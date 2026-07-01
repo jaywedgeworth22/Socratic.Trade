@@ -72,6 +72,9 @@ import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from ".
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
+import { assertLivePreflight } from "./preflight-live-guard";
+import { checkLlmDailyBudget } from "./llm-budget";
+import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
@@ -79,7 +82,7 @@ import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { withLlmGeneration } from "./observability";
+import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -96,6 +99,11 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+// STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
+// can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
+// so red-team.ts can import it too without a circular dep.
+export { STRATEGY_PROMPT_VERSION };
 type RunnablePolicy = TradingPolicy & { accountNumber: string };
 
 export interface StrategyLlmStep {
@@ -352,22 +360,45 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
+    // breakers above) and BEFORE any model call below (proposal REVALIDATION and generation), so a
+    // spend cap NEVER disables risk maintenance — it only skips the LLM work. The single choke point
+    // for EVERY run entry (event trigger, interval scheduler, manual "Run once" API, mobile command,
+    // future). Default OFF unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
+    //
+    // Known limitation (bounded, documented — docs/rollouts/2026-07-01-fg-codex-review-fixes.md): a
+    // read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account runs can
+    // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
+    // needs a per-user reservation / run serialization — deferred as a follow-up.
+    const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+    let skipLlmDueToBudget = !budget.ok;
+    if (skipLlmDueToBudget) {
+      audit(
+        "strategy_run_suppressed_budget",
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        userId
+      );
+    }
+
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
-    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
-    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
-    //       cadence (regular market hours only) against this run's fresh scan — withdrawing
-    //       what no longer holds, stamping the survivors as re-validated.
+    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes (non-LLM — always
+    //       runs, it's safety hygiene), then
+    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their cadence —
+    //       SKIPPED when over the LLM budget, since it calls the model (records usage).
     const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
       .catch((e) => {
         console.error("[expiry] run error:", e);
         return { expired: 0 };
       });
-    const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
-      .catch((e) => {
-        console.error("[revalidation] run error:", e);
-        return null;
-      });
+    const revalidation = skipLlmDueToBudget
+      ? null
+      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+          .catch((e) => {
+            console.error("[revalidation] run error:", e);
+            return null;
+          });
 
     const betaBySymbol: Record<string, number> = {};
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
@@ -422,7 +453,8 @@ export async function runStrategyOnce(
         // never wired through this call site before. Advisory context only — not a money-path gate.
         retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
           docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
-          minScore: defaultMinScore()
+          minScore: defaultMinScore(),
+          connectedAccountId: policy.connectedAccountId
         })
       ));
       const validContexts = contexts.flat().filter(Boolean);
@@ -469,12 +501,35 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Gate LLM proposal generation on the daily token/$ budget — the single choke point for EVERY run
+    // LLM proposal generation is skipped when over the daily budget (skipLlmDueToBudget, computed
+    // above before revalidation) or when no candidate cleared the score threshold. Non-LLM safety
+    // work already ran regardless.
+    // Re-read the budget immediately before generation. The initial check above ran BEFORE revalidation
+    // and the RAG retrieval block, both of which record llm_usage/rag_usage — so a run that STARTED just
+    // under the ceiling can be over it by now. Using the stale skipLlmDueToBudget here would let
+    // proposeTrades call the model and the withLlmGeneration backstop would THROW LlmBudgetExceededError,
+    // which the outer catch turns into a FAILED run + failure notification for what is really normal
+    // budget exhaustion. Re-reading degrades to a graceful skip instead. Cheap DB read; default OFF
+    // (no ceiling) → always ok, so no behavior change when budgets are unset.
+    if (!skipLlmDueToBudget) {
+      const budgetNow = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+      if (!budgetNow.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget",
+          { runId, userId, reason: budgetNow.reason, tokensToday: budgetNow.tokensToday, costUsdToday: budgetNow.costUsdToday, tokenLimit: budgetNow.tokenLimit, costLimitUsd: budgetNow.costLimitUsd, phase: "pre_generation" },
+          userId
+        );
+      }
+    }
     let llmProposals: TradeProposal[] = [];
     // FAIL-CLOSED signal from the inline Bear (Red Team): when its review could not run, these
     // Bull proposals were NOT critiqued — route them to human review below instead of auto-executing.
     let bearReviewUnavailable = false;
     let bearReviewReason: string | undefined;
-    if (!skipLlmDueToScoreThreshold) {
+    if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
       const proposed = await proposeTrades({
         runId,
         userId,
@@ -549,8 +604,14 @@ export async function runStrategyOnce(
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
+        // rationale-append text below too for backward compatibility with anything reading the string.
+        proposal.redTeamVerdict = { rejected: redTeamResult.rejected, available: redTeamResult.available, reason: redTeamResult.reason };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
+          // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
+          // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
+          audit("proposal_rejected_by_red_team", { symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason }, userId);
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
         } else if (!redTeamResult.available) {
@@ -651,6 +712,20 @@ export async function runStrategyOnce(
       console.warn(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
       );
+      // Emit the diversity-collapse decision point as a queryable Langfuse observation (no-op when
+      // Langfuse is unconfigured). Advisory only — never blocks/drops/modifies proposals.
+      await recordDecisionObservation({
+        name: "trading.strategy.diversity-collapse",
+        userId,
+        metadata: {
+          promptVersion: STRATEGY_PROMPT_VERSION,
+          meanPairwiseSimilarity: Number(rationaleDiversity.meanPairwiseSimilarity.toFixed(4)),
+          threshold: rationaleDiversity.threshold,
+          proposalCount: rationaleDiversity.count,
+          runId
+        },
+        tags: ["strategy", "diversity-collapse"]
+      });
     }
     // (The rationale-collapse GATE that routes collapsed openings to human review runs EARLIER — before
     // sell-to-fund planning — so a gated buy can't drive automated funding sells. Only the advisory
@@ -834,6 +909,36 @@ export async function runStrategyOnce(
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        continue;
+      }
+
+      // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
+      // is placed. No-op in Test/paper mode (usesLocalSimulation → returns immediately, and the
+      // simulated path already `continue`d above); on the broker/live path it throws unless the run
+      // is genuinely out of paper mode AND live trading is explicitly enabled (ALLOW_LIVE_TRADING).
+      // This code path can also be reached for broker/paper (submitsBrokerOrders, real-capital-free),
+      // where mode !== "broker/live" so the guard is a no-op. It NEVER places or enables a trade.
+      try {
+        assertLivePreflight({
+          mode: executionState.mode,
+          usesLocalSimulation: executionState.usesLocalSimulation,
+          paperMode: policy.paperMode,
+          symbol: normalizedProposal.symbol,
+          side: normalizedProposal.side
+        });
+      } catch (guardError) {
+        const message = guardError instanceof Error ? guardError.message : String(guardError);
+        const proposalId = crypto.randomUUID();
+        // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
+        // leave an `approved: true` row in the decision/audit ledger.
+        const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
+        await sendNotification(
+          { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
         continue;
       }
 
@@ -1809,6 +1914,32 @@ export async function executeProposal(
       return { status: "paper" };
     }
 
+    // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
+    // loop). No-op in paper/test (that branch already returned above); on broker/live it refuses
+    // unless the run is genuinely out of paper mode AND live trading is explicitly enabled
+    // (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending proposal
+    // must clear the same live invariant as an autonomous one before reaching the broker.
+    try {
+      assertLivePreflight({
+        mode: executionState.mode,
+        usesLocalSimulation: executionState.usesLocalSimulation,
+        paperMode: policy.paperMode,
+        symbol: proposal.symbol,
+        side: proposal.side
+      });
+    } catch (guardError) {
+      const message = guardError instanceof Error ? guardError.message : String(guardError);
+      // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
+      const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
+      await sendNotification(
+        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
+        { policy, userId }
+      );
+      return { status: "blocked", reasons: [message] };
+    }
+
     // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
     // idempotency-keyed intent (status "placing" + refId) BEFORE the broker call so a crash or
     // lost broker response can't leave an untracked real order.
@@ -2262,6 +2393,7 @@ async function proposeTrades(input: {
         name: "trading.strategy.bull",
         model,
         userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(body),
         metadata: {
           endpoint: url,
@@ -2270,7 +2402,8 @@ async function proposeTrades(input: {
           executionMode,
           internalPaperMode: input.policy.paperMode,
           usesLocalSimulation: executionState.usesLocalSimulation,
-          currentMarketRegime
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["strategy", "bull-agent"],
         output: (result) => ({
@@ -2572,6 +2705,7 @@ async function proposeTrades(input: {
         name: "trading.strategy.bear",
         model: bearModel,
         userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
         input: summarizeOpenAiRequest(bearBody),
         metadata: {
           endpoint: bearUrl,
@@ -2580,14 +2714,24 @@ async function proposeTrades(input: {
           executionMode,
           internalPaperMode: input.policy.paperMode,
           usesLocalSimulation: executionState.usesLocalSimulation,
-          currentMarketRegime
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["strategy", "bear-agent", "red-team"],
-        output: (result) => ({
-          ...summarizeOpenAiResponseText(result.text),
-          ...summarizeTradeProposals(result.proposals),
-          fallbackToBull: result.fallbackToBull
-        })
+        output: (result) => {
+          // Bear-veto decision point: the Bear removed one or more Bull proposals (fewer survived
+          // than were reviewed, and it did not fall back to Bull). Stamp the veto count + a boolean
+          // so a Bear veto is queryable in Langfuse (no-op when Langfuse is unconfigured).
+          const survivorCount = result.proposals.length;
+          const bearVetoCount = result.fallbackToBull ? 0 : Math.max(0, bullProposals.length - survivorCount);
+          return {
+            ...summarizeOpenAiResponseText(result.text),
+            ...summarizeTradeProposals(result.proposals),
+            fallbackToBull: result.fallbackToBull,
+            bearVeto: bearVetoCount > 0,
+            bearVetoCount
+          };
+        }
       },
       async () => {
         const bearResponse = await llmFetch(bearUrl, {
@@ -2672,9 +2816,16 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
+/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
+ *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
+ *  degrades to the refPrice-based branch instead. */
+function hasRealAsk(quote: MarketQuote): boolean {
+  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+}
+
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
   if (!marketScan) return undefined;
-  const hasAskData = marketScan.topCandidates.some((quote) => quote.ask && quote.ask > 0);
+  const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
     source: marketScan.source,
     generatedAt: marketScan.generatedAt,
@@ -2694,12 +2845,17 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
+  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
+  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
+  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
     px: quote.price,
-    bid: quote.bid,
-    ask: quote.ask,
+    bid: realBid,
+    ask: realAsk,
     vol: quote.volume,
     mktCap: quote.marketCap,
     chgPct: quote.intradayChangePct,
@@ -2712,10 +2868,16 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     pb: quote.pbRatio,
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    earnIn: quote.daysToEarnings,
+    instOwn: quote.institutionOwnershipPct,
+    iv: quote.nearTheMoneyIv,
+    putCall: quote.putCallRatio,
     range52w: pricePosition52w(quote),
     // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
-    // computed deterministically, then omitted when their inputs are unavailable.
-    ...deriveMetrics(quote),
+    // computed deterministically, then omitted when their inputs are unavailable. Pass the
+    // synthetic-stripped bid/ask so a price-derived (synthetic) spread doesn't leak into the prompt
+    // as a fabricated `spreadBps` execution-cost signal — matching the bid/ask omission above.
+    ...deriveMetrics({ ...quote, bid: realBid, ask: realAsk }),
     secRelStr: quote.sectorRelStrength,
     newsSent: quote.sentiment,
     insiderSent: quote.insiderSentiment,
@@ -2973,9 +3135,17 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
     if (qty >= 1) {
       const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
       const buffer = bufferBps / 10_000;
+      // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
+      // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
+      // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
+      // back to refPrice only for the side that is actually synthetic so the limit is honest.
+      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
+      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
+      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
-        ? round2((quote?.ask && quote.ask > 0 ? quote.ask : refPrice) * (1 + buffer))
-        : round2((quote?.bid && quote.bid > 0 ? quote.bid : refPrice) * (1 - buffer));
+        ? round2((realAsk ?? refPrice) * (1 + buffer))
+        : round2((realBid ?? refPrice) * (1 - buffer));
       if (limitPrice > 0) {
         next = {
           ...next,

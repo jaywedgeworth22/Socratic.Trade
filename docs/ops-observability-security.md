@@ -77,6 +77,10 @@ The telemetry path treats this as a financial application:
 - Litestream runs under PM2 (`litestream` sidecar) next to production `next start` — see
   `docs/litestream.md`. Periodically verify a restore to a scratch path
   (`scripts/litestream-restore.sh /tmp/app.db.restored`) before treating backups as ready.
+  **Status as of 2026-07-01 (G9a audit item): restore has not yet been exercised** —
+  only replication is verified live (`docs/rollouts/2026-06-21-litestream-r2-live.md`).
+  See the "Restore verification status" runbook section in `docs/litestream.md` for the
+  drill procedure and where to log results once it's run.
 - Browser Sentry and the `withSentryConfig` build wrapper are now enabled and validated
   against `npm run build`. To activate telemetry in prod, set `SENTRY_DSN` +
   `NEXT_PUBLIC_SENTRY_DSN` (the `NEXT_PUBLIC_*` values are inlined at build time, so set

@@ -239,6 +239,20 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+  /**
+   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
+   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
+   * runs). `undefined` (blank in the UI) INHERITS the operator env default
+   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
+   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
+   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   */
+  llmDailyTokenBudget?: number;
+  /**
+   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
+   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   */
+  llmDailyCostBudgetUsd?: number;
 
   // ── Workstream B: learning-loop auto-tuning (all DEFAULT OFF) ──────────────────
   /**
@@ -508,6 +522,15 @@ export interface BrokerQuote {
   volume?: number;
   asOf?: string;
   provider?: string;
+  /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
+   *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
+   *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
+   *  derived; the side-specific flags preserve the real side of a one-sided quote. */
+  syntheticSpread?: boolean;
+  /** True when only the BID was derived from price (the ask may be real). */
+  syntheticBid?: boolean;
+  /** True when only the ASK was derived from price (the bid may be real). */
+  syntheticAsk?: boolean;
 }
 
 /**
@@ -773,13 +796,25 @@ export interface TradeProposal {
    */
   takeProfitBand?: number;
   takeProfitBasis?: number;
+  /**
+   * Red Team (Bear) debate verdict for this proposal, mirroring `RedTeamDebateResult`
+   * (src/lib/red-team.ts). Set by the strategy loop when the Red Team debate runs on a
+   * high-conviction proposal; surfaced as its own "Bear Review" block in the dashboard so the
+   * critique isn't buried inside the truncated rationale. Optional so existing/persisted proposals
+   * and test fixtures that predate the field render unchanged.
+   *   - `rejected`: the Bear found a critical flaw (the proposal is dropped upstream, so a persisted
+   *     proposal will normally have `rejected: false`; the field records the surviving verdict).
+   *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
+   *   - `reason`: the Bear's counter-argument or approval reasoning.
+   */
+  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string };
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
 // single-source tooltips in the market scan table.
 export type EnrichmentSources = Partial<
   Record<
-    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
+    "price" | "bid" | "ask" | "intradayChangePct" | "asOf" | "sentiment" | "peRatio" | "analystRating" | "sector" | "industry" | "volume" | "dividendYield" | "eps" | "companyName" | "insiderSentiment" | "fcfYield" | "debtToEquity" | "epsGrowth" | "senateTrades" | "daysToEarnings" | "institutionOwnershipPct" | "nearTheMoneyIv" | "putCallRatio" | "vwap" | "targetMean" | "targetHigh" | "targetLow" | "targetMedian",
     string
   >
 >;
@@ -830,6 +865,15 @@ export interface MarketQuote {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number; // Net congressional trade signal (distinct buy members minus sell members)
+  /** Trading days until the next scheduled earnings date (Yahoo calendarEvents). Source-provided
+   *  only; undefined when the API does not return a future earnings date — never fabricated to 0. */
+  daysToEarnings?: number;
+  /** Percentage of shares held by institutions (Yahoo institutionOwnership / majorHoldersBreakdown). */
+  institutionOwnershipPct?: number;
+  /** Near-the-money implied volatility (%) derived from the Robinhood option chain (opt-in tier). */
+  nearTheMoneyIv?: number;
+  /** Put/call open-interest ratio around the money (Robinhood option chain; opt-in tier). */
+  putCallRatio?: number;
   /** Numeric analyst price targets (FMP price-target-consensus; opt-in FMP_PRICE_TARGETS_ENABLED). */
   targetMean?: number;
   targetHigh?: number;
@@ -964,6 +1008,10 @@ export interface MarketQuoteSummary {
   debtToEquity?: number;
   epsGrowth?: number;
   senateTrades?: number;
+  daysToEarnings?: number;
+  institutionOwnershipPct?: number;
+  nearTheMoneyIv?: number;
+  putCallRatio?: number;
   targetMean?: number;
   targetHigh?: number;
   targetLow?: number;

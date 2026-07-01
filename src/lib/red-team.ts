@@ -6,6 +6,7 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
+import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { MarketQuoteSummary, TradeProposal } from "./types";
 
@@ -141,7 +142,8 @@ Respond with a JSON object containing:
           symbol: proposal.symbol,
           side: proposal.side,
           isBullish,
-          executionMode
+          executionMode,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["red-team", "proposal-review"],
         output: (result) => ({
@@ -232,7 +234,8 @@ async function debateViaAnthropic(args: {
           symbol: args.proposal.symbol,
           side: args.proposal.side,
           isBullish: args.isBullish,
-          executionMode: args.executionMode
+          executionMode: args.executionMode,
+          promptVersion: STRATEGY_PROMPT_VERSION
         },
         tags: ["red-team", "proposal-review", "anthropic"],
         output: (result) => ({ rejected: result.debate.rejected, reasonChars: result.debate.reason.length })

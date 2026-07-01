@@ -241,6 +241,85 @@ describe("enrichment cache consent gate", () => {
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
 
+  it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    const runAndCount = async () => {
+      clearEnrichmentCache();
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(String(url));
+        if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+        if (String(url).includes("recommendation")) {
+          return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+        }
+        return new Response(JSON.stringify({}));
+      });
+      const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+      const res = await provider.enrich(["AAPL"]);
+      return { urls, res };
+    };
+
+    // Flag OFF (default) → 5 calls, recommendation IS fetched and yields an analyst score.
+    delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    const off = await runAndCount();
+    expect(off.urls.length).toBe(5);
+    expect(off.urls.some((u) => u.includes("recommendation"))).toBe(true);
+    expect(off.res.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+
+    // Flag ON → 4 calls, recommendation NOT fetched, no fabricated Finnhub analyst rating.
+    process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+    const on = await runAndCount();
+    expect(on.urls.length).toBe(4);
+    expect(on.urls.some((u) => u.includes("recommendation"))).toBe(false);
+    expect(on.res.AAPL?.analystBySource?.finnhub).toBeUndefined();
+    // Non-analyst fields still populate from the remaining calls.
+    expect(on.res.AAPL?.companyName).toBe("Acme Corp");
+
+    if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+    else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+  });
+
+  it("keys the Finnhub cache by FINNHUB_DROP_RECOMMENDATION so flipping the flag refetches (not a stale no-rec row)", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    let recFetches = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("recommendation")) {
+        recFetches++;
+        return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+      }
+      if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+      return new Response(JSON.stringify({}));
+    });
+
+    try {
+      // Flag ON: recommendation dropped, row cached under the flag-specific namespace.
+      process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+      const onProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const on1 = await onProvider.enrich(["AAPL"]);
+      expect(on1.AAPL?.analystBySource?.finnhub).toBeUndefined();
+      expect(recFetches).toBe(0);
+      // Same flag again → cache hit, still no recommendation fetch.
+      await onProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(0);
+
+      // Flag OFF: distinct cache namespace → MISS → refetch, now including the recommendation, so the
+      // blended analyst rating regains Finnhub's vote instead of serving the stale no-rec row until TTL.
+      delete process.env.FINNHUB_DROP_RECOMMENDATION;
+      const offProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const off1 = await offProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(1);
+      expect(off1.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+    } finally {
+      if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+      else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    }
+  });
+
   it("user-keyed data is shared via pool to a consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
@@ -397,6 +476,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
+    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
     expect(fetchCount).toBe(4);
 
     const res2 = await provider.enrich(["AAPL"]);
@@ -446,6 +526,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({ peRatio: 25.5 });
+    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
     expect(fetchCount).toBe(4);
 
     const res2 = await provider.enrich(["AAPL"]);

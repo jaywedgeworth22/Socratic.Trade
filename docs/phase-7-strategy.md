@@ -57,6 +57,23 @@ adversarial-debate lenses before making a decision.
   requests strict `json_schema` on OpenAI-compatible providers, and the strategy/red-team
   Anthropic calls use prompt caching. See
   `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+- **Proposed redesign (design-only, 2026-07-01):** `docs/single-adversary-consolidation.md`
+  proposes collapsing today's *two* adversarial passes (the in-flow Bear inside `proposeTrades`
+  and the standalone `debateProposal`, which run the same model twice) into a single hardened
+  **Red Team** that reviews the finalized (post-sizing) trade, fails **closed and visibly** when
+  it can't run, never blocks a risk-reducing exit, and is provably independent of the proposer.
+  Not yet implemented; decisions resolved in that spec's §9, review refinements in §12.
+- **First-class verdict (2026-07-01):** the Red Team debate result is stored on the proposal as a
+  structured `redTeamVerdict?: { rejected; available; reason }` field (`TradeProposal` in
+  `src/lib/types.ts`), not just appended to the free-text rationale. It survives the JSON round-trip
+  into `trade_proposals` (folded into the existing payload column — no migration), so the dashboard
+  can render a dedicated "Bear Review" block instead of burying the critique in a truncated
+  rationale. The backward-compat rationale-append text is preserved.
+- **Bear-veto audit (2026-07-01):** a Bear *rejection* now writes an
+  `audit("proposal_rejected_by_red_team", { symbol, side, thesisTag, reason })` row before the
+  proposal is dropped — parity with the sibling `proposal_skipped_negative_ev` /
+  `proposal_skipped_correlation` audits — so a vetoed high-conviction trade is visible in the
+  Activity/Audit feed rather than only in the server console.
 
 ---
 
@@ -239,6 +256,41 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   post-mortem so the proposal path stays network-free.
 - **Delta-only macro pruning** — `pruneMacro()` sends only changed (plus
   regime-critical) macro fields on repeat runs, listing the rest as unchanged.
+- **Risk-control wiring audit + money-path test (2026-07-01, audit work-split F/G):**
+  - **Drawdown kill-switch (G5)** — verified `runStrategyOnce` (`src/lib/strategy.ts:~253-262`)
+    flips an `active`, autonomous run to `close_only` via `setPolicy`, audits
+    `policy_violation_drawdown`, and sends a `kill_switch` notification when the account draws down
+    past `riskRules.maxDrawdownPct` / `maxDailyLossNotional` from the persisted equity high-water
+    mark (HWM + start-of-day equity live in the settings KV, so they survive a restart). Already
+    wired and durable; the missing piece was a *regression test* driving the full
+    breach→`close_only` flip through `runStrategyOnce`
+    (`test/strategy-moneypath-drawdown-flip.test.ts`). Default-safe: the block is gated on `active`
+    and no-ops when no limit is configured; no behavior change.
+  - **Correlation cluster gate (G6)** — verified `applyCorrelationClusterGate`
+    (`src/lib/strategy.ts:~1087`, invoked at `~509`) runs *before* execution, keyed on
+    `policy.maxAvgCorrelation` (default off). An over-correlated *opening* buy/short is dropped with
+    an `audit("proposal_skipped_correlation")` row while exits (sell/cover) always pass. Built +
+    wired + opt-in; covered by `test/correlation-cluster-gate.test.ts`.
+  - **Money-path e2e test (G7)** — `test/strategy-money-path-f-g.test.ts` drives `runStrategyOnce`
+    in Test/paper mode (simulated fills, never a real trade) with a stubbed LLM + Test broker and
+    asserts the full proposal→evaluate→execute path books a paper fill and persists a proposal +
+    `fill_event`.
+  - **Live-order pre-flight guard (G7)** — `src/lib/preflight-live-guard.ts` (`assertLivePreflight`)
+    is a default-SAFE assertion wired in just before a real (`broker/live`) order is placed
+    (`src/lib/strategy.ts`, before `gateway.placeEquityOrder`). It is a hard no-op in Test/paper
+    mode; on the real-capital path it throws (blocking the order + auditing
+    `order_blocked_live_preflight`) unless `policy.paperMode === false` **and** live trading is
+    explicitly enabled via `ALLOW_LIVE_TRADING=true`. It never places or enables a trade.
+    Unit-tested in `test/preflight-live-guard.test.ts`.
+- **Observability prompt-version + decision stamps (2026-07-01, G10):** every traced strategy
+  generation (bull `trading.strategy.bull`, bear `trading.strategy.bear`, red-team
+  `trading.red-team.debate`) now carries `metadata.promptVersion`, sourced from the single
+  `STRATEGY_PROMPT_VERSION` constant (`src/lib/strategy.ts`) so traces are filterable/comparable
+  across prompt revisions. The **Bear-veto** count is stamped into the bear generation's output
+  (`bearVeto` / `bearVetoCount`), and a **rationale diversity-collapse** emits a stamped
+  `recordDecisionObservation("trading.strategy.diversity-collapse")` span
+  (`src/lib/observability.ts`). All of it is a hard no-op when Langfuse is unconfigured
+  (`langfuseConfigured()` gates it). Covered by `test/redteam-observability-g10.test.ts`.
 - Still TODO from this section: OPRO-style prompt self-rewrite (intentionally
   kept advisory-only via Strategy Studio's human-approved tuning, not
   auto-applied).

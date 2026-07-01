@@ -32,9 +32,12 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Server,
   Settings as SettingsIcon,
   Shield,
+  ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -111,15 +114,26 @@ import {
   type SettingsSection,
   type SettingsTier
 } from "./settings-scope";
+import {
+  FEED_TAB_KEY,
+  WORKSPACE_TAB_KEY,
+  isFeedTab,
+  isNavV2Enabled,
+  isStrategyConsolidationEnabled,
+  isWorkspaceTab,
+  migrateNavKeysToDestinations,
+  type FeedTab,
+  type WorkspaceTab
+} from "./nav-destinations";
+import { GLOSSARY_RULE_OF_THUMB, SETTINGS_GLOSSARY } from "./settings-search";
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
+import dynamic from "next/dynamic";
 import { AllocationDonut, EquityCurve, ScorecardBars } from "./ui/charts";
-import { StrategyFlow } from "./ui/strategy-flow";
 import { MacroBoardView } from "./ui/macro-panel";
 import { AssistantView } from "./ui/assistant-console";
 import { DeliveryChannelsPanel } from "./ui/delivery-channels";
 import { SymbolButton } from "./ui/symbol-button";
-import { SymbolDrilldown, SymbolDrilldownTitle } from "./ui/symbol-drilldown";
 import { TickerLogo } from "./ui/ticker-logo";
 import { ConfirmModal, Modal, SlideOver } from "./ui/overlays";
 import { LearnedContextQueue, LearnedContextQueueBadge } from "./ui/learned-context-queue";
@@ -131,6 +145,7 @@ import {
   Dot,
   EmptyState,
   Field,
+  ICON,
   IconButton,
   PanelHeader,
   Segmented,
@@ -149,9 +164,32 @@ import {
   DEFAULT_LLM_MODEL
 } from "./ui/llm-model-catalog";
 
+// Code-split the two heaviest tab payloads out of the initial dashboard bundle:
+//  • StrategyFlow pulls in @xyflow/react (~3.9MB) + its CSS — only needed when the Strategy Flow
+//    modal opens.
+//  • SymbolDrilldown pulls in PriceChart (which lazy-loads lightweight-charts) — only needed when a
+//    symbol drilldown slide-over opens.
+// Both are client-only (`ssr: false`) with lightweight loading fallbacks matching our skeleton /
+// EmptyState conventions, so @xyflow/react and the drilldown chart boundary never ship on first load.
+const StrategyFlow = dynamic(() => import("./ui/strategy-flow").then((m) => m.StrategyFlow), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center py-10">
+      <EmptyState icon={<Network size={18} />} title="Loading strategy flow…" />
+    </div>
+  )
+});
+const SymbolDrilldown = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldown), {
+  ssr: false,
+  loading: () => <EmptyState title="Loading symbol details…" />
+});
+const SymbolDrilldownTitle = dynamic(() => import("./ui/symbol-drilldown").then((m) => m.SymbolDrilldownTitle), {
+  ssr: false,
+  loading: () => <span className="text-sm font-medium text-muted">Symbol</span>
+});
+
 type SortDir = "asc" | "desc";
 type PolicyPatch = Partial<TradingPolicy> & { strategyPrompt?: string };
-type WorkspaceTab = "decision" | "assistant" | "market" | "macro" | "performance" | "tax" | "strategy";
 
 function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode {
   return CURATED_LLM_MODEL_GROUPS.map((group) => (
@@ -164,7 +202,6 @@ function renderCuratedModelOptions(descriptive: boolean = true): React.ReactNode
     </optgroup>
   ));
 }
-type FeedTab = "activity" | "runs" | "notifications" | "audit";
 
 type MarketReplaceCandidate = {
   order: EquityOrder;
@@ -179,7 +216,7 @@ type AccountDeletionPreview = {
   prepared: boolean;
   requestedAt?: string;
   connectedAccounts: Array<{ id: string; label: string; broker: string; environment: string; accountNumber?: string; isActive: boolean }>;
-  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number };
+  blockers: { runningStrategyRuns: number; placingProposals: number; pendingReconciliationFills: number; activeMobileCommands: number };
   counts: Record<string, number>;
 };
 const TICKER_LOGO_DISPLAY_KEY = "ticker-logo-display";
@@ -192,8 +229,6 @@ const LEGACY_EXECUTION_BANNER_HIDDEN_KEY = "execution-banner-hidden";
 const EXECUTION_BANNER_MODE_KEY = "execution-banner-mode";
 type ExecutionBannerMode = "full" | "compact" | "hidden";
 const HIDE_TEST_ACCOUNT_KEY = "hide-test-account";
-const WORKSPACE_TAB_KEY = "dashboard-workspace-tab";
-const FEED_TAB_KEY = "dashboard-feed-tab";
 const STRATEGY_TUNING_STORAGE_KEY = "strategy-tuning-proposal";
 const ALPACA_PAPER_ENDPOINT = "https://paper-api.alpaca.markets/v2";
 const ALPACA_BROKERAGE_ENDPOINT = "https://api.alpaca.markets";
@@ -268,14 +303,6 @@ function safeJson(value: string): unknown {
   } catch {
     return {};
   }
-}
-
-function isWorkspaceTab(value: unknown): value is WorkspaceTab {
-  return value === "decision" || value === "assistant" || value === "market" || value === "macro" || value === "performance" || value === "tax" || value === "strategy";
-}
-
-function isFeedTab(value: unknown): value is FeedTab {
-  return value === "activity" || value === "runs" || value === "notifications" || value === "audit";
 }
 
 function readStoredWorkspaceTab(): WorkspaceTab {
@@ -476,7 +503,7 @@ function ReadinessStrip({ items }: { items: ReadinessItem[] }) {
               )}
               title={item.detail}
             >
-              {item.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+              {item.ok ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
               {item.label}
             </span>
           ))}
@@ -641,13 +668,13 @@ function AccountMenu({
 
           <div className="mt-1 space-y-0.5">
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenSettings)}>
-              <span className={menuItemLeftClass}><SettingsIcon size={15} /> Settings</span>
+              <span className={menuItemLeftClass}><SettingsIcon size={16} /> Settings</span>
             </button>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenAccounts)}>
-              <span className={menuItemLeftClass}><Wallet size={15} /> Account Management</span>
+              <span className={menuItemLeftClass}><Wallet size={16} /> Account Management</span>
             </button>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenActivity)}>
-              <span className={menuItemLeftClass}><ActivityIcon size={15} /> Activity Log</span>
+              <span className={menuItemLeftClass}><ActivityIcon size={16} /> Activity Log</span>
               {pendingCount > 0 && (
                 <span className="rounded-full bg-warn/20 px-2 py-0.5 text-[11px] font-semibold text-warn">
                   {pendingCount}
@@ -655,11 +682,11 @@ function AccountMenu({
               )}
             </button>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(onOpenHelp)}>
-              <span className={menuItemLeftClass}><HelpCircle size={15} /> System Help</span>
+              <span className={menuItemLeftClass}><HelpCircle size={16} /> System Help</span>
             </button>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => run(toggle)}>
               <span className={menuItemLeftClass}>
-                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                 {theme === "dark" ? "Light Mode" : "Dark Mode"}
               </span>
             </button>
@@ -667,11 +694,141 @@ function AccountMenu({
 
           <div className="mt-1 border-t border-line pt-1">
             <button type="button" role="menuitem" className={cn(menuItemClass, "text-down hover:bg-down/10")} onClick={() => run(onSignOut)}>
-              <span className={menuItemLeftClass}><LogOut size={15} /> Sign Out</span>
+              <span className={menuItemLeftClass}><LogOut size={16} /> Sign Out</span>
             </button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Workspace tab IA: the five primary tabs stay inline; Macro and Tax are demoted
+// behind a "More" overflow so the single-screen tab row stays scannable. Both
+// remain deep-linkable and persisted via the same WORKSPACE_TAB_KEY/workspaceTab
+// state (see readStoredWorkspaceTab) — the overflow only changes presentation.
+const PRIMARY_WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: "decision", label: "Decision" },
+  { id: "assistant", label: "Assistant" },
+  { id: "market", label: "Market Scan" },
+  { id: "performance", label: "Performance" },
+  { id: "strategy", label: "Strategy" }
+];
+const OVERFLOW_WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: "macro", label: "Macro" },
+  { id: "tax", label: "Tax" }
+];
+
+/**
+ * Workspace tab bar: primary tabs via the shared `Tabs` primitive (which keeps
+ * `role="tablist"` + roving arrow-key nav) plus a "More" overflow menu holding
+ * Macro and Tax. The overflow menu items are `role="tab"` with `aria-selected`
+ * so an active overflow tab is announced correctly, and the "More" trigger
+ * reflects/labels the active overflow tab so the user always sees where they are.
+ */
+function WorkspaceTabsBar({
+  value,
+  onChange
+}: {
+  value: WorkspaceTab;
+  onChange: (v: WorkspaceTab) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const activeOverflow = OVERFLOW_WORKSPACE_TABS.find((t) => t.id === value);
+
+  // The tab row lives inside an `overflow-x-auto` scroll container, which also clips VERTICAL
+  // overflow — an absolutely-positioned `top-full` dropdown gets cut off on exactly the narrow
+  // layouts this overflow menu exists for. So position the menu with `fixed` coords derived from the
+  // trigger's rect, escaping the clip; recompute on open and close on scroll/resize (fixed coords
+  // would otherwise drift as the row scrolls).
+  const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    function close() {
+      setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  return (
+    <div className="flex items-center gap-1">
+      <Tabs value={value} onChange={onChange} tabs={PRIMARY_WORKSPACE_TABS} />
+      <div ref={menuRef} className="relative">
+        <button
+          ref={btnRef}
+          type="button"
+          id="tab-more"
+          role="tab"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-selected={Boolean(activeOverflow)}
+          aria-controls={activeOverflow ? `tabpanel-${activeOverflow.id}` : undefined}
+          title="More workspaces"
+          onClick={() => (open ? setOpen(false) : openMenu())}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-xl border border-line bg-surface px-3 py-1.5 text-[13px] font-medium transition-colors touch-manipulation max-sm:min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            activeOverflow ? "text-fg shadow-sm" : "text-muted hover:text-fg"
+          )}
+        >
+          {activeOverflow ? activeOverflow.label : "More"}
+          <ChevronDown size={ICON.sm} className={cn("transition-transform", open && "rotate-180")} />
+        </button>
+        {open && menuPos && (
+          <div
+            role="menu"
+            aria-label="More workspaces"
+            style={{ top: menuPos.top, right: menuPos.right }}
+            className="fixed z-[1200] w-44 rounded-lg border border-line bg-surface p-1 text-fg shadow-[var(--shadow-lg)]"
+          >
+            {OVERFLOW_WORKSPACE_TABS.map((tab) => {
+              const active = value === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  id={`tab-${tab.id}`}
+                  aria-selected={active}
+                  aria-controls={`tabpanel-${tab.id}`}
+                  onClick={() => {
+                    onChange(tab.id);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center rounded-md px-2.5 py-2 text-left text-[13px] font-medium transition-colors focus:outline-none focus-visible:bg-surface-2 focus-visible:outline-none",
+                    active ? "bg-surface-3 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -720,7 +877,7 @@ function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: Dashboard
       <header className="flex min-h-16 shrink-0 flex-col gap-3 border-b border-line bg-surface/70 px-4 py-3 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-            <Zap size={17} className="fill-current" />
+            <Zap size={16} className="fill-current" />
           </span>
           <div>
             <div className="text-sm font-semibold">Trading Dashboard</div>
@@ -816,12 +973,12 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
       className="fixed inset-0 z-[2000] flex items-center justify-center p-4"
     >
       {/* Opaque backdrop — blocks all interaction beneath */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-[3px]" />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-scrim" />
       <div className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)] p-6 flex flex-col gap-5">
         {/* Header */}
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-            <Network size={18} />
+            <Network size={20} />
           </span>
           <div>
             <h2 id="consent-title" className="text-base font-semibold text-fg">
@@ -1031,6 +1188,15 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const [tuningBusy, setTuningBusy] = useState(false);
   const [tuningError, setTuningError] = useState("");
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // NAV_V2 PR #2: one-time, flag-INDEPENDENT migration of the legacy tab keys to
+  // the new destination keys. Additive (legacy keys are left intact so a flag-off
+  // render path still finds them) and idempotent (no-op once the new keys exist),
+  // so it is safe to run on every mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    migrateNavKeysToDestinations(window.localStorage);
+  }, []);
 
   useEffect(() => {
     try {
@@ -1577,20 +1743,20 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const safetyBanner = executionBanner(executionState);
 
   const paletteCommands: Command[] = [
-    { id: "tab-decision", label: "Go to Decision", hint: "Decision tab", icon: <LayoutDashboard size={15} />, run: () => setWorkspaceTab("decision") },
-    { id: "tab-assistant", label: "Go to Assistant", hint: "Assistant tab", icon: <BrainCircuit size={15} />, run: () => setWorkspaceTab("assistant") },
-    { id: "tab-market", label: "Go to Market Scan", hint: "Market tab", icon: <LineChartIcon size={15} />, run: () => setWorkspaceTab("market") },
-    { id: "tab-macro", label: "Go to Macro", hint: "Macro tab", icon: <Network size={15} />, run: () => setWorkspaceTab("macro") },
-    { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={15} />, run: () => setWorkspaceTab("performance") },
-    { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={15} />, run: () => setWorkspaceTab("strategy") },
-    { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={15} />, run: () => setFeedOpen(true) },
-    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={15} />, run: () => openSettings("operate") },
-    { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={15} />, run: () => setAccountsOpen(true) },
-    { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={15} />, run: () => setNodeEditorOpen(true) },
-    { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={15} />, run: () => setStudioOpen(true) },
-    { id: "open-help", label: "Open Help", icon: <HelpCircle size={15} />, run: () => setHelpOpen(true) },
-    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={15} />, run: () => { if (!runOnceBlockedReason) void runStrategy(); else routeSetupBlocker(runOnceBlockedReason); } },
-    { id: "sign-out", label: "Sign out", hint: signedInEmail ?? "Current session", icon: <LogOut size={15} />, run: () => { window.location.href = "/logout"; } },
+    { id: "tab-decision", label: "Go to Decision", hint: "Decision tab", icon: <LayoutDashboard size={16} />, run: () => setWorkspaceTab("decision") },
+    { id: "tab-assistant", label: "Go to Assistant", hint: "Assistant tab", icon: <BrainCircuit size={16} />, run: () => setWorkspaceTab("assistant") },
+    { id: "tab-market", label: "Go to Market Scan", hint: "Market tab", icon: <LineChartIcon size={16} />, run: () => setWorkspaceTab("market") },
+    { id: "tab-macro", label: "Go to Macro", hint: "Macro tab", icon: <Network size={16} />, run: () => setWorkspaceTab("macro") },
+    { id: "tab-performance", label: "Go to Performance", hint: "Performance tab", icon: <TrendingUp size={16} />, run: () => setWorkspaceTab("performance") },
+    { id: "tab-strategy", label: "Go to Strategy", hint: "Strategy tab", icon: <Sparkles size={16} />, run: () => setWorkspaceTab("strategy") },
+    { id: "open-activity", label: "Open Activity feed", icon: <ActivityIcon size={16} />, run: () => setFeedOpen(true) },
+    { id: "open-settings", label: "Open Settings", icon: <SettingsIcon size={16} />, run: () => openSettings("operate") },
+    { id: "open-accounts", label: "Open Accounts", icon: <Wallet size={16} />, run: () => setAccountsOpen(true) },
+    { id: "open-flow", label: "Open Strategy Flow", icon: <Network size={16} />, run: () => setNodeEditorOpen(true) },
+    { id: "open-strategy-studio", label: "Open Strategy Studio", icon: <BrainCircuit size={16} />, run: () => setStudioOpen(true) },
+    { id: "open-help", label: "Open Help", icon: <HelpCircle size={16} />, run: () => setHelpOpen(true) },
+    { id: "run-strategy", label: "Run strategy once", icon: <Zap size={16} />, run: () => { if (!runOnceBlockedReason) void runStrategy(); else routeSetupBlocker(runOnceBlockedReason); } },
+    { id: "sign-out", label: "Sign out", hint: signedInEmail ?? "Current session", icon: <LogOut size={16} />, run: () => { window.location.href = "/logout"; } },
   ];
 
   return (
@@ -1626,7 +1792,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 w-full lg:w-auto lg:justify-start lg:gap-4">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
-              <Zap size={17} className="fill-current" />
+              <Zap size={16} className="fill-current" />
             </span>
             <div className="leading-tight">
               <div className="whitespace-nowrap text-sm font-semibold text-fg">Trading Dashboard</div>
@@ -1719,6 +1885,19 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
 
           {/* Sub-container 2: Action buttons */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap justify-end w-full lg:w-auto">
+            {/* Discoverable entry point for the ⌘K command palette (in addition to the
+                keyboard shortcut). Opens the same palette the keydown listener toggles. */}
+            <button
+              type="button"
+              aria-label="Open command palette"
+              aria-keyshortcuts="Meta+K Control+K"
+              title="Open command palette (⌘K / Ctrl-K)"
+              onClick={() => setCmdOpen(true)}
+              className="inline-flex h-8 max-sm:min-h-11 touch-manipulation items-center gap-1.5 rounded-lg border border-line bg-surface/50 px-2 text-muted backdrop-blur-xl transition-colors hover:text-fg hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 lg:h-9 lg:px-2.5"
+            >
+              <Search size={ICON.sm} />
+              <kbd className="hidden rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-faint sm:inline">⌘K</kbd>
+            </button>
             <LearnedContextQueueBadge
               count={learnedQueueCount}
               onClick={() => setLearnedQueueOpen(true)}
@@ -1737,7 +1916,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               }}
               disabled={busy}
             >
-              <Zap size={15} /> <span className="hidden sm:inline">Run once</span>
+              <Zap size={16} /> <span className="hidden sm:inline">Run once</span>
             </Button>
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
@@ -1772,19 +1951,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           </div>
           <ReadinessStrip items={readinessItems} />
           <div className="scroll-fade-edge flex min-w-0 items-center justify-between overflow-x-auto">
-            <Tabs
-              value={workspaceTab}
-              onChange={setWorkspaceTab}
-              tabs={[
-                { id: "decision", label: "Decision" },
-                { id: "assistant", label: "Assistant" },
-                { id: "market", label: "Market Scan" },
-                { id: "macro", label: "Macro" },
-                { id: "performance", label: "Performance" },
-                { id: "tax", label: "Tax" },
-                { id: "strategy", label: "Strategy" }
-              ]}
-            />
+            <WorkspaceTabsBar value={workspaceTab} onChange={setWorkspaceTab} />
             {workspaceTab === "decision" && pendingCount > 0 && (
               <Chip tone="warn">
                 {pendingCount} pending approval{pendingCount === 1 ? "" : "s"}
@@ -1914,13 +2081,13 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         onCountChange={setLearnedQueueCount}
       />
 
-      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Live pipeline status" icon={<Network size={18} />} size="full">
+      <Modal open={nodeEditorOpen} onClose={() => setNodeEditorOpen(false)} title="Strategy Flow" subtitle="Live pipeline status" icon={<Network size={20} />} size="full">
         <div className="h-full w-full">
           <StrategyFlow snapshot={snapshot} />
         </div>
       </Modal>
 
-      <Modal open={studioOpen} onClose={() => setStudioOpen(false)} title="Strategy Studio" subtitle="Prompt, sliders, scoring weights & LLM review" icon={<BrainCircuit size={18} />} size="xl">
+      <Modal open={studioOpen} onClose={() => setStudioOpen(false)} title="Strategy Studio" subtitle="Prompt, sliders, scoring weights & LLM review" icon={<BrainCircuit size={20} />} size="xl">
         <StrategyStudio
           snapshot={snapshot}
           policy={policy}
@@ -1943,7 +2110,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         title="Settings"
-        icon={<SettingsIcon size={18} />}
+        icon={<SettingsIcon size={20} />}
         size="xl"
         headerAction={
           <div className="flex items-center gap-2 max-sm:gap-1">
@@ -1995,11 +2162,11 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         />
       </Modal>
 
-      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" icon={<Wallet size={18} />} size="lg">
+      <Modal open={accountsOpen} onClose={() => setAccountsOpen(false)} title="Accounts" icon={<Wallet size={20} />} size="lg">
         <IntegrationsSection accounts={snapshot.connectedAccounts || []} policy={policy} onSaved={load} hideTestAccount={hideTestAccount} setHideTestAccount={updateHideTestAccount} />
       </Modal>
 
-      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="How it works, safeguards, costs & data sources" icon={<HelpCircle size={18} />} size="xl">
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="System Help" subtitle="How it works, safeguards, costs & data sources" icon={<HelpCircle size={20} />} size="xl">
         <HelpContent policy={policy} snapshot={snapshot} />
       </Modal>
 
@@ -2138,7 +2305,7 @@ function MobilePortfolioSummary({ snapshot, mode, modeLabel }: { snapshot: Dashb
       {posOpen && (
         <div className="mt-2 max-h-72 overflow-auto rounded-md border border-line/50">
           {enriched.length === 0 ? (
-            <div className="px-2 py-2 text-[13px] text-faint">No open positions.</div>
+            <EmptyState icon={<Wallet size={ICON.md} />} title="No Open Positions" />
           ) : (
             enriched.map((p) => (
               <div key={p.symbol} className="flex items-center gap-2 border-b border-line/50 px-2 py-1.5 text-[13px] last:border-0">
@@ -2208,7 +2375,7 @@ function PortfolioRail({
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
         {enriched.length === 0 ? (
-          <EmptyState icon={<Wallet size={18} />} title="No Open Positions" hint="Run the strategy to start building a position set." />
+          <EmptyState icon={<Wallet size={20} />} title="No Open Positions" hint="Run the strategy to start building a position set." />
         ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface/50 backdrop-blur-xl">
@@ -2242,6 +2409,67 @@ function PortfolioRail({
 
 /* ───────────────────────── Decision view ───────────────────────── */
 
+/**
+ * Bull rationale paragraph with tap-to-expand. The default 3-line clamp keeps the
+ * card compact, but a hover-only `title` tooltip is unreachable on touch, so this
+ * adds an explicit, keyboard-focusable "Show more"/"Show less" toggle that expands
+ * the text in place. The `title` tooltip is kept as a secondary desktop affordance.
+ */
+function ProposalRationale({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // Only offer the toggle when the text is long enough to plausibly clamp — short
+  // rationales render as a plain paragraph with no dangling control.
+  const canExpand = text.length > 140;
+  return (
+    <div className="mt-2">
+      <p
+        className={cn("text-[13px] leading-snug text-fg/85", !expanded && "line-clamp-3")}
+        title={text}
+      >
+        {text}
+      </p>
+      {canExpand && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="mt-0.5 text-[11px] font-medium text-accent transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 rounded"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Bear Review callout — surfaces the Red Team (Bear) verdict as its own tinted
+ * block instead of burying it in the truncated Bull rationale. Renders nothing
+ * for older proposals that predate the `redTeamVerdict` field (backward compat).
+ */
+function BearReview({ verdict }: { verdict: TradeProposal["redTeamVerdict"] }) {
+  if (!verdict) return null;
+  const { rejected, available, reason } = verdict;
+  // Three states: unavailable (Bear didn't run) → neutral; rejected → down/red;
+  // survived → up/green. Each gets a matching tint, border, label, and icon.
+  const state = !available ? "unavailable" : rejected ? "rejected" : "survived";
+  const styles = {
+    survived: { box: "border-up/30 bg-up/10", label: "text-up", icon: <ShieldCheck size={ICON.sm} className="text-up" /> },
+    rejected: { box: "border-down/40 bg-down/10", label: "text-down", icon: <ShieldAlert size={ICON.sm} className="text-down" /> },
+    unavailable: { box: "border-line bg-surface-3/40", label: "text-muted", icon: <Shield size={ICON.sm} className="text-faint" /> }
+  }[state];
+  const heading = state === "survived" ? "Bear Review — Survived" : state === "rejected" ? "Bear Review — Rejected" : "Bear Review — Unavailable";
+  return (
+    <div className={cn("mt-2 rounded-lg border px-2.5 py-2", styles.box)}>
+      <div className={cn("flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider", styles.label)}>
+        {styles.icon}
+        <span>{heading}</span>
+      </div>
+      {reason && <p className="mt-1 text-[12px] leading-snug text-fg/80">{reason}</p>}
+    </div>
+  );
+}
+
 function DecisionView({
   snapshot,
   symbolMetaBySymbol,
@@ -2270,7 +2498,7 @@ function DecisionView({
       {pending.length === 0 && snapshot.policy.strategyAuthority === "propose" && snapshot.policy.systemState === "active" && (
         <Card className="overflow-hidden">
           <PanelHeader title="Pending Approval" subtitle="No Proposals Awaiting Review" icon={<CheckCircle size={16} />} />
-          <EmptyState icon={<CheckCircle size={18} />} title="All Clear — No Pending Approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
+          <EmptyState icon={<CheckCircle size={20} />} title="All Clear — No Pending Approvals" hint="The agent will surface new proposals here when it identifies tradeable opportunities on the next run." />
         </Card>
       )}
       {pending.length > 0 && (
@@ -2327,7 +2555,8 @@ function DecisionView({
                     />
                     <span className="ml-auto tnum text-xs text-fg font-medium" title="Estimated total cost and share count. The '~' means it's an estimate — the actual fill price (and so the exact shares) can differ slightly.">{proposalSize(p.proposal, p.review?.estimatedNotional, decision?.marketScan?.quotesBySymbol[p.proposal.symbol]?.price)}</span>
                   </div>
-                  <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-fg/85" title={p.proposal.rationale}>{p.proposal.rationale}</p>
+                  <ProposalRationale text={p.proposal.rationale} />
+                  <BearReview verdict={p.proposal.redTeamVerdict} />
                   {p.lastRevalidatedAt && (
                     <p className="mt-1.5 text-[11px] text-faint" title={p.revalidationNote}>
                       Revalidated {proposalTimeLabel(p.lastRevalidatedAt)}
@@ -3017,7 +3246,7 @@ function MarketScanView({
                                   disabled={index <= 0}
                                   className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
                                 >
-                                  <ArrowUp size={12} />
+                                  <ArrowUp size={14} />
                                 </button>
                                 <button
                                   type="button"
@@ -3026,7 +3255,7 @@ function MarketScanView({
                                   disabled={index === visible.length - 1}
                                   className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-3 hover:text-fg disabled:opacity-30"
                                 >
-                                  <ArrowDown size={12} />
+                                  <ArrowDown size={14} />
                                 </button>
                               </>
                             )}
@@ -3049,7 +3278,7 @@ function MarketScanView({
           className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-muted transition-colors"
           aria-expanded={scanDetailsOpen}
         >
-          <ChevronDown size={12} className={cn("transition-transform", scanDetailsOpen && "rotate-180")} />
+          <ChevronDown size={14} className={cn("transition-transform", scanDetailsOpen && "rotate-180")} />
           Scan details
         </button>
         {scanDetailsOpen && (
@@ -3401,7 +3630,7 @@ function TaxView({
         <PanelHeader title="Wash-Sale Lockout" subtitle="Rebuying these is blocked 30 days after a loss sale" icon={<Shield size={16} />} />
         <div className="space-y-3 p-4 pt-3">
           {tax.lockedSymbols.length === 0 ? (
-            <p className="text-[13px] text-faint">No symbols are currently locked out.</p>
+            <EmptyState icon={<Shield size={ICON.lg} />} title="No Symbols Locked Out" hint="Symbols become blocked for 30 days after a loss sale to avoid a wash sale." />
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {tax.lockedSymbols.map((s) => (
@@ -3429,7 +3658,7 @@ function TaxView({
         <PanelHeader title="Tax-Loss Harvest Candidates" subtitle="Unrealized losers that could offset realized gains" icon={<Percent size={16} />} />
         <div className="p-4 pt-3">
           {tax.harvestCandidates.length === 0 ? (
-            <p className="text-[13px] text-faint">No harvestable losses right now.</p>
+            <EmptyState icon={<Percent size={ICON.lg} />} title="No Harvestable Losses" hint="Unrealized losers that could offset realized gains will appear here." />
           ) : (
             <table className="w-full text-[13px]">
               <tbody>
@@ -3450,7 +3679,7 @@ function TaxView({
         <PanelHeader title="Holding Period — Days To Long-Term" subtitle="Crossing 1 year flips gains from ordinary to long-term rates" icon={<Hourglass size={16} />} />
         <div className="min-h-0 overflow-auto p-2">
           {tax.openLots.length === 0 ? (
-            <EmptyState icon={<Hourglass size={18} />} title="No Open Lots" />
+            <EmptyState icon={<Hourglass size={20} />} title="No Open Lots" />
           ) : (
             <table className="w-full text-[13px]">
               <thead>
@@ -3699,7 +3928,7 @@ function StrategyView({
           <div className="rounded-lg border border-line bg-bg/55 px-3 py-3">
             <div className="flex items-start gap-3">
               <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                <Zap size={15} />
+                <Zap size={16} />
               </span>
               <div className="min-w-0 flex-1 space-y-3">
                 <div>
@@ -3889,8 +4118,8 @@ function TuningCard({
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" disabled={!reviewDisplay.hasEffectiveChanges} onClick={onApply}><CheckCircle size={15} /> Apply reviewed changes</Button>
-        <Button variant="ghost" onClick={onDiscard}><X size={15} /> Discard review</Button>
+        <Button variant="primary" disabled={!reviewDisplay.hasEffectiveChanges} onClick={onApply}><CheckCircle size={16} /> Apply reviewed changes</Button>
+        <Button variant="ghost" onClick={onDiscard}><X size={16} /> Discard review</Button>
       </div>
     </div>
   );
@@ -3964,7 +4193,7 @@ function DetailLine({ text, className }: { text: string; className?: string }) {
 function ActivityFeed({ snapshot, onReplaceMarket }: { snapshot: DashboardSnapshot; onReplaceMarket?: (candidate: MarketReplaceCandidate) => void }) {
   const feed = snapshot.unifiedFeed ?? [];
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Activity Yet" />;
+  if (feed.length === 0) return <EmptyState icon={<ActivityIcon size={20} />} title="No Activity Yet" />;
   return (
     <div className="space-y-2">
       {feed.slice(0, 50).map((group) => {
@@ -4007,7 +4236,7 @@ function ActivityFeed({ snapshot, onReplaceMarket }: { snapshot: DashboardSnapsh
                     title="Cancel this stale limit order and submit the remaining quantity as a market order."
                     onClick={() => onReplaceMarket?.(replaceCandidate)}
                   >
-                    <RefreshCw size={13} />
+                    <RefreshCw size={14} />
                     Market replace
                   </Button>
                 )}
@@ -4071,7 +4300,7 @@ function MarketReplaceModal({
       onClose={onClose}
       title="Replace stale limit order"
       subtitle={`${order.side.toUpperCase()} ${order.symbol} (${remaining} remaining)`}
-      icon={<RefreshCw size={18} />}
+      icon={<RefreshCw size={20} />}
       footer={
         <>
           <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
@@ -4209,7 +4438,7 @@ function RunHistory({ snapshot }: { snapshot: DashboardSnapshot }) {
         </div>
       )}
       {runs.length === 0 ? (
-        <EmptyState icon={<Zap size={18} />} title="No Strategy Runs Yet" />
+        <EmptyState icon={<Zap size={20} />} title="No Strategy Runs Yet" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-[13px]">
@@ -4271,7 +4500,7 @@ function NotificationsList({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function AuditLog({ snapshot }: { snapshot: DashboardSnapshot }) {
   const items = snapshot.auditFeed ?? [];
-  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={18} />} title="No Audit Events Yet" hint="Policy changes, order decisions, and system events appear here." />;
+  if (items.length === 0) return <EmptyState icon={<ActivityIcon size={20} />} title="No Audit Events Yet" hint="Policy changes, order decisions, and system events appear here." />;
   return (
     <div className="space-y-1.5">
       {items.slice(0, 100).map((item) => (
@@ -4317,6 +4546,12 @@ function StrategyStudio({
   discardStrategyTuning: () => void;
 }) {
   const [tuningModel, setTuningModel] = useState<string>(policy.llmModel ?? DEFAULT_LLM_MODEL);
+  // NAV_V2 PR #6: when STRATEGY_CONSOLIDATION is on, this Studio-modal TuningCard
+  // (the duplicate) is suppressed so a single instance renders on the Strategy
+  // tab. Off by default — flag-off keeps both render sites (byte-identical).
+  const [strategyConsolidation] = useState(() =>
+    isStrategyConsolidationEnabled(typeof window !== "undefined" ? window.localStorage : null)
+  );
   useEffect(() => {
     if (policy.llmModel) {
       setTuningModel(policy.llmModel);
@@ -4333,7 +4568,7 @@ function StrategyStudio({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-semibold text-fg">Strategy Prompt</h4>
-          <Button size="sm" variant="ghost" onClick={resetPrompt}><RotateCcw size={13} /> Reset</Button>
+          <Button size="sm" variant="ghost" onClick={resetPrompt}><RotateCcw size={14} /> Reset</Button>
         </div>
         <textarea
           value={snapshot.strategyPrompt}
@@ -4415,7 +4650,7 @@ function StrategyStudio({
         <div className="rounded-lg border border-line bg-surface-2/45 p-3">
           <div className="flex items-start gap-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-              <Sparkles size={15} />
+              <Sparkles size={16} />
             </span>
             <div className="min-w-0 flex-1 space-y-3">
               <div>
@@ -4442,7 +4677,13 @@ function StrategyStudio({
           </div>
           {tuningError && <p className="mt-3 rounded-lg border border-down/30 bg-down/10 px-3 py-2 text-[13px] text-down">{tuningError}</p>}
           <div className="mt-3">
-            {strategyTuning ? <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} /> : <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>}
+            {strategyConsolidation ? (
+              <p className="text-[13px] text-faint">Strategy review now lives in one place — the Strategy tab.</p>
+            ) : strategyTuning ? (
+              <TuningCard proposal={strategyTuning} currentPolicy={policy} currentPrompt={snapshot.strategyPrompt} onApply={applyStrategyTuning} onDiscard={discardStrategyTuning} />
+            ) : (
+              <p className="text-[13px] text-faint">Run a review to get suggested prompt, scoring, and risk changes.</p>
+            )}
           </div>
         </div>
       </div>
@@ -4531,6 +4772,9 @@ function SettingsContent({
   const [blockDraft, setBlockDraft] = useState("");
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [settingsTier, setSettingsTier] = useState<SettingsTier>(() => settingsTierForSection(initialSection));
+  // NAV_V2 PR #3: scope-first framing. Off by default (dark launch); the flag-off
+  // modal is byte-identical.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
   useEffect(() => {
     setSection(initialSection);
     setSettingsTier(settingsTierForSection(initialSection));
@@ -4699,7 +4943,7 @@ function SettingsContent({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                {settingsTier === "user" ? <SettingsIcon size={15} /> : <Wallet size={15} />}
+                {settingsTier === "user" ? <SettingsIcon size={16} /> : <Wallet size={16} />}
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -4766,6 +5010,36 @@ function SettingsContent({
               </div>
             );
           })()}
+
+          {navV2 && settingsTier === "user" && (
+            <div className="rounded-lg border border-line/70 bg-bg/35 p-3">
+              <div className="text-sm font-semibold text-fg">Looking for strategy or risk settings?</div>
+              <p className="mt-1 text-[13px] text-muted">
+                Those live with the account. If a setting changes how a trade is decided or placed, it
+                belongs to the account.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("strategy"); }}
+                >
+                  Open Strategy ›
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setSettingsTier("account"); setSection("risk"); }}
+                >
+                  Open Guardrails ›
+                </Button>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">
+                Rule of thumb: if it changes how a trade is decided or placed → account. Everything else is
+                here in Settings.
+              </p>
+            </div>
+          )}
 
           {settingsTier === "user" && (
             <button
@@ -4836,7 +5110,7 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
               <div className="flex flex-wrap items-start gap-3">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
-                  <BrainCircuit size={15} />
+                  <BrainCircuit size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-fg">Strategy Studio</div>
@@ -4846,7 +5120,7 @@ function SettingsContent({
                   <p className="mt-1 text-xs text-faint">Provider API keys remain under User → Connections because credentials belong to you, not to a single account strategy.</p>
                 </div>
                 <Button size="sm" variant="ghost" className="sm:ml-auto" onClick={openStrategyStudio}>
-                  <BrainCircuit size={13} /> Open Strategy Studio
+                  <BrainCircuit size={14} /> Open Strategy Studio
                 </Button>
               </div>
             </div>
@@ -4869,7 +5143,7 @@ function SettingsContent({
                 : "border-down/40 bg-down/8 text-down"
           )}>
             <div className="mb-1 flex items-center gap-2 font-semibold">
-              <Shield size={13} className="shrink-0" />
+              <Shield size={14} className="shrink-0" />
               {executionState.label} mode is active
             </div>
             <p className="opacity-80">
@@ -4903,7 +5177,7 @@ function SettingsContent({
                       "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition",
                       selected ? "border-info bg-info text-bg" : "border-line bg-surface-3/50 text-faint"
                     )}>
-                      {selected ? <Check size={15} /> : <Plus size={15} />}
+                      {selected ? <Check size={16} /> : <Plus size={16} />}
                     </span>
                   </button>
                 );
@@ -4916,7 +5190,7 @@ function SettingsContent({
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {policy.additionalSymbols.map((s) => (
                     <button type="button" key={s} onClick={() => updatePolicy({ additionalSymbols: policy.additionalSymbols.filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-surface-3/50 backdrop-blur-md px-2 py-0.5 text-xs text-fg">
-                      {s} <X size={11} />
+                      {s} <X size={14} />
                     </button>
                   ))}
                 </div>
@@ -4940,7 +5214,7 @@ function SettingsContent({
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {(policy.blocklist || []).map((s) => (
                     <button type="button" key={s} onClick={() => updatePolicy({ blocklist: (policy.blocklist || []).filter((x) => x !== s) })} className="inline-flex items-center gap-1 rounded-md bg-down/20 px-2 py-0.5 text-xs font-medium text-down">
-                      {s} <X size={11} />
+                      {s} <X size={14} />
                     </button>
                   ))}
                 </div>
@@ -4992,7 +5266,7 @@ function SettingsContent({
               title={policy.systemState !== "active" ? enableBlockedReason : undefined}
               onClick={onRequestSystemToggle}
             >
-              {policy.systemState === "active" ? <Pause size={15} /> : <Play size={15} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
+              {policy.systemState === "active" ? <Pause size={16} /> : <Play size={16} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
             </Button>
             {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
           </div>
@@ -5322,6 +5596,22 @@ function SettingsContent({
               max={100}
               hint="Drops scan candidates below this 0-100 score before they reach the LLM. If every candidate is below the threshold, the LLM call is skipped and only existing protective exits can fire. Default 0 means no filtering."
               onCommit={(v) => updatePolicy({ tuning: { ...tuning, minProposalScoreThreshold: v } })}
+            />
+            <OptionalNumberField
+              label="Daily LLM token budget"
+              value={tuning.llmDailyTokenBudget}
+              placeholder="blank = inherit default"
+              step={1000}
+              hint="Hard per-day ceiling on this account's total LLM + RAG token usage. Once today's usage reaches it, the run skips all model + RAG spend for the rest of the day — risk breakers, reconciliation, and protective exits still run. Blank inherits the operator default (TRIGGER_LLM_DAILY_TOKEN_BUDGET env); 0 = no limit (opt out of the default)."
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, llmDailyTokenBudget: v } })}
+            />
+            <OptionalNumberField
+              label="Daily LLM cost budget ($)"
+              value={tuning.llmDailyCostBudgetUsd}
+              placeholder="blank = inherit default"
+              step={1}
+              hint="Hard per-day ceiling on this account's estimated LLM + RAG cost (USD). Same behavior as the token budget. Blank inherits the operator default (TRIGGER_LLM_DAILY_COST_BUDGET_USD env); 0 = no limit."
+              onCommit={(v) => updatePolicy({ tuning: { ...tuning, llmDailyCostBudgetUsd: v } })}
             />
             <OptionalNumberField
               label="FCF-yield veto floor %"
@@ -5716,7 +6006,7 @@ function AccountDeletionModal({
       onClose={onClose}
       title="Delete app account"
       subtitle={email ? `Signed in as ${email}` : "Verified sign-in required"}
-      icon={<Trash2 size={18} />}
+      icon={<Trash2 size={20} />}
       size="lg"
       footer={
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
@@ -5730,12 +6020,12 @@ function AccountDeletionModal({
               }}
               disabled={loading || submitting || (step === 1 && blockers > 0)}
             >
-              {step === 0 ? <Shield size={15} /> : <Trash2 size={15} />}
+              {step === 0 ? <Shield size={16} /> : <Trash2 size={16} />}
               {step === 0 ? "Prepare deletion" : "Continue to final confirmation"}
             </Button>
           ) : (
             <Button variant="danger" onClick={deleteAccount} disabled={!canSubmit || submitting}>
-              <Trash2 size={15} /> Permanently delete account
+              <Trash2 size={16} /> Permanently delete account
             </Button>
           )}
         </div>
@@ -5755,21 +6045,35 @@ function AccountDeletionModal({
                 item.active ? "border-down/40 bg-down/10 text-down" : item.done ? "border-up/30 bg-up/10 text-up" : "border-line bg-surface-2/55 text-muted"
               )}
             >
-              {item.done ? <CheckCircle size={13} className="mr-1 inline" /> : null}{item.label}
+              {item.done ? <CheckCircle size={14} className="mr-1 inline" /> : null}{item.label}
             </div>
           ))}
         </div>
 
-        {loading && <p className="rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-xs text-faint">Loading deletion preview...</p>}
+        {loading && (
+          <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]" aria-hidden="true">
+            {[0, 1].map((col) => (
+              <div key={col} className="rounded-lg border border-line bg-surface-2/45 p-3">
+                <div className="skeleton mb-2 h-4 w-2/3 rounded" />
+                <div className="space-y-1.5">
+                  <div className="skeleton h-3 w-full rounded" />
+                  <div className="skeleton h-3 w-11/12 rounded" />
+                  <div className="skeleton h-3 w-4/5 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {loading && <span className="sr-only" role="status">Loading deletion preview…</span>}
 
         {preview && (
           <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="rounded-lg border border-line bg-surface-2/45 p-3">
               <div className="mb-2 text-sm font-semibold text-fg">What will be deleted from this app</div>
               <ul className="space-y-1.5 text-xs leading-relaxed">
-                <li><CheckCircle size={13} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
-                <li><CheckCircle size={13} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
-                <li><XCircle size={13} className="mr-1 inline text-warn" />Broker positions, open broker orders, and Google, GitHub, or Apple login accounts are not deleted by this app.</li>
+                <li><CheckCircle size={14} className="mr-1 inline text-up" />Stored API keys, broker links, and Robinhood MCP OAuth tokens for this user.</li>
+                <li><CheckCircle size={14} className="mr-1 inline text-up" />Settings, strategy profiles, watchlists, alerts, chat history, memories, proposals, fills, snapshots, notifications, and private learned context.</li>
+                <li><XCircle size={14} className="mr-1 inline text-warn" />Broker positions, open broker orders, and Google, GitHub, or Apple login accounts are not deleted by this app.</li>
               </ul>
               <div className="mt-3 rounded-lg border border-line bg-bg/55 px-3 py-2 text-xs text-faint">
                 {preview.connectedAccounts.length} connection{preview.connectedAccounts.length === 1 ? "" : "s"} and about {accountDeletionRecordTotal(preview)} private app row{accountDeletionRecordTotal(preview) === 1 ? "" : "s"} are in scope.
@@ -5794,7 +6098,7 @@ function AccountDeletionModal({
             <AlertTriangle size={14} className="mr-1 inline" />
             Deletion is blocked until trading activity settles:
             {" "}
-            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), and {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation.
+            {preview.blockers.runningStrategyRuns} running strategy run(s), {preview.blockers.placingProposals} placing proposal(s), {preview.blockers.pendingReconciliationFills} fill(s) pending broker reconciliation, and {preview.blockers.activeMobileCommands} in-flight mobile command(s).
           </div>
         )}
 
@@ -6246,7 +6550,7 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
   const selectedStrategyModelMissing = selectedStrategyRow?.source === "none";
 
   if (loading) {
-    return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={18} className="animate-spin" />} />;
+    return <EmptyState title="Loading API Key Status" icon={<RefreshCw size={20} className="animate-spin" />} />;
   }
 
   return (
@@ -6285,7 +6589,7 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
                 </div>
                 {row.docsUrl && (
                   <a className="inline-flex items-center text-info hover:text-fg" href={row.docsUrl} target="_blank" rel="noreferrer" aria-label="Open provider site" title="Open provider site">
-                    <ExternalLink size={15} />
+                    <ExternalLink size={16} />
                   </a>
                 )}
               </div>
@@ -6301,10 +6605,10 @@ function ApiKeysSection({ policy }: { policy: TradingPolicy }) {
                 />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => saveKey(row)} disabled={busy || !drafts[row.service]?.trim()}>
-                    <Save size={13} /> Save
+                    <Save size={14} /> Save
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => clearKey(row)} disabled={busy || row.source !== "user"}>
-                    <Trash2 size={13} /> Clear
+                    <Trash2 size={14} /> Clear
                   </Button>
                 </div>
               </div>
@@ -6817,6 +7121,8 @@ function CongressionalTradesHelpLine({ sources }: { sources: string[] }) {
 function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: DashboardSnapshot }) {
   type Section = "overview" | "guardrails" | "settings" | "tax" | "data" | "mcp";
   const [section, setSection] = useState<Section>("overview");
+  // NAV_V2 PR #4: show the old→new Settings Glossary table for returning users.
+  const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
 
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const congressionalSources = snapshot.webSources?.congress?.sources ?? [];
@@ -6895,6 +7201,32 @@ function HelpContent({ policy, snapshot }: { policy: TradingPolicy; snapshot: Da
           <p>
             Settings are split by scope. <strong>User Settings</strong> (tagged <strong>ALL ACCOUNTS</strong>) cover provider keys, appearance, alert delivery, and shared data preferences. <strong>Account Settings</strong> (tagged <strong>THIS ACCOUNT</strong>) cover the selected account&apos;s strategy, universe, safety, tax treatment, and tuning behavior.
           </p>
+          {navV2 && (
+            <div className="rounded-lg border border-line bg-surface-2/30 p-3">
+              <div className="mb-2 font-semibold text-fg">Renamed &amp; relocated — old name → new home</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="text-faint">
+                    <tr>
+                      <th className="py-1 pr-3 font-medium">You used to call it…</th>
+                      <th className="py-1 pr-3 font-medium">It&apos;s now…</th>
+                      <th className="py-1 font-medium">What changed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SETTINGS_GLOSSARY.map((entry) => (
+                      <tr key={entry.oldName} className="border-t border-line/60 align-top">
+                        <td className="py-1.5 pr-3 text-muted">{entry.oldName}</td>
+                        <td className="py-1.5 pr-3 font-medium text-fg">{entry.newHome}</td>
+                        <td className="py-1.5 text-muted">{entry.whatChanged}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 border-t border-line/60 pt-2 text-[11px] text-faint">{GLOSSARY_RULE_OF_THUMB}</p>
+            </div>
+          )}
           <div className="grid gap-2.5 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-surface-2/30 p-3">
               <div className="mb-1 font-semibold text-fg">Strategy Studio</div>

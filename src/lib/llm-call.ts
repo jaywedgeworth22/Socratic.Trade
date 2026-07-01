@@ -133,7 +133,11 @@ function openAiResponsesTextFormat(
   schema: LlmJsonSchema | undefined,
   openAiJsonObject: boolean | undefined
 ): Record<string, unknown> | undefined {
-  if (schema && !openAiJsonObject) return { type: "json_schema", name: schema.name, schema: schema.schema };
+  // strict:true matches the chat-completions branch — without it the Responses API treats the
+  // schema as advisory and schema-drifting output can slip through as merely JSON-shaped data.
+  // Every schema routed here (Bull/Bear proposals, red-team verdict, revalidation, tuning) is
+  // strict-conformant: additionalProperties:false + full required lists, null via type unions.
+  if (schema && !openAiJsonObject) return { type: "json_schema", name: schema.name, strict: true, schema: schema.schema };
   if (schema || openAiJsonObject) return { type: "json_object" };
   return undefined;
 }

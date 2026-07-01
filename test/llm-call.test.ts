@@ -35,13 +35,14 @@ describe("buildLlmRequestBody", () => {
     expect(body.response_format).toEqual({ type: "json_object" });
   });
 
-  it("OpenAI responses: json_schema under text.format", () => {
+  it("OpenAI responses: STRICT json_schema under text.format", () => {
     const body = buildLlmRequestBody(
       { provider: "openai", transport: "responses" },
       { model: "gpt-5.4-mini", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500 }
     ) as Record<string, any>;
     expect(body.input[0]).toEqual({ role: "system", content: "sys" });
-    expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", schema: SCHEMA.schema } });
+    // strict:true — without it the Responses API treats the schema as advisory (Codex review, PR #301).
+    expect(body.text).toEqual({ format: { type: "json_schema", name: "trade_proposals", strict: true, schema: SCHEMA.schema } });
   });
 
   it("Anthropic: system field + forced tool-use for the schema, max_tokens set, no response_format", () => {

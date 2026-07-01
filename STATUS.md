@@ -23,6 +23,250 @@ changes except item 1 are default-off flags (Phase-0 byte-identical when off).
 **Verified:** `tsc` clean, `lint` 0 errors, `npm test` green (178 files / 1692 tests),
 `npm run build` passes, `eval:strategy-offline` green. Next: open the PR (ready).
 See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+## 2026-07-01 - Single-adversary consolidation design spec (design only)
+Branch `claude/wonderful-bell-32958a`. Added
+`docs/single-adversary-consolidation.md` — a verified, adversarially-reviewed
+spec to collapse the strategy engine's two adversarial LLM passes (in-flow Bear
+in `proposeTrades` + standalone `debateProposal`) into one hardened "Adversary
+Review". Motivated by a `gemini-3.5-flash (fallback)` tooltip that traced to three
+problems: the two adversaries run the identical model twice (both read
+`policy.redTeamLlmModel`); the adversary parse path bare-`JSON.parse`s with no
+fence-stripping/retries so Gemini's fenced JSON silently failed the review; and an
+adversary-unavailable proposal is indistinguishable in the UI from a routine
+manual-approval one. Spec decides: one post-sizing adversary
+(approve/approve-at-half/reject, down-only, placeability-checked), net-exposure
+gating (never blocks a risk-reducing trade), never-fail-silent (fail closed in
+broker modes), enforced model independence (kill the hidden `RED_TEAM_LLM_PROVIDER`
+env override), reliability fixes (shared fence-stripping, strict schema, bounded
+retry/failover, fail-closed on unknown verdict), and visibility fixes (badge +
+un-overwritten notification title + persisted `decision.reasons`). **No code
+changed.** Blocked on user decisions O1-O4 (spec §9) before implementation; a
+separate fill-confirmation/reconciliation design pass is still owed. See
+`docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
+## 2026-07-01 — Account deletion: block while a mobile command is in flight (Claude)
+On PR #293 (branch HEAD `e4ff311`). Codex P2 on my workstream-G change: `mobile_commands` was added to
+the deletion sweep but `getAccountDeletionBlockers()` didn't count in-flight commands, so a `running`
+command's worker could keep mutating policy/watchlists against a just-deleted row. Fix: added
+`activeMobileCommands` (count of `status IN ('queued','running')`) to the blockers, included it in the
+`confirmAndDeleteAccount` 409 gate, and surfaced it in the dashboard blocked-reason message. Test added
+(`account-deletion.test.ts`). Quartet green: tsc 0, lint 0 errors, **2056 tests**, build ok. (The
+complementary Codex P2 — RAG guard `connectedAccountId` — was fixed by the owner in `e4ff311`.)
+
+## 2026-07-01 — Durable budget: Codex round on 42f0f23 (3 more fixes) (Claude)
+On PR #293. Third Codex pass (`42f0f23f45`) — all **fixed in code with tests** (real bugs, not design
+nuances): (4) over-budget `generateReflectionSummary` no longer skips the non-LLM excursion enrichment
+(`persistExcursionsBackground`) — budget guard moved below `source` so it suppresses only the LLM
+reflection; (5) a run that crosses the budget mid-run (via revalidation/RAG spend) no longer surfaces as
+a FAILED run — `runStrategyOnce` re-reads the budget right before `proposeTrades` and gracefully skips
+instead of letting `withLlmGeneration` throw into the outer failure catch (red-team path was already
+fail-closed); (6) `embedQueryCached` no longer caches a malformed query embedding (would poison the LRU
+and return no context until eviction) — only valid embeddings are cached now. Tests: `post-mortem.test.ts`,
+`query-embedding-cache.test.ts`. Verify quartet green: tsc 0, lint 0 errors, **1885 tests**, build ok.
+
+## 2026-07-01 — Durable budget: follow-up Codex review (3 fixes + 2 docs) (Claude)
+On PR #293. Codex passes on `de66edc` / `1e14e848fb`: **fixed in code** (with tests) — (1) an explicit
+per-user policy budget of `0` now opts OUT of an operator env default (`resolveLimit` only inherits env on
+`undefined`/blank; `0`/≤0 = no limit); (2) RAG (`rag_usage`) spend now counts toward the same ceiling as
+`llm_usage`, so RAG-only usage can trip the cap; (3) **retrieval RAG meters now book under the requesting
+`userId`** — `meterEmbed`/`meterPineconeQuery`/`meterRerank` in `retrieveContextDetailed` were defaulting
+to `"local"`, so a non-`local` user's retrieval spend never counted against *their* ceiling (silently
+defeated fix #2 for multi-user). Threaded `userId` through the meter helpers + call sites.
+**Documented as future considerations** (not implemented, per owner's deferral): chat-path (`/api/chat`)
+coverage and per-account (vs per-user) budget targeting — see PLAN.md top + the rollout note. Also merged
+`origin/main` twice (learning-loop #296/#297/#299, usage-monitor #294) — one additive `types.ts` conflict
+resolved (kept both field sets). Verify quartet green: tsc 0, lint 0 errors, **1883 tests**, build ok.
+
+## 2026-07-01 — Durable per-user LLM budget: modifiable config + spend-primitive enforcement (Claude)
+On PR #293. Replaced call-site budget gating (Codex kept finding new bypass sites) with a durable
+design. **Config (now modifiable):** the daily LLM ceiling is a per-user POLICY setting
+(`policy.tuning.llmDailyTokenBudget` / `llmDailyCostBudgetUsd`), editable in the dashboard Settings →
+Tuning and via `PATCH /api/policy`, falling back to the operator env default
+(`TRIGGER_LLM_DAILY_TOKEN_BUDGET` / `_COST_BUDGET_USD`) when unset; 0/blank = off. **Enforcement (now
+airtight):** two spend primitives everything funnels through — `withLlmGeneration` (all LLM
+generations: bull/bear/red-team/revalidation/reflection/tuning) throws `LlmBudgetExceededError` when
+over budget, and `retrieveContextDetailed` (all RAG) returns `[]` — so current and future spend sites
+are covered by one check each. Non-LLM safety (breakers/reconciliation/protective exits) always runs.
+Resilient policy read (degrades to env-only, never throws from bookkeeping). Verify quartet green (1738
+tests). Deferred: concurrent-run reservation; chat-path coverage. See
+`docs/rollouts/2026-07-01-llm-budget-durable-enforcement.md`.
+
+## 2026-07-01 — F/G PR #293 Codex-review fixes (Claude)
+Follow-up on PR #293 addressing 5 verified Codex findings (2×P1, 3×P2): (P1) reindex routes now
+require the `x-admin-token` in production via a new `requireTokenInProd` option on `checkAdmin` — a
+synthetic/injected admin email from an auth-unconfigured deploy can no longer trigger the paid Voyage
+backfill; (P1) `assertLivePreflight` now also guards the `approveProposal` (human-approval) placement
+path, not just the autonomous loop; (P2) cached query embeds no longer metered as real Voyage calls
+(`embedQueryCached` returns hit/miss; meter only on miss); (P2) the daily LLM-budget ceiling is now
+enforced on the fixed-interval scheduler lane too, not only the event-trigger path; (P2) OAuth tokens
+only encrypt when a stable `ENCRYPTION_KEY` is set (else plaintext, as before — no ephemeral-key
+brick), and an undecryptable stored token is treated as missing so env-token reseed runs. **Round 2**
+(4 more P2s on the fix commit): rate-limit `/api/chat` before body-parse; persist live-preflight
+blocks as REJECTED decisions (both autonomous + approval paths); extend the `ENCRYPTION_KEY` boot
+guard to encrypted OAuth-token rows; fixed-position the Macro/Tax "More" menu so the tab-row's
+`overflow-x-auto` no longer clips it. **Round 3** (1 P1 + 1 P2, both to CHOKE POINTS): `getBrokerGateway`
+now wraps `placeEquityOrder` in a Proxy that runs `assertLivePreflight` first, so EVERY real-order path
+(strategy, synthetic/protective stops, order replacement, future) is guarded by one wrapper; and the
+LLM budget ceiling moved to the top of `runStrategyOnce` (via a new `src/lib/llm-budget.ts` to avoid a
+strategy↔triggers cycle), so ALL run entries (trigger, scheduler, manual API, mobile) are gated. **Round
+4** (1 P1 fixed, 1 P2 documented): the `getBrokerGateway` Proxy now also guards `cancelEquityOrder`, so
+cancel-then-place flows (order replacement, protective-stop reconcile) fail BEFORE the live cancel (no
+orphaned/unprotected side effects); and the budget ceiling's concurrent-multi-account TOCTOU overshoot
+is documented as a bounded, deferred limitation (a true per-user reservation is a follow-up). **Round 5**
+(2 findings correcting earlier rounds): reverted the round-4 blanket cancel guard (it blocked
+risk-reducing/emergency cancels) — now only cancel-then-place WORKFLOWS guard before their own cancel
+phase, so standalone cancels always work; and moved the budget gate from the top of `runStrategyOnce`
+to just before LLM generation, AFTER the drawdown breaker + reconciliation, so a cost cap can't disable
+non-LLM safety. **Round 6** (3 P2 consolidating the choke points): the budget gate now also skips LLM
+proposal REVALIDATION (another model call) and sits after the non-LLM safety work; the outer budget
+suppressions in `triggers.fire()`/scheduler were removed so an over-budget run still runs its risk
+breakers (only LLM is skipped); and the protective-stop `pending_cancel` retry now skips still-open
+positions when a replacement stop can't be placed. Verify quartet green (1730 tests). See
+`docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+
+## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
+Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G
+(security/risk/testing/ops) from `docs/reviews/2026-07-01-audit-work-split.md` via four parallel
+Opus/Sonnet agents on disjoint file sets, then integrated + verified as one change.
+- **F (UI/IA):** first-class `redTeamVerdict` on `TradeProposal` (`types.ts`) rendered as a distinct
+  "Bear Review" block in `DecisionView`; `proposal_rejected_by_red_team` audit on Bear veto; visible
+  ⌘K command-bar button; Macro/Tax demoted to a "More" tab overflow (5 primary tabs); tap-to-expand
+  rationale (touch-reachable); bare empty states → `<EmptyState>` + a real `.skeleton` loader; 3-tier
+  elevation/blur scale (no more `blur-[Npx]`); 3-step icon scale (`ICON.sm/md/lg`); `docs/phase-8`
+  IA corrected (7 workspace + 4 feed tabs); new `docs/design/visual-system.md`.
+- **G (security/risk/ops):** `/api/chat` + `/api/scan` rate-limited (429+Retry-After); Robinhood
+  OAuth tokens AES-256-GCM encrypted at rest (legacy-plaintext fallback preserved); constant-time
+  admin-token compare (`timingSafeEqualStr`, length-guarded — no throw) + reindex routes migrated to
+  shared `requireAdmin`; security headers in `middleware.ts` (X-Frame-Options/Referrer-Policy always;
+  CSP **default-off/report-only** behind `CSP_ENABLED`); drawdown-breaker + correlation-gate verified
+  wired/durable (regression tests added); one e2e money-path test + a default-safe `assertLivePreflight`
+  guard (blocks broker/live unless `paperMode:false` AND `ALLOW_LIVE_TRADING=true`); default-off
+  per-user/day token-budget ceiling in `triggers.ts` (`TRIGGER_LLM_DAILY_TOKEN_BUDGET`/`_COST_BUDGET_USD`)
+  + query-embedding LRU in `vector-db.ts`; **account-deletion gap fixed** — 4 user-scoped tables
+  (`api_health_log`, `mobile_commands`, `rag_usage`, `take_profit_trims`) were escaping deletion, now
+  covered + a runtime cross-check test; Langfuse `promptVersion` stamping + Bear-veto/diversity-collapse
+  observations (no-op when unconfigured). **Litestream restore: never exercised — documented a
+  restore-verification runbook (`docs/litestream.md`); no infra change here.**
+- **Every new behavior is default-off/conservative** (CSP, token budget, live guard); paper/Test mode
+  untouched. Deferred (noted, not attempted): the `strategy.ts` god-module split; interval-scheduler
+  budget wiring (event-trigger path only).
+- **Verify quartet GREEN locally:** `tsc --noEmit` 0 errors · `lint` 0 errors (261 grandfathered warns)
+  · `vitest` **1720/1720** · `build` success. Env note: the private `@jaywedgeworth22/congress-trading-shared`
+  dep is unfetchable here (GH Packages 401) and agents clobbered the installed copy; rebuilt a faithful
+  local stub in gitignored `node_modules` to run the full quartet — CI `verify` uses the real package.
+  Rollout notes: `docs/rollouts/2026-07-01-{ux-ia-aesthetics,security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+## 2026-07-01 — Audit D/E follow-ons: FMP short-interest removal + per-lane breaker (Claude)
+Branch `claude/trading-audit-d-e-dpw0h7` (restarted from `origin/main` after PR #292 merged —
+NEW PR, not a reopen). Closes issue #306's three non-mechanical follow-ups:
+(1) **FMP short-interest removed as non-deliverable** — FMP has no `/short_interest` endpoint
+(verified against FMP's API docs + official MCP surface, 2026-07); the speculative sub-call
+always 404'd so the FMP second-source + Yahoo-vs-FMP disagreement bulletin never fired. Removed
+the whole dead path (`shortPercentOfFloatFmp`/`shortInterestDisagreement` fields, cascade carry,
+cross-check, threshold helper, the `/api/v4/short_interest` fan-out, cache-guard revert). Yahoo
+`shortPercentOfFloat` stays the single real source.
+(2) **Circuit breaker per-credential-lane** — added `healthKeySource` to `MarketEnrichmentProvider`,
+`withHealthLane()` wrapping the 9 keyed push sites, and scoped `applyCircuitBreaker`'s lane filter
+to the provider's own `keySource`; a dead env lane no longer blacks out a healthy user lane (keyless
+providers keep all-lanes behavior). Default-off.
+(3) **`extractUnderlyingPrice` `{ quotes: [...] }` envelope** — parser already handled it (landed in
+#292); added the missing regression test. Issue #306 item 4 (disagreement bulletin through overlay)
+is **moot** (bulletin removed with item 1; overlay already merges-not-replaces via #307).
+**Verify:** lint 0 errors; tsc + tests + build fail ONLY on the private `congress-trading-shared`
+stub (8 tsc errors + 36 tests across 4 `congress-*` files — environmental, CI authoritative). The 4
+touched test files pass 129/129.
+**Next:** push branch, open new PR, close issue #306 on merge. See
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
+
+## 2026-07-01 — Congress.Trade integration repair (Workstream C1) (Claude)
+Branch `claude/elastic-rosalind-a2a48a`. Implements C1 from
+`docs/reviews/2026-07-01-audit-work-split.md`. **App B side (this PR):**
+(1) **Push/SSE** — rewrote `src/lib/congress-stream.ts` to App A's **subscription model**
+(`/api/stream` requires `?subscription=<id>` + a per-subscription secret; the old consumer
+connected without it and got `400`, so the push path was dead). Now resolves a subscription
+(env-provisioned or opt-in auto-create), connects with `?subscription=` + Bearer secret, maps
+App A's raw `trade.new` Transaction into a `congress.trade` envelope, and treats
+cursor/ping/reconnect/error control frames as no-ops (kills the per-heartbeat "dropped
+unparseable" spam). Still gated by `CONGRESS_STREAM_ENABLED` (default off) → inert until a
+subscription is provisioned.
+(2) **"drops 4 of 7"** — verified this is **correct-by-design** (App A persists all 7 inbound;
+App B is authoritative for insider/shortVolume and pulls fundamentals/analyst), NOT the bug the
+source docs implied. Trimming outbound would break the working donation; adding tables duplicates
+the pull tier. Fixed by making App B's inbound import receiver **explicitly acknowledge**
+non-persisted datasets (`acceptedNotPersisted`) + documenting the directional asymmetry.
+(3) **Pinning** — exact-pinned shared pkg to `1.0.0` (`package.json` + lockfile) and rewrote
+`shared-package-pin-check.yml` to fetch App A's peer spec and **fail on divergence** (the old
+check no-oped for semver pins). No shared-pkg source change needed for C1.
+(4) **Aliases** — applied shared `resolveTickerAlias` on all outbound row tickers
+(`congress-share.ts`, new `canonicalOutboundSymbol`) so FB→META etc. don't fragment rows.
+(5) **Validation** — `shareWithCongressTrade` now drops schema-invalid rows per-dataset instead
+of warn-and-send.
+**Verify:** tsc clean; lint 0 errors; `npm test` 1680/1680 pass; `npm run build` success. `node_modules`
+symlinked from parent worktree (no `read:packages` token for `npm ci` here).
+**Next / follow-up:** App A PR in `jaywedgeworth22/Congress.Trade` — exact-pin `app/package.json`
++ mirror the peer pin-check, and retire App A's local `TICKER_ALIASES` for the shared one (App A is
+on `chore/pin-check-latest-sha-guard`, which also edits the pin-check workflow — land on a separate
+branch, reconcile that file). Operator must provision an SSE subscription + set
+`CONGRESS_STREAM_ENABLED` to activate the push path. See
+`docs/rollouts/2026-07-01-congress-integration-repair.md`.
+## 2026-07-01 — Audit work-split Chats D + E implemented (Claude)
+Branch `claude/trading-audit-d-e-dpw0h7`. Implemented both single-repo workstreams from
+`docs/reviews/2026-07-01-audit-work-split.md` using two parallel agents (disjoint file sets)
+plus orchestrator integration (Finnhub item 4, env repair, full verify).
+
+**Chat D — data sources & breadth (all 6):** `daysToEarnings` + `institutionOwnershipPct`
+added to the existing authenticated Yahoo `quoteSummary` call (zero added API cost, threaded
+through the full per-field enrichment checklist, degrade to `undefined` — never fabricated);
+synthetic Yahoo bid/ask now provenance-tagged `yahoo-finance-synthetic`, and `hasAskData`
+(via new `hasRealAsk`) + the marketable-limit calc exclude it so a placeholder spread no
+longer anchors live limit prices (correctness/safety fix); new default-off Robinhood
+options/IV enrichment tier (`RobinhoodOptionsEnrichmentProvider`,
+`src/lib/robinhood-options.ts`); default-off active per-provider circuit breaker consulting
+`getServiceHealthSummaries()`; FMP added as a second short-interest source with a ≥5pp
+Yahoo-vs-FMP disagreement bulletin (`MarketScan.source` credits `fmp` only when it actually
+contributed).
+
+**Chat E — request-path & bundle performance (items 1,2,3,4,5,7,8; item 6 deferred):**
+`getDashboardSnapshot` fetches live+paper fills once and threads them through the perf/tax/feed
+functions (collapsing ~9 `listFillEvents` replays → 1 live + 1 paper; all new params optional/
+backward-compatible); batched proposal lookups (`getProposalsByIds`, one `IN (...)`); unified
+feed capped at 60; `next/dynamic` code-split of `StrategyFlow` + `SymbolDrilldown` (verified
+`@xyflow/react` is out of the dashboard first-load JS via the react-loadable manifest); sqlite
+`cache_size`/`mmap_size` pragmas; Playwright-CI `.next/cache` restore step. Item 4 (Finnhub
+5→4 REST calls) landed by the orchestrator as `FINNHUB_DROP_RECOMMENDATION` (default-off, drops
+`stock/recommendation`; analyst ratings still backstopped by Yahoo/FMP/Alpha-Vantage). E is a
+pure refactor — no user-visible number or trading behavior changes.
+
+**New env flags (all default-off / behavior-preserving):**
+`ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED` (+`ROBINHOOD_OPTIONS_TTL_MS`),
+`ENRICHMENT_CIRCUIT_BREAKER_ENABLED` (+`ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN`),
+`SHORT_INTEREST_DISAGREEMENT_PCT_PT` (default 5), `FINNHUB_DROP_RECOMMENDATION`.
+
+**Verification:** `npx tsc --noEmit` clean (0 errors); `npm run lint` 0 errors (258
+grandfathered warnings); `npm run build` clean (item-5 code-split confirmed in the build
+output); `npm test` = **1689 passed**, with **8 failures confined to `congress-*` test files
+only**. Those 8 are an environmental sandbox artifact: the private
+`@jaywedgeworth22/congress-trading-shared` GitHub Packages dep can't be authenticated here
+(no `read:packages` token — same limitation noted in the entry below), so a permissive local
+stub stands in for it and can't replicate the real package's exact Zod schemas / API-path
+constants. Those files are untouched by this change; the CI `verify` gate (real package) is
+authoritative. See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+`docs/rollouts/2026-07-01-performance-efficiency.md`.
+
+**Codex PR review (5 of 6 P2s fixed, tested):** options cache keyed per-user (no cross-user
+token-derived leak); underlying price threaded into option metrics (+`underlying_symbol` MCP
+arg); circuit breaker requires the 5-consecutive-failure condition (no single-cold-failure
+blackout); FMP transient short-interest failure no longer caches a row missing the disagreement
+input. Deferred: per-credential circuit-breaker lane (interface change across ~9 providers on a
+default-off feature) — tracked in the rollout note. gitleaks false positive (a `clearEnrichmentCache`
+identifier) resolved via a narrow `.gitleaks.toml` allowlist. **2nd review round (4 more P2s fixed):**
+unified-feed cap now keeps all proposal-bearing groups (ledger reconciliation was regressing for
+>60 groups) and caps only the render-only tail; marketable-limit prices each side independently
+(a synthetic ask no longer discards a real bid); `parseDaysToEarnings` keeps same-day/straddling
+windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envelope.
+
+**Next / follow-ups:** UI surfacing of the new D fields (earnings, institution %, IV, put/call,
+disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
+MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
+(monolithic-snapshot whole-tree re-render refactor, audit §6.1).
 ## 2026-07-01 - Alpaca account-editor "Custom Endpoint" checkbox bug (base_url/environment drift)
 Branch `claude/affectionate-franklin-a52935`. User reported a newly-added live Alpaca
 account ("Alpaca Standard") failing with `Request failed with status code 401` on the
@@ -98,6 +342,29 @@ All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quart
 `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276 grandfathered warnings) → `npm test` (195 files /
 1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
 `docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
+
+## 2026-07-01 — NAV_V2 PRs #2–#6: mapping, settings search, glossary, /how-it-works, TuningCard (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (restarted from `origin/main` after PR #1/#303
+merged), **PR #305**. Stacked the flag-gated middle of the delivery plan; **everything behind `NAV_V2`
+(+ `STRATEGY_CONSOLIDATION`) or a safe structural change — flags off ⇒ production byte-identical.**
+- **PR #2:** `app/nav-destinations.ts` — destination vocab mapped over `WorkspaceTab`/`FeedTab`, the `NAV_V2`
+  flag reader, and an additive/idempotent one-time localStorage shim (runs on mount, flag-independent,
+  legacy keys retained).
+- **PR #3:** `app/settings-search.ts` — one field catalog as the SSOT for the **search index**, the **five
+  Guardrails Essentials**, and the **scope classification** (gap #4: `Max order size (per trade)` →
+  `maxOrderNotional`, never "position"); + Scope-A signpost in Settings (NAV_V2).
+- **PR #4:** `LEGACY_SECTION_RELOCATION` + `SETTINGS_GLOSSARY` (§11 old→new, 17 rows); Help renders the
+  old→new table under NAV_V2.
+- **PR #5:** `/strategy` → **`/how-it-works`** with a gated redirect (gap #2: both 404 when
+  `LANDING_PAGE_ENABLED` off); `middleware` + welcome links updated.
+- **PR #6:** twin `TuningCard` de-dup behind `STRATEGY_CONSOLIDATION` (precondition verified structurally;
+  flag-off keeps both sites).
+- **Consolidation note:** the physical teardown of the ~1000-line settings/Strategy modal (8-node tree, live
+  Essentials/Advanced, Studio→inline, `openSettings` rewrites, `/admin` shims) is **staged to the shell
+  (PR #9)** — done once, QA'd live; the tested logic/data layers, flags, copy, and routes are in now.
+- **Verify (branch tip):** `tsc` clean · `lint` 0 errors · `npm test` 203 files / 2020 tests · `build` ok.
+- **Stopped before PR #7** (⛔ real-money execution gate — not flag-conditional) pending explicit go-ahead.
+See `docs/rollouts/2026-07-01-nav-v2-pr2-6-batch.md`.
 
 ## 2026-07-01 — NAV_V2 PR #1: vocabulary relabels + scope-surfacing (first app code) (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`. **First app-code step** of the redesign —
