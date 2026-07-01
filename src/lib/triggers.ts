@@ -14,8 +14,8 @@
 // ledger in llm-usage.ts. Default OFF (TRIGGER_LLM_DAILY_TOKEN_BUDGET unset => no ceiling), so
 // existing behavior is byte-identical until an operator opts in.
 
-import { audit, DAILY_RESET_TIME_ZONE, getPolicy, listUsers, startOfDayInTimeZone } from "./db";
-import { getLlmUsageSummary } from "./llm-usage";
+import { audit, getPolicy, listUsers } from "./db";
+import { checkLlmDailyBudget } from "./llm-budget";
 import { isRunAllowedNow } from "./market-hours";
 import { runStrategyOnce } from "./strategy";
 
@@ -71,19 +71,6 @@ const maxRunsPerHour = () => envNum("TRIGGER_MAX_RUNS_PER_HOUR", 6);
 const maxRunsPerDay = () => envNum("TRIGGER_MAX_RUNS_PER_DAY", 24);
 const dedupTtlMs = () => envNum("TRIGGER_DEDUP_TTL_SEC", 86_400) * 1000;
 
-// G8(a) hard per-user/day LLM cost ceiling. Both are unset (0/Infinity => no ceiling) by default —
-// an operator opts in by setting one or both. 0 or a negative/non-finite value means "no limit" for
-// that dimension (envNum's own >=0 guard already rejects negatives back to the default, so the
-// dedicated helpers below additionally treat 0 as "unset" rather than "always skip").
-function llmDailyTokenBudget(): number {
-  const v = envNum("TRIGGER_LLM_DAILY_TOKEN_BUDGET", 0);
-  return v > 0 ? v : Number.POSITIVE_INFINITY;
-}
-function llmDailyCostBudgetUsd(): number {
-  const v = envNum("TRIGGER_LLM_DAILY_COST_BUDGET_USD", 0);
-  return v > 0 ? v : Number.POSITIVE_INFINITY;
-}
-
 function stateFor(userId: string): UserTriggerState {
   let s = states.get(userId);
   if (!s) {
@@ -135,41 +122,11 @@ export function broadcastMaterialEvent(event: MaterialEvent): void {
   }
 }
 
-export interface LlmBudgetDecision {
-  ok: boolean;
-  reason?: "token_budget" | "cost_budget";
-  tokensToday?: number;
-  costUsdToday?: number;
-  tokenLimit?: number;
-  costLimitUsd?: number;
-}
-
-/**
- * G8(a): hard per-user/day LLM usage ceiling, checked at the trigger entry before firing
- * runStrategyOnce. Sums TODAY's usage (America/New_York day boundary, matching the rest of the
- * daily-reset conventions in db-execution.ts) for `userId` from the ledger in llm-usage.ts across
- * every provider/context/key. Default OFF: with both TRIGGER_LLM_DAILY_TOKEN_BUDGET and
- * TRIGGER_LLM_DAILY_COST_BUDGET_USD unset, the limits are +Infinity and this always returns ok.
- * Exported (pure, DB-read-only) so it can be unit-tested directly against a seeded ledger.
- */
-export function checkLlmDailyBudget(userId: string, now: Date = new Date()): LlmBudgetDecision {
-  const tokenLimit = llmDailyTokenBudget();
-  const costLimit = llmDailyCostBudgetUsd();
-  if (!Number.isFinite(tokenLimit) && !Number.isFinite(costLimit)) return { ok: true };
-
-  const dayStart = startOfDayInTimeZone(now, DAILY_RESET_TIME_ZONE);
-  const rows = getLlmUsageSummary({ sinceIso: dayStart.toISOString() }).filter((r) => r.userId === userId);
-  const tokensToday = rows.reduce((sum, r) => sum + (r.totalTokens ?? 0), 0);
-  const costUsdToday = rows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-
-  if (Number.isFinite(tokenLimit) && tokensToday >= tokenLimit) {
-    return { ok: false, reason: "token_budget", tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };
-  }
-  if (Number.isFinite(costLimit) && costUsdToday >= costLimit) {
-    return { ok: false, reason: "cost_budget", tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };
-  }
-  return { ok: true, tokensToday, costUsdToday, tokenLimit, costLimitUsd: costLimit };
-}
+// checkLlmDailyBudget now lives in ./llm-budget (so runStrategyOnce can enforce it as the single
+// choke point without a strategy↔triggers cycle). Re-exported here for existing importers
+// (scheduler, tests) that reference it via ./triggers.
+export { checkLlmDailyBudget };
+export type { LlmBudgetDecision } from "./llm-budget";
 
 async function fire(userId: string): Promise<void> {
   const s = stateFor(userId);

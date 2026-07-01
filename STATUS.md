@@ -17,8 +17,12 @@ brick), and an undecryptable stored token is treated as missing so env-token res
 (4 more P2s on the fix commit): rate-limit `/api/chat` before body-parse; persist live-preflight
 blocks as REJECTED decisions (both autonomous + approval paths); extend the `ENCRYPTION_KEY` boot
 guard to encrypted OAuth-token rows; fixed-position the Macro/Tax "More" menu so the tab-row's
-`overflow-x-auto` no longer clips it. Verify quartet green (1728 tests). See
-`docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+`overflow-x-auto` no longer clips it. **Round 3** (1 P1 + 1 P2, both to CHOKE POINTS): `getBrokerGateway`
+now wraps `placeEquityOrder` in a Proxy that runs `assertLivePreflight` first, so EVERY real-order path
+(strategy, synthetic/protective stops, order replacement, future) is guarded by one wrapper; and the
+LLM budget ceiling moved to the top of `runStrategyOnce` (via a new `src/lib/llm-budget.ts` to avoid a
+strategy↔triggers cycle), so ALL run entries (trigger, scheduler, manual API, mobile) are gated. Verify
+quartet green (1730 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
 Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G

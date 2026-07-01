@@ -64,6 +64,7 @@ import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from ".
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
+import { checkLlmDailyBudget } from "./llm-budget";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
@@ -159,6 +160,20 @@ export async function runStrategyOnce(
   userId: string = "local",
   options: { manual?: boolean; connectedAccountId?: string } = {}
 ): Promise<StrategyResult> {
+  // Hard per-user/day LLM budget ceiling — enforced HERE, the single choke point for EVERY run entry
+  // (event trigger, interval scheduler, manual "Run once" API, mobile command, and any future
+  // caller). Default OFF (no ceiling) unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET /
+  // _COST_BUDGET_USD. Checked before the run lock + run row so an over-budget call is a clean no-op.
+  const budget = checkLlmDailyBudget(userId);
+  if (!budget.ok) {
+    audit(
+      "strategy_run_suppressed_budget",
+      { userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+      userId
+    );
+    return { runId: "", status: "failed", summary: "Daily LLM budget ceiling reached; run skipped.", proposals: [] };
+  }
+
   // Target account: an explicit override (scheduler running a non-active account) or the active
   // account. Everything below derives from this account's policy, so a single override here runs
   // the whole loop against the targeted account.

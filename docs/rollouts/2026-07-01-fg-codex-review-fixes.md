@@ -72,13 +72,33 @@ review findings (2×P1, 3×P2). Each was verified against the actual code before
 Tests: +2 boot-guard cases in `test/security-oauth-token-encryption.test.ts` (findings 7/9 are
 data-integrity/UI changes covered by tsc + the existing guard/money-path suites).
 
+## Round 3 (commit after 61172fa) — 2 more Codex findings (1 P1, 1 P2), both to CHOKE POINTS
+
+10. **P1 — guard EVERY broker/live order path, not just strategy.** `synthetic-stops.ts`,
+    `broker-protective-stops.ts`, and `order-replacement.ts` reach `placeEquityOrder` without the
+    guard. Rather than sprinkle asserts, `getBrokerGateway` (`broker.ts`) now returns the gateway
+    wrapped in a Proxy whose `placeEquityOrder` runs `assertLivePreflight` first (execution state
+    derived lazily from policy + active account; async so a block is a rejected promise). Every current
+    and future real-order caller is covered by one shared wrapper. No-op in Test/paper.
+11. **P2 — enforce the LLM budget at the run entry.** The ceiling was only on the trigger/scheduler
+    lanes; `app/api/strategy/run/route.ts` and `mobile-api.ts` call `runStrategyOnce` directly, so
+    "Run once" / mobile could spend past a hard ceiling. Extracted `checkLlmDailyBudget` to a new
+    `src/lib/llm-budget.ts` (avoids a strategy↔triggers import cycle; `triggers.ts` re-exports it) and
+    added the check at the TOP of `runStrategyOnce` (before the lock), so every entry is gated. The
+    trigger/scheduler early-checks remain as cheap short-circuits. Manual runs are now gated too — a
+    hard daily ceiling is hard for all entries. Default OFF.
+
+Tests: new `test/run-budget-and-live-guard.test.ts` (over-budget `runStrategyOnce` is a hard no-op +
+audit; `getBrokerGateway` blocks a broker/live order when `ALLOW_LIVE_TRADING` is unset).
+
 ## Verification
 
-`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1728/1728** · `npm run build` ok.
+`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1730/1730** · `npm run build` ok.
 (Private `@jaywedgeworth22/congress-trading-shared` dep stubbed locally as before; CI `verify` uses the
 real package.)
 
 ## Follow-ups
 
-- Deferred still: the `strategy.ts` god-module split. The budget ceiling now covers both the event
-  and interval autonomous lanes; manual "Run once" is intentionally not gated by the daily ceiling.
+- Deferred still: the `strategy.ts` god-module split. The LLM budget ceiling now covers ALL run
+  entries (trigger, scheduler, manual API, mobile) via the `runStrategyOnce` choke point, and the
+  live pre-flight guard covers ALL real-order paths via the `getBrokerGateway` wrapper.
