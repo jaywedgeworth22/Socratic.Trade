@@ -39,6 +39,7 @@ import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCount
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { notify } from "./notify";
 import { planFundingSells } from "./sell-to-fund";
 import { isRejectedOrCanceledState } from "./broker-side";
 import {
@@ -531,12 +532,16 @@ export async function runStrategyOnce(
     // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
     // trades. (test/local simulation still auto-fills, matching the existing requiresHumanReview.)
     if (bearReviewUnavailable) {
-      for (const p of sizedProposals) {
+      // Route only OPENING proposals (buy/short) to human review. Risk-reducing exits (sell/cover)
+      // must still flow through to placement even when the Red Team is down — blocking a de-risking
+      // trade on a Bear outage is itself unsafe (mirrors the rationale-collapse gate below).
+      const bearGatedOpenings = sizedProposals.filter((p) => p.side === "buy" || p.side === "short");
+      for (const p of bearGatedOpenings) {
         p.rationale += `\n\nInline Red Team (Bear) review was REQUIRED but unavailable (${bearReviewReason ?? "unknown error"}); routed to human approval.`;
         requiresHumanReview.add(p);
       }
-      if (sizedProposals.length > 0) {
-        audit("strategy_bear_review_routed_to_human", { runId, count: sizedProposals.length, reason: bearReviewReason, mode: policy.strategyAuthority }, userId);
+      if (bearGatedOpenings.length > 0) {
+        audit("strategy_bear_review_routed_to_human", { runId, count: bearGatedOpenings.length, reason: bearReviewReason, mode: policy.strategyAuthority }, userId);
       }
     }
     for (const proposal of sizedProposals) {
@@ -570,7 +575,11 @@ export async function runStrategyOnce(
     let sellToFundNote = "";
     if (sellToFundMode !== "off") {
       const isOpening = (p: TradeProposal) => p.side === "buy" || p.side === "short";
-      const intendedOpeningNotional = debatedProposals.filter(isOpening).reduce((sum, p) => {
+      // Only fund openings that will ACTUALLY be placed this run. An opening routed to human review
+      // (e.g. a Bear-unavailable or rationale-collapse-gated buy) must not drive automated funding
+      // sells — otherwise in "decide" mode we'd auto-liquidate holdings to fund buys that are merely
+      // queued for approval and won't execute (potentially leaving the account short on buying power).
+      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p)).reduce((sum, p) => {
         const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
         const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
         return sum + (Number.isFinite(notional) ? notional : 0);
@@ -617,22 +626,27 @@ export async function runStrategyOnce(
       console.warn(
         `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
       );
-      // OPTIONAL GATE (default OFF via policy.tuning.gateOnRationaleCollapse): when enabled, a
-      // collapsed run's OPENING proposals (buy/short) are routed to human review instead of
-      // auto-executing — the LLM may be emitting input-agnostic boilerplate. Exits (sell/cover) are
-      // never gated (routing a risk-reducing trade to a human is unsafe). Flag off = advisory only,
-      // byte-identical to prior behavior.
-      if (policy.tuning?.gateOnRationaleCollapse) {
-        const gatedOpenings = proposals.filter((p) => p.side === "buy" || p.side === "short");
+    }
+    // OPTIONAL GATE (default OFF via policy.tuning.gateOnRationaleCollapse): route a collapsed run's
+    // OPENING proposals (buy/short) to human review instead of auto-executing. The gate decision is
+    // computed over the OPENING rationales' OWN diversity — a deterministic funding-sell/exit
+    // rationale must not dilute the full-set mean and mask collapsed openings, and a full-set
+    // collapse (driven by exits) doesn't imply the openings collapsed. Exits (sell/cover) are never
+    // gated (routing a risk-reducing trade to a human is unsafe). Explicit `=== true` so a malformed
+    // stored non-boolean can't enable this default-off flag. Flag off = advisory only, unchanged.
+    if (policy.tuning?.gateOnRationaleCollapse === true) {
+      const gatedOpenings = proposals.filter((p) => p.side === "buy" || p.side === "short");
+      const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
+      if (openingDiversity.collapsed) {
         for (const p of gatedOpenings) {
-          p.rationale += `\n\nRationale-diversity gate: this run's proposals collapsed to near-identical reasoning (mean similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > ${rationaleDiversity.threshold}); routed to human approval.`;
+          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
           requiresHumanReview.add(p);
         }
         if (gatedOpenings.length > 0) {
           console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
           audit(
             "strategy_rationale_collapse_gated",
-            { runId, count: gatedOpenings.length, meanSimilarity: rationaleDiversity.meanPairwiseSimilarity, threshold: rationaleDiversity.threshold },
+            { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
             userId
           );
         }
@@ -2195,7 +2209,8 @@ async function proposeTrades(input: {
   const bullAttempts = [
     { url, provider, model, transport, key: openaiKey, keySource: llmKeySource, keyRef: llmKeyRef, body }
   ];
-  for (const fallbackModel of (input.policy.llmFallbackModels ?? []).map((m) => m.trim()).filter(Boolean)) {
+  const fallbackModelList = Array.isArray(input.policy.llmFallbackModels) ? input.policy.llmFallbackModels : [];
+  for (const fallbackModel of fallbackModelList.filter((m): m is string => typeof m === "string").map((m) => m.trim()).filter(Boolean)) {
     const ep = resolveLlmEndpoint({ ...input.policy, llmModel: fallbackModel }, input.userId);
     if (!ep.key) continue; // No credential for this provider's model — skip it rather than fail.
     bullAttempts.push({
@@ -2500,6 +2515,16 @@ async function proposeTrades(input: {
       },
       { policy: input.policy, userId: input.userId }
     );
+    // sendNotification skips the DIRECT alert for provider_degraded (it's in DIRECT_NOTIFY_ALREADY_SENT,
+    // which assumes the provider-tier caller already sent one via notify()). This inline-Bear path has
+    // no prior notify(), so a user WITHOUT a webhook would get no alert at all. Mirror provider-tier:
+    // send the direct notification explicitly (sendNotification above still handles the webhook).
+    await notify(input.userId, {
+      title: "Red Team (inline Bear) review unavailable",
+      body: `${reason} ${bullProposals.length} Bull proposal(s) routed to human review (mode=${input.policy.strategyAuthority}).`,
+      kind: "provider_degraded",
+      data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
+    }).catch((err) => console.error("[Bear] notify error:", err));
     return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
   };
 

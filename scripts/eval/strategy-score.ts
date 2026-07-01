@@ -43,7 +43,11 @@ function norm(symbol: string): string {
 const isOpening = (side: ProposalFixture["side"]): boolean => side === "buy" || side === "short";
 
 function hasStop(p: ProposalFixture): boolean {
-  return p.stopPrice != null || p.bracketStopLoss != null || p.type === "stop_market" || p.type === "stop_limit";
+  // A short's mandatory protective stop must come from an explicit stop price / bracket stop-loss.
+  // The ENTRY order's own type (a stop_market/stop_limit entry) is NOT a post-entry stop-loss, so a
+  // stopless short entered as a stop order must not count as protected (that would let the offline
+  // eval report a stopless short as passing and give false confidence in prompt/schema changes).
+  return p.stopPrice != null || p.bracketStopLoss != null;
 }
 
 /**
@@ -91,10 +95,14 @@ export function scoreBuysMatchEvidence(
   regime: string
 ): ScoreResult {
   const riskOff = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
+  // Normalize the evidence map keys the same way we normalize proposal symbols, so a fixture keyed
+  // as `aapl`/mixed-case still matches (otherwise the contradiction checks silently skip and an
+  // evidence-contradicting buy passes the offline eval).
+  const evidenceByNorm = new Map(Object.entries(evidence).map(([k, v]) => [norm(k), v]));
   const contradictions: string[] = [];
   for (const p of proposals) {
     if (p.side !== "buy") continue;
-    const ev = evidence[norm(p.symbol)];
+    const ev = evidenceByNorm.get(norm(p.symbol));
     if (!ev) continue;
     if (thresholds?.fcfYieldFloorPct != null && ev.fcfYield != null && ev.fcfYield < thresholds.fcfYieldFloorPct) {
       contradictions.push(`${p.symbol}: fcfYield ${ev.fcfYield} < floor ${thresholds.fcfYieldFloorPct}`);

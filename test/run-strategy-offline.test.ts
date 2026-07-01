@@ -43,6 +43,10 @@ describe("strategy offline eval — scorers have teeth", () => {
   it("scorer 2 fails a stopless short and a short emitted while shorting is disabled", () => {
     const stoplessShort: ProposalFixture[] = [{ symbol: "AAPL", side: "short", type: "market" }];
     expect(scoreShortsHaveStop(stoplessShort, true).pass).toBe(false);
+    // A short entered AS a stop order but with no protective stopPrice/bracketStopLoss is still
+    // stopless — the entry order's own type is not the mandatory post-entry stop-loss.
+    const stopOrderEntryNoStop: ProposalFixture[] = [{ symbol: "AAPL", side: "short", type: "stop_market" }];
+    expect(scoreShortsHaveStop(stopOrderEntryNoStop, true).pass).toBe(false);
     const shortWithStop: ProposalFixture[] = [{ symbol: "AAPL", side: "short", type: "stop_market", stopPrice: 100 }];
     expect(scoreShortsHaveStop(shortWithStop, true).pass).toBe(true);
     // Short emitted while disabled fails even with a stop.
