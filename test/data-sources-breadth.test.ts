@@ -92,6 +92,22 @@ describe("extractUnderlyingPrice reads Robinhood quote shapes", () => {
     const { extractUnderlyingPrice } = await import("../src/lib/robinhood");
     expect(extractUnderlyingPrice({ results: [{ symbol: "AAPL", quote: {} }] }, "AAPL")).toBeUndefined();
   });
+
+  it("reads a top-level `{ quotes: [...] }` envelope (flat and nested-quote rows)", async () => {
+    const { extractUnderlyingPrice } = await import("../src/lib/robinhood");
+    // Some MCP server variants return the equity quotes under `quotes` rather than `results`.
+    expect(extractUnderlyingPrice({ quotes: [{ symbol: "AAPL", last_trade_price: "190.5" }] }, "AAPL")).toBe(190.5);
+    const nested = { quotes: [{ symbol: "AAPL", quote: { mark_price: 189.75 } }] };
+    expect(extractUnderlyingPrice(nested, "AAPL")).toBe(189.75);
+    // Symbol filtering still applies within the `quotes` envelope.
+    const multi = {
+      quotes: [
+        { symbol: "MSFT", last_trade_price: 400 },
+        { symbol: "AAPL", quote: { last_trade_price: 191 } }
+      ]
+    };
+    expect(extractUnderlyingPrice(multi, "AAPL")).toBe(191);
+  });
 });
 
 // ── Item 3: institutional ownership ──────────────────────────────────────────
@@ -343,5 +359,36 @@ describe("enrichment circuit breaker (opt-in)", () => {
     };
     const [wrapped] = applyCircuitBreaker([finnhubLike]);
     expect(await wrapped.enrich(["AAPL"])).toEqual({ AAPL: { peRatio: 10 } }); // NOT skipped
+  });
+
+  it("scopes the trip to the provider's own credential lane (dead env lane spares a healthy user lane)", async () => {
+    const { applyCircuitBreaker } = await import("../src/lib/data-providers");
+    const { logApiHealth } = await import("../src/lib/db-health");
+    const { getDb } = await import("../src/lib/db");
+    getDb().prepare("DELETE FROM api_health_log WHERE service = ?").run("finnhub");
+    // Two credential lanes for the SAME service: the env-key lane is hard-stopped (5 consecutive
+    // failures), the user-key lane is healthy. Only the provider running on the dead lane should trip.
+    for (let i = 0; i < 5; i++) logApiHealth({ service: "finnhub", ok: false, errorText: "HTTP 500", keySource: "env" });
+    logApiHealth({ service: "finnhub", ok: true, latencyMs: 20, keySource: "user" });
+
+    const makeFinnhub = (source: "env" | "user"): import("../src/lib/data-providers").MarketEnrichmentProvider => ({
+      name: "finnhub",
+      configured: true,
+      healthKeySource: source,
+      async enrich(symbols) {
+        const out: Record<string, import("../src/lib/data-providers").SymbolEnrichment> = {};
+        for (const s of symbols) out[s] = { peRatio: 10 };
+        return out;
+      }
+    });
+
+    process.env.ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN = "60";
+    // env-lane provider: its own lane is hard-stopped → tripped (no-op'd).
+    const [envWrapped] = applyCircuitBreaker([makeFinnhub("env")]);
+    expect(await envWrapped.enrich(["AAPL"])).toEqual({ AAPL: {} });
+    // user-lane provider: its own lane is healthy → NOT tripped even though the env lane is dead.
+    const [userWrapped] = applyCircuitBreaker([makeFinnhub("user")]);
+    expect(await userWrapped.enrich(["AAPL"])).toEqual({ AAPL: { peRatio: 10 } });
+    delete process.env.ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN;
   });
 });

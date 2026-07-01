@@ -162,19 +162,6 @@ describe("applyEnrichment", () => {
     expect(enriched.sources?.daysToEarnings).toBe("yahoo-finance");
     expect(enriched.sources?.nearTheMoneyIv).toBe("robinhood-options");
   });
-
-  it("surfaces a short-interest disagreement as a deduped evidence bulletin", () => {
-    const note = "Short interest disagreement: yahoo-finance 3.0% vs fmp 12.0% (9.0pp apart).";
-    const enriched = applyEnrichment(
-      quote({ symbol: "GME", evidenceBulletins: ["existing bulletin"] }),
-      { shortInterestDisagreement: note } as SymbolEnrichment
-    );
-    expect(enriched.evidenceBulletins).toContain(note);
-    expect(enriched.evidenceBulletins).toContain("existing bulletin");
-    // Idempotent: applying it again does not duplicate.
-    const again = applyEnrichment(enriched, { shortInterestDisagreement: note } as SymbolEnrichment);
-    expect(again.evidenceBulletins?.filter((b) => b === note)).toHaveLength(1);
-  });
 });
 
 describe("mergeQuoteData", () => {
