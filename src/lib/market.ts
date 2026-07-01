@@ -847,11 +847,6 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     targetHigh: extra.targetHigh ?? quote.targetHigh,
     targetLow: extra.targetLow ?? quote.targetLow,
     targetMedian: extra.targetMedian ?? quote.targetMedian,
-    // Surface a short-interest source disagreement as an evidence bulletin (deduped) so the prompt
-    // and dashboard don't silently trust one source. Kept out of the sourced-field cascade.
-    evidenceBulletins: extra.shortInterestDisagreement
-      ? Array.from(new Set([...(quote.evidenceBulletins ?? []), extra.shortInterestDisagreement]))
-      : quote.evidenceBulletins,
     sources: mergeSources(quote, extra)
   };
 }

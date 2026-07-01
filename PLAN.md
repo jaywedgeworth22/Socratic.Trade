@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/trading-audit-d-e-dpw0h7`, follow-on): closed issue #306's
+> non-mechanical follow-ups from Chats D+E. **Scope correction:** the "FMP as a second
+> short-interest source with a ≥5pp disagreement bulletin" item below was removed as
+> non-deliverable — FMP publishes no short-interest data (no `/short_interest` endpoint;
+> verified against FMP's API docs + official MCP surface). Yahoo `shortPercentOfFloat` is the
+> single real source; a real second source would need Massive/Finnhub. Also: scoped the
+> default-off enrichment circuit breaker to trip per **credential lane** (a dead env lane no
+> longer disables a healthy user lane), and locked in `extractUnderlyingPrice`'s
+> `{ quotes: [...] }` envelope parsing with a regression test. See
+> `docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
 > 2026-07-01 (`claude/trading-audit-d-e-dpw0h7`): audit work-split Chats D+E
 > (data-source breadth + request-path/bundle performance), two parallel agents +
 > orchestrator integration. **D (data sources):** `daysToEarnings` and

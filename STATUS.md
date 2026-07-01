@@ -4,6 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Audit D/E follow-ons: FMP short-interest removal + per-lane breaker (Claude)
+Branch `claude/trading-audit-d-e-dpw0h7` (restarted from `origin/main` after PR #292 merged —
+NEW PR, not a reopen). Closes issue #306's three non-mechanical follow-ups:
+(1) **FMP short-interest removed as non-deliverable** — FMP has no `/short_interest` endpoint
+(verified against FMP's API docs + official MCP surface, 2026-07); the speculative sub-call
+always 404'd so the FMP second-source + Yahoo-vs-FMP disagreement bulletin never fired. Removed
+the whole dead path (`shortPercentOfFloatFmp`/`shortInterestDisagreement` fields, cascade carry,
+cross-check, threshold helper, the `/api/v4/short_interest` fan-out, cache-guard revert). Yahoo
+`shortPercentOfFloat` stays the single real source.
+(2) **Circuit breaker per-credential-lane** — added `healthKeySource` to `MarketEnrichmentProvider`,
+`withHealthLane()` wrapping the 9 keyed push sites, and scoped `applyCircuitBreaker`'s lane filter
+to the provider's own `keySource`; a dead env lane no longer blacks out a healthy user lane (keyless
+providers keep all-lanes behavior). Default-off.
+(3) **`extractUnderlyingPrice` `{ quotes: [...] }` envelope** — parser already handled it (landed in
+#292); added the missing regression test. Issue #306 item 4 (disagreement bulletin through overlay)
+is **moot** (bulletin removed with item 1; overlay already merges-not-replaces via #307).
+**Verify:** lint 0 errors; tsc + tests + build fail ONLY on the private `congress-trading-shared`
+stub (8 tsc errors + 36 tests across 4 `congress-*` files — environmental, CI authoritative). The 4
+touched test files pass 129/129.
+**Next:** push branch, open new PR, close issue #306 on merge. See
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
+
 ## 2026-07-01 — Congress.Trade integration repair (Workstream C1) (Claude)
 Branch `claude/elastic-rosalind-a2a48a`. Implements C1 from
 `docs/reviews/2026-07-01-audit-work-split.md`. **App B side (this PR):**
