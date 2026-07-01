@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
+import { logApiHealth } from "./db-health";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
@@ -441,8 +442,27 @@ export async function getRobinhoodMcpHealth(userId: string): Promise<RobinhoodMc
 }
 
 export async function callRobinhoodMcpTool(userId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
-  const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
-  return unpackMcpToolResult(result);
+  // Every Robinhood MCP call (trading + reads) funnels through here, so this single wrap
+  // gives the admin connections-health page a "robinhood-broker" signal for whether the
+  // broker gateway is reachable. The token is per-user, so key the lane by userId.
+  // logApiHealth swallows its own errors and is only ever called around the real call, so
+  // health logging can never throw or block the broker call.
+  const start = Date.now();
+  try {
+    const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
+    logApiHealth({ service: "robinhood-broker", ok: true, latencyMs: Date.now() - start, keySource: "user", userId });
+    return unpackMcpToolResult(result);
+  } catch (err) {
+    logApiHealth({
+      service: "robinhood-broker",
+      ok: false,
+      latencyMs: Date.now() - start,
+      errorText: err instanceof Error ? err.message : String(err),
+      keySource: "user",
+      userId
+    });
+    throw err;
+  }
 }
 
 export async function callRobinhoodMcpMethod(userId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
