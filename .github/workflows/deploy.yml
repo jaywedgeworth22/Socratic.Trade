@@ -73,11 +73,12 @@ jobs:
 
           echo "::group::Install dependencies (lockfile-exact)"
           bash scripts/npm-ci-with-shared-deps.sh
-          # NODE_AUTH_TOKEN (GitHub Packages auth) is only needed for the install above. Unset it
-          # before build/restart so `pm2 restart --update-env` cannot propagate the packages token
-          # into the long-running production process's environment, where runtime code could read it.
-          # (Review: PR #279.)
-          unset NODE_AUTH_TOKEN
+          # Package/fetch auth is only needed for the git fetch + install above. Unset BOTH the
+          # packages token (NODE_AUTH_TOKEN) and the fetch token (GH_TOKEN = GITHUB_TOKEN, now
+          # packages:read) before build/restart so `pm2 restart --update-env` cannot propagate a
+          # GitHub-Packages-readable token into the long-running production process's environment,
+          # where runtime code could read it. (Review: PR #279.)
+          unset GH_TOKEN NODE_AUTH_TOKEN
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"

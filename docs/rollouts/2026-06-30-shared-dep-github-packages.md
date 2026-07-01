@@ -55,6 +55,18 @@ threads on the PR.
 - **Handoff docs:** `STATUS.md` and `PLAN.md` still described the old git+`220677a`-pin + deploy-key
   model; both now record the GitHub Packages registry switch (this PR).
 
+## Round 3 (Codex re-review)
+
+- **deploy.yml — `GH_TOKEN` also leaked into the PM2 restart:** the round-1 fix unset only
+  `NODE_AUTH_TOKEN`, but the job-level `GH_TOKEN` (= `GITHUB_TOKEN`, which this PR grants
+  `packages: read`) was still present and propagated via `pm2 restart --update-env`. Now
+  `unset GH_TOKEN NODE_AUTH_TOKEN` before build/restart (both are only needed for the fetch + install).
+- **Codex Autofix couldn't install the private package:** the autofix workflow lacked `packages: read`
+  and a package token, so the agent's `npm install` (part of its verify trio) would 403 and it could
+  not push fixes after review. Added `packages: read` + a job-level `NODE_AUTH_TOKEN`, and made
+  `.npmrc` carry `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}` so a plain `npm install`
+  authenticates from the env var (empty/anonymous when unset — same tokenless behavior as before).
+
 ## Follow-ups
 
 - Confirm the `@jaywedgeworth22/congress-trading-shared` package grants `read` to the
