@@ -14,10 +14,17 @@ export async function POST(request: Request) {
     const proposal = await proposeStrategyTuning(userId, model);
     // P0-3: in the MANUAL path, tuning-config invariant violations are surfaced as WARNINGS (never blocks) —
     // the human reviews them alongside the proposal. (The AUTONOMOUS path fails closed on the same set.)
+    // The dashboard renders `proposal.cautions`, so APPEND the warnings there (with a clear prefix) so manual
+    // users actually SEE them; also keep the structured `tuningConfigWarnings` field for programmatic callers.
     const invariants = validateTuningInvariants(getPolicy(userId).tuning);
+    if (invariants.ok) {
+      return NextResponse.json(proposal);
+    }
+    const warningCautions = invariants.violations.map((v) => `Tuning-config warning: ${v.message}`);
     return NextResponse.json({
       ...proposal,
-      ...(invariants.ok ? {} : { tuningConfigWarnings: invariants.violations })
+      cautions: [...(proposal.cautions ?? []), ...warningCautions],
+      tuningConfigWarnings: invariants.violations
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Strategy tuning failed.";

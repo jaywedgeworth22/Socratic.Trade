@@ -26,12 +26,14 @@ export interface TuningInvariantResult {
  * PURE. Validate a small set of hard safety couplings in the tuning settings. Never throws.
  *
  * Checks:
- *  - sample gates are strictly positive when set (`minClosedLotsForWeightShift`, `shrinkPrior`,
+ *  - sample-count gates are strictly positive when set (`minClosedLotsForWeightShift`,
  *    `recurringFactorMinCount`): a non-positive gate would let a zero-evidence apply through;
+ *  - `shrinkPrior` is NON-NEGATIVE when set: 0 is a VALID "no shrinkage" setting (mirrors
+ *    `resolveShrinkPrior`, which accepts `v >= 0`), so only a negative prior is invalid here;
  *  - `sizingFloorPct <= sizingCeilingPct` when both set (an inverted band is an unsafe sizer config);
  *  - `autoApplyWeights ⇒ oosWithholdUnvalidated` (unless the explicit `autoApplyOverrideUnvalidated`
- *    override is set): autonomy must not run while the OOS gate is configured to KEEP unvalidated
- *    weight moves — that would defeat the very gate the autonomous path leans on;
+ *    override is set — which must be the real boolean `true`): autonomy must not run while the OOS gate
+ *    is configured to KEEP unvalidated weight moves — that would defeat the very gate autonomy leans on;
  *  - `calibrationSizing ⇒ a valid per-band sample gate` (`minClosedLotsForWeightShift > 0`): calibrated
  *    sizing without a band gate can size off a 1-lot band.
  *
@@ -47,8 +49,12 @@ export function validateTuningInvariants(tuning: TuningSettings | undefined): Tu
     }
   };
   positiveIfSet(t.minClosedLotsForWeightShift, "min_closed_lots_nonpositive", "minClosedLotsForWeightShift");
-  positiveIfSet(t.shrinkPrior, "shrink_prior_nonpositive", "shrinkPrior");
   positiveIfSet(t.recurringFactorMinCount, "recurring_factor_min_nonpositive", "recurringFactorMinCount");
+  // shrinkPrior: 0 is a valid "no shrinkage" setting (resolveShrinkPrior accepts v>=0) — only a NEGATIVE
+  // prior is invalid. Do NOT treat 0 as invalid or the autonomous path fails closed on a valid config.
+  if (typeof t.shrinkPrior === "number" && t.shrinkPrior < 0) {
+    violations.push({ code: "shrink_prior_negative", message: `shrinkPrior must be >= 0 when set (got ${t.shrinkPrior}).` });
+  }
 
   if (
     typeof t.sizingFloorPct === "number" &&
@@ -61,11 +67,13 @@ export function validateTuningInvariants(tuning: TuningSettings | undefined): Tu
     });
   }
 
-  if (t.autoApplyWeights && t.oosWithholdUnvalidated === false && !t.autoApplyOverrideUnvalidated) {
+  // The override must be the REAL boolean `true` to clear this violation — a truthy non-boolean (e.g. the
+  // JSON string "false", or 1) must NOT bypass the fail-closed guard.
+  if (t.autoApplyWeights && t.oosWithholdUnvalidated === false && t.autoApplyOverrideUnvalidated !== true) {
     violations.push({
       code: "auto_apply_without_oos_withhold",
       message:
-        "autoApplyWeights requires oosWithholdUnvalidated=true (or an explicit autoApplyOverrideUnvalidated) — " +
+        "autoApplyWeights requires oosWithholdUnvalidated=true (or autoApplyOverrideUnvalidated===true) — " +
         "autonomy must not run while unvalidated weight moves are kept."
     });
   }

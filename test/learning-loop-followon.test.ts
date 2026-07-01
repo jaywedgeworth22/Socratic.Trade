@@ -61,6 +61,26 @@ describe("validateTuningInvariants — P0-3", () => {
   it("autoApplyWeights with oosWithholdUnvalidated left default (true) is valid", () => {
     expect(validateTuningInvariants({ autoApplyWeights: true }).ok).toBe(true);
   });
+
+  // Codex finding #1: shrinkPrior=0 is a VALID "no shrinkage" setting (resolveShrinkPrior accepts v>=0).
+  it("shrinkPrior=0 is VALID (no shrinkage); only a negative prior is flagged", () => {
+    expect(validateTuningInvariants({ shrinkPrior: 0 }).ok).toBe(true);
+    const neg = validateTuningInvariants({ shrinkPrior: -1 });
+    expect(neg.ok).toBe(false);
+    expect(neg.violations.some((v) => v.code === "shrink_prior_negative")).toBe(true);
+  });
+
+  // Codex finding #4: a truthy NON-boolean override must NOT bypass the fail-closed guard.
+  it("a non-boolean truthy override (e.g. the string \"false\") does NOT clear the violation", () => {
+    const r = validateTuningInvariants({
+      autoApplyWeights: true,
+      oosWithholdUnvalidated: false,
+      // Simulate a mis-serialized config value that is truthy but not the real boolean true.
+      autoApplyOverrideUnvalidated: "false" as unknown as boolean
+    });
+    expect(r.ok).toBe(false);
+    expect(r.violations.some((v) => v.code === "auto_apply_without_oos_withhold")).toBe(true);
+  });
 });
 
 // ── P0-3: fail-closed at the AUTONOMOUS apply path (skip + audit, never throw) ───────────────────
@@ -184,5 +204,96 @@ describe("learning-mutation ledger + revert — P0-4", () => {
     const result = revertAutonomousWeightTuning(userId);
     expect(result.reverted).toBe(true);
     expect(getPolicy(userId).scoringWeights.quality).toBeCloseTo(prior.quality, 5);
+  });
+
+  // Codex finding #5: an entryId from ANOTHER account must not restore/mutate that other account.
+  it("entryId revert rejects a row belonging to a different account (account_mismatch)", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const userId = `p04-acctmix-${randomUUID()}`;
+    setPolicy(policyFor("P04-ACCT"), userId);
+    // Record a mutation tagged to account "OTHER-ACCT".
+    const entryId = recordLearningMutation({
+      subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+      userId,
+      connectedAccountId: "OTHER-ACCT",
+      before: { scoringWeights: { a: 1 } },
+      after: { scoringWeights: { a: 2 } }
+    });
+    // Request the revert for the DEFAULT account (connectedAccountId undefined → ""), by the other account's id.
+    const result = revertLearningMutation({ subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS, userId, entryId });
+    expect(result.reverted).toBe(false);
+    expect(result.reason).toBe("account_mismatch");
+  });
+
+  // Codex finding #6: reverting an OLDER entryId while a NEWER unreverted row exists must be rejected.
+  it("entryId revert rejects a non-latest row (not_latest_mutation) so a newer mutation isn't discarded", async () => {
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    const userId = `p04-nonlatest-${randomUUID()}`;
+    setPolicy(policyFor("P04-NL"), userId);
+    const prior = { ...getPolicy(userId).scoringWeights } as ScoringWeights;
+    // Older mutation (record with a distinct created_at by inserting first).
+    const olderId = recordLearningMutation({
+      subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+      userId,
+      before: { scoringWeights: prior },
+      after: { scoringWeights: { ...prior, momentum: prior.momentum + 0.03 } }
+    });
+    // Newer mutation on the same (account, subsystem).
+    recordLearningMutation({
+      subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+      userId,
+      before: { scoringWeights: { ...prior, momentum: prior.momentum + 0.03 } },
+      after: { scoringWeights: { ...prior, momentum: prior.momentum + 0.06 } }
+    });
+    // Attempting to revert the OLDER row by id is rejected (the newer unreverted row would be silently lost).
+    const result = revertLearningMutation({ subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS, userId, entryId: olderId });
+    expect(result.reverted).toBe(false);
+    expect(result.reason).toBe("not_latest_mutation");
+  });
+
+  // Codex finding #2: after a ledger revert, a 2nd revertAutonomousWeightTuning must NOT clobber a later
+  // MANUAL weight change via the stale legacy audit-row fallback.
+  it("2nd revertAutonomousWeightTuning after a ledger revert does NOT restore a stale legacy snapshot", async () => {
+    const { setPolicy, getPolicy, audit } = await import("../src/lib/db");
+    const userId = `p04-noclobber-${randomUUID()}`;
+    setPolicy(policyFor("P04-NC"), userId);
+    const prior = { ...getPolicy(userId).scoringWeights } as ScoringWeights;
+    const bumped: ScoringWeights = { ...prior, sentiment: prior.sentiment + 0.05 };
+    setPolicy({ ...getPolicy(userId), scoringWeights: bumped }, userId);
+    // Both a ledger row AND a legacy audit row exist (as the real apply path writes both).
+    recordLearningMutation({ subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS, userId, before: { scoringWeights: prior }, after: { scoringWeights: bumped } });
+    audit("auto_weight_apply", { userId, previousWeights: prior, newWeights: bumped, changedFactors: ["sentiment"] }, userId);
+
+    // 1st revert (via ledger) restores prior.
+    expect(revertAutonomousWeightTuning(userId).reverted).toBe(true);
+    expect(getPolicy(userId).scoringWeights.sentiment).toBeCloseTo(prior.sentiment, 5);
+
+    // Now the operator makes a MANUAL weight change.
+    const manual: ScoringWeights = { ...getPolicy(userId).scoringWeights, sentiment: prior.sentiment + 0.1 };
+    setPolicy({ ...getPolicy(userId), scoringWeights: manual }, userId);
+    const manualSentiment = getPolicy(userId).scoringWeights.sentiment;
+
+    // 2nd revert must be a NO-OP (the ledger row is reverted; the stale legacy audit snapshot must NOT apply).
+    const second = revertAutonomousWeightTuning(userId);
+    expect(second.reverted).toBe(false);
+    expect(second.reason).toBe("no_unreverted_ledger_mutation");
+    // The manual change survives — the stale legacy snapshot did NOT clobber it.
+    expect(getPolicy(userId).scoringWeights.sentiment).toBeCloseTo(manualSentiment, 5);
+  });
+
+  // A genuine PRE-LEDGER apply (only a legacy audit row, NO ledger row) still reverts via the fallback.
+  it("legacy fallback still reverts a genuine pre-ledger apply (only an audit row, no ledger row)", async () => {
+    const { setPolicy, getPolicy, audit } = await import("../src/lib/db");
+    const userId = `p04-legacy-${randomUUID()}`;
+    setPolicy(policyFor("P04-LEG"), userId);
+    const prior = { ...getPolicy(userId).scoringWeights } as ScoringWeights;
+    const bumped: ScoringWeights = { ...prior, momentum: prior.momentum + 0.05 };
+    setPolicy({ ...getPolicy(userId), scoringWeights: bumped }, userId);
+    // ONLY a legacy audit row (no ledger row) — mirrors an apply made before P0-4 landed.
+    audit("auto_weight_apply", { userId, previousWeights: prior, newWeights: bumped, changedFactors: ["momentum"] }, userId);
+
+    const result = revertAutonomousWeightTuning(userId);
+    expect(result.reverted).toBe(true);
+    expect(getPolicy(userId).scoringWeights.momentum).toBeCloseTo(prior.momentum, 5);
   });
 });

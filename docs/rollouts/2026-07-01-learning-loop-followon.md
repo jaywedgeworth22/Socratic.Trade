@@ -128,3 +128,47 @@ npm run build       # <see below>
 - **P1-1 dry-run harness, P1-2 purged/embargoed split, and the rest of the P1/P2 backlog** — out of scope
   for this focused pass.
 - The admin ledger route has no UI yet (API only) — a dashboard surface is a natural next step.
+
+## Codex review fixes (PR #300, 2026-07-01)
+
+The PR's Codex auto-reviewer left 8 P2 findings (all valid, several safety-relevant). Fixed on top of the
+original branch; verify quartet re-run green (tsc clean, lint 0 errors, 194 files / 1947 tests, build
+compiled). Each finding + fix:
+
+1. **`shrinkPrior=0` wrongly invalid** (`tuning-invariants.ts`). `resolveShrinkPrior` accepts `v >= 0` (0 =
+   "no shrinkage"), but the invariant treated 0 as invalid → the autonomous path failed closed on a valid
+   config. Now only a NEGATIVE `shrinkPrior` is flagged (`shrink_prior_negative`); `minClosedLotsForWeightShift`
+   / `recurringFactorMinCount` remain strictly-positive.
+2. **Legacy revert fallback clobbering later manual changes** (`strategy-tuning.ts`). After a ledger revert
+   marked the row reverted, a 2nd `revertAutonomousWeightTuning` found no unreverted ledger row and fell
+   through to the STALE legacy `auto_weight_apply` audit snapshot, restoring old `previousWeights` over any
+   manual change made since. Now the legacy fallback runs ONLY for a genuine pre-ledger apply (NO
+   `learning_mutations` row exists at all for this user/account/subsystem); otherwise it returns
+   `no_unreverted_ledger_mutation` and touches nothing.
+3. **Manual tune warnings invisible** (`app/api/strategy/tune/route.ts`). The dashboard renders
+   `proposal.cautions`, but warnings were returned only in a separate `tuningConfigWarnings` field. Now the
+   violations are ALSO appended into `cautions` (prefixed `Tuning-config warning: …`) so manual users see
+   them; the structured field is kept for programmatic callers. (Backend only — no UI edits.)
+4. **Override not runtime-validated** (`tuning-invariants.ts`). A truthy non-boolean
+   `autoApplyOverrideUnvalidated` (e.g. the JSON string `"false"`) bypassed the fail-closed guard. Now
+   requires `=== true` (the real boolean) to clear the violation.
+5. **Cross-account `entryId` revert** (`learning-ledger.ts`). The `entryId` path looked up by `(id, userId)`
+   then restored whichever account was on the row; a stale/copied id from ANOTHER account could mutate that
+   other account. Now rejects rows whose `connectedAccountId` != the requested active account
+   (`account_mismatch`).
+6. **Non-latest `entryId` revert discards a newer mutation** (`learning-ledger.ts`). Reverting an older
+   `entryId` while a newer unreverted row existed for the same account/subsystem silently discarded the newer
+   mutation. Now rejects any non-latest `entryId` revert (`not_latest_mutation`).
+7. **Uniform positive zero-variance diff rejected** (`backtest.ts`). When every OOS date had the SAME positive
+   candidate−baseline IC diff, `seDiff=0` forced `tStat=0`, rejecting a candidate that UNIFORMLY beats
+   baseline. Now a zero-variance diff returns `±Infinity` (sign of the mean) when the mean is nonzero, and 0
+   only when the mean is truly 0 — so a uniformly-better candidate clears any finite paired-t threshold.
+8. **Ledger missing from deletion purges** (`db.ts` consumers). `learning_mutations` was absent from both
+   cleanup paths. Added it to `deleteConnectedAccount`'s per-account purge (by `connected_account_id`,
+   `src/lib/db-api-keys.ts`) and to `DELETE_TABLES_BY_USER_ID` (full user deletion by `user_id`,
+   `src/lib/account-deletion.ts`).
+
+Tests added/extended: `test/learning-loop-followon.test.ts` (findings 1, 2, 4, 5, 6 — non-boolean override,
+account-mismatch, non-latest, no-clobber-after-ledger-revert, genuine-pre-ledger fallback still works),
+`test/backtest.test.ts` (finding 7 — uniform ±zero-variance diff → ±Infinity), `test/account-delete-cleanup.test.ts`
+(finding 8 — account deletion purges ledger rows). Default-off/no-op semantics preserved throughout.

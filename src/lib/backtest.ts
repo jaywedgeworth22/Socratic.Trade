@@ -599,7 +599,14 @@ export interface PairedICDiffStats {
   stdDiff: number;
   /** Standard error of the mean difference (stdDiff / sqrt(n)). */
   seDiff: number;
-  /** Paired t-statistic: meanDiff / seDiff (0 when SE is 0 / n<2). Positive ⇒ candidate beats baseline. */
+  /**
+   * Paired t-statistic: meanDiff / seDiff. Positive ⇒ candidate beats baseline. Special cases:
+   *  - `n < 2` → 0 (no SE from one point);
+   *  - ZERO variance with a NONZERO mean (every date's diff is the same nonzero value) → ±Infinity,
+   *    NOT 0: a candidate that UNIFORMLY beats baseline is, in the limit, infinitely significant. Treating
+   *    that as 0 would wrongly reject the strongest possible edge;
+   *  - zero variance with a zero mean → 0 (truly no difference).
+   */
   tStat: number;
 }
 
@@ -652,7 +659,12 @@ export function pairedICDiffStats(
   const sampleVar = diffs.reduce((s, x) => s + (x - meanDiff) ** 2, 0) / (n - 1);
   const stdDiff = Math.sqrt(sampleVar);
   const seDiff = stdDiff / Math.sqrt(n);
-  const tStat = seDiff > 0 ? meanDiff / seDiff : 0;
+  // Zero variance: if the mean is nonzero (every date's diff is the same nonzero value — a candidate that
+  // UNIFORMLY beats or lags baseline), the t-stat is infinite (Math.sign gives its direction). Only a truly
+  // zero mean-difference yields 0. Otherwise the standard meanDiff/seDiff.
+  const tStat = seDiff > 0
+    ? meanDiff / seDiff
+    : (meanDiff === 0 ? 0 : Math.sign(meanDiff) * Infinity);
   return { n, meanDiff, stdDiff, seDiff, tStat };
 }
 

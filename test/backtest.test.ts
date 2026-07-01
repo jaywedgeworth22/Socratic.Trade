@@ -342,6 +342,40 @@ describe("pairedICDiffStats", () => {
     expect(stats.n).toBe(1);
     expect(stats.tStat).toBe(0);
   });
+
+  // Codex finding #7: a UNIFORM positive diff (candidate perfectly beats an inverse baseline on every date →
+  // per-date diff is a constant +2, variance 0) must be treated as SIGNIFICANT (+Infinity), NOT rejected as 0.
+  it("a uniform positive zero-variance diff yields +Infinity (significant), not 0", () => {
+    const observations: FactorObservation[] = [];
+    for (let d = 0; d < 4; d++) {
+      const date = `2026-06-${String(10 + d).padStart(2, "0")}`;
+      // momentum ↑ with return (+1 IC), value ↓ with return (−1 IC) on EVERY date → diff = +2 every date.
+      observations.push(obs(date, "A", 0.01, { momentum: 10, value: 40 }));
+      observations.push(obs(date, "B", 0.02, { momentum: 20, value: 30 }));
+      observations.push(obs(date, "C", 0.03, { momentum: 30, value: 20 }));
+      observations.push(obs(date, "D", 0.04, { momentum: 40, value: 10 }));
+    }
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.n).toBe(4);
+    expect(stats.meanDiff).toBeCloseTo(2, 8);
+    expect(stats.seDiff).toBe(0);
+    expect(stats.tStat).toBe(Infinity); // a uniformly-better candidate clears ANY finite paired-t threshold
+  });
+
+  it("a uniform NEGATIVE zero-variance diff yields -Infinity (candidate uniformly worse)", () => {
+    const observations: FactorObservation[] = [];
+    for (let d = 0; d < 4; d++) {
+      const date = `2026-06-${String(10 + d).padStart(2, "0")}`;
+      // Swap roles: candidate=momentum tracks INVERSE of return, baseline=value tracks WITH return → diff −2.
+      observations.push(obs(date, "A", 0.04, { momentum: 10, value: 40 }));
+      observations.push(obs(date, "B", 0.03, { momentum: 20, value: 30 }));
+      observations.push(obs(date, "C", 0.02, { momentum: 30, value: 20 }));
+      observations.push(obs(date, "D", 0.01, { momentum: 40, value: 10 }));
+    }
+    const stats = pairedICDiffStats(observations, momentumWeights, valueWeights);
+    expect(stats.meanDiff).toBeCloseTo(-2, 8);
+    expect(stats.tStat).toBe(-Infinity); // uniformly worse → never passes a positive threshold
+  });
 });
 
 describe("buildEquityCurve", () => {

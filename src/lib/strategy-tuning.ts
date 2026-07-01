@@ -5,6 +5,7 @@ import {
   getActiveConnectedAccount,
   latestAuditByKind,
   listFillEvents,
+  listLearningMutations,
   listStrategyRuns,
   normalizeScoringWeights,
   setPolicy
@@ -1064,7 +1065,19 @@ export function revertAutonomousWeightTuning(userId: string = "local"): Autonomo
     return { reverted: true, restoredWeights: ledgerResult.restoredWeights };
   }
 
-  // Back-compat fallback: a legacy `auto_weight_apply` audit row from before the unified ledger existed.
+  // Back-compat fallback: ONLY for a genuine PRE-LEDGER apply — i.e. NO learning-mutation ledger row exists
+  // for this (user, account, scoring_weights) at all. If a ledger row DOES exist (even one already reverted),
+  // the ledger is authoritative and the legacy `auto_weight_apply` audit snapshot is STALE — using it on a
+  // 2nd revert would restore old previousWeights and clobber any manual weight change made since (finding #2).
+  const anyLedgerRow = listLearningMutations(userId, {
+    connectedAccountId: policy.connectedAccountId,
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    limit: 1
+  }).length > 0;
+  if (anyLedgerRow) {
+    return { reverted: false, reason: "no_unreverted_ledger_mutation" };
+  }
+
   const last = (policy.connectedAccountId
     ? latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId, policy.connectedAccountId)
     : latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId))?.payload as { previousWeights?: Partial<ScoringWeights> } | undefined;

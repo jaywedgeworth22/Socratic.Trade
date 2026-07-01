@@ -97,7 +97,10 @@ function hasScoringWeights(state: unknown): state is ScoringWeightsSnapshot {
  * active-profile mirror stay in sync). Marks the entry reverted so the same row isn't reverted twice.
  *
  * Overloads by resolution:
- *  - `entryId` given → revert that specific row (admin picks a row);
+ *  - `entryId` given → revert that specific row, but ONLY if it (a) belongs to the requested active account
+ *    (a stale/copied entryId from ANOTHER account must not mutate that other account — panel finding #5) and
+ *    (b) is the LATEST non-reverted row for its (account, subsystem) — reverting an older row while a newer
+ *    unreverted mutation exists would silently discard the newer one (finding #6);
  *  - otherwise → revert the most-recent non-reverted row for (subsystem, user, account).
  *
  * @param revertedBy identity string recorded on the row (e.g. the admin email), for the audit trail.
@@ -111,12 +114,24 @@ export function revertLearningMutation(options: {
 }): RevertLearningMutationResult {
   const userId = options.userId ?? "local";
   const subsystem = options.subsystem ?? LEARNING_SUBSYSTEM_SCORING_WEIGHTS;
+  const requestedAccount = options.connectedAccountId ?? "";
 
   let entry: LearningMutationRow | undefined;
   if (options.entryId) {
     entry = getLearningMutationById(options.entryId, userId);
     if (!entry) return { reverted: false, reason: "entry_not_found" };
     if (entry.revertedAt) return { reverted: false, reason: "already_reverted", entryId: entry.id };
+    // #5: account scoping — the row must belong to the requested active account. A stale/copied entryId
+    // from a DIFFERENT account must never restore weights onto this account (or mutate the other one).
+    if ((entry.connectedAccountId ?? "") !== requestedAccount) {
+      return { reverted: false, reason: "account_mismatch", entryId: entry.id };
+    }
+    // #6: only the LATEST non-reverted row for this (account, subsystem) may be reverted by id — reverting an
+    // older entry while a newer unreverted mutation exists would silently discard the newer mutation.
+    const latest = latestLearningMutation(entry.subsystem, userId, entry.connectedAccountId || undefined);
+    if (!latest || latest.id !== entry.id) {
+      return { reverted: false, reason: "not_latest_mutation", entryId: entry.id };
+    }
   } else {
     entry = latestLearningMutation(subsystem, userId, options.connectedAccountId);
     if (!entry) return { reverted: false, reason: "no_prior_mutation" };
