@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildFactorObservations, computeFactorICs, computePerFactorIC, deriveWeightsFromIC, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
+import { buildFactorObservations, computeFactorICs, computePerFactorIC, computePerRegimeFactorICs, deriveWeightsFromIC, deriveWeightsFromICs, runWalkForwardOOS } from "@/lib/backtest";
 import { getPolicy } from "@/lib/db";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -33,6 +33,10 @@ export async function GET(request: Request) {
 
   const observations = await buildFactorObservations(userId, { horizonDays, auditLimit });
   const ics = computeFactorICs(observations);
+  // Item 7 (report-only): per-regime factor ICs. Application of regime-conditioned weights is intentionally
+  // left OFF — per-regime buckets are almost always too thin to act on without overfitting. `sufficient`
+  // flags which regimes even have enough distinct snapshot dates to be worth reading.
+  const perRegimeICs = computePerRegimeFactorICs(observations);
   // computePerFactorIC is an alias for computeFactorICs; derive weights using the minN gate.
   const perFactorIC = computePerFactorIC(observations);
   const suggestedWeightsGated = deriveWeightsFromIC(perFactorIC);
@@ -51,6 +55,8 @@ export async function GET(request: Request) {
     currentWeights: current ?? null,
     suggestedWeights,
     suggestedWeightsGated,
+    perRegimeICs,
+    perRegimeNote: "Report only. Per-regime weight APPLICATION is intentionally not wired (per-regime samples are typically too thin to act on without overfitting); read `sufficient` before drawing any conclusion.",
     note: "Suggestion only. Apply via the strategy tuner, which holds weight shifts to the 20-closed-lot gate.",
     oos: oosResult
       ? {
