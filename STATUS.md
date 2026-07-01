@@ -4,6 +4,29 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
+Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
+all 8 owner dimensions + architecture/security + both cross-app integrations
+(Congress.Trade, API Usage Monitor); results in
+`docs/reviews/2026-06-30-improvement-audit.md` (scorecard, ranked top-10, quick wins,
+strategic bets, per-dimension tables, completeness critic). **Headline: the historical
+critical auth IDOR is verified RESOLVED** (fail-closed edge auth, client-identity-header
+stripping, AES-256-GCM keys, 16-assertion regression suite); residual security items are
+non-P0 (chat rate-limit, Robinhood OAuth tokens unencrypted at rest, admin-token `===`).
+Recurring theme across reviewers: **built-but-unwired rigor** — factor-weight tuner,
+congress-score go/no-go, rationale-diversity collapse detector, correlation gate, and the
+usage-telemetry push client are all computed/built but not wired into the path they protect.
+
+Merge/deploy: PR #277 merged + auto-deployed to production. PR #278 (strategy timeout/sizing)
+and #279 (GitHub Packages dep) had their Codex P1/P2 review feedback fixed across two rounds
+(incl. #279's production token-leak via `pm2 --update-env`, and #278's Red-Team/revalidation
+reasoning-clamp bypass) — auto-merge armed. Pruned merged-only worktrees/branches: removed
+38 worktrees + 128 branches, **kept every dirty/unmerged worktree** and the protected lanes
+(main, agent previews, production, open-PR worktrees).
+
+Open item was promoted into active work: the orphaned Robinhood small-dollar routing
+diagnosis became PR #282 (`fix/robinhood-fractional-market`), which implements and verifies
+the `toMcpOrder` guard instead of leaving a missing rollout-note reference in this docs PR.
 ## 2026-07-01 - [codex-autofix] Congress bare-tx envelope-field strip (PR #283)
 Branch `agent/claude-congress-webhook-parity`. Addressed both Codex review
 threads on PR #283. (1) P2 correctness: the "envelope itself is one trade"

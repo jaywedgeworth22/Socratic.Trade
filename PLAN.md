@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`docs/improvement-audit-2026-06-30`): comprehensive audit
+> re-baseline - historical auth IDOR is no longer the active P0; near-term
+> priorities shift to money-path correctness (Bear red-team fail-closed,
+> synthetic quote avoidance, end-to-end proposal execution tests), built-but-
+> unwired learning guardrails (factor tuning, congress go/no-go, rationale
+> collapse), RAG evaluation/corpus depth, usage-telemetry push integration, and
+> dashboard decomposition. See `docs/reviews/2026-06-30-improvement-audit.md`.
 > 2026-07-01 (`agent/claude-congress-webhook-parity` / PR #283, [codex-autofix]):
 > Congress bare-tx ingest fix - the "envelope itself is one trade" last-resort
 > branch in `applyCongressEvent` was pushing the whole envelope into
