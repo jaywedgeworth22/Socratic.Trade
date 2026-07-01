@@ -118,7 +118,7 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));
   });
 
-  it("skips + audits when the user is over a low configured token budget — runStrategyOnce never fires", async () => {
+  it("STILL fires runStrategyOnce when over budget (budget is enforced INSIDE the run, after the risk breakers) and does NOT suppress at the outer gate", async () => {
     process.env.TRIGGER_ENGINE = "true";
     process.env.TRIGGER_MODE = "event";
     process.env.TRIGGER_GLOBAL_COOLDOWN_SEC = "0";
@@ -126,37 +126,22 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
     process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "100";
     const userId = `user-over-budget-fire-${randomUUID()}`;
     await activateUser(userId);
-    await seedUsage(userId, { totalTokens: 500 });
-    const { submitMaterialEvent } = await import("../src/lib/triggers");
-
-    submitMaterialEvent(userId, { type: "test", sourceId: "s2" });
-    // Give the async fire() a tick to run and hit the (short-circuited) budget check.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(runStrategyOnceMock).not.toHaveBeenCalledWith(userId);
-  });
-
-  it("records a trigger_suppressed_budget audit event when over budget", async () => {
-    process.env.TRIGGER_ENGINE = "true";
-    process.env.TRIGGER_MODE = "event";
-    process.env.TRIGGER_GLOBAL_COOLDOWN_SEC = "0";
-    process.env.TRIGGER_MAX_BATCH = "1";
-    process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET = "100";
-    const userId = `user-audit-fire-${randomUUID()}`;
-    await activateUser(userId);
     await seedUsage(userId, { totalTokens: 999 });
     const { submitMaterialEvent } = await import("../src/lib/triggers");
     const { getDb } = await import("../src/lib/db");
 
-    submitMaterialEvent(userId, { type: "test", sourceId: "s3" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    submitMaterialEvent(userId, { type: "test", sourceId: "s2" });
+    // The outer gate no longer suppresses — the run is entered so its non-LLM risk breakers +
+    // reconciliation still run; runStrategyOnce (mocked here) internally skips only the LLM work.
+    await vi.waitFor(() => expect(runStrategyOnceMock).toHaveBeenCalledWith(userId));
 
-    const rows = getDb()
-      .prepare("SELECT kind, payload FROM audit_events WHERE user_id = ? AND kind = 'trigger_suppressed_budget'")
-      .all(userId) as Array<{ kind: string; payload: string }>;
-    expect(rows.length).toBe(1);
-    const payload = JSON.parse(rows[0].payload);
-    expect(payload.reason).toBe("token_budget");
-    expect(runStrategyOnceMock).not.toHaveBeenCalledWith(userId);
+    // And fire() no longer writes a trigger_suppressed_budget audit (the outer suppression was removed;
+    // the internal skip audits strategy_run_suppressed_budget instead — covered by the money-path test).
+    const n = (
+      getDb()
+        .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'trigger_suppressed_budget'")
+        .get() as { n: number }
+    ).n;
+    expect(n).toBe(0);
   });
 });

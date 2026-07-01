@@ -134,9 +134,26 @@ audit, run still completes, no OpenAI call); `run-budget-and-live-guard.test.ts`
 live cancel is NOT blocked (and the place still is). The concurrent-run reservation (item 13) remains a
 documented, deferred follow-up.
 
+## Round 6 (commit after cd5d584) — 3 P2, CONSOLIDATING the budget/guard choke points
+
+16. **Gate revalidation on the budget too.** `revalidatePendingProposals` is an LLM call that ran
+    BEFORE the round-5 budget gate, so an over-budget run still spent tokens on it. Moved the budget
+    check to right after the non-LLM safety work (reconcile + breakers) and BEFORE both LLM sites
+    (revalidation + generation); revalidation is now skipped on budget while deterministic expiry
+    still runs. (`src/lib/strategy.ts`.)
+17. **Removed the outer budget suppressions.** `triggers.fire()` and the scheduler still `return`/
+    `continue`d before entering `runStrategyOnce` when over budget — which also skipped the drawdown/
+    volatility breakers + reconciliation inside the run. Removed both outer gates so the run is always
+    entered (safety runs) and only the LLM work is skipped by the internal gate. (`triggers.ts`,
+    `scheduler.ts`; token-budget test updated to assert the run IS entered + no `trigger_suppressed_budget`.)
+18. **Protective-stop pending-cancel retry.** The `pending_cancel` retry ran before the round-5
+    `liveReplaceBlocked` check, so it could cancel a still-open position's only stop when the replace
+    is blocked. Moved `liveLongs` + `liveReplaceBlocked` up front and made the retry skip still-open
+    positions when replacement is blocked (closed-position cancels stay risk-reducing). (`broker-protective-stops.ts`.)
+
 ## Verification
 
-`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1731/1731** · `npm run build` ok.
+`npx tsc --noEmit` 0 errors · `npm run lint` 0 errors · `npm test` **1730/1730** · `npm run build` ok.
 (Private `@jaywedgeworth22/congress-trading-shared` dep stubbed locally as before; CI `verify` uses the
 real package.)
 

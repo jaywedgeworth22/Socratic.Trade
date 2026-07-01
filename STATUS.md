@@ -30,7 +30,12 @@ is documented as a bounded, deferred limitation (a true per-user reservation is 
 risk-reducing/emergency cancels) — now only cancel-then-place WORKFLOWS guard before their own cancel
 phase, so standalone cancels always work; and moved the budget gate from the top of `runStrategyOnce`
 to just before LLM generation, AFTER the drawdown breaker + reconciliation, so a cost cap can't disable
-non-LLM safety. Verify quartet green (1731 tests). See `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+non-LLM safety. **Round 6** (3 P2 consolidating the choke points): the budget gate now also skips LLM
+proposal REVALIDATION (another model call) and sits after the non-LLM safety work; the outer budget
+suppressions in `triggers.fire()`/scheduler were removed so an over-budget run still runs its risk
+breakers (only LLM is skipped); and the protective-stop `pending_cancel` retry now skips still-open
+positions when a replacement stop can't be placed. Verify quartet green (1730 tests). See
+`docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
 
 ## 2026-07-01 — Audit workstreams F + G implemented (Claude, 4 parallel agents)
 Branch `claude/audit-work-split-f-g-o67jj2`. Implemented **both** F (UX/IA/aesthetics) and G

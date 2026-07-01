@@ -289,22 +289,45 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
+    // breakers above) and BEFORE any model call below (proposal REVALIDATION and generation), so a
+    // spend cap NEVER disables risk maintenance — it only skips the LLM work. The single choke point
+    // for EVERY run entry (event trigger, interval scheduler, manual "Run once" API, mobile command,
+    // future). Default OFF unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
+    //
+    // Known limitation (bounded, documented — docs/rollouts/2026-07-01-fg-codex-review-fixes.md): a
+    // read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account runs can
+    // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
+    // needs a per-user reservation / run serialization — deferred as a follow-up.
+    const budget = checkLlmDailyBudget(userId);
+    const skipLlmDueToBudget = !budget.ok;
+    if (skipLlmDueToBudget) {
+      audit(
+        "strategy_run_suppressed_budget",
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        userId
+      );
+    }
+
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
-    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
-    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
-    //       cadence (regular market hours only) against this run's fresh scan — withdrawing
-    //       what no longer holds, stamping the survivors as re-validated.
+    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes (non-LLM — always
+    //       runs, it's safety hygiene), then
+    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their cadence —
+    //       SKIPPED when over the LLM budget, since it calls the model (records usage).
     const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
       .catch((e) => {
         console.error("[expiry] run error:", e);
         return { expired: 0 };
       });
-    const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
-      .catch((e) => {
-        console.error("[revalidation] run error:", e);
-        return null;
-      });
+    const revalidation = skipLlmDueToBudget
+      ? null
+      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+          .catch((e) => {
+            console.error("[revalidation] run error:", e);
+            return null;
+          });
 
     const betaBySymbol: Record<string, number> = {};
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
@@ -408,26 +431,9 @@ export async function runStrategyOnce(
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Gate LLM proposal generation on the daily token/$ budget — the single choke point for EVERY run
-    // entry (event trigger, interval scheduler, manual "Run once" API, mobile command, future). Placed
-    // HERE, AFTER the non-LLM safety work (drawdown/volatility breakers, pending-fill reconciliation
-    // above) and BEFORE the model call, so a spend cap NEVER disables risk maintenance — it only skips
-    // the LLM part, exactly like the score-threshold skip. Default OFF unless an operator sets
-    // TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
-    //
-    // Known limitation (bounded, documented — see docs/rollouts/2026-07-01-fg-codex-review-fixes.md):
-    // this is a read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account
-    // runs can overshoot by up to the in-flight runs' spend (bounded by the scheduler's concurrency
-    // cap). A true hard cap needs a per-user reservation / run serialization — deferred as a follow-up.
-    const budget = checkLlmDailyBudget(userId);
-    const skipLlmDueToBudget = !budget.ok;
-    if (skipLlmDueToBudget) {
-      audit(
-        "strategy_run_suppressed_budget",
-        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
-        userId
-      );
-    }
-
+    // LLM proposal generation is skipped when over the daily budget (skipLlmDueToBudget, computed
+    // above before revalidation) or when no candidate cleared the score threshold. Non-LLM safety
+    // work already ran regardless.
     let llmProposals: TradeProposal[] = [];
     if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
       const proposed = await proposeTrades({

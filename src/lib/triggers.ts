@@ -142,16 +142,10 @@ async function fire(userId: string): Promise<void> {
     return;
   }
 
-  const budget = checkLlmDailyBudget(userId);
-  if (!budget.ok) {
-    audit(
-      "trigger_suppressed_budget",
-      { userId, reason: budget.reason, events: batch.length, types: distinctTypes(batch), tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
-      userId
-    );
-    return;
-  }
-
+  // NOTE: the daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
+  // breakers + reconciliation, before proposal generation), NOT here — suppressing the whole run at
+  // this outer gate would also skip the drawdown/volatility breakers + fill reconciliation, disabling
+  // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
   const now = Date.now();
   rollWindows(s, now);
   s.lastRunMs = now;

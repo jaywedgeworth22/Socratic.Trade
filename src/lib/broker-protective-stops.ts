@@ -88,9 +88,26 @@ export async function reconcileBrokerProtectiveStops(args: {
   if (!brokerProtectiveStopsEnabled(policy, executionMode)) return out;
   const stopPct = policy.riskRules!.stopLossPct!;
 
-  // 1. Retry pending cancellations first
+  // Robinhood is long-only, so protective stops only apply to long positions. Computed UP FRONT
+  // (before any cancel) so the guards below know which positions are still open.
+  const liveLongs = new Map<string, EquityPosition>();
+  for (const p of positions) {
+    if (p.quantity > 0.000001) liveLongs.set(normalizeSymbol(p.symbol), p);
+  }
+  // Would a live REPLACEMENT stop be blocked (broker/live without ALLOW_LIVE_TRADING)? If so, we must
+  // not cancel an OPEN position's only stop with no replacement — that would leave it unprotected.
+  // Cancels for CLOSED positions stay risk-reducing and are never blocked.
+  const liveReplaceBlocked = livePreflightBlocks({
+    mode: executionMode,
+    usesLocalSimulation: executionMode === "test/local",
+    paperMode: policy.paperMode
+  });
+
+  // 1. Retry pending cancellations first — but for a STILL-OPEN position, skip the retry when a
+  //    replacement can't be placed (keep its existing stop rather than orphaning the position).
   for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
     if (row.status === "pending_cancel") {
+      if (liveReplaceBlocked && liveLongs.has(normalizeSymbol(row.symbol))) continue;
       try {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
@@ -100,12 +117,6 @@ export async function reconcileBrokerProtectiveStops(args: {
         console.error(`[protective-stops] retry cancel failed for ${row.symbol} order ${row.brokerOrderId}:`, err);
       }
     }
-  }
-
-  // Robinhood is long-only, so protective stops only apply to long positions.
-  const liveLongs = new Map<string, EquityPosition>();
-  for (const p of positions) {
-    if (p.quantity > 0.000001) liveLongs.set(normalizeSymbol(p.symbol), p);
   }
 
   // 2. Cancel-on-close (runs regardless of `running` — cancelling is always risk-reducing).
@@ -128,14 +139,8 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   // 3. Mismatch detection: if quantity or stop price has drifted, cancel the existing stop.
   // On the next loop, it will be re-placed with correct values. This is a cancel-THEN-place: if the
-  // re-place (section 4) would be blocked (broker/live without ALLOW_LIVE_TRADING), skip the cancel so
-  // we KEEP the existing (slightly-mismatched) protective stop rather than orphaning the position.
-  // Standalone risk-reducing cancels (sections 1-2, /api/orders/cancel) are unaffected by this.
-  const liveReplaceBlocked = livePreflightBlocks({
-    mode: executionMode,
-    usesLocalSimulation: executionMode === "test/local",
-    paperMode: policy.paperMode
-  });
+  // re-place (section 4) would be blocked (`liveReplaceBlocked`, computed above), skip the cancel so we
+  // KEEP the existing (slightly-mismatched) protective stop rather than orphaning the position.
   const existingStops = listBrokerProtectiveStops(accountNumber, userId);
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
