@@ -41,7 +41,10 @@ import { sendNotification } from "./notifications";
 import { planFundingSells } from "./sell-to-fund";
 import { isRejectedOrCanceledState } from "./broker-side";
 import {
+  calibratedConviction,
+  getClosedLotCount,
   getConfidenceCalibration,
+  type ConfidenceCalibrationStat,
   getFactorScorecard,
   getPaperPortfolioProjection,
   getRegimeScorecard,
@@ -50,9 +53,12 @@ import {
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
+  MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT,
   recordFillFromProposal,
   recordPortfolioSnapshot
 } from "./performance";
+import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
+import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal, OPENING_ORDER_HEADROOM_PCT } from "./policy";
 import { atr, atrStopPct } from "./indicators";
@@ -77,7 +83,7 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, TradingPolicy, TradeProposal } from "./types";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ScoringWeights, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -156,6 +162,46 @@ export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
 }
 
+/**
+ * Item 3 (opt-in): return the scan-scoring weights for THIS run, applying a small clamped nudge for a
+ * factor that keeps showing up among matured missed winners. Transient — the nudge affects only this run's
+ * scoring, never the persisted policy weights (that's the item-1 autonomous-apply path). Returns
+ * `policy.scoringWeights` UNCHANGED (byte-identical) when the flag is off, no account is configured, or the
+ * closed-lot sample gate isn't met. Emits a `missed_opportunity_nudge` audit row when a nudge is applied.
+ */
+function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, runId: string, userId: string): ScoringWeights {
+  if (!policy.tuning?.missedOpportunityNudge || !policy.accountNumber) return policy.scoringWeights;
+  const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
+  const closedLotCount = getClosedLotCount(policy.accountNumber, source, userId);
+  if (closedLotCount < minLots) return policy.scoringWeights;
+
+  const benchmarkRelative = policy.tuning?.benchmarkRelativeMisses ?? false;
+  const minRecurringCount = policy.tuning?.recurringFactorMinCount ?? (benchmarkRelative ? 5 : 2);
+  // Realized rows only (empty price map) — no live quotes needed here. Benchmark-relative annotation is
+  // deliberately skipped in this hot path (it would add a SPY fetch to every run); when the operator opts
+  // into benchmarkRelativeMisses without SPY data present the recurring-factor gate simply won't fire,
+  // which is the safe direction (no nudge rather than an unvalidated one).
+  const summary = summarizeMissedOpportunities(
+    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId }),
+    { limit: 8, benchmarkRelative, minRecurringCount }
+  );
+  if (!summary.recurringFactor) return policy.scoringWeights;
+
+  const nudge = applyMissedOpportunityNudge(policy.scoringWeights, summary);
+  if (!nudge.nudgedFactor) return policy.scoringWeights;
+  audit("missed_opportunity_nudge", {
+    runId,
+    userId,
+    factor: nudge.nudgedFactor,
+    delta: nudge.delta,
+    recurringFactorCount: summary.recurringFactorCount,
+    closedLotCount,
+    benchmarkRelative,
+    note: nudge.note
+  }, userId);
+  return nudge.weights;
+}
+
 export async function runStrategyOnce(
   userId: string = "local",
   options: { manual?: boolean; connectedAccountId?: string } = {}
@@ -216,10 +262,25 @@ export async function runStrategyOnce(
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+    // Item 3 (opt-in): thread a sample-gated, audited per-factor nudge from matured missed-opportunity
+    // evidence into THIS run's scan-scoring weights (transient — not persisted). Default OFF → the scan
+    // uses policy.scoringWeights byte-identically. The recurring-factor bar is raised (>=5) + SPY-relative
+    // only when item-4's benchmarkRelativeMisses is also on; otherwise the historical >0/>=2 test applies.
+    const scanWeights = resolveScanScoringWeights(policy, fillSourceForExecutionMode(executionState), runId, userId);
+    // Item 2 (opt-in): resolve the cached congress go/no-go gate multiplier (1 default / 0 when a fresh
+    // no-go verdict + gating on). Default OFF → multiplier 1 → congress scoring byte-identical.
+    const { multiplier: congressMultiplier, verdict: congressVerdict } = resolveCongressGateMultiplier(
+      userId,
+      policy.tuning?.congressGoNoGoGating ?? false
+    );
+    if (congressMultiplier === 0 && congressVerdict) {
+      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId);
+    }
+    const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
       outlierReserve: policy.marketScanOutlierReserve,
-      universeFloor: policy.universeFloor
+      universeFloor: policy.universeFloor,
+      congressMultiplier
     });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
@@ -456,6 +517,13 @@ export async function runStrategyOnce(
       llmSteps = proposed.llmSteps;
     }
 
+    // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
+    // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
+    const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
+      policy.tuning?.calibrationSizing && policy.accountNumber
+        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId)
+        : undefined;
+
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
     // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
@@ -469,7 +537,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
         return enrichOpeningProposal(sized, policy, marketScan);
       });
 
@@ -1197,7 +1265,7 @@ export async function applyCorrelationClusterGate(
   return kept;
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan): TradeProposal {
+export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -1228,7 +1296,20 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const sampleTrades = stat?.trades ?? 0;
   const winRate = stat?.shrunkWinRate ?? 50;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
-  const rawConviction = (proposal.confidenceScore ?? 50) / 100;
+  // Item 6 (opt-in, panel-hardened): remap confidenceScore through the account's realized confidence-
+  // calibration curve BEFORE it becomes the conviction multiplier — a poorly-calibrated high-confidence
+  // band is sized DOWN toward its (isotonic, shrunk) realized win rate, never inflated. Composes as a
+  // reduction fed into the existing conviction-cap MIN below. Default OFF → raw confidenceScore/100 as
+  // today. Only applies to BUYS (getConfidenceCalibration is long-only; shorts fall back to raw). The
+  // per-band sample gate uses minClosedLotsForWeightShift. Calibration is computed once per run and passed
+  // in (precomputedCalibration); falls back to an internal read when a direct caller doesn't supply it.
+  const rawScore = proposal.confidenceScore ?? 50;
+  let rawConviction = rawScore / 100;
+  if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
+    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId);
+    const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
+    rawConviction = calibratedConviction(rawScore, calibration, minLots);
+  }
 
   // Conviction-cap on PROVEN theses (panel finding): the LLM's confidenceScore is a direct linear
   // multiplier on size, and a learned "fact" can inflate it — so AI confidence alone could size up

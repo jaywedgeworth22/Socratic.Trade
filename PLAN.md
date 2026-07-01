@@ -46,6 +46,42 @@ filling the missing pieces.
 > `strategy.ts` god-module split and interval-scheduler budget wiring. Verify quartet
 > green locally (1720 tests); see `docs/rollouts/2026-07-01-{ux-ia-aesthetics,
 > security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
+> 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
+> Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
+> `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised
+> by 19 network-free tests pinning the as-of/rerank/hybrid fail-safes) and **R1 part 2**
+> (`VECTOR_ASOF_STRICT`, default off - drops undated chunks under an active `asOf` instead of
+> the lenient default, with a drop-count audit; golden as-of tuple proven end-to-end). Both
+> byte-identical to current behavior unless explicitly opted in. See
+> `docs/rollouts/2026-07-01-rag-followon.md`.
+> 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
+> highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
+> eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene
+> issues): a new recall@k/MRR eval harness (28-case golden fixture, no live network calls)
+> gates future retrieval-pipeline changes; rerank relevance scores are now captured +
+> surfaced with an opt-in post-rerank floor; char-cap alignment + write-time doc_type
+> lowercasing landed; the salience extractor's first-match-only ticker-binding bug was fixed
+> and a default-off structured-output LLM extractor with real ticker validation was added.
+> Hybrid BM25/RRF was evaluated (measured delta table) and stays off by default - reranking
+> alone already reaches the eval ceiling on the golden fixture. All behavior changes are
+> default-off/opt-in; no order/execution-path code touched. A parallel 16-agent expert
+> design review (`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) landed corrections
+> mid-implementation, folded in per the rollout note. See
+> `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for full item-by-item status and explicit
+> follow-ups (R1 strict as-of mode, R3/R4/R5/R6/R7/R9/R10/R11, R12-R17 P2 backlog).
+> 2026-07-01 (`agent/claude-workstream-b-learning-v2`): **Workstream B — learning
+> loop / auto-tuning.** Wired the audit's "built-but-unwired" learning loops into the
+> money path behind default-off `policy.tuning.*` flags, with the 16-expert-panel
+> corrections folded in (B1–B8): opt-in autonomous factor-weight apply (stricter OOS
+> gate + write-scope safety + scheduler-hosted cadence + audited revert); congress
+> go/no-go gating with a three-way verdict (no data-poverty kill-switch); missed-
+> opportunity per-factor scan nudge; ≥5 + SPY-relative recurringFactor; factor
+> attribution stamped at entry (no momentum default); confidence-calibration→sizing
+> (isotonic, reduce-only); per-regime IC report (application off — samples too thin);
+> and a REAL fix — paper/test protective EXITS now pay execution cost. Verify quartet
+> green (tsc/lint/1710 tests/build). See
+> `docs/rollouts/2026-07-01-learning-loop-autotuning.md` + `docs/phase-7-strategy.md` §3.E.
+>
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

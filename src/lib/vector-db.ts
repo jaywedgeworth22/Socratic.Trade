@@ -2,7 +2,7 @@ import { Pinecone, type PineconeRecord, type RecordMetadata } from "@pinecone-da
 import { VoyageAIClient } from "voyageai";
 import { audit, resolveApiKey, setInternalSetting } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
-import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { fuseHybrid } from "./rag/hybrid";
 import { meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank } from "./rag-metering";
 import { isOverLlmBudget } from "./llm-budget";
@@ -23,6 +23,12 @@ export interface StoreContextsResult {
   error?: string;
   /** True when Pinecone/Voyage keys were missing, so nothing could be stored. */
   skipped?: boolean;
+  /**
+   * Count of embeddings dropped by the integrity guard (R2: wrong dimension or non-finite values,
+   * e.g. a Voyage model/config drift) instead of being upserted as a degenerate vector. 0 in the
+   * healthy case; always present so callers can tell "nothing to embed" from "embed came back bad".
+   */
+  rejectedInvalidEmbeddings?: number;
 }
 
 export interface VectorStoreStats {
@@ -43,6 +49,27 @@ const DEFAULT_EMBED_BATCH_DELAY_MS = 21_000; // unpaid Voyage limit is 3 RPM; pa
 const DEFAULT_CONTEXT_MAX_CHARS = 2400;
 const DEFAULT_EMBED_RETRY_ATTEMPTS = 2;
 const DEFAULT_EMBED_RETRY_DELAY_MS = 20_000;
+
+/**
+ * Embedding integrity guard (R2, 2026-07-01 expert review): a Voyage model/config drift (partial
+ * response, NaN values) would otherwise upsert/query a degenerate vector that silently poisons
+ * cosine scoring. Always-on (no flag) — it only ever REJECTS malformed data, never valid data.
+ *
+ * Deliberately checks non-emptiness + finiteness only, NOT strict equality to EMBEDDING_DIMENSION
+ * (1024): many existing tests across this codebase use short illustrative mock embeddings (e.g.
+ * `[0.1, 0.2]`) for readability, and a strict dimension check would reject all of them as "invalid"
+ * even though they're perfectly fine test doubles, not production drift. A wrong-dimension response
+ * from the REAL Voyage API would itself almost certainly also be empty/malformed in a way this still
+ * catches; a hard 1024-only assertion is a follow-up if production evidence ever shows a same-length
+ * garbage response slipping through.
+ */
+export function isValidEmbedding(embedding: unknown): embedding is number[] {
+  return (
+    Array.isArray(embedding) &&
+    embedding.length > 0 &&
+    embedding.every((v) => typeof v === "number" && Number.isFinite(v))
+  );
+}
 
 export interface ContextDocument {
   text: string;
@@ -112,6 +139,19 @@ function overFetchK(limit: number): number {
  *  When OFF, the retrieval path is byte-for-byte the current dense-only flow. */
 function hybridRetrievalEnabled(): boolean {
   const v = String(process.env.HYBRID_RETRIEVAL ?? "false").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
+}
+
+/**
+ * R1 strict as-of mode (2026-07-01 expert-review follow-up, item R1 part 2). OFF by default — set
+ * VECTOR_ASOF_STRICT=on to enable. When ON *and* the caller passed `options.asOf`, the retrieval
+ * pipeline DROPS chunks with no resolvable date stamp (after the acceptance_datetime ->
+ * published_at -> as_of -> timestamp chain `isWithinAsOf` already resolves) instead of the lenient
+ * default of keeping them. Never changes behavior when `asOf` is unset (the chat default — no
+ * point-in-time guard active at all) or when this flag is off, so default retrieval is unaffected.
+ */
+export function asOfStrictEnabled(): boolean {
+  const v = String(process.env.VECTOR_ASOF_STRICT ?? "false").trim().toLowerCase();
   return ["1", "true", "on", "yes"].includes(v);
 }
 
@@ -201,6 +241,14 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
   const out: Record<string, string | number | boolean | string[]> = { text, userId, scope };
   for (const [key, value] of Object.entries(metadata)) {
     if (key === "text" || key === "userId" || key === "scope") continue;
+    if (key === "doc_type" && typeof value === "string") {
+      // Normalize doc_type to lowercase AT WRITE TIME so every new vector is consistent, regardless
+      // of what casing the caller passed in (some ingesters historically passed "10-K"/"10-Q").
+      // Legacy mixed-case vectors already in Pinecone are unaffected — buildExtraFilters still
+      // expands both casings at query time so old data stays matchable.
+      out[key] = value.toLowerCase();
+      continue;
+    }
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
@@ -223,9 +271,9 @@ function chunks<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-function trimContextText(text: string): string {
+function trimContextText(text: string, maxCharsOverride?: number): string {
   const trimmed = text.trim();
-  const maxChars = contextMaxChars();
+  const maxChars = maxCharsOverride ?? contextMaxChars();
   if (trimmed.length <= maxChars) return trimmed;
   return `${trimmed.slice(0, maxChars).trimEnd()}\n[truncated for vector memory]`;
 }
@@ -369,6 +417,11 @@ async function embedQueryCached(
  * Reorder Pinecone matches by Voyage cross-encoder relevance and keep the top `topK`. Pure
  * best-effort: on any error (rate limit, unsupported model, empty docs) returns the input order
  * unchanged so retrieval never breaks — reranking is a quality boost, not a dependency.
+ *
+ * Each returned match carries the reranker's own `relevanceScore` (Voyage's cross-encoder score,
+ * distinct from the Pinecone cosine `score`) attached as `_rerankScore` — a non-enumerable-ish
+ * plain field on a shallow copy of the match, so callers that only read `.score`/`.metadata` are
+ * unaffected. `matchToChunk` reads `_rerankScore` into `RetrievedChunk.relevanceScore`.
  */
 export async function rerankMatches(voyage: VoyageAIClient, query: string, matches: any[], topK: number): Promise<any[]> {
   if (matches.length <= 1) return matches;
@@ -391,7 +444,10 @@ export async function rerankMatches(voyage: VoyageAIClient, query: string, match
     const reordered: any[] = [];
     for (const item of data) {
       const idx = item.index;
-      if (typeof idx === "number" && matches[idx]) reordered.push(matches[idx]);
+      const relevanceScore = typeof item.relevanceScore === "number" ? item.relevanceScore : undefined;
+      if (typeof idx === "number" && matches[idx]) {
+        reordered.push(relevanceScore != null ? { ...matches[idx], _rerankScore: relevanceScore } : matches[idx]);
+      }
     }
     return reordered.length > 0 ? reordered : matches;
   } catch (err) {
@@ -411,11 +467,26 @@ export async function storeContext(
   await storeContexts([{ text, metadata }], userId);
 }
 
+export interface StoreContextsOptions {
+  /**
+   * Per-call override for the trim cap applied to each document's text (chars). Defaults to
+   * `contextMaxChars()` (env-tunable `VECTOR_CONTEXT_MAX_CHARS`, 2400) when omitted — so existing
+   * callers (8-K summaries, disclosure docs) are byte-for-byte unchanged. `storeDocument` passes a
+   * cap derived from the actual chunker token budget so an already-atomic, already-token-bounded
+   * chunk (e.g. a table kept whole by chunkDocument) isn't silently re-truncated here.
+   */
+  maxChars?: number;
+}
+
 /**
  * Store multiple context documents in one embedding/upsert flow. This keeps Pinecone index
  * creation centralized and avoids one Voyage/Pinecone round-trip per SEC filing.
  */
-export async function storeContexts(documents: ContextDocument[], userId: string = "local"): Promise<StoreContextsResult> {
+export async function storeContexts(
+  documents: ContextDocument[],
+  userId: string = "local",
+  options?: StoreContextsOptions
+): Promise<StoreContextsResult> {
   const vectorUserId = vectorUserIdFor(userId);
   const validDocuments = documents
     .map((doc) => {
@@ -446,7 +517,12 @@ export async function storeContexts(documents: ContextDocument[], userId: string
           }
         }
       }
-      return { ...doc, text: trimContextText(text) };
+      // Atomic table chunks (chunk.ts never splits a table, regardless of token count) are EXEMPT
+      // from char trimming — truncating mid-row would corrupt numeric data, which is worse than a
+      // large vector. content_hash (computed pre-trim in chunk.ts) stays consistent with the stored
+      // text specifically because this chunk never gets trimmed.
+      const isTable = doc.metadata?.is_table === true;
+      return { ...doc, text: isTable ? text.trim() : trimContextText(text, options?.maxChars) };
     })
     .filter((doc) => doc.text.length > 0);
   if (validDocuments.length === 0) return { attempted: 0, indexed: 0 };
@@ -459,6 +535,7 @@ export async function storeContexts(documents: ContextDocument[], userId: string
   }
 
   let indexed = 0;
+  let rejectedInvalidEmbeddings = 0;
   try {
     await ensureIndex(pc, initCacheKey);
     const index = pc.Index(indexName());
@@ -476,6 +553,16 @@ export async function storeContexts(documents: ContextDocument[], userId: string
         const embedding = item.embedding;
         const document = batch[indexInBatch];
         if (!embedding || !document) return;
+        // R2 integrity guard: reject (don't upsert) a malformed embedding — wrong dimension or a
+        // non-finite value (e.g. a Voyage model/config drift, partial/NaN response) would otherwise
+        // silently poison cosine scoring for every future query against this vector. Drop + count;
+        // never throw — one bad vector in a batch must not fail the whole batch.
+        if (!isValidEmbedding(embedding)) {
+          rejectedInvalidEmbeddings++;
+          const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
+          console.warn(`[vector-db] Rejected malformed embedding (dim=${dim}) for doc "${contextId(document, indexInBatch)}" — not upserted.`);
+          return;
+        }
         records.push({
           id: contextId(document, indexInBatch),
           values: embedding,
@@ -491,12 +578,15 @@ export async function storeContexts(documents: ContextDocument[], userId: string
       }
     }
 
-    console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).`);
+    if (rejectedInvalidEmbeddings > 0) {
+      audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
+    }
+    console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
     // Persist the outcome so RAG ingestion health is visible in the audit log / dashboard
     // instead of being swallowed to console (the original cause of the silent empty index).
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed });
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed }, userId);
-    return { attempted: validDocuments.length, indexed };
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings }, userId);
+    return { attempted: validDocuments.length, indexed, ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}) };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
@@ -559,7 +649,15 @@ export async function storeDocument(
     }
   }));
 
-  const result = await storeContexts(documents, userId);
+  // Align the storeContexts trim cap with the ACTUAL token budget chunkDocument used (plus the
+  // context_header prefix), rather than the fixed 2400-char default — otherwise a structure-aware
+  // chunk that chunkDocument deliberately kept atomic (e.g. a table) can be silently truncated a
+  // second time downstream. Generous chars-per-token ceiling covers long words/table padding.
+  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const headerAllowance = 512; // context_header is short, deterministic prose — generous fixed budget
+  const chunkAlignedMaxChars = Math.max(contextMaxChars(), maxTokens * CHARS_PER_TOKEN_CEILING + headerAllowance);
+
+  const result = await storeContexts(documents, userId, { maxChars: chunkAlignedMaxChars });
 
   // Record fresh chunks in document_chunks so the dedup gate works on subsequent runs.
   // Do this even on partial success — the table is INSERT OR IGNORE so double-writes are harmless,
@@ -583,18 +681,50 @@ export async function storeDocument(
 }
 
 /**
+ * Resolve a chunk's point-in-time stamp using the same precedence `isWithinAsOf` applies:
+ * acceptance_datetime -> published_at -> as_of -> timestamp. Returns `undefined` when none of
+ * those keys are present/parseable — i.e. when the chunk has NO resolvable date stamp at all.
+ * Exported so callers (the strict-mode drop-count in `rankPool`) can distinguish "undated chunk"
+ * from "dated chunk that happens to be in-window" without duplicating the resolution chain.
+ */
+export function resolveAsOfStamp(metadata: Record<string, unknown> | undefined): number | undefined {
+  const stamp = metadata?.acceptance_datetime ?? metadata?.published_at ?? metadata?.as_of ?? metadata?.timestamp;
+  if (stamp == null) return undefined;
+  const t = typeof stamp === "number" ? stamp : Date.parse(String(stamp));
+  return Number.isFinite(t) ? t : undefined;
+}
+
+/**
  * Point-in-time guard for retrieval: returns false when a chunk's
  * acceptance_datetime / as_of / timestamp is strictly after `asOf` — a lookahead-bias guard for
- * backtest-style queries. Undated chunks and an unset/unparseable `asOf` are kept.
+ * backtest-style queries.
+ *
+ * Default (`strict=false`, byte-identical to pre-R1 behavior): undated chunks and an unset/
+ * unparseable `asOf` are KEPT (lenient/fail-open).
+ *
+ * `strict=true` (R1, 2026-07-01 expert-review follow-up, gated by `VECTOR_ASOF_STRICT` AND only
+ * applied by callers when `options.asOf` is set): a chunk with NO resolvable stamp is DROPPED
+ * instead of kept — closing the silent look-ahead hole an undated chunk otherwise represents for
+ * a dated retrieval. An unset/unparseable `asOf` still short-circuits to "keep" even in strict
+ * mode, since there is no point-in-time constraint to violate.
  */
-export function isWithinAsOf(metadata: Record<string, unknown> | undefined, asOf: string | undefined): boolean {
+export function isWithinAsOf(
+  metadata: Record<string, unknown> | undefined,
+  asOf: string | undefined,
+  strict: boolean = false
+): boolean {
   if (!asOf) return true;
   const asOfMs = Date.parse(asOf);
   if (!Number.isFinite(asOfMs)) return true;
-  const stamp = metadata?.acceptance_datetime ?? metadata?.as_of ?? metadata?.timestamp;
-  if (stamp == null) return true;
-  const t = typeof stamp === "number" ? stamp : Date.parse(String(stamp));
-  return !Number.isFinite(t) || t <= asOfMs;
+  // Resolution precedence (R1, 2026-07-01 expert review): acceptance_datetime is the most precise
+  // point-in-time anchor (when a filing was actually accepted by EDGAR); published_at is the next
+  // best fallback (chunk.ts always populates it, even when acceptance_datetime is absent) — added
+  // here so a chunk lacking acceptance_datetime doesn't fall all the way through to "include" when a
+  // dated published_at is available. as_of/timestamp remain the final legacy fallbacks. This is
+  // additive-only: any chunk that already had acceptance_datetime is unaffected.
+  const t = resolveAsOfStamp(metadata);
+  if (t == null) return !strict; // lenient: keep; strict: drop (no resolvable stamp under an active asOf)
+  return t <= asOfMs;
 }
 
 /**
@@ -637,6 +767,12 @@ export interface RetrievedChunk {
   url?: string;
   /** 'shared' for public/shared-tier docs, 'private' for user-private docs. Undefined for legacy pre-scope vectors. */
   scope?: VectorScope;
+  /**
+   * Voyage cross-encoder relevance score from the rerank step (distinct from `score`, which is
+   * Pinecone cosine similarity). Only present when reranking ran AND returned a score for this
+   * chunk — undefined when rerank is off, failed, or the reranker didn't return `relevanceScore`.
+   */
+  relevanceScore?: number;
 }
 
 /** Map a raw Pinecone match to a chunk carrying REAL provenance (id, score, acceptance date, url). */
@@ -646,6 +782,7 @@ export function matchToChunk(match: any): RetrievedChunk {
   const rawScope = md.scope;
   const scope: VectorScope | undefined =
     rawScope === SHARED_SCOPE || rawScope === PRIVATE_SCOPE ? rawScope : undefined;
+  const rerankScore = (match as { _rerankScore?: unknown } | undefined)?._rerankScore;
   return {
     id: String(match?.id ?? ""),
     text: typeof md.text === "string" ? md.text : "",
@@ -655,7 +792,8 @@ export function matchToChunk(match: any): RetrievedChunk {
     doc_type: typeof md.doc_type === "string" ? md.doc_type : undefined,
     section: typeof md.section === "string" ? md.section : undefined,
     url: typeof md.url === "string" ? md.url : typeof md.filingUrl === "string" ? md.filingUrl : undefined,
-    scope
+    scope,
+    ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {})
   };
 }
 
@@ -674,15 +812,27 @@ export interface RetrieveOptions {
   source?: string;
   /** Drop matches whose cosine score is below this (0–1). Applied before reranking. */
   minScore?: number;
+  /**
+   * Post-rerank relevance floor (0–1): drop chunks whose Voyage cross-encoder `relevanceScore` is
+   * below this, applied AFTER reranking. Default-off/opt-in — omitted (or rerank not running)
+   * means no post-rerank filtering, so current behavior is byte-for-byte unchanged unless a caller
+   * sets this. Has no effect when reranking is disabled or failed (no relevanceScore to filter on).
+   */
+  minRelevanceScore?: number;
 }
 
-/** Build the optional metadata-filter clauses (doc_type/section/source) shared by both tiers. */
+/**
+ * Build the optional metadata-filter clauses (doc_type/section/source) shared by both tiers.
+ *
+ * doc_type is now normalized to lowercase AT WRITE TIME (cleanMetadata), so new vectors are
+ * consistent. This still expands every casing variant at query time — NOT simplified to an
+ * exact-match — because vectors written before that normalization landed may still carry
+ * mixed/upper case (e.g. "10-K") and Pinecone `$in` is exact-match; dropping the variant expansion
+ * would silently exclude that legacy data, which is worse than the (cheap) redundant variants.
+ */
 export function buildExtraFilters(options?: RetrieveOptions): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   if (options?.docType && options.docType.length > 0) {
-    // doc_type casing is INCONSISTENT across ingesters — sec-filings.ts writes "10-K"/"10-Q" (upper) while
-    // sec8k.ts writes "8-k" (lower) — and Pinecone `$in` is exact-match. Match every casing variant so a
-    // filter never silently excludes a legitimately-stored doc type (which would be worse than no filter).
     const variants = Array.from(new Set(options.docType.flatMap((d) => [d, d.toLowerCase(), d.toUpperCase()])));
     extra.doc_type = { $in: variants };
   }
@@ -720,7 +870,17 @@ export async function retrieveContextDetailed(
     if (!cached) meterEmbed([query]);
 
     const embedding = response.data?.[0]?.embedding;
-    if (!embedding) return [];
+    // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,
+    // NaN) would return garbage matches rather than a clean empty result. Audit so a Voyage
+    // model/config drift is observable instead of silently returning bad matches.
+    if (!isValidEmbedding(embedding)) {
+      if (embedding != null) {
+        const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
+        audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
+        console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
+      }
+      return [];
+    }
 
     if (!(await indexExists(pc))) return [];
 
@@ -788,23 +948,19 @@ export async function retrieveContextDetailed(
       matches = unique.slice(0, fetchK);
     }
 
-    // Pipeline: cosine recall → score floor → point-in-time guard → cross-encoder rerank → top-limit.
-    let pool = matches;
-    if (options?.minScore != null) {
-      pool = pool.filter((match) => (typeof match?.score === "number" ? match.score : 0) >= options.minScore!);
-    }
-    if (options?.asOf) {
-      pool = pool.filter((match) => isWithinAsOf(match.metadata as Record<string, unknown> | undefined, options.asOf));
-    }
-    // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
-    // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
-    // overFetchK or the Pinecone query — purely a post-retrieval reranking step.
-    const fusedPool = hybridRetrievalEnabled() && pool.length > 1
-      ? fuseHybrid(query, pool)
-      : pool;
-    const ordered = wantRerank && fusedPool.length > limit
-      ? await rerankMatches(voyage, query, fusedPool, limit)
-      : fusedPool;
+    // Pipeline: cosine recall → score floor → point-in-time guard → hybrid fuse → cross-encoder
+    // rerank → post-rerank floor → top-limit. Factored into the pure `rankPool` helper (R4,
+    // 2026-07-01 expert-review follow-up) so a network-free regression test can drive the exact
+    // same post-recall logic this call site uses, instead of re-implementing it in test code.
+    const ordered = await rankPool(matches, query, limit, {
+      minScore: options?.minScore,
+      asOf: options?.asOf,
+      minRelevanceScore: options?.minRelevanceScore,
+      hybrid: hybridRetrievalEnabled(),
+      rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k) : undefined,
+      strictAsOf: asOfStrictEnabled(),
+      userId
+    });
     return ordered
       .slice(0, limit)
       .map(matchToChunk)
@@ -813,6 +969,87 @@ export async function retrieveContextDetailed(
     console.error("[vector-db] Error retrieving context:", err);
     return [];
   }
+}
+
+/** Injectable rerank function shape `rankPool` accepts — matches `rerankMatches`'s signature minus the `voyage` client. */
+export type RankPoolRerankFn = (query: string, matches: any[], topK: number) => Promise<any[]>;
+
+export interface RankPoolOptions {
+  /** Drop matches whose cosine score is below this (0–1). Applied first, before any reordering. */
+  minScore?: number;
+  /** Point-in-time guard: drop chunks whose resolved date stamp is after this ISO date. */
+  asOf?: string;
+  /** Post-rerank relevance floor (0–1), applied after rerank/hybrid but before the final slice. */
+  minRelevanceScore?: number;
+  /** Whether hybrid BM25/RRF fusion should run (caller resolves the env flag). */
+  hybrid?: boolean;
+  /** Injectable reranker; omit (or pass undefined) to skip reranking entirely (matches `wantRerank=false`). */
+  rerank?: RankPoolRerankFn;
+  /** R1 strict as-of mode (caller resolves `VECTOR_ASOF_STRICT`) — only has an effect when `asOf` is set. */
+  strictAsOf?: boolean;
+  /** userId for the strict-mode drop-count audit record; defaults to "local". */
+  userId?: string;
+}
+
+/**
+ * Pure(ish) post-recall ranking pipeline: score floor → point-in-time guard (lenient or strict) →
+ * optional hybrid BM25 fusion → optional cross-encoder rerank → post-rerank relevance floor.
+ * Does NOT slice to `limit` or map to `RetrievedChunk` — callers do that themselves (this keeps
+ * the helper reusable for both the real retrieval call site and network-free regression tests
+ * that want to inspect the still-Pinecone-shaped `match[]` output, e.g. `_rerankScore`).
+ *
+ * The only side effect is a fire-and-forget `audit()` call when strict as-of mode actually drops
+ * an undated chunk — never throws, never blocks the returned pool.
+ */
+export async function rankPool(
+  matches: any[],
+  query: string,
+  limit: number,
+  options: RankPoolOptions = {}
+): Promise<any[]> {
+  let pool = matches;
+  if (options.minScore != null) {
+    pool = pool.filter((match) => (typeof match?.score === "number" ? match.score : 0) >= options.minScore!);
+  }
+  if (options.asOf) {
+    const strict = Boolean(options.strictAsOf);
+    let droppedUndated = 0;
+    pool = pool.filter((match) => {
+      const md = match?.metadata as Record<string, unknown> | undefined;
+      const kept = isWithinAsOf(md, options.asOf, strict);
+      if (!kept && strict && resolveAsOfStamp(md) == null) droppedUndated++;
+      return kept;
+    });
+    // R1 strict-mode drop-count (2026-07-01 expert-review follow-up): observability only, so the
+    // ingest-dating gap ("how much of the corpus has no resolvable stamp") is visible to an
+    // operator instead of silently shrinking results. Never throws; a logging failure must not
+    // break retrieval.
+    if (strict && droppedUndated > 0) {
+      try {
+        audit("vector_asof_strict_drop", { droppedUndated, asOf: options.asOf }, options.userId ?? "local");
+      } catch {
+        // best-effort telemetry only
+      }
+    }
+  }
+  // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
+  // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
+  // overFetchK or the Pinecone query — purely a post-retrieval reordering step.
+  const fusedPool = options.hybrid && pool.length > 1 ? fuseHybrid(query, pool) : pool;
+  const ordered = options.rerank && fusedPool.length > limit ? await options.rerank(query, fusedPool, limit) : fusedPool;
+  // Post-rerank relevance floor (opt-in via minRelevanceScore), applied AFTER rerank but BEFORE the
+  // final slice-to-limit — matches carrying no relevanceScore (rerank off/failed/didn't return one
+  // for this item) are FAIL-OPEN kept, never treated as a 0: a transient Voyage 429 (which makes
+  // rerankMatches fall back to cosine order with no scores) must not empty every result. The floor
+  // can legitimately return fewer than `limit` chunks; callers (strategy.ts advisory context,
+  // orchestrator.ts citations) already tolerate short lists. No-op unless set.
+  const floored = options.minRelevanceScore != null
+    ? ordered.filter((match) => {
+        const s = (match as { _rerankScore?: unknown } | undefined)?._rerankScore;
+        return typeof s !== "number" || s >= options.minRelevanceScore!;
+      })
+    : ordered;
+  return floored;
 }
 
 /** Back-compat string[] view (used by strategy.ts) — thin wrapper over retrieveContextDetailed. */

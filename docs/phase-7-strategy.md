@@ -344,7 +344,42 @@ The ultimate expression of the learning loop is adjusting the Initial Factor Wei
   - Maximum 5-point weight delta per factor suggestion.
   - Maximum 10-point weight delta per sector shift suggestion.
   - Strict sector concentration caps (e.g., no single sector can exceed 40% of the portfolio).
-  - Never auto-apply; requires human approval via the Dashboard.
+  - Human approval via the Dashboard is the DEFAULT.
+
+#### E.1 Opt-in autonomous factor-weight apply (Workstream B, 2026-07-01 — DEFAULT OFF)
+A default-off `policy.tuning.autoApplyWeights` flag lets a cadence-gated caller apply the auto-tuner's
+factor-weight suggestions WITHOUT human approval — but ONLY under strictly stronger gates than the manual
+suggestion path:
+- **Cadence:** hosted in `scheduler.ts` after a successful `runStrategyOnce`, under the single-leader gate,
+  on its own slow clock (`AUTO_TUNE_MIN_INTERVAL_HOURS`, default 24h) — NOT the event-driven trigger path.
+- **Write scope:** ONLY `proposedPatch.scoringWeights` are applied. The tuning patch's `policy` sub-patch
+  (risk caps, `strategyAuthority`, `riskRules`, `sectorCaps`) and free-text `prompt` are NEVER auto-applied,
+  so an autonomous run can't loosen a risk control or flip authority to `decide`.
+- **Statistical gate:** a stricter-than-manual OOS re-validation on the exact vector to be persisted —
+  requires a minimum IC-delta margin over baseline, positive absolute candidate IC, an ICIR floor, and a
+  minimum test-date count; a null OOS run (<4 distinct snapshot dates) is a HARD no-apply.
+- **Clamp:** each factor delta is re-clamped to ±`MAX_WEIGHT_STEP` (5 points) AFTER normalization.
+- **Persistence + revert:** applied via `setPolicy` (syncs account_strategy_state + the active-profile
+  mirror); an `auto_weight_apply` audit row stores the prior vector so `revertAutonomousWeightTuning`
+  restores it. Off by default → the human-approval path above is unchanged.
+
+#### E.2 Congress-signal go/no-go gating (Workstream B — DEFAULT OFF)
+A default-off `policy.tuning.congressGoNoGoGating` flag gates the congressional scan contribution on a cached
+statistical verdict (`congress-score-eval` → three-way PASS / FAIL_SIGNIFICANCE / INSUFFICIENT). Only a
+data-backed significance failure down-weights the term to zero; a data-poor account resolves to INSUFFICIENT
+and stays neutral (never a permanent kill-switch). Verdict cached out of the scan hot path, surfaced on the
+dashboard, refreshed via `POST /api/admin/congress-score-eval`.
+
+#### E.3 Confidence calibration → sizing (Workstream B — DEFAULT OFF)
+A default-off `policy.tuning.calibrationSizing` flag remaps a BUY proposal's `confidenceScore` DOWN toward its
+realized (Bayesian-shrunk, isotonic-across-bands, per-band-sample-gated) win rate before it becomes the
+conviction sizing multiplier — de-risking persistent over-confidence. Reduce-only; shorts fall back to raw;
+composes as a reduction feeding the existing conviction cap.
+
+#### E.4 Execution cost on protective exits (Workstream B — correctness fix, ON)
+The paper/test execution-cost model now also debits EXIT fills booked by `synthetic-stops.ts` and
+`order-replacement.ts` (previously they inserted raw-price exits with no cost), so the learning loop's
+realized edge is net-of-cost on both legs — not just entries.
 
 ## 4. Test Plan
 - **Context/Outcome Fixture:** Seed buy/sell fills and assert that `entryMarketRegime`, `mae`, and `mfe` are accurately captured and calculated.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildExtraFilters, defaultMinScore, isWithinAsOf, rerankMatches } from "../src/lib/vector-db";
+import { buildExtraFilters, defaultMinScore, isWithinAsOf, matchToChunk, rerankMatches } from "../src/lib/vector-db";
 
 describe("buildExtraFilters", () => {
   it("is empty with no options", () => {
@@ -72,6 +72,34 @@ describe("rerankMatches", () => {
     const out = await rerankMatches(fakeVoyage(() => ({ data: [] })), "q", matches, 2);
     expect(out.map((x) => x.id)).toEqual(["a", "b"]);
   });
+
+  // Item 2 (2026-07-01 RAG workstream): the reranker's own relevanceScore was previously discarded —
+  // rerankMatches only reordered by index, and matchToChunk only read Pinecone's cosine `score`.
+  it("attaches the reranker's relevanceScore onto each reordered match (not just reordering by index)", async () => {
+    const matches = [m("a", "alpha", 0.9), m("b", "beta", 0.8), m("c", "gamma", 0.7)];
+    const voyage = fakeVoyage(() => ({
+      data: [{ index: 2, relevanceScore: 0.95 }, { index: 0, relevanceScore: 0.4 }]
+    }));
+    const out = await rerankMatches(voyage, "q", matches, 2);
+    expect(out.map((x) => x.id)).toEqual(["c", "a"]);
+    // matchToChunk reads _rerankScore into RetrievedChunk.relevanceScore.
+    expect(matchToChunk(out[0]).relevanceScore).toBe(0.95);
+    expect(matchToChunk(out[1]).relevanceScore).toBe(0.4);
+  });
+
+  it("matchToChunk omits relevanceScore when reranking never ran (no _rerankScore on the match)", () => {
+    const chunk = matchToChunk(m("a", "alpha", 0.9));
+    expect(chunk.relevanceScore).toBeUndefined();
+    expect(chunk.score).toBe(0.9); // cosine score is unaffected either way
+  });
+
+  it("does not attach relevanceScore when the reranker response omits it for a given item", async () => {
+    const matches = [m("a", "alpha", 0.9), m("b", "beta", 0.8)];
+    // Reranker returns an index with no relevanceScore field (some responses may omit it).
+    const voyage = fakeVoyage(() => ({ data: [{ index: 1 }, { index: 0 }] }));
+    const out = await rerankMatches(voyage, "q", matches, 2);
+    expect(matchToChunk(out[0]).relevanceScore).toBeUndefined();
+  });
 });
 
 describe("isWithinAsOf (point-in-time guard, incl. 8-K acceptance_datetime)", () => {
@@ -85,5 +113,23 @@ describe("isWithinAsOf (point-in-time guard, incl. 8-K acceptance_datetime)", ()
     expect(isWithinAsOf({ source: "x" }, "2026-03-10")).toBe(true);
     expect(isWithinAsOf({ acceptance_datetime: "2026-03-10" }, undefined)).toBe(true);
     expect(isWithinAsOf({ acceptance_datetime: "2026-03-10" }, "not-a-date")).toBe(true);
+  });
+
+  // R1 (2026-07-01 expert review): published_at is now in the resolution chain, between
+  // acceptance_datetime and as_of/timestamp — a chunk lacking acceptance_datetime but carrying a
+  // dated published_at is still correctly point-in-time-guarded instead of falling through to
+  // "include" via the (today, always-empty) as_of key.
+  it("falls back to published_at when acceptance_datetime is absent", () => {
+    const chunk = { published_at: "2026-03-10", source: "sec-edgar" };
+    expect(isWithinAsOf(chunk, "2026-03-09")).toBe(false); // look-ahead, excluded
+    expect(isWithinAsOf(chunk, "2026-03-10")).toBe(true);
+    expect(isWithinAsOf(chunk, "2026-03-11")).toBe(true);
+  });
+
+  it("acceptance_datetime still takes precedence over published_at when both are present", () => {
+    // acceptance_datetime says "after asOf" (exclude); published_at alone would have said "on/before"
+    // (include) — acceptance_datetime must win since it's the more precise anchor.
+    const chunk = { acceptance_datetime: "2026-03-12", published_at: "2026-03-05" };
+    expect(isWithinAsOf(chunk, "2026-03-10")).toBe(false);
   });
 });
