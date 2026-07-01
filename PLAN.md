@@ -5,6 +5,19 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-workstream-b-learning-v2`): **Workstream B — learning
+> loop / auto-tuning.** Wired the audit's "built-but-unwired" learning loops into the
+> money path behind default-off `policy.tuning.*` flags, with the 16-expert-panel
+> corrections folded in (B1–B8): opt-in autonomous factor-weight apply (stricter OOS
+> gate + write-scope safety + scheduler-hosted cadence + audited revert); congress
+> go/no-go gating with a three-way verdict (no data-poverty kill-switch); missed-
+> opportunity per-factor scan nudge; ≥5 + SPY-relative recurringFactor; factor
+> attribution stamped at entry (no momentum default); confidence-calibration→sizing
+> (isotonic, reduce-only); per-regime IC report (application off — samples too thin);
+> and a REAL fix — paper/test protective EXITS now pay execution cost. Verify quartet
+> green (tsc/lint/1710 tests/build). See
+> `docs/rollouts/2026-07-01-learning-loop-autotuning.md` + `docs/phase-7-strategy.md` §3.E.
+>
 > 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
 > 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
 > independent items from `docs/broker-capability-plan.md`'s cheap/high-value

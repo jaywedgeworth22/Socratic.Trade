@@ -42,6 +42,8 @@ export interface FactorObservation {
   subScores: Record<MarketFactor, number>;
   /** Realized forward return as a fraction (e.g. 0.05 = +5%). */
   forwardReturn: number;
+  /** Market regime stamped on the snapshot at decision time (item 7 per-regime IC report). Optional. */
+  regime?: string;
 }
 
 /** Averaged cross-sectional rank IC for one factor across all snapshot dates. */
@@ -72,6 +74,7 @@ interface SignalSnapshotPayload {
     refPrice?: number;
     factorBreakdown?: MarketFactorBreakdown;
     asOf?: string;
+    regime?: string;
   }>;
 }
 
@@ -121,7 +124,8 @@ export async function buildFactorObservations(
         date: snapshotDate,
         symbol,
         subScores,
-        forwardReturn: (exit - refPrice) / refPrice
+        forwardReturn: (exit - refPrice) / refPrice,
+        ...(typeof signal.regime === "string" && signal.regime.trim() ? { regime: signal.regime.trim() } : {})
       });
     }
   }
@@ -170,6 +174,50 @@ export function computeFactorICs(observations: FactorObservation[]): FactorIC[] 
     }
     return { factor, ic: dates > 0 ? sum / dates : 0, n: dates };
   });
+}
+
+/** Per-regime factor-IC report (item 7). Application of regime-conditioned weights is intentionally NOT
+ * wired: per-regime buckets in this research app are almost always far below the sample size needed to
+ * avoid overfitting, so this is a READ-ONLY diagnostic. `sufficient` flags whether the regime had enough
+ * distinct snapshot dates for its ICs to be trustworthy — application stays off regardless. */
+export interface PerRegimeFactorIC {
+  regime: string;
+  /** Distinct snapshot dates observed in this regime bucket. */
+  dates: number;
+  /** Total observations in this regime bucket. */
+  observations: number;
+  /** Per-factor IC within this regime. */
+  ics: FactorIC[];
+  /** True when `dates >= minDates` (i.e. the per-regime sample is large enough to be worth reading). */
+  sufficient: boolean;
+}
+
+/**
+ * PURE. Group `FactorObservation`s by their stamped `regime` and compute per-factor IC within each regime.
+ * Observations with no regime are bucketed under "Unspecified". `minDates` (default 8) is the sufficiency
+ * bar below which a regime's ICs are statistically too thin to act on — this function REPORTS them either
+ * way (with `sufficient` set) but never itself applies regime-conditioned weights. Date.now()-free.
+ */
+export function computePerRegimeFactorICs(observations: FactorObservation[], minDates = 8): PerRegimeFactorIC[] {
+  const byRegime = new Map<string, FactorObservation[]>();
+  for (const obs of observations) {
+    const regime = obs.regime && obs.regime.trim() ? obs.regime.trim() : "Unspecified";
+    const bucket = byRegime.get(regime);
+    if (bucket) bucket.push(obs);
+    else byRegime.set(regime, [obs]);
+  }
+  return Array.from(byRegime.entries())
+    .map(([regime, group]) => {
+      const dates = new Set(group.map((o) => o.date)).size;
+      return {
+        regime,
+        dates,
+        observations: group.length,
+        ics: computeFactorICs(group),
+        sufficient: dates >= minDates
+      };
+    })
+    .sort((a, b) => b.observations - a.observations);
 }
 
 /**
@@ -615,6 +663,50 @@ async function buildSpyReturnMap(
     result.set(date, (exitClose - entryClose) / entryClose);
   }
   return result;
+}
+
+/**
+ * EXPORTED (panel B4). SPY % return (as a fraction) from each snapshot business-day to `now`, over the SAME
+ * variable window a skipped-candidate return uses (entry snapshot date → current price). Reuses the single
+ * SPY OHLC fetch + `selectExitClose` machinery (no hand-rolled 2nd fetch). A date with no SPY bar at/before
+ * `now` or at/after the entry date is OMITTED — the caller must treat a missing entry as "exclude", never
+ * fall back to a raw >0 test. Returns an empty Map when SPY is unavailable.
+ */
+export async function buildSpyReturnToNowMap(
+  dates: string[],
+  now: number = Date.now(),
+  fetchOHLC: BacktestOHLCFetcher = fetchDailyOHLC
+): Promise<Map<string, number>> {
+  const spyBars = await fetchOHLC("SPY", now);
+  if (!spyBars || spyBars.length === 0) return new Map();
+  const nowDate = new Date(now).toISOString().slice(0, 10);
+  const result = new Map<string, number>();
+  for (const date of new Set(dates)) {
+    const entryClose = selectExitClose(spyBars, date);
+    if (entryClose === undefined || !(entryClose > 0)) continue;
+    // Exit = the last SPY close at/before "now" (mirrors the skipped-candidate "current price" endpoint).
+    const exitClose = selectExitClose(spyBars, nowDate) ?? lastCloseAtOrBefore(spyBars, nowDate);
+    if (exitClose === undefined || !(exitClose > 0)) continue;
+    result.set(date, (exitClose - entryClose) / entryClose);
+  }
+  return result;
+}
+
+/** Last usable SPY close at/before a date (fallback endpoint when no bar lands exactly on/after "now"). */
+function lastCloseAtOrBefore(bars: OHLCBar[], date: string): number | undefined {
+  const dated = bars
+    .map((b) => ({ d: toBusinessDayLocal(b.time), c: b.close }))
+    .filter((b): b is { d: string; c: number } => Boolean(b.d) && typeof b.c === "number" && b.c > 0)
+    .sort((a, b) => a.d.localeCompare(b.d));
+  const before = dated.filter((b) => b.d <= date);
+  return before.length > 0 ? before[before.length - 1].c : undefined;
+}
+
+function toBusinessDayLocal(time: number | string | undefined): string | undefined {
+  if (time === undefined) return undefined;
+  const d = typeof time === "number" ? new Date(time) : new Date(time);
+  const iso = d.toISOString();
+  return Number.isNaN(d.getTime()) ? undefined : iso.slice(0, 10);
 }
 
 /**

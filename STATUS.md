@@ -4,6 +4,29 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Workstream B: learning loop / auto-tuning (Claude)
+Branch `agent/claude-workstream-b-learning-v2`. Implemented all 8 items of "Chat B" from
+`docs/reviews/2026-07-01-audit-work-split.md` PLUS the 16-expert-panel mid-flight corrections
+(`docs/reviews/2026-07-01-learning-loop-expansion.md`, B1–B8). Every change is behind a **default-off**
+`policy.tuning.*` flag EXCEPT the B8 execution-cost correctness fix. Highlights: (1) opt-in autonomous
+factor-weight tuning with a stricter-than-manual OOS gate (IC-delta margin + candidateIC>0 + ICIR floor +
+min test-dates; null OOS = hard no-apply), WRITE-SCOPE SAFETY (scoringWeights ONLY — never
+policy/risk/strategyAuthority/prompt), cadence in `scheduler.ts` under the single-leader gate, persist via
+`setPolicy`, ±MAX_WEIGHT_STEP re-clamped post-normalization, audited revert; (2) congress go/no-go gating
+with a THREE-WAY verdict (PASS/FAIL_SIGNIFICANCE→down-weight/INSUFFICIENT→neutral) so data-poverty is not a
+kill-switch, verdict cached + surfaced on the dashboard + new admin route; (3) matured missed-opportunity
+per-factor nudge into scan-scoring weights (transient, audited); (4) recurringFactor ≥5 + SPY-relative
+(reuses backtest SPY fetch, injected in getSkippedCandidateReturns); (5) factor attribution stamps
+`dominantFactor` at entry (survives audit-cap aging), no momentum default; (6) confidence calibration →
+sizing (isotonic, reduce-only, shrunkWinRate, per-band gate, shorts→raw, once-per-run); (7) per-regime IC
+**report only** (application off — samples too thin); (8) REAL BUG: paper/test EXIT fills in
+`synthetic-stops.ts`/`order-replacement.ts` now pay exit-side execution cost (were cost-free, overstating
+edge on the losing tail). Verify quartet all green: tsc 0 errors, lint 0 errors, `npm test` 174 files /
+1710 tests, `npm run build` compiled successfully. See
+`docs/rollouts/2026-07-01-learning-loop-autotuning.md`. Coordination: the stale
+`agent/claude-workstream-b-learning` worktree (a stopped sibling) was left untouched; Red Team / inline-Bear
+code was NOT touched (separate session).
+
 ## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
 Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
 analysis + sequenced plan: `docs/market-data-freshness-decision.md` +
