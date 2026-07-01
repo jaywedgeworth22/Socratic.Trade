@@ -31,6 +31,7 @@ import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
+import { readCongressScoreVerdict } from "./congress-score-gate";
 import { fetchMacroData, determineMarketRegime } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
@@ -528,7 +529,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
         .slice(0, 12),
       insider: [...(getInsiderDataset()?.filings ?? [])]
         .sort((a, b) => (b.filedAt ?? "").localeCompare(a.filedAt ?? ""))
-        .slice(0, 8)
+        .slice(0, 8),
+      // Item 2: cached congress-score go/no-go verdict (pass/fail + stats), null when never evaluated.
+      // Surfaces whether the congressional scan signal is currently statistically validated; gating on it
+      // is opt-in via policy.tuning.congressGoNoGoGating.
+      congressScoreVerdict: readCongressScoreVerdict(userId) ?? null
     },
     marketSession: currentMarketSession(),
     macroBoard

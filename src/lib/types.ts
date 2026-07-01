@@ -229,6 +229,59 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+
+  // ── Workstream B: learning-loop auto-tuning (all DEFAULT OFF) ──────────────────
+  /**
+   * OPT-IN (DEFAULT false): when true, a cadence-gated caller may AUTONOMOUSLY apply the
+   * auto-tuner's proposed factor-weight changes — but ONLY after the existing OOS walk-forward
+   * gate passes, every delta is clamped to MAX_WEIGHT_STEP, and a previous-weights snapshot is
+   * stored (audit kind "auto_weight_apply") so a revert can restore the prior vector. Off by
+   * default: today the tuner only ever feeds a manual proposal / read-only route, so default
+   * behavior is byte-identical. Never applies weights when the OOS gate strips them.
+   */
+  autoApplyWeights?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the scan composite gates the congressional contribution on
+   * the congress-score-eval go/no-go verdict — a "no-go" signal (below the eval's t-stat / marginal-IC
+   * thresholds) no longer lifts a name into the candidate set or up the composite. Off by default:
+   * the congress term is applied unconditionally today, so default scans are unchanged.
+   */
+  congressGoNoGoGating?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, matured missed-opportunity evidence (skipped names that beat
+   * the benchmark) produces a small, clamped, audited per-factor nudge into the scan composite weights
+   * used for THIS run's scoring, subject to the sample gate. Off by default: today these stats only
+   * feed the manual tuning proposal, so default scan scoring is unchanged.
+   */
+  missedOpportunityNudge?: boolean;
+  /**
+   * Minimum count of benchmark-beating missed winners a single dominant factor must recur across before
+   * `summarizeMissedOpportunities` flags it as a recurring factor. Default 2 (current behavior). Item-4
+   * hardening raises this to 5 via the benchmark-relative path when `benchmarkRelativeMisses` is on.
+   */
+  recurringFactorMinCount?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, a skipped name only counts as a "missed winner" if it beat SPY
+   * over the same horizon (return minus the SPY return), not merely returnPct > 0, and the recurring-factor
+   * threshold is raised to `recurringFactorMinCount` (>= 5 recommended). Off by default: the winner test
+   * stays `returnPct > 0` with no market adjustment, so default missed-opportunity stats are unchanged.
+   */
+  benchmarkRelativeMisses?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer remaps the proposal's confidenceScore
+   * through the account's realized confidence-calibration curve BEFORE it becomes the conviction sizing
+   * multiplier — a poorly-calibrated high-confidence band is sized down toward its realized win rate. Off
+   * by default: the sizer uses the raw confidenceScore/100 exactly as today. Still respects the existing
+   * convictionCapUncorroborated cap.
+   */
+  calibrationSizing?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true AND per-regime sample sizes are sufficient, regime-conditioned
+   * factor-weight vectors (keyed off determineMarketRegime) are applied in scan scoring. Off by default;
+   * when the per-regime sample is too thin, the app produces only the admin-side per-regime IC report and
+   * leaves application off regardless of this flag.
+   */
+  perRegimeWeights?: boolean;
 }
 
 export interface RiskRules {
@@ -828,6 +881,12 @@ export interface MarketDataProviderOptions {
   outlierReserve?: number;
   /** Penny/illiquid exclusion for index + dynamic-universe candidates (explicit symbols + positions exempt). */
   universeFloor?: UniverseFloor;
+  /**
+   * Item 2: multiplier applied to the congressional contribution in scan scoring. Default (undefined → 1)
+   * leaves the congress term unchanged; 0 zeroes it when the congress-score go/no-go gate returned a no-go
+   * verdict and `policy.tuning.congressGoNoGoGating` is on. Resolved by the caller from the cached verdict.
+   */
+  congressMultiplier?: number;
 }
 
 export interface MarketDataProvider {

@@ -12,7 +12,7 @@
 // PAPER_EXECUTION_COST_MODEL=off (or 0/false/no). Real broker (live) fills already carry their
 // realized price and are never adjusted (no double-count) — only paper/Test fills are affected.
 
-import type { OrderSide } from "./types";
+import type { FillSource, OrderSide } from "./types";
 
 export interface ExecutionCostInputs {
   /** (ask − bid)/mid × 1e4 — only when a real two-sided quote exists (else omitted, contributes 0). */
@@ -63,6 +63,26 @@ const DEFAULT_BASE_SLIPPAGE_BPS = 1;
  *
  * Real broker (live) fills are never adjusted — only paper/simulated fills are affected.
  */
+/**
+ * B8 fix: apply the base execution cost to a SIMULATED (paper/test) EXIT fill priced at the raw quote.
+ *
+ * `recordFillFromProposal` already costs paper ENTRIES, but the two protective-exit writers
+ * (`synthetic-stops.ts`, `order-replacement.ts`) insert paper/test fills at the raw price with NO cost —
+ * so a paper lot exited via a synthetic stop pays no exit cost, overstating realized edge on the losing
+ * tail that feeds the tuner + sizer. This applies the EXIT side's adverse adjustment (base slippage only —
+ * no live scan quote is available at stop/replacement time, mirroring the entry path when spread/volume are
+ * absent). LIVE fills are returned UNCHANGED (they carry a real reconciled price; double-costing would be
+ * wrong), as are non-positive prices or a disabled model.
+ */
+export function applyPaperExitCost(price: number, side: OrderSide, source: FillSource | undefined): number {
+  if (source !== "paper") return price; // "paper" covers both broker-paper and local Test simulated fills
+  if (!(price > 0)) return price;
+  const cfg = executionCostConfig();
+  if (!cfg.enabled) return price;
+  const costBps = estimateExecutionCostBps({ orderNotional: 0, baseSlippageBps: cfg.baseSlippageBps, impactCoeff: cfg.impactCoeff });
+  return applyExecutionCost(price, side, costBps);
+}
+
 export function executionCostConfig(): { enabled: boolean; baseSlippageBps: number; impactCoeff: number } {
   const envFlag = String(process.env.PAPER_EXECUTION_COST_MODEL ?? "").trim().toLowerCase();
   // Explicit opt-out: treat "0", "false", "off", "no" as disabled.
