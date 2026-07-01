@@ -64,6 +64,36 @@ windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envel
 disagreement bulletin); enable + validate the default-off D flags against a live Robinhood
 MCP / real health data; per-credential circuit-breaker lane; the deferred E item 6
 (monolithic-snapshot whole-tree re-render refactor, audit §6.1).
+## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
+Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,
+below) merged. Focused follow-on implementing the two items PR #297 explicitly deferred:
+**R4** (retrieval regression net) and **R1 part 2** (`VECTOR_ASOF_STRICT`). Read/retrieval-only
+— no order/execution-path code touched; every behavior change is default-off/opt-in and
+byte-identical to the pre-change pipeline unless a new flag/option is explicitly set.
+
+- **R4:** factored a pure `rankPool(matches, query, limit, options)` helper out of
+  `retrieveContextDetailed`'s inline post-recall pipeline (score floor → as-of guard → hybrid
+  fuse → rerank → post-rerank floor) — no such helper existed after #297 (verified by grep).
+  New `test/rag-retrieval-regression.test.ts` (19 tests, network-free) pins: a chunk dated
+  after `asOf` is dropped / an undated chunk kept (lenient) or dropped (strict); `rerankMatches`
+  preserves length+identity when the real Voyage client throws or returns empty data
+  (fail-open); `fuseHybrid` returns input unchanged on `<=1` match or malformed input; hybrid
+  on-vs-off reorders the pool but never drops a candidate. Includes an explicit `fetch` spy
+  assertion proving no live network is reachable from the file.
+- **R1 part 2:** new `VECTOR_ASOF_STRICT` flag (default OFF). `isWithinAsOf` gained an optional
+  third `strict` parameter (default `false`, byte-identical for every existing caller). When
+  strict is on **and** `options.asOf` is set, chunks with no resolvable date stamp are now
+  DROPPED instead of kept, with a fire-and-forget `audit("vector_asof_strict_drop", {
+  droppedUndated, asOf }, userId)` record. New `test/vector-db-asof-strict.test.ts` (5 tests)
+  proves the golden as-of tuple (undated excluded under strict / included without) through the
+  real `retrieveContextDetailed` pipeline (mocked Pinecone/Voyage).
+- Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 274
+  warnings, pre-existing grandfathered class, unchanged in kind) → `npm test` (183 files / 1797
+  tests, up from 181/1778) → `npm run build` (clean). `tsc --noEmit` re-checked clean after the
+  build regenerated `.next/types`. See `docs/rollouts/2026-07-01-rag-followon.md` for full
+  detail and remaining backlog (R3/R5-R17 still unimplemented, per PR #297's own deferral list —
+  out of scope for this focused pass).
+
 ## 2026-07-01 — RAG eval harness, rerank scoring, char-cap/doc_type/salience fixes — Workstream C (Claude)
 Branch `agent/claude-workstream-c-rag-v2`. Implements all 7 items from
 `docs/reviews/2026-07-01-audit-work-split.md` §"Chat C — RAG / Embedding / Knowledge Framework",
