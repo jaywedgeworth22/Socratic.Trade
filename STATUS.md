@@ -4,6 +4,38 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
+Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
+merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three
+guardrail items on top of #296's autonomous factor-weight tuning:
+- **P0-4 — Unified learning-mutation ledger + admin revert.** New `learning_mutations` table (`db.ts`
+  `migrate()`), CRUD in new `src/lib/db-learning-ledger.ts`, orchestration in new
+  `src/lib/learning-ledger.ts` (`recordLearningMutation` / `revertLearningMutation`, subsystem
+  `scoring_weights`). One canonical append-only row per gated mutation (before/after full weight vectors,
+  subsystem, trigger, OOS evidence, flag, timestamp). Recording is passive/always-on. GENERALIZES #296's
+  tuning-specific audited revert — `applyAutonomousWeightTuning` now records here (still writes the legacy
+  `auto_weight_apply` audit row for dashboard back-compat), and `revertAutonomousWeightTuning` delegates to
+  the unified ledger (falls back to the legacy audit row for pre-ledger applies). Admin-only revert route
+  `app/api/admin/learning-ledger/route.ts` (`requireAdmin`; GET lists, POST reverts). `before` is captured
+  ATOMICALLY (re-read policy immediately before `setPolicy`).
+- **P0-2 — Effect-size + paired-t significance on the OOS gate.** New pure `pairedICDiffStats()` in
+  `backtest.ts` computes the PAIRED per-date candidate−baseline IC-difference series (correct SE source: the
+  two ICs share the same fold) and a t-stat; threaded onto `OOSResult.pairedICDiff` when both weight vectors
+  are supplied. Autonomous gate extended with `policy.tuning.minOosICImprovement` (default 0 = today's margin
+  via env `AUTO_TUNE_MIN_IC_DELTA`) and `policy.tuning.minOosPairedTStat` (default 0 = paired-t OFF / no-op).
+  Multiplicity (D-1) explicitly deferred (documented; no teeth until a per-account trial counter exists).
+- **P0-3 — Fail-closed tuning-config invariant guard.** New pure `src/lib/tuning-invariants.ts`
+  (`validateTuningInvariants`) checks a small hard-coupling set (positive sample gates,
+  `sizingFloorPct ≤ sizingCeilingPct`, `autoApplyWeights ⇒ oosWithholdUnvalidated` unless the new
+  `autoApplyOverrideUnvalidated` escape hatch, calibration ⇒ band gate). The AUTONOMOUS apply path calls it
+  at the TOP and fails CLOSED (skip + `auto_weight_apply_skipped` audit row, NEVER throws). The manual tune
+  route surfaces the same violations as non-blocking `tuningConfigWarnings`.
+
+All behavior-changing knobs default OFF/no-op; the ledger RECORDING is passive/always-on (audit trail only,
+no trading behavior change). Did NOT touch `red-team.ts` / inline-Bear (separate session). Verify quartet
+green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 265 grandfathered warnings) →
+`npm test` (182 files / 1793 tests) → `npm run build` (see rollout note). See
+`docs/rollouts/2026-07-01-learning-loop-followon.md` and `docs/phase-7-strategy.md` §3.E.5–E.7.
 ## 2026-07-01 — RAG expansion backlog, broader pass (Claude)
 Branch `agent/claude-backlog-c-rag`, based on `origin/main` after #297 (Workstream C) and #299
 (follow-on: `rankPool` helper, R1 `published_at` fallback + `VECTOR_ASOF_STRICT`, R2 embedding-
