@@ -24,6 +24,17 @@ filling the missing pieces.
 > monolithic-snapshot re-render refactor is tracked as a deferred follow-up. No roadmap
 > change; see `docs/rollouts/2026-07-01-data-sources-breadth.md` and
 > `docs/rollouts/2026-07-01-performance-efficiency.md`.
+> 2026-07-01 (`claude/affectionate-franklin-a52935`): Alpaca account-editor
+> "Custom Endpoint" checkbox fix - a live Alpaca account (`environment: "live"`)
+> ended up with `base_url` stuck on Alpaca's paper endpoint, causing a
+> production 401 on the readiness check. Root cause: checking "Use a Custom
+> Alpaca Endpoint" in `dashboard-client.tsx`'s account editor copied the
+> current (possibly-stale-default) `baseUrl` into the custom field with
+> nothing typed, and also disabled the auto-derivation that keeps `baseUrl` in
+> sync with the inferred paper/live environment as the account
+> number/API key are filled in. Fixed to start the custom field empty on
+> check. No roadmap change; see
+> `docs/rollouts/2026-07-01-alpaca-custom-endpoint-checkbox-fix.md`.
 > 2026-07-01 (`agent/claude-backlog-b-learning-b`): **Learning-loop BROADER BACKLOG (P1 + P2).**
 > Backend/API/tests-only pass on `docs/reviews/2026-07-01-learning-loop-expansion.md`, building ON
 > #300's ledger / tuning-invariants / `pairedICDiffStats` (no duplication). P1: (P1-1) read-only
