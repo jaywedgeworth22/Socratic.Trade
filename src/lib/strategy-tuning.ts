@@ -111,6 +111,18 @@ export interface SummarizeMissedOpportunitiesOptions {
   benchmarkRelative?: boolean;
   /** Minimum recurrences of a dominant factor before it's flagged. Default 2. */
   minRecurringCount?: number;
+  /**
+   * P2-1 (default false): require a real HIT RATE, not just a winner count. When on, a factor is flagged as
+   * recurring ONLY if — over ALL matured skipped rows carrying it (winners AND losers) — its benchmark-beating
+   * hit rate, SHRUNK toward the overall skipped hit rate, is at/above that overall base rate AND it has at
+   * least `minHitRateDenominator` matured rows. This kills the failure mode where a factor "recurs" among
+   * winners simply because it is the most COMMON skipped factor. Off by default → winners-only count as today.
+   */
+  requireHitRate?: boolean;
+  /** P2-1: minimum matured rows carrying a factor before its hit rate is trusted. Default 5. */
+  minHitRateDenominator?: number;
+  /** P2-1: Bayesian shrinkage pseudo-count pulling a factor's hit rate toward the overall base rate. Default 5. */
+  hitRateShrinkPrior?: number;
 }
 
 export interface MissedOpportunitySummary {
@@ -120,6 +132,10 @@ export interface MissedOpportunitySummary {
   /** The dominant factor that recurred across >= minRecurringCount missed winners, if any. */
   recurringFactor?: string;
   recurringFactorCount?: number;
+  /** P2-1: the recurring factor's shrunk benchmark-beating hit rate (0–1), present only when requireHitRate is on. */
+  recurringFactorHitRate?: number;
+  /** P2-1: the overall skipped-candidate base hit rate (0–1), present only when requireHitRate is on. */
+  baseHitRate?: number;
 }
 
 /**
@@ -140,10 +156,15 @@ export function summarizeMissedOpportunities(
   const limit = options.limit ?? 8;
   const benchmarkRelative = options.benchmarkRelative ?? false;
   const minRecurringCount = Math.max(1, options.minRecurringCount ?? 2);
+  const requireHitRate = options.requireHitRate ?? false;
+  const minHitRateDenominator = Math.max(1, options.minHitRateDenominator ?? 5);
+  const hitRateShrinkPrior = Math.max(0, options.hitRateShrinkPrior ?? 5);
 
   // Winner test: default is the historical `returnPct > 0` (no market adjustment). Benchmark-relative
   // mode requires the name to have BEATEN the benchmark over the same horizon (return − SPY-return > 0);
   // a row with no benchmark can't be certified as a market-beater, so it's excluded (never over-credited).
+  // P2-2: the SAME benchmark-relative test classifies losers, so the per-factor hit rate below is net-of-
+  // benchmark on BOTH sides (a name beating 0 but lagging SPY is neither a winner nor an avoided loss).
   const isWinner = (row: MissedOpportunityInput): boolean => {
     if (typeof row.returnPct !== "number") return false;
     if (!benchmarkRelative) return row.returnPct > 0;
@@ -173,6 +194,56 @@ export function summarizeMissedOpportunities(
     ...(row.dominantFactor ? { dominantFactor: row.dominantFactor } : {}),
     ...(typeof row.ageDays === "number" ? { ageDays: row.ageDays } : {})
   }));
+
+  // ── P2-1 (opt-in): hit-rate gate over ALL matured skipped rows (winners AND losers) ──────────────
+  // Default OFF → the winners-only count above governs recurringFactor exactly as before. When on, a factor is
+  // flagged ONLY when its shrunk benchmark-beating hit rate clears the overall skipped base rate and it has a
+  // minimum denominator. This tallies per-factor total (any row carrying the factor with a usable returnPct)
+  // and per-factor winners, computes the overall base hit rate, and shrinks each factor's rate toward it.
+  if (requireHitRate) {
+    const usable = rows.filter((r) => typeof r.returnPct === "number" && r.dominantFactor
+      // P2-2: in benchmark-relative mode a row with no benchmark can't be classified either way → exclude it
+      // from the denominator too, so the base rate isn't diluted by unclassifiable names.
+      && (!benchmarkRelative || typeof r.benchmarkReturnPct === "number"));
+    const totalUsable = usable.length;
+    const totalWinners = usable.filter(isWinner).length;
+    const baseHitRate = totalUsable > 0 ? totalWinners / totalUsable : 0;
+
+    const perFactor = new Map<string, { total: number; wins: number }>();
+    for (const row of usable) {
+      const f = row.dominantFactor as string;
+      const bucket = perFactor.get(f) ?? { total: 0, wins: 0 };
+      bucket.total += 1;
+      if (isWinner(row)) bucket.wins += 1;
+      perFactor.set(f, bucket);
+    }
+
+    // Pick the factor with the highest SHRUNK hit rate that also clears the denominator + winner-count bars.
+    let bestFactor: string | undefined;
+    let bestHitRate = -Infinity;
+    let bestWins = 0;
+    for (const [factor, { total, wins }] of perFactor) {
+      if (total < minHitRateDenominator) continue;
+      if (wins < minRecurringCount) continue;
+      // Bayesian shrinkage of the factor's win rate toward the overall base rate (prior mass = shrinkPrior).
+      const shrunk = (wins + hitRateShrinkPrior * baseHitRate) / (total + hitRateShrinkPrior);
+      if (shrunk >= baseHitRate && shrunk > bestHitRate) {
+        bestFactor = factor;
+        bestHitRate = shrunk;
+        bestWins = wins;
+      }
+    }
+
+    return {
+      items,
+      count: winners.length,
+      baseHitRate: Number(baseHitRate.toFixed(4)),
+      ...(bestFactor
+        ? { recurringFactor: bestFactor, recurringFactorCount: bestWins, recurringFactorHitRate: Number(bestHitRate.toFixed(4)) }
+        : {})
+    };
+  }
+
   return {
     items,
     count: winners.length,
@@ -262,15 +333,19 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
   // falls back to raw returnPct>0).
   const benchmarkRelative = policy.tuning?.benchmarkRelativeMisses ?? false;
   const minRecurringCount = policy.tuning?.recurringFactorMinCount ?? (benchmarkRelative ? 5 : 2);
+  // P2-1: the hit-rate gate needs the FULL matured skipped set (winners AND losers) to compute a real base
+  // rate, so widen the fetch limit when it's on. Default off → the historical top-12 window is unchanged.
+  const requireHitRate = policy.tuning?.missedOpportunityRequireHitRate ?? false;
+  const skippedLimit = requireHitRate ? 100 : 12;
   let benchmarkReturnBySnapshotDate: Map<string, number> | undefined;
   if (benchmarkRelative) {
     // Pre-scan the snapshot dates the skipped rows will span, then build one SPY entry→now map for them.
-    const preScan = getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId });
+    const preScan = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId });
     const dates = Array.from(new Set(preScan.map((r) => r.asOf?.slice(0, 10)).filter((d): d is string => Boolean(d))));
     benchmarkReturnBySnapshotDate = await buildSpyReturnToNowMap(dates).catch(() => new Map<string, number>());
   }
-  const skippedRows = getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId, benchmarkReturnBySnapshotDate });
-  const missedOpportunities = summarizeMissedOpportunities(skippedRows, { limit: 8, benchmarkRelative, minRecurringCount });
+  const skippedRows = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId, benchmarkReturnBySnapshotDate });
+  const missedOpportunities = summarizeMissedOpportunities(skippedRows, { limit: 8, benchmarkRelative, minRecurringCount, requireHitRate });
   // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
   // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust
   // per-factor attribution.
@@ -857,6 +932,54 @@ export interface AutonomousWeightApplyResult {
 
 /** Audit kind for an autonomous weight application (also the revert lookup key). */
 export const AUTO_WEIGHT_APPLY_AUDIT_KIND = "auto_weight_apply";
+/** Ledger trigger for a P1-3 SHADOW row (what the tuner WOULD have applied — never persisted to policy). */
+export const AUTO_WEIGHT_SHADOW_TRIGGER = "auto_weight_shadow";
+/** P2-7 audit kind: the reproducibility/decision-provenance snapshot written on each autonomous apply. */
+export const TUNING_APPLY_PROVENANCE_AUDIT_KIND = "tuning_apply_provenance";
+
+/**
+ * Panel P1-1: the full, side-effect-FREE decision an autonomous apply WOULD make. Produced by the shared
+ * evaluator and consumed by both the real apply (`applyAutonomousWeightTuning`) and the read-only dry-run
+ * (`dryRunAutonomousWeightTuning`). Computing this performs NO writes: no `setPolicy`, no ledger row, no
+ * cadence-key advance, no audit.
+ */
+export interface AutonomousWeightDecision {
+  /** Would the gate persist these weights on a real apply? */
+  wouldApply: boolean;
+  /** Machine reason when `wouldApply` is false (mirrors the apply-path reasons). */
+  reason?: string;
+  /** The status-quo weight vector (normalized) the apply would replace. */
+  before?: ScoringWeights;
+  /** The candidate vector the apply would persist (clamped + normalized). Present when a candidate was built. */
+  after?: ScoringWeights;
+  /** The OOS composite ICs on the shared fold. */
+  oosICCandidate?: number;
+  oosICBaseline?: number;
+  /** The clamped per-factor deltas (after − before) for the changed factors. */
+  clampedDeltas?: Partial<Record<keyof ScoringWeights, number>>;
+  /** The full OOS readout justifying the decision (nulls if OOS couldn't run). */
+  oosReadout?: {
+    icDelta?: number;
+    icir?: number;
+    testDates?: number;
+    pairedTStat?: number;
+    pairedN?: number;
+    candidateMaxDrawdownPct?: number;
+    baselineMaxDrawdownPct?: number;
+    /** P2-7 provenance: fold shape so an apply can be reproduced/audited. */
+    trainDates?: number;
+    trainObservations?: number;
+    testObservations?: number;
+  };
+  /** The autonomous thresholds in effect. */
+  thresholds?: ReturnType<typeof autonomousOosThresholds>;
+  /** The changed factor keys the proposal named. */
+  changedFactors?: string[];
+  /** Underlying proposal metadata for the audit trail. */
+  confidenceScore?: number;
+  generatedBy?: StrategyTuningProposal["generatedBy"];
+  cautions?: string[];
+}
 
 /**
  * STRICTER-than-manual autonomous OOS thresholds (panel B1). The manual gate (`applyOosGate`) only checks
@@ -909,132 +1032,301 @@ export function autonomousOosThresholds(
  *   5. persists ONLY via `setPolicy` (so mirrorPolicyToActiveAccount syncs account_strategy_state + the
  *      active-profile mirror) and writes an `auto_weight_apply` audit row carrying the PRIOR vector for revert.
  */
-export async function applyAutonomousWeightTuning(userId: string = "local", modelOverride?: string): Promise<AutonomousWeightApplyResult> {
+/**
+ * Panel P1-1: SHARED, SIDE-EFFECT-FREE evaluator for the autonomous weight-tuning decision. Runs the full
+ * gate path — propose → write-scope-strip → clamp → STRICTER autonomous OOS re-validation (margin, paired-t,
+ * ICIR floor, test-date floor P2-6, optional drawdown guard P2-5) — and returns exactly what a real apply
+ * WOULD do, performing ZERO writes. Both the real apply and the read-only dry-run consume this. The invariant
+ * guard is NOT run here (it decides whether to enter the autonomous path at all and emits an audit row on
+ * violation); callers run it before consuming a decision when they intend to persist.
+ */
+async function evaluateAutonomousWeightTuning(userId: string, modelOverride?: string): Promise<AutonomousWeightDecision> {
   const policy = getPolicy(userId);
-  if (!policy.tuning?.autoApplyWeights) return { applied: false, reason: "autoApplyWeights_off" };
-
-  // P0-3 FAIL-CLOSED CONFIG GUARD: validate the tuning invariants at the TOP of the autonomous path. On any
-  // violation, SKIP the apply and write an audited "skipped: invariant violation" row — never throw (a throw
-  // would wedge the scheduler tick that calls this). The pure validator never throws.
-  const invariants = validateTuningInvariants(policy.tuning);
-  if (!invariants.ok) {
-    audit("auto_weight_apply_skipped", {
-      userId,
-      connectedAccountId: policy.connectedAccountId,
-      reason: "invariant_violation",
-      violations: invariants.violations
-    }, userId, policy.connectedAccountId);
-    return {
-      applied: false,
-      reason: `invariant_violation (${invariants.violations.map((v) => v.code).join(",")})`
-    };
-  }
-
   const proposal = await proposeStrategyTuning(userId, modelOverride);
   // WRITE-SCOPE SAFETY (panel B1): scoringWeights ONLY — never the patch's policy/prompt sub-fields.
   const proposedWeights = proposal.proposedPatch.scoringWeights;
+  const proposalMeta = { confidenceScore: proposal.confidenceScore, generatedBy: proposal.generatedBy, cautions: proposal.cautions };
   if (!proposedWeights || Object.keys(proposedWeights).length === 0) {
-    return { applied: false, reason: "no_validated_weight_changes", cautions: proposal.cautions };
+    return { wouldApply: false, reason: "no_validated_weight_changes", ...proposalMeta };
   }
 
   const previousWeights = normalizeScoringWeights({ ...policy.scoringWeights });
   const mergedCandidate = normalizeScoringWeights({ ...policy.scoringWeights, ...proposedWeights });
   // Re-assert the per-factor step clamp AFTER normalization: normalizeScoringWeights re-scales the whole
   // vector, so a delta clamped to ±step pre-normalization can end up past ±step. Clamp each factor to
-  // [prev-step, prev+step] and re-normalize once more so the persisted vector is both clamped and valid.
+  // [prev-step, prev+step] and re-normalize once more so the candidate vector is both clamped and valid.
   const clampedToPrev: Partial<ScoringWeights> = {};
   for (const key of Object.keys(mergedCandidate) as (keyof ScoringWeights)[]) {
     const prev = previousWeights[key];
     clampedToPrev[key] = round(clamp(mergedCandidate[key], prev - MAX_WEIGHT_STEP, prev + MAX_WEIGHT_STEP));
   }
   const newWeights = normalizeScoringWeights(clampedToPrev);
+  const changedFactors = Object.keys(proposedWeights);
+  const clampedDeltas: Partial<Record<keyof ScoringWeights, number>> = {};
+  for (const key of changedFactors as (keyof ScoringWeights)[]) {
+    clampedDeltas[key] = round(newWeights[key] - previousWeights[key]);
+  }
+  const base: AutonomousWeightDecision = { wouldApply: false, before: previousWeights, after: newWeights, clampedDeltas, changedFactors, ...proposalMeta };
 
   // STRICTER autonomous OOS re-validation on the ACTUAL vector we would persist. Thresholds are policy-driven
-  // (P0-2: minOosICImprovement raises the margin, minOosPairedTStat adds a paired-t significance gate).
+  // (P0-2: minOosICImprovement raises the margin, minOosPairedTStat adds a paired-t significance gate). P1-2:
+  // the purged-&-embargoed split + P2-4 IC-weight shrinkage are opt-in, default-off pass-throughs.
   const th = autonomousOosThresholds(policy.tuning);
   let oos;
   try {
-    oos = await runWalkForwardOOS(userId, { candidateWeights: newWeights, baselineWeights: previousWeights });
+    oos = await runWalkForwardOOS(userId, {
+      candidateWeights: newWeights,
+      baselineWeights: previousWeights,
+      purgeEmbargo: policy.tuning?.oosPurgeEmbargo ?? false,
+      icWeightShrinkage: policy.tuning?.icWeightShrinkage ?? 0
+    });
   } catch {
-    return { applied: false, reason: "oos_fetch_failed", cautions: proposal.cautions };
+    return { ...base, reason: "oos_fetch_failed" };
   }
-  if (!oos) return { applied: false, reason: "oos_insufficient_history", cautions: proposal.cautions }; // <4 dates → HARD no-apply
+  if (!oos) return { ...base, reason: "oos_insufficient_history" }; // <4 dates → HARD no-apply
   const candidateIC = oos.oosICCandidate;
   const baselineIC = oos.oosICBaseline;
-  if (candidateIC == null || baselineIC == null) return { applied: false, reason: "oos_no_composite_ic", cautions: proposal.cautions };
+  if (candidateIC == null || baselineIC == null) return { ...base, reason: "oos_no_composite_ic" };
   // P0-2 PAIRED SIGNIFICANCE: the two composite ICs are measured on the SAME test fold and are correlated, so
-  // the difference's SE must come from the PAIRED per-date IC-difference series (oos.pairedICDiff), not from
-  // differencing independent ICIRs. Require the paired t-stat to clear minPairedTStat. Default 0 = no-op.
-  // Multiplicity (D-1): a single-shot Šidák/Bonferroni correction is deferred — it only earns teeth once a
-  // per-account trial counter exists; with minPairedTStat defaulting to 0 today there is no multiplicity to
-  // correct. Documented here rather than trivially bolted on.
+  // the difference's SE must come from the PAIRED per-date IC-difference series (oos.pairedICDiff). Default 0.
   const pairedT = oos.pairedICDiff?.tStat ?? 0;
   const pairedN = oos.pairedICDiff?.n ?? 0;
   const passesPairedT = th.minPairedTStat <= 0 || (pairedN >= 2 && pairedT >= th.minPairedTStat);
-  const passesAutonomousGate =
-    candidateIC - baselineIC >= th.minICDelta &&
-    candidateIC > th.minCandidateIC &&
-    oos.oosICIR >= th.minICIR &&
-    oos.testDates >= th.minTestDates &&
-    passesPairedT;
-  if (!passesAutonomousGate) {
-    return {
-      applied: false,
-      reason: `autonomous_oos_gate_failed (ΔIC=${(candidateIC - baselineIC).toFixed(4)}, IC=${candidateIC.toFixed(4)}, ICIR=${oos.oosICIR.toFixed(2)}, testDates=${oos.testDates}, pairedT=${pairedT.toFixed(2)}, pairedN=${pairedN})`,
-      cautions: proposal.cautions
-    };
-  }
-
-  // P0-4: capture `before` ATOMICALLY — re-read effective policy immediately before the setPolicy write so a
-  // concurrent multi-agent weight write doesn't cause a stale baseline to be recorded/reverted-to.
-  const beforePolicy = getPolicy(userId, policy.connectedAccountId);
-  const beforeWeights = normalizeScoringWeights({ ...beforePolicy.scoringWeights });
-  setPolicy({ ...beforePolicy, scoringWeights: newWeights }, userId, policy.connectedAccountId);
-
-  const evidence = {
-    candidateIC,
-    baselineIC,
+  // P2-6 STARVATION GUARD: raise the distinct-test-date floor above the env default when the policy asks.
+  const minTestDates = Math.max(th.minTestDates, policy.tuning?.minOosTestDates ?? 0);
+  const oosReadout = {
     icDelta: candidateIC - baselineIC,
     icir: oos.oosICIR,
     testDates: oos.testDates,
     pairedTStat: pairedT,
     pairedN,
-    pairedMeanDiff: oos.pairedICDiff?.meanDiff,
-    thresholds: th,
-    changedFactors: Object.keys(proposedWeights),
-    confidenceScore: proposal.confidenceScore,
-    generatedBy: proposal.generatedBy,
-    cautions: proposal.cautions
+    candidateMaxDrawdownPct: oos.candidateMaxDrawdownPct,
+    baselineMaxDrawdownPct: oos.baselineMaxDrawdownPct,
+    // P2-7 provenance: fold shape (distinct dates + observation counts) so an apply is reproducible/auditable.
+    trainDates: oos.trainDates,
+    trainObservations: oos.trainObservations,
+    testObservations: oos.testObservations
   };
+  const withOos: AutonomousWeightDecision = { ...base, oosICCandidate: candidateIC, oosICBaseline: baselineIC, oosReadout, thresholds: th };
 
-  // P0-4: record ONE canonical ledger row (before/after full vectors, subsystem, trigger, evidence, flag).
-  recordLearningMutation({
-    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
-    userId,
-    connectedAccountId: policy.connectedAccountId,
-    trigger: AUTO_WEIGHT_APPLY_AUDIT_KIND,
-    flag: "autoApplyWeights",
-    before: { scoringWeights: beforeWeights },
-    after: { scoringWeights: newWeights },
-    evidence
-  });
+  const passesAutonomousGate =
+    candidateIC - baselineIC >= th.minICDelta &&
+    candidateIC > th.minCandidateIC &&
+    oos.oosICIR >= th.minICIR &&
+    oos.testDates >= minTestDates &&
+    passesPairedT;
+  if (!passesAutonomousGate) {
+    return {
+      ...withOos,
+      reason: `autonomous_oos_gate_failed (ΔIC=${(candidateIC - baselineIC).toFixed(4)}, IC=${candidateIC.toFixed(4)}, ICIR=${oos.oosICIR.toFixed(2)}, testDates=${oos.testDates}/${minTestDates}, pairedT=${pairedT.toFixed(2)}, pairedN=${pairedN})`
+    };
+  }
 
-  // Keep the existing audit row for backward-compat (dashboard + prior tests read `auto_weight_apply`); the
-  // unified ledger is now the source of truth for revert.
-  audit(AUTO_WEIGHT_APPLY_AUDIT_KIND, {
-    userId,
-    connectedAccountId: policy.connectedAccountId,
-    previousWeights: beforeWeights,
-    newWeights,
-    changedFactors: Object.keys(proposedWeights),
-    oos: { candidateIC, baselineIC, icDelta: candidateIC - baselineIC, icir: oos.oosICIR, testDates: oos.testDates, pairedTStat: pairedT, pairedN },
-    thresholds: th,
-    confidenceScore: proposal.confidenceScore,
-    generatedBy: proposal.generatedBy,
-    cautions: proposal.cautions
-  }, userId);
+  // P2-5 DRAWDOWN GUARD (opt-in): refuse a candidate whose OOS max-drawdown exceeds the baseline's beyond a
+  // small tolerance — but only when the fold is deep enough (below the floor the IC/paired-t gate governs).
+  if (policy.tuning?.autoApplyDrawdownGuard && oos.testDates >= Math.max(minTestDates, AUTO_TUNE_DRAWDOWN_GUARD_MIN_TEST_DATES)) {
+    const candDd = oos.candidateMaxDrawdownPct;
+    const baseDd = oos.baselineMaxDrawdownPct;
+    if (typeof candDd === "number" && typeof baseDd === "number" && candDd > baseDd + AUTO_TUNE_DRAWDOWN_TOLERANCE_PCT) {
+      return {
+        ...withOos,
+        reason: `autonomous_drawdown_guard_failed (candidateDD=${candDd.toFixed(2)}% > baselineDD=${baseDd.toFixed(2)}% + ${AUTO_TUNE_DRAWDOWN_TOLERANCE_PCT}%)`
+      };
+    }
+  }
 
-  return { applied: true, previousWeights: beforeWeights, newWeights, cautions: proposal.cautions };
+  return { ...withOos, wouldApply: true };
+}
+
+/** P2-5 drawdown-guard constants. Tolerance in drawdown percentage points; min fold depth for the guard. */
+const AUTO_TUNE_DRAWDOWN_TOLERANCE_PCT = 2;
+const AUTO_TUNE_DRAWDOWN_GUARD_MIN_TEST_DATES = 8;
+
+/**
+ * Item 1 (panel-hardened): cadence-gated AUTONOMOUS application of the auto-tuner's factor-weight changes.
+ *
+ * DEFAULT OFF (`policy.tuning.autoApplyWeights`): a no-op returning `{ applied: false, reason }`, so default
+ * behavior is byte-identical. When on it runs the shared gate evaluator (write-scope-strip → clamp →
+ * stricter OOS + paired-t + P2-5/P2-6 guards) and, only if `wouldApply`, persists via `setPolicy` ONLY and
+ * records the P0-4 unified ledger row + legacy `auto_weight_apply` audit row.
+ *
+ * P1-3 SHADOW: when `policy.tuning.shadowWeightLedger` is on and NO real apply fired this evaluation, records
+ * a passive shadow ledger row (subsystem `scoring_weights`, trigger `auto_weight_shadow`) capturing what the
+ * tuner WOULD have applied + the OOS readout — never touching policy — so an operator can forward-validate
+ * the tuner's decisions before trusting autonomy.
+ */
+export async function applyAutonomousWeightTuning(userId: string = "local", modelOverride?: string): Promise<AutonomousWeightApplyResult> {
+  const policy = getPolicy(userId);
+  const shadowEnabled = policy.tuning?.shadowWeightLedger ?? false;
+
+  // The invariant guard and the autoApplyWeights flag decide whether a REAL apply may run. The SHADOW ledger
+  // (P1-3) is independent — it may record what WOULD happen even when auto-apply is off — so evaluate the
+  // decision first when either path is active.
+  const autoApplyOn = policy.tuning?.autoApplyWeights ?? false;
+  if (!autoApplyOn && !shadowEnabled) return { applied: false, reason: "autoApplyWeights_off" };
+
+  // P0-3 FAIL-CLOSED CONFIG GUARD (real-apply path only): validate the tuning invariants at the TOP. On any
+  // violation, SKIP the apply and write an audited "skipped: invariant violation" row — never throw (a throw
+  // would wedge the scheduler tick). The shadow path is diagnostic-only and does not persist, so it is not
+  // blocked by the guard (a shadow row on a mis-configured account is still useful evidence).
+  if (autoApplyOn) {
+    const invariants = validateTuningInvariants(policy.tuning);
+    if (!invariants.ok) {
+      audit("auto_weight_apply_skipped", {
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        reason: "invariant_violation",
+        violations: invariants.violations
+      }, userId, policy.connectedAccountId);
+      // Still allow a shadow row (below) to capture the would-be decision for the operator.
+      if (!shadowEnabled) {
+        return { applied: false, reason: `invariant_violation (${invariants.violations.map((v) => v.code).join(",")})` };
+      }
+    }
+  }
+
+  const decision = await evaluateAutonomousWeightTuning(userId, modelOverride);
+
+  // Real apply: only when auto-apply is on AND the invariant guard passed AND the gate says wouldApply.
+  const invariantsOk = autoApplyOn ? validateTuningInvariants(policy.tuning).ok : false;
+  if (autoApplyOn && invariantsOk && decision.wouldApply && decision.after) {
+    const newWeights = decision.after;
+    // P0-4: capture `before` ATOMICALLY — re-read effective policy immediately before the setPolicy write so a
+    // concurrent multi-agent weight write doesn't cause a stale baseline to be recorded/reverted-to.
+    const beforePolicy = getPolicy(userId, policy.connectedAccountId);
+    const beforeWeights = normalizeScoringWeights({ ...beforePolicy.scoringWeights });
+    setPolicy({ ...beforePolicy, scoringWeights: newWeights }, userId, policy.connectedAccountId);
+
+    const evidence = {
+      candidateIC: decision.oosICCandidate,
+      baselineIC: decision.oosICBaseline,
+      icDelta: decision.oosReadout?.icDelta,
+      icir: decision.oosReadout?.icir,
+      testDates: decision.oosReadout?.testDates,
+      pairedTStat: decision.oosReadout?.pairedTStat,
+      pairedN: decision.oosReadout?.pairedN,
+      candidateMaxDrawdownPct: decision.oosReadout?.candidateMaxDrawdownPct,
+      baselineMaxDrawdownPct: decision.oosReadout?.baselineMaxDrawdownPct,
+      thresholds: decision.thresholds,
+      changedFactors: decision.changedFactors,
+      confidenceScore: decision.confidenceScore,
+      generatedBy: decision.generatedBy,
+      cautions: decision.cautions
+    };
+
+    // P0-4: record ONE canonical ledger row (before/after full vectors, subsystem, trigger, evidence, flag).
+    recordLearningMutation({
+      subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      trigger: AUTO_WEIGHT_APPLY_AUDIT_KIND,
+      flag: "autoApplyWeights",
+      before: { scoringWeights: beforeWeights },
+      after: { scoringWeights: newWeights },
+      evidence
+    });
+
+    // Keep the existing audit row for backward-compat (dashboard + prior tests read `auto_weight_apply`); the
+    // unified ledger is now the source of truth for revert.
+    audit(AUTO_WEIGHT_APPLY_AUDIT_KIND, {
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      previousWeights: beforeWeights,
+      newWeights,
+      changedFactors: decision.changedFactors,
+      oos: {
+        candidateIC: decision.oosICCandidate,
+        baselineIC: decision.oosICBaseline,
+        icDelta: decision.oosReadout?.icDelta,
+        icir: decision.oosReadout?.icir,
+        testDates: decision.oosReadout?.testDates,
+        pairedTStat: decision.oosReadout?.pairedTStat,
+        pairedN: decision.oosReadout?.pairedN
+      },
+      thresholds: decision.thresholds,
+      confidenceScore: decision.confidenceScore,
+      generatedBy: decision.generatedBy,
+      cautions: decision.cautions
+    }, userId);
+
+    // P2-7 REPRODUCIBILITY / DECISION-PROVENANCE: runWalkForwardOOS is IO + time-dependent, so a later re-run
+    // can't reproduce the fold that justified this apply. Record the fold shape, ICs, ICIR, margin/thresholds,
+    // and the flags in effect so an operator can audit exactly what evidence authorized the mutation.
+    audit(TUNING_APPLY_PROVENANCE_AUDIT_KIND, {
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      trainObservations: decision.oosReadout?.trainObservations,
+      testObservations: decision.oosReadout?.testObservations,
+      trainDates: decision.oosReadout?.trainDates,
+      testDates: decision.oosReadout?.testDates,
+      candidateIC: decision.oosICCandidate,
+      baselineIC: decision.oosICBaseline,
+      icir: decision.oosReadout?.icir,
+      icDelta: decision.oosReadout?.icDelta,
+      pairedTStat: decision.oosReadout?.pairedTStat,
+      pairedN: decision.oosReadout?.pairedN,
+      candidateMaxDrawdownPct: decision.oosReadout?.candidateMaxDrawdownPct,
+      baselineMaxDrawdownPct: decision.oosReadout?.baselineMaxDrawdownPct,
+      thresholds: decision.thresholds,
+      changedFactors: decision.changedFactors,
+      // The flags whose settings shaped this decision (for reproducibility of the config, not just the data).
+      flagsInEffect: {
+        autoApplyWeights: policy.tuning?.autoApplyWeights ?? false,
+        oosPurgeEmbargo: policy.tuning?.oosPurgeEmbargo ?? false,
+        icWeightShrinkage: policy.tuning?.icWeightShrinkage ?? 0,
+        autoApplyDrawdownGuard: policy.tuning?.autoApplyDrawdownGuard ?? false,
+        minOosTestDates: policy.tuning?.minOosTestDates ?? 0,
+        minOosICImprovement: policy.tuning?.minOosICImprovement ?? 0,
+        minOosPairedTStat: policy.tuning?.minOosPairedTStat ?? 0
+      }
+    }, userId, policy.connectedAccountId);
+
+    return { applied: true, previousWeights: beforeWeights, newWeights, cautions: decision.cautions };
+  }
+
+  // P1-3 SHADOW LEDGER: no real apply fired — record what the tuner WOULD have done (when the flag is on and a
+  // candidate vector was actually built). Passive: it writes ONLY a shadow ledger row (a distinct trigger), so
+  // no revert path will restore it and it never mutates policy.
+  if (shadowEnabled && decision.after && decision.before) {
+    recordLearningMutation({
+      subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      trigger: AUTO_WEIGHT_SHADOW_TRIGGER,
+      flag: "shadowWeightLedger",
+      before: { scoringWeights: decision.before, shadow: true },
+      after: { scoringWeights: decision.after, shadow: true },
+      evidence: {
+        shadow: true,
+        wouldApply: decision.wouldApply,
+        reason: decision.reason,
+        candidateIC: decision.oosICCandidate,
+        baselineIC: decision.oosICBaseline,
+        oosReadout: decision.oosReadout,
+        thresholds: decision.thresholds,
+        changedFactors: decision.changedFactors,
+        confidenceScore: decision.confidenceScore,
+        generatedBy: decision.generatedBy
+      }
+    });
+  }
+
+  return { applied: false, reason: decision.reason ?? (autoApplyOn ? "no_validated_weight_changes" : "autoApplyWeights_off"), cautions: decision.cautions };
+}
+
+/**
+ * Panel P1-1: READ-ONLY deterministic dry-run/replay of the autonomous decision. Runs the SAME shared gate
+ * evaluator as `applyAutonomousWeightTuning` and returns exactly what an apply WOULD do — `{ before, after,
+ * clampedDeltas, oosICCandidate, oosICBaseline, oosReadout, wouldApply }` — with ZERO writes (no `setPolicy`,
+ * no ledger row, no audit, no cadence-key advance). It ignores the `autoApplyWeights` flag entirely (an
+ * operator can inspect the decision before enabling autonomy) but surfaces any invariant violations so the
+ * operator sees a config that WOULD block a real apply.
+ */
+export async function dryRunAutonomousWeightTuning(userId: string = "local", modelOverride?: string): Promise<AutonomousWeightDecision & { invariantViolations?: ReturnType<typeof validateTuningInvariants>["violations"] }> {
+  const policy = getPolicy(userId);
+  const invariants = validateTuningInvariants(policy.tuning);
+  const decision = await evaluateAutonomousWeightTuning(userId, modelOverride);
+  return invariants.ok ? decision : { ...decision, invariantViolations: invariants.violations };
 }
 
 export interface AutonomousWeightRevertResult {
