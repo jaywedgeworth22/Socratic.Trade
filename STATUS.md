@@ -68,6 +68,19 @@ capability plan). Not pushed as of this note, so no branch to reference yet — 
 duplicating it. This session's work stayed in the "use Alpaca/Robinhood more fully" lane
 per `docs/broker-capability-plan.md`, not new-broker integration, specifically to avoid
 collision.
+## 2026-07-01 - Mobile API/PWA stale worktree rebase (Codex)
+Branch `codex/mobile-command-api-rebase-20260701`. Re-extracted the old
+`codex/mobile-command-api` worktree onto current `origin/main` rather than
+direct-merging its stale 199-commit-behind branch. The rebase keeps the current
+audited account-deletion lifecycle, adds `mobile_commands` as migration v8,
+preserves current dashboard action semantics, and brings over `/mobile`, mobile
+command APIs/SSE, PWA metadata, SwiftUI starter files, and focused tests.
+Verification so far: `bash scripts/npm-ci-with-shared-deps.sh`;
+`npx vitest run test/mobile-api.test.ts` (5 tests passed);
+`npx tsc --noEmit` (passed); `npm run lint && npx tsc --noEmit && npm test &&
+npm run build` (lint 0 errors / existing warnings, TypeScript pass, 170 test
+files / 1,632 tests pass, build pass with the existing Sentry Edge-runtime
+warning).
 
 ## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
 Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
@@ -2235,6 +2248,26 @@ Branch: claude/magical-faraday-uce1uy
   tests; `npx tsc --noEmit`, full `npm test` (102 files / 915 tests), and
   `npm run build` passed; local `/api/health` returned OK. See
   `docs/rollouts/2026-06-23-custom-watchlist-errors.md`.
+- 2026-06-23 (`codex/mobile-command-api`): **Shared mobile API, phone PWA, SwiftUI starter, and account deletion reset flow.**
+  Built an isolated mobile worktree from current `origin/main` so it does not
+  touch the other agent lanes. Added `/api/mobile/*` as the shared backend
+  source-of-truth contract for a responsive Next.js/PWA and native SwiftUI
+  iPhone app: snapshot/bootstrap reads, audited/idempotent command queue,
+  server-side command execution, SSE command/status events, and a phone-first
+  `/mobile` PWA. Added SwiftUI starter files under `ios/AgenticTrading/` using
+  the same command/status model. Added a multi-step account deletion procedure
+  that creates a short-lived request, requires exact signed-in email/user-id and
+  exact phrase confirmation, deletes user-scoped app data plus server-stored
+  broker/provider secrets, signs out, and clearly separates backend reset from
+  optional Google/Apple provider-side OAuth grant revocation. Browser visual
+  review covered `/mobile` at 360x740, 390x844, 768x1024, and 1440x900 plus
+  main-dashboard smoke at 390x844 and 1440x900; fixes included mobile alert
+  overflow, danger-zone contrast, deletion confirmation layout, and mobile
+  touch-target sizing. Verification: `npx tsc --noEmit`; focused
+  `npx vitest run test/mobile-api.test.ts --testTimeout=20000`; full `npm test`
+  passed 100 files / 913 tests; `npm run build` passed.
+  See `docs/mobile-api-and-clients.md` and
+  `docs/rollouts/2026-06-23-mobile-pwa-command-api.md`.
 - 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
   Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
   and fixed the account UI issues found during the expert/site pass. Middleware now

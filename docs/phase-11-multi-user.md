@@ -86,6 +86,13 @@ allowed users map to isolated hashed user IDs only when present in
   `market-data` SSE refresh. This back-populates only from shared facts: env-key,
   no-key/free, or explicitly opted-in user-keyed history. A private user-key fill
   does not satisfy another user's pending demand.
+- Mobile/PWA/native clients now share one backend command gateway rather than
+  talking to every web endpoint directly. `/api/mobile/*` exposes a
+  request-scoped snapshot, audited command queue/status model, SSE updates, and
+  a multi-step account deletion flow. The phone PWA at `/mobile` and the
+  SwiftUI starter in `ios/AgenticTrading/` both treat the backend as the source
+  of truth; broker/provider secrets, MCP calls, scraping, calculations, and
+  order placement stay server-side. See `docs/mobile-api-and-clients.md`.
 
 ## Milestones
 
@@ -304,6 +311,31 @@ provider, source, API-key destination, account-flow label, or user-facing system
 description changes. The Help modal should reflect the actual provider stack,
 avoid giving one provider special treatment unless the runtime does, and link
 source names to their provider or API-key pages when applicable.
+
+### M8 `[foundation]` Shared mobile API, PWA, and SwiftUI client
+
+The mobile path is intentionally a backend-mediated command system, not a second
+set of trading controls:
+
+- `mobile_commands` stores command id, authenticated user, idempotency key,
+  command type, payload, status, result/error, client metadata, and timing fields.
+- `POST /api/mobile/commands` validates and queues commands; the backend worker
+  claims queued rows, runs the existing server-side trading/account/watchlist/
+  alert/policy functions, audits success or failure, and emits status events.
+- `GET /api/mobile/snapshot` packages the dashboard snapshot into a phone-friendly
+  response with readiness, policy, portfolio, positions, proposals, accounts,
+  watchlist, alerts, and recent commands.
+- `GET /api/mobile/events` streams command and dashboard freshness updates for
+  the signed-in user.
+- `/mobile` is a phone-first PWA control surface using the same command model as
+  the native app. It has clear Start/Stop/Close-only/Run-once controls, approval
+  cards, watchlist and alert controls, command history, backend-source-of-truth
+  messaging, and a danger-zone deletion workflow.
+- `ios/AgenticTrading/` provides a SwiftUI starter that uses the same endpoints
+  and keeps only the backend session on-device.
+- Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
+  type the signed-in identity and required phrase, then confirm/sign out with
+  provider-side guidance for optional OAuth grant revocation.
 
 ## Sequencing & risk
 M1 → M2 are near-term and low-risk (additive; default user). M3–M5 are the real

@@ -848,7 +848,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
             type="button"
             disabled={submitting}
             onClick={() => void respond(false)}
-            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
+            className="min-h-11 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50 sm:h-9 sm:min-h-0"
           >
             Decline
           </button>
@@ -856,7 +856,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
             type="button"
             disabled={submitting}
             onClick={() => void respond(true)}
-            className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50 sm:h-9 sm:min-h-0"
           >
             {submitting ? "Saving…" : "Agree & Continue"}
           </button>
@@ -1721,7 +1721,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             />
             <Button
               variant={runOnceBlockedReason ? "ghost" : "primary"}
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              className="h-8 px-2 text-xs max-sm:min-w-11 lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label="Run strategy once"
               title={runOnceBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
@@ -1737,7 +1737,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             </Button>
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              className="h-8 px-2 text-xs max-sm:min-w-11 lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
               title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
               onClick={() => {
