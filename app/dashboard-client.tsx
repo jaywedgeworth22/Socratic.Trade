@@ -123,6 +123,30 @@ import {
   type WorkspaceTab
 } from "./nav-destinations";
 import { GLOSSARY_RULE_OF_THUMB, SETTINGS_GLOSSARY } from "./settings-search";
+
+// NAV_V2 PR #3 (physical): the off-rail Settings tree — eight scope-first nodes.
+// Four reuse existing section content (via `section`); four are new panels. Rendered
+// only when NAV_V2 is on and the user tier is active; the flag-off modal is untouched.
+type UserNode =
+  | "account-security"
+  | "connections"
+  | "keys-models"
+  | "alert-delivery"
+  | "data-privacy"
+  | "presets"
+  | "appearance"
+  | "admin";
+
+const USER_NODE_TABS: Array<{ id: UserNode; label: string; section?: SettingsSection; adminOnly?: boolean }> = [
+  { id: "account-security", label: "Account & Security" },
+  { id: "connections", label: "Connections" },
+  { id: "keys-models", label: "Keys & Models", section: "connections" },
+  { id: "alert-delivery", label: "Alert delivery", section: "notifications" },
+  { id: "data-privacy", label: "Data & Privacy", section: "data" },
+  { id: "presets", label: "Presets" },
+  { id: "appearance", label: "Appearance", section: "display" },
+  { id: "admin", label: "Admin", adminOnly: true }
+];
 import { compactMoney, compactNum, formatPct, money, pnlTone, signedMoney } from "./dashboard-widgets";
 import { cn } from "./ui/cn";
 import dynamic from "next/dynamic";
@@ -4578,6 +4602,12 @@ function SettingsContent({
   // NAV_V2 PR #3: scope-first framing. Off by default (dark launch); the flag-off
   // modal is byte-identical.
   const [navV2] = useState(() => isNavV2Enabled(typeof window !== "undefined" ? window.localStorage : null));
+  // NAV_V2 PR #3 (physical): which Scope-B node is open in the off-rail Settings tree.
+  const [userNode, setUserNode] = useState<UserNode>(
+    () => USER_NODE_TABS.find((n) => n.section === initialSection)?.id ?? "keys-models"
+  );
+  const isAdmin = snapshot.currentUser?.isAdmin === true;
+  const visibleUserNodes = USER_NODE_TABS.filter((n) => !n.adminOnly || isAdmin);
   useEffect(() => {
     setSection(initialSection);
     setSettingsTier(settingsTierForSection(initialSection));
@@ -4882,25 +4912,36 @@ function SettingsContent({
 
           <div className="overflow-x-auto overscroll-x-contain">
             <Tabs
-              value={section}
-              onChange={(v) => setSection(v as SettingsSection)}
+              value={navV2 && settingsTier === "user" ? userNode : section}
+              onChange={(v) => {
+                if (navV2 && settingsTier === "user") {
+                  const node = v as UserNode;
+                  setUserNode(node);
+                  const mapped = USER_NODE_TABS.find((n) => n.id === node)?.section;
+                  if (mapped) setSection(mapped);
+                } else {
+                  setSection(v as SettingsSection);
+                }
+              }}
               className="w-max min-w-full border-line/70 bg-bg/45 p-0.5 sm:min-w-0"
               tabClassName="max-sm:flex-1 max-sm:px-2"
               tabs={
-                settingsTier === "user"
-                  ? [
-                      { id: "connections", label: "Connections" },
-                      { id: "display", label: "Appearance" },
-                      { id: "notifications", label: "Alert delivery" },
-                      { id: "data", label: "Data & Privacy" }
-                    ]
-                  : [
-                      { id: "strategy", label: "Strategy" },
-                      { id: "operate", label: "Operate" },
-                      { id: "risk", label: "Safety" },
-                      { id: "tax", label: "Tax" },
-                      { id: "tuning", label: "Tuning" }
-                    ]
+                navV2 && settingsTier === "user"
+                  ? visibleUserNodes.map((n) => ({ id: n.id, label: n.label }))
+                  : settingsTier === "user"
+                    ? [
+                        { id: "connections", label: "Connections" },
+                        { id: "display", label: "Appearance" },
+                        { id: "notifications", label: "Alert delivery" },
+                        { id: "data", label: "Data & Privacy" }
+                      ]
+                    : [
+                        { id: "strategy", label: "Strategy" },
+                        { id: "operate", label: "Operate" },
+                        { id: "risk", label: "Safety" },
+                        { id: "tax", label: "Tax" },
+                        { id: "tuning", label: "Tuning" }
+                      ]
               }
             />
           </div>
@@ -5267,13 +5308,13 @@ function SettingsContent({
 
         {settingsTier === "user" && <>
 
-        {section === "connections" && (
+        {section === "connections" && (!navV2 || userNode === "keys-models") && (
           <div className="space-y-4">
             <ApiKeysSection policy={policy} />
           </div>
         )}
 
-        {section === "display" && (
+        {section === "display" && (!navV2 || userNode === "appearance") && (
           <div className="space-y-3">
             <Field label="Account-mode banner" hint="The Test / Paper / Brokerage banner at the very top. Full is the standard size, Compact uses less vertical space, and Hidden removes it entirely.">
               <Segmented<ExecutionBannerMode>
@@ -5444,7 +5485,7 @@ function SettingsContent({
 
       {settingsTier === "user" && <>
 
-      {section === "data" && (
+      {section === "data" && (!navV2 || userNode === "data-privacy") && (
         <div className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-line bg-surface-2/50 px-3 py-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-info/15 text-info">
@@ -5558,17 +5599,20 @@ function SettingsContent({
             Changes apply immediately. Only fact-tier learnings are ever shared — risk and strategy
             directives go through a human approval queue and are never shared automatically.
           </p>
-          <AccountDeletionPanel
-            signedInEmail={snapshot.currentUser?.email}
-            onOpen={() => setAccountDeletionOpen(true)}
-          />
+          {/* NAV_V2 PR #3: the deletion panel relocates to the Account & Security node. */}
+          {!navV2 && (
+            <AccountDeletionPanel
+              signedInEmail={snapshot.currentUser?.email}
+              onOpen={() => setAccountDeletionOpen(true)}
+            />
+          )}
         </div>
       )}
       </>}
 
       {settingsTier === "user" && <>
 
-      {section === "notifications" && (
+      {section === "notifications" && (!navV2 || userNode === "alert-delivery") && (
         <div className="space-y-3">
             <Field label="Alerts webhook">
             <input className={inputClass} value={policy.notificationSettings.webhookUrl ?? ""} onChange={(e) => updatePolicy({ notificationSettings: { ...policy.notificationSettings, webhookUrl: e.target.value } })} placeholder="https://…" />
@@ -5608,6 +5652,61 @@ function SettingsContent({
         </div>
       )}
       </>}
+
+      {/* NAV_V2 PR #3 (physical): the four NEW Scope-B nodes. Account & Security holds the relocated
+          deletion panel; the rest are focused panels / pointers to their live surfaces. */}
+      {navV2 && settingsTier === "user" && userNode === "account-security" && (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-line bg-surface-2/40 p-3">
+            <div className="text-sm font-semibold text-fg">Account &amp; Security</div>
+            <p className="mt-1 text-[13px] text-muted">
+              Signed in as <span className="text-fg">{snapshot.currentUser?.email ?? "this account"}</span>
+              {snapshot.currentUser?.loginProvider ? ` via ${snapshot.currentUser.loginProvider}` : ""}. Your
+              identity, sign-in, and sessions.
+            </p>
+          </div>
+          <AccountDeletionPanel
+            signedInEmail={snapshot.currentUser?.email}
+            onOpen={() => setAccountDeletionOpen(true)}
+          />
+        </div>
+      )}
+
+      {navV2 && settingsTier === "user" && userNode === "connections" && (
+        <div className="rounded-lg border border-line bg-surface-2/40 p-3">
+          <div className="text-sm font-semibold text-fg">Broker connections</div>
+          <p className="mt-1 text-[13px] text-muted">
+            Connect and disconnect brokers, and set each account to Test, Paper, or Live. API keys and default
+            models live under <span className="text-fg">Keys &amp; Models</span>.
+          </p>
+          <Button size="sm" variant="ghost" className="mt-2" onClick={openAccounts}>
+            Open Accounts ›
+          </Button>
+        </div>
+      )}
+
+      {navV2 && settingsTier === "user" && userNode === "presets" && (
+        <div className="rounded-lg border border-line bg-surface-2/40 p-3">
+          <div className="text-sm font-semibold text-fg">Presets</div>
+          <p className="mt-1 text-[13px] text-muted">
+            Rename, version, delete, and share your presets. You <span className="text-fg">apply</span> them
+            from the Strategy tab (&ldquo;Copy this strategy to another account&rdquo;).
+          </p>
+        </div>
+      )}
+
+      {navV2 && settingsTier === "user" && userNode === "admin" && isAdmin && (
+        <div className="rounded-lg border border-line bg-surface-2/40 p-3">
+          <div className="text-sm font-semibold text-fg">Admin</div>
+          <p className="mt-1 text-[13px] text-muted">
+            Operator tools — user allowlist, LLM usage &amp; billing, provider &amp; connection health, RAG
+            coverage, transcript, and the system-wide halt / close-only override.
+          </p>
+          <a href="/admin" className={cn(buttonClass({ size: "sm", variant: "ghost" }), "mt-2 inline-flex")}>
+            Open Admin ›
+          </a>
+        </div>
+      )}
 
       </div>
       <ConfirmModal
