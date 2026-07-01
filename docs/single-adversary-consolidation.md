@@ -704,6 +704,13 @@ Do **not** open the PR as a draft (repo rule: open ready for review by default).
 
 ## 11. Touch-point index (implementation map)
 
+> **Refined by [§12](#12-review-reconciliation-codex-automated-review) — read it before
+> following any row below.** The one-line map cells are deliberately terse; §12 corrects
+> several that would otherwise mislead (net-exposure gating, returning the
+> deterministic-filtered Bull output, preserving the Bear fact-check context + candidate
+> evidence, recording Red-Team rejections, passing the account-scoped policy into the
+> reviewer, the JSON-helper scope, and the write-time/ops-snapshot independence gaps).
+
 | Area | Anchor | Change |
 |------|--------|--------|
 | Delete in-flow Bear | `src/lib/strategy.ts:~2225-2440` | Remove `bearSystemPrompt`/`bearSchema`/`bearUserContent`/`resolveLlmEndpoint(...,"red")`/fetch/parse/`bearProposals`; return Bull output, no 2nd LLM call. |
@@ -724,3 +731,131 @@ Do **not** open the PR as a draft (repo rule: open ready for review by default).
 | Retry wrapper | `src/lib/llm-request.ts:55` | Add `fetchLlmWithRetry`; swap adversary `llmFetch` calls. |
 | Token-cap consolidation | `src/lib/llm-request.ts:69-73` | Merge `strategyCritique`/`redTeamDebate` → one `adversaryReview` key. |
 | Tests | `test/llm-provider.test.ts:67-76`, `test/red-team.test.ts:20-170`, bear-step tests | Rewrite per §10. |
+
+---
+
+## 12. Review reconciliation (Codex automated review)
+
+Automated design review (Codex, 2026-07-01) raised 20 substantive points on this spec.
+All are folded in below; where a point corrects §11's terse map or a detailed section,
+**this section is authoritative.** Grouped by area.
+
+### 12.1 Verdict & sizing (§3.3, §3.6)
+
+- **R1 — `approve-at-half` that is unplaceable must NOT proceed at full size.** §3.3's
+  "no-op the haircut" is corrected: when `0.5×` falls below the bracket/whole-share/floor
+  minimum, the adversary only approved *lower* risk, so proceeding at the original
+  deterministic size violates that verdict. **Route to human review (or reject) instead of
+  silently keeping the larger trade.** Never up-size an `approve-at-half`.
+- **R2 — Half-size must handle quantity-based limit orders.** When `marketableLimitEntries`
+  is enabled the post-sizing enrichment converts qualifying openings to **quantity-based
+  limit orders and clears `dollarAmount`** (`src/lib/strategy.ts` ~`2868-2873`), so
+  `proposal.dollarAmount * 0.5` becomes `NaN` and wiping `quantity` produces an invalid
+  order. Compute the haircut from the **estimated notional** (or halve `quantity` on the
+  quantity-routed path) rather than assuming every finalized proposal is dollar-routed;
+  if neither is placeable at half, apply R1 (route to human).
+- **R3 — A "cap on openings reviewed per run" must fail closed, not skip review.** §3.6's
+  optional cap is corrected: any opening beyond the cap must **route to human / fail
+  closed**, never proceed unreviewed — otherwise it recreates the silent-unreviewed
+  autonomous path this design eliminates. Prefer no cap (concurrency handles latency, R4).
+- **R4 — Use a bounded concurrency limiter, not raw `Promise.all`.** `Promise.all` starts
+  every adversary request at once. Use a real worker-pool / limiter (e.g. `p-limit`-style,
+  cap 3–4) so a wide run can't burst all Red-Team calls and re-trigger the
+  scheduler-lock / rate-limit starvation §3.6 is trying to avoid.
+
+### 12.2 Side/exit scope & telemetry (§3.1, §3.5, §11)
+
+- **R5 — Net-exposure gating belongs in the §11 map too.** §11's "gate on
+  `side==="buy"||"short"`" is corrected to match §3.5: gate on **net risk direction** — a
+  `buy` covering an existing short or a `short` trimming an existing long is
+  risk-*reducing* and must be exempt (look up the held position as the sizer does), else
+  the adversary could reject/half-size a de-risking trade.
+- **R6 — Deleting the in-flow Bear must RETURN the deterministic-filtered Bull proposals.**
+  `deterministicBearFilter` runs immediately before the Bear LLM; its filtered
+  `bullProposals` (phantom-exit / regime / fundamentals vetoes §3.1 says MUST survive) are
+  the output. The map's "return Bull output" means **return the deterministic-filtered
+  output**, not the raw pre-filter proposals.
+- **R7 — Preserve the Bear fact-check context when consolidating.** The in-flow Bear passes
+  `candidatesUnderReview` and instructs the model to fact-check Bull claims against
+  fundamentals/technicals/smart-money/macro. The consolidated Red Team prompt/input MUST
+  carry the **full candidate evidence + the same fact-check instruction** — the
+  deterministic pre-filter only covers a few fixed vetoes and cannot replace it.
+- **R8 — Record Red-Team rejections before dropping them.** The map keeps `continue` on a
+  reject, which leaves a rejected opening out of `trade_proposals` and the audit/activity
+  feed — hiding the adversary's most important negative verdict from operator review and
+  learning telemetry. **Insert a proposal/audit row (status `rejected`, with the Red reason
+  + thesis tag) before `continue`**, matching the existing user/policy/broker-rejection paths.
+
+### 12.3 Reliability / JSON parsing (§4.1, §4.3)
+
+- **R9 — The JSON extractor must not be greedy.** The sketched helper grabs from the first
+  `[`/`{` through the last `]`/`}`, which combines / corrupts output when prose contains a
+  stray bracket or multiple JSON-looking blocks. **Strip enclosing code fences and scan for
+  the first *balanced* JSON object/array**, not a greedy first-to-last slice.
+- **R10 — Apply the JSON helper to the Bull/Green parser too.** §4.1's "apply everywhere an
+  LLM response is parsed" must include the **Green/Bull proposal parser** (bare
+  `JSON.parse(text)` at `src/lib/strategy.ts` ~`2269`); otherwise fenced JSON on the
+  proposal step still degrades to zero proposals — the same reliability failure in the
+  primary path.
+- **R11 — Define the backup reviewer before requiring failover.** §4.3's "fail over to the
+  configured backup adversary model" needs a concrete source: the spec otherwise defines
+  only a single adversary model. Either (a) add an explicit **backup adversary model**
+  Strategy Studio setting (surfaced, persisted — no hidden fallback, per "Settings tells the
+  truth"), or (b) drop the failover step. Do not invent an implicit env/default fallback.
+
+### 12.4 Independence enforcement (§3.8, §8, §11)
+
+- **R12 — Compare RESOLVED models/endpoints, not raw policy strings.** Independence checks
+  (migration §8 and write-time R14) must compare the **resolved** Green vs Red models: a
+  blank `llmModel` resolves to `OPENAI_MODEL`/`DEFAULT_OPENAI_MODEL`, so an explicit Red
+  equal to that default (e.g. `gpt-5.4-mini`) is the *same runtime model* yet passes a raw
+  `redTeamLlmModel !== llmModel` check. Compare `resolveLlmEndpoint(...,"green")` vs
+  `(...,"red")` (model + provider).
+- **R13 — Provider auto-default needs a provider→model map.** §3.8b iterates
+  `LLM_PROVIDER_SERVICES` for a second key, but that yields provider IDs/keys, not a model
+  string (`resolveLlmEndpoint` picks the provider *from* the model prefix). Add an explicit
+  **provider → default-model** mapping (e.g. anthropic → `claude-haiku-4-5`, gemini →
+  `gemini-2.5-flash`) so a blank Red with a second-provider key resolves to a concrete model.
+- **R14 — Enforce exact-model independence on WRITES, not just migration.** §8 migrates
+  existing rows, but `app/api/policy/route.ts` (~`113`) only validates Red as non-empty, so
+  a future PUT can still save `llmModel === redTeamLlmModel`. Add **write-time (and runtime)
+  validation** (using the R12 resolved comparison) + tests, so both roles can never resolve
+  to the same model.
+- **R15 — Migrate the env-selected Red Team before deleting the env override.** Deployments
+  running `RED_TEAM_LLM_PROVIDER=anthropic` / `RED_TEAM_LLM_MODEL` with a blank
+  `policy.redTeamLlmModel` would, under the new no-blank-fallback rule, become
+  unconfigured → fail-closed the moment §3.8c deletes those env reads. Add an **operator
+  migration / startup seed** that writes the first-class Red Team setting from the env
+  override (and clean `.env.example`) *before* removing the reads, so a working safety setup
+  doesn't silently flip to human-review mode.
+- **R16 — Update the ops-snapshot Red resolution.** `src/lib/ops-snapshot.ts` (~`203`)
+  derives Red diagnostics via `resolveLlmEndpoint({ llmModel: policy.redTeamLlmModel }, …)`
+  — treating Red as the Green model and falling back to the default when blank. After the
+  no-fallback change, update this caller to resolve with `role:"red"`; otherwise live
+  diagnostics report Red as "configured" while the strategy path considers it unconfigured
+  and fails closed, hiding *why* runs are stuck awaiting review.
+
+### 12.5 Account-scoped policy & visibility (§3.7, §5, §7, §11)
+
+- **R17 — Pass the selected account policy into `debateProposal`.** The current
+  `debateProposal(...userId)` shape reloads `getPolicy(userId)` (user-level), ignoring the
+  selected `connectedAccountId` — so a non-default account's account-scoped Red
+  model/reasoning is dropped. The consolidated call MUST pass the already-resolved
+  `policy`/`connectedAccountId` in, not reload the user-level policy.
+- **R18 — Surface adversary-unavailable in PROPOSE mode too.** §5/§7 add the flag only on the
+  `requiresHumanReview` path, but `strategy.ts` handles `strategyAuthority==="propose"`
+  *before* that check — so a manual-proposal run's adversary-unavailable trade is inserted by
+  the routine pending-approval branch with no flag/reason. Set the persisted
+  `adversaryUnavailable` flag + reason on **both** the propose-mode insert and the
+  requiresHumanReview insert.
+- **R19 — Persist a machine-readable badge flag, not just a notification payload.** The
+  pending-approval card is populated from **stored pending proposals**, not notification
+  payloads, so the badge needs a stable persisted field. Add a machine-readable
+  `adversaryUnavailable` boolean (+ reason) to the persisted `decision` (or a dedicated
+  column), and use the notification payload only for the feed/title path.
+
+### 12.6 Handoff / process
+
+- **R20 — PLAN.md + `docs/phase-7-strategy.md` updated**, and the rollout note now records
+  the verification commands + resolved O1–O4 status (see the rollout note and the "Decisions"
+  §9). This satisfies the AGENTS.md Pre-Commit / Handoff Protocol for this design change.

@@ -80,17 +80,31 @@ pre-filter retention) plus 3 minors were folded back into the doc before commit.
 
 ## Verification
 
-None run — no code changed (design doc only). The spec's §10 carries the
-`tsc --noEmit` → `lint` → `test` → `build` gate for the eventual implementation.
+This change is **docs-only** (a design spec + these handoff docs — no `src/`/`app/`
+code changed), but the repo's verify gate was run anyway to confirm nothing regressed
+and to record the exact commands per the Handoff Protocol:
+
+```bash
+npx tsc --noEmit   # clean
+npm run lint       # 0 errors (pre-existing grandfathered warnings only)
+npm test           # green
+npm run build      # passes
+```
+
+The spec's §10 carries this same gate as the required check for the eventual
+*implementation* PR (which will change code).
 
 ## Follow-ups
 
-- **Open decisions blocking implementation** (spec §9): O1 naming (deferred), O2
-  remove-conviction-gate + concurrency, O3 `test/local` behavior, O4
-  single-provider fallback.
-- Implementation not started. When it lands it must update `PLAN.md` and
-  `docs/phase-7-strategy.md` (the owning phase doc) to match — deferred here
-  because this is a proposal, not a change to current implementation state.
+- **Decisions are RESOLVED, not blocking** (spec §9): O1 = "Red Team", O2 = remove
+  the conviction gate (+ concurrency), O3 = default-route `test/local` through human
+  review, O4 = fail-closed on blank/no-second-key. (An earlier draft of this note said
+  O1–O4 were open — corrected to match spec §9.) The only remaining design nuances are
+  captured as review-reconciliation items R1–R20 in spec §12.
+- **PLAN.md and `docs/phase-7-strategy.md` updated** to reference this design path (an
+  earlier draft deferred both; done now per the Pre-Commit / Handoff Protocol).
+- Implementation not started — this is a proposal. When it lands, the implementation
+  PR carries its own verify run + doc updates.
 - Separate workstream (not in this spec): order fill-confirmation / reconciliation
   design (extend the existing `placing`-intent + `flagStalePlacingIntents`
   reconciliation rather than a fragile in-memory poll loop; prefer broker push

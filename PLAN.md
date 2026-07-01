@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/wonderful-bell-32958a`): **Design spec — single-adversary ("Red Team")
+> consolidation.** `docs/single-adversary-consolidation.md` proposes collapsing today's two
+> adversarial LLM passes (in-flow Bear + standalone `debateProposal`) into one hardened Red
+> Team: reviews the finalized trade, fails closed + visible when unavailable, never blocks a
+> risk-reducing exit, provably independent of the proposer. Design-only (not implemented);
+> decisions O1–O4 resolved (spec §9); Codex review refinements folded in as §12 R1–R20. Owning
+> phase doc: `docs/phase-7-strategy.md` §F. See
+> `docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
+
 > 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Follow-up Codex review on the durable budget** —
 > three findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
 > of `0` now opts OUT of an operator env default (`0` = no limit, not "block everything") — `resolveLimit`

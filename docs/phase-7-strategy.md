@@ -45,6 +45,12 @@ adversarial-debate lenses before making a decision.
 *Prevent confirmation bias and hallucination.*
 - **Mechanism:** Before a high-conviction trade is finalized, the proposal is routed to a separate "Red Team / Bear" prompt. This prompt is tasked *exclusively* with finding reasons the trade will fail (e.g., hidden technical resistance, negative sector news, overvaluation).
 - **Goal:** The main agent must successfully address or invalidate the Bear agent's concerns before the trade is approved, ensuring maximum robustness and quality.
+- **Proposed redesign (design-only, 2026-07-01):** `docs/single-adversary-consolidation.md`
+  proposes collapsing today's *two* adversarial passes (the in-flow Bear inside `proposeTrades`
+  and the standalone `debateProposal`, which run the same model twice) into a single hardened
+  **Red Team** that reviews the finalized (post-sizing) trade, fails **closed and visibly** when
+  it can't run, never blocks a risk-reducing exit, and is provably independent of the proposer.
+  Not yet implemented; decisions resolved in that spec's §9, review refinements in §12.
 - **First-class verdict (2026-07-01):** the Red Team debate result is stored on the proposal as a
   structured `redTeamVerdict?: { rejected; available; reason }` field (`TradeProposal` in
   `src/lib/types.ts`), not just appended to the free-text rationale. It survives the JSON round-trip
