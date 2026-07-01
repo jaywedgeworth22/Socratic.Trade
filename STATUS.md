@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Durable per-user LLM budget: modifiable config + spend-primitive enforcement (Claude)
+On PR #293. Replaced call-site budget gating (Codex kept finding new bypass sites) with a durable
+design. **Config (now modifiable):** the daily LLM ceiling is a per-user POLICY setting
+(`policy.tuning.llmDailyTokenBudget` / `llmDailyCostBudgetUsd`), editable in the dashboard Settings →
+Tuning and via `PATCH /api/policy`, falling back to the operator env default
+(`TRIGGER_LLM_DAILY_TOKEN_BUDGET` / `_COST_BUDGET_USD`) when unset; 0/blank = off. **Enforcement (now
+airtight):** two spend primitives everything funnels through — `withLlmGeneration` (all LLM
+generations: bull/bear/red-team/revalidation/reflection/tuning) throws `LlmBudgetExceededError` when
+over budget, and `retrieveContextDetailed` (all RAG) returns `[]` — so current and future spend sites
+are covered by one check each. Non-LLM safety (breakers/reconciliation/protective exits) always runs.
+Resilient policy read (degrades to env-only, never throws from bookkeeping). Verify quartet green (1738
+tests). Deferred: concurrent-run reservation; chat-path coverage. See
+`docs/rollouts/2026-07-01-llm-budget-durable-enforcement.md`.
+
 ## 2026-07-01 — F/G PR #293 Codex-review fixes (Claude)
 Follow-up on PR #293 addressing 5 verified Codex findings (2×P1, 3×P2): (P1) reindex routes now
 require the `x-admin-token` in production via a new `requireTokenInProd` option on `checkAdmin` — a

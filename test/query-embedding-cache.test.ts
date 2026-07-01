@@ -37,7 +37,13 @@ vi.mock("voyageai", () => ({
 vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
-  setInternalSetting: vi.fn()
+  setInternalSetting: vi.fn(),
+  // retrieveContextDetailed now consults the per-user LLM budget (isOverLlmBudget → getPolicy). With
+  // no budget configured, checkLlmDailyBudget short-circuits to ok (both limits +Infinity) without
+  // touching the usage ledger, so a bare policy stub is enough to keep these cache tests budget-off.
+  getPolicy: () => ({ tuning: {} }),
+  DAILY_RESET_TIME_ZONE: "America/New_York",
+  startOfDayInTimeZone: () => new Date(0)
 }));
 
 // Spy on the usage metering so we can assert a cache HIT is not metered as a real Voyage call.

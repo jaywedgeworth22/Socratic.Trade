@@ -229,6 +229,19 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+  /**
+   * Hard per-user/day LLM TOKEN ceiling. When today's summed LLM usage (all providers/contexts)
+   * reaches this, the run skips every model/RAG spend for the rest of the day (non-LLM risk
+   * maintenance still runs). 0 / undefined = no limit. Modifiable in Settings → Tuning; falls back to
+   * the operator env default `TRIGGER_LLM_DAILY_TOKEN_BUDGET` when unset. Enforced at the spend
+   * primitives (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   */
+  llmDailyTokenBudget?: number;
+  /**
+   * Hard per-user/day LLM COST ceiling in USD (estimated). Same semantics as `llmDailyTokenBudget`.
+   * 0 / undefined = no limit; env fallback `TRIGGER_LLM_DAILY_COST_BUDGET_USD`.
+   */
+  llmDailyCostBudgetUsd?: number;
 }
 
 export interface RiskRules {

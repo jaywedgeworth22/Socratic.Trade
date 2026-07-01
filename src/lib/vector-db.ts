@@ -5,6 +5,7 @@ import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { chunkDocument, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { fuseHybrid } from "./rag/hybrid";
 import { meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank } from "./rag-metering";
+import { isOverLlmBudget } from "./llm-budget";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 
@@ -697,6 +698,10 @@ export async function retrieveContextDetailed(
   userId: string = "local",
   options?: RetrieveOptions
 ): Promise<RetrievedChunk[]> {
+  // Budget guard (durable spend primitive): when the user is over their daily LLM/RAG budget, skip
+  // retrieval entirely — no Voyage embed, no Pinecone query, no metered spend. Returns empty like the
+  // no-client case, so every caller degrades gracefully. Default OFF (no ceiling) → no-op.
+  if (isOverLlmBudget(userId)) return [];
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage } = getClients(userId);
   if (!pc || !voyage) return [];

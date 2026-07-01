@@ -1,4 +1,5 @@
 import { redactForTelemetry, safeErrorMessage } from "./telemetry-sanitize";
+import { assertWithinLlmBudget } from "./llm-budget";
 
 type LlmGenerationOptions<T> = {
   name: string;
@@ -72,6 +73,12 @@ export async function startObservability(): Promise<void> {
 }
 
 export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run: () => Promise<T>): Promise<T> {
+  // Durable budget backstop: EVERY LLM generation flows through here (bull, bear, red-team,
+  // revalidation, reflection, tuning, and any future one), so throwing when the user is over their
+  // daily budget guarantees no model spend slips past the ceiling — even from a call site that forgot
+  // its own gate. No-op when no ceiling is configured (default). Runs BEFORE the Langfuse short-circuit
+  // so it applies whether or not tracing is enabled.
+  if (options.userId) assertWithinLlmBudget(options.userId);
   if (!langfuseConfigured()) return run();
 
   let attemptedRun = false;

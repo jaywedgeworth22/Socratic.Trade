@@ -10,9 +10,14 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
+import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
+  // Budget guard: the post-mortem reflection is an LLM call — skip it (before any DB/model work) when
+  // the user is over their daily budget. (withLlmGeneration is a second backstop; this avoids the
+  // wasted 50-row fill fetch below.) Default OFF → no-op.
+  if (isOverLlmBudget(userId)) return;
   const db = getDb();
   const policy = getPolicy(userId);
   const { url, key: openaiKey, model: resolvedModel, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
