@@ -13,8 +13,9 @@ filling the missing pieces.
 > (`alpaca-account-insights.ts`), a Robinhood-realized-P&L cross-check
 > (`robinhood-pnl-crosscheck.ts`), and 3 new read-only chat-assistant tools
 > (earnings calendar, option chain, instrument search) backed by Robinhood MCP
-> data. Merged all 4 branches with zero conflicts, re-verified as one change
-> (171 files / 1663 tests). Robinhood options-trading support and
+> data. Merged all 4 branches with zero conflicts, merged current
+> `origin/main` through the mobile API/PWA work, and re-verified as one change
+> (172 files / 1668 tests). Robinhood options-trading support and
 > eToro/Public.com/IBKR integration deliberately excluded — real feature work
 > and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
 > change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.

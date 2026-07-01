@@ -32,16 +32,16 @@ eToro/Public.com/IBKR integration (Codex's separate new-broker work is still unp
 `git branch -r` shows no eToro/Public/IBKR branch yet, so no collision risk today, but
 still worth checking before starting that work).
 
-Verification (combined, after merging all 4 branches): `npm run lint` (0 errors, 256
-warnings — 2 new, from the untyped Alpaca SDK's pre-existing `any` convention), `npx tsc
---noEmit` (clean), `npm test` (171 files / 1663 tests, all passing together), `npm run
-build` (clean). See `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+Verification (combined after merging all 4 branches and current `origin/main` through
+the mobile API/PWA merge): `npm run lint` (0 errors, 258 warnings — existing warning
+class), `npx tsc --noEmit` (clean), `npm test` (172 files / 1668 tests, all passing
+together), `npm run build` (clean). See
+`docs/rollouts/2026-07-01-broker-capability-fanout.md`.
 
-**Still open from the prior round**: PR #286 (share-class fix in `data-providers.ts`,
-stream credential fix, Robinhood-fundamentals sector-taxonomy fix) has green CI and is
-ready to merge; the 2 auth-dependent Alpaca streams keep reconnect-looping on `HTTP 401`
-in production until it merges + deploys. Owner has not yet said go/no-go on expediting
-that deploy.
+This branch/PR now combines the prior PR #286 stream/fundamentals fixes with this
+read-only broker fan-out. Deploying it should stop the 2 auth-dependent Alpaca streams
+from using stale legacy credentials and keeps Robinhood fundamentals safe to enable only
+for verified numeric fields.
 
 ## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
 Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the
