@@ -34,4 +34,41 @@ describe("policy notification event settings", () => {
     expect(policy.notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded", "limit_order_stale"]);
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).notificationSettings.enabledEvents).toEqual(["fill", "provider_degraded", "limit_order_stale"]);
   });
+
+  it("rejects gpt-5.5 high reasoning for interactive strategy runs", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+
+    const response = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          llmModel: "gpt-5.5",
+          llmReasoningEffort: "high"
+        })
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("gpt-5.5 with high reasoning is disabled");
+
+    const redTeamResponse = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          llmModel: "gpt-5.4-mini",
+          redTeamLlmModel: "gpt-5.5",
+          llmReasoningEffort: "high"
+        })
+      })
+    );
+
+    expect(redTeamResponse.status).toBe(400);
+    expect(await redTeamResponse.text()).toContain("gpt-5.5 with high reasoning is disabled");
+  });
 });
