@@ -517,6 +517,54 @@ describe("dashboard feed helpers", () => {
       expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true);
     }
   });
+
+  it("never caps proposal-bearing groups (ledger reconciliation) — only the proposal-less tail", () => {
+    // 80 fills with distinct proposalIds → 80 proposal-bearing groups. The decision ledger reconciles
+    // statuses for up to 100 recent proposals from this feed, so none may be dropped even though 80 > 60.
+    const proposalFills: FillEvent[] = Array.from({ length: 80 }, (_, i) => ({
+      id: `pf${i}`,
+      accountNumber: "CAP2",
+      source: "paper",
+      symbol: "AAA",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      proposalId: `prop-${i}`,
+      filledAt: `2026-06-15T01:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+    // 100 proposal-less fills → render-only, capped.
+    const looseFills: FillEvent[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `lf${i}`,
+      accountNumber: "CAP2",
+      source: "paper",
+      symbol: "BBB",
+      side: "buy",
+      quantity: 1,
+      price: 10,
+      notional: 10,
+      status: "filled",
+      filledAt: `2026-06-15T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`
+    }));
+
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [],
+      fills: [...proposalFills, ...looseFills],
+      orders: [],
+      symbolMetaBySymbol: {}
+    });
+
+    const proposalGroups = feed.filter((g) => g.proposalId);
+    const looseGroups = feed.filter((g) => !g.proposalId);
+    expect(proposalGroups.length).toBe(80); // every proposal group survives — reconciliation stays complete
+    expect(new Set(proposalGroups.map((g) => g.proposalId)).size).toBe(80);
+    expect(looseGroups.length).toBe(UNIFIED_FEED_MAX_GROUPS); // only the render-only tail is capped
+    for (let i = 1; i < feed.length; i++) {
+      expect(feed[i - 1]!.updatedAt >= feed[i]!.updatedAt).toBe(true); // still globally newest-first
+    }
+  });
 });
 
 function proposal(input: { symbol: string; side: "buy" | "sell" }) {

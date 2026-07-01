@@ -1750,12 +1750,18 @@ export function parseDaysToEarnings(calendarEvents: Record<string, unknown>, now
   }
   if (futureSeconds.length === 0) return undefined;
   const nowSec = now / 1000;
-  // Earliest date at/after now; ignore past dates (a just-reported earnings).
-  const future = futureSeconds.filter((s) => s >= nowSec - 86_400); // 1-day grace for "today"
-  if (future.length === 0) return undefined;
-  const earliest = Math.min(...future);
+  // Keep today + future dates (1-day grace so a midnight-UTC "today" timestamp or a lo/hi window
+  // whose low edge just passed still counts); drop only genuinely-stale (>1 day) past earnings.
+  const withinWindow = futureSeconds.filter((s) => s >= nowSec - 86_400);
+  if (withinWindow.length === 0) return undefined;
+  // Prefer the earliest STRICTLY-upcoming date; fall back to the grace window only when every date is
+  // already (just) past — so `Math.min` can't pick a past window edge and shadow a real future date.
+  const upcoming = withinWindow.filter((s) => s >= nowSec);
+  const earliest = Math.min(...(upcoming.length > 0 ? upcoming : withinWindow));
   const days = Math.round((earliest - nowSec) / 86_400);
-  return days >= 0 ? days : undefined;
+  // Clamp the grace window to 0 rather than returning undefined, so the signal stays visible on
+  // earnings day / during a straddling window instead of silently disappearing.
+  return Math.max(0, days);
 }
 
 /** Institutional ownership % (0–100) from majorHoldersBreakdown (preferred) or a summed

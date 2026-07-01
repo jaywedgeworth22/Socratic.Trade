@@ -159,3 +159,26 @@ current "all lanes stopped" behavior is the deliberate conservative choice (don'
 provider that can still serve someone). The `#5` tightening above already removes the most harmful
 false-trip. Tracked as a follow-up rather than expanding this PR's surface.
 
+## Codex review — 2nd round (PR #292, commit c58823a → follow-up)
+
+Four further P2s, two of them behavior regressions in the ostensibly-safe changes; all fixed + tested:
+
+- **[E] Unified feed cap broke ledger reconciliation** (`dashboard-feed.ts`) — the client's
+  `decisionLedgerItems` reconciles fill/order statuses for up to 100 recent proposals from
+  `unifiedFeed`, not just to render it, so the flat `.slice(0, 60)` dropped statuses for proposals
+  beyond the newest 60 (a real output change, violating E's identical-output rule). Now keeps EVERY
+  proposal-bearing group and caps only the proposal-less, render-only tail — the rendered newest-50
+  and the reconciled statuses are both provably unchanged. Test added.
+- **[D] Per-side marketable-limit pricing** (`strategy.ts`) — the all-or-nothing `syntheticSpread`
+  flag discarded a real bid when only the ask was synthetic (and vice-versa). Now each side is judged
+  independently (`syntheticAsk`/`syntheticBid`), so a buy still anchors on a real ask and a short on a
+  real bid. Test added.
+- **[D] `parseDaysToEarnings` dropped same-day / straddling windows** (`data-providers.ts`) — the
+  1-day grace let `Math.min` pick a just-past window edge → negative days → `undefined`, hiding
+  near-term earnings on earnings day. Now prefers the earliest strictly-upcoming date and clamps the
+  grace window to 0. Two tests added.
+- **[D] `extractUnderlyingPrice` ignored the nested `quote` envelope** (`robinhood.ts`) — Robinhood
+  commonly returns `{ quote: {...} }`; the extractor now reads `item.quote ?? item` (exported + tested)
+  so the options tier gets a real moneyness anchor instead of falling back to median IV.
+
+

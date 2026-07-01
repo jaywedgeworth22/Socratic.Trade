@@ -250,6 +250,32 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     expect(p.type).toBe("limit");
     expect(p.limitPrice).toBe(100.15);
   });
+
+  it("prices each side independently: a synthetic BID must not discard a REAL ask for a buy", () => {
+    const mixed: MarketScan = {
+      ...marketScan,
+      quotesBySymbol: {
+        // Real ask (alpaca) alongside a synthetic bid (e.g. a later provider supplied the bid).
+        TSLA: {
+          symbol: "TSLA",
+          price: 100,
+          ask: 101,
+          bid: 99,
+          score: 50,
+          sources: { ask: "alpaca", bid: "yahoo-finance-synthetic" }
+        }
+      }
+    };
+    const p = enrichOpeningProposal(
+      buy({ dollarAmount: 1000, referencePrice: 100 }),
+      policy({ activeBroker: "test", marketableLimitEntries: true, permittedOrderTypes: ["market", "limit"] }),
+      mixed
+    );
+    // A buy anchors on the REAL ask (101); the synthetic BID is irrelevant to it and must not degrade
+    // the limit to refPrice. 101 * (1 + 15bps) = 101.15 (would be 100.15 under the old all-or-nothing flag).
+    expect(p.type).toBe("limit");
+    expect(p.limitPrice).toBe(101.15);
+  });
 });
 
 describe("generateProactiveRiskProposals beta-scaled stops", () => {

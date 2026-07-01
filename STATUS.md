@@ -54,7 +54,11 @@ arg); circuit breaker requires the 5-consecutive-failure condition (no single-co
 blackout); FMP transient short-interest failure no longer caches a row missing the disagreement
 input. Deferred: per-credential circuit-breaker lane (interface change across ~9 providers on a
 default-off feature) — tracked in the rollout note. gitleaks false positive (a `clearEnrichmentCache`
-identifier) resolved via a narrow `.gitleaks.toml` allowlist.
+identifier) resolved via a narrow `.gitleaks.toml` allowlist. **2nd review round (4 more P2s fixed):**
+unified-feed cap now keeps all proposal-bearing groups (ledger reconciliation was regressing for
+>60 groups) and caps only the render-only tail; marketable-limit prices each side independently
+(a synthetic ask no longer discards a real bid); `parseDaysToEarnings` keeps same-day/straddling
+windows visible; `extractUnderlyingPrice` reads Robinhood's nested `quote` envelope.
 
 **Next / follow-ups:** UI surfacing of the new D fields (earnings, institution %, IV, put/call,
 disagreement bulletin); enable + validate the default-off D flags against a live Robinhood

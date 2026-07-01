@@ -49,6 +49,49 @@ describe("daysToEarnings (Yahoo calendarEvents)", () => {
     const ce = { earnings: { earningsDate: [{ raw: d2 }, { raw: d1 }] } };
     expect(parseDaysToEarnings(ce, now)).toBe(19);
   });
+
+  it("for a straddling window (low edge just past, high edge upcoming) reports the upcoming date, not undefined", async () => {
+    const { parseDaysToEarnings } = await import("../src/lib/data-providers");
+    const now = Date.UTC(2026, 6, 1, 12); // midday
+    const lowEdge = Math.floor(Date.UTC(2026, 6, 1, 0) / 1000); // 12h ago (within the 1-day grace)
+    const highEdge = Math.floor(Date.UTC(2026, 6, 4, 12) / 1000); // +3 days, upcoming
+    const ce = { earnings: { earningsDate: [{ raw: lowEdge }, { raw: highEdge }] } };
+    expect(parseDaysToEarnings(ce, now)).toBe(3); // earliest UPCOMING wins; the just-past low edge no longer drops it
+  });
+
+  it("reports 0 (not undefined) on earnings day when only a just-past midnight timestamp is present", async () => {
+    const { parseDaysToEarnings } = await import("../src/lib/data-providers");
+    const now = Date.UTC(2026, 6, 1, 15); // 3pm
+    const midnightToday = Math.floor(Date.UTC(2026, 6, 1, 0) / 1000); // 15h ago, within grace
+    const ce = { earnings: { earningsDate: [{ raw: midnightToday }] } };
+    expect(parseDaysToEarnings(ce, now)).toBe(0);
+  });
+});
+
+// ── extractUnderlyingPrice (Robinhood equity-quote parsing for option moneyness) ──
+describe("extractUnderlyingPrice reads Robinhood quote shapes", () => {
+  it("reads the nested `quote` envelope Robinhood commonly returns", async () => {
+    const { extractUnderlyingPrice } = await import("../src/lib/robinhood");
+    const nested = { results: [{ symbol: "AAPL", quote: { last_trade_price: "191.23" } }] };
+    expect(extractUnderlyingPrice(nested, "AAPL")).toBe(191.23);
+  });
+
+  it("still reads a flat top-level row and skips non-matching symbols", async () => {
+    const { extractUnderlyingPrice } = await import("../src/lib/robinhood");
+    expect(extractUnderlyingPrice([{ symbol: "AAPL", mark_price: 188.5 }], "AAPL")).toBe(188.5);
+    const multi = {
+      results: [
+        { symbol: "MSFT", last_trade_price: 400 },
+        { symbol: "AAPL", quote: { last_trade_price: 191 } }
+      ]
+    };
+    expect(extractUnderlyingPrice(multi, "AAPL")).toBe(191);
+  });
+
+  it("returns undefined when no positive price is present", async () => {
+    const { extractUnderlyingPrice } = await import("../src/lib/robinhood");
+    expect(extractUnderlyingPrice({ results: [{ symbol: "AAPL", quote: {} }] }, "AAPL")).toBeUndefined();
+  });
 });
 
 // ── Item 3: institutional ownership ──────────────────────────────────────────

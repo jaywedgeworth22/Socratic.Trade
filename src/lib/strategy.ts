@@ -2784,10 +2784,13 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
       const buffer = bufferBps / 10_000;
       // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
-      // marketable-limit through it. Fall back to refPrice for that side so the limit is honest.
-      const syntheticSpread = quote?.sources?.ask === "yahoo-finance-synthetic" || quote?.sources?.bid === "yahoo-finance-synthetic";
-      const realAsk = !syntheticSpread && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !syntheticSpread && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
+      // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
+      // back to refPrice only for the side that is actually synthetic so the limit is honest.
+      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
+      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
+      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
         ? round2((realAsk ?? refPrice) * (1 + buffer))
         : round2((realBid ?? refPrice) * (1 - buffer));

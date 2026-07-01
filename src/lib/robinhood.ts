@@ -984,7 +984,7 @@ export async function fetchRobinhoodOptionChain(
 }
 
 /** Tolerantly pull a positive underlying last/mark price for `sym` from a get_equity_quotes payload. */
-function extractUnderlyingPrice(raw: unknown, sym: string): number | undefined {
+export function extractUnderlyingPrice(raw: unknown, sym: string): number | undefined {
   const root = raw as Record<string, unknown> | undefined;
   const rows: unknown[] = Array.isArray(root?.results)
     ? (root!.results as unknown[])
@@ -995,10 +995,16 @@ function extractUnderlyingPrice(raw: unknown, sym: string): number | undefined {
         : [];
   for (const r of rows) {
     if (!r || typeof r !== "object") continue;
-    const row = r as Record<string, unknown>;
-    const rsym = normalizeSymbol(String(row.symbol ?? row.ticker ?? ""));
+    const outer = r as Record<string, unknown>;
+    // Robinhood commonly wraps the quote in a `quote` envelope (mirrors `item.quote ?? item` used by
+    // the equity-quote parser elsewhere in this file); read that nested shape, not just the top level.
+    const inner =
+      outer.quote && typeof outer.quote === "object" ? (outer.quote as Record<string, unknown>) : outer;
+    const rsym = normalizeSymbol(
+      String(inner.symbol ?? inner.ticker ?? outer.symbol ?? outer.ticker ?? "")
+    );
     if (rows.length > 1 && rsym && rsym !== sym) continue;
-    const price = firstNum(row, [
+    const price = firstNum(inner, [
       "last_trade_price",
       "last_non_reg_trade_price",
       "mark_price",

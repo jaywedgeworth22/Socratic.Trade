@@ -564,7 +564,9 @@ export interface UnifiedActivityGroup {
   accountLabel?: string;
 }
 
-/** Source-level cap on unified-feed groups (client slices to 50; a small buffer preserves headroom). */
+/** Source-level cap on the PROPOSAL-LESS unified-feed tail (fills with no proposal + notifications),
+ *  which is render-only (client slices the rendered feed to 50). Proposal-bearing groups are never
+ *  capped — the decision ledger reconciles their statuses for up to 100 recent proposals. */
 export const UNIFIED_FEED_MAX_GROUPS = 60;
 
 export function buildUnifiedFeed(input: {
@@ -954,11 +956,17 @@ export function buildUnifiedFeed(input: {
     });
   }
 
-  // Cap at the source so we never ship the full 100-audit + 500-fill group set to the client, which
-  // only ever renders the newest 50 (app/dashboard-client.tsx `feed.slice(0, 50)`). We keep a small
-  // buffer above 50 for any client-side re-sort/filter headroom. Groups are already sorted
-  // newest-first by `updatedAt`, so slicing keeps exactly the most-recent activity.
-  return unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, UNIFIED_FEED_MAX_GROUPS);
+  // Bound the shipped payload WITHOUT changing observable output. The client uses this feed two ways:
+  // (1) it renders only the newest 50 (`feed.slice(0, 50)`), and (2) `decisionLedgerItems` reconciles
+  // fill/order-derived statuses for up to 100 recent proposals from it. So we keep EVERY
+  // proposal-bearing group (reconciliation must stay complete) and cap only the proposal-less tail
+  // (fills without a proposal + notifications), which is render-only. Because any proposal-less group
+  // in the newest 50 is necessarily within the newest 60 proposal-less groups, the rendered newest-50
+  // is unchanged; only the far, render-invisible tail is trimmed.
+  const sorted = unifiedGroups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const withProposal = sorted.filter((g) => g.proposalId);
+  const withoutProposal = sorted.filter((g) => !g.proposalId).slice(0, UNIFIED_FEED_MAX_GROUPS);
+  return [...withProposal, ...withoutProposal].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function getProposalIdFromAudit(event: SourceAuditEvent): string | undefined {
