@@ -17,6 +17,26 @@ const originalKey = process.env.ALPACA_PAPER_API_KEY;
 const originalSecret = process.env.ALPACA_PAPER_SECRET_KEY;
 const originalBase = process.env.ALPACA_TRADING_BASE_URL;
 
+async function seedConnectedAlpaca(
+  userId: string,
+  environment: "paper" | "live" = "paper",
+  apiKey = "key-id",
+  apiSecret = "key-secret"
+) {
+  const { upsertConnectedAccount } = await import("../src/lib/db");
+  upsertConnectedAccount({
+    id: `${userId}-alpaca-${environment}-${randomUUID()}`,
+    userId,
+    broker: "alpaca",
+    environment,
+    accountNumber: `${environment.toUpperCase()}-1`,
+    label: `${environment} Alpaca`,
+    apiKey,
+    apiSecret,
+    isActive: true
+  });
+}
+
 describe("alpaca-account-insights", () => {
   beforeEach(() => {
     process.env.ALPACA_PAPER_API_KEY = "key-id";
@@ -36,6 +56,7 @@ describe("alpaca-account-insights", () => {
 
   describe("fetchAlpacaPortfolioHistory", () => {
     it("hits the trading portfolio-history endpoint with auth headers and maps the equity curve", async () => {
+      await seedConnectedAlpaca("u1");
       let capturedUrl = "";
       let capturedHeaders: Record<string, string> = {};
       vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
@@ -72,15 +93,28 @@ describe("alpaca-account-insights", () => {
       const fetchSpy = vi.fn();
       vi.stubGlobal("fetch", fetchSpy);
 
-      const result = await fetchAlpacaPortfolioHistory("u1");
+      const result = await fetchAlpacaPortfolioHistory("u-no-alpaca");
       expect(result).toBeUndefined();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it("returns undefined on an HTTP error", async () => {
+      await seedConnectedAlpaca("u-http");
       vi.stubGlobal("fetch", async () => new Response("nope", { status: 403 }));
-      const result = await fetchAlpacaPortfolioHistory("u1");
+      const result = await fetchAlpacaPortfolioHistory("u-http");
       expect(result).toBeUndefined();
+    });
+
+    it("selects the live trading host for a live connected account", async () => {
+      await seedConnectedAlpaca("u-live", "live");
+      let capturedUrl = "";
+      vi.stubGlobal("fetch", async (url: string) => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ timestamp: [], equity: [], profit_loss: [], profit_loss_pct: [], timeframe: "1D" }));
+      });
+
+      await fetchAlpacaPortfolioHistory("u-live");
+      expect(capturedUrl).toBe("https://api.alpaca.markets/v2/account/portfolio/history");
     });
   });
 
@@ -170,6 +204,7 @@ describe("alpaca-account-insights", () => {
 
   describe("fetchAlpacaAccountActivities", () => {
     it("hits the activities endpoint with an activity_types filter and maps fill + non-trade rows", async () => {
+      await seedConnectedAlpaca("u-activities");
       let capturedUrl = "";
       vi.stubGlobal("fetch", async (url: string) => {
         capturedUrl = url;
@@ -206,6 +241,7 @@ describe("alpaca-account-insights", () => {
 
       expect(capturedUrl).toContain("/v2/account/activities");
       expect(capturedUrl).toContain("activity_types=FILL%2CDIV");
+      expect(capturedUrl).toContain("page_size=100");
       expect(activities).toHaveLength(2);
       expect(activities[0].symbol).toBe("AAPL");
       expect(activities[0].side).toBe("buy");
@@ -214,15 +250,35 @@ describe("alpaca-account-insights", () => {
     });
 
     it("omits the activity_types param when none are supplied", async () => {
+      await seedConnectedAlpaca("u-no-types");
       let capturedUrl = "";
       vi.stubGlobal("fetch", async (url: string) => {
         capturedUrl = url;
         return new Response(JSON.stringify([]));
       });
 
-      await fetchAlpacaAccountActivities("u1");
+      await fetchAlpacaAccountActivities("u-no-types");
       expect(capturedUrl).toContain("/v2/account/activities");
       expect(capturedUrl).not.toContain("activity_types");
+    });
+
+    it("pages account activities by passing the last activity id as page_token", async () => {
+      await seedConnectedAlpaca("u-paged");
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(url);
+        if (url.includes("page_token=act-2")) {
+          return new Response(JSON.stringify([{ id: "act-3", activity_type: "DIV" }]));
+        }
+        return new Response(JSON.stringify([{ id: "act-1", activity_type: "FILL" }, { id: "act-2", activity_type: "FILL" }]));
+      });
+
+      const activities = await fetchAlpacaAccountActivities("u-paged", { pageSize: 2, maxPages: 3 });
+
+      expect(activities.map((a) => a.id)).toEqual(["act-1", "act-2", "act-3"]);
+      expect(urls).toHaveLength(2);
+      expect(urls[0]).toContain("page_size=2");
+      expect(urls[1]).toContain("page_token=act-2");
     });
 
     it("returns an empty array when no Alpaca credential is available", async () => {
@@ -231,7 +287,7 @@ describe("alpaca-account-insights", () => {
       const fetchSpy = vi.fn();
       vi.stubGlobal("fetch", fetchSpy);
 
-      const activities = await fetchAlpacaAccountActivities("u1");
+      const activities = await fetchAlpacaAccountActivities("u-no-activities-account");
       expect(activities).toEqual([]);
       expect(fetchSpy).not.toHaveBeenCalled();
     });

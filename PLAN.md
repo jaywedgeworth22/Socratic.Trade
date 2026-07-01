@@ -14,8 +14,8 @@ filling the missing pieces.
 > (`robinhood-pnl-crosscheck.ts`), and 3 new read-only chat-assistant tools
 > (earnings calendar, option chain, instrument search) backed by Robinhood MCP
 > data. Merged all 4 branches with zero conflicts, merged current
-> `origin/main` through the mobile API/PWA work, and re-verified as one change
-> (172 files / 1668 tests). Robinhood options-trading support and
+> `origin/main` through the mobile API/PWA work, addressed review fixes, and
+> re-verified as one change (172 files / 1671 tests). Robinhood options-trading support and
 > eToro/Public.com/IBKR integration deliberately excluded — real feature work
 > and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
 > change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.

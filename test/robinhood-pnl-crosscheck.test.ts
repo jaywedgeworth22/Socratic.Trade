@@ -10,34 +10,42 @@ beforeEach(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-rh-pnl-xcheck-${randomUUID()}.db`)}`;
 });
 
+const NOW = "2026-07-01T00:00:00.000Z";
+
 // Seed a realized $100 gain on a Robinhood (live) account: buy 10 @ $100, sell 10 @ $110.
-async function seedLiveRealizedGain(accountNumber: string, userId: string) {
+async function seedLiveRealizedGain(
+  accountNumber: string,
+  userId: string,
+  opts: { symbol?: string; entryAt?: string; exitAt?: string; idPrefix?: string } = {}
+) {
   const { insertFillEvent } = await import("../src/lib/db");
+  const symbol = opts.symbol ?? "AAPL";
+  const idPrefix = opts.idPrefix ?? symbol.toLowerCase();
   insertFillEvent({
     userId,
     accountNumber,
     source: "live",
-    symbol: "AAPL",
+    symbol,
     side: "buy",
     quantity: 10,
     price: 100,
     notional: 1000,
     status: "filled",
-    brokerOrderId: "rh-open-1",
-    filledAt: "2026-04-01T15:00:00.000Z"
+    brokerOrderId: `${idPrefix}-open-1`,
+    filledAt: opts.entryAt ?? "2026-04-01T15:00:00.000Z"
   });
   insertFillEvent({
     userId,
     accountNumber,
     source: "live",
-    symbol: "AAPL",
+    symbol,
     side: "sell",
     quantity: 10,
     price: 110,
     notional: 1100,
     status: "filled",
-    brokerOrderId: "rh-close-1",
-    filledAt: "2026-04-10T15:00:00.000Z"
+    brokerOrderId: `${idPrefix}-close-1`,
+    filledAt: opts.exitAt ?? "2026-04-10T15:00:00.000Z"
   });
 }
 
@@ -69,7 +77,7 @@ describe("crossCheckRealizedPnl", () => {
     const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
     setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
-    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT");
+    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { now: NOW });
 
     expect(result.appRealizedPnl).toBeCloseTo(100);
     expect(result.robinhoodRealizedPnl).toBeCloseTo(102);
@@ -94,7 +102,7 @@ describe("crossCheckRealizedPnl", () => {
     const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
     setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
-    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT");
+    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { now: NOW });
 
     expect(result.appRealizedPnl).toBeCloseTo(100);
     expect(result.robinhoodRealizedPnl).toBeCloseTo(500);
@@ -102,16 +110,23 @@ describe("crossCheckRealizedPnl", () => {
     expect(result.withinTolerance).toBe(false);
   });
 
-  it("sums per-bucket realized-gain rows when Robinhood returns buckets", async () => {
+  it("sums only equity per-bucket realized-gain rows when Robinhood returns mixed asset buckets", async () => {
     vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
     await seedLiveRealizedGain("RH-ACCOUNT", "user-a");
-    stubRealizedPnlFetch({ results: [{ realized_gain: "60.00" }, { realized_gain: "40.00" }] });
+    stubRealizedPnlFetch({
+      total_realized_pnl: "1000.00",
+      results: [
+        { asset_class: "equity", realized_gain: "60.00" },
+        { asset_class: "stock", realized_gain: "40.00" },
+        { asset_class: "option", realized_gain: "900.00" }
+      ]
+    });
 
     const { crossCheckRealizedPnl } = await import("../src/lib/robinhood-pnl-crosscheck");
     const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
     setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
-    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT");
+    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { now: NOW });
 
     expect(result.robinhoodRealizedPnl).toBeCloseTo(100);
     expect(result.discrepancyAbs).toBeCloseTo(0);
@@ -127,9 +142,36 @@ describe("crossCheckRealizedPnl", () => {
     const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
     setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
-    await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { span: "year" });
+    await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { span: "year", now: NOW });
 
     expect(calls[0].params).toMatchObject({ arguments: { span: "year" } });
+  });
+
+  it("filters the app realized P&L to the requested span while keeping pre-span opening lots for basis", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    await seedLiveRealizedGain("RH-ACCOUNT", "user-a", {
+      symbol: "AAPL",
+      entryAt: "2026-01-15T15:00:00.000Z",
+      exitAt: "2026-02-01T15:00:00.000Z",
+      idPrefix: "old"
+    });
+    await seedLiveRealizedGain("RH-ACCOUNT", "user-a", {
+      symbol: "MSFT",
+      entryAt: "2026-01-15T15:00:00.000Z",
+      exitAt: "2026-06-01T15:00:00.000Z",
+      idPrefix: "window"
+    });
+    stubRealizedPnlFetch({ total_realized_pnl: "100.00" });
+
+    const { crossCheckRealizedPnl } = await import("../src/lib/robinhood-pnl-crosscheck");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { span: "3month", now: NOW });
+
+    expect(result.appRealizedPnl).toBeCloseTo(100);
+    expect(result.robinhoodRealizedPnl).toBeCloseTo(100);
+    expect(result.withinTolerance).toBe(true);
   });
 
   it("returns undefined Robinhood/discrepancy fields when Robinhood is not connected", async () => {
@@ -140,7 +182,7 @@ describe("crossCheckRealizedPnl", () => {
 
     const { crossCheckRealizedPnl } = await import("../src/lib/robinhood-pnl-crosscheck");
 
-    const result = await crossCheckRealizedPnl("user-nope", "RH-ACCOUNT");
+    const result = await crossCheckRealizedPnl("user-nope", "RH-ACCOUNT", { now: NOW });
 
     expect(result.appRealizedPnl).toBeCloseTo(100);
     expect(result.robinhoodRealizedPnl).toBeUndefined();
@@ -164,7 +206,7 @@ describe("crossCheckRealizedPnl", () => {
     const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
     setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
 
-    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT");
+    const result = await crossCheckRealizedPnl("user-a", "RH-ACCOUNT", { now: NOW });
 
     expect(result.appRealizedPnl).toBeCloseTo(100);
     expect(result.robinhoodRealizedPnl).toBeUndefined();

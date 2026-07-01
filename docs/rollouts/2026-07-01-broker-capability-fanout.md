@@ -49,16 +49,19 @@ Deliberately excluded, per the plan doc's own risk framing:
   "robinhood-broker", ... })` pattern.
 - `src/lib/alpaca-account-insights.ts` (new) — `fetchAlpacaPortfolioHistory`,
   `fetchAlpacaMarketCalendar`, `fetchAlpacaMarketClock`, `fetchAlpacaAccountActivities`.
-  GET-only against Alpaca's Trading API (paper by default; `ALPACA_TRADING_BASE_URL`
-  overrides to live — `resolveAlpacaMarketData` doesn't carry environment, so this
-  defaults to paper matching the app's default mode). Logs health under
-  `"alpaca-account-insights"`. Degrades to `undefined`/`[]` on missing credentials or
-  failure; never throws, never places an order.
+  GET-only against Alpaca's Trading API. Private account endpoints resolve only the
+  requested user's connected Alpaca account, choose paper/live host per account, and fail
+  closed instead of falling back to shared operator market-data credentials. Account
+  activities page through Alpaca's `page_token` using the last activity id. Logs health
+  under `"alpaca-account-insights"`. Degrades to `undefined`/`[]` on missing credentials
+  or failure; never throws, never places an order.
 - `src/lib/robinhood-pnl-crosscheck.ts` (new) — `crossCheckRealizedPnl(userId,
   accountNumber, opts?)`: calls Robinhood's `get_realized_pnl` MCP tool, compares against
-  `performance.ts`'s `getPerformanceSummary(...).liveRealizedPnl`, returns a 5%-tolerance
-  discrepancy result. Robinhood fields are undefined (not thrown) on failure/no connection.
-  Diagnostic function only — not wired into any UI/cron/route in this change.
+  this app's live equity realized P&L over the same requested span, filters Robinhood
+  per-asset buckets to equities/stocks when bucket metadata is present, and returns a
+  5%-tolerance discrepancy result. Robinhood fields are undefined (not thrown) on
+  failure/no connection. Diagnostic function only — not wired into any UI/cron/route in
+  this change.
 - `src/lib/chat/tools.ts` — 3 new `ToolDef` entries (`get_earnings_calendar`,
   `get_option_chain`, `search_instrument`), all `readOnly: true`, each re-validating the
   model's input server-side before calling through `ToolDeps`. 3 new optional `ToolDeps`
@@ -68,8 +71,8 @@ Deliberately excluded, per the plan doc's own risk framing:
   `buildProductionDeps`, calling `callRobinhoodMcpTool` with a `robinhoodNotConnected()`
   guard that returns a clear `{ error: "NOT_CONNECTED", message }` result (not a throw)
   when Robinhood isn't linked.
-- New test files: `test/alpaca-account-insights.test.ts` (12 tests), `test/robinhood-pnl-crosscheck.test.ts`
-  (6 tests), plus additions to `test/alpaca-mcp.test.ts`, `test/robinhood-mcp.test.ts`, and
+- New test files: `test/alpaca-account-insights.test.ts`, `test/robinhood-pnl-crosscheck.test.ts`,
+  plus additions to `test/alpaca-mcp.test.ts`, `test/robinhood-mcp.test.ts`, and
   `test/chat-readonly-tools.test.ts`.
 - `STATUS.md`, `PLAN.md` — updated per the handoff protocol (the 4 agents were
   deliberately scoped to only their feature files + tests, so these doc updates were left
@@ -83,13 +86,15 @@ merging all 4 branches into one, then merging current `origin/main` through the 
 API/PWA merge:
 
 - `npx tsc --noEmit` — clean.
-- `npm test` — 172 files / 1668 tests, all passing together (up from 169/1635 before the
+- `npm test` — 172 files / 1671 tests, all passing together (up from 169/1635 before the
   broker fan-out; the delta is the new broker tests plus the already-merged mobile API
   tests).
 - `npm run lint` — 0 errors, 258 warnings (existing warning classes, including the Alpaca
   SDK's pre-existing untyped-`any` convention in the new `trackHealth` helper).
 - `npm run build` — clean.
 - `npm run lint && npx tsc --noEmit && npm test && npm run build` — clean as a full gate.
+- Review-fix focused gate: `npx vitest run test/alpaca-account-insights.test.ts
+  test/robinhood-pnl-crosscheck.test.ts` — 21 tests passed; `npx tsc --noEmit` — clean.
 - Manual safety spot-check (not agent-reported, done directly against the diff): confirmed
   all 3 new chat tools are `readOnly: true`, no order-placement tool was added, and
   `alpaca.ts`'s `trackHealth()` correctly re-throws on failure so no existing error-handling
@@ -104,12 +109,6 @@ API/PWA merge:
 - The Robinhood-backed chat tools require the user's Robinhood account to be connected via
   MCP OAuth; they degrade to a "not connected" message otherwise — no action needed, this
   is by design.
-- `alpaca-account-insights.ts` defaults to the paper Trading API host since
-  `resolveAlpacaMarketData` doesn't expose the connected account's environment; set
-  `ALPACA_TRADING_BASE_URL` to point it at live if that's ever needed for a live-only
-  account. Worth reconciling with `resolveAlpacaStreamAccount` (added 2026-07-01, DOES
-  carry environment) in a future pass if these insights need to follow the account's real
-  environment automatically.
 - This branch/PR now combines the prior PR #286 stream/fundamentals fixes with this
   broker fan-out, so they land and deploy together.
 - Robinhood options-trading support and eToro/Public.com/IBKR integration remain

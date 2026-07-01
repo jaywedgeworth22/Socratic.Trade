@@ -7,19 +7,57 @@
 // distinct so the admin connection-status page can attribute failures precisely).
 //
 // Unlike the market-data providers (which hit data.alpaca.markets), these endpoints live on
-// the trading API. The credential resolver does not carry the account's paper/live
-// environment, so we default to the paper host (matching the app's paper-mode default) and
-// allow ALPACA_TRADING_BASE_URL to point at the live host when needed.
+// the trading API. Private account endpoints must use the requested user's connected
+// Alpaca account and its paper/live environment; they must not fall back to shared
+// operator market-data credentials.
 
-import { resolveAlpacaMarketData, type ApiKeySource } from "./db";
+import { getConnectedAccount, listConnectedAccounts, resolveAlpacaMarketData, type ApiKeySource } from "./db";
 import { logApiHealth } from "./db-health";
+import type { ConnectedAccount } from "./types";
 
 const DEFAULT_PAPER_BASE = "https://paper-api.alpaca.markets";
+const DEFAULT_LIVE_BASE = "https://api.alpaca.markets";
+const DEFAULT_ACTIVITIES_PAGE_SIZE = 100;
+const DEFAULT_ACTIVITIES_MAX_PAGES = 20;
 const REQUEST_TIMEOUT_MS = 8000;
 
-function tradingBase(): string {
+function tradingBase(environment: "paper" | "live" = "paper"): string {
   const raw = String(process.env.ALPACA_TRADING_BASE_URL ?? "").trim();
-  return (raw || DEFAULT_PAPER_BASE).replace(/\/+$/, "");
+  const fallback = environment === "live" ? DEFAULT_LIVE_BASE : DEFAULT_PAPER_BASE;
+  return (raw || fallback).replace(/\/+$/, "");
+}
+
+function rankAlpacaAccounts(accounts: ConnectedAccount[]): ConnectedAccount[] {
+  const ranked = [
+    accounts.find((a) => a.isActive && a.environment === "live"),
+    accounts.find((a) => a.isActive),
+    accounts.find((a) => a.environment === "live"),
+    accounts.find((a) => a.environment === "paper"),
+    ...accounts
+  ];
+  const seen = new Set<string>();
+  return ranked.filter((account): account is ConnectedAccount => {
+    if (!account || seen.has(account.id)) return false;
+    seen.add(account.id);
+    return true;
+  });
+}
+
+function resolvePrivateAlpacaAccount(
+  userId: string
+): { apiKey: string; secretKey?: string; environment: "paper" | "live"; source: ApiKeySource } | undefined {
+  const accounts = rankAlpacaAccounts(listConnectedAccounts(userId).filter((account) => account.broker === "alpaca"));
+  for (const account of accounts) {
+    const detailed = getConnectedAccount(account.id, userId);
+    if (!detailed?.apiKey) continue;
+    return {
+      apiKey: detailed.apiKey,
+      secretKey: detailed.apiSecret,
+      environment: detailed.environment === "live" ? "live" : "paper",
+      source: "user"
+    };
+  }
+  return undefined;
 }
 
 function authHeaders(apiKey: string, secretKey?: string): Record<string, string> {
@@ -36,13 +74,14 @@ function authHeaders(apiKey: string, secretKey?: string): Record<string, string>
 // GET the trading API and parse JSON, logging health under `service` and degrading to
 // undefined on any credential/HTTP/network failure. Never throws.
 async function getJson<T>(
+  baseUrl: string,
   path: string,
   service: string,
   apiKey: string,
   secretKey: string | undefined,
   keySource: ApiKeySource
 ): Promise<T | undefined> {
-  const url = `${tradingBase()}${path}`;
+  const url = `${baseUrl}${path}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const start = Date.now();
@@ -129,15 +168,15 @@ export async function fetchAlpacaPortfolioHistory(
   userId: string,
   opts: { period?: string; timeframe?: string } = {}
 ): Promise<AlpacaPortfolioHistory | undefined> {
-  const creds = resolveAlpacaMarketData(userId);
-  if (!creds.apiKey) return undefined;
+  const creds = resolvePrivateAlpacaAccount(userId);
+  if (!creds) return undefined;
 
   const params = new URLSearchParams();
   if (opts.period) params.set("period", opts.period);
   if (opts.timeframe) params.set("timeframe", opts.timeframe);
   const query = params.toString();
   const path = `/v2/account/portfolio/history${query ? `?${query}` : ""}`;
-  return getJson<AlpacaPortfolioHistory>(path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
+  return getJson<AlpacaPortfolioHistory>(tradingBase(creds.environment), path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
 }
 
 // Session open/close and holiday info (GET /v2/calendar). Market-wide reference data, so it
@@ -153,7 +192,7 @@ export async function fetchAlpacaMarketCalendar(
   if (opts.end) params.set("end", opts.end);
   const query = params.toString();
   const path = `/v2/calendar${query ? `?${query}` : ""}`;
-  const days = await getJson<AlpacaCalendarDay[]>(path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
+  const days = await getJson<AlpacaCalendarDay[]>(tradingBase(), path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
   return Array.isArray(days) ? days : [];
 }
 
@@ -162,25 +201,40 @@ export async function fetchAlpacaMarketCalendar(
 export async function fetchAlpacaMarketClock(): Promise<AlpacaMarketClock | undefined> {
   const creds = resolveAlpacaMarketData();
   if (!creds.apiKey) return undefined;
-  return getJson<AlpacaMarketClock>("/v2/clock", SERVICE, creds.apiKey, creds.secretKey, creds.source);
+  return getJson<AlpacaMarketClock>(tradingBase(), "/v2/clock", SERVICE, creds.apiKey, creds.secretKey, creds.source);
 }
 
 // Account activity/audit log — fills, dividends, transfers (GET /v2/account/activities).
 // Returns an empty array when no Alpaca credential is available or the request fails.
 export async function fetchAlpacaAccountActivities(
   userId: string,
-  opts: { activityTypes?: string[] } = {}
+  opts: { activityTypes?: string[]; pageSize?: number; maxPages?: number } = {}
 ): Promise<AlpacaAccountActivity[]> {
-  const creds = resolveAlpacaMarketData(userId);
-  if (!creds.apiKey) return [];
+  const creds = resolvePrivateAlpacaAccount(userId);
+  if (!creds) return [];
 
   const types = (opts.activityTypes ?? [])
     .map((t) => t.trim())
     .filter(Boolean);
-  const params = new URLSearchParams();
-  if (types.length > 0) params.set("activity_types", types.join(","));
-  const query = params.toString();
-  const path = `/v2/account/activities${query ? `?${query}` : ""}`;
-  const activities = await getJson<AlpacaAccountActivity[]>(path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
-  return Array.isArray(activities) ? activities : [];
+  const pageSize = Math.max(1, Math.min(100, Math.trunc(opts.pageSize ?? DEFAULT_ACTIVITIES_PAGE_SIZE)));
+  const maxPages = Math.max(1, Math.trunc(opts.maxPages ?? DEFAULT_ACTIVITIES_MAX_PAGES));
+  const all: AlpacaAccountActivity[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const params = new URLSearchParams();
+    if (types.length > 0) params.set("activity_types", types.join(","));
+    params.set("page_size", String(pageSize));
+    if (pageToken) params.set("page_token", pageToken);
+    const path = `/v2/account/activities?${params.toString()}`;
+    const activities = await getJson<AlpacaAccountActivity[]>(tradingBase(creds.environment), path, SERVICE, creds.apiKey, creds.secretKey, creds.source);
+    if (!Array.isArray(activities) || activities.length === 0) break;
+    all.push(...activities);
+    if (activities.length < pageSize) break;
+    const nextToken = activities[activities.length - 1]?.id;
+    if (!nextToken || nextToken === pageToken) break;
+    pageToken = nextToken;
+  }
+
+  return all;
 }
