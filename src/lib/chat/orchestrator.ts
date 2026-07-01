@@ -12,16 +12,18 @@ import { getBrokerGateway } from "../broker";
 import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
-import { defaultMinScore, retrieveContextDetailed } from "../vector-db";
+import { citationStalenessEnabled, defaultMinScore, isStale, retrieveContextDetailed } from "../vector-db";
 import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { getEnrichmentProvider } from "../data-providers";
 import { getMarketSignals } from "../market-signals";
+import { callRobinhoodMcpTool, robinhoodMcpDataEnabled } from "../robinhood";
+import { getMcpAccessToken } from "../mcp-oauth";
 import { addToWatchlist, listWatchlist as wlList } from "../watchlist";
 import { canonicalTicker } from "../rag/chunk";
 import { appendTurn, listTurns } from "../chat-history";
 import { ingestMessage, retrieve } from "../memory/store";
-import { extractLearnedCandidates } from "../memory/salience";
+import { extractLearnedCandidatesLLM } from "../memory/salience-llm";
 import { ingestLearned, retrieveLearnedContext } from "../learned-context/store";
 import { classifyIntent, getLLM } from "./llm";
 import { buildSystem, DISCLAIMER, PROMPT_VERSION } from "./prompt";
@@ -49,7 +51,10 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     const mem = ingestMessage(userId, message);
     // Extract learned-context candidates from the message for both the write path (ingest) and
     // the read path (retrieve facts already in store to inject into the system prompt).
-    const learnedCandidates = extractLearnedCandidates(message);
+    // extractLearnedCandidatesLLM is regex (extractLearnedCandidates) unless LLM_SALIENCE_EXTRACTOR=on
+    // AND a credential resolves for this user — falls back to regex on any LLM-path failure, and
+    // validates any LLM-proposed symbol against the real known-ticker universe (see salience-llm.ts).
+    const learnedCandidates = await extractLearnedCandidatesLLM(message, userId);
     // Fire-and-forget write path: the semantic classifier runs 3+ sequential LLM calls — awaiting
     // it on the hot path would add 1–3 s of latency to every chat turn. Errors are benign: advisory
     // writes, never critical. The chat hard-cap (risk-adjacent prose is DROPPED) holds inside
@@ -181,7 +186,21 @@ export function buildProductionDeps(): ToolDeps {
       };
       const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).
-      return chunks.map((c) => ({ chunk_id: c.id, text: c.text, source: c.source ?? "kb", as_of: c.as_of, score: c.score, url: c.url }));
+      // R13 (2026-07-01 RAG backlog): additive doc_type/section/url provenance keys + an optional
+      // advisory isStale label (RAG_CITATION_STALENESS, default off). Backend/payload only — no UI
+      // consumes these yet; a parallel dashboard-redesign thread owns any citation rendering.
+      const staleness = citationStalenessEnabled();
+      return chunks.map((c) => ({
+        chunk_id: c.id,
+        text: c.text,
+        source: c.source ?? "kb",
+        as_of: c.as_of,
+        score: c.score,
+        url: c.url,
+        doc_type: c.doc_type,
+        section: c.section,
+        ...(staleness ? { isStale: isStale(c.as_of, c.doc_type) } : {})
+      }));
     },
     createAlert(userId, input) {
       const result = alertsCreateAlert(userId, input);
@@ -290,6 +309,60 @@ export function buildProductionDeps(): ToolDeps {
     getReflection(userId) {
       return getUserSetting<string>(userId, "reflection_summary", "");
     },
+    // Robinhood MCP-backed read-only research. Each returns a clear "not connected" result (never a
+    // thrown error) when the adapter is off or the user has no stored token, so chat degrades to a
+    // plain message instead of failing the turn. Purely discovery — none of these can place an order.
+    async getEarningsCalendar(userId, args) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "get_earnings_calendar", {
+          ...(args.start_date ? { start_date: args.start_date } : {}),
+          ...(args.days != null ? { days: args.days } : {}),
+          ...(args.high_market_cap ? { filter: "high_market_cap" } : {})
+        });
+        return { earnings: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async getOptionChain(userId, underlyingSymbol) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "get_option_chains", { underlying_symbol: underlyingSymbol });
+        return { symbol: underlyingSymbol, chains: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    async searchInstrument(userId, args) {
+      const notConnected = await robinhoodNotConnected(userId);
+      if (notConnected) return notConnected;
+      try {
+        const raw = await callRobinhoodMcpTool(userId, "search", {
+          query: args.query,
+          ...(args.asset_type ? { asset_type: args.asset_type } : {}),
+          ...(args.limit != null ? { limit: args.limit } : {})
+        });
+        return { results: raw };
+      } catch (e) {
+        return { error: "FAILED", message: e instanceof Error ? e.message : String(e) };
+      }
+    },
     accountLabel: "Test (local)"
   };
+}
+
+// A "not connected" result (not a throw) when Robinhood MCP data is disabled or the user has no
+// stored token — so the research tools return a plain message the model can relay to the user.
+async function robinhoodNotConnected(userId: string): Promise<{ error: string; message: string } | null> {
+  if (!robinhoodMcpDataEnabled()) {
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+  }
+  const token = await getMcpAccessToken(userId);
+  if (!token) {
+    return { error: "NOT_CONNECTED", message: "Robinhood is not connected. Connect your Robinhood agentic account in Settings → Connections to enable this." };
+  }
+  return null;
 }

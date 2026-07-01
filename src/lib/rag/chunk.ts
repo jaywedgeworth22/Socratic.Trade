@@ -5,8 +5,17 @@
 
 import { createHash, randomUUID } from "crypto";
 
-const DEFAULT_MAX_TOKENS = 480;
+export const DEFAULT_MAX_TOKENS = 480;
 const DEFAULT_OVERLAP_RATIO = 0.12;
+
+/**
+ * Rough chars-per-token ceiling used to size a downstream char cap from a token budget. English
+ * prose averages ~5–6 chars/token; markdown tables (pipe-delimited, kept atomic by chunkDocument)
+ * run longer per token because of `|`/whitespace padding. 8 is a deliberately generous upper bound
+ * so a legitimately atomic, already-token-bounded chunk is never truncated downstream — it only
+ * needs to cover the worst case, not be a tight estimate.
+ */
+export const CHARS_PER_TOKEN_CEILING = 8;
 
 /** Hash chunk text with SHA-256 for dedup (cheaper than re-embedding via Voyage). */
 export function hashContent(text: string): string {

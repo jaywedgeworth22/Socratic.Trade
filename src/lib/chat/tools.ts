@@ -40,6 +40,11 @@ export interface ToolDeps {
   getPortfolioPnl?(userId: string): Promise<PortfolioPnlResult | null>;
   getPerformanceSummary?(userId: string): PerformanceSummaryResult | null;
   getReflection?(userId: string): string;
+  // Robinhood-backed read-only research (optional; the tool returns a clear "not supported"/"not
+  // connected" message when the dep isn't wired or the user has no Robinhood connection).
+  getEarningsCalendar?(userId: string, args: { start_date?: string; days?: number; high_market_cap?: boolean }): Promise<any>;
+  getOptionChain?(userId: string, underlyingSymbol: string): Promise<any>;
+  searchInstrument?(userId: string, args: { query: string; asset_type?: string; limit?: number }): Promise<any>;
   accountLabel?: string;
 }
 
@@ -273,6 +278,81 @@ export function buildTools(): Record<string, ToolDef> {
       async execute(_input, ctx) {
         const reflection = ctx.deps.getReflection ? ctx.deps.getReflection(ctx.userId) : "";
         return { reflection: reflection || null };
+      }
+    },
+
+    get_earnings_calendar: {
+      readOnly: true,
+      description:
+        "List earnings reports scheduled across the market over a date window (up to 31 days), " +
+        "optionally limited to high-market-cap names. Call for 'what reports this week', 'upcoming " +
+        "earnings', 'who reports on <date>' questions. For a specific known ticker, prefer fundamentals.",
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          start_date: { type: "string" },
+          days: { type: "integer", minimum: -31, maximum: 31 },
+          high_market_cap: { type: "boolean" }
+        }
+      },
+      async execute(input, ctx) {
+        if (!ctx.deps.getEarningsCalendar) return { error: "NOT_SUPPORTED" };
+        // Server-side validation — the model's input is untrusted regardless of any schema claim.
+        const days = Number(input.days);
+        return ctx.deps.getEarningsCalendar(ctx.userId, {
+          start_date: typeof input.start_date === "string" ? input.start_date : undefined,
+          days: Number.isInteger(days) && days !== 0 && days >= -31 && days <= 31 ? days : undefined,
+          high_market_cap: input.high_market_cap === true
+        });
+      }
+    },
+
+    get_option_chain: {
+      readOnly: true,
+      description:
+        "Look up the option chain (expiration dates + contract set) for an underlying ticker. Research " +
+        "and discovery only — this NEVER places, modifies, or prices an option order. Call for 'what " +
+        "expirations/strikes does <symbol> have', 'show me <symbol> options' questions.",
+      input_schema: { type: "object", additionalProperties: false, required: ["symbol"], properties: { symbol: { type: "string" } } },
+      async execute(input, ctx) {
+        if (!ctx.deps.getOptionChain) return { error: "NOT_SUPPORTED" };
+        const symbol = canonicalTicker(String(input.symbol ?? ""));
+        if (!symbol) return { error: "INVALID_INPUT", details: "symbol required" };
+        return ctx.deps.getOptionChain(ctx.userId, symbol);
+      }
+    },
+
+    search_instrument: {
+      readOnly: true,
+      description:
+        "Resolve a natural-language company name, ticker, crypto pair, or index to concrete instruments. " +
+        "Call when the user names an asset by (partial) name rather than a ticker, or you need to " +
+        "disambiguate which symbol they mean before answering.",
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string" },
+          asset_type: { type: "string", enum: ["instrument", "currency_pair", "market_index"] },
+          limit: { type: "integer", minimum: 1, maximum: 20 }
+        }
+      },
+      async execute(input, ctx) {
+        if (!ctx.deps.searchInstrument) return { error: "NOT_SUPPORTED" };
+        const query = String(input.query ?? "").trim();
+        if (!query) return { error: "INVALID_INPUT", details: "query required" };
+        const assetType =
+          input.asset_type === "instrument" || input.asset_type === "currency_pair" || input.asset_type === "market_index"
+            ? input.asset_type
+            : undefined;
+        const limit = Number(input.limit);
+        return ctx.deps.searchInstrument(ctx.userId, {
+          query,
+          asset_type: assetType,
+          limit: Number.isInteger(limit) && limit >= 1 && limit <= 20 ? limit : undefined
+        });
       }
     }
   };

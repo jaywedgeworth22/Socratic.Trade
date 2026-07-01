@@ -10,22 +10,34 @@ on:
       - main
       - "agent/**"
 
+# Cancel a superseded run for the same branch/PR instead of letting it queue
+# behind newer pushes — the single trading-live-mac runner was serializing a
+# backlog of stale runs from repeated pushes to the same branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
-    # GitHub-hosted runners can fail before job startup when account billing or
-    # spending limits block usage. Use the existing self-hosted runner for
-    # trusted same-repo human branches/PRs. Start the required check even for
-    # untrusted PRs so branch protection cannot be satisfied by a skipped job.
-    runs-on: [self-hosted, trading-live]
+    # Moved off the self-hosted runner (2026-07-01): this job is a generic
+    # lint/typecheck/test/build with no dependency on the production box, and
+    # was the main source of the runner queue bottleneck. Requires the repo's
+    # GitHub Actions spending limit to be > $0 (Settings → Billing → Plans and
+    # usage → Spending limit) — a $0 limit makes hosted jobs fail outright once
+    # free minutes run out, which would then block merges since this is a
+    # required status check. Revert to `[self-hosted, trading-live]` if that's
+    # ever a problem.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
           if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "::error::Fork PRs cannot run on the self-hosted production runner."
+            echo "::error::Fork PRs cannot run this job (it installs deps with a private-repo deploy key secret)."
             exit 1
           fi
           actor="${{ github.actor }}"
@@ -35,7 +47,7 @@ jobs:
                 echo "Trusted same-repo bot: $actor"
                 ;;
               *)
-                echo "::error::Bot PRs cannot run package installs on the self-hosted production runner (untrusted bot: $actor)."
+                echo "::error::Bot PRs cannot run package installs with this secret (untrusted bot: $actor)."
                 exit 1
                 ;;
             esac
@@ -44,10 +56,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
       - name: Install dependencies
         shell: bash
         env:
           CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
+          # Drop GH_PAT from this chain: it is the Codex-Autofix PAT (repo + workflow scope, no
+          # read:packages), so preferring it over the packages-scoped job GITHUB_TOKEN makes the
+          # private-package install 403 when only GH_PAT is configured. (Review: PR #279.)
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: bash scripts/npm-ci-with-shared-deps.sh
       - run: npm run lint
       - run: npx tsc --noEmit

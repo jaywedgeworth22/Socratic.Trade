@@ -7,7 +7,7 @@
 // On each article we write headlines into the push store; the enrichment provider reads it.
 // Reconnects with exponential backoff; dedups by article id. Opt-in (STREAMS_ALPACA_NEWS_ENABLED).
 
-import { resolveApiKey } from "../db";
+import { resolveAlpacaStreamAccount } from "../db";
 import { recordStreamedArticle } from "./news-store";
 
 const ALPACA_NEWS_WS = process.env.ALPACA_NEWS_WS_URL || "wss://stream.data.alpaca.markets/v1beta1/news";
@@ -36,15 +36,15 @@ export function startAlpacaNewsStream(): void {
     console.warn("[stream:alpaca-news] global WebSocket unavailable in this runtime; not starting.");
     return;
   }
-  // Process-level background worker (no per-request user): keyed to the `local` operator.
-  const key = resolveApiKey("alpaca_paper_api_key", "local");
-  const secret = resolveApiKey("alpaca_paper_secret_key", "local");
-  if (!key) {
+  // Process-level background worker (no per-request user): keyed to the `local` operator's
+  // active connected Alpaca account (falls back to the legacy standalone key pair).
+  const creds = resolveAlpacaStreamAccount("local");
+  if (!creds) {
     console.warn("[stream:alpaca-news] missing Alpaca key; not starting.");
     return;
   }
   state.started = true;
-  connect(key, secret || undefined);
+  connect(creds.apiKey, creds.apiSecret);
 }
 
 function connect(key: string, secret?: string): void {

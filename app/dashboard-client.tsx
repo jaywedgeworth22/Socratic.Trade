@@ -848,7 +848,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
             type="button"
             disabled={submitting}
             onClick={() => void respond(false)}
-            className="h-9 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50"
+            className="min-h-11 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 disabled:opacity-50 sm:h-9 sm:min-h-0"
           >
             Decline
           </button>
@@ -856,7 +856,7 @@ function ConsentGate({ onResolved }: { onResolved: () => void }) {
             type="button"
             disabled={submitting}
             onClick={() => void respond(true)}
-            className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 disabled:opacity-50 sm:h-9 sm:min-h-0"
           >
             {submitting ? "Saving…" : "Agree & Continue"}
           </button>
@@ -1721,7 +1721,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             />
             <Button
               variant={runOnceBlockedReason ? "ghost" : "primary"}
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              className="h-8 px-2 text-xs max-sm:min-w-11 lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label="Run strategy once"
               title={runOnceBlockedReason ?? "Run one manual proposal check. This works while stopped and routes results to approval; scheduled/autonomous runs still require Start."}
               onClick={() => {
@@ -1737,7 +1737,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
             </Button>
             <Button
               variant={policy.systemState === "halted" ? "primary" : "danger"}
-              className="h-8 px-2 text-xs lg:h-9 lg:px-3 lg:text-[13px]"
+              className="h-8 px-2 text-xs max-sm:min-w-11 lg:h-9 lg:px-3 lg:text-[13px]"
               aria-label={policy.systemState === "halted" ? "Start system" : "Stop system"}
               title={policy.systemState === "halted" ? "Start the system — only while running can orders be placed (per your approval mode)" : "Stop the system — halts all trading immediately"}
               onClick={() => {
@@ -3629,6 +3629,8 @@ function StrategyView({
                <OptionalNumberField label="Max portfolio beta" value={policy.maxPortfolioBeta} placeholder="blank disables" step={0.1} onCommit={(v) => updatePolicy({ maxPortfolioBeta: v })} />
                <OptionalNumberField label="Max avg correlation" value={policy.maxAvgCorrelation} placeholder="blank disables" step={0.05} onCommit={(v) => updatePolicy({ maxAvgCorrelation: v })} />
                <OptionalNumberField label="Max entry drift %" value={policy.maxEntryDriftPct} placeholder="blank disables (default 10)" step={0.5} onCommit={(v) => updatePolicy({ maxEntryDriftPct: v })} />
+               <OptionalNumberField label="Max quote age (sec)" value={policy.maxQuoteAgeSec} placeholder="blank disables" step={15} onCommit={(v) => updatePolicy({ maxQuoteAgeSec: v })} />
+               <OptionalNumberField label="Max fundamentals age (sec)" value={policy.maxFundamentalsAgeSec} placeholder="blank disables" step={60} onCommit={(v) => updatePolicy({ maxFundamentalsAgeSec: v })} />
              </div>
              <div title="When a run's intended buys exceed buying power, optionally raise cash by trimming holdings (largest losers first, never the buy targets).">
                <span className="mb-1.5 block text-xs font-medium text-muted">Sell to fund buys</span>
@@ -5485,7 +5487,7 @@ function SettingsContent({
           <div>
             <span className="mb-1.5 block text-xs font-medium text-muted">Send notifications for</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "limit_order_stale", "provider_degraded"] as const).map((eventType) => {
+              {(["fill", "block", "run_failed", "pending_approval", "kill_switch", "limit_order_stale", "provider_degraded", "budget_alert"] as const).map((eventType) => {
                 const enabled = policy.notificationSettings.enabledEvents.includes(eventType);
                 return (
                   <label key={eventType} className="flex min-h-10 items-center gap-2 rounded-lg border border-line bg-surface-2/50 backdrop-blur-lg px-3 py-2 text-sm capitalize text-fg">

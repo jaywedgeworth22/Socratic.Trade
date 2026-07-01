@@ -1,11 +1,14 @@
 import {
+  audit,
   getPolicy,
   getStrategyPrompt,
   getActiveConnectedAccount,
   latestAuditByKind,
   listFillEvents,
+  listLearningMutations,
   listStrategyRuns,
-  normalizeScoringWeights
+  normalizeScoringWeights,
+  setPolicy
 } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
@@ -18,7 +21,9 @@ import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
 import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import { runWalkForwardOOS } from "./backtest";
+import { runWalkForwardOOS, buildSpyReturnToNowMap } from "./backtest";
+import { validateTuningInvariants } from "./tuning-invariants";
+import { recordLearningMutation, revertLearningMutation, LEARNING_SUBSYSTEM_SCORING_WEIGHTS } from "./learning-ledger";
 import type {
   FillEvent,
   MarketFactor,
@@ -86,13 +91,33 @@ export interface MissedOpportunityInput {
   regime?: string;
   dominantFactor?: string;
   ageDays?: number;
+  /**
+   * SPY (or other benchmark) return % over the SAME horizon as this skipped name. Only consulted
+   * when `benchmarkRelative` is on: then the "winner" test becomes returnPct − benchmarkReturnPct > 0
+   * so a name that only beat zero but LAGGED the market no longer counts as a missed winner.
+   */
+  benchmarkReturnPct?: number;
+}
+
+/** Options for `summarizeMissedOpportunities`. Defaults preserve the original >0 / >=2 behavior. */
+export interface SummarizeMissedOpportunitiesOptions {
+  /** Item cap. Default 8. */
+  limit?: number;
+  /**
+   * When true, a skipped name only counts as a missed WINNER when its benchmark-relative return
+   * (returnPct − benchmarkReturnPct) is positive; rows lacking a benchmark are treated as lagging
+   * (excluded) so we never over-credit. Default false (winner = returnPct > 0, no market adjustment).
+   */
+  benchmarkRelative?: boolean;
+  /** Minimum recurrences of a dominant factor before it's flagged. Default 2. */
+  minRecurringCount?: number;
 }
 
 export interface MissedOpportunitySummary {
   items: Array<{ symbol: string; returnPct: number; score?: number; sector?: string; regime?: string; dominantFactor?: string; ageDays?: number }>;
-  /** Count of positive-return skipped names in the window. */
+  /** Count of winning skipped names in the window (definition depends on `benchmarkRelative`). */
   count: number;
-  /** The dominant factor that recurred across >= 2 missed winners, if any. */
+  /** The dominant factor that recurred across >= minRecurringCount missed winners, if any. */
   recurringFactor?: string;
   recurringFactorCount?: number;
 }
@@ -105,8 +130,28 @@ export interface MissedOpportunitySummary {
  * sample-size guardrail before any weight actually changes. Pure (no I/O) so it is unit
  * testable; callers pass already-sorted rows from `getSkippedCandidateReturns`.
  */
-export function summarizeMissedOpportunities(rows: MissedOpportunityInput[], limit = 8): MissedOpportunitySummary {
-  const winners = rows.filter((row) => typeof row.returnPct === "number" && row.returnPct > 0);
+export function summarizeMissedOpportunities(
+  rows: MissedOpportunityInput[],
+  optionsOrLimit: number | SummarizeMissedOpportunitiesOptions = 8
+): MissedOpportunitySummary {
+  // Back-compat: a bare number is still the item limit; an options object unlocks the item-4 hardening.
+  const options: SummarizeMissedOpportunitiesOptions =
+    typeof optionsOrLimit === "number" ? { limit: optionsOrLimit } : optionsOrLimit;
+  const limit = options.limit ?? 8;
+  const benchmarkRelative = options.benchmarkRelative ?? false;
+  const minRecurringCount = Math.max(1, options.minRecurringCount ?? 2);
+
+  // Winner test: default is the historical `returnPct > 0` (no market adjustment). Benchmark-relative
+  // mode requires the name to have BEATEN the benchmark over the same horizon (return − SPY-return > 0);
+  // a row with no benchmark can't be certified as a market-beater, so it's excluded (never over-credited).
+  const isWinner = (row: MissedOpportunityInput): boolean => {
+    if (typeof row.returnPct !== "number") return false;
+    if (!benchmarkRelative) return row.returnPct > 0;
+    if (typeof row.benchmarkReturnPct !== "number") return false;
+    return row.returnPct - row.benchmarkReturnPct > 0;
+  };
+  const winners = rows.filter(isWinner);
+
   const factorCounts = new Map<string, number>();
   for (const row of winners) {
     if (row.dominantFactor) factorCounts.set(row.dominantFactor, (factorCounts.get(row.dominantFactor) ?? 0) + 1);
@@ -131,7 +176,50 @@ export function summarizeMissedOpportunities(rows: MissedOpportunityInput[], lim
   return {
     items,
     count: winners.length,
-    ...(recurringFactor && recurringFactorCount >= 2 ? { recurringFactor, recurringFactorCount } : {})
+    ...(recurringFactor && recurringFactorCount >= minRecurringCount ? { recurringFactor, recurringFactorCount } : {})
+  };
+}
+
+/** The scoring-weight factor keys that a missed-opportunity nudge may touch (subset of ScoringWeights). */
+const NUDGEABLE_FACTORS = new Set<keyof ScoringWeights>([
+  "liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"
+]);
+
+export interface MissedOpportunityNudgeResult {
+  weights: ScoringWeights;
+  /** The factor that was nudged, if any (for auditing). */
+  nudgedFactor?: keyof ScoringWeights;
+  /** The clamped delta actually applied (+step), if any. */
+  delta?: number;
+  /** Human-readable reason, present only when a nudge was applied. */
+  note?: string;
+}
+
+/**
+ * Item 3: derive a SMALL, CLAMPED, transient per-factor weight nudge from matured missed-opportunity
+ * evidence, applied to THIS run's scan-scoring weights only (NOT persisted — persisting is the item-1
+ * autonomous-apply path). When a single dominant factor recurred across enough benchmark-beating missed
+ * winners (`summary.recurringFactor` set), bump that factor's weight up by `MAX_WEIGHT_STEP`. Pure over
+ * (weights, summary); returns the weights unchanged when the sample gate isn't met or the factor isn't a
+ * recognized scoring factor. Caller is responsible for the flag check + the closed-lot sample gate and for
+ * emitting the audit row using `note`/`nudgedFactor`.
+ */
+export function applyMissedOpportunityNudge(
+  weights: ScoringWeights,
+  summary: MissedOpportunitySummary,
+  step: number = MAX_WEIGHT_STEP
+): MissedOpportunityNudgeResult {
+  const factor = summary.recurringFactor as keyof ScoringWeights | undefined;
+  if (!factor || !NUDGEABLE_FACTORS.has(factor) || typeof weights[factor] !== "number") {
+    return { weights };
+  }
+  const current = weights[factor];
+  const bumped = round(current + step);
+  return {
+    weights: { ...weights, [factor]: bumped },
+    nudgedFactor: factor,
+    delta: round(step),
+    note: `Missed-opportunity nudge: '${factor}' recurred across ${summary.recurringFactorCount} benchmark-beating skipped winner(s); nudged its scan weight ${current} -> ${bumped} (+${round(step)}) for this run only.`
   };
 }
 
@@ -167,9 +255,22 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
   const runs = listStrategyRuns(10, userId);
   // Matured skipped-candidate counterfactuals (empty price map => realized rows only,
   // no live quotes needed). Lets the tuner learn from high-scoring names it passed on.
-  const missedOpportunities = summarizeMissedOpportunities(
-    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId })
-  );
+  // Item 4 (opt-in): raise the recurring-factor bar to >=5 and require SPY-beating over each row's OWN
+  // entry→now window before a skipped name counts as a "missed winner". Default OFF → byte-identical.
+  // The SPY excess return is injected in getSkippedCandidateReturns (keeping summarize pure), reusing the
+  // backtest SPY fetch. A missing SPY row → benchmarkReturnPct absent → excluded by the winner test (never
+  // falls back to raw returnPct>0).
+  const benchmarkRelative = policy.tuning?.benchmarkRelativeMisses ?? false;
+  const minRecurringCount = policy.tuning?.recurringFactorMinCount ?? (benchmarkRelative ? 5 : 2);
+  let benchmarkReturnBySnapshotDate: Map<string, number> | undefined;
+  if (benchmarkRelative) {
+    // Pre-scan the snapshot dates the skipped rows will span, then build one SPY entry→now map for them.
+    const preScan = getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId });
+    const dates = Array.from(new Set(preScan.map((r) => r.asOf?.slice(0, 10)).filter((d): d is string => Boolean(d))));
+    benchmarkReturnBySnapshotDate = await buildSpyReturnToNowMap(dates).catch(() => new Map<string, number>());
+  }
+  const skippedRows = getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId, benchmarkReturnBySnapshotDate });
+  const missedOpportunities = summarizeMissedOpportunities(skippedRows, { limit: 8, benchmarkRelative, minRecurringCount });
   // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
   // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust
   // per-factor attribution.
@@ -737,4 +838,254 @@ function clamp(value: number, min: number, max: number): number {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+// ── Item 1: opt-in autonomous factor-weight tuning (close the loop) ─────────────────────────────
+
+export interface AutonomousWeightApplyResult {
+  /** Whether weights were actually persisted this run. */
+  applied: boolean;
+  /** Why nothing was applied (present only when applied=false). */
+  reason?: string;
+  /** The prior full weight vector (for revert), present when applied. */
+  previousWeights?: ScoringWeights;
+  /** The new full weight vector actually persisted, present when applied. */
+  newWeights?: ScoringWeights;
+  /** The OOS/clamp cautions attached to the underlying proposal (audit trail). */
+  cautions?: string[];
+}
+
+/** Audit kind for an autonomous weight application (also the revert lookup key). */
+export const AUTO_WEIGHT_APPLY_AUDIT_KIND = "auto_weight_apply";
+
+/**
+ * STRICTER-than-manual autonomous OOS thresholds (panel B1). The manual gate (`applyOosGate`) only checks
+ * `candidateIC > baselineIC` with no margin/significance — fine for a human-reviewed suggestion, but too
+ * weak to auto-apply. For the AUTONOMOUS path we additionally require: a minimum IC-delta MARGIN over the
+ * baseline (not a razor-thin edge), a POSITIVE absolute candidate IC, a minimum ICIR (signal stability),
+ * and a minimum test-date count. All env-tunable for operators who want to loosen/tighten.
+ */
+export function autonomousOosThresholds(
+  tuning?: TradingPolicy["tuning"]
+): { minICDelta: number; minCandidateIC: number; minICIR: number; minTestDates: number; minPairedTStat: number } {
+  const num = (name: string, dflt: number) => {
+    const v = Number(process.env[name]);
+    return Number.isFinite(v) && v >= 0 ? v : dflt;
+  };
+  // Panel P0-2: the policy-level `minOosICImprovement` (default 0) raises the IC-delta MARGIN above the env
+  // floor; `minOosPairedTStat` (default 0 = no-op) adds a proper paired-t significance requirement on the
+  // per-date IC-difference series. Both default to preserving current behavior.
+  const envMargin = num("AUTO_TUNE_MIN_IC_DELTA", 0.005);
+  const policyMargin = typeof tuning?.minOosICImprovement === "number" && tuning.minOosICImprovement >= 0
+    ? tuning.minOosICImprovement
+    : 0;
+  const minPairedTStat = typeof tuning?.minOosPairedTStat === "number" && tuning.minOosPairedTStat >= 0
+    ? tuning.minOosPairedTStat
+    : 0;
+  return {
+    minICDelta: Math.max(envMargin, policyMargin),
+    minCandidateIC: num("AUTO_TUNE_MIN_CANDIDATE_IC", 0.0),
+    minICIR: num("AUTO_TUNE_MIN_ICIR", 0.2),
+    minTestDates: num("AUTO_TUNE_MIN_TEST_DATES", 4),
+    minPairedTStat
+  };
+}
+
+/**
+ * Item 1 (panel-hardened): cadence-gated AUTONOMOUS application of the auto-tuner's factor-weight changes.
+ *
+ * DEFAULT OFF (`policy.tuning.autoApplyWeights`): a no-op returning `{ applied: false, reason }`, so default
+ * behavior is byte-identical. When on:
+ *   1. runs `proposeStrategyTuning` (already clamps every delta to MAX_WEIGHT_STEP and runs the manual OOS
+ *      gate, stripping weights that don't beat baseline / can't be validated);
+ *   2. WRITE-SCOPE SAFETY: builds the delta from `proposedPatch.scoringWeights` ONLY — the patch's `policy`
+ *      sub-patch (maxDailyNotional, strategyAuthority, riskRules, sectorCaps) and free-text `prompt` are
+ *      NEVER auto-applied, so an autonomous run can't loosen a risk cap or set strategyAuthority='decide';
+ *   3. re-validates the merged candidate against a STRICTER autonomous OOS gate (min IC-delta margin,
+ *      candidateIC>0, ICIR floor, min test-dates). A null OOS run (<4 dates) is a HARD no-apply regardless
+ *      of `oosWithholdUnvalidated`;
+ *   4. re-asserts the MAX_WEIGHT_STEP clamp on the POST-normalization vector (normalizeScoringWeights
+ *      re-normalizes after merge, so a pre-normalization clamp can drift past ±step);
+ *   5. persists ONLY via `setPolicy` (so mirrorPolicyToActiveAccount syncs account_strategy_state + the
+ *      active-profile mirror) and writes an `auto_weight_apply` audit row carrying the PRIOR vector for revert.
+ */
+export async function applyAutonomousWeightTuning(userId: string = "local", modelOverride?: string): Promise<AutonomousWeightApplyResult> {
+  const policy = getPolicy(userId);
+  if (!policy.tuning?.autoApplyWeights) return { applied: false, reason: "autoApplyWeights_off" };
+
+  // P0-3 FAIL-CLOSED CONFIG GUARD: validate the tuning invariants at the TOP of the autonomous path. On any
+  // violation, SKIP the apply and write an audited "skipped: invariant violation" row — never throw (a throw
+  // would wedge the scheduler tick that calls this). The pure validator never throws.
+  const invariants = validateTuningInvariants(policy.tuning);
+  if (!invariants.ok) {
+    audit("auto_weight_apply_skipped", {
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      reason: "invariant_violation",
+      violations: invariants.violations
+    }, userId, policy.connectedAccountId);
+    return {
+      applied: false,
+      reason: `invariant_violation (${invariants.violations.map((v) => v.code).join(",")})`
+    };
+  }
+
+  const proposal = await proposeStrategyTuning(userId, modelOverride);
+  // WRITE-SCOPE SAFETY (panel B1): scoringWeights ONLY — never the patch's policy/prompt sub-fields.
+  const proposedWeights = proposal.proposedPatch.scoringWeights;
+  if (!proposedWeights || Object.keys(proposedWeights).length === 0) {
+    return { applied: false, reason: "no_validated_weight_changes", cautions: proposal.cautions };
+  }
+
+  const previousWeights = normalizeScoringWeights({ ...policy.scoringWeights });
+  const mergedCandidate = normalizeScoringWeights({ ...policy.scoringWeights, ...proposedWeights });
+  // Re-assert the per-factor step clamp AFTER normalization: normalizeScoringWeights re-scales the whole
+  // vector, so a delta clamped to ±step pre-normalization can end up past ±step. Clamp each factor to
+  // [prev-step, prev+step] and re-normalize once more so the persisted vector is both clamped and valid.
+  const clampedToPrev: Partial<ScoringWeights> = {};
+  for (const key of Object.keys(mergedCandidate) as (keyof ScoringWeights)[]) {
+    const prev = previousWeights[key];
+    clampedToPrev[key] = round(clamp(mergedCandidate[key], prev - MAX_WEIGHT_STEP, prev + MAX_WEIGHT_STEP));
+  }
+  const newWeights = normalizeScoringWeights(clampedToPrev);
+
+  // STRICTER autonomous OOS re-validation on the ACTUAL vector we would persist. Thresholds are policy-driven
+  // (P0-2: minOosICImprovement raises the margin, minOosPairedTStat adds a paired-t significance gate).
+  const th = autonomousOosThresholds(policy.tuning);
+  let oos;
+  try {
+    oos = await runWalkForwardOOS(userId, { candidateWeights: newWeights, baselineWeights: previousWeights });
+  } catch {
+    return { applied: false, reason: "oos_fetch_failed", cautions: proposal.cautions };
+  }
+  if (!oos) return { applied: false, reason: "oos_insufficient_history", cautions: proposal.cautions }; // <4 dates → HARD no-apply
+  const candidateIC = oos.oosICCandidate;
+  const baselineIC = oos.oosICBaseline;
+  if (candidateIC == null || baselineIC == null) return { applied: false, reason: "oos_no_composite_ic", cautions: proposal.cautions };
+  // P0-2 PAIRED SIGNIFICANCE: the two composite ICs are measured on the SAME test fold and are correlated, so
+  // the difference's SE must come from the PAIRED per-date IC-difference series (oos.pairedICDiff), not from
+  // differencing independent ICIRs. Require the paired t-stat to clear minPairedTStat. Default 0 = no-op.
+  // Multiplicity (D-1): a single-shot Šidák/Bonferroni correction is deferred — it only earns teeth once a
+  // per-account trial counter exists; with minPairedTStat defaulting to 0 today there is no multiplicity to
+  // correct. Documented here rather than trivially bolted on.
+  const pairedT = oos.pairedICDiff?.tStat ?? 0;
+  const pairedN = oos.pairedICDiff?.n ?? 0;
+  const passesPairedT = th.minPairedTStat <= 0 || (pairedN >= 2 && pairedT >= th.minPairedTStat);
+  const passesAutonomousGate =
+    candidateIC - baselineIC >= th.minICDelta &&
+    candidateIC > th.minCandidateIC &&
+    oos.oosICIR >= th.minICIR &&
+    oos.testDates >= th.minTestDates &&
+    passesPairedT;
+  if (!passesAutonomousGate) {
+    return {
+      applied: false,
+      reason: `autonomous_oos_gate_failed (ΔIC=${(candidateIC - baselineIC).toFixed(4)}, IC=${candidateIC.toFixed(4)}, ICIR=${oos.oosICIR.toFixed(2)}, testDates=${oos.testDates}, pairedT=${pairedT.toFixed(2)}, pairedN=${pairedN})`,
+      cautions: proposal.cautions
+    };
+  }
+
+  // P0-4: capture `before` ATOMICALLY — re-read effective policy immediately before the setPolicy write so a
+  // concurrent multi-agent weight write doesn't cause a stale baseline to be recorded/reverted-to.
+  const beforePolicy = getPolicy(userId, policy.connectedAccountId);
+  const beforeWeights = normalizeScoringWeights({ ...beforePolicy.scoringWeights });
+  setPolicy({ ...beforePolicy, scoringWeights: newWeights }, userId, policy.connectedAccountId);
+
+  const evidence = {
+    candidateIC,
+    baselineIC,
+    icDelta: candidateIC - baselineIC,
+    icir: oos.oosICIR,
+    testDates: oos.testDates,
+    pairedTStat: pairedT,
+    pairedN,
+    pairedMeanDiff: oos.pairedICDiff?.meanDiff,
+    thresholds: th,
+    changedFactors: Object.keys(proposedWeights),
+    confidenceScore: proposal.confidenceScore,
+    generatedBy: proposal.generatedBy,
+    cautions: proposal.cautions
+  };
+
+  // P0-4: record ONE canonical ledger row (before/after full vectors, subsystem, trigger, evidence, flag).
+  recordLearningMutation({
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    userId,
+    connectedAccountId: policy.connectedAccountId,
+    trigger: AUTO_WEIGHT_APPLY_AUDIT_KIND,
+    flag: "autoApplyWeights",
+    before: { scoringWeights: beforeWeights },
+    after: { scoringWeights: newWeights },
+    evidence
+  });
+
+  // Keep the existing audit row for backward-compat (dashboard + prior tests read `auto_weight_apply`); the
+  // unified ledger is now the source of truth for revert.
+  audit(AUTO_WEIGHT_APPLY_AUDIT_KIND, {
+    userId,
+    connectedAccountId: policy.connectedAccountId,
+    previousWeights: beforeWeights,
+    newWeights,
+    changedFactors: Object.keys(proposedWeights),
+    oos: { candidateIC, baselineIC, icDelta: candidateIC - baselineIC, icir: oos.oosICIR, testDates: oos.testDates, pairedTStat: pairedT, pairedN },
+    thresholds: th,
+    confidenceScore: proposal.confidenceScore,
+    generatedBy: proposal.generatedBy,
+    cautions: proposal.cautions
+  }, userId);
+
+  return { applied: true, previousWeights: beforeWeights, newWeights, cautions: proposal.cautions };
+}
+
+export interface AutonomousWeightRevertResult {
+  reverted: boolean;
+  reason?: string;
+  restoredWeights?: ScoringWeights;
+}
+
+/**
+ * Item 1 (P0-4-unified): revert the most recent autonomous weight application. Prefers the UNIFIED learning-
+ * mutation ledger (`revertLearningMutation`, subsystem `scoring_weights`) so there is ONE revert path that
+ * restores via `setPolicy` (keeping account_strategy_state + the active-profile mirror in sync). For pre-
+ * ledger applies (only the legacy `auto_weight_apply` audit row exists), falls back to that snapshot. Returns
+ * `{ reverted: false }` when nothing is revertible. Writes an `auto_weight_revert` audit row for traceability.
+ */
+export function revertAutonomousWeightTuning(userId: string = "local"): AutonomousWeightRevertResult {
+  const policy = getPolicy(userId);
+
+  // Preferred path: the unified ledger (the source of truth for applies made after P0-4 landed).
+  const ledgerResult = revertLearningMutation({
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    userId,
+    connectedAccountId: policy.connectedAccountId,
+    revertedBy: "revertAutonomousWeightTuning"
+  });
+  if (ledgerResult.reverted && ledgerResult.restoredWeights) {
+    audit("auto_weight_revert", { userId, connectedAccountId: policy.connectedAccountId, restoredWeights: ledgerResult.restoredWeights, via: "ledger", entryId: ledgerResult.entryId }, userId);
+    return { reverted: true, restoredWeights: ledgerResult.restoredWeights };
+  }
+
+  // Back-compat fallback: ONLY for a genuine PRE-LEDGER apply — i.e. NO learning-mutation ledger row exists
+  // for this (user, account, scoring_weights) at all. If a ledger row DOES exist (even one already reverted),
+  // the ledger is authoritative and the legacy `auto_weight_apply` audit snapshot is STALE — using it on a
+  // 2nd revert would restore old previousWeights and clobber any manual weight change made since (finding #2).
+  const anyLedgerRow = listLearningMutations(userId, {
+    connectedAccountId: policy.connectedAccountId,
+    subsystem: LEARNING_SUBSYSTEM_SCORING_WEIGHTS,
+    limit: 1
+  }).length > 0;
+  if (anyLedgerRow) {
+    return { reverted: false, reason: "no_unreverted_ledger_mutation" };
+  }
+
+  const last = (policy.connectedAccountId
+    ? latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId, policy.connectedAccountId)
+    : latestAuditByKind(AUTO_WEIGHT_APPLY_AUDIT_KIND, userId))?.payload as { previousWeights?: Partial<ScoringWeights> } | undefined;
+  if (!last?.previousWeights || Object.keys(last.previousWeights).length === 0) {
+    return { reverted: false, reason: "no_prior_snapshot" };
+  }
+  const restoredWeights = normalizeScoringWeights({ ...policy.scoringWeights, ...last.previousWeights });
+  setPolicy({ ...policy, scoringWeights: restoredWeights }, userId, policy.connectedAccountId);
+  audit("auto_weight_revert", { userId, connectedAccountId: policy.connectedAccountId, restoredWeights, via: "legacy_audit" }, userId);
+  return { reverted: true, restoredWeights };
 }

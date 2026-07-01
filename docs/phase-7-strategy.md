@@ -115,15 +115,21 @@ Proposals stay in the approval queue until a human approves or rejects them, so 
 ### C.2 Opening Size and Broker Bracket Practicality
 
 The LLM advises proposal size, but deterministic sizing remains authoritative.
-`limits.maxOrderNotional` in the prompt is the effective cap after combining
-absolute and percent-of-NAV policy settings; hidden stale values must not bind
-behind the user's visible risk control. For Alpaca REST/MCP native brackets, a
-dollar order needs enough notional to represent at least one whole share at the
-reference price. If the advised notional is below that threshold and policy
-capacity allows it, the deterministic pass raises the order to one-share
-notional and records the reason. If the cap does not allow a full share, the
-proposal may remain a fractional dollar order, but native Alpaca bracket legs
-are skipped so the broker is not asked for an impossible sub-share bracket.
+`limits.maxOrderNotional` in the prompt is the absolute cap after combining
+absolute and percent-of-NAV policy settings; `limits.preferredMaxOrderNotional`
+is the normal opening-size target after reserving a 5% execution buffer below
+that cap. Hidden stale values must not bind behind the user's visible risk
+control, and proposals should not sit exactly on the hard policy tripwire. The
+policy gate also enforces this opening-order buffer, so a `$4.99` max order cap
+allows a preferred opening size up to `$4.74`; larger orders are blocked with a
+reason telling the user to reduce size or raise the policy cap. For Alpaca
+REST/MCP native brackets, a dollar order needs enough notional to represent at
+least one whole share at the reference price. If the advised notional is below
+that threshold and policy capacity allows it, the deterministic pass raises the
+order to one-share notional and records the reason. If the cap does not allow a
+full share, the proposal may remain a fractional dollar order, but native Alpaca
+bracket legs are skipped so the broker is not asked for an impossible sub-share
+bracket.
 
 As of 2026-06-28, `TradeProposal.referencePrice` is explicitly the decision-time
 market quote used for entry-drift checks and proposal/counterfactual performance
@@ -204,7 +210,10 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   final `strategy_run` audit. Raw abort strings are translated into
   provider/model-specific guidance (for example, Green Team `gpt-5.5` high
   reasoning timing out after the shared 60s cap), while Red Team transport
-  failures fallback to Bull proposals with an auditable reason.
+  failures fallback to Bull proposals with an auditable reason. Interactive
+  strategy runs keep the 60s cap: `gpt-5.5` with high reasoning is rejected in
+  Settings and stale stored configs are clamped to medium effort at request
+  build time.
 - **Context trimming** — large allowlists (e.g. full S&P 500) are sent as a
   compact note instead of every ticker; `recentOrders` is slimmed to 8 records;
   the Bear/critique agent receives only the candidates under review rather than
@@ -289,7 +298,75 @@ The ultimate expression of the learning loop is adjusting the Initial Factor Wei
   - Maximum 5-point weight delta per factor suggestion.
   - Maximum 10-point weight delta per sector shift suggestion.
   - Strict sector concentration caps (e.g., no single sector can exceed 40% of the portfolio).
-  - Never auto-apply; requires human approval via the Dashboard.
+  - Human approval via the Dashboard is the DEFAULT.
+
+#### E.1 Opt-in autonomous factor-weight apply (Workstream B, 2026-07-01 — DEFAULT OFF)
+A default-off `policy.tuning.autoApplyWeights` flag lets a cadence-gated caller apply the auto-tuner's
+factor-weight suggestions WITHOUT human approval — but ONLY under strictly stronger gates than the manual
+suggestion path:
+- **Cadence:** hosted in `scheduler.ts` after a successful `runStrategyOnce`, under the single-leader gate,
+  on its own slow clock (`AUTO_TUNE_MIN_INTERVAL_HOURS`, default 24h) — NOT the event-driven trigger path.
+- **Write scope:** ONLY `proposedPatch.scoringWeights` are applied. The tuning patch's `policy` sub-patch
+  (risk caps, `strategyAuthority`, `riskRules`, `sectorCaps`) and free-text `prompt` are NEVER auto-applied,
+  so an autonomous run can't loosen a risk control or flip authority to `decide`.
+- **Statistical gate:** a stricter-than-manual OOS re-validation on the exact vector to be persisted —
+  requires a minimum IC-delta margin over baseline, positive absolute candidate IC, an ICIR floor, and a
+  minimum test-date count; a null OOS run (<4 distinct snapshot dates) is a HARD no-apply.
+- **Clamp:** each factor delta is re-clamped to ±`MAX_WEIGHT_STEP` (5 points) AFTER normalization.
+- **Persistence + revert:** applied via `setPolicy` (syncs account_strategy_state + the active-profile
+  mirror); an `auto_weight_apply` audit row stores the prior vector so `revertAutonomousWeightTuning`
+  restores it. Off by default → the human-approval path above is unchanged.
+
+#### E.2 Congress-signal go/no-go gating (Workstream B — DEFAULT OFF)
+A default-off `policy.tuning.congressGoNoGoGating` flag gates the congressional scan contribution on a cached
+statistical verdict (`congress-score-eval` → three-way PASS / FAIL_SIGNIFICANCE / INSUFFICIENT). Only a
+data-backed significance failure down-weights the term to zero; a data-poor account resolves to INSUFFICIENT
+and stays neutral (never a permanent kill-switch). Verdict cached out of the scan hot path, surfaced on the
+dashboard, refreshed via `POST /api/admin/congress-score-eval`.
+
+#### E.3 Confidence calibration → sizing (Workstream B — DEFAULT OFF)
+A default-off `policy.tuning.calibrationSizing` flag remaps a BUY proposal's `confidenceScore` DOWN toward its
+realized (Bayesian-shrunk, isotonic-across-bands, per-band-sample-gated) win rate before it becomes the
+conviction sizing multiplier — de-risking persistent over-confidence. Reduce-only; shorts fall back to raw;
+composes as a reduction feeding the existing conviction cap.
+
+#### E.4 Execution cost on protective exits (Workstream B — correctness fix, ON)
+The paper/test execution-cost model now also debits EXIT fills booked by `synthetic-stops.ts` and
+`order-replacement.ts` (previously they inserted raw-price exits with no cost), so the learning loop's
+realized edge is net-of-cost on both legs — not just entries.
+
+#### E.5 Unified learning-mutation ledger + admin revert (follow-on P0-4 — ledger ALWAYS-ON, revert admin-only)
+Every autonomous learning mutation now lands in ONE canonical append-only ledger (`learning_mutations`
+table; CRUD in `src/lib/db-learning-ledger.ts`; orchestration in `src/lib/learning-ledger.ts`). Each row
+carries the subsystem (`scoring_weights` today), the before/after full weight vectors, the trigger/run id,
+the OOS/statistical evidence, the authorizing flag, and a timestamp. `applyAutonomousWeightTuning` records
+here (capturing `before` ATOMICALLY, immediately before the `setPolicy` write) and still writes the legacy
+`auto_weight_apply` audit row for dashboard back-compat. `revertLearningMutation` restores the prior vector
+via `setPolicy` ONLY (keeping `account_strategy_state` + the active-profile mirror in sync), scoped by
+`(user, account, subsystem)`, and marks the row reverted (idempotent). This GENERALIZES the #296
+tuning-specific revert — it does not duplicate it. Recording is passive/always-on (audit trail only — it
+changes no trading behavior). The one-click revert route `POST /api/admin/learning-ledger` is `requireAdmin`
+(this repo has prior IDOR history); `GET` lists entries for the caller's active account.
+
+#### E.6 Paired-t significance on the autonomous OOS gate (follow-on P0-2 — DEFAULT no-op)
+The autonomous OOS gate (E.1) is extended with a proper effect-size + PAIRED-t significance test on the
+per-fold IC deltas. Because the candidate and baseline composite ICs are measured on the SAME test fold and
+are highly correlated, the difference's standard error comes from the PAIRED per-date IC-difference series
+(`pairedICDiffStats` in `backtest.ts`, surfaced on `OOSResult.pairedICDiff`), NOT from differencing two
+independent ICIRs. Two default-preserving knobs: `policy.tuning.minOosICImprovement` (default 0 → today's
+env `AUTO_TUNE_MIN_IC_DELTA` margin) raises the IC-delta MARGIN; `policy.tuning.minOosPairedTStat` (default 0
+= paired-t OFF) requires `pairedN ≥ 2 && pairedT ≥ threshold`. Multiplicity control across repeated
+auto-applies (Šidák/Bonferroni, expansion-doc D-1) is explicitly deferred — it earns teeth only once a
+per-account trial counter exists, and with the paired-t defaulting off there is nothing to correct today.
+
+#### E.7 Fail-closed tuning-config invariant guard (follow-on P0-3 — validator ALWAYS-ON, gating autonomous-only)
+A pure always-on validator (`validateTuningInvariants` in `src/lib/tuning-invariants.ts`) checks a small set
+of HARD safety couplings in `policy.tuning`: sample gates > 0; `sizingFloorPct ≤ sizingCeilingPct`;
+`autoApplyWeights ⇒ oosWithholdUnvalidated` (unless the explicit `autoApplyOverrideUnvalidated` escape
+hatch); `calibrationSizing ⇒ a positive per-band sample gate`. The AUTONOMOUS apply path calls it at the TOP
+and fails CLOSED — on any violation it SKIPS the apply, writes an `auto_weight_apply_skipped` audit row, and
+returns without throwing (a throw would wedge the scheduler tick). The MANUAL tune route surfaces the same
+violations as non-blocking `tuningConfigWarnings` for human review.
 
 ## 4. Test Plan
 - **Context/Outcome Fixture:** Seed buy/sell fills and assert that `entryMarketRegime`, `mae`, and `mfe` are accurately captured and calculated.

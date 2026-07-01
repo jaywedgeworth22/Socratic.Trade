@@ -9,20 +9,30 @@ on:
   schedule:
     - cron: "17 9 * * 1"
 
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
-    # Start the required check even for untrusted PRs so branch protection cannot
-    # be satisfied by a skipped job, then fail closed before checkout.
-    runs-on: [self-hosted, trading-live]
+    # Moved off the self-hosted runner (2026-07-01): playwright.config.ts already
+    # builds and serves its own local `next start` on 127.0.0.1 and only talks to
+    # itself (no live production/broker dependency), and the Linux/RUNNER_OS
+    # branch below was already written anticipating a hosted Linux runner. This
+    # job was contributing to the runner queue bottleneck. Revert to
+    # `[self-hosted, trading-live]` if the account's Actions spending limit ever
+    # blocks this (Settings → Billing → Plans and usage → Spending limit).
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
           if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "::error::Fork PRs cannot run on the self-hosted production runner."
+            echo "::error::Fork PRs cannot run this job (it installs deps with a private-repo deploy key secret)."
             exit 1
           fi
           actor="${{ github.actor }}"
@@ -32,7 +42,7 @@ jobs:
                 echo "Trusted same-repo bot: $actor"
                 ;;
               *)
-                echo "::error::Bot PRs cannot run package installs on the self-hosted production runner (untrusted bot: $actor)."
+                echo "::error::Bot PRs cannot run package installs with this secret (untrusted bot: $actor)."
                 exit 1
                 ;;
             esac
@@ -41,10 +51,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
       - name: Install dependencies
         shell: bash
         env:
           CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
+          # See ci.yml: GH_PAT lacks read:packages, so it must not precede the job GITHUB_TOKEN here.
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: bash scripts/npm-ci-with-shared-deps.sh
       - name: Install Playwright browser
         shell: bash

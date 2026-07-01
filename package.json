@@ -22,11 +22,13 @@
     "litestream:dry-run": "litestream databases -config litestream.yml",
     "eval:offline": "tsx scripts/eval/run-offline.ts",
     "eval:congress-score": "tsx scripts/eval/run-congress-score.ts",
+    "eval:faithfulness": "tsx scripts/eval/run-faithfulness.ts",
+    "eval:corpus-coverage": "tsx scripts/eval/corpus-coverage.ts",
     "ops:snapshot": "bash scripts/fetch-prod-ops-snapshot.sh"
   },
   "dependencies": {
     "@alpacahq/alpaca-trade-api": "^3.1.3",
-    "@jaywedgeworth22/congress-trading-shared": "git+https://github.com/jaywedgeworth22/congress-trading-shared.git#220677a3fb768c9e378404736e8f1f8c933220e1",
+    "@jaywedgeworth22/congress-trading-shared": "^1.0.0",
     "@langfuse/otel": "^5.6.0",
     "@langfuse/tracing": "^5.6.0",
     "@opentelemetry/instrumentation": "^0.219.0",

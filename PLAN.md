@@ -5,6 +5,174 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
+> Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
+> (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
+> `db-learning-ledger.ts` CRUD + `learning-ledger.ts` record/revert) that GENERALIZES #296's
+> tuning-specific audited revert into one ledger + one `requireAdmin` revert route
+> (`/api/admin/learning-ledger`); (P0-2) effect-size + PAIRED-t significance on the autonomous
+> OOS gate (pure `pairedICDiffStats` on the shared-fold per-date IC-difference series;
+> `policy.tuning.minOosICImprovement` + `minOosPairedTStat`, both default no-op); (P0-3) a
+> FAIL-CLOSED tuning-config invariant guard (`tuning-invariants.ts`) that skips (never throws)
+> the autonomous apply on a bad config and warns (never blocks) the manual tune route. Ledger
+> RECORDING is passive/always-on (audit trail only); every behavior-changing knob defaults
+> off/no-op. Red-team/inline-Bear untouched. Verify quartet green (tsc / lint 0-err / 1793
+> tests / build). See `docs/rollouts/2026-07-01-learning-loop-followon.md` +
+> `docs/phase-7-strategy.md` §3.E.5–E.7.
+>
+> 2026-07-01 (`claude/competent-elion-c82938`): Workstream C2 — API Usage Monitor
+> integration. Wired App B's usage ledgers (`recordLlmUsage`/`recordRagUsage`) +
+> market-data/broker call paths to push real usage/cost to `usage.jays.services`
+> via a new fire-and-forget forwarder (the shared push client had zero callers —
+> audit §6.9 / top-10 #9); added the audit's cost-aware feedback loop (monitor
+> `GET /api/budget-status` + App B budget client: alerts by default, model-downgrade/
+> cycle-skip behind default-off `USAGE_BUDGET_ENFORCE`). All default-off,
+> fire-and-forget, fail-open — App B runs standalone without the monitor. Hand-rolled
+> the push (App B's pinned shared pkg 1.0.0 lacks the `usageTelemetry` export; publish
+> + pin-bump deferred). No roadmap-phase change. See
+> `docs/usage-monitor-integration.md` +
+> `docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+
+> 2026-07-01 (`agent/claude-backlog-c-rag`): RAG expansion backlog, broader pass - implemented
+> all remaining P1/P2 items from `docs/reviews/2026-07-01-rag-knowledge-expansion.md`: **R5**
+> consolidated per-retrieval telemetry (`recordRetrievalQuality()`, hashed query, default off);
+> **R6** shared `envFlagOn` parser (fixes `RAG_EMBED_DISCLOSURES` to accept `true/1/yes`); **R7**
+> index-metric assertion at bootstrap (warn+audit only, never throws); **R9** query-embedding LRU
+> (vector-only, never Pinecone results, default off); **R10** `content_hash` dedup for
+> `storeContexts` (opt-in `dedupKeyPrefix`, wired into 8-K summary + disclosure ingesters);
+> **R11** faithfulness/citation-grounding eval (`scripts/eval/faithfulness.ts`, deterministic +
+> optional off-by-default LLM judge); **R12** centralized default cosine floor
+> (`applyDefaultFloors`); **R13** provenance-complete citations (additive `doc_type`/`section`) +
+> optional advisory `isStale` label, backend/payload only; **R14** near-duplicate suppression
+> (Jaccard-shingle, opt-in); **R15** offline corpus coverage & freshness report
+> (`scripts/eval/corpus-coverage.ts`); **R16** per-run RAG budget ceiling (degrades rerank/hybrid
+> only, never core recall); **R17** fixed train/serve text skew (`VECTOR_EMBED_CLEAN_TEXT`,
+> embeds clean text, stored/cited text unchanged). R3/R8 already shipped (#297/#299), verified not
+> re-implemented. Every item default-off/opt-in, proven byte-identical when unset. Read/
+> retrieval-only, no UI touched. See `docs/rollouts/2026-07-01-rag-backlog.md`.
+> 2026-07-01 (`agent/claude-followon-c-rag`): RAG follow-on, focused pass on the two items
+> Workstream C's own rollout note deferred - **R4** (retrieval regression net: a pure
+> `rankPool` helper extracted from `retrieveContextDetailed`'s post-recall pipeline, exercised
+> by 19 network-free tests pinning the as-of/rerank/hybrid fail-safes) and **R1 part 2**
+> (`VECTOR_ASOF_STRICT`, default off - drops undated chunks under an active `asOf` instead of
+> the lenient default, with a drop-count audit; golden as-of tuple proven end-to-end). Both
+> byte-identical to current behavior unless explicitly opted in. See
+> `docs/rollouts/2026-07-01-rag-followon.md`.
+> 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
+> highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
+> eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene
+> issues): a new recall@k/MRR eval harness (28-case golden fixture, no live network calls)
+> gates future retrieval-pipeline changes; rerank relevance scores are now captured +
+> surfaced with an opt-in post-rerank floor; char-cap alignment + write-time doc_type
+> lowercasing landed; the salience extractor's first-match-only ticker-binding bug was fixed
+> and a default-off structured-output LLM extractor with real ticker validation was added.
+> Hybrid BM25/RRF was evaluated (measured delta table) and stays off by default - reranking
+> alone already reaches the eval ceiling on the golden fixture. All behavior changes are
+> default-off/opt-in; no order/execution-path code touched. A parallel 16-agent expert
+> design review (`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) landed corrections
+> mid-implementation, folded in per the rollout note. See
+> `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for full item-by-item status and explicit
+> follow-ups (R1 strict as-of mode, R3/R4/R5/R6/R7/R9/R10/R11, R12-R17 P2 backlog).
+> 2026-07-01 (`agent/claude-workstream-b-learning-v2`): **Workstream B — learning
+> loop / auto-tuning.** Wired the audit's "built-but-unwired" learning loops into the
+> money path behind default-off `policy.tuning.*` flags, with the 16-expert-panel
+> corrections folded in (B1–B8): opt-in autonomous factor-weight apply (stricter OOS
+> gate + write-scope safety + scheduler-hosted cadence + audited revert); congress
+> go/no-go gating with a three-way verdict (no data-poverty kill-switch); missed-
+> opportunity per-factor scan nudge; ≥5 + SPY-relative recurringFactor; factor
+> attribution stamped at entry (no momentum default); confidence-calibration→sizing
+> (isotonic, reduce-only); per-regime IC report (application off — samples too thin);
+> and a REAL fix — paper/test protective EXITS now pay execution cost. Verify quartet
+> green (tsc/lint/1710 tests/build). See
+> `docs/rollouts/2026-07-01-learning-loop-autotuning.md` + `docs/phase-7-strategy.md` §3.E.
+>
+> 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
+> 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
+> independent items from `docs/broker-capability-plan.md`'s cheap/high-value
+> list: broker-gateway health logging (`alpaca-broker`/`robinhood-broker`
+> services), Alpaca portfolio-history/calendar/clock/account-activities
+> (`alpaca-account-insights.ts`), a Robinhood-realized-P&L cross-check
+> (`robinhood-pnl-crosscheck.ts`), and 3 new read-only chat-assistant tools
+> (earnings calendar, option chain, instrument search) backed by Robinhood MCP
+> data. Merged all 4 branches with zero conflicts, merged current
+> `origin/main` through the mobile API/PWA work, addressed review fixes, and
+> re-verified as one change (172 files / 1671 tests). Robinhood options-trading support and
+> eToro/Public.com/IBKR integration deliberately excluded — real feature work
+> and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
+> change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+> 2026-07-01 (`docs/improvement-audit-2026-06-30`): comprehensive audit
+> re-baseline - historical auth IDOR is no longer the active P0; near-term
+> priorities shift to money-path correctness (Bear red-team fail-closed,
+> synthetic quote avoidance, end-to-end proposal execution tests), built-but-
+> unwired learning guardrails (factor tuning, congress go/no-go, rationale
+> collapse), RAG evaluation/corpus depth, usage-telemetry push integration, and
+> dashboard decomposition. See `docs/reviews/2026-06-30-improvement-audit.md`.
+> 2026-07-01 (`agent/claude-congress-webhook-parity` / PR #283, [codex-autofix]):
+> Congress bare-tx ingest fix - the "envelope itself is one trade" last-resort
+> branch in `applyCongressEvent` was pushing the whole envelope into
+> `coerceCongressTrade`, so a bare App A transaction over SSE (whose `type` was
+> stamped with the SSE event name by `applySseMessage`) had its trade side
+> shadowed and was dropped as `no-trades`. Now strips envelope keys
+> (`type`/`event`/`id`/`data`) before coercing, with a regression test. No
+> roadmap change; see `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
+> 2026-07-01 (`claude/stock-data-pricing-comparison-2wzg8u`): market-data
+> freshness decision + plan (docs-only). Recorded that the engine is
+> broker/strategy-neutral and already runs "delayed bulk + real-time hot-set on
+> demand"; real-time only matters at the 60s exit layer and the order-submission
+> instant. New deferred workstream: enable/tune the already-built but default-OFF
+> gates (`maxQuoteAgeSec`, `maxEntryDriftPct`, `marketableLimitEntries`), add a
+> hot-set quote-source router (broker → FMP real-time → stamped-stale DB
+> fallback), and an optional poll→push trailing-stop stream. No new data feed
+> required. See `docs/market-data-freshness-decision.md` +
+> `docs/market-data-freshness-implementation-plan.md`.
+
+> 2026-06-30 (`claude/affectionate-franklin-a52935`): broker reliability +
+> capability audit - broker-agnostic order-placement confirmation
+> (`isRejectedOrCanceledState` in `broker-side.ts`; a non-throwing but
+> broker-declined order no longer records proposal status "placed"), a
+> Robinhood order-id fabrication fix, the share-class symbol fix extended into
+> `data-providers.ts`'s Alpaca enrichment providers and the news stream (same
+> bug, independent code path), a production-data-confirmed root cause for the
+> "Alpaca news never worked" report (a credential issue that self-resolved
+> 2026-06-30 ~10:01 UTC — not a code bug), and `docs/broker-capability-plan.md`
+> - a 5-broker (Alpaca/Robinhood/eToro/Public.com/IBKR) capability audit +
+> MCP evaluation + prioritized roadmap, including a live enumeration of the
+> Robinhood MCP surface (43 tools, 34 unused). No roadmap change; the plan
+> doc's own roadmap (options trading, new-broker integration, enabling
+> disabled streams) is future work, not started. See
+> `docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
+> 2026-06-30 (`claude/affectionate-franklin-a52935`): Alpaca share-class symbol
+> mapping fix - live orders for tickers like `BRK-B` failed with HTTP 422
+> "asset not found" because our canonical hyphenated symbol format (Robinhood
+> convention) was passed to Alpaca unconverted; Alpaca requires dot notation
+> (`BRK.B`). Added `toAlpacaSymbol`/`fromAlpacaSymbol` conversions at every
+> Alpaca boundary (order placement, quotes, order/position mappers). No
+> roadmap change; see
+> `docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`.
+> 2026-07-01 (`ci/hosted-runner-and-concurrency`): CI runner-bottleneck fix -
+> added cancel-in-progress concurrency groups to `ci.yml`/`security.yml`/
+> `e2e.yml` and moved `verify`/`gitleaks`/`smoke` to `ubuntu-latest`, since
+> the single self-hosted `trading-live-mac` runner was serializing all CI
+> and queueing PRs behind unrelated branches. `deploy.yml`/
+> `sync-previews.yml` stay self-hosted (they touch the production box
+> directly). No roadmap change; see
+> `docs/rollouts/2026-07-01-ci-hosted-runner-migration.md`.
+> 2026-07-01 (`chore/shared-package-drift-fixes`, PR #280): cross-app
+> dependency hygiene - `congress-trade-client.ts` now imports the shared
+> `MAX_REFS_BATCH` constant instead of a hardcoded `500`; removed the unused,
+> shape-conflicting `congress-shared-aliases.ts`; added a weekly
+> `shared-package-pin-check.yml` workflow that warns if our git-pinned
+> `congress-trading-shared` commit falls behind that repo's `main`. No
+> roadmap change; see
+> `docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
+> 2026-07-01 (`codex/mobile-command-api-rebase-20260701`): rebased the stale
+> mobile/PWA command API worktree onto current main as an additive mobile
+> control surface. The backend remains source of truth via `mobile_commands`,
+> `/api/mobile/*`, and SSE; account deletion reuses the audited M7 deletion
+> lifecycle instead of the older short-lived settings deletion request. This
+> advances Phase 11 with a new M8 foundation note; see
+> `docs/rollouts/2026-06-23-mobile-pwa-command-api.md`.
 > 2026-06-30 (`codex/prod-build-hotfix-20260630`): production build/start hotfix -
 > after PR #270, the live box needed a manual repair because the default Next 16
 > Turbopack build did not emit the production files consumed by the existing
@@ -12,6 +180,14 @@ filling the missing pieces.
 > this branch keeps deploys repeatable by using `next build --webpack` and
 > webpack-compatible server-only crypto imports. No roadmap change; see
 > `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+> 2026-06-30 (`codex/strategy-timeout-sizing-guardrails-20260630`): strategy
+> timeout and sizing guardrails - keep the interactive LLM call cap at 60s,
+> reject `gpt-5.5` + high reasoning in Settings, runtime-clamp stale
+> `gpt-5.5`/high configs to medium, add a 5% preferred opening-order headroom
+> under the hard policy max, and stop chat draft promotion from staging
+> already blocked policy decisions. No roadmap change; see
+> `docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
+>
 > 2026-06-30 (`codex/fix-policy-route-export`): production build fix - moved
 > `stripNullsDeep` out of `app/api/policy/route.ts` because Next 16 rejects
 > non-route exports from app route modules. Antigravity strategy-review/test
@@ -166,6 +342,13 @@ filling the missing pieces.
 > shared install helper plus read-only deploy key for npm's private git dependency.
 > No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
+>
+> 2026-06-30 (`codex/agentic-shared-registry-semver-20260630` / PR #279): switched the
+> shared dependency from the git+deploy-key pin to the private **GitHub Packages**
+> registry (semver range). Install helper now authenticates with `NODE_AUTH_TOKEN`
+> (fallback `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs carry `packages: read`.
+> Supersedes the deploy-key model in the entry above. No roadmap change; see
+> `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 >
 > 2026-06-30 (`codex/browser-title`): browser tab title correction —
 > root and welcome metadata now emit the document title `Trading Dashboard`
@@ -378,6 +561,8 @@ scope, timeline, or approach changed.
 | 9 | Backend web sources (scraped signals) | `docs/phase-9-web-sources.md` | 2026-06-16/17 (branch `web-sources`): `src/lib/web-sources/` reads no-free-API signals server-side — Senate eFD + Capitol Trades **congressional trades**, **SEC EDGAR Form 4** insider, and **FINRA daily short-volume** — with polite cached fetch, persistent daily refresh, scheduler hook, event candidate union, source attribution, scan/prompt/UI wiring, and a never-fabricate guarantee. Also: fixed the dropped-enrichment-field bug, plumbed technical/risk fields, `signal_snapshot` audit, thesis×regime + signal-efficacy + confidence-calibration learning, 20-lot gate, edge-aware sizing. Follow-ups now tracked in Phase 10 |
 | 10 | Stronger signals, learning & UI (v2 plan) | `docs/phase-10-signals-learning-ui-v2.md` | In progress on `phase-10`: positioning/smart-money deterministic sub-score, sector scorecard, full EvidenceDigest for chosen+skipped, SEC 8-K bulletins with item-label enrichment, market breadth/internals, expanded FRED/macro metrics, Macro tab, Fama-French, Cboe SKEW/VVIX, CFTC COT, Congress.Trade confidence-capped composite + PIT export evaluator with App A `validationReadiness` / `pitValidity` fail-closed gates, technical signals, keyed OHLC cascade, batched Voyage/Pinecone RAG scaffold with paced/capped 8-K ingestion, 2026-06-20 tenant-safe RAG metadata/filter/backoff hardening with raw-user credential lookup preservation, symbol drilldown with 0-100 signal thresholds, price chart with VWAP overlay, Market Scan `vs VWAP`, first-pass prompt compaction, factor-bucket scorecards, current-scan skipped counterfactual summaries, durable/mature-horizon skipped-name counterfactual rows, configurable red-team conviction threshold, and an optional de-risk-in-crisis opening-exposure cap are live. Remaining: real App A PIT export validation once App A marks `historicalValidationReady=true`, broader adaptive prompt compaction/cache layout, production-grade filing/news digests, analyst/earnings revisions, SEC XBRL facts, post-mortem/tuning use of missed-opportunity rows, full learning-matrix UI, and broader scoring-threshold settings. |
 | 11 | Multi-user & API-key management (plan) | `docs/phase-11-multi-user.md` | In progress: default-user scaffolding exists; connected accounts now keep API keys server-only in dashboard snapshots, encrypt stored credentials, preserve credentials on metadata edits, route Alpaca through the active connected account, sync Robinhood through MCP OAuth/status instead of manual keys, support Alpaca MCP client connections alongside REST, keep account connection buttons persistent in UI for multi-broker setups, derive Alpaca paper vs brokerage environment dynamically via account number `PA...` or API key `PK...`, enforce required account numbers for Alpaca, preserve user-entered Alpaca account labels in the Accounts list while showing Paper/Brokerage as environment metadata, derive execution state as Test vs Paper vs Brokerage, present supported account connect buttons in Accounts, keep Paper accounts optional and user-selected, expose a hardened Robinhood MCP HTTP/SSE transport plus `/api/broker/mcp/health`, use that health check to distinguish stored Robinhood rows from authenticated MCP sessions (`OAuth Needed` + Reconnect), expose server-side `accountReadiness` so broker visibility/backfill cannot masquerade as selected-account usability, ship Settings → Connections for provider keys and connection status, let users choose separate Green Team and Red Team OpenAI/xAI models in Strategy Studio with Green fallback, route major provider/LLM calls through `resolveApiKey(service,userId)`, scope strategy locks, paper projections, learning scorecards, tax reads, notifications, reflections, dashboard callbacks, and prompt cache keys by user, route high-impact API handlers through verified middleware identity via `resolveRequestUser`, explicitly share public/env-key market data while keeping user-keyed history private by default, track pending public OHLC misses so later shared fills can refresh prior requesters without spending another user's key, and add Infisical wrappers, local Gitleaks scanning, Sentry runtime hooks, redacted Langfuse LLM traces, npm Dependabot, Litestream scripts, and Playwright smoke tests. 2026-06-24: direct Alpaca Add Account no longer shows the endpoint explainer, live default endpoint is `https://api.alpaca.markets` while Paper remains `https://paper-api.alpaca.markets/v2`, and Alpaca account-type parsing is best-effort from broker-returned account subtype fields. 2026-06-27: broker/data fallbacks in the account dashboard path now emit throttled `recoverable_issue` audit events. 2026-06-28: site auth now relies on Auth.js Google sessions instead of Cloudflare Access headers; `AUTH_SECRET` arms fail-closed auth, `/logout` redirects to app `/login`, and empty `ALLOWED_EMAILS` allows only primary operator aliases. GitHub CI/e2e/security workflows are deferred until push credentials include `workflow` scope. M3 complete (2026-06-21): per-user policy/profiles/prompt/tuning fully scoped; global settings seeds removed; one-time migration to copy legacy global rows to 'local' user; DELETE /api/profiles/[id] route added; two-user isolation verified by test/per-user-policy-isolation.test.ts. M6 real identity/auth is implemented with Auth.js Google fail-closed middleware, request-scoped SSR snapshots, `/login`, `/logout`, and visible signed-in/Sign out UI. M7 account deletion is implemented with preview/prepare/final-delete API, multi-step Settings -> Data UI, broker/Google/Apple limitations, in-flight trading blockers, per-user OAuth/token cleanup, and hashed deletion audit. Remaining: complete data isolation audit for any newer fills/snapshots/proposals/learning tables and add provider-account-id identity mapping before Apple private-relay identities become first-class. |
+| 10 | Stronger signals, learning & UI (v2 plan) | `docs/phase-10-signals-learning-ui-v2.md` | In progress on `phase-10`: positioning/smart-money deterministic sub-score, sector scorecard, full EvidenceDigest for chosen+skipped, SEC 8-K bulletins with item-label enrichment, market breadth/internals, expanded FRED/macro metrics, Macro tab, Fama-French, Cboe SKEW/VVIX, CFTC COT, technical signals, keyed OHLC cascade, batched Voyage/Pinecone RAG scaffold with paced/capped 8-K ingestion, 2026-06-20 tenant-safe RAG metadata/filter/backoff hardening with raw-user credential lookup preservation, symbol drilldown with 0-100 signal thresholds, price chart with VWAP overlay, Market Scan `vs VWAP`, first-pass prompt compaction, factor-bucket scorecards, current-scan skipped counterfactual summaries, durable/mature-horizon skipped-name counterfactual rows, configurable red-team conviction threshold, and an optional de-risk-in-crisis opening-exposure cap are live. Remaining: broader adaptive prompt compaction/cache layout, production-grade filing/news digests, analyst/earnings revisions, SEC XBRL facts, post-mortem/tuning use of missed-opportunity rows, full learning-matrix UI, and broader scoring-threshold settings. |
+| 11 | Multi-user & API-key management (plan) | `docs/phase-11-multi-user.md` | In progress: default-user scaffolding exists; connected accounts now keep API keys server-only in dashboard snapshots, encrypt stored credentials, preserve credentials on metadata edits, route Alpaca through the active connected account, sync Robinhood through MCP OAuth/status instead of manual keys, support Alpaca MCP client connections alongside REST, keep account connection buttons persistent in UI for multi-broker setups, derive Alpaca paper vs brokerage environment dynamically via the account number PA prefix, state the Alpaca Paper/Brokerage default endpoints before asking for custom endpoints, enforce required account numbers for Alpaca, derive execution state as Test vs Paper vs Brokerage, present supported account connect buttons in Accounts, keep Paper accounts optional and user-selected, expose a hardened Robinhood MCP HTTP/SSE transport plus `/api/broker/mcp/health`, use that health check silently behind the Robinhood connect action instead of a persistent disconnected status card, ship Settings → Connections for provider keys and connection status, let users choose separate Green Team and Red Team OpenAI/xAI models in Strategy Studio with Green fallback, route major provider/LLM calls through `resolveApiKey(service,userId)`, scope strategy locks, paper projections, learning scorecards, tax reads, notifications, reflections, dashboard callbacks, and prompt cache keys by user, route high-impact API handlers through verified middleware identity via `resolveRequestUser`, explicitly share public/env-key market data while keeping user-keyed history private by default, track pending public OHLC misses so later shared fills can refresh prior requesters without spending another user's key, and add Infisical wrappers, local Gitleaks scanning, Sentry runtime hooks, redacted Langfuse LLM traces, npm Dependabot, Litestream scripts, and Playwright smoke tests. GitHub CI/e2e/security workflows are deferred until push credentials include `workflow` scope. M3 complete (2026-06-21): per-user policy/profiles/prompt/tuning fully scoped; global settings seeds removed; one-time migration to copy legacy global rows to 'local' user; DELETE /api/profiles/[id] route added; two-user isolation verified by test/per-user-policy-isolation.test.ts. M6 real identity/auth is implemented with Cloudflare Access/Auth.js fail-closed middleware, request-scoped SSR snapshots, `/login`, `/logout`, and visible signed-in/Sign out UI. M7 mobile foundation adds `/api/mobile/*`, a durable audited mobile command queue, `/mobile` PWA, SwiftUI starter client, SSE status updates, and a multi-step account deletion/reset flow for Google/Apple-authenticated users. Remaining: complete data isolation audit for any newer fills/snapshots/proposals/learning tables and broaden mobile e2e coverage. |
 | 12 | Architecture Blueprint | docs/architecture-blueprint.md | Completed 2026-06-20: Blueprint R1–R5 requirements (tri-state execution safety, trailing stop-loss engine, IRA taxation policy settings, multi-tenant RAG & rate limits, prompt compaction & reasoning) are fully implemented, tested, and verified. |
 
 ## Integrations (outside the phase roadmap)
@@ -472,6 +657,8 @@ scope, timeline, or approach changed.
 - Mobile and tablet layouts use normal page scrolling with the fixed cockpit
   shell reserved for desktop widths.
 - Strategy tuning proposals are review-only until the user explicitly applies them.
+- Mobile/PWA/native clients use the shared backend command queue and status model;
+  phones never store provider secrets, broker credentials, or MCP tokens.
 - Policy enforcement deterministically handles daily limits, symbol limits, sector caps, stop-loss, and take-profit rules.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.

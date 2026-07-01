@@ -14,6 +14,7 @@ import {
   mockEnrichmentProvider,
   noopProvider,
   parseAlpacaSnapshot,
+  parseRobinhoodFundamentals,
   parseWebullUnofficialQuote,
   scoreHeadlines,
   type MarketEnrichmentProvider,
@@ -575,6 +576,46 @@ describe("Alpha Vantage Warning Detection", () => {
 
 // ── AlpacaSnapshotEnrichmentProvider ─────────────────────────────────────────
 
+describe("parseRobinhoodFundamentals", () => {
+  // Real shape from a live get_equity_fundamentals(["AAPL"]) call (2026-07-01), trimmed to
+  // the fields the parser reads. Robinhood returns numeric fields as strings.
+  const liveAaplRow = {
+    symbol: "AAPL",
+    average_volume: "81911063.910945",
+    average_volume_2_weeks: "81911063.910945",
+    high_52_weeks: "317.400000",
+    low_52_weeks: "201.500000",
+    pe_ratio: "34.082139",
+    sector: "Electronic Technology",
+    industry: "Telecommunications Equipment"
+  };
+
+  it("maps the verified-reliable numeric fields, parsing Robinhood's string-encoded numbers", () => {
+    const result = parseRobinhoodFundamentals(liveAaplRow);
+    expect(result.peRatio).toBeCloseTo(34.082139);
+    expect(result.fiftyTwoWeekHigh).toBe(317.4);
+    expect(result.fiftyTwoWeekLow).toBe(201.5);
+    expect(result.volume).toBeCloseTo(81911063.910945);
+  });
+
+  it("never maps sector/industry — Robinhood's taxonomy doesn't match the app's GICS-style sectorCaps keys", () => {
+    // Regression: Robinhood's own sector taxonomy ("Electronic Technology" for AAPL) differs
+    // from the GICS-style taxonomy used elsewhere (Yahoo/Finnhub, and whatever a user
+    // configures in policy.sectorCaps). SymbolEnrichment.sector feeds real sector-cap risk
+    // enforcement via market.ts -> policy.ts's sectorForSymbol/sectorCapFor, so silently
+    // passing this through would make sector caps stop matching for affected symbols.
+    const result = parseRobinhoodFundamentals(liveAaplRow);
+    expect(result).not.toHaveProperty("sector");
+    expect(result).not.toHaveProperty("industry");
+  });
+
+  it("omits a field entirely when it is missing, zero, or unparseable rather than defaulting to 0", () => {
+    const result = parseRobinhoodFundamentals({ symbol: "ZZZ", pe_ratio: "0", high_52_weeks: null });
+    expect(result).not.toHaveProperty("peRatio");
+    expect(result).not.toHaveProperty("fiftyTwoWeekHigh");
+  });
+});
+
 describe("parseAlpacaSnapshot", () => {
   it("maps a full snapshot to the correct SymbolEnrichment fields", () => {
     const snap = {
@@ -867,6 +908,82 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     expect(result.TSLA?.price).toBe(175.00);
     expect(result.TSLA).not.toHaveProperty("bid");
     expect(result.TSLA).not.toHaveProperty("ask");
+  });
+
+  it("converts a hyphenated share-class symbol (BRK-B) to Alpaca's dot notation in the request and maps the response back", async () => {
+    // Regression: Alpaca's snapshots endpoint 400s an entire batch when it contains an
+    // unconverted hyphenated symbol — confirmed in production (~97% failure rate on batches
+    // that included BRK-B from the S&P 500 scan universe) before this fix.
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          "BRK.B": {
+            latestTrade: { p: 410.00 },
+            dailyBar: { c: 409.50, v: 1_000_000 },
+            prevDailyBar: { c: 408.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.price).toBe(410.00);
+  });
+});
+
+describe("AlpacaNewsEnrichmentProvider", () => {
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("converts a hyphenated share-class symbol to Alpaca's dot notation in the request and maps tagged articles back", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire posts strong quarter", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire posts strong quarter");
+  });
+
+  it("matches Alpaca news tags when the requested share-class symbol is already dot-form", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire stays active in markets", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK.B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire stays active in markets");
+    expect(result["BRK.B"]?.headlines).toContain("Berkshire stays active in markets");
   });
 });
 

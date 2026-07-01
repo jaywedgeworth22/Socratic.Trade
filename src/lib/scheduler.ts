@@ -14,6 +14,7 @@ import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
+import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
@@ -199,6 +200,13 @@ async function tick(): Promise<void> {
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 
+  // Mobile/PWA command gateway: drain queued user commands from the durable queue. Route handlers
+  // also kick this worker immediately after enqueueing, but the scheduler makes queued commands
+  // recover after a process restart or an interrupted request.
+  void import("./mobile-api")
+    .then(({ processPendingMobileCommands }) => processPendingMobileCommands({ limit: 5 }))
+    .catch((err) => console.error("[scheduler] mobile-command worker error:", err));
+
   try {
 
     // --- Per-Account Scheduling ---
@@ -308,6 +316,9 @@ async function tick(): Promise<void> {
 
     for (const { userId, accountId } of dueRuns) {
       const p = runStrategyOnce(userId, { connectedAccountId: accountId })
+        // Item 1 (opt-in): after a successful cadence run, attempt cadence-gated autonomous weight tuning.
+        // No-op unless policy.tuning.autoApplyWeights is on; fully self-guarded so it can never break the tick.
+        .then(() => maybeAutoTuneWeights(userId))
         .catch((err) => {
           console.error(`[scheduler] error running strategy for ${userId}/${accountId}:`, err);
         })

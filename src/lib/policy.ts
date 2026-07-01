@@ -47,6 +47,17 @@ export interface PolicyContext {
  * broker.
  */
 export const MARGIN_MINIMUM_EQUITY = 2_000;
+export const OPENING_ORDER_HEADROOM_PCT = 5;
+
+function dollars(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+export function applyOpeningOrderHeadroom(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  if (value <= 0) return 0;
+  return Math.floor(value * (100 - OPENING_ORDER_HEADROOM_PCT)) / 100;
+}
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
@@ -89,19 +100,21 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  // Entry-drift guard: reject a stale OPENING market/dollar order whose price has moved away from
-  // the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Limit orders are
-  // excluded — the broker's limit already caps the fill. Fires only when both an entry anchor and a
-  // fresh current price are known, so it can never false-reject on missing data. This closes the gap
-  // where an hours-old market order approved off the run cadence (or with no LLM revalidation) still
-  // executes at a materially worse price than the technical trigger that justified it.
+  const robinhoodFractionalLimitEntry =
+    proposal.type === "limit" && hasFractionalQuantity(proposal) && context.policy.activeBroker === "robinhood";
+
+  // Entry-drift guard: reject a stale OPENING market/dollar order whose price has moved
+  // away from the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Whole-share
+  // limit orders are excluded because the broker's limit caps the fill. Robinhood fractional limits
+  // are included because that adapter routes fractional entries as market orders; otherwise a stale
+  // fractional limit could pass policy and then execute uncapped after broker normalization.
   if (
     isOpening &&
     context.policy.maxEntryDriftPct != null &&
     context.policy.maxEntryDriftPct > 0 &&
     proposal.referencePrice != null &&
     proposal.referencePrice > 0 &&
-    (proposal.type === "market" || proposal.dollarAmount != null || proposal.limitPrice == null)
+    (proposal.type === "market" || proposal.dollarAmount != null || robinhoodFractionalLimitEntry || proposal.limitPrice == null)
   ) {
     const currentPrice = context.marketScan?.quotesBySymbol[symbol]?.price;
     if (currentPrice != null && currentPrice > 0) {
@@ -202,6 +215,26 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   );
   if (isOpening && estimatedNotional > effectiveMaxOrderNotional) {
     reasons.push(`Order of $${estimatedNotional.toFixed(2)} exceeds the maximum order limit of $${effectiveMaxOrderNotional.toFixed(2)}`);
+  }
+  // Headroom (execution-buffer) gate. For shorts, fold in the short-specific cap so a short sized at
+  // the full maxShortOrderNotional still leaves the buffer even when the generic/NAV cap is unset or
+  // higher (the hard short-cap check above only rejects at 100% of the short cap). (Review: PR #278.)
+  const isShortWithShortCap =
+    proposal.side === "short" && context.policy.maxShortOrderNotional != null && context.policy.maxShortOrderNotional > 0;
+  const headroomBaseCap = isShortWithShortCap
+    ? Math.min(effectiveMaxOrderNotional, context.policy.maxShortOrderNotional as number)
+    : effectiveMaxOrderNotional;
+  const headroomMaxOrderNotional = applyOpeningOrderHeadroom(headroomBaseCap);
+  if (
+    isOpening &&
+    Number.isFinite(headroomBaseCap) &&
+    Number.isFinite(headroomMaxOrderNotional) &&
+    estimatedNotional > headroomMaxOrderNotional
+  ) {
+    const capLabel = isShortWithShortCap && headroomBaseCap === context.policy.maxShortOrderNotional ? "max short order" : "maximum order";
+    reasons.push(
+      `Order of ${dollars(estimatedNotional)} leaves less than ${OPENING_ORDER_HEADROOM_PCT}% buffer below the ${dollars(headroomBaseCap)} ${capLabel} limit; reduce to ${dollars(headroomMaxOrderNotional)} or raise the policy cap.`
+    );
   }
   // Market-impact (ADV) ceiling: reject an opening order whose notional exceeds maxOrderPctOfAdv % of
   // the name's recent daily $-volume (price × volume from the scan; the app ingests no historical

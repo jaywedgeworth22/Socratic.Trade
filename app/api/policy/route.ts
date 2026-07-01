@@ -20,6 +20,7 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
+import { isDisallowedInteractiveStrategyReasoningConfig } from "@/lib/llm-request";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -111,6 +112,10 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
+  if (
+    isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
+    isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, policy.llmReasoningEffort)
+  ) return "gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";

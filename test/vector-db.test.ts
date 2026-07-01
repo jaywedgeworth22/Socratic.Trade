@@ -116,6 +116,41 @@ describe("vector-db", () => {
     });
   });
 
+  // Item 6 (2026-07-01 RAG workstream): doc_type is now normalized to lowercase AT WRITE TIME
+  // (cleanMetadata) regardless of what casing the caller passes in — some ingesters historically
+  // passed "10-K"/"10-Q" (upper), others "8-k" (lower). buildExtraFilters still expands both
+  // casings at query time so pre-existing mixed-case vectors stay matchable (see
+  // test/vector-db-retrieval.test.ts "matches doc_type across casings").
+  it("normalizes doc_type to lowercase at write time regardless of caller casing", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      { text: "AAPL 10-K body", metadata: { symbol: "AAPL", source: "sec-edgar", timestamp: "2026-06-20", doc_type: "10-K" } },
+      { text: "AAPL 8-K catalyst", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-20", doc_type: "8-k" } }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.doc_type).toBe("10-k");
+    expect(records[1].metadata.doc_type).toBe("8-k"); // already-lowercase input is unaffected
+  });
+
+  it("leaves other metadata fields' casing untouched (only doc_type is normalized)", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      { text: "AAPL 10-K body", metadata: { symbol: "AAPL", source: "SEC-EDGAR", timestamp: "2026-06-20", doc_type: "10-K", section: "Risk Factors" } }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.doc_type).toBe("10-k");
+    expect(records[0].metadata.source).toBe("SEC-EDGAR"); // unrelated field: casing untouched
+    expect(records[0].metadata.section).toBe("Risk Factors"); // unrelated field: casing untouched
+  });
+
   it("honors the configured embedding batch size", async () => {
     process.env.VECTOR_EMBED_BATCH_SIZE = "1";
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";

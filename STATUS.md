@@ -24,6 +24,499 @@ un-overwritten notification title + persisted `decision.reasons`). **No code
 changed.** Blocked on user decisions O1-O4 (spec §9) before implementation; a
 separate fill-confirmation/reconciliation design pass is still owed. See
 `docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
+## 2026-07-01 — Learning-loop follow-on: P0-4 unified ledger + P0-2 paired-t + P0-3 fail-closed guard (Claude)
+Branch `agent/claude-followon-b-learning` (off freshly-merged `origin/main`; Workstream B PR #296 already
+merged). Focused follow-on from `docs/reviews/2026-07-01-learning-loop-expansion.md`, implementing three
+guardrail items on top of #296's autonomous factor-weight tuning:
+- **P0-4 — Unified learning-mutation ledger + admin revert.** New `learning_mutations` table (`db.ts`
+  `migrate()`), CRUD in new `src/lib/db-learning-ledger.ts`, orchestration in new
+  `src/lib/learning-ledger.ts` (`recordLearningMutation` / `revertLearningMutation`, subsystem
+  `scoring_weights`). One canonical append-only row per gated mutation (before/after full weight vectors,
+  subsystem, trigger, OOS evidence, flag, timestamp). Recording is passive/always-on. GENERALIZES #296's
+  tuning-specific audited revert — `applyAutonomousWeightTuning` now records here (still writes the legacy
+  `auto_weight_apply` audit row for dashboard back-compat), and `revertAutonomousWeightTuning` delegates to
+  the unified ledger (falls back to the legacy audit row for pre-ledger applies). Admin-only revert route
+  `app/api/admin/learning-ledger/route.ts` (`requireAdmin`; GET lists, POST reverts). `before` is captured
+  ATOMICALLY (re-read policy immediately before `setPolicy`).
+- **P0-2 — Effect-size + paired-t significance on the OOS gate.** New pure `pairedICDiffStats()` in
+  `backtest.ts` computes the PAIRED per-date candidate−baseline IC-difference series (correct SE source: the
+  two ICs share the same fold) and a t-stat; threaded onto `OOSResult.pairedICDiff` when both weight vectors
+  are supplied. Autonomous gate extended with `policy.tuning.minOosICImprovement` (default 0 = today's margin
+  via env `AUTO_TUNE_MIN_IC_DELTA`) and `policy.tuning.minOosPairedTStat` (default 0 = paired-t OFF / no-op).
+  Multiplicity (D-1) explicitly deferred (documented; no teeth until a per-account trial counter exists).
+- **P0-3 — Fail-closed tuning-config invariant guard.** New pure `src/lib/tuning-invariants.ts`
+  (`validateTuningInvariants`) checks a small hard-coupling set (positive sample gates,
+  `sizingFloorPct ≤ sizingCeilingPct`, `autoApplyWeights ⇒ oosWithholdUnvalidated` unless the new
+  `autoApplyOverrideUnvalidated` escape hatch, calibration ⇒ band gate). The AUTONOMOUS apply path calls it
+  at the TOP and fails CLOSED (skip + `auto_weight_apply_skipped` audit row, NEVER throws). The manual tune
+  route surfaces the same violations as non-blocking `tuningConfigWarnings`.
+
+All behavior-changing knobs default OFF/no-op; the ledger RECORDING is passive/always-on (audit trail only,
+no trading behavior change). Did NOT touch `red-team.ts` / inline-Bear (separate session). Verify quartet
+green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 265 grandfathered warnings) →
+`npm test` (182 files / 1793 tests) → `npm run build` (see rollout note). See
+`docs/rollouts/2026-07-01-learning-loop-followon.md` and `docs/phase-7-strategy.md` §3.E.5–E.7.
+## 2026-07-01 — RAG expansion backlog, broader pass (Claude)
+Branch `agent/claude-backlog-c-rag`, based on `origin/main` after #297 (Workstream C) and #299
+(follow-on: `rankPool` helper, R1 `published_at` fallback + `VECTOR_ASOF_STRICT`, R2 embedding-
+integrity guard, R8 first-valid-ticker) merged. Implements the full remaining backlog from
+`docs/reviews/2026-07-01-rag-knowledge-expansion.md` — all P1 (R5, R6, R7, R9, R10, R11) and all
+P2 (R12, R13, R14, R15, R16, R17) items. R3 (golden-set anti-leakage lint) and R8 (salience
+first-valid-ticker) were already shipped in earlier passes and are verified, not re-implemented.
+Read/retrieval-only — no order/execution-path code touched, no `app/` UI component edited (R13 is
+backend/payload-only per the redesign-thread constraint).
+
+- **R5** `recordRetrievalQuality()` in `rag-metering.ts` — one consolidated per-retrieval
+  distribution-telemetry record (hashed query via SHA-256-first-16, never raw; k/candidates/
+  dropped-by-minScore/dropped-by-asOf/hybrid/rerank-attempted/rerank-ran/top-cosine/top-relevance/
+  final-count), fire-and-forget try/catch, default off via `RAG_RETRIEVAL_TELEMETRY`.
+- **R6** new `src/lib/rag/env-flag.ts` (`envFlagOn(name, default)`), routed through by rerank/
+  hybrid/as-of-strict/disclosure flags. `RAG_EMBED_DISCLOSURES` now accepts `true/1/yes` (was
+  exact-`'on'`-only) — an intentional safe-direction change, called out because it can trigger
+  real embedding cost for an operator relying on the old quirk.
+- **R7** `assertIndexMetric()` — `describeIndex` called once per index-init cache key (cached),
+  `console.warn` + `audit("vector_index_metric_mismatch", ...)` if the metric isn't `cosine`,
+  NEVER throws.
+- **R9** query-embedding LRU (`src/lib/rag/query-embed-cache.ts`), keyed on
+  `${VOYAGE_MODEL}:${query.trim()}` (no userId), caches ONLY the 1024-dim vector never Pinecone
+  results, `meterEmbed` only on miss, default off via `RAG_QUERY_EMBED_CACHE`.
+- **R10** `storeContexts` gained opt-in `dedupKeyPrefix` (hashes trimmed text via the existing
+  `hashContent` SHA-256 helper, reuses `document_chunks`/`filterNewDocumentChunks`/
+  `insertDocumentChunks`); wired into `sec8k.ts`'s summary ingest and `disclosure-rag.ts` behind
+  new `VECTOR_STORECONTEXTS_DEDUP` (default off).
+- **R11** `scripts/eval/faithfulness.ts` (+ `run-faithfulness.ts`, `test/rag-faithfulness-eval.test.ts`,
+  `test/fixtures/rag-faithfulness-fixture.ts`) — deterministic citation-grounding (cited chunk_id
+  present in retrieval?) + numeric-claim substring-support checks, plus an optional LLM judge
+  (default off, no-ops without `OPENAI_API_KEY`, kept out of the required CI test run).
+- **R12** `RetrieveOptions.applyDefaultFloors` / `RAG_APPLY_DEFAULT_FLOORS` (default off) applies
+  `defaultMinScore()` when a NEW caller omits `minScore`; both existing callers (`strategy.ts`,
+  `orchestrator.ts`) already pass it explicitly and are proven byte-identical.
+- **R13** `KbChunk` gained additive `doc_type`/`isStale` fields; `orchestrator.searchKnowledge`
+  forwards `doc_type`/`section` always, and `isStale` (heuristic per-doc_type staleness horizon,
+  advisory only) only when `RAG_CITATION_STALENESS` is on. Backend/payload only — no UI renders
+  these yet (owned by the parallel dashboard-redesign thread).
+- **R14** `src/lib/rag/dedupe-similar.ts` — greedy Jaccard-shingle near-duplicate suppression with
+  back-fill, opt-in via `RetrieveOptions.dedupeSimilarity`, applied after the relevance floor and
+  before the final slice-to-limit.
+- **R15** `scripts/eval/corpus-coverage.ts` (npm run `eval:corpus-coverage`) — offline report from
+  `ingested_accessions`/`document_chunks` (doc_type breakdown, per-symbol chunk counts, watchlist
+  symbols with zero coverage), optional live `describeIndexStats` cross-check. Related but
+  separate from the existing live `/api/admin/rag-coverage` + `app/admin/rag-coverage/` UI (not
+  touched by this pass).
+- **R16** `src/lib/rag/run-budget.ts` — default-off, very-high-ceiling rolling-window operation
+  counter (`RAG_RUN_BUDGET_ENABLED`); on trip, degrades by skipping rerank/hybrid ONLY (never core
+  dense-cosine recall), emits exactly one `rag_run_budget_tripped` audit row per process lifetime.
+- **R17** `VECTOR_EMBED_CLEAN_TEXT` (default off) — `storeContexts` embeds boilerplate-stripped
+  text (`stripPublishedPrefix`) while the stored/cited metadata text is unchanged; confirmed no
+  consumer parses the `[Published:]` prefix out of chunk text (only test fixtures reference it).
+
+Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276
+warnings, pre-existing grandfathered class) → `npm test` (193 files / 1918 tests, up from 183/1797)
+→ `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-backlog.md` for full detail, the
+updated `test/disclosure-rag.test.ts` `RAG_EMBED_DISCLOSURES` behavior-change note, and the two new
+`scripts/eval/*` diagnostics (`eval:faithfulness`, `eval:corpus-coverage`) smoke-tested against a
+real (empty) dev DB with no keys configured.
+
+## 2026-07-01 — API Usage Monitor integration (Workstream C2) (Claude)
+Branch `claude/competent-elion-c82938`. Wired App B → the API Usage Monitor
+(`usage.jays.services`) per `docs/reviews/2026-07-01-audit-work-split.md` (Cross-repo C2):
+(1) `recordLlmUsage`/`recordRagUsage` now fire-and-forget push usage+cost via new
+`src/lib/usage-monitor-push.ts`; (2) market-data (`fetchWithRetry`) + broker
+(`alpaca.trackHealth`, `robinhood.callRobinhoodMcpTool`) call-volume is counted and flushed
+as aggregated per-provider `requests` events; (3) Anthropic/Voyage/Robinhood become
+push-primary just by tagging `provider` (poll adapters are blind); (4) cost-aware loop — new
+monitor `GET /api/budget-status` (token-gated, combines poll snapshot + pushed MTD cost vs
+`ProviderPlan.monthlyBudgetUsd`) + App B `src/lib/usage-budget.ts` firing `budget_alert`
+notifications (**Phase 1, wired**). **Phase 2** (model-downgrade / cycle-skip enforcement) is
+implemented + tested as a building block but **DEFERRED** — the Codex PR review showed a naive
+strategy-loop wiring is unsafe (must skip only the LLM step, not risk exits/reconcile; must not
+persist a temp downgrade via `setPolicy`; must thread the override into `debateProposal`). **Self-
+sufficient by design** (owner requirement): all default-off, fire-and-forget, never-throws,
+fail-open — a monitor outage only shows a `usage-monitor` row on the admin connections-health page,
+never blocks a run. **Hand-rolled the push** (not the shared client) because App B pins
+`congress-trading-shared@1.0.0`, which lacks the `usageTelemetry` export (it's on the shared
+repo's unmerged 1.1.0 branch) and publishing/lockfile-regen isn't possible here — same event
+contract, migration path documented. **Monitor DEPLOYED to prod (Render, `usage.jays.services`,
+PR #6 merged); App B deploy pending PR #294 merge → `trading-publish.sh`.** Verify (in-worktree
+after `NODE_AUTH_TOKEN=$(gh auth token) npm ci`): tsc clean, lint 0 errors, full suite green
+(+16 tests), build clean; monitor tsc + build clean. Reviews: pre-merge multi-agent (2 fixes) +
+Codex PR review (5 fixes + Phase-2 deferral). See `docs/usage-monitor-integration.md` +
+`docs/rollouts/2026-07-01-usage-monitor-integration.md`.
+## 2026-07-01 — RAG follow-on: retrieval regression net + R1 strict as-of mode (Claude)
+Branch `agent/claude-followon-c-rag`, based on `origin/main` after Workstream C (PR #297,
+below) merged. Focused follow-on implementing the two items PR #297 explicitly deferred:
+**R4** (retrieval regression net) and **R1 part 2** (`VECTOR_ASOF_STRICT`). Read/retrieval-only
+— no order/execution-path code touched; every behavior change is default-off/opt-in and
+byte-identical to the pre-change pipeline unless a new flag/option is explicitly set.
+
+- **R4:** factored a pure `rankPool(matches, query, limit, options)` helper out of
+  `retrieveContextDetailed`'s inline post-recall pipeline (score floor → as-of guard → hybrid
+  fuse → rerank → post-rerank floor) — no such helper existed after #297 (verified by grep).
+  New `test/rag-retrieval-regression.test.ts` (19 tests, network-free) pins: a chunk dated
+  after `asOf` is dropped / an undated chunk kept (lenient) or dropped (strict); `rerankMatches`
+  preserves length+identity when the real Voyage client throws or returns empty data
+  (fail-open); `fuseHybrid` returns input unchanged on `<=1` match or malformed input; hybrid
+  on-vs-off reorders the pool but never drops a candidate. Includes an explicit `fetch` spy
+  assertion proving no live network is reachable from the file.
+- **R1 part 2:** new `VECTOR_ASOF_STRICT` flag (default OFF). `isWithinAsOf` gained an optional
+  third `strict` parameter (default `false`, byte-identical for every existing caller). When
+  strict is on **and** `options.asOf` is set, chunks with no resolvable date stamp are now
+  DROPPED instead of kept, with a fire-and-forget `audit("vector_asof_strict_drop", {
+  droppedUndated, asOf }, userId)` record. New `test/vector-db-asof-strict.test.ts` (5 tests)
+  proves the golden as-of tuple (undated excluded under strict / included without) through the
+  real `retrieveContextDetailed` pipeline (mocked Pinecone/Voyage).
+- Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 274
+  warnings, pre-existing grandfathered class, unchanged in kind) → `npm test` (183 files / 1797
+  tests, up from 181/1778) → `npm run build` (clean). `tsc --noEmit` re-checked clean after the
+  build regenerated `.next/types`. See `docs/rollouts/2026-07-01-rag-followon.md` for full
+  detail and remaining backlog (R3/R5-R17 still unimplemented, per PR #297's own deferral list —
+  out of scope for this focused pass).
+
+## 2026-07-01 — RAG eval harness, rerank scoring, char-cap/doc_type/salience fixes — Workstream C (Claude)
+Branch `agent/claude-workstream-c-rag-v2`. Implements all 7 items from
+`docs/reviews/2026-07-01-audit-work-split.md` §"Chat C — RAG / Embedding / Knowledge Framework",
+plus a correction pass from a parallel 16-agent expert review
+(`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) that arrived mid-implementation.
+Read/retrieval-only — no order/execution-path code touched; every behavior change is
+default-off/opt-in. Highlights: a new recall@k/MRR eval harness
+(`test/rag-retrieval-eval.test.ts` + a 28-case golden fixture, no live network calls) that
+drives the real `retrieveContextDetailed` pipeline; the reranker now captures + surfaces its
+own `relevanceScore` (was previously discarded) with an opt-in post-rerank floor
+(`RetrieveOptions.minRelevanceScore`, fail-open on missing scores); the per-chunk char cap is
+now aligned with the token chunker (`storeDocument` computes an aligned cap; atomic table
+chunks are exempt from trimming entirely — truncating mid-row would corrupt numbers);
+`doc_type` is normalized to lowercase at write time (`cleanMetadata`), with the legacy
+upper/lower query-time shim kept intact; a new structured-output LLM salience extractor
+(`src/lib/memory/salience-llm.ts`, default off, falls back to regex on any failure) validates
+tickers against the real known-universe check (`isIndexMemberSymbol`) instead of the old
+`\b([A-Z]{1,5})\b` first-match regex, which also had its own first-match-only mis-binding bug
+fixed independently (`firstValidTicker`, injected validator + stopword denylist, kept pure/DB-free);
+hybrid BM25/RRF was evaluated (delta table in the rollout note) and **stays OFF by default** —
+reranking alone already reaches 1.0 recall@1/MRR on the eval fixture, hybrid's real value is
+narrowly the exact-token case. Also folded in two expert-review P0 items: an always-on
+embedding-integrity guard (rejects non-finite/empty embeddings before upsert/query, degraded to
+non-emptiness+finiteness-only after a strict-1024 check broke 16 pre-existing tests using short
+mock embeddings) and a safe additive `published_at` fallback in the as-of point-in-time guard's
+resolution chain. Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint`
+(0 errors, 265 warnings, pre-existing grandfathered class) → `npm test` (179 files / 1734
+tests) → `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for the
+full item-by-item status (incl. explicit follow-ups not implemented: R1's strict-mode flag,
+R3/R4/R5/R6/R7/R9/R10/R11 and the R12-R17 P2 backlog) and the measured hybrid on/off delta table.
+## 2026-07-01 — Workstream B: learning loop / auto-tuning (Claude)
+Branch `agent/claude-workstream-b-learning-v2`. Implemented all 8 items of "Chat B" from
+`docs/reviews/2026-07-01-audit-work-split.md` PLUS the 16-expert-panel mid-flight corrections
+(`docs/reviews/2026-07-01-learning-loop-expansion.md`, B1–B8). Every change is behind a **default-off**
+`policy.tuning.*` flag EXCEPT the B8 execution-cost correctness fix. Highlights: (1) opt-in autonomous
+factor-weight tuning with a stricter-than-manual OOS gate (IC-delta margin + candidateIC>0 + ICIR floor +
+min test-dates; null OOS = hard no-apply), WRITE-SCOPE SAFETY (scoringWeights ONLY — never
+policy/risk/strategyAuthority/prompt), cadence in `scheduler.ts` under the single-leader gate, persist via
+`setPolicy`, ±MAX_WEIGHT_STEP re-clamped post-normalization, audited revert; (2) congress go/no-go gating
+with a THREE-WAY verdict (PASS/FAIL_SIGNIFICANCE→down-weight/INSUFFICIENT→neutral) so data-poverty is not a
+kill-switch, verdict cached + surfaced on the dashboard + new admin route; (3) matured missed-opportunity
+per-factor nudge into scan-scoring weights (transient, audited); (4) recurringFactor ≥5 + SPY-relative
+(reuses backtest SPY fetch, injected in getSkippedCandidateReturns); (5) factor attribution stamps
+`dominantFactor` at entry (survives audit-cap aging), no momentum default; (6) confidence calibration →
+sizing (isotonic, reduce-only, shrunkWinRate, per-band gate, shorts→raw, once-per-run); (7) per-regime IC
+**report only** (application off — samples too thin); (8) REAL BUG: paper/test EXIT fills in
+`synthetic-stops.ts`/`order-replacement.ts` now pay exit-side execution cost (were cost-free, overstating
+edge on the losing tail). Verify quartet all green: tsc 0 errors, lint 0 errors, `npm test` 174 files /
+1710 tests, `npm run build` compiled successfully. See
+`docs/rollouts/2026-07-01-learning-loop-autotuning.md`. Coordination: the stale
+`agent/claude-workstream-b-learning` worktree (a stopped sibling) was left untouched; Red Team / inline-Bear
+code was NOT touched (separate session).
+
+## 2026-07-01 — Market-data freshness decision + plan + Workstream-1 wiring (Claude)
+Branch `claude/stock-data-pricing-comparison-2wzg8u` (PR #288). Real-time-vs-15-min-delayed
+analysis + sequenced plan: `docs/market-data-freshness-decision.md` +
+`docs/market-data-freshness-implementation-plan.md`. **Now includes code:** removed the
+paper/test defaults from `DEFAULT_POLICY` (`paperMode:false`; dropped `activeBroker:"test"`
+— broker-neutral, set on connect; `getBrokerGateway` resolves undefined→local sim safely),
+left `marketableLimitEntries` as an opt-in settings toggle (an initial commit defaulted
+it ON but CI caught that it reserves the 15bps sizing buffer and broke
+`conviction-size-cap.test.ts` — reverted), and surfaced quote/fundamentals staleness
+fields in settings (`dashboard-client.tsx`). Plan reframed on the operator principle: **whichever
+account you're in IS the account; its broker feed is the quote source of record** — the
+fallback tiers are a Test-account/missing-feed safety net, not a routine path. Folds in 7
+Codex P2 review points (entry-drift already enabled/tune-only; marketable limits need
+bid/ask; price-alerts in router scope; exit-path stale-quote guard; Twelve Data Basic
+pre-trade/single-name only). Decision unchanged: **no new data feed** (FMP ~$30 real-time +
+Massive $30 history + broker quotes already cover it). **Verify blocker:** full
+lint/tsc/test/build can't run here (no `node_modules`; private shared dep 404s) — CI
+`verify` gate is authoritative. See `docs/rollouts/2026-07-01-market-data-freshness-decision-and-plan.md`.
+## 2026-07-01 - Broker capability fan-out (4 parallel Opus agents, merged)
+Branch `claude/affectionate-franklin-a52935`. At the owner's request ("spawn a bunch of
+agents... lots of work"), ran a Workflow with 4 parallel Opus agents (each in an isolated
+git worktree) implementing independent, read-only broker-capability additions from
+`docs/broker-capability-plan.md`'s "cheap, high-value" list, then merged all 4 branches
+(zero conflicts) and re-verified as one integrated change:
+1. **Broker connection health observability** — `logApiHealth()` now wraps every raw
+   Alpaca SDK call (`src/lib/alpaca.ts`, service `alpaca-broker`) and every Robinhood MCP
+   call (`src/lib/robinhood.ts`'s `callRobinhoodMcpTool`, service `robinhood-broker`), so
+   the admin connections-health page can finally show broker-gateway health, not just
+   market-data-enrichment-provider health (the gap identified 2026-06-30).
+2. **Alpaca account insights** — new `src/lib/alpaca-account-insights.ts`: read-only
+   portfolio history, market calendar, market clock, account activities (all free, all
+   previously unused per the capability plan §3).
+3. **Robinhood realized-P&L cross-check** — new `src/lib/robinhood-pnl-crosscheck.ts`:
+   compares this app's own realized P&L against Robinhood's own `get_realized_pnl` figure
+   as an independent sanity check (5% tolerance, documented as approximate).
+4. **Chat assistant read-only research tools** — `get_earnings_calendar`, `get_option_chain`,
+   `search_instrument` added to `src/lib/chat/tools.ts`/`orchestrator.ts`, backed by real
+   Robinhood MCP data. All `readOnly: true`; no order-placement capability added; degrades
+   to a clear "not connected" message rather than throwing when Robinhood isn't linked.
+
+Deliberately excluded from this batch (per the owner's own prior framing — real
+feature/coordination work, not "cheap"): Robinhood options-trading support, and
+eToro/Public.com/IBKR integration (Codex's separate new-broker work is still unpushed —
+`git branch -r` shows no eToro/Public/IBKR branch yet, so no collision risk today, but
+still worth checking before starting that work).
+
+Verification (combined after merging all 4 branches and current `origin/main` through
+the mobile API/PWA merge, plus review fixes): `npm run lint` (0 errors, 258 warnings —
+existing warning class), `npx tsc --noEmit` (clean), `npm test` (172 files / 1671 tests,
+all passing together), `npm run build` (clean). See
+`docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+
+This branch/PR now combines the prior PR #286 stream/fundamentals fixes with this
+read-only broker fan-out. Review follow-up fixed the stream resolver to rank any usable
+connected Alpaca account before legacy keys, even when Test/Robinhood is currently active.
+It also hardened the new read-only diagnostics: Alpaca private account insights now fail
+closed to the requested user's connected Alpaca account and choose paper/live hosts per
+account; account activities page through Alpaca's `page_token`; Robinhood P&L cross-checks
+compare the same span and only equity buckets. Deploying it should stop the 2
+auth-dependent Alpaca streams from using stale legacy credentials and keeps Robinhood
+fundamentals safe to enable only for verified numeric fields.
+
+## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
+Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the
+3 previously-disabled Alpaca streams in production (`STREAMS_ALPACA_NEWS_ENABLED`,
+`STREAMS_ALPACA_TRADE_UPDATES_ENABLED`, `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`) plus the
+`TRIGGER_ENGINE` prerequisite the price-events stream needs to start at all (broader
+scope than just price events — see rollout note). Found and fixed a real bug while
+verifying: `alpaca-news-stream.ts`/`alpaca-trade-updates-stream.ts` were reading Alpaca
+credentials from a stale legacy `user_api_keys` row (last touched 2026-06-22) instead of
+the actively-used `connected_accounts` record (rotated 2026-06-29) the rest of the app
+reads from — added `resolveAlpacaStreamAccount()` (`db-api-keys.ts`) to fix this, plus
+picking the correct live-vs-paper trade_updates WS host. **Not yet deployed to
+`trading-live`** — the `.env.local` flags are live on the production box now, but the
+credential-resolution code fix is only pushed to this branch/PR, so the 2 auth-dependent
+streams will keep reconnect-looping on `HTTP 401` in production until this merges +
+deploys. Price-events stream IS running correctly but has nothing to watch (`local`'s
+`user_watchlist` is empty) — a content gap, not a bug. See
+`docs/rollouts/2026-07-01-enable-alpaca-streams.md`.
+
+**Coordination**: the owner says Codex has separate, currently-unmerged work (on a dirty
+local worktree) adding new broker integrations (eToro/Public.com/IBKR per the earlier
+capability plan). Not pushed as of this note, so no branch to reference yet — check
+`git branch -r` for new codex/* branches before starting any new-broker work to avoid
+duplicating it. This session's work stayed in the "use Alpaca/Robinhood more fully" lane
+per `docs/broker-capability-plan.md`, not new-broker integration, specifically to avoid
+collision.
+## 2026-07-01 - Mobile API/PWA stale worktree rebase (Codex)
+Branch `codex/mobile-command-api-rebase-20260701`. Re-extracted the old
+`codex/mobile-command-api` worktree onto current `origin/main` rather than
+direct-merging its stale 199-commit-behind branch. The rebase keeps the current
+audited account-deletion lifecycle, adds `mobile_commands` as migration v8,
+preserves current dashboard action semantics, and brings over `/mobile`, mobile
+command APIs/SSE, PWA metadata, SwiftUI starter files, and focused tests.
+Verification so far: `bash scripts/npm-ci-with-shared-deps.sh`;
+`npx vitest run test/mobile-api.test.ts` (5 tests passed);
+`npx tsc --noEmit` (passed); `npm run lint && npx tsc --noEmit && npm test &&
+npm run build` (lint 0 errors / existing warnings, TypeScript pass, 170 test
+files / 1,632 tests pass, build pass with the existing Sentry Edge-runtime
+warning).
+
+## 2026-06-30 — Full app review, PR review-fixes, and worktree/branch cleanup (Claude)
+Branch `docs/improvement-audit-2026-06-30`. Ran an 11-expert read-only audit across
+all 8 owner dimensions + architecture/security + both cross-app integrations
+(Congress.Trade, API Usage Monitor); results in
+`docs/reviews/2026-06-30-improvement-audit.md` (scorecard, ranked top-10, quick wins,
+strategic bets, per-dimension tables, completeness critic). **Headline: the historical
+critical auth IDOR is verified RESOLVED** (fail-closed edge auth, client-identity-header
+stripping, AES-256-GCM keys, 16-assertion regression suite); residual security items are
+non-P0 (chat rate-limit, Robinhood OAuth tokens unencrypted at rest, admin-token `===`).
+Recurring theme across reviewers: **built-but-unwired rigor** — factor-weight tuner,
+congress-score go/no-go, rationale-diversity collapse detector, correlation gate, and the
+usage-telemetry push client are all computed/built but not wired into the path they protect.
+
+Merge/deploy: PR #277 merged + auto-deployed to production. PR #278 (strategy timeout/sizing)
+and #279 (GitHub Packages dep) had their Codex P1/P2 review feedback fixed across two rounds
+(incl. #279's production token-leak via `pm2 --update-env`, and #278's Red-Team/revalidation
+reasoning-clamp bypass) — auto-merge armed. Pruned merged-only worktrees/branches: removed
+38 worktrees + 128 branches, **kept every dirty/unmerged worktree** and the protected lanes
+(main, agent previews, production, open-PR worktrees).
+
+Open item was promoted into active work: the orphaned Robinhood small-dollar routing
+diagnosis became PR #282 (`fix/robinhood-fractional-market`), which implements and verifies
+the `toMcpOrder` guard instead of leaving a missing rollout-note reference in this docs PR.
+## 2026-07-01 - [codex-autofix] Congress bare-tx envelope-field strip (PR #283)
+Branch `agent/claude-congress-webhook-parity`. Addressed both Codex review
+threads on PR #283. (1) P2 correctness: the "envelope itself is one trade"
+last-resort branch in `applyCongressEvent` pushed the whole `raw` envelope into
+`coerceCongressTrade`; since `applySseMessage` stamps the SSE event name onto
+`env.type` and the coercer reads `type` before `txType`, a bare App A
+transaction over SSE had its side shadowed and was dropped as `no-trades`. Fixed
+by stripping envelope keys (`type`/`event`/`id`/`data`) before coercing, plus a
+regression test. (2) P2 handoff: updated this file, `PLAN.md`, and the rollout
+note. Verification is constrained by the sandbox (the private
+`@jaywedgeworth22/congress-trading-shared` git dep is not fetchable — the token
+404s — so a full `npm install`/`tsc`/`build` can't run here); verified via a
+local stub: `vitest` on the two congress event suites → 25 passed (the new test
+fails on the pre-fix code), `eslint` clean, `tsc` shows no errors in the touched
+files. The `verify` CI gate runs the full trio with real registry access on
+push. See `docs/rollouts/2026-06-30-congress-webhook-sse-parity.md`.
+
+## 2026-07-01 - PR #283 webhook health review fix
+Branch `agent/claude-congress-webhook-parity`. Authenticated Congress webhook
+requests now log `congress.trade:webhook` health after applying the payload:
+unsupported single events record ok:false with the apply reason, and batches
+record ok:false when any item is rejected. Regression drives the real route
+handler and checks the admin health summary. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(26 tests pass) and `npx tsc --noEmit`.
+
+## 2026-07-01 - PR #283 bare transaction event-name precedence
+Branch `agent/claude-congress-webhook-parity`. Review follow-up fixed bare App A
+transactions that carry `event: "trade.new"` plus a transaction-side `type`
+alias such as `"purchase"`: event resolution now treats `type` as the event
+only when it is a known event name, otherwise `event` supplies the event and
+`type` remains available to `coerceCongressTrade` as the side alias. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(27 tests pass) and `npx tsc --noEmit`.
+## 2026-06-30 - Broker reliability + capability audit (order confirmation, Alpaca news root cause, 5-broker plan)
+Branch `claude/affectionate-franklin-a52935` (same branch/PR as the share-class fix
+below). Three code fixes plus a diagnosis plus a research-backed plan, from a user
+request to make order-placement confirmation broker-agnostic and audit broker
+capability usage:
+1. Extended the share-class symbol fix (`BRK-B` -> `BRK.B`) beyond the trading
+   gateway into `data-providers.ts`'s Alpaca snapshot/news enrichment providers and
+   the news-streaming store, which had the identical bug independently. Confirmed
+   via a read-only production DB query that this was the actual cause of
+   `alpaca-snapshot` still failing ~97% of the time (`HTTP 400`) after an unrelated
+   credential issue self-resolved on 2026-06-30 ~10:01 UTC.
+2. `alpaca-news` "has never worked" per the user report: confirmed via production
+   `api_health_log` that it was a real credential problem that self-resolved at the
+   same 10:01 UTC cutover — not a code bug, and should now show healthy on the
+   admin connection-status page (reload if it still shows red).
+3. Broker-agnostic order-placement confirmation: `executeProposal`/the run-loop in
+   `strategy.ts` used to record a proposal `"placed"` any time the broker call
+   didn't throw, even though Alpaca/Robinhood can both return a synchronous
+   rejected/canceled state without throwing. Added
+   `isRejectedOrCanceledState()` (`broker-side.ts`) and check it before marking
+   "placed"; a decline now records `"rejected_by_broker"` with its own
+   notification.
+4. Robinhood `placeEquityOrder` no longer fabricates the order id string
+   `"undefined"` when the MCP response is malformed — throws instead, routing into
+   the existing placement-uncertain path.
+5. `docs/broker-capability-plan.md` (new): full capability audit of Alpaca,
+   Robinhood, eToro, Public.com, and IBKR (trading, market data, streaming, MCP,
+   non-trading uses, order-status monitoring), including a live enumeration of the
+   43-tool Robinhood MCP surface (34 unused, incl. options trading, fundamentals,
+   historicals, earnings calendar, realized P&L, native scanner) since a live
+   Robinhood MCP connector happened to be attached to this session. MCP evaluation
+   per broker in §7. Prioritized roadmap in §10 — nothing there has been
+   implemented yet (e.g. the 3 disabled Alpaca streams `STREAMS_ALPACA_NEWS_ENABLED`
+   / `STREAMS_ALPACA_TRADE_UPDATES_ENABLED` / `STREAMS_ALPACA_PRICE_EVENTS_ENABLED`
+   remain off in production — flipping them is a deliberate follow-up decision, not
+   done here).
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (full suite green; two new `executeProposal`-driving tests
+padded to 30s after confirming a timeout was a full-suite-parallel-load artifact,
+not a logic bug — this repo has a documented history of this exact flake class,
+see `approval-lock.test.ts`). `npm run build` — run before landing. See
+`docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
+
+## 2026-07-01 - PR #284 broker/share-class review fixes
+Branch `claude/affectionate-franklin-a52935`. Addressed Codex review follow-up:
+Alpaca quotes/news now return requested share-class aliases such as `BRK.B`
+alongside internal `BRK-B`; `AlpacaNewsEnrichmentProvider` canonicalizes
+dot-form requests before matching article tags; and the unified Activity feed
+shows `order_rejected_by_broker` as a broker decline rather than a manual
+rejection. Verification:
+`npx vitest run test/order-confirmation-status.test.ts test/data-providers.test.ts
+test/dashboard-feed.test.ts` (79 tests pass) and `npx tsc --noEmit`.
+
+## 2026-06-30 - Alpaca share-class symbol mapping fix
+Branch `claude/affectionate-franklin-a52935`. Fixed live orders for share-class
+tickers (e.g. `BRK-B`) failing with `Alpaca order failed: HTTP 422 — asset
+"BRK-B" not found`. Our canonical symbol format uses a hyphen for share
+classes (Robinhood convention, `src/lib/sp500.ts:2`); Alpaca requires a dot
+(`BRK.B`) and rejected the hyphenated form outright. Added
+`toAlpacaSymbol`/`fromAlpacaSymbol` in `src/lib/alpaca.ts` and applied them at
+every Alpaca API boundary — order placement (REST + MCP paths),
+`getEquityQuotes`, and the order/position response mappers — so internal
+state stays hyphenated while Alpaca gets dot notation. Also fixed a related
+silent bug: `getEquityQuotes` previously keyed its response by Alpaca's raw
+(dot-notation) symbol, so hyphenated lookups always missed and silently fell
+through to the Yahoo keyless fallback instead of using Alpaca's real quote.
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (165 files / 1,582 tests), `npm run build` all pass. See
+`docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`. Follow-up:
+`src/lib/streams/alpaca-price-events-stream.ts` has the same symbol-format gap
+on its websocket subscription but is a separate, default-off, flag-gated
+feature — left untouched, noted in the rollout doc.
+## 2026-07-01 - CI hosted-runner migration + concurrency guards
+Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
+`trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
+across every branch, causing long queue waits even for green PRs — observed
+directly while landing PR #280. Added `cancel-in-progress` concurrency
+groups to `ci.yml`/`security.yml`/`e2e.yml` so superseded pushes don't queue
+behind themselves, and moved `verify`, `gitleaks`, and `smoke` to
+`runs-on: ubuntu-latest` (none depend on the production box; `smoke` builds
+and serves its own local `next start`). `deploy.yml`/`sync-previews.yml`
+stay self-hosted — they operate on the live PM2 process and local preview
+lanes directly. Owner is on GitHub Pro and explicitly approved the
+associated Actions-minutes cost. Follow-up: confirm the account's Actions
+spending limit is > $0, or required-check jobs could fail before startup.
+See `docs/rollouts/2026-07-01-ci-hosted-runner-migration.md`.
+
+## 2026-07-01 - congress-trading-shared drift fixes
+Branch `chore/shared-package-drift-fixes` (PR #280), pushed from
+`~/apps/trading-claude` (the main `~/Code/Agentic Trading` integration
+worktree's pre-push hook blocks agent pushes from there by design).
+`congress-trade-client.ts` now imports the shared `MAX_REFS_BATCH` constant
+instead of a locally hardcoded `500`; deleted the unused
+`congress-shared-aliases.ts`, whose `CongressRef` alias conflicted in shape
+with the `CongressRef` actually used elsewhere; added
+`.github/workflows/shared-package-pin-check.yml`, a weekly + manual job that
+warns (never fails the build) when this repo's git-pinned
+`congress-trading-shared` commit falls behind that repo's `main`, using the
+`GH_PACKAGES_TOKEN` repo secret. A companion fix landed in Congress.Trade PR
+#124 for the same workflow (that repo's `package.json` had separately moved
+to a semver/registry dependency, which the original parsing didn't handle).
+Verification: `npx tsc --noEmit` passes. Follow-up: confirm
+`GH_PACKAGES_TOKEN`'s scope is sufficient once the workflow can actually be
+dispatched (requires landing on `main` first). See
+`docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
+## 2026-07-01 - PR #279 shared-dep GitHub Packages - Codex round-4 fixes
+Branch `codex/agentic-shared-registry-semver-20260630`. Two remaining open Codex
+review threads addressed: (1) `scripts/npm-ci-with-shared-deps.sh` now also
+`export`s `NODE_AUTH_TOKEN` from the resolved token so the higher-precedence
+committed project `.npmrc` (`_authToken=${NODE_AUTH_TOKEN}`) authenticates when a
+caller only set `GITHUB_TOKEN`; (2) `scripts/sync-preview-lanes.sh` strips
+`GH_TOKEN` too (`env -u GH_TOKEN`) from the `pm2 restart --update-env` so the
+`GH_TOKEN` fetch path can't leak a repo token into preview processes. Verify trio
+green (tsc / 1578 tests / build); scripts ASCII-clean. See
+`docs/rollouts/2026-06-30-shared-dep-github-packages.md` (Round 4).
+
+Round 5 review fix: `scripts/npm-ci-with-shared-deps.sh` now includes `GH_TOKEN`
+in the package-auth fallback chain, matching the script fetch paths used by
+manual/operator preview syncs.
+
+## 2026-07-01 - PR #282 Robinhood fractional routing review fixes
+Branch `fix/robinhood-fractional-market`. Round-3 review tightened the Robinhood
+small-dollar routing fix: entry-drift policy now treats fractional opening
+limits as market-routed for Robinhood, fractional opening coercion forces GFD,
+and sell/exit limits preserve their requested limit semantics instead of being
+converted into immediate market sells. See
+`docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`.
+
+## 2026-07-01 - PR #282 Robinhood fractional drift scoping
+Branch `fix/robinhood-fractional-market`. Round-4 review narrowed the
+fractional-limit entry-drift special case to `policy.activeBroker ===
+"robinhood"` so brokers that preserve fractional limit orders keep broker-side
+limit-price protection. Verification: `npx vitest run test/robinhood-mcp.test.ts
+test/strategy-hardening.test.ts` (54 tests pass) and `npx tsc --noEmit`.
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
@@ -56,6 +549,34 @@ keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
 redirects to `/login`, `/api/health` returns `ok:true`, and
 `https://trading.jays.services/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+## 2026-06-30 - Strategy timeout and sizing guardrails
+Branch `codex/strategy-timeout-sizing-guardrails-20260630`. Follow-up to the
+Green Team timeout and the Roth IRA AAPL approval block. The timed-out run took
+about 73.5s wall-clock from run start to failure, while the LLM HTTP call itself
+hit the existing 60s timeout; the fix keeps the interactive timeout bounded
+instead of extending it. `gpt-5.5` with `high` reasoning is now rejected in
+Settings for interactive strategy runs, and stale stored `gpt-5.5`/high configs
+are runtime-clamped to medium effort before building Green/Red request bodies.
+
+Opening proposal sizing and the policy gate now reserve a 5% execution buffer
+below the effective per-order policy cap (`maxOrderNotional` / `% NAV`). A
+`$4.99` max therefore produces a preferred opening cap of `$4.74`, while the
+hard max remains the final fail-safe. The strategy prompt exposes both
+`limits.maxOrderNotional` and `limits.preferredMaxOrderNotional`. Chat/Assistant
+draft promotion now refuses to stage an already blocked dry-run decision, so a
+policy-blocked draft cannot become a pending approval row and then fail only
+after confirmation. Focused verification:
+`npx vitest run test/llm-request.test.ts test/policy.test.ts test/conviction-size-cap.test.ts test/policy-notification-events.test.ts test/chat-draft-policy.test.ts`
+passed (68 tests). Full verification passed: `npm run lint` (0 errors, 254
+existing warnings), `npx tsc --noEmit`, `npm test` (166 files / 1582 tests),
+and `npm run build`; the first post-merge webpack build retry hit host
+`ENOSPC`, then passed after deleting this worktree's generated `.next`. See
+`docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
+
+Round 5 review fix: deterministic opening sizing now includes
+`maxShortOrderNotional` in the 5% headroom path, and chat-draft policy previews
+pass `userId` so wash-sale lockouts block before staging.
+
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
 failed during `npm run build` because Next 16 route validation rejected
@@ -348,6 +869,15 @@ a Dependabot secret so trusted Dependabot PRs can run the required verify gate.
 Companion shared-package PR:
 jaywedgeworth22/congress-trading-shared#1. See
 `docs/rollouts/2026-06-30-congress-trading-shared.md`.
+
+**UPDATE — PR #279 (`codex/agentic-shared-registry-semver-20260630`):** the shared
+dependency now installs from the private **GitHub Packages** registry
+(`https://npm.pkg.github.com`, `@jaywedgeworth22/congress-trading-shared`) via a
+semver range, **superseding** the git+`220677a`-pin + `CONGRESS_TRADING_SHARED_DEPLOY_KEY`
+model above. `scripts/npm-ci-with-shared-deps.sh` authenticates with
+`NODE_AUTH_TOKEN` (falling back to `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs
+carry `packages: read`. The legacy SSH deploy-key path remains only as a fallback for
+older lockfiles. See `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 
 ## 2026-06-29 — Sticky top bar, slide-over layout offsets & verification
 Branch `agent/antigravity`. Made the dashboard header/top bar sticky so it always stays at the top of the viewport. Offset the `SlideOver` component dynamically from the top of the viewport using a measured `--header-height` CSS variable so drawer panels (like the Activity Log) render cleanly below the top bar instead of overlapping/sliding behind it. Verified `npx tsc --noEmit`, `npm run lint`, `npm test` (1,516 tests), and `npm run build` are all green. See `docs/rollouts/2026-06-29-sticky-top-bar-and-slideover-offsets.md`.
@@ -1962,6 +2492,26 @@ Branch: claude/magical-faraday-uce1uy
   tests; `npx tsc --noEmit`, full `npm test` (102 files / 915 tests), and
   `npm run build` passed; local `/api/health` returned OK. See
   `docs/rollouts/2026-06-23-custom-watchlist-errors.md`.
+- 2026-06-23 (`codex/mobile-command-api`): **Shared mobile API, phone PWA, SwiftUI starter, and account deletion reset flow.**
+  Built an isolated mobile worktree from current `origin/main` so it does not
+  touch the other agent lanes. Added `/api/mobile/*` as the shared backend
+  source-of-truth contract for a responsive Next.js/PWA and native SwiftUI
+  iPhone app: snapshot/bootstrap reads, audited/idempotent command queue,
+  server-side command execution, SSE command/status events, and a phone-first
+  `/mobile` PWA. Added SwiftUI starter files under `ios/AgenticTrading/` using
+  the same command/status model. Added a multi-step account deletion procedure
+  that creates a short-lived request, requires exact signed-in email/user-id and
+  exact phrase confirmation, deletes user-scoped app data plus server-stored
+  broker/provider secrets, signs out, and clearly separates backend reset from
+  optional Google/Apple provider-side OAuth grant revocation. Browser visual
+  review covered `/mobile` at 360x740, 390x844, 768x1024, and 1440x900 plus
+  main-dashboard smoke at 390x844 and 1440x900; fixes included mobile alert
+  overflow, danger-zone contrast, deletion confirmation layout, and mobile
+  touch-target sizing. Verification: `npx tsc --noEmit`; focused
+  `npx vitest run test/mobile-api.test.ts --testTimeout=20000`; full `npm test`
+  passed 100 files / 913 tests; `npm run build` passed.
+  See `docs/mobile-api-and-clients.md` and
+  `docs/rollouts/2026-06-23-mobile-pwa-command-api.md`.
 - 2026-06-23 (`codex/multi-user-auth-prod`): **Multi-user auth + account UI production pass.**
   Integrated the Auth.js/Cloudflare Access identity work onto current `origin/main`
   and fixed the account UI issues found during the expert/site pass. Middleware now
