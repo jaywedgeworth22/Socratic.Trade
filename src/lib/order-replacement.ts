@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { audit, insertFillEvent } from "./db";
+import { applyPaperExitCost } from "./execution-cost";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
 import { listStaleLimitOrders } from "./stale-limit-orders";
@@ -145,7 +146,12 @@ export async function replaceStaleLimitOrderWithMarket(input: {
 
   const source = fillSourceForExecutionMode(executionState);
   const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
-  const price = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
+  const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
+  // B8: a paper/test EXIT (sell/cover) booked here at the simulated mid pays no execution cost otherwise,
+  // overstating realized edge on the losing tail that feeds the tuner/sizer. Debit the exit-side cost for
+  // paper exits only; entries and live fills are unchanged. applyPaperExitCost no-ops on non-paper sources.
+  const isExit = original.side === "sell" || original.side === "cover";
+  const price = isExit ? applyPaperExitCost(rawPrice, original.side, source) : rawPrice;
   insertFillEvent({
     userId,
     accountNumber: input.policy.accountNumber,
