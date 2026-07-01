@@ -22,6 +22,16 @@ Verification: `npx tsc --noEmit` passes. Follow-up: confirm
 `GH_PACKAGES_TOKEN`'s scope is sufficient once the workflow can actually be
 dispatched (requires landing on `main` first). See
 `docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
+## 2026-07-01 - PR #279 shared-dep GitHub Packages - Codex round-4 fixes
+Branch `codex/agentic-shared-registry-semver-20260630`. Two remaining open Codex
+review threads addressed: (1) `scripts/npm-ci-with-shared-deps.sh` now also
+`export`s `NODE_AUTH_TOKEN` from the resolved token so the higher-precedence
+committed project `.npmrc` (`_authToken=${NODE_AUTH_TOKEN}`) authenticates when a
+caller only set `GITHUB_TOKEN`; (2) `scripts/sync-preview-lanes.sh` strips
+`GH_TOKEN` too (`env -u GH_TOKEN`) from the `pm2 restart --update-env` so the
+`GH_TOKEN` fetch path can't leak a repo token into preview processes. Verify trio
+green (tsc / 1578 tests / build); scripts ASCII-clean. See
+`docs/rollouts/2026-06-30-shared-dep-github-packages.md` (Round 4).
 
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
