@@ -687,7 +687,10 @@ class TestBrokerGateway implements BrokerGateway {
               ask: yf.ask,
               volume: yf.volume > 0 ? yf.volume : undefined,
               asOf: yf.asOf || new Date().toISOString(),
-              provider: "yahoo-finance"
+              provider: "yahoo-finance",
+              // Carry the synthetic-spread flag so a price-derived Yahoo batch spread isn't relabeled as
+              // a real quoted spread when merged (mergeQuoteData / hasRealAsk).
+              ...(yf.syntheticSpread ? { syntheticSpread: true } : {})
             };
           } else {
             remainingSymbols.push(symbol);

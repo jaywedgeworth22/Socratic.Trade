@@ -255,6 +255,34 @@ describe("mergeQuoteData", () => {
     expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("alpaca");
     expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("alpaca");
   });
+
+  it("keeps synthetic provenance when a Test-mode synthetic Yahoo batch spread is merged", () => {
+    const withRealScreenerSource = () => quote({ symbol: "AAPL", sources: { price: "yahoo-finance" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [withRealScreenerSource()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: withRealScreenerSource() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // TestBrokerGateway returns a Yahoo BATCH quote whose bid/ask were synthesized from price.
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 100, bid: 99.9, ask: 100.1, provider: "yahoo-finance", syntheticSpread: true }
+    });
+
+    // The synthetic spread must NOT be relabeled as a real quoted spread — otherwise hasRealAsk /
+    // marketable-limit pricing would treat a price-derived ask as real in the default Test mode.
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("yahoo-finance-synthetic");
+  });
 });
 
 describe("mergeGroupedBarData", () => {

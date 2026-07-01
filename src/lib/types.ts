@@ -363,6 +363,10 @@ export interface BrokerQuote {
   volume?: number;
   asOf?: string;
   provider?: string;
+  /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
+   *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
+   *  synthetic spread as a real quoted one. */
+  syntheticSpread?: boolean;
 }
 
 /**

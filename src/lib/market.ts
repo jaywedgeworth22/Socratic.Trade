@@ -458,7 +458,7 @@ export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAU
 
 export function mergeQuoteData(
   scan: MarketScan,
-  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string }>
+  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string; syntheticSpread?: boolean }>
 ): MarketScan {
   // When a merge accepts a real broker bid/ask/volume, refresh THAT side's provenance too. Otherwise a
   // "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote) would stick even
@@ -466,16 +466,20 @@ export function mergeQuoteData(
   // marketable-limit calc (which would then wrongly fall back to refPrice).
   const refreshSideProvenance = (
     base: EnrichmentSources | undefined,
-    extra: { bid?: number; ask?: number; volume?: number; provider?: string }
+    extra: { bid?: number; ask?: number; volume?: number; provider?: string; syntheticSpread?: boolean }
   ): EnrichmentSources | undefined => {
     if (!extra.provider) return base;
     const usedBid = positiveNumber(extra.bid) !== undefined;
     const usedAsk = positiveNumber(extra.ask) !== undefined;
     const usedVol = !!(extra.volume && extra.volume > 0);
     if (!usedBid && !usedAsk && !usedVol) return base;
+    // A synthesized (price-derived) spread — e.g. a Test-mode Yahoo batch quote with no real bid/ask —
+    // must KEEP synthetic provenance, not be relabeled as a real quoted spread. Volume is a real datum
+    // even when the spread is synthetic, so it always takes the actual provider.
+    const spreadProvider = extra.syntheticSpread ? "yahoo-finance-synthetic" : extra.provider;
     const next: EnrichmentSources = { ...(base ?? {}) };
-    if (usedBid) next.bid = extra.provider;
-    if (usedAsk) next.ask = extra.provider;
+    if (usedBid) next.bid = spreadProvider;
+    if (usedAsk) next.ask = spreadProvider;
     if (usedVol) next.volume = extra.provider;
     return next;
   };

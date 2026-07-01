@@ -207,4 +207,16 @@ Four further P2s, two of them behavior regressions in the ostensibly-safe change
   ?? volume` selected a present-but-zero OI (common for new/same-day strikes) and dropped the row; now
   uses volume whenever OI is not positive. Test added.
 
+### 5th round (commit 152d225 → follow-up) — inverse of the round-3 provenance fix
+
+- **[D] Preserve synthetic provenance across Test-mode broker merges** (`types.ts`, `robinhood.ts`,
+  `market.ts`) — the round-3 `refreshSideProvenance` fix assumed a merged broker bid/ask is always REAL,
+  but in the DEFAULT Test mode `TestBrokerGateway.getEquityQuotes` returns Yahoo *batch* quotes that can
+  themselves be synthetic. `BrokerQuote` dropped the `syntheticSpread` flag and passed `provider:
+  "yahoo-finance"`, so the refresh overwrote a `yahoo-finance-synthetic` tag with plain `yahoo-finance` —
+  making a price-derived ask look real to `hasRealAsk`/marketable-limit (re-introducing the item-2 bug in
+  Test mode). Fixed by threading `syntheticSpread` through `BrokerQuote` (set in the Test gateway) and
+  having `refreshSideProvenance` tag a synthetic spread `yahoo-finance-synthetic` (volume, a real datum,
+  still takes the actual provider). Test added.
+
 
