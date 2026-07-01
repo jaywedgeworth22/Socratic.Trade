@@ -214,4 +214,88 @@ describe("chat draft policy bridge", () => {
     // Dry-run and commit must agree: staleness-only preview is effectively stageable.
     expect(body.decision?.approved).toBe(true);
   });
+
+  it("does not stage a wash-sale-blocked buy draft", async () => {
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    const { getPolicy, insertFillEvent, listPendingProposals, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { POST } = await import("../app/api/proposals/from-draft/route");
+
+    upsertConnectedAccount({
+      id: "chat-draft-taxable",
+      userId: DEFAULT_REQUEST_USER_ID,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Taxable test",
+      taxationType: "taxable",
+      isActive: true
+    });
+    insertFillEvent({
+      userId: DEFAULT_REQUEST_USER_ID,
+      accountNumber: "TEST",
+      source: "paper",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "filled",
+      filledAt: "2026-06-01T14:30:00.000Z"
+    });
+    insertFillEvent({
+      userId: DEFAULT_REQUEST_USER_ID,
+      accountNumber: "TEST",
+      source: "paper",
+      symbol: "AAPL",
+      side: "sell",
+      quantity: 1,
+      price: 90,
+      notional: 90,
+      status: "filled",
+      filledAt: "2026-06-20T14:30:00.000Z"
+    });
+    setPolicy(
+      {
+        ...getPolicy(DEFAULT_REQUEST_USER_ID),
+        systemState: "active",
+        accountNumber: "TEST",
+        activeBroker: "test",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        maxOrderNotional: 100000,
+        maxOrderPctOfNav: undefined,
+        maxDailyNotional: 1000000
+      },
+      DEFAULT_REQUEST_USER_ID
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/proposals/from-draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          draft: {
+            draft_id: "draft-aapl-wash-sale",
+            symbol: "AAPL",
+            side: "buy",
+            qty: 1,
+            order_type: "market",
+            limit_usd: null,
+            rationale: "test",
+            account_label: "Test",
+            is_real: false,
+            blocked: false,
+            warnings: [],
+            executed: false
+          }
+        })
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.error).toBe("POLICY_BLOCKED");
+    expect(body.reasons.join(" ")).toContain("wash-sale lockout");
+    expect(listPendingProposals("TEST", DEFAULT_REQUEST_USER_ID)).toHaveLength(0);
+  });
 });

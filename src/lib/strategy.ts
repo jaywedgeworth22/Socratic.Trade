@@ -1160,7 +1160,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
       : Math.max(floor, Math.min(ceiling, multiplier));
   
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
-  const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(policy, portfolio));
+  const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
   const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
   // When marketable-limit entries are enabled, this deterministic dollar market order is later
   // converted to a whole-share LIMIT priced through the quote (ask×(1+bufferBps)); that conversion can
@@ -1174,7 +1174,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
       : 1;
   const openingSizingCap = marketableLimitBufferFactor > 1 ? Math.floor(rawOpeningCap / marketableLimitBufferFactor) : rawOpeningCap;
   const openingSizingReason = Number.isFinite(policyHeadroomCap) && policyHeadroomCap < openingCapacity.cap
-    ? `per-order cap, with 5% execution buffer`
+    ? `${proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0 ? "max short order limit" : "per-order cap"}, with 5% execution buffer`
     : openingCapacity.reason;
   // The bracket-minimum raise below must respect the SAME buffered/per-order cap, not the raw risk
   // capacity — otherwise a one-share bracket raise can lift the order above the headroom cap and the
@@ -1297,6 +1297,9 @@ function openingRiskCapacity(
   if (policy.maxOrderNotional != null && policy.maxOrderNotional > 0) {
     caps.push({ value: policy.maxOrderNotional, reason: "per-order cap" });
   }
+  if (proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0) {
+    caps.push({ value: policy.maxShortOrderNotional, reason: "max short order limit" });
+  }
   if (policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && totalValue > 0) {
     caps.push({ value: (policy.maxOrderPctOfNav / 100) * totalValue, reason: `${policy.maxOrderPctOfNav}% NAV cap` });
   }
@@ -1328,9 +1331,12 @@ function openingRiskCapacity(
   return { cap: limitingCap.value, reason: limitingCap.reason };
 }
 
-function openingPolicyNotionalCap(policy: TradingPolicy, portfolio: Portfolio): number {
+function openingPolicyNotionalCap(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio): number {
   return Math.min(
     policy.maxOrderNotional ?? Infinity,
+    proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0
+      ? policy.maxShortOrderNotional
+      : Infinity,
     policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && portfolio.totalMarketValue > 0
       ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue
       : Infinity

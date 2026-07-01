@@ -93,6 +93,10 @@ and `npm run build`; the first post-merge webpack build retry hit host
 `ENOSPC`, then passed after deleting this worktree's generated `.next`. See
 `docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
 
+Round 5 review fix: deterministic opening sizing now includes
+`maxShortOrderNotional` in the 5% headroom path, and chat-draft policy previews
+pass `userId` so wash-sale lockouts block before staging.
+
 ## 2026-06-30 - Policy route export build fix
 Branch `codex/fix-policy-route-export`. Production deploy of merged PR #270
 failed during `npm run build` because Next 16 route validation rejected

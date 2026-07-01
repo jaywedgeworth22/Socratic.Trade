@@ -139,6 +139,16 @@ Verification: `npx tsc --noEmit` pass; `chat-draft-policy` 3 tests pass (added a
 
 Verification: `npx tsc --noEmit` pass; `policy` + `chat-draft-policy` (52 + 4 tests) pass.
 
+### Round 5 (Codex re-review)
+
+- **Deterministic sizing now includes the short-specific cap.** `applyDeterministicSizing` now folds
+  `maxShortOrderNotional` into both the risk-cap candidate set and the 5% headroom cap, so a short
+  near the short cap is reduced to a stageable size instead of being blocked later by policy review.
+- **Chat draft previews resolve wash-sale locks by user.** The chat draft policy preview now passes
+  `userId` into `evaluateTradeProposal`, so the authoritative wash-sale resolver can block a draft
+  before staging instead of waiting until approval.
+- Added regression coverage for both paths.
+
 ## Follow-ups
 
 - Consider a per-context timeout knob only if a future queued/background strategy

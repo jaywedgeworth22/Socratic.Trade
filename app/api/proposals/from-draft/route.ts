@@ -91,6 +91,7 @@ export async function POST(request: Request) {
     estimatedNotional: review?.estimatedNotional,
     accountCapabilities: activeAccount?.capabilities,
     isLiveExecution: executionMode === "broker/live",
+    userId,
     now
   });
   let estimatedNotional = review?.estimatedNotional;
