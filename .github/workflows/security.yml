@@ -2,6 +2,9 @@ name: Security
 
 on:
   pull_request:
+  # Required for the GitHub merge queue: the `gitleaks` check must run on the
+  # queue's temporary merge_group branch, or queued PRs hang forever.
+  merge_group:
   push:
     branches:
       - main
