@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 - congress-trading-shared drift fixes
+Branch `chore/shared-package-drift-fixes` (PR #280), pushed from
+`~/apps/trading-claude` (the main `~/Code/Agentic Trading` integration
+worktree's pre-push hook blocks agent pushes from there by design).
+`congress-trade-client.ts` now imports the shared `MAX_REFS_BATCH` constant
+instead of a locally hardcoded `500`; deleted the unused
+`congress-shared-aliases.ts`, whose `CongressRef` alias conflicted in shape
+with the `CongressRef` actually used elsewhere; added
+`.github/workflows/shared-package-pin-check.yml`, a weekly + manual job that
+warns (never fails the build) when this repo's git-pinned
+`congress-trading-shared` commit falls behind that repo's `main`, using the
+`GH_PACKAGES_TOKEN` repo secret. A companion fix landed in Congress.Trade PR
+#124 for the same workflow (that repo's `package.json` had separately moved
+to a semver/registry dependency, which the original parsing didn't handle).
+Verification: `npx tsc --noEmit` passes. Follow-up: confirm
+`GH_PACKAGES_TOKEN`'s scope is sufficient once the workflow can actually be
+dispatched (requires landing on `main` first). See
+`docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`

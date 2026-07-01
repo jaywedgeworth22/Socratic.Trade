@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`chore/shared-package-drift-fixes`, PR #280): cross-app
+> dependency hygiene - `congress-trade-client.ts` now imports the shared
+> `MAX_REFS_BATCH` constant instead of a hardcoded `500`; removed the unused,
+> shape-conflicting `congress-shared-aliases.ts`; added a weekly
+> `shared-package-pin-check.yml` workflow that warns if our git-pinned
+> `congress-trading-shared` commit falls behind that repo's `main`. No
+> roadmap change; see
+> `docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
 > 2026-06-30 (`codex/prod-build-hotfix-20260630`): production build/start hotfix -
 > after PR #270, the live box needed a manual repair because the default Next 16
 > Turbopack build did not emit the production files consumed by the existing
