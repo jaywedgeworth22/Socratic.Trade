@@ -27,6 +27,7 @@ jobs:
     # Read access to repo contents is enough to fetch the code.
     permissions:
       contents: read
+      packages: read
 
     # Optional overrides via repo Settings → Secrets and variables → Variables.
     # Defaults match the documented production layout; resolved with shell
@@ -36,6 +37,9 @@ jobs:
       PM2_APP: ${{ vars.PM2_APP }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
+      # GH_PAT lacks read:packages (see ci.yml); keep it out of the package-auth chain. This token is
+      # unset after `npm ci` below so it never reaches the PM2 --update-env restart. (Review: PR #279.)
+      NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Pull, build, and restart production
@@ -69,6 +73,12 @@ jobs:
 
           echo "::group::Install dependencies (lockfile-exact)"
           bash scripts/npm-ci-with-shared-deps.sh
+          # Package/fetch auth is only needed for the git fetch + install above. Unset BOTH the
+          # packages token (NODE_AUTH_TOKEN) and the fetch token (GH_TOKEN = GITHUB_TOKEN, now
+          # packages:read) before build/restart so `pm2 restart --update-env` cannot propagate a
+          # GitHub-Packages-readable token into the long-running production process's environment,
+          # where runtime code could read it. (Review: PR #279.)
+          unset GH_TOKEN NODE_AUTH_TOKEN
           echo "::endgroup::"
 
           echo "::group::Build (.next is regenerated)"

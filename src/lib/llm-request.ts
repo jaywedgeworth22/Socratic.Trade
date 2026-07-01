@@ -30,6 +30,16 @@ export function resolveOpenAiModel(policy?: { llmModel?: string | null } | null)
   return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
 }
 
+export function isDisallowedInteractiveStrategyReasoningConfig(model: string | undefined, effort: LlmReasoningEffort | undefined): boolean {
+  return /^gpt-5\.5(?:$|[-.:_])/i.test((model ?? "").trim()) && effort === "high";
+}
+
+export function interactiveStrategyReasoningEffort(model: string, effort: LlmReasoningEffort | undefined): LlmReasoningEffort | undefined {
+  if (!isReasoningModel(model)) return undefined;
+  const requested = effort ?? "medium";
+  return isDisallowedInteractiveStrategyReasoningConfig(model, requested) ? "medium" : requested;
+}
+
 /** Extra output-token headroom for reasoning models (hidden reasoning tokens are billed as output). */
 const REASONING_TOKEN_BUDGET: Record<LlmReasoningEffort, number> = {
   low: 2000,

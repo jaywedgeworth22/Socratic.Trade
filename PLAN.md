@@ -28,6 +28,14 @@ filling the missing pieces.
 > this branch keeps deploys repeatable by using `next build --webpack` and
 > webpack-compatible server-only crypto imports. No roadmap change; see
 > `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
+> 2026-06-30 (`codex/strategy-timeout-sizing-guardrails-20260630`): strategy
+> timeout and sizing guardrails - keep the interactive LLM call cap at 60s,
+> reject `gpt-5.5` + high reasoning in Settings, runtime-clamp stale
+> `gpt-5.5`/high configs to medium, add a 5% preferred opening-order headroom
+> under the hard policy max, and stop chat draft promotion from staging
+> already blocked policy decisions. No roadmap change; see
+> `docs/rollouts/2026-06-30-strategy-timeout-sizing-guardrails.md`.
+>
 > 2026-06-30 (`codex/fix-policy-route-export`): production build fix - moved
 > `stripNullsDeep` out of `app/api/policy/route.ts` because Next 16 rejects
 > non-route exports from app route modules. Antigravity strategy-review/test
@@ -182,6 +190,13 @@ filling the missing pieces.
 > shared install helper plus read-only deploy key for npm's private git dependency.
 > No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
+>
+> 2026-06-30 (`codex/agentic-shared-registry-semver-20260630` / PR #279): switched the
+> shared dependency from the git+deploy-key pin to the private **GitHub Packages**
+> registry (semver range). Install helper now authenticates with `NODE_AUTH_TOKEN`
+> (fallback `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs carry `packages: read`.
+> Supersedes the deploy-key model in the entry above. No roadmap change; see
+> `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 >
 > 2026-06-30 (`codex/browser-title`): browser tab title correction —
 > root and welcome metadata now emit the document title `Trading Dashboard`
