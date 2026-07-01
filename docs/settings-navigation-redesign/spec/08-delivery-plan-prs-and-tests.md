@@ -55,6 +55,11 @@ PR#14 (deferred) Mobile account-scope parity
 
 ## PR #1 — Vocabulary, label de-duplication, and scope-surfacing
 
+> **Status (2026-07-01): LANDED** on `claude/settings-navigation-redesign-a3k1yv-mce45j`. New shared module
+> `app/settings-scope.ts` (scope-tag SSOT) + `test/scope-tag-render.test.ts`; relabels + settings-header
+> `THIS ACCOUNT`/`ALL ACCOUNTS` tags in `app/dashboard-client.tsx`. Kill-button handler byte-identical.
+> tsc/lint/test/build green. See `docs/rollouts/2026-07-01-nav-v2-pr1-relabels-scope-surfacing.md`.
+
 **Phase:** 1. **Flag:** none (pure clarifying copy on current IA; safe ahead of the shell). **Effort:** S. **Risk:** Low.
 
 **Goal.** Kill duplicated-label confusion and make the already-coded but hidden account-vs-user tier split legible, without moving a panel or touching a data path.
