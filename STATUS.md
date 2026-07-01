@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-06-30 - Alpaca share-class symbol mapping fix
+Branch `claude/affectionate-franklin-a52935`. Fixed live orders for share-class
+tickers (e.g. `BRK-B`) failing with `Alpaca order failed: HTTP 422 — asset
+"BRK-B" not found`. Our canonical symbol format uses a hyphen for share
+classes (Robinhood convention, `src/lib/sp500.ts:2`); Alpaca requires a dot
+(`BRK.B`) and rejected the hyphenated form outright. Added
+`toAlpacaSymbol`/`fromAlpacaSymbol` in `src/lib/alpaca.ts` and applied them at
+every Alpaca API boundary — order placement (REST + MCP paths),
+`getEquityQuotes`, and the order/position response mappers — so internal
+state stays hyphenated while Alpaca gets dot notation. Also fixed a related
+silent bug: `getEquityQuotes` previously keyed its response by Alpaca's raw
+(dot-notation) symbol, so hyphenated lookups always missed and silently fell
+through to the Yahoo keyless fallback instead of using Alpaca's real quote.
+Verification: `npm run lint` (0 errors, 254 pre-existing warnings), `npx tsc
+--noEmit`, `npm test` (165 files / 1,582 tests), `npm run build` all pass. See
+`docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`. Follow-up:
+`src/lib/streams/alpaca-price-events-stream.ts` has the same symbol-format gap
+on its websocket subscription but is a separate, default-off, flag-gated
+feature — left untouched, noted in the rollout doc.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`

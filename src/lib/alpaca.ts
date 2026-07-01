@@ -52,6 +52,20 @@ export function getAlpacaGateway(userId: string = "local", connectedAccountId?: 
   return new AlpacaBrokerGateway(userId, connectedAccountId);
 }
 
+// Our canonical symbol format uses a hyphen for share classes (e.g. "BRK-B", the Robinhood
+// convention — see sp500.ts). Alpaca's asset/order/quote APIs reject that and require a dot
+// ("BRK.B"), returning HTTP 422 "asset not found" otherwise. Convert at the Alpaca boundary only —
+// internal state stays hyphenated.
+export function toAlpacaSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/-/g, ".");
+}
+
+// Inverse of toAlpacaSymbol — normalize symbols coming back from Alpaca (orders, positions,
+// quotes) to our canonical hyphenated format so they match watchlist/proposal symbols elsewhere.
+export function fromAlpacaSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace(/\./g, "-");
+}
+
 export function classifyAlpacaAccountType(account: Record<string, unknown>): AccountCapabilities["accountType"] {
   const rawType = String(account.account_type ?? account.accountType ?? "").toLowerCase();
   const rawSubType = String(account.account_sub_type ?? account.account_subtype ?? account.accountSubType ?? "").toLowerCase();
@@ -354,8 +368,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const normalizedSymbols = symbols.map(normalizeSymbol);
     const quotes: Record<string, BrokerQuote> = {};
     try {
-      const response = await this.alpaca.getLatestQuotes(normalizedSymbols);
-      for (const [symbol, q] of Object.entries(response)) {
+      const response = await this.alpaca.getLatestQuotes(normalizedSymbols.map(toAlpacaSymbol));
+      for (const [rawSymbol, q] of Object.entries(response)) {
+        const symbol = fromAlpacaSymbol(rawSymbol);
         const anyQ = q as Record<string, number | string>;
         const bid = optionalNumber(anyQ.bp);
         const ask = optionalNumber(anyQ.ap);
@@ -417,7 +432,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
     const fallbackFn = async () => {
       try {
         const orderOptions: Record<string, unknown> = {
-          symbol: input.symbol,
+          symbol: toAlpacaSymbol(input.symbol),
           side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
           type: input.type,
           // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
@@ -475,7 +490,7 @@ class AlpacaBrokerGateway implements BrokerGateway {
         : "place_market_order";
 
     const orderArgs: Record<string, any> = {
-      symbol: input.symbol,
+      symbol: toAlpacaSymbol(input.symbol),
       side: toBrokerSide(input.side), // short→sell, cover→buy; Alpaca infers open/close from position
       type: input.type,
       // Bracket orders require time_in_force="day" — Alpaca rejects "gtc" entries with brackets.
@@ -564,7 +579,7 @@ export function mapAlpacaOrderType(raw: unknown): OrderType {
 export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
   return {
     id: String(o.id),
-    symbol: normalizeSymbol(String(o.symbol)),
+    symbol: fromAlpacaSymbol(String(o.symbol)),
     side: o.side as OrderSide,
     type: mapAlpacaOrderType(o.type),
     state: String(o.status),
@@ -581,7 +596,7 @@ export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
 
 export function parseAlpacaPosition(p: Record<string, unknown>): EquityPosition {
   return {
-    symbol: normalizeSymbol(String(p.symbol)),
+    symbol: fromAlpacaSymbol(String(p.symbol)),
     quantity: number(p.qty ?? p.quantity),
     averageCost: number(p.avg_entry_price ?? p.average_entry_price ?? p.averageCost),
     marketValue: number(p.market_value ?? p.marketValue),

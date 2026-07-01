@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`claude/affectionate-franklin-a52935`): Alpaca share-class symbol
+> mapping fix - live orders for tickers like `BRK-B` failed with HTTP 422
+> "asset not found" because our canonical hyphenated symbol format (Robinhood
+> convention) was passed to Alpaca unconverted; Alpaca requires dot notation
+> (`BRK.B`). Added `toAlpacaSymbol`/`fromAlpacaSymbol` conversions at every
+> Alpaca boundary (order placement, quotes, order/position mappers). No
+> roadmap change; see
+> `docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`.
 > 2026-06-30 (`codex/prod-build-hotfix-20260630`): production build/start hotfix -
 > after PR #270, the live box needed a manual repair because the default Next 16
 > Turbopack build did not emit the production files consumed by the existing
