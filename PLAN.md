@@ -191,6 +191,13 @@ filling the missing pieces.
 > No roadmap change; see
 > `docs/rollouts/2026-06-30-congress-trading-shared.md`.
 >
+> 2026-06-30 (`codex/agentic-shared-registry-semver-20260630` / PR #279): switched the
+> shared dependency from the git+deploy-key pin to the private **GitHub Packages**
+> registry (semver range). Install helper now authenticates with `NODE_AUTH_TOKEN`
+> (fallback `GITHUB_TOKEN`); CI/e2e/deploy/preview-sync jobs carry `packages: read`.
+> Supersedes the deploy-key model in the entry above. No roadmap change; see
+> `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
+>
 > 2026-06-30 (`codex/browser-title`): browser tab title correction —
 > root and welcome metadata now emit the document title `Trading Dashboard`
 > exactly. No roadmap change; see
