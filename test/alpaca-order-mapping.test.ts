@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapAlpacaOrder, mapAlpacaOrderType } from "../src/lib/alpaca";
+import { fromAlpacaSymbol, mapAlpacaOrder, mapAlpacaOrderType, parseAlpacaPosition, toAlpacaSymbol } from "../src/lib/alpaca";
 
 describe("mapAlpacaOrderType", () => {
   it("maps Alpaca raw order types to our OrderType union (no leaked raw values)", () => {
@@ -43,5 +43,39 @@ describe("mapAlpacaOrder", () => {
       placedAgent: "alpaca"
     });
     expect(order.averagePrice).toBeUndefined();
+  });
+
+  it("normalizes a dot-notation share-class symbol from Alpaca back to our hyphen convention", () => {
+    const order = mapAlpacaOrder({
+      id: "o2",
+      symbol: "BRK.B",
+      side: "buy",
+      type: "market",
+      status: "filled",
+      qty: "1",
+      created_at: "2026-06-25T00:00:00Z"
+    });
+    expect(order.symbol).toBe("BRK-B");
+  });
+});
+
+describe("toAlpacaSymbol / fromAlpacaSymbol", () => {
+  it("converts our hyphenated share-class symbol to Alpaca's dot notation and back", () => {
+    // Regression: Alpaca rejects "BRK-B" with HTTP 422 "asset not found" — it requires "BRK.B".
+    expect(toAlpacaSymbol("BRK-B")).toBe("BRK.B");
+    expect(toAlpacaSymbol("brk-b")).toBe("BRK.B");
+    expect(fromAlpacaSymbol("BRK.B")).toBe("BRK-B");
+  });
+
+  it("leaves plain symbols unaffected aside from normalization", () => {
+    expect(toAlpacaSymbol("aapl")).toBe("AAPL");
+    expect(fromAlpacaSymbol("AAPL")).toBe("AAPL");
+  });
+});
+
+describe("parseAlpacaPosition", () => {
+  it("normalizes a dot-notation share-class symbol from Alpaca back to our hyphen convention", () => {
+    const position = parseAlpacaPosition({ symbol: "BRK.B", qty: "5", avg_entry_price: "400", market_value: "2000" });
+    expect(position.symbol).toBe("BRK-B");
   });
 });
