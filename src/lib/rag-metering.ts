@@ -11,7 +11,7 @@
 //   - Pinecone: serverless — metered by Read/Write Request Units (not tokenized)
 
 import crypto from "crypto";
-import { getDb } from "./db";
+import { audit, getDb } from "./db";
 import { pushRagUsage } from "./usage-monitor-push";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -198,4 +198,88 @@ export function getRagUsageSummary(opts: { sinceIso?: string } = {}): RagUsageRo
     batchCount: Number(r.batch_count),
     costEstUsd: Number(r.cost_est_usd)
   }));
+}
+
+// ── R5: consolidated per-retrieval distribution telemetry ───────────────────
+//
+// (2026-07-01 RAG backlog item R5.) Subsumes three overlapping proposals ("recall-proxy
+// telemetry", "per-chunk retrieval trace", "embed/rerank cost meter") into ONE record per
+// `retrieveContextDetailed` call, instead of three separate mechanisms. Default OFF via
+// RAG_RETRIEVAL_TELEMETRY — when unset/off this is a complete no-op (not even a hashed-query
+// computation runs), so default retrieval stays byte-for-byte unchanged.
+//
+// IMPORTANT — these are DISTRIBUTION telemetry, NOT a recall metric. Recall/MRR is only
+// measurable against a golden set (see test/rag-retrieval-eval.test.ts); a field like
+// `topCosine` or `finalCount` here says nothing about whether the RIGHT chunks were retrieved.
+// Field names are chosen so an operator reading this table doesn't mistake "we got N results
+// with a wide score spread" for "recall is good."
+
+import { envFlagOn } from "./rag/env-flag";
+
+/** Returns true when RAG_RETRIEVAL_TELEMETRY is truthy. Default OFF. */
+export function retrievalTelemetryEnabled(): boolean {
+  return envFlagOn("RAG_RETRIEVAL_TELEMETRY", false);
+}
+
+/** Stable, non-reversible hash of a query string — the raw query text must NEVER be persisted
+ *  (it may contain private/user-scoped context), only a fingerprint for grouping/debugging. */
+export function hashQuery(query: string): string {
+  return crypto.createHash("sha256").update(query, "utf8").digest("hex").slice(0, 16);
+}
+
+export interface RetrievalQualityRecord {
+  /** SHA-256 (first 16 hex) of the query — NEVER the raw query text. */
+  queryHash: string;
+  /** Requested result count (the caller's `limit`). */
+  k: number;
+  /** Number of raw Pinecone matches fetched before any post-recall filtering. */
+  candidates: number;
+  /** Count dropped by the cosine score floor (`minScore`). */
+  droppedByMinScore: number;
+  /** Count dropped by the as-of point-in-time guard. */
+  droppedByAsOf: number;
+  /** Whether hybrid BM25/RRF fusion ran for this call. */
+  hybrid: boolean;
+  /** Whether reranking was attempted for this call (not necessarily succeeded). */
+  rerankAttempted: boolean;
+  /** Whether reranking actually ran (fusedPool.length > limit) and returned scored results. */
+  rerankRan: boolean;
+  /** Top cosine similarity score in the final pool (undefined if the pool ended up empty). */
+  topCosine?: number;
+  /** Top Voyage cross-encoder relevance score, if rerank produced one (undefined otherwise). */
+  topRelevanceScore?: number;
+  /** Final chunk count returned to the caller after every stage (score floor/as-of/hybrid/rerank/limit). */
+  finalCount: number;
+}
+
+/**
+ * Record one consolidated retrieval-quality distribution record. Fire-and-forget: wrapped in
+ * try/catch so a telemetry failure (DB unavailable, serialization error) can never break
+ * retrieval. No-ops entirely when RAG_RETRIEVAL_TELEMETRY is unset/off — the caller is expected
+ * to gate the (cheap but non-zero) call site itself, but this function double-checks the flag
+ * so importing/calling it directly is always safe.
+ */
+export function recordRetrievalQuality(entry: RetrievalQualityRecord, userId: string = "local"): void {
+  if (!retrievalTelemetryEnabled()) return;
+  try {
+    audit(
+      "rag_retrieval_quality",
+      {
+        queryHash: entry.queryHash,
+        k: entry.k,
+        candidates: entry.candidates,
+        droppedByMinScore: entry.droppedByMinScore,
+        droppedByAsOf: entry.droppedByAsOf,
+        hybrid: entry.hybrid,
+        rerankAttempted: entry.rerankAttempted,
+        rerankRan: entry.rerankRan,
+        topCosine: entry.topCosine,
+        topRelevanceScore: entry.topRelevanceScore,
+        finalCount: entry.finalCount
+      },
+      userId
+    );
+  } catch {
+    /* telemetry is best-effort only; never break retrieval */
+  }
 }
