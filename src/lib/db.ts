@@ -218,6 +218,33 @@ const MIGRATIONS: Migration[] = [
     version: 7,
     name: "account_scoped_strategy_models_backfill",
     up: (database) => backfillAccountScopedStrategyModels(database)
+  },
+  {
+    version: 8,
+    name: "mobile_commands",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS mobile_commands (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          idempotency_key TEXT,
+          command_type TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT,
+          error TEXT,
+          client TEXT,
+          created_at TEXT NOT NULL,
+          queued_at TEXT NOT NULL,
+          started_at TEXT,
+          finished_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, idempotency_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_commands_user_created ON mobile_commands (user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mobile_commands_status ON mobile_commands (status, queued_at);
+      `);
+    }
   }
 ];
 

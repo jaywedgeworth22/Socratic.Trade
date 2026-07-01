@@ -199,6 +199,13 @@ async function tick(): Promise<void> {
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
 
+  // Mobile/PWA command gateway: drain queued user commands from the durable queue. Route handlers
+  // also kick this worker immediately after enqueueing, but the scheduler makes queued commands
+  // recover after a process restart or an interrupted request.
+  void import("./mobile-api")
+    .then(({ processPendingMobileCommands }) => processPendingMobileCommands({ limit: 5 }))
+    .catch((err) => console.error("[scheduler] mobile-command worker error:", err));
+
   try {
 
     // --- Per-Account Scheduling ---
