@@ -5,6 +5,29 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-06-30 (`claude/affectionate-franklin-a52935`): broker reliability +
+> capability audit - broker-agnostic order-placement confirmation
+> (`isRejectedOrCanceledState` in `broker-side.ts`; a non-throwing but
+> broker-declined order no longer records proposal status "placed"), a
+> Robinhood order-id fabrication fix, the share-class symbol fix extended into
+> `data-providers.ts`'s Alpaca enrichment providers and the news stream (same
+> bug, independent code path), a production-data-confirmed root cause for the
+> "Alpaca news never worked" report (a credential issue that self-resolved
+> 2026-06-30 ~10:01 UTC — not a code bug), and `docs/broker-capability-plan.md`
+> - a 5-broker (Alpaca/Robinhood/eToro/Public.com/IBKR) capability audit +
+> MCP evaluation + prioritized roadmap, including a live enumeration of the
+> Robinhood MCP surface (43 tools, 34 unused). No roadmap change; the plan
+> doc's own roadmap (options trading, new-broker integration, enabling
+> disabled streams) is future work, not started. See
+> `docs/rollouts/2026-06-30-broker-reliability-and-capability-audit.md`.
+> 2026-06-30 (`claude/affectionate-franklin-a52935`): Alpaca share-class symbol
+> mapping fix - live orders for tickers like `BRK-B` failed with HTTP 422
+> "asset not found" because our canonical hyphenated symbol format (Robinhood
+> convention) was passed to Alpaca unconverted; Alpaca requires dot notation
+> (`BRK.B`). Added `toAlpacaSymbol`/`fromAlpacaSymbol` conversions at every
+> Alpaca boundary (order placement, quotes, order/position mappers). No
+> roadmap change; see
+> `docs/rollouts/2026-06-30-alpaca-share-class-symbol-mapping.md`.
 > 2026-07-01 (`ci/hosted-runner-and-concurrency`): CI runner-bottleneck fix -
 > added cancel-in-progress concurrency groups to `ci.yml`/`security.yml`/
 > `e2e.yml` and moved `verify`/`gitleaks`/`smoke` to `ubuntu-latest`, since

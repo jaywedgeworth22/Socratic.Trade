@@ -449,6 +449,37 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup!.detail).toContain("Broker reported Rejected");
     expect(tradeGroup!.detail).not.toContain("Rejected manually");
   });
+
+  it("shows synchronous broker declines as broker outcomes, not manual rejections", () => {
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "audit-broker-reject",
+          createdAt: "2026-06-16T13:36:00.000Z",
+          kind: "order_rejected_by_broker",
+          payload: {
+            proposalId: "p-broker-reject",
+            symbol: "VZ",
+            side: "buy",
+            orderId: "alpaca-order-rejected",
+            brokerState: "rejected"
+          }
+        }
+      ],
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: { VZ: { companyName: "Verizon Communications Inc." } },
+      getProposalById: () => ({ proposal: proposal({ symbol: "VZ", side: "buy" }) })
+    });
+
+    const tradeGroup = feed.find(g => g.proposalId === "p-broker-reject");
+    expect(tradeGroup).toBeDefined();
+    expect(tradeGroup!.status).toBe("rejected");
+    expect(tradeGroup!.detail).toContain("Broker state Rejected");
+    expect(tradeGroup!.detail).toContain("alpaca-order-rejected");
+    expect(tradeGroup!.detail).not.toContain("Rejected manually");
+  });
 });
 
 function proposal(input: { symbol: string; side: "buy" | "sell" }) {

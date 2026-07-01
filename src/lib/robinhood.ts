@@ -346,8 +346,16 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
     const raw = await this.callTool("place_equity_order", { ...toMcpOrder(input), ref_id: input.refId }) as Record<string, unknown>;
+    const orderId = raw.id ?? raw.order_id;
+    // A response with no order id can't be tracked or reconciled against Robinhood's real order
+    // list — String(undefined) would silently become the literal string "undefined" and the
+    // caller would record this as a confirmed "placed" order that can never be matched later.
+    // Throw so the caller's placement try/catch treats this as placement-uncertain instead.
+    if (orderId === undefined || orderId === null || orderId === "") {
+      throw new Error(`Robinhood place_equity_order response had no order id: ${JSON.stringify(raw)}`);
+    }
     return {
-      orderId: String(raw.id ?? raw.order_id),
+      orderId: String(orderId),
       refId: input.refId,
       state: String(raw.state ?? "submitted"),
       filledQuantity: optionalNumber(raw.cumulative_quantity ?? raw.filled_quantity ?? raw.filledQuantity),

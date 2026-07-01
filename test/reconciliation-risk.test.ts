@@ -111,6 +111,37 @@ describe("reconcilePendingFills", () => {
     expect(matched!.status).toBe("cancelled");
   });
 
+  it("recognizes a mixed-case broker state as terminal-declined (isRejectedOrCanceledState is case-insensitive)", async () => {
+    const fillId = randomUUID();
+    const brokerOrderId = "broker-order-mixed-case";
+    insertFillEvent({
+      id: fillId,
+      proposalId: "p2b",
+      runId: "r1",
+      accountNumber: "ACC123",
+      source: "live",
+      symbol: "MSFT",
+      side: "buy",
+      quantity: 5,
+      price: 400,
+      notional: 2000,
+      status: "pending_reconciliation",
+      brokerOrderId,
+      raw: { test: true }
+    });
+
+    const mockGateway = {
+      getEquityOrders: async () => [
+        { id: brokerOrderId, symbol: "MSFT", side: "buy", type: "market", state: "Rejected", createdAt: new Date().toISOString() } as EquityOrder
+      ]
+    } as unknown as BrokerGateway;
+
+    await reconcilePendingFills(mockGateway, "ACC123");
+
+    const matched = listFillEvents("ACC123", "live").find((f) => f.id === fillId);
+    expect(matched!.status).toBe("Rejected");
+  });
+
   it("records the executed portion of a partially_filled live order", async () => {
     const fillId = randomUUID();
     const brokerOrderId = "broker-order-partial-1";

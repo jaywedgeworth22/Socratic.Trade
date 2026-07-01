@@ -179,6 +179,20 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "order_rejected_by_broker") {
+    const brokerState = stringValue(payload.brokerState);
+    const orderId = stringValue(payload.orderId);
+    const reason = stringValue(payload.reason) ?? stringValue(payload.error);
+    return {
+      title: `${sideLabel(context.side, context.symbol) ?? context.symbol ?? "Order"} Broker Declined`,
+      detail: joinDetail([
+        brokerState ? `Broker state ${readableBrokerState(brokerState)}` : "Broker declined the order",
+        orderId ? `Order ${orderId}` : undefined,
+        reason
+      ]) ?? "Broker declined the order"
+    };
+  }
+
   if (kind === "notification") {
     const notification = payload as unknown as NotificationEvent;
     const symbol = normalizeSymbol(notificationSymbol(payload)) ?? context.symbol;
@@ -804,6 +818,7 @@ export function buildUnifiedFeed(input: {
       const hasFill = events.find(ev => ev.type === "fill");
       const hasOrder = events.find(ev => ev.type === "order") as UnifiedActivitySubEvent | undefined;
       const hasApproval = events.find(ev => ev.type === "audit" && ev.title.includes("Approved"));
+      const hasBrokerRejection = events.find(ev => ev.type === "audit" && asRecord(ev.raw).kind === "order_rejected_by_broker");
       const hasRejection = events.find(ev => ev.type === "audit" && ev.title.includes("Rejected"));
       const hasBlock = events.find(ev => ev.type === "notification" && ev.title.includes("Blocked"));
       const hasPendingApproval = events.find(ev => ev.type === "notification" && ev.title.includes("Approval Pending"));
@@ -833,6 +848,8 @@ export function buildUnifiedFeed(input: {
         status = order!.state;
       } else if (isPendingBrokerState(order?.state)) {
         status = "pending_order";
+      } else if (hasBrokerRejection) {
+        status = "rejected";
       } else if (hasRejection) {
         status = "rejected";
       } else if (hasApproval) {
@@ -873,6 +890,8 @@ export function buildUnifiedFeed(input: {
         detail = `Pending Broker Order: ${fillEv.detail}`;
       } else if ((hasFill || hasOrder) && (status === "pending_order" || status === "partially_filled" || isTerminalBrokerState(status))) {
         detail = brokerOrderDetail(order, hasFill?.status);
+      } else if (status === "rejected" && hasBrokerRejection) {
+        detail = hasBrokerRejection.detail;
       } else if (status === "rejected") {
         detail = "Rejected manually";
       } else if (status === "approved") {

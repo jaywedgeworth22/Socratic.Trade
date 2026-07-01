@@ -9,7 +9,7 @@
 // Each keyed provider is only instantiated when its env key is set. Yahoo Finance is always
 // the final real tier — no API key required, uses session crumb auth.
 
-import { normalizeSymbol } from "./money";
+import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import {
   congressReadsEnabled,
   congressFundamentalsEnabled,
@@ -1141,13 +1141,33 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
-    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    const aliasesByCanonical = new Map<string, Set<string>>();
+    for (const rawSymbol of symbols) {
+      const requested = normalizeSymbol(rawSymbol);
+      const canonical = fromAlpacaSymbol(toAlpacaSymbol(requested));
+      if (!canonical) continue;
+      const aliases = aliasesByCanonical.get(canonical) ?? new Set<string>();
+      aliases.add(canonical);
+      if (requested) aliases.add(requested);
+      aliasesByCanonical.set(canonical, aliases);
+    }
+    const normalized = Array.from(aliasesByCanonical.keys()).slice(0, maxSymbols());
     if (normalized.length === 0) return {};
 
     const now = Date.now();
     const consented = hasDataPoolConsent(this.userId ?? "local");
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
+    const addRequestedAliases = () => {
+      for (const [canonical, aliases] of aliasesByCanonical) {
+        const data = result[canonical];
+        if (!data) continue;
+        for (const alias of aliases) {
+          if (!result[alias]) result[alias] = data;
+        }
+      }
+      return result;
+    };
     for (const symbol of normalized) {
       const cached = readEnrichmentCache("alpaca-news", symbol, this.userId, consented, now);
       if (cached) {
@@ -1166,11 +1186,12 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
       }
       misses.push(symbol);
     }
-    if (misses.length === 0) return result;
+    if (misses.length === 0) return addRequestedAliases();
 
     try {
-      // Single batched request: Alpaca tags every article with the symbols it mentions.
-      const url = `${this.base}?symbols=${encodeURIComponent(misses.join(","))}&limit=50&sort=desc`;
+      // Single batched request: Alpaca tags every article with the symbols it mentions. Alpaca
+      // requires dot notation for share classes (BRK.B, not our internal BRK-B) in the filter.
+      const url = `${this.base}?symbols=${encodeURIComponent(misses.map(toAlpacaSymbol).join(","))}&limit=50&sort=desc`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       let articles: Array<{ headline?: string; symbols?: string[] }> = [];
@@ -1201,7 +1222,9 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
         const headline = typeof article.headline === "string" ? article.headline.trim() : "";
         if (!headline) continue;
         for (const raw of article.symbols ?? []) {
-          const symbol = normalizeSymbol(raw);
+          // Alpaca tags articles with its own dot notation (BRK.B) — convert back to our
+          // hyphenated internal format before matching against `misses`.
+          const symbol = fromAlpacaSymbol(raw);
           if (!symbol || !misses.includes(symbol)) continue;
           const list = headlinesBySymbol.get(symbol) ?? [];
           if (list.length < 5 && !list.includes(headline)) list.push(headline);
@@ -1220,7 +1243,7 @@ export class AlpacaNewsEnrichmentProvider implements MarketEnrichmentProvider {
     } catch {
       for (const symbol of misses) result[symbol] = {};
     }
-    return result;
+    return addRequestedAliases();
   }
 }
 
@@ -1285,7 +1308,11 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
     for (let i = 0; i < misses.length; i += ALPACA_SNAPSHOT_CHUNK) {
       const chunk = misses.slice(i, i + ALPACA_SNAPSHOT_CHUNK);
       try {
-        const url = `${this.base}?symbols=${encodeURIComponent(chunk.join(","))}&feed=${alpacaDataFeed()}`;
+        // Alpaca requires dot notation for share classes (BRK.B, not our internal BRK-B) — a
+        // single unconverted hyphenated symbol in the batch gets the whole chunk rejected with
+        // HTTP 400 (confirmed in prod: this was silently failing ~97% of snapshot calls whenever
+        // the batch included a symbol like BRK-B from the S&P 500 scan universe).
+        const url = `${this.base}?symbols=${encodeURIComponent(chunk.map(toAlpacaSymbol).join(","))}&feed=${alpacaDataFeed()}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
         let snapshots: Record<string, AlpacaSnapshot>;
@@ -1306,7 +1333,7 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
         }
 
         for (const symbol of chunk) {
-          const snap = snapshots[symbol];
+          const snap = snapshots[toAlpacaSymbol(symbol)];
           const data = parseAlpacaSnapshot(snap);
           const hasData = Object.keys(data).length > 0;
           if (hasData) {

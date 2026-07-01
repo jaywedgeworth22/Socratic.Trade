@@ -300,3 +300,63 @@ describe("toMcpOrder — fractional/notional routing", () => {
     expect(order.quantity).toBe("0.5");
   });
 });
+
+describe("HttpMcpRobinhoodGateway.placeEquityOrder — order confirmation", () => {
+  const equityOrder = {
+    accountNumber: "RH-ACCOUNT",
+    symbol: "AAPL",
+    side: "buy" as const,
+    type: "market" as const,
+    quantity: 1,
+    timeInForce: "gfd" as const,
+    marketHours: "regular_hours" as const,
+    refId: "ref-1"
+  };
+
+  it("throws instead of fabricating an order id when the MCP response has none", async () => {
+    // Regression: String(undefined ?? undefined) silently became the literal string "undefined",
+    // which the caller would have recorded as a confirmed "placed" order that could never be
+    // matched against Robinhood's real order list during reconciliation.
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { structuredContent: { data: { state: "confirmed" }, guide: "ok" } }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    await expect(getRobinhoodGateway("user-a").placeEquityOrder(equityOrder)).rejects.toThrow(/no order id/i);
+  });
+
+  it("returns the order id and state when the MCP response is well-formed", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { structuredContent: { data: { id: "rh-order-1", state: "confirmed" }, guide: "ok" } }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const executed = await getRobinhoodGateway("user-a").placeEquityOrder(equityOrder);
+    expect(executed.orderId).toBe("rh-order-1");
+    expect(executed.state).toBe("confirmed");
+  });
+});

@@ -16,3 +16,14 @@ export function toBrokerSide(side: OrderSide): "buy" | "sell" {
 export function isShortIntent(side: OrderSide): boolean {
   return side === "short" || side === "cover";
 }
+
+// Broker order-state vocabularies aren't normalized to one canonical enum (Alpaca and Robinhood
+// each return their own raw state strings, with spelling variants like "canceled"/"cancelled").
+// This is the single broker-agnostic check for "the broker declined/terminated this order without
+// a fill" — used both immediately after placement (so a synchronous broker rejection isn't
+// mislabeled "placed") and by the later reconciliation sweep (so both spellings/brokers match).
+const TERMINAL_DECLINE_STATES = new Set(["rejected", "canceled", "cancelled", "failed", "expired"]);
+
+export function isRejectedOrCanceledState(state: string | undefined | null): boolean {
+  return TERMINAL_DECLINE_STATES.has(String(state ?? "").trim().toLowerCase());
+}

@@ -7,6 +7,7 @@
 
 import { resolveApiKey } from "../db";
 import { onBrokerFill } from "../fills";
+import { fromAlpacaSymbol } from "../money";
 
 const TRADE_WS_URL = process.env.ALPACA_TRADE_WS_URL || "wss://paper-api.alpaca.markets/stream";
 const MAX_BACKOFF_MS = 60_000;
@@ -94,7 +95,7 @@ function connect(key: string, secret?: string): void {
       if (ev !== "fill" && ev !== "partial_fill") return;
       const order = (data.order ?? {}) as Record<string, unknown>;
       const orderId = String(order.id ?? "");
-      const symbol = order.symbol ? String(order.symbol) : undefined;
+      const symbol = order.symbol ? fromAlpacaSymbol(String(order.symbol)) : undefined;
       const dedup = `${orderId}:${ev}:${String(data.timestamp ?? "")}`;
       if (state.seen.has(dedup)) return;
       state.seen.add(dedup);
