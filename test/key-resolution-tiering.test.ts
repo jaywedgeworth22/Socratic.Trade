@@ -548,9 +548,10 @@ describe("resolveAlpacaStreamAccount (background WebSocket stream workers)", () 
     expect(resolveAlpacaStreamAccount("brand-new-user")).toBeUndefined();
   });
 
-  it("ignores a non-Alpaca active account and falls back to the legacy key", async () => {
+  it("prefers a connected Alpaca account over legacy keys even when another broker is active", async () => {
     const { resolveAlpacaStreamAccount, upsertConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
-    upsertUserApiKey("local", "alpaca_paper_api_key", "legacy-key");
+    upsertUserApiKey("local", "alpaca_paper_api_key", "stale-legacy-key");
+    upsertUserApiKey("local", "alpaca_paper_secret_key", "stale-legacy-secret");
     upsertConnectedAccount({
       id: "local-robinhood",
       userId: "local",
@@ -560,7 +561,22 @@ describe("resolveAlpacaStreamAccount (background WebSocket stream workers)", () 
       label: "Robinhood Acc",
       isActive: true
     });
+    upsertConnectedAccount({
+      id: "local-alpaca-inactive",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "ALPACA-1",
+      label: "Alpaca Acc",
+      apiKey: "fresh-connected-key",
+      apiSecret: "fresh-connected-secret",
+      isActive: false
+    });
 
-    expect(resolveAlpacaStreamAccount("local")).toMatchObject({ apiKey: "legacy-key", environment: "paper" });
+    expect(resolveAlpacaStreamAccount("local")).toMatchObject({
+      apiKey: "fresh-connected-key",
+      apiSecret: "fresh-connected-secret",
+      environment: "live"
+    });
   });
 });

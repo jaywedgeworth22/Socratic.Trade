@@ -39,9 +39,11 @@ together), `npm run build` (clean). See
 `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
 
 This branch/PR now combines the prior PR #286 stream/fundamentals fixes with this
-read-only broker fan-out. Deploying it should stop the 2 auth-dependent Alpaca streams
-from using stale legacy credentials and keeps Robinhood fundamentals safe to enable only
-for verified numeric fields.
+read-only broker fan-out. Review follow-up fixed the stream resolver to rank any usable
+connected Alpaca account before legacy keys, even when Test/Robinhood is currently active.
+Deploying it should stop the 2 auth-dependent Alpaca streams from using stale legacy
+credentials and keeps Robinhood fundamentals safe to enable only for verified numeric
+fields.
 
 ## 2026-07-01 - Alpaca streams enabled + stale-credential fix; coordination note re: Codex new-broker work
 Branch `claude/affectionate-franklin-a52935`. At the owner's explicit request, enabled the

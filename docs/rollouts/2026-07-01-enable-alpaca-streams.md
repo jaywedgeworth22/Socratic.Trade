@@ -30,10 +30,10 @@ since Alpaca's trade_updates host is environment-specific.
 
 ## Files
 
-- `src/lib/db-api-keys.ts` — added `resolveAlpacaStreamAccount(userId)`: resolves the
-  active connected Alpaca account (same store `Settings -> Accounts` writes to) and
-  returns its `apiKey`/`apiSecret`/`environment`; falls back to the legacy standalone key
-  pair (reported as `environment: "paper"`) only when no connected Alpaca account exists.
+- `src/lib/db-api-keys.ts` — added `resolveAlpacaStreamAccount(userId)`: ranks connected
+  Alpaca accounts (same store `Settings -> Accounts` writes to) and returns the first
+  usable `apiKey`/`apiSecret`/`environment`; falls back to the legacy standalone key pair
+  (reported as `environment: "paper"`) only when no connected Alpaca account exists.
 - `src/lib/streams/alpaca-news-stream.ts` — uses `resolveAlpacaStreamAccount` instead of
   the legacy `resolveApiKey` calls.
 - `src/lib/streams/alpaca-trade-updates-stream.ts` — same credential-source fix, plus picks
@@ -41,10 +41,10 @@ since Alpaca's trade_updates host is environment-specific.
   (paper) based on the resolved account's environment instead of hardcoding paper;
   threaded the environment through the `connect`/`scheduleReconnect` reconnect chain.
 - `test/key-resolution-tiering.test.ts` — new `resolveAlpacaStreamAccount` describe block:
-  prefers the active connected account, reports the correct environment, falls back to the
+  prefers connected Alpaca accounts, reports the correct environment, falls back to the
   legacy pair when no connected account exists, explicitly regression-tests the stale-vs-
   fresh-credential scenario from production, returns `undefined` with neither source, and
-  ignores a non-Alpaca active account.
+  covers the case where another broker/Test account is currently active.
 
 ## Production changes (not in git — infra, not code)
 

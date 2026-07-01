@@ -417,8 +417,8 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
  * resolveAlpacaMarketData, which only serves read-only market-data REST calls where paper vs
  * live doesn't matter.
  *
- * Prefers the active connected Alpaca account (the modern, actively-maintained credential
- * store — same one Settings -> Accounts writes to) over the legacy standalone
+ * Prefers connected Alpaca accounts (the modern, actively-maintained credential store —
+ * same one Settings -> Accounts writes to) over the legacy standalone
  * `alpaca_paper_api_key`/`alpaca_paper_secret_key` user-API-key pair, which is not updated by
  * the connected-accounts UI and can silently go stale (confirmed in production: the legacy
  * pair was last touched 2026-06-22, while the account's real key was rotated 2026-06-29).
@@ -426,9 +426,9 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
 export function resolveAlpacaStreamAccount(
   userId: string = "local"
 ): { apiKey: string; apiSecret?: string; environment: "paper" | "live" } | undefined {
-  const active = getActiveConnectedAccount(userId);
-  if (active?.broker === "alpaca") {
-    const detailed = getConnectedAccount(active.id, userId);
+  const alpacaAccounts = rankConnectedAlpacaAccounts(listConnectedAccounts(userId).filter((account) => account.broker === "alpaca"));
+  for (const account of alpacaAccounts) {
+    const detailed = getConnectedAccount(account.id, userId);
     if (detailed?.apiKey) {
       return { apiKey: detailed.apiKey, apiSecret: detailed.apiSecret, environment: detailed.environment === "live" ? "live" : "paper" };
     }
