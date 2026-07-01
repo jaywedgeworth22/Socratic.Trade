@@ -673,6 +673,30 @@ function migrate(database: Database.Database): void {
       PRIMARY KEY (user_id, connected_account_id)
     );
 
+    -- Unified append-only ledger of EVERY autonomous learning mutation (panel P0-4). One canonical row per
+    -- gated mutation (factor-weight applies today; any future auto-tuning), carrying before/after snapshots,
+    -- the subsystem, the trigger/run id, the OOS/statistical evidence, and the flag in effect. Recording is
+    -- passive/always-on (it only writes an audit trail; it changes no trading behavior). The admin revert
+    -- route reads a row and restores before_state via setPolicy. Scoped by (user_id, connected_account_id,
+    -- subsystem) so a revert cannot cross accounts or subsystems.
+    CREATE TABLE IF NOT EXISTS learning_mutations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT NOT NULL DEFAULT '',
+      subsystem TEXT NOT NULL,
+      trigger TEXT,
+      run_id TEXT,
+      flag TEXT,
+      before_state TEXT NOT NULL,
+      after_state TEXT NOT NULL,
+      evidence TEXT,
+      reverted_at TEXT,
+      reverted_by TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_mutations_lookup
+      ON learning_mutations (user_id, connected_account_id, subsystem, created_at);
+
     CREATE TABLE IF NOT EXISTS market_data_demands (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -1248,6 +1272,7 @@ function normalizeScoringWeights(weights: Partial<import("./types").ScoringWeigh
 
 export * from "./db-settings";
 export * from "./db-learning";
+export * from "./db-learning-ledger";
 export * from "./db-profiles";
 export * from "./db-execution";
 export * from "./db-proposals";
