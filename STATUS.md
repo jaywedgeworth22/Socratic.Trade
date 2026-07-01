@@ -4,6 +4,36 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — RAG eval harness, rerank scoring, char-cap/doc_type/salience fixes — Workstream C (Claude)
+Branch `agent/claude-workstream-c-rag-v2`. Implements all 7 items from
+`docs/reviews/2026-07-01-audit-work-split.md` §"Chat C — RAG / Embedding / Knowledge Framework",
+plus a correction pass from a parallel 16-agent expert review
+(`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) that arrived mid-implementation.
+Read/retrieval-only — no order/execution-path code touched; every behavior change is
+default-off/opt-in. Highlights: a new recall@k/MRR eval harness
+(`test/rag-retrieval-eval.test.ts` + a 28-case golden fixture, no live network calls) that
+drives the real `retrieveContextDetailed` pipeline; the reranker now captures + surfaces its
+own `relevanceScore` (was previously discarded) with an opt-in post-rerank floor
+(`RetrieveOptions.minRelevanceScore`, fail-open on missing scores); the per-chunk char cap is
+now aligned with the token chunker (`storeDocument` computes an aligned cap; atomic table
+chunks are exempt from trimming entirely — truncating mid-row would corrupt numbers);
+`doc_type` is normalized to lowercase at write time (`cleanMetadata`), with the legacy
+upper/lower query-time shim kept intact; a new structured-output LLM salience extractor
+(`src/lib/memory/salience-llm.ts`, default off, falls back to regex on any failure) validates
+tickers against the real known-universe check (`isIndexMemberSymbol`) instead of the old
+`\b([A-Z]{1,5})\b` first-match regex, which also had its own first-match-only mis-binding bug
+fixed independently (`firstValidTicker`, injected validator + stopword denylist, kept pure/DB-free);
+hybrid BM25/RRF was evaluated (delta table in the rollout note) and **stays OFF by default** —
+reranking alone already reaches 1.0 recall@1/MRR on the eval fixture, hybrid's real value is
+narrowly the exact-token case. Also folded in two expert-review P0 items: an always-on
+embedding-integrity guard (rejects non-finite/empty embeddings before upsert/query, degraded to
+non-emptiness+finiteness-only after a strict-1024 check broke 16 pre-existing tests using short
+mock embeddings) and a safe additive `published_at` fallback in the as-of point-in-time guard's
+resolution chain. Verify quartet green in order: `npx tsc --noEmit` (clean) → `npm run lint`
+(0 errors, 265 warnings, pre-existing grandfathered class) → `npm test` (179 files / 1734
+tests) → `npm run build` (clean). See `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for the
+full item-by-item status (incl. explicit follow-ups not implemented: R1's strict-mode flag,
+R3/R4/R5/R6/R7/R9/R10/R11 and the R12-R17 P2 backlog) and the measured hybrid on/off delta table.
 ## 2026-07-01 — Workstream B: learning loop / auto-tuning (Claude)
 Branch `agent/claude-workstream-b-learning-v2`. Implemented all 8 items of "Chat B" from
 `docs/reviews/2026-07-01-audit-work-split.md` PLUS the 16-expert-panel mid-flight corrections

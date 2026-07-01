@@ -5,6 +5,21 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`agent/claude-workstream-c-rag-v2`): RAG/embedding Workstream C - closed the 3
+> highest-leverage gaps the 2026-06-30 audit found in the RAG pipeline (no retrieval-quality
+> eval, reranker discarding its own relevance score, char-cap/doc_type/salience hygiene
+> issues): a new recall@k/MRR eval harness (28-case golden fixture, no live network calls)
+> gates future retrieval-pipeline changes; rerank relevance scores are now captured +
+> surfaced with an opt-in post-rerank floor; char-cap alignment + write-time doc_type
+> lowercasing landed; the salience extractor's first-match-only ticker-binding bug was fixed
+> and a default-off structured-output LLM extractor with real ticker validation was added.
+> Hybrid BM25/RRF was evaluated (measured delta table) and stays off by default - reranking
+> alone already reaches the eval ceiling on the golden fixture. All behavior changes are
+> default-off/opt-in; no order/execution-path code touched. A parallel 16-agent expert
+> design review (`docs/reviews/2026-07-01-rag-knowledge-expansion.md`) landed corrections
+> mid-implementation, folded in per the rollout note. See
+> `docs/rollouts/2026-07-01-rag-eval-and-rerank.md` for full item-by-item status and explicit
+> follow-ups (R1 strict as-of mode, R3/R4/R5/R6/R7/R9/R10/R11, R12-R17 P2 backlog).
 > 2026-07-01 (`agent/claude-workstream-b-learning-v2`): **Workstream B — learning
 > loop / auto-tuning.** Wired the audit's "built-but-unwired" learning loops into the
 > money path behind default-off `policy.tuning.*` flags, with the 16-expert-panel

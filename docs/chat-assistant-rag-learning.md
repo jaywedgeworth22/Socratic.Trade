@@ -112,17 +112,29 @@ the onboarding minimum from **I13** (router-matched suggested-prompt chips; fix 
 8-K framing). *Approved by the user.*
 
 **NEXT** (grounding fidelity + helpful dialogue + corpus): ingest filing **bodies** via the built
-`storeDocument` path (**I5**); real citation provenance (**I4**); ticker-less `kb_search` + apply
-`doc_type`/`as_of` Pinecone metadata filters (stored, never queried); relevance-score floor + Voyage
-`rerank` + an explicit insufficient-evidence path; slot-filling + model-authored rationale (**I7**);
+`storeDocument` path (**I5** — full-body ingest paths verified end-to-end against fixtures 2026-07-01,
+`docs/rollouts/2026-07-01-rag-eval-and-rerank.md`; enabling them by default is still a pending
+paid-Voyage-key cost decision, see `docs/prod-config-voyage.md`); real citation provenance (**I4**);
+ticker-less `kb_search` + apply `doc_type`/`as_of` Pinecone metadata filters (stored, never queried);
+~~relevance-score floor + Voyage `rerank`~~ — **DONE 2026-07-01**: `rerankMatches` now captures each
+match's `relevanceScore` (was previously discarded) and `RetrieveOptions.minRelevanceScore` applies
+an opt-in post-rerank floor, fail-open when no score is available (see the rollout note); an explicit
+insufficient-evidence path is still open; slot-filling + model-authored rationale (**I7**);
 prompt-injection hardening (**I8**); capture chat feedback (**I12**, chat-behavior only).
 
-**LATER** (durability/provenance/polish): LLM salience extractor (**I9**); unify constraints↔policy
-(**I10**, with confirm); restore chat→trade provenance (**I11**); hybrid lexical (FTS5/BM25 + RRF) leg
-for exact tickers/CUSIPs/"Item 5.02"/dollar figures + a 20–40 query retrieval eval set
-(recall@k/MRR + faithfulness); corpus coverage/freshness UI ("8-K through 2026-06-18; no 10-K on
-file"); typed second gate on **BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent
-"what can I ask?" popover.
+**LATER** (durability/provenance/polish): ~~LLM salience extractor~~ (**I9** — **DONE 2026-07-01**:
+`src/lib/memory/salience-llm.ts`, default off via `LLM_SALIENCE_EXTRACTOR`, falls back to the regex
+extractor on any failure, validates tickers against `isIndexMemberSymbol`; the regex extractor's own
+first-match-only ticker-binding bug was also fixed independently, see the rollout note); unify
+constraints↔policy (**I10**, with confirm); restore chat→trade provenance (**I11**); hybrid lexical
+(FTS5/BM25 + RRF) leg for exact tickers/CUSIPs/"Item 5.02"/dollar figures — **evaluated 2026-07-01**,
+stays off by default (measured eval-delta table in the rollout note; reranking alone already reaches
+the eval ceiling on the golden fixture; hybrid's real value is narrowly the exact-token case) + a
+20–40 query retrieval eval set (recall@k/MRR + faithfulness) — **partially DONE 2026-07-01**: the
+recall@k/MRR half shipped as `test/rag-retrieval-eval.test.ts` (28-case golden fixture, no live
+network calls); the faithfulness half is still open (see R11 in the rollout note); corpus
+coverage/freshness UI ("8-K through 2026-06-18; no 10-K on file"); typed second gate on
+**BROKERAGE·LIVE** confirm only (keep paper/test one-click); persistent "what can I ask?" popover.
 
 ## 6. User-guidance design ("how to advise users to interact")
 

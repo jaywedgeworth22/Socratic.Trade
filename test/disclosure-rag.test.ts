@@ -112,6 +112,25 @@ describe("disclosureRagEnabled()", () => {
     const { disclosureRagEnabled } = await import("../src/lib/web-sources/disclosure-rag");
     expect(disclosureRagEnabled()).toBe(true);
   });
+
+  // C3 expert-review correction (2026-07-01): documented operator trap. Unlike VECTOR_ENABLE_RERANK
+  // / HYBRID_RETRIEVAL (which accept "1"/"true"/"on"/"yes"), disclosureRagEnabled() requires the
+  // EXACT string "on" — an operator who reasonably sets RAG_EMBED_DISCLOSURES=true gets a SILENT
+  // no-op, not an error. This test pins that behavior so a future "helpful" fix to accept true/1/yes
+  // is a deliberate, documented change (see docs/prod-config-voyage.md Trap 2), not an accident.
+  it("does NOT accept 'true'/'1'/'yes' — only the exact string 'on' (documented trap, unlike the other RAG flags)", async () => {
+    for (const value of ["true", "1", "yes", "TRUE", "ON"]) {
+      process.env.RAG_EMBED_DISCLOSURES = value;
+      vi.resetModules();
+      const { disclosureRagEnabled } = await import("../src/lib/web-sources/disclosure-rag");
+      if (value === "ON") {
+        // Case-insensitive on the "on" string itself is fine — only non-"on" spellings no-op.
+        expect(disclosureRagEnabled()).toBe(true);
+      } else {
+        expect(disclosureRagEnabled(), `RAG_EMBED_DISCLOSURES="${value}" unexpectedly enabled disclosures`).toBe(false);
+      }
+    }
+  });
 });
 
 describe("embedDisclosures() — flag OFF", () => {
