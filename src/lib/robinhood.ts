@@ -17,6 +17,7 @@ import type {
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { logApiHealth } from "./db-health";
+import { recordProviderCall } from "./usage-monitor-push";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
@@ -451,6 +452,7 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
   try {
     const result = await callRobinhoodMcpMethod(userId, "tools/call", { name, arguments: args });
     logApiHealth({ service: "robinhood-broker", ok: true, latencyMs: Date.now() - start, keySource: "user", userId });
+    recordProviderCall("robinhood", { service: "broker", ok: true });
     return unpackMcpToolResult(result);
   } catch (err) {
     logApiHealth({
@@ -461,6 +463,7 @@ export async function callRobinhoodMcpTool(userId: string, name: string, args: R
       keySource: "user",
       userId
     });
+    recordProviderCall("robinhood", { service: "broker", ok: false });
     throw err;
   }
 }
