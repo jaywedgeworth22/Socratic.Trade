@@ -2,10 +2,11 @@
 
 ## Summary
 
-`toMcpOrder` (`src/lib/robinhood.ts`) now coerces any **dollar-routed** (fractional /
-notional) equity order into a **regular-hours market** order and drops the limit/stop
-price modifiers. Whole-share limit orders (integer quantity + `limit_price`, no
-`dollar_amount`) are preserved unchanged, so marketable-limit entries still work.
+`toMcpOrder` (`src/lib/robinhood.ts`) now coerces **opening buy** dollar-routed /
+fractional equity orders into **regular-hours GFD market** orders and drops the
+limit/stop price modifiers. Whole-share limit orders and explicit limit exits are
+preserved unchanged, so marketable-limit entries and take-profit/trim semantics still
+work.
 
 ## Why
 
@@ -25,9 +26,9 @@ at the broker boundary, where it holds regardless of how upstream shaped the ord
 
 ## What changed
 
-- `src/lib/robinhood.ts` — `toMcpOrder`: compute `isDollarRouted = dollarAmount > 0 && not a
-  whole-share quantity`; when true → `type: "market"`, `limit_price`/`stop_price` omitted,
-  `market_hours: "regular_hours"`. Applies to buys and sells; short/cover still throw.
+- `src/lib/robinhood.ts` — `toMcpOrder`: compute opening fractional/notional buys; when true →
+  `type: "market"`, `limit_price`/`stop_price` omitted, `market_hours: "regular_hours"`,
+  and `time_in_force: "gfd"`. Explicit sell exits preserve limit semantics; short/cover still throw.
 - `test/robinhood-mcp.test.ts` — 4 regression tests: dollar-routed limit→market (buy, from
   extended hours), dollar-routed sell→market, whole-share limit preserved, whole-share market
   unchanged.
@@ -58,6 +59,14 @@ code fix and adds only its rollout note to avoid a duplicate STATUS insert confl
   fractional order is unsatisfiable as a limit on Robinhood regardless, so honoring
   `permittedOrderTypes` for that inherently-conflicting case belongs in upstream proposal
   normalization/policy (follow-up). The coercion serves the user's explicit small-dollar intent.
+
+## Round 3 (Codex re-review)
+
+- **Entry drift before fractional market routing:** `evaluateTradeProposal` now treats fractional
+  opening limits as drift-guarded because Robinhood will route them as market orders.
+- **Exit semantics preserved:** fractional/dollar sell limits are no longer coerced into immediate
+  market sells; they keep their limit semantics and must be blocked upstream if unsupported.
+- **Market TIF fixed:** fractional opening limit coercion now forces `time_in_force: "gfd"`.
 
 ## Verification
 

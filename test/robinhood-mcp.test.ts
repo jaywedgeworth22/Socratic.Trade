@@ -250,15 +250,17 @@ describe("toMcpOrder — fractional/notional routing", () => {
     expect(order.limit_price).toBeUndefined();
     expect(order.stop_price).toBeUndefined();
     expect(order.market_hours).toBe("regular_hours");
+    expect(order.time_in_force).toBe("gfd");
     expect(order.quantity).toBeUndefined();
   });
 
-  it("routes a dollar-routed SELL as a market order too", async () => {
+  it("preserves a dollar-routed SELL limit instead of liquidating immediately", async () => {
     const { toMcpOrder } = await import("../src/lib/robinhood");
-    const order = toMcpOrder({ ...base, side: "sell", type: "limit", dollarAmount: 5, limitPrice: 12.3 });
-    expect(order.type).toBe("market");
+    const order = toMcpOrder({ ...base, side: "sell", type: "limit", dollarAmount: 5, limitPrice: 12.3, timeInForce: "gtc" });
+    expect(order.type).toBe("limit");
     expect(order.dollar_amount).toBe("5.00");
-    expect(order.limit_price).toBeUndefined();
+    expect(order.limit_price).toBe("12.30");
+    expect(order.time_in_force).toBe("gtc");
   });
 
   it("preserves a whole-share limit order unchanged (marketable-limit entries still work)", async () => {
@@ -288,12 +290,13 @@ describe("toMcpOrder — fractional/notional routing", () => {
     expect(stopLimit.limit_price).toBe("149.50");
   });
 
-  it("coerces a fractional QUANTITY-only limit to market too (not just dollar-routed)", async () => {
+  it("coerces a fractional BUY quantity-only limit to GFD market too (not just dollar-routed)", async () => {
     const { toMcpOrder } = await import("../src/lib/robinhood");
-    const order = toMcpOrder({ ...base, side: "sell", type: "limit", quantity: 0.5, limitPrice: 180.4 });
+    const order = toMcpOrder({ ...base, side: "buy", type: "limit", quantity: 0.5, limitPrice: 180.4, timeInForce: "gtc" });
     expect(order.type).toBe("market");
     expect(order.limit_price).toBeUndefined();
     expect(order.market_hours).toBe("regular_hours");
+    expect(order.time_in_force).toBe("gfd");
     expect(order.quantity).toBe("0.5");
   });
 });

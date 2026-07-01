@@ -38,6 +38,14 @@ Verification: `npx tsc --noEmit` passes. Follow-up: confirm
 dispatched (requires landing on `main` first). See
 `docs/rollouts/2026-07-01-congress-trading-shared-drift-fixes.md`.
 
+## 2026-07-01 - PR #282 Robinhood fractional routing review fixes
+Branch `fix/robinhood-fractional-market`. Round-3 review tightened the Robinhood
+small-dollar routing fix: entry-drift policy now treats fractional opening
+limits as market-routed for Robinhood, fractional opening coercion forces GFD,
+and sell/exit limits preserve their requested limit semantics instead of being
+converted into immediate market sells. See
+`docs/rollouts/2026-06-30-robinhood-fractional-market-fix.md`.
+
 ## 2026-06-30 - Robinhood MCP public reconnect loopback opt-in
 Branch `codex/robinhood-public-oauth-20260630`. Diagnosed the public-domain
 Reconnect path without using browser secrets: production `/api/auth/robinhood/start`

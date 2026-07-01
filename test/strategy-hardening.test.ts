@@ -105,6 +105,10 @@ describe("entry-drift guard", () => {
     const d = evaluateTradeProposal(buy({ type: "limit", dollarAmount: undefined, quantity: 1, limitPrice: 100, referencePrice: 100 }), { ...base, policy: policy({ maxEntryDriftPct: 10 }), marketScan: scan({ TSLA: { price: 130 } }) });
     expect(d.reasons.some((r) => r.startsWith("entry_drift"))).toBe(false);
   });
+  it("does apply to fractional opening limits because Robinhood routes them as market orders", () => {
+    const d = evaluateTradeProposal(buy({ type: "limit", dollarAmount: undefined, quantity: 0.5, limitPrice: 100, referencePrice: 100 }), { ...base, policy: policy({ maxEntryDriftPct: 10 }), marketScan: scan({ TSLA: { price: 130 } }) });
+    expect(d.reasons.some((r) => r.startsWith("entry_drift"))).toBe(true);
+  });
   it("does not fire without a referencePrice anchor", () => {
     const d = evaluateTradeProposal(buy(), { ...base, policy: policy({ maxEntryDriftPct: 10 }), marketScan: scan({ TSLA: { price: 130 } }) });
     expect(d.reasons.some((r) => r.startsWith("entry_drift"))).toBe(false);

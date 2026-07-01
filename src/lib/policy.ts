@@ -89,19 +89,18 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   if ((proposal.dollarAmount || hasFractionalQuantity(proposal)) && proposal.marketHours !== "regular_hours") {
     reasons.push("Fractional or dollar-based orders must be regular-hours only.");
   }
-  // Entry-drift guard: reject a stale OPENING market/dollar order whose price has moved away from
-  // the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Limit orders are
-  // excluded — the broker's limit already caps the fill. Fires only when both an entry anchor and a
-  // fresh current price are known, so it can never false-reject on missing data. This closes the gap
-  // where an hours-old market order approved off the run cadence (or with no LLM revalidation) still
-  // executes at a materially worse price than the technical trigger that justified it.
+  // Entry-drift guard: reject a stale OPENING market/dollar/fractional order whose price has moved
+  // away from the proposed entry anchor (referencePrice) by more than maxEntryDriftPct. Whole-share
+  // limit orders are excluded because the broker's limit caps the fill. Fractional limits are included
+  // because Robinhood routes fractional entries as market orders; otherwise a stale fractional limit
+  // could pass policy and then execute uncapped after broker normalization.
   if (
     isOpening &&
     context.policy.maxEntryDriftPct != null &&
     context.policy.maxEntryDriftPct > 0 &&
     proposal.referencePrice != null &&
     proposal.referencePrice > 0 &&
-    (proposal.type === "market" || proposal.dollarAmount != null || proposal.limitPrice == null)
+    (proposal.type === "market" || proposal.dollarAmount != null || hasFractionalQuantity(proposal) || proposal.limitPrice == null)
   ) {
     const currentPrice = context.marketScan?.quotesBySymbol[symbol]?.price;
     if (currentPrice != null && currentPrice > 0) {
