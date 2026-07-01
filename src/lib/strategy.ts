@@ -74,7 +74,8 @@ import { checkBudgetAndAlert } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { checkLlmDailyBudget } from "./llm-budget";
-import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
+// (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
+// ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";

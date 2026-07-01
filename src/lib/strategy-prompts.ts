@@ -8,10 +8,14 @@ import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
  * strategy.ts / execution-mode / db.
  *
  * BUMP STRATEGY_PROMPT_VERSION whenever either prompt's wording changes — it is stamped onto every
- * persisted trade proposal (trade_proposals.prompt_version) so a proposal can be traced to the exact
- * prompt revision that produced it.
+ * persisted trade proposal (trade_proposals.prompt_version) AND onto traced generations' metadata
+ * (Langfuse `promptVersion`), so a proposal/trace ties back to the exact prompt revision.
+ * CANONICAL definition — ./strategy-prompt-version.ts re-exports it for consumers (red-team.ts)
+ * that need the constant without the prompt builders. (Two lanes briefly defined competing
+ * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
+ * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "strategy@1.0.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.0.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
