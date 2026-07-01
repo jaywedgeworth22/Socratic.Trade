@@ -5,6 +5,20 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`claude/affectionate-franklin-a52935`): broker capability fan-out -
+> 4 parallel Opus agents (Workflow tool, isolated worktrees) implemented
+> independent items from `docs/broker-capability-plan.md`'s cheap/high-value
+> list: broker-gateway health logging (`alpaca-broker`/`robinhood-broker`
+> services), Alpaca portfolio-history/calendar/clock/account-activities
+> (`alpaca-account-insights.ts`), a Robinhood-realized-P&L cross-check
+> (`robinhood-pnl-crosscheck.ts`), and 3 new read-only chat-assistant tools
+> (earnings calendar, option chain, instrument search) backed by Robinhood MCP
+> data. Merged all 4 branches with zero conflicts, merged current
+> `origin/main` through the mobile API/PWA work, addressed review fixes, and
+> re-verified as one change (172 files / 1671 tests). Robinhood options-trading support and
+> eToro/Public.com/IBKR integration deliberately excluded — real feature work
+> and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
+> change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
 > 2026-07-01 (`docs/improvement-audit-2026-06-30`): comprehensive audit
 > re-baseline - historical auth IDOR is no longer the active P0; near-term
 > priorities shift to money-path correctness (Bear red-team fail-closed,

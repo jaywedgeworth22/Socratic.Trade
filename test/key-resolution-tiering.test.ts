@@ -480,3 +480,103 @@ describe("Alpaca market-data credential (shared data, per-user trading)", () => 
     expect(resolveApiKeyWithSource("alpaca_paper_api_key", "u_tenant").source).toBe("none");
   });
 });
+
+describe("resolveAlpacaStreamAccount (background WebSocket stream workers)", () => {
+  it("prefers the active connected Alpaca account and reports its real environment", async () => {
+    const { resolveAlpacaStreamAccount, upsertConnectedAccount } = await import("../src/lib/db");
+
+    upsertConnectedAccount({
+      id: "local-alpaca-live",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "LIVE-1",
+      label: "Live Acc",
+      apiKey: "live-key",
+      apiSecret: "live-secret",
+      isActive: true
+    });
+
+    expect(resolveAlpacaStreamAccount("local")).toMatchObject({
+      apiKey: "live-key",
+      apiSecret: "live-secret",
+      environment: "live"
+    });
+  });
+
+  it("falls back to the legacy standalone key pair (as 'paper') when no connected Alpaca account exists", async () => {
+    const { resolveAlpacaStreamAccount, upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "alpaca_paper_api_key", "legacy-key");
+    upsertUserApiKey("local", "alpaca_paper_secret_key", "legacy-secret");
+
+    expect(resolveAlpacaStreamAccount("local")).toMatchObject({
+      apiKey: "legacy-key",
+      apiSecret: "legacy-secret",
+      environment: "paper"
+    });
+  });
+
+  it("does not use a stale legacy key when a connected account is active — regression for the production incident", async () => {
+    // Production incident: the legacy alpaca_paper_api_key/secret pair went stale (last
+    // touched 2026-06-22) after the user rotated keys via Settings -> Accounts on 2026-06-29,
+    // which only updates connected_accounts. The stream workers used to read the stale legacy
+    // pair exclusively and got HTTP 401 from Alpaca. The active connected account must win.
+    const { resolveAlpacaStreamAccount, upsertConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "alpaca_paper_api_key", "stale-legacy-key");
+    upsertUserApiKey("local", "alpaca_paper_secret_key", "stale-legacy-secret");
+    upsertConnectedAccount({
+      id: "local-alpaca-fresh",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "FRESH-1",
+      label: "Fresh Acc",
+      apiKey: "fresh-key",
+      apiSecret: "fresh-secret",
+      isActive: true
+    });
+
+    expect(resolveAlpacaStreamAccount("local")).toMatchObject({
+      apiKey: "fresh-key",
+      apiSecret: "fresh-secret",
+      environment: "live"
+    });
+  });
+
+  it("returns undefined when neither a connected Alpaca account nor a legacy key exists", async () => {
+    const { resolveAlpacaStreamAccount } = await import("../src/lib/db");
+    expect(resolveAlpacaStreamAccount("brand-new-user")).toBeUndefined();
+  });
+
+  it("prefers a connected Alpaca account over legacy keys even when another broker is active", async () => {
+    const { resolveAlpacaStreamAccount, upsertConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("local", "alpaca_paper_api_key", "stale-legacy-key");
+    upsertUserApiKey("local", "alpaca_paper_secret_key", "stale-legacy-secret");
+    upsertConnectedAccount({
+      id: "local-robinhood",
+      userId: "local",
+      broker: "robinhood",
+      environment: "live",
+      accountNumber: "RH-1",
+      label: "Robinhood Acc",
+      isActive: true
+    });
+    upsertConnectedAccount({
+      id: "local-alpaca-inactive",
+      userId: "local",
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "ALPACA-1",
+      label: "Alpaca Acc",
+      apiKey: "fresh-connected-key",
+      apiSecret: "fresh-connected-secret",
+      isActive: false
+    });
+
+    expect(resolveAlpacaStreamAccount("local")).toMatchObject({
+      apiKey: "fresh-connected-key",
+      apiSecret: "fresh-connected-secret",
+      environment: "live"
+    });
+  });
+});

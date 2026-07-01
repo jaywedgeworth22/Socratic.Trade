@@ -171,6 +171,53 @@ describe("robinhood mcp transport", () => {
     expect(methods).toEqual(["initialize", "tools/list"]);
   });
 
+  it("logs robinhood-broker health on a successful tool call", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    vi.stubGlobal("fetch", async () => {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "1",
+          result: { structuredContent: { data: { accounts: [] }, guide: "ok" } }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const { getDb } = await import("../src/lib/db");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    await callRobinhoodMcpTool("user-a", "get_accounts", {});
+
+    const rows = getDb()
+      .prepare("SELECT ok, key_source, user_id FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("robinhood-broker") as Array<{ ok: number; key_source: string | null; user_id: string | null }>;
+    expect(rows.some((row) => row.ok === 1 && row.key_source === "user" && row.user_id === "user-a")).toBe(true);
+  });
+
+  it("logs a robinhood-broker health failure when a tool call throws", async () => {
+    vi.stubGlobal("fetch", async () => {
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: "1", error: { code: -32000, message: "not authorized" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+
+    const { callRobinhoodMcpTool } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    const { getDb } = await import("../src/lib/db");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    await expect(callRobinhoodMcpTool("user-a", "get_accounts", {})).rejects.toThrow("not authorized");
+
+    const rows = getDb()
+      .prepare("SELECT ok, error_text FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("robinhood-broker") as Array<{ ok: number; error_text: string | null }>;
+    expect(rows.some((row) => row.ok === 0 && row.error_text === "not authorized")).toBe(true);
+  });
+
   it("surfaces JSON-RPC errors with the broker message", async () => {
     vi.stubGlobal("fetch", async () => {
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: "1", error: { code: -32000, message: "not authorized" } }), {
