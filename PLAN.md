@@ -83,6 +83,13 @@ filling the missing pieces.
 > structural changes — flags off ⇒ prod byte-identical. The physical settings/Strategy modal teardown is
 > staged to the shell (PR #9). Stopped before PR #7 (real-money execution gate) pending go-ahead.
 > tsc/lint/test(2020)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr2-6-batch.md`.
+> **PR #7 built (2026-07-01, own PR after #305): the ⛔ real-money gate — view/execution decouple.** Subagent
+> map found most of it already existed (autonomy-reset-on-boot, per-account scheduler fan-out, view-only
+> pointer incl. mobile, copy-preset preserves state, API auth ignores body). Remaining coupling closed in
+> `db-profiles.ts`: fail-closed fresh-seed (no auto-arm, view-pointer independent), ambient mirror made
+> config-only (`copyPolicyConfigToActiveAccount` preserves run-state), explicit
+> `assertConnectedAccountOwnedByUser` write guard. Not flag-gated; real-money — preview-QA before merge.
+> tsc/lint/test(2032)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr7-execution-gate.md`.
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +

@@ -171,6 +171,25 @@ All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quart
 1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
 `docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
 
+## 2026-07-01 — NAV_V2 PR #7 (⛔ gate): view/execution decouple + write-time validation (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (own PR, after #305 merges). The delivery plan's
+real-money **gate** — **not flag-gated**. **⚠️ real-money code changed without browser QA — preview-QA before
+merge.** **Key finding (subagent map):** most of PR #7 was ALREADY built + tested — autonomy-reset-on-restart
+(`scheduler.reconcileAutonomyOnBoot`), per-account scheduler fan-out (pointer has zero exec effect), view-only
+pointer incl. mobile, `applyProfileToAccount` preserves systemState, API auth ignores body identity. Remaining
+coupling closed here in `src/lib/db-profiles.ts`:
+1. **Seed decouple (fail-closed):** the 3 not-active→halted seed coercions were gated on the ephemeral active
+   pointer; replaced with an unconditional fail-closed floor — a fresh account never auto-arms, view-pointer
+   independent (established rows untouched).
+2. **Ambient mirror neutralized:** `mirrorPolicyToActiveAccount` → `copyPolicyConfigToActiveAccount` — library
+   edits propagate CONFIG but preserve the account's run-state (no side-effect arm/disarm).
+3. **Explicit write-time guard:** new `assertConnectedAccountOwnedByUser` used by `applyProfileToAccount`.
+Deviation (documented): mirror made config-only rather than fully removed (full verb-split + copy-on-bind UI
+land with the shell PR #9). Tests: decouple-no-coercion, copy-config-preserves-arming,
+write-time-accountid-validation, mobile-view-scope, pr7-merge-gate. **Verify:** tsc clean · lint 0 · 208 files
+/ 2032 tests · build ok; pre-existing safety tests stay green. See
+`docs/rollouts/2026-07-01-nav-v2-pr7-execution-gate.md`.
+
 ## 2026-07-01 — NAV_V2 PRs #2–#6: mapping, settings search, glossary, /how-it-works, TuningCard (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (restarted from `origin/main` after PR #1/#303
 merged), **PR #305**. Stacked the flag-gated middle of the delivery plan; **everything behind `NAV_V2`
