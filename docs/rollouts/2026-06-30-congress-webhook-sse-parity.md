@@ -131,3 +131,20 @@ payload and verifies the admin-facing `getServiceHealthSummaries()` row has
 
 - `npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts` — 26 tests pass.
 - `npx tsc --noEmit` — clean.
+
+## 2026-07-01 — bare transaction event/type precedence fix
+
+Review caught one remaining App A wire-shape edge: a bare transaction may carry
+`event: "trade.new"` as the envelope event name while retaining transaction-side
+`type: "purchase"` / `"sale"` as a side alias. Event resolution now treats
+`raw.type` as the event only when it is a known event name; otherwise
+`raw.event` can supply the event name and `raw.type` remains available to
+`coerceCongressTrade`.
+
+Regression: `test/congress-webhook-parity.test.ts` now covers
+`{ event: "trade.new", type: "purchase", ticker, txDate }`.
+
+### Verification (this round)
+
+- `npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts` — 27 tests pass.
+- `npx tsc --noEmit` — clean.

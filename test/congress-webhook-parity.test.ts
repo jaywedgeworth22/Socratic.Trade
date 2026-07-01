@@ -77,6 +77,20 @@ describe("applyCongressEvent — App A wire-shape parity", () => {
     expect(hasSymbol("PARITYE")).toBe(true);
   });
 
+  it("uses the legacy event name when a bare transaction keeps `type` as the trade side", () => {
+    const res = apply({
+      event: "trade.new",
+      type: "purchase",
+      ticker: "PARITYF",
+      txDate: recent(5),
+      memberName: "Jane Doe",
+      chamber: "house",
+    });
+    expect(res).toMatchObject({ ok: true, type: "congress.trade" });
+    expect(res.applied).toBeGreaterThanOrEqual(1);
+    expect(hasSymbol("PARITYF")).toBe(true);
+  });
+
   it("rejects a payload with no resolvable type", () => {
     expect(apply({ foo: "bar" })).toMatchObject({ ok: false, applied: 0, reason: "invalid-event" });
   });

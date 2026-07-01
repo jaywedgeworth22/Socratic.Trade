@@ -74,12 +74,10 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
     //  - the legacy `event` field (App A's webhook posts { event: 'trade.new', transaction }
     //    and its pre-fix SSE emitted `event: trade.new`), and
     //  - `trade.new` is treated as an alias of the canonical `congress.trade`.
-    const rawType =
-      typeof raw.type === "string" && raw.type
-        ? raw.type
-        : typeof raw.event === "string" && raw.event
-          ? raw.event
-          : "";
+    const rawTypeValue = typeof raw.type === "string" ? raw.type : "";
+    const rawEventValue = typeof raw.event === "string" ? raw.event : "";
+    const rawTypeIsEvent = isCongressEventType(rawTypeValue);
+    const rawType = rawTypeIsEvent ? rawTypeValue : rawEventValue || rawTypeValue;
     if (!rawType) return { ok: false, applied: 0, reason: "invalid-event" };
     const type = rawType === "trade.new" ? "congress.trade" : rawType;
 
@@ -107,13 +105,13 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
       const single = raw.transaction ?? data?.transaction;
       if (single) candidates.push(single);
       if (candidates.length === 0) {
-        // Last resort: the envelope itself is one bare transaction (legacy bare-tx SSE). Strip the
-        // envelope-level fields first — applySseMessage copies the SSE event name into `raw.type`, and
-        // `coerceCongressTrade` reads `type` BEFORE `txType` for the side, so leaving `type` in place
-        // would shadow a valid `txType: "P"/"S"` row and reject it as no-trades. `event`/`id`/`data`
-        // are likewise envelope fields, never transaction-side data.
+        // Last resort: the envelope itself is one bare transaction (legacy bare-tx SSE). Strip only
+        // envelope-level event fields — applySseMessage can copy the SSE event name into `raw.type`,
+        // and `coerceCongressTrade` reads `type` BEFORE `txType` for the side. But when `raw.type`
+        // is not an event name (for example "purchase") and `raw.event` carries "trade.new", keep
+        // `type` because it is transaction-side data.
         const bareTx: Record<string, unknown> = { ...raw };
-        delete bareTx.type;
+        if (rawTypeIsEvent) delete bareTx.type;
         delete bareTx.event;
         delete bareTx.id;
         delete bareTx.data;
@@ -158,4 +156,13 @@ export function applyCongressEvent(event: CongressEvent | null | undefined): App
 export function applyCongressEvents(events: unknown): ApplyResult[] {
   if (!Array.isArray(events)) return [];
   return events.map((e) => applyCongressEvent(e as CongressEvent));
+}
+
+function isCongressEventType(value: string): boolean {
+  return value === "congress.trade" ||
+    value === "trade.new" ||
+    value === "insider.update" ||
+    value === "ref.upsert" ||
+    value === "price.eod" ||
+    value === "spx.eod";
 }

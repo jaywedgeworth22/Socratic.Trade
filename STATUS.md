@@ -29,6 +29,15 @@ record ok:false when any item is rejected. Regression drives the real route
 handler and checks the admin health summary. Verification:
 `npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
 (26 tests pass) and `npx tsc --noEmit`.
+
+## 2026-07-01 - PR #283 bare transaction event-name precedence
+Branch `agent/claude-congress-webhook-parity`. Review follow-up fixed bare App A
+transactions that carry `event: "trade.new"` plus a transaction-side `type`
+alias such as `"purchase"`: event resolution now treats `type` as the event
+only when it is a known event name, otherwise `event` supplies the event and
+`type` remains available to `coerceCongressTrade` as the side alias. Verification:
+`npx vitest run test/congress-trade-events.test.ts test/congress-webhook-parity.test.ts`
+(27 tests pass) and `npx tsc --noEmit`.
 ## 2026-07-01 - CI hosted-runner migration + concurrency guards
 Branch `ci/hosted-runner-and-concurrency`. The single self-hosted
 `trading-live-mac` runner was serializing all CI (verify/gitleaks/smoke)
