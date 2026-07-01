@@ -171,6 +171,16 @@ filling the missing pieces.
 > eToro/Public.com/IBKR integration deliberately excluded — real feature work
 > and Codex-coordination-sensitive, respectively, not "cheap." No roadmap
 > change; see `docs/rollouts/2026-07-01-broker-capability-fanout.md`.
+> 2026-07-01 (`claude/elastic-rosalind-a2a48a`): Workstream C1 — Congress.Trade
+> integration repair (App B side). Adopted App A's subscription-model SSE
+> (`/api/stream?subscription=` — the old consumer never connected), made the
+> inbound import receiver explicitly acknowledge non-persisted datasets (the
+> "drops 4 of 7" is correct-by-design, not a bug), exact-pinned the shared pkg to
+> 1.0.0 with a real peer-divergence CI check, applied the shared `resolveTickerAlias`
+> on outbound rows, and made outbound payload validation drop-invalid-rows. App A
+> exact-pin + local-alias-retirement ship in a separate Congress.Trade PR. No
+> shared-pkg source/publish change needed. See
+> `docs/rollouts/2026-07-01-congress-integration-repair.md`.
 > 2026-07-01 (`docs/improvement-audit-2026-06-30`): comprehensive audit
 > re-baseline - historical auth IDOR is no longer the active P0; near-term
 > priorities shift to money-path correctness (Bear red-team fail-closed,
