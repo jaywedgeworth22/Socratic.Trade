@@ -691,8 +691,11 @@ class TestBrokerGateway implements BrokerGateway {
               volume: yf.volume > 0 ? yf.volume : undefined,
               asOf: yf.asOf || new Date().toISOString(),
               provider: "yahoo-finance",
-              // Carry the synthetic-spread flag so a price-derived Yahoo batch spread isn't relabeled as
-              // a real quoted spread when merged (mergeQuoteData / hasRealAsk).
+              // Carry the synthetic-spread flags so a price-derived Yahoo batch spread isn't relabeled
+              // as a real quoted spread when merged (mergeQuoteData / hasRealAsk). Side-specific flags
+              // preserve the REAL side of a one-sided quote; syntheticSpread stays = both, for back-compat.
+              ...(yf.syntheticBid ? { syntheticBid: true } : {}),
+              ...(yf.syntheticAsk ? { syntheticAsk: true } : {}),
               ...(yf.syntheticSpread ? { syntheticSpread: true } : {})
             };
           } else {
@@ -994,11 +997,13 @@ export function extractUnderlyingPrice(raw: unknown, sym: string): number | unde
   const root = raw as Record<string, unknown> | undefined;
   const rows: unknown[] = Array.isArray(root?.results)
     ? (root!.results as unknown[])
-    : Array.isArray(raw)
-      ? (raw as unknown[])
-      : root && typeof root === "object"
-        ? [root]
-        : [];
+    : Array.isArray(root?.quotes)
+      ? (root!.quotes as unknown[])
+      : Array.isArray(raw)
+        ? (raw as unknown[])
+        : root && typeof root === "object"
+          ? [root]
+          : [];
   for (const r of rows) {
     if (!r || typeof r !== "object") continue;
     const outer = r as Record<string, unknown>;

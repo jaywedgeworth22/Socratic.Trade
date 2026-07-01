@@ -2589,12 +2589,17 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
+  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
+  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
+  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
     px: quote.price,
-    bid: quote.bid,
-    ask: quote.ask,
+    bid: realBid,
+    ask: realAsk,
     vol: quote.volume,
     mktCap: quote.marketCap,
     chgPct: quote.intradayChangePct,

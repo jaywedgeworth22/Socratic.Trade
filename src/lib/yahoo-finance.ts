@@ -8,8 +8,15 @@ export interface YahooFinanceQuote {
   asOf?: string;
   /** true when bid/ask were SYNTHESIZED from price (the chart endpoint has no real quote spread) rather
    *  than reported by Yahoo. Consumers must not treat a synthetic ask as a real quoted ask (e.g. for
-   *  ask-relative limit pricing) — it is only a rough placeholder derived from the last price. */
+   *  ask-relative limit pricing) — it is only a rough placeholder derived from the last price.
+   *  `syntheticSpread` stays true only when BOTH sides were derived (for back-compat); the side-specific
+   *  flags below tell you exactly which side is synthetic, so the REAL side of a one-sided quote is
+   *  preserved rather than being blanket-tagged synthetic. */
   syntheticSpread?: boolean;
+  /** true when the BID was derived from price (Yahoo reported no real bid). */
+  syntheticBid?: boolean;
+  /** true when the ASK was derived from price (Yahoo reported no real ask). */
+  syntheticAsk?: boolean;
 }
 
 export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
@@ -42,6 +49,9 @@ export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinan
       prevClose,
       volume,
       asOf,
+      // Fully synthetic single-quote fallback: both sides derived from price.
+      syntheticBid: true,
+      syntheticAsk: true,
       syntheticSpread: true
     };
   } catch {
@@ -89,9 +99,13 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
         const price = Number(item.regularMarketPrice);
         if (!Number.isFinite(price) || price <= 0) continue;
         const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
-        const hasRealSpread = Boolean(item.bid && item.bid > 0 && item.ask && item.ask > 0);
-        const bid = item.bid && item.bid > 0 ? Number(item.bid) : price * 0.999;
-        const ask = item.ask && item.ask > 0 ? Number(item.ask) : price * 1.001;
+        // Track each side independently so a one-sided quote keeps its REAL side (a real bid must not
+        // be blanket-tagged synthetic just because the ask had to be derived, and vice versa).
+        const syntheticBid = !(item.bid && item.bid > 0);
+        const syntheticAsk = !(item.ask && item.ask > 0);
+        const hasRealSpread = !syntheticBid && !syntheticAsk;
+        const bid = syntheticBid ? price * 0.999 : Number(item.bid);
+        const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
         const volume = Number(item.regularMarketVolume ?? 0);
         const t = Number(item.regularMarketTime);
         const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
@@ -103,7 +117,9 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
           prevClose,
           volume,
           asOf,
-          // Only mark synthetic when we had to derive BOTH sides from price.
+          // Side-specific synthetic flags; syntheticSpread stays true only when BOTH sides were derived.
+          ...(syntheticBid ? { syntheticBid: true } : {}),
+          ...(syntheticAsk ? { syntheticAsk: true } : {}),
           ...(hasRealSpread ? {} : { syntheticSpread: true })
         });
       }

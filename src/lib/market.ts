@@ -473,7 +473,7 @@ export function scoreFactors(quote: MarketQuote, weights: ScoringWeights = DEFAU
 
 export function mergeQuoteData(
   scan: MarketScan,
-  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string; syntheticSpread?: boolean }>
+  quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }>
 ): MarketScan {
   // When a merge accepts a real broker bid/ask/volume, refresh THAT side's provenance too. Otherwise a
   // "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote) would stick even
@@ -481,20 +481,23 @@ export function mergeQuoteData(
   // marketable-limit calc (which would then wrongly fall back to refPrice).
   const refreshSideProvenance = (
     base: EnrichmentSources | undefined,
-    extra: { bid?: number; ask?: number; volume?: number; provider?: string; syntheticSpread?: boolean }
+    extra: { bid?: number; ask?: number; volume?: number; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }
   ): EnrichmentSources | undefined => {
     if (!extra.provider) return base;
     const usedBid = positiveNumber(extra.bid) !== undefined;
     const usedAsk = positiveNumber(extra.ask) !== undefined;
     const usedVol = !!(extra.volume && extra.volume > 0);
     if (!usedBid && !usedAsk && !usedVol) return base;
-    // A synthesized (price-derived) spread — e.g. a Test-mode Yahoo batch quote with no real bid/ask —
-    // must KEEP synthetic provenance, not be relabeled as a real quoted spread. Volume is a real datum
-    // even when the spread is synthetic, so it always takes the actual provider.
-    const spreadProvider = extra.syntheticSpread ? "yahoo-finance-synthetic" : extra.provider;
+    // A synthesized (price-derived) side — e.g. a Test-mode Yahoo batch quote with no real bid/ask —
+    // must KEEP synthetic provenance, not be relabeled as a real quoted spread. Tag EACH side by its
+    // own synthetic flag so a one-sided quote's real side stays labeled with the actual provider
+    // (falling back to the coarse syntheticSpread flag when the side-specific flags aren't set). Volume
+    // is a real datum even when the spread is synthetic, so it always takes the actual provider.
+    const bidSynthetic = extra.syntheticBid ?? extra.syntheticSpread ?? false;
+    const askSynthetic = extra.syntheticAsk ?? extra.syntheticSpread ?? false;
     const next: EnrichmentSources = { ...(base ?? {}) };
-    if (usedBid) next.bid = spreadProvider;
-    if (usedAsk) next.ask = spreadProvider;
+    if (usedBid) next.bid = bidSynthetic ? "yahoo-finance-synthetic" : extra.provider;
+    if (usedAsk) next.ask = askSynthetic ? "yahoo-finance-synthetic" : extra.provider;
     if (usedVol) next.volume = extra.provider;
     return next;
   };
@@ -541,7 +544,10 @@ export function mergeQuoteData(
       ask: positiveNumber(quote.ask),
       score: 0,
       provider: quote.provider,
-      asOf: quote.asOf
+      asOf: quote.asOf,
+      // Seed per-side provenance for a NEWLY-added quote too — otherwise a synthetic bid/ask on an
+      // added row carries no sources and reads as a real quoted spread downstream (hasRealAsk etc.).
+      sources: refreshSideProvenance(undefined, quote)
     };
   }
   return {

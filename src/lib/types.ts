@@ -501,8 +501,13 @@ export interface BrokerQuote {
   provider?: string;
   /** True when bid/ask were synthesized from price (no real quoted spread) — e.g. a Yahoo batch quote
    *  used by the Test-mode gateway. Consumers (mergeQuoteData provenance, hasRealAsk) must not treat a
-   *  synthetic spread as a real quoted one. */
+   *  synthetic spread as a real quoted one. `syntheticSpread` stays true only when BOTH sides were
+   *  derived; the side-specific flags preserve the real side of a one-sided quote. */
   syntheticSpread?: boolean;
+  /** True when only the BID was derived from price (the ask may be real). */
+  syntheticBid?: boolean;
+  /** True when only the ASK was derived from price (the bid may be real). */
+  syntheticAsk?: boolean;
 }
 
 /**

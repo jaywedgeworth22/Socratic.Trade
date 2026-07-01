@@ -2077,9 +2077,10 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
               ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
               : Promise.resolve(undefined),
             // Second short-interest source: FMP's short-interest endpoint. Carried alongside Yahoo's
-            // read so the cascade can flag a material disagreement (403 on non-premium keys is expected
-            // and suppressed like the insider/senate optional calls).
-            this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false)
+            // read so the cascade can flag a material disagreement. Both 403 (non-premium key) and 404
+            // (no short-interest row for this symbol) are EXPECTED for this optional call and must not
+            // log an fmp health failure — suppress both, like the insider/senate optional calls.
+            this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false, [403, 404])
           ]);
 
           let peRatio: number | undefined;
@@ -2223,7 +2224,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
     return result;
   }
 
-  private async getJson(url: string, logHealth = true): Promise<unknown> {
+  private async getJson(url: string, logHealth = true, suppressStatuses?: number[]): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -2234,7 +2235,8 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           service: this.name,
           keySource: this.keySource,
           userId: this.userId,
-          suppressHealthStatuses: logHealth ? undefined : [403]
+          // An explicit suppress list wins; otherwise fall back to the old logHealth behavior (403 only).
+          suppressHealthStatuses: suppressStatuses ?? (logHealth ? undefined : [403])
         }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
