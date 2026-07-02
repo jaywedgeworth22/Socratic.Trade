@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-orders`, Claude): **Console Wave 2 — Orders destination**
+> — `/console/orders` implemented (one of the parallel Wave-2 lanes on the #321
+> foundation): open working orders for the active account with stale-limit detection
+> mirroring the server's `listStaleLimitOrders` rule, a replace-at-market flow against
+> `POST /api/orders/replace-market` (LIVE typed-confirmation ritual preserved), a NEW
+> cancel flow over the pre-existing `POST /api/orders/cancel` (legacy had no cancel UI),
+> and a finished-orders history table. New files confined to `app/console/orders/**`.
+> Deferred: surfacing `limitPrice`/`timeInForce` on `EquityOrder` (src/lib owner) so the
+> limit-vs-market gap can be shown. See `docs/rollouts/2026-07-02-console-orders.md`.
 > 2026-07-02 (`claude/console-port-foundation`, Claude): **Console parity-port
 > foundation (Wave 1)** — the legacy-dashboard feature parity port into `/console` is
 > now an explicit multi-agent track: Wave 1 (this branch) ships the shared primitives
