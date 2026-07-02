@@ -103,13 +103,32 @@ Known cascade nuance: Tailwind 4 layers utilities while `console.css` is
 unlayered, so `con-select`/`con-textarea` box rules beat width/resize utilities —
 handled with fixed-width wrappers and inline styles, not `!important`.
 
+## Post-merge update (same day)
+
+`origin/main` advanced mid-task with PR #321 (console-port foundation:
+`app/console/lib/models.ts`, `ui/provider-logo.tsx`, `ui/ticker-logo.tsx`,
+`ui/symbol-drilldown.tsx`, nav gains the Assistant entry). Merged main into
+this branch (clean — STATUS/PLAN kept both sides) and adopted the foundation
+where it genuinely helps, without a broad refactor:
+
+- `models.tsx` now delegates provider routing/labels to
+  `app/console/lib/models` (`providerForModel` + `providerLabel`), keeping only
+  the assistant-specific pieces: the grouped `<select>` catalog (tiers,
+  Mock/custom options — the shared module deliberately carries attribution
+  only, not a picker catalog) and the "mock" keyless special case.
+- Assistant replies attribute their model with the shared `ModelBadge`
+  (vendor logo + display name); the offline `mock` model keeps a plain-text
+  label so no vendor logo is faked.
+
+Full verify gate re-run after the merge (results below are post-merge).
+
 ## Follow-ups
 
-- `models.tsx` duplicates the curated catalog (console imports nothing from
-  `app/ui/*`, and `app/console/lib/models` is being created in a parallel PR) —
-  fold into that shared module once it lands.
-- Provider logos / ticker logos / symbol drilldown intentionally omitted pending
-  the foundation primitives from the parallel PR.
+- The grouped select catalog in `models.tsx` still mirrors
+  `app/ui/llm-model-catalog.ts` — if the console ever grows a shared picker
+  catalog, fold it there.
+- Ticker logos / symbol drilldown not used here (no symbol rows in chat);
+  revisit if the assistant ever renders position/quote tables natively.
 - `/api/chat` is non-streaming; if the endpoint grows streaming support the
   composer/transcript here can adopt it without layout changes.
 - Draft tickets vanish on reload because the transcript doesn't persist drafts

@@ -24,6 +24,7 @@ import { humanizeLlmError } from "@/lib/llm-errors";
 import { deriveReality } from "../lib/derive";
 import { cx, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
+import { ModelBadge } from "../ui/provider-logo";
 import { Chip, Select, TextInput } from "../ui/primitives";
 import { useToast } from "../ui/toast";
 import { DraftTicket } from "./draft-card";
@@ -423,8 +424,13 @@ export function AssistantChat() {
                 {m.draft && reality && <DraftTicket draft={m.draft} reality={reality} />}
               </div>
               {m.role === "assistant" && m.model && (
-                <div className="mt-0.5 px-1 text-[10px] text-[color:var(--con-faint)]" title="The model that produced this answer.">
-                  {m.model}
+                <div className="mt-0.5 px-1 text-[10px] text-[color:var(--con-faint)]">
+                  {m.model.trim().toLowerCase() === "mock" ? (
+                    // No vendor logo for the offline mock — that would fake a provider.
+                    <span title="The deterministic offline model produced this answer — no LLM provider was called.">mock</span>
+                  ) : (
+                    <ModelBadge modelId={m.model} size="sm" className="font-normal" title="The model that produced this answer." />
+                  )}
                 </div>
               )}
               {m.failed && (

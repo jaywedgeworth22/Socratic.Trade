@@ -20,10 +20,13 @@ bumps the badge; dedupe honored). Owner UX standard baked in: `title=` tooltips 
 control (no Tooltip primitive exists — native title is the floor) and `--con-*` hover
 highlights on row-like elements. Markdown replies via react-markdown/remark-gfm styled with
 con tokens. Quartet green: tsc clean, lint 0 errors, 2241 tests, build ok (`/console/assistant`
-static); smoke-tested chat/providers/history/from-draft against `next start`. Docs:
+static); smoke-tested chat/providers/history/from-draft against `next start`. Post-merge of
+#321 (console-port foundation): provider routing/labels now delegate to
+`app/console/lib/models`, and assistant replies wear the shared `ModelBadge` (plain text for
+the offline mock — no faked vendor logo); the nav's Assistant entry comes from #321. Docs:
 `docs/rollouts/2026-07-02-console-assistant.md`. **Next:** open PR (auto-merge on green
-verify); fold `app/console/assistant/models.tsx` into the shared `app/console/lib/models`
-once the foundation PR lands (nav entry for /console/assistant also arrives there).
+verify); if the console grows a shared picker catalog, fold the grouped select options there.
+
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:

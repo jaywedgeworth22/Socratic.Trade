@@ -3,10 +3,13 @@
  *  Model ids MUST match what POST /api/chat routes on (see chatProviderForModel
  *  in src/lib/chat/llm.ts: claude-* -> anthropic, grok-* -> xai, gemini-* ->
  *  gemini, mistral-family -> mistral, deepseek-* -> deepseek, else openai).
- *  This mirrors the curated list in app/ui/llm-model-catalog.ts; it is kept
- *  local because the console deliberately imports nothing from app/ui/*.
- *  Follow-up: fold into app/console/lib/models once that shared module lands.
- */
+ *  The grouped options mirror the curated list in app/ui/llm-model-catalog.ts;
+ *  they are kept local because the console imports nothing from app/ui/* and
+ *  the shared app/console/lib/models module deliberately carries only
+ *  attribution (provider routing + display names), not a picker catalog.
+ *  Provider routing/labels below delegate to that shared module. */
+
+import { providerForModel as consoleProviderForModel, providerLabel, type ConsoleProviderId } from "../lib/models";
 
 export interface ModelOption {
   value: string;
@@ -96,35 +99,14 @@ export const MODEL_GROUPS: ModelGroup[] = [
 
 export const CATALOG_MODEL_IDS = new Set(MODEL_GROUPS.flatMap((g) => g.options.map((o) => o.value)));
 
-/** Client-side mirror of the server's chatProviderForModel, so the UI can warn
- *  about a missing key for THE provider this exact request would hit ("mock"
- *  is the explicit keyless path). */
-export function providerForModel(model: string): "mock" | "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" {
-  const m = model.trim().toLowerCase();
-  if (m === "mock") return "mock";
-  if (/^claude/.test(m)) return "anthropic";
-  if (/^grok/.test(m)) return "xai";
-  if (/^gemini/.test(m)) return "gemini";
-  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/.test(m)) return "mistral";
-  if (/^deepseek/.test(m)) return "deepseek";
-  return "openai";
+/** Provider a chat request with this model would hit. Delegates to the shared
+ *  console attribution module, adding the assistant's one extra case: "mock" is
+ *  the explicit keyless offline path (never gated on a provider key). */
+export function providerForModel(model: string): "mock" | ConsoleProviderId {
+  if (model.trim().toLowerCase() === "mock") return "mock";
+  return consoleProviderForModel(model);
 }
 
-export function providerDisplayName(provider: string): string {
-  switch (provider) {
-    case "openai":
-      return "OpenAI";
-    case "anthropic":
-      return "Anthropic";
-    case "xai":
-      return "xAI (Grok)";
-    case "gemini":
-      return "Google Gemini";
-    case "mistral":
-      return "Mistral";
-    case "deepseek":
-      return "DeepSeek";
-    default:
-      return provider;
-  }
+export function providerDisplayName(provider: "mock" | ConsoleProviderId): string {
+  return provider === "mock" ? "Mock (offline)" : providerLabel(provider);
 }
