@@ -30,6 +30,7 @@ clean, 2280 tests pass (235 files), build ok. Docs:
 handling modes (block/ask/auto) + Decide-mode escalation" with auto-merge on green verify;
 polish: dedicated wash-sale cost callout on the approvals card + humanized Activity copy for the
 new audit events.
+
 ## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
 Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
 `/console/orders` page (nav linked it since Wave 1): open working orders for the
