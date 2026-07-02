@@ -4,6 +4,27 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console: Assistant chat destination (Claude)
+Branch `claude/console-assistant` (cut from `origin/main` @ 78ecc98; parallel console-port
+lane — new files only under `app/console/assistant/`, per the collision contract no edits to
+console.css/nav/api.ts/approvals/settings or src/lib). Ported the legacy AI Assistant into the
+console at `/console/assistant`: transcript from `GET /api/chat-history` (server persists both
+turns), composer (Enter sends, Shift+Enter newline, auto-grow), suggestion chips, native grouped
+model `<select>` with per-provider "no key" disabling from `/api/chat/providers` + custom model
+id + sticky localStorage choice, per-provider missing-key gate (mirrors the server 412, names
+the provider the SELECTED model routes to), Clear-conversation (DELETE /api/chat-history),
+Retry-on-failed-send (no fabricated apology turns). Trade drafts render as order tickets that
+AUTO-run the policy dry-run preview (`/api/proposals/from-draft dryRun`) then "Stage for
+approval" hands off to Approvals (409 POLICY_BLOCKED reasons shown plainly; snapshot refresh
+bumps the badge; dedupe honored). Owner UX standard baked in: `title=` tooltips on every
+control (no Tooltip primitive exists — native title is the floor) and `--con-*` hover
+highlights on row-like elements. Markdown replies via react-markdown/remark-gfm styled with
+con tokens. Quartet green: tsc clean, lint 0 errors, 2241 tests, build ok (`/console/assistant`
+static); smoke-tested chat/providers/history/from-draft against `next start`. Docs:
+`docs/rollouts/2026-07-02-console-assistant.md`. **Next:** open PR (auto-merge on green
+verify); fold `app/console/assistant/models.tsx` into the shared `app/console/lib/models`
+once the foundation PR lands (nav entry for /console/assistant also arrives there).
+
 ## 2026-07-02 — /console: 12 owner QA fixes (Claude)
 Branch `claude/console-qa-fixes` (cut from `origin/main` @ 8f828af, after #317+#319 landed).
 All 12 owner-walkthrough issues fixed, each diagnosis verified against real code first.
