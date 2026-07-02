@@ -13,6 +13,18 @@ filling the missing pieces.
 > standard). Console feature-parity track only — no roadmap scope change. Follow-ups:
 > sharing prefs in Settings, nav/needs-attention count. See
 > `docs/rollouts/2026-07-02-console-learned-context.md`.
+> 2026-07-02 (`claude/console-port-foundation`, Claude): **Console parity-port
+> foundation (Wave 1)** — the legacy-dashboard feature parity port into `/console` is
+> now an explicit multi-agent track: Wave 1 (this branch) ships the shared primitives
+> (`app/console/ui/ticker-logo.tsx`, `provider-logo.tsx` (+`ModelBadge`),
+> `symbol-drilldown.tsx`, `app/console/lib/models.ts`), nav scaffolding for four
+> upcoming routes (`/console/scan`, `/console/macro`, `/console/orders`,
+> `/console/assistant` — pages land in Wave 2 via parallel agents), the owner-requested
+> model-attribution approval-card redesign (green-team proposer block with the vendor
+> logo + LARGE confidence number; red-team reviewer block), positions logos+drilldown,
+> and a console-wide tooltips-everywhere + row-hover UX standard in `console.css`.
+> Fast-follow on the roadmap: persist `proposedByModel` per proposal (needs the
+> src/lib/strategy.ts owner). See `docs/rollouts/2026-07-02-console-port-foundation.md`.
 > 2026-07-02 (`claude/console-qa-fixes`, Claude): **12 owner QA fixes on /console** —
 > policy saves no longer rejected by a stale stored gpt-5.5/high config; SPY benchmark
 > is deposit/withdrawal-aware (inferred flows + time-weighted return, honestly labeled);

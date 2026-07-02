@@ -23,6 +23,35 @@ clean, lint 0 errors, 2241 tests, build ok. Docs:
 `docs/rollouts/2026-07-02-console-learned-context.md`. **Next:** land via PR (auto-merge on green
 verify); follow-ups: sharing-prefs surface in Settings, nav badge / needs-attention count once
 those files free up.
+## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
+Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
+primitives for the multi-agent parity port of legacy dashboard features into /console:
+new `app/console/ui/ticker-logo.tsx` (`<TickerLogo>`, console-theme-aware via data-theme
+on `.console-root`, monogram-tile fallback), `app/console/ui/provider-logo.tsx`
+(`<ProviderLogo>` + `<ModelBadge>` — AI-vendor marks on a neutral tile, colored-initial
+fallback), `app/console/lib/models.ts` (pure: `providerForModel` mirroring
+usage-budget.ts, `providerLabel`, `modelDisplayName`, `PROVIDER_META`,
+`DEFAULT_GREEN_MODEL_ID`), and `app/console/ui/symbol-drilldown.tsx` (`<SymbolButton>` +
+`<SymbolDrilldownSheet>`: SVG daily-close chart over /api/history, snapshot quote stats,
+honest empty states). Nav gained the four wave-2 destinations — /console/scan, /macro,
+/orders, /assistant (dead links until wave 2 creates the pages; mobile primary tabs and
+the approvals badge unchanged). Approval card redesigned per the owner's request: a faint
+GREEN team block always shows the proposing model (vendor logo + name from
+`policy.llmModel`, "(policy default)" fallback) with the confidence score rendered LARGE
+(`.con-confidence-num`; omitted when absent), and the devil's-advocate content moved into
+a faint RED team block badged with `policy.redTeamLlmModel ?? llmModel` — the LIVE
+typed-confirmation contract is untouched. Positions rows: `<TickerLogo>` + drilldown via
+`<SymbolButton>`. console.css: `.con-logo-tile`, `.con-team{,-green,-red}`,
+`.con-confidence-num`, and a shared row-hover/focus highlight (auto on `.con-table`,
+opt-in `.con-row`) per the owner's new tooltips-everywhere + row-hover UX standard (native
+`title` floors added across everything this wave touched). **Known caveat:** model
+attribution is policy-derived (the model configured NOW), not persisted per-proposal —
+fast-follow is persisting `proposedByModel` in coordination with the src/lib/strategy.ts
+owner (src/lib deliberately untouched here; another agent owns it concurrently). Quartet
+green: tsc clean, lint 0 errors (284 grandfathered warnings), 2241 tests / 234 files pass,
+build ok. Docs: `docs/rollouts/2026-07-02-console-port-foundation.md`. **Next:** wave-2
+agents build /console/scan, /console/macro, /console/assistant, /console/orders on these
+primitives; persist per-proposal model attribution.
 
 ## 2026-07-02 — /console: 12 owner QA fixes (Claude)
 Branch `claude/console-qa-fixes` (cut from `origin/main` @ 8f828af, after #317+#319 landed).
