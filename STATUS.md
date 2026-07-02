@@ -30,6 +30,7 @@ clean, 2280 tests pass (235 files), build ok. Docs:
 handling modes (block/ask/auto) + Decide-mode escalation" with auto-merge on green verify;
 polish: dedicated wash-sale cost callout on the approvals card + humanized Activity copy for the
 new audit events.
+
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
 console port, settings lane. Five sections added to `/console/settings`, all under
@@ -50,6 +51,7 @@ on :3123 confirmed page + all three APIs 200 with matching shapes. Docs:
 `docs/rollouts/2026-07-02-console-settings-expansions.md`. **Next:** land via PR (auto-merge on
 green verify); after the foundation lane's provider-logo/models modules land, upgrade the native
 selects to the logo picker and unify the duplicated model catalog data.
+
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:
