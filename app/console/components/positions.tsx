@@ -8,6 +8,7 @@ import type { DashboardSnapshot } from "../../dashboard-types";
 import { deriveProtection } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { Card, Dash, Empty, SignedText } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
   const positions = snapshot.positions ?? [];
@@ -20,12 +21,12 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
           <table className="con-table">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th className="num">Qty</th>
-                <th className="num">Avg cost</th>
-                <th className="num">Value</th>
-                <th className="num">Unrealized</th>
-                <th>Protection</th>
+                <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
+                <th className="num" title="Shares held; negative means a short position.">Qty</th>
+                <th className="num" title="Average price paid per share.">Avg cost</th>
+                <th className="num" title="Current market value of the position.">Value</th>
+                <th className="num" title="Market value minus cost basis — the gain or loss if you closed now.">Unrealized</th>
+                <th title="What protects this position: a resting broker stop order, an app-managed stop rule, or nothing (—).">Protection</th>
               </tr>
             </thead>
             <tbody>
@@ -41,12 +42,12 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                 return (
                   <tr key={p.symbol}>
                     <td>
-                      <span className="font-semibold">{p.symbol}</span>
+                      <SymbolButton symbol={p.symbol} />
                       {short && (
                         <span className="ml-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]">SHORT</span>
                       )}
                       {meta?.companyName && (
-                        <span className="block max-w-44 truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                        <span className="block max-w-44 truncate pl-[26px] text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                           {meta.companyName}
                         </span>
                       )}
