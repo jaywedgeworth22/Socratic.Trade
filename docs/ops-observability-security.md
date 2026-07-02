@@ -19,6 +19,15 @@ This app now has opt-in scaffolding for the seven selected tools:
   render errors. The previous build-wrapper instability did not reproduce on
   `@sentry/nextjs@10` + Next 16. Browser Session Replay is opt-in
   (`NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true`) and masks all text + blocks all media when on.
+- **Sentry Crons scheduler heartbeat**: a dead/hung scheduler still returns 200 from
+  `/api/health`, so the scheduler tick can additionally report an "ok" check-in to the
+  Sentry Crons monitor `scheduler-tick` every 60s tick (`sendSentrySchedulerCheckIn` in
+  `src/lib/scheduler.ts`); Sentry alerts when check-ins stop. Opt-in — requires BOTH
+  `SENTRY_DSN` and `SENTRY_CRONS_ENABLED=1` — placed after the single-leader gate so idle
+  followers can't mask a dead leader, and fully try/catch-wrapped so monitoring can never
+  break trading. The monitor is auto-created via the upsert config on first check-in
+  (interval 1 minute, 5-minute checkin margin). Inertness is asserted by
+  `test/sentry-inert.test.ts`.
 - **Langfuse**: add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. LLM calls are
   traced around Bull, Bear, Red Team, post-mortem, and strategy-tuning requests.
   The default `LANGFUSE_CAPTURE_IO=summary` captures model/schema/counts and
@@ -86,3 +95,5 @@ The telemetry path treats this as a financial application:
   `NEXT_PUBLIC_SENTRY_DSN` (the `NEXT_PUBLIC_*` values are inlined at build time, so set
   them before `next build`/`build:secrets`). Add `SENTRY_AUTH_TOKEN` (store in Infisical) to
   turn on source-map upload. Session Replay stays opt-in via `NEXT_PUBLIC_SENTRY_REPLAY_ENABLED`.
+  Set `SENTRY_CRONS_ENABLED=1` (with `SENTRY_DSN`) to arm the `scheduler-tick` Crons
+  heartbeat and configure a missed-check-in alert on that monitor in Sentry.

@@ -4,6 +4,23 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Sentry monitoring completed: scheduler Crons heartbeat + inert-by-default test (Claude)
+Branch `claude/sentry-monitoring`. The Sentry integration was already mostly on main (server/edge
+`instrumentation.ts` + browser `instrumentation-client.ts` + `global-error.tsx` + `withSentryConfig`,
+see `docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`). This adds the missing piece: an
+**env-gated Sentry Crons heartbeat** in the scheduler tick (`sendSentrySchedulerCheckIn` in
+`src/lib/scheduler.ts`, monitor slug `scheduler-tick`) — closes the confirmed gap where a dead
+scheduler still returns 200 from `/api/health`. Gated on `SENTRY_DSN` && `SENTRY_CRONS_ENABLED=1`,
+placed after the single-leader gate, fully try/catch-wrapped (monitoring can never break trading).
+Plus `test/sentry-inert.test.ts` (9 tests pinning the whole integration as inert with zero Sentry
+env — the SDK module is never even loaded) and `SENTRY_CRONS_ENABLED` documented in `.env.example`.
+Everything is a no-op until the owner creates the Sentry project and sets the env vars — safe to
+merge now. Quartet green with NO Sentry env set: tsc clean, lint 0 errors, **2215 tests** (9 new),
+build ok. Docs: `docs/rollouts/2026-07-02-sentry-monitoring.md` (owner activation steps inside),
+`docs/ops-observability-security.md` updated. **Next:** owner creates the Sentry project → sets
+`SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` (+`SENTRY_CRONS_ENABLED=1`) in Infisical/prod → alert on
+missed `scheduler-tick` check-ins.
+
 ## 2026-07-01 — Per-user LLM budget reservation: close the concurrent-run TOCTOU (Claude)
 On PR #293 (branch `claude/audit-work-split-f-g-o67jj2`). Built the deferred follow-up from the fg-codex
 note (item 13): the daily LLM ceiling was a read-of-the-ledger admission check, so a same-user
