@@ -62,7 +62,7 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal, WASH_SALE_AUTO_EDGE_MULTIPLE } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { fetchDailyOHLC } from "./history";

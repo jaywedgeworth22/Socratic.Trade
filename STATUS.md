@@ -4,6 +4,33 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Wash-sale handling modes (block/ask/auto) + Decide-mode escalation (Claude)
+Branch `claude/washsale-modes-escalation` (cut from `origin/main` @ 78ecc98). Owner-locked spec,
+built on the fresh `washSaleMinLossUsd` floor + tax.ts `WashSaleLockMap` provenance. New
+account-scoped `taxSettings.washSaleHandling` (default `"block"` = behavior unchanged): `"ask"`
+turns a wash-sale-locked BUY into a pending-approval card in BOTH authorities, priced with the
+forfeited deduction (`WashSaleLock.lossUsd` × shortTermRatePct — lossUsd is new: summed
+still-in-window disallowed loss); `"auto"` proceeds only when
+`washSaleExpectedEdgeUsd (notional × takeProfitPct × confidence) >= 3× cost`
+(`WASH_SALE_AUTO_EDGE_MULTIPLE`), else skips with the math logged — both outcomes audited, never
+silent. IRA-replacement rebuys are HARD-blocked in every mode (Rev. Rul. 2008-5; via
+taxationType OR broker accountCapabilities.accountType; ignores overrides; enforced even with
+washSaleGuard off). Narrow escalation framework: `PolicyDecision.escalations` closed allowlist —
+ask-mode wash sales (both authorities) + time-context gates (daily/hourly notional, daily order
+cap, quote staleness; Decide only) become pending cards with the block reason; red-team/negative-
+EV/conviction stay blocked entries; IRA/per-order caps/shorting/blocklist can never escalate.
+policy.ts stays authoritative: approval re-runs the FULL gate; only the wash-sale gate honors a
+server-minted token stored in the proposal row's decision JSON (`approvedEscalationsFromDecision`)
+— no client-settable bypass exists; honoring is audited (`wash_sale_override_applied`). Console
+Guardrails → Tax rules gains a washSaleHandling select (new "select" FieldKind; block→ask/auto =
+LOOSER, typed CONFIRM on LIVE). LLM context gains priced `taxContext.washSaleRebuyCosts` in
+ask/auto; `STRATEGY_PROMPT_VERSION` → `agentic-strategy@1.1.0`. Quartet green: lint 0 errors, tsc
+clean, 2280 tests pass (235 files), build ok. Docs:
+`docs/rollouts/2026-07-02-washsale-modes-escalation.md`. **Next:** PR "feat(tax): wash-sale
+handling modes (block/ask/auto) + Decide-mode escalation" with auto-merge on green verify;
+polish: dedicated wash-sale cost callout on the approvals card + humanized Activity copy for the
+new audit events.
+
 ## 2026-07-02 — /console: 12 owner QA fixes (Claude)
 Branch `claude/console-qa-fixes` (cut from `origin/main` @ 8f828af, after #317+#319 landed).
 All 12 owner-walkthrough issues fixed, each diagnosis verified against real code first.

@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/washsale-modes-escalation`, Claude): **Wash-sale handling modes +
+> Decide-mode escalation** — owner-locked spec. Account-scoped
+> `taxSettings.washSaleHandling` (block default / ask = priced pending-approval card in
+> both authorities / auto = deterministic edge >= 3x tax-cost guard, logged, never
+> silent); IRA-replacement rebuys hard-blocked in every mode (Rev. Rul. 2008-5); narrow
+> escalation framework routing ask-mode wash sales + time-context gate failures
+> (daily/hourly notional, order cap, quote staleness; Decide only) to pending cards that
+> RE-RUN the full gate at approval via a server-stored override token (wash-sale gate
+> only — no client-settable bypass). Guardrails Tax rules select (LOOSER classification
+> on block->ask/auto). No roadmap scope change — extends the tax-guardrail track. See
+> `docs/rollouts/2026-07-02-washsale-modes-escalation.md`.
 > 2026-07-02 (`claude/console-qa-fixes`, Claude): **12 owner QA fixes on /console** —
 > policy saves no longer rejected by a stale stored gpt-5.5/high config; SPY benchmark
 > is deposit/withdrawal-aware (inferred flows + time-weighted return, honestly labeled);
