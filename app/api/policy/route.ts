@@ -192,9 +192,10 @@ async function validatePolicy(
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
   if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
   if (policy.taxSettings) {
-    const { shortTermRatePct, longTermRatePct } = policy.taxSettings;
+    const { shortTermRatePct, longTermRatePct, washSaleMinLossUsd } = policy.taxSettings;
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";
     if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
+    if (washSaleMinLossUsd !== undefined && (!Number.isFinite(washSaleMinLossUsd) || washSaleMinLossUsd < 0)) return "taxSettings.washSaleMinLossUsd must be a non-negative dollar amount (blank = every loss locks).";
   }
   if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
     return "llmFallbackModels must be an array of model-id strings.";

@@ -1,5 +1,5 @@
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
-import { listConnectedAccounts, listFillEvents } from "./db";
+import { getPolicy, listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
 import { getClosedLotsDetailed, getOpenLots, type ClosedLot, type PrefetchedFills } from "./performance";
 import type { FillEvent, FillSource, TaxSettings, TaxationType } from "./types";
@@ -97,12 +97,17 @@ export function getWashSaleLockProvenance(
   source: FillSource,
   now = new Date(),
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  minLossUsd?: number
 ): WashSaleLockMap {
   const locked: WashSaleLockMap = new Map();
   const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
+  // Optional materiality floor (taxSettings.washSaleMinLossUsd): losses smaller than this do
+  // NOT contribute a lockout. Default undefined/<=0 = every loss locks (original behavior).
+  const lossFloor = typeof minLossUsd === "number" && Number.isFinite(minLossUsd) && minLossUsd > 0 ? minLossUsd : 0;
   for (const lot of getClosedLotsDetailed(accountNumber, source, userId, prefetched)) {
     if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
+    if (lossFloor > 0 && Math.abs(lot.pnl) < lossFloor) continue;
     const exitT = new Date(lot.exitAt).getTime();
     if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) {
       const clearDate = new Date(exitT + WASH_WINDOW_DAYS * MS_PER_DAY);
@@ -123,15 +128,18 @@ export function getWashSaleLockedSymbols(
   source: FillSource,
   now = new Date(),
   userId: string = "local",
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  minLossUsd?: number
 ): Set<string> {
-  return new Set(getWashSaleLockProvenance(accountNumber, source, now, userId, prefetched).keys());
+  return new Set(getWashSaleLockProvenance(accountNumber, source, now, userId, prefetched, minLossUsd).keys());
 }
 
 export interface AccountTaxContext {
   accountNumber: string;
   source: FillSource;
   taxationType?: TaxationType;
+  /** Per-account materiality floor for lockout contribution (taxSettings.washSaleMinLossUsd). */
+  washSaleMinLossUsd?: number;
 }
 
 /**
@@ -146,7 +154,7 @@ export function getWashSaleLockProvenanceForUser(accounts: AccountTaxContext[], 
   for (const acct of accounts) {
     if (acct.taxationType === "roth_ira" || acct.taxationType === "traditional_ira") continue;
     if (!acct.accountNumber) continue;
-    for (const [sym, lock] of getWashSaleLockProvenance(acct.accountNumber, acct.source, now, userId)) {
+    for (const [sym, lock] of getWashSaleLockProvenance(acct.accountNumber, acct.source, now, userId, undefined, acct.washSaleMinLossUsd)) {
       mergeWashSaleLock(locked, sym, lock);
     }
   }
@@ -171,9 +179,22 @@ export function getUserWashSaleLockProvenance(userId: string = "local", now = ne
     .map((a) => ({
       accountNumber: a.accountNumber ?? "",
       source: (a.environment === "paper" ? "paper" : "live") as FillSource,
-      taxationType: a.taxationType
+      taxationType: a.taxationType,
+      // Each account contributes its losses under ITS OWN policy's materiality floor
+      // (taxSettings.washSaleMinLossUsd) — policies are account-scoped.
+      washSaleMinLossUsd: safeAccountWashSaleMinLoss(userId, a.id)
     }));
   return getWashSaleLockProvenanceForUser(accounts, now, userId);
+}
+
+/** Best-effort per-account taxSettings.washSaleMinLossUsd lookup. A policy read failure must
+ *  never break the lockout computation — degrade to undefined (= every loss locks). */
+function safeAccountWashSaleMinLoss(userId: string, connectedAccountId: string): number | undefined {
+  try {
+    return getPolicy(userId, connectedAccountId).taxSettings?.washSaleMinLossUsd;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Convenience: the user's cross-account locked-symbol Set (projection; feeds the enforcement gate). */
@@ -298,7 +319,9 @@ export function getTaxSummary(
     estimatedLongTermTax: Number(estimatedLongTermTax.toFixed(2)),
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
-    lockedSymbols: tax.washSaleGuard ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched)) : [],
+    lockedSymbols: tax.washSaleGuard
+      ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched, tax.washSaleMinLossUsd))
+      : [],
     openLots,
     harvestCandidates,
     settings: tax

@@ -77,6 +77,18 @@ export const HYGIENE: FieldDef[] = [
   { path: "staleLimitOrderMinutes", label: "Stale limit-order alert (minutes)", kind: "int", optional: true }
 ];
 
+export const TAX_RULES: FieldDef[] = [
+  {
+    path: "taxSettings.washSaleMinLossUsd",
+    label: "Wash-sale lockout: minimum loss",
+    kind: "money",
+    optional: true,
+    looserWhen: "up",
+    hint:
+      "Only losses at least this large trigger the 30-day rebuy lockout; a trivial loss no longer freezes a symbol for a month. Blank (default) = every loss locks. This loosens only THIS APP's guardrail — the IRS applies the wash-sale rule to losses of any size, and the tax report still counts them."
+  }
+];
+
 export const UNIVERSE_FLOOR: FieldDef[] = [
   { path: "universeFloor.minPrice", label: "Min share price", kind: "money", optional: true, looserWhen: "down", hint: "The penny-stock gate. Held positions and your explicit symbols are always exempt; exits never affected." },
   { path: "universeFloor.minMarketCapUsd", label: "Min market cap", kind: "money", optional: true, looserWhen: "down" },
@@ -91,6 +103,7 @@ export const ALL_DEFS: FieldDef[] = [
   ...PANIC_BRAKE,
   ...SHORTS,
   ...HYGIENE,
+  ...TAX_RULES,
   ...UNIVERSE_FLOOR
 ];
 
