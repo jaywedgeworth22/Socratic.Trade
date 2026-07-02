@@ -75,8 +75,14 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
   return { ...realityForMode(mode), account };
 }
 
-export function realityForAccount(account: ConnectedAccount, policy: TradingPolicy): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
-  if (policy.paperMode) return realityForMode("test/local");
+/** Reality of a specific account ROW (switcher, connections list), derived
+ *  from the account itself — never from the active policy. `policy.paperMode`
+ *  describes only the ACTIVE account (the server derives it as
+ *  `broker === "test"` on every read), so consulting it here would label every
+ *  broker/live account "TEST · practice money" whenever the active account is
+ *  the simulator — erasing the real-money warning exactly where a switch
+ *  decision is being made. For the active account this matches deriveReality. */
+export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
   if (account.broker === "test") return realityForMode("test/local");
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
@@ -145,24 +151,33 @@ export interface ProtectionInfo {
 
 const TERMINAL_ORDER_STATES = new Set(["filled", "cancelled", "canceled", "rejected", "expired", "failed", "done_for_day", "replaced"]);
 
-function hasWorkingStop(orders: EquityOrder[], symbol: string): boolean {
-  return orders.some(
-    (o) =>
-      o.symbol?.toUpperCase() === symbol.toUpperCase() &&
-      (o.type === "stop_market" || o.type === "stop_limit") &&
-      !TERMINAL_ORDER_STATES.has((o.state || "").toLowerCase())
-  );
+/** True when a resting broker stop order would CLOSE this position: a long is
+ *  protected by a sell-side stop; a short by a cover (or buy — broker listings
+ *  vary) stop. A same-direction stop (e.g. a stop-limit ENTRY working on the
+ *  same symbol) protects nothing and must not be counted. */
+function hasWorkingClosingStop(orders: EquityOrder[], symbol: string, isShort: boolean): boolean {
+  return orders.some((o) => {
+    if (o.symbol?.toUpperCase() !== symbol.toUpperCase()) return false;
+    if (o.type !== "stop_market" && o.type !== "stop_limit") return false;
+    if (TERMINAL_ORDER_STATES.has((o.state || "").toLowerCase())) return false;
+    return isShort ? o.side === "cover" || o.side === "buy" : o.side === "sell";
+  });
 }
 
 /** Honest protection derivation from what the snapshot actually carries:
- *  a resting broker stop order for the symbol, else the app-managed stop rules
- *  (which pause while Stopped), else nothing. */
+ *  a resting broker stop order that closes the position, else the app-managed
+ *  stop rules (which pause while Stopped), else nothing. Shorts mirror the
+ *  server's rules: the stop distance is riskRules.shortStopLossPct, falling
+ *  back to stopLossPct (generateProactiveRiskProposals), and the app skips
+ *  shorts entirely while shortSellingEnabled is off (synthetic-stops monitor
+ *  and proactive exits both do). */
 export function deriveProtection(
   position: EquityPosition,
   orders: EquityOrder[],
   policy: TradingPolicy
 ): ProtectionInfo {
-  if (hasWorkingStop(orders, position.symbol)) {
+  const isShort = position.quantity < 0;
+  if (hasWorkingClosingStop(orders, position.symbol, isShort)) {
     return {
       label: "Broker stop",
       detail: "A stop order is resting at the broker. It keeps protecting even if this app is down or stopped.",
@@ -170,25 +185,38 @@ export function deriveProtection(
     };
   }
   const rules = policy.riskRules;
-  const stopPct = rules.trailingStopPct && rules.trailingStopPct > 0 ? rules.trailingStopPct : rules.stopLossPct;
+  if (isShort && !policy.shortSellingEnabled) {
+    return {
+      label: null,
+      detail: "Short position, but short selling is off in policy — the app's stop monitor skips it, and no closing broker stop order is resting.",
+      tone: "muted"
+    };
+  }
+  const baseStopPct = isShort
+    ? rules.shortStopLossPct && rules.shortStopLossPct > 0
+      ? rules.shortStopLossPct
+      : rules.stopLossPct
+    : rules.stopLossPct;
   const trailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
+  const stopPct = trailing ? rules.trailingStopPct : baseStopPct;
   if (typeof stopPct === "number" && stopPct > 0) {
+    const word = `App ${trailing ? "trailing " : ""}${isShort ? "short " : ""}stop −${stopPct}%`;
     if (policy.systemState === "halted") {
       return {
-        label: `App stop −${stopPct}% · paused`,
+        label: `${word} · paused`,
         detail: "App-managed stop rules are configured but paused while the system is Stopped. They resume when you start or switch to Exit-only.",
         tone: "warn"
       };
     }
     return {
-      label: `App ${trailing ? "trailing " : ""}stop −${stopPct}%`,
-      detail: "Managed by this app on its scheduler tick. It requires the app to be running and pauses if you Stop everything.",
+      label: word,
+      detail: `Managed by this app on its scheduler tick${isShort ? " (exits with a buy-to-cover)" : ""}. It requires the app to be running and pauses if you Stop everything.`,
       tone: "pos"
     };
   }
   return {
     label: null,
-    detail: "No stop rule is configured and no broker stop order is resting for this symbol.",
+    detail: `No ${isShort ? "short " : ""}stop rule is configured and no closing broker stop order is resting for this symbol.`,
     tone: "muted"
   };
 }
@@ -300,16 +328,30 @@ export function deriveAttention(snapshot: DashboardSnapshot): AttentionItem[] {
       href: "/console/activity"
     });
   }
+  const activeAccount = activeConnectedAccount(snapshot);
   const recentKill = snapshot.notifications.filter((n) => n.type === "kill_switch").slice(0, 1);
   for (const n of recentKill) {
     // Only surface if it's fresh (last 48h) — older breaker events live in Activity.
     const t = new Date(n.createdAt).getTime();
     if (Number.isFinite(t) && Date.now() - t < 48 * 3600_000) {
+      // Notifications are user-wide; a breaker event may belong to a different
+      // account than the one this console is scoped to. Say so instead of
+      // implying the active account tripped a breaker.
+      let title = "A circuit breaker fired";
+      let detail = n.title;
+      if (n.connectedAccountId && n.connectedAccountId !== activeAccount?.id) {
+        const other = snapshot.connectedAccounts.find((a) => a.id === n.connectedAccountId);
+        const name = other?.label || other?.broker || "another account";
+        title = `A circuit breaker fired on ${name}`;
+        detail = `${n.title} — this happened on ${name}, not the account you're viewing.`;
+      } else if (!n.connectedAccountId && snapshot.connectedAccounts.length > 1) {
+        detail = `${n.title} — recorded without an account tag; it may concern any of your accounts.`;
+      }
       items.push({
         id: `kill-${n.id}`,
         tone: "neg",
-        title: "A circuit breaker fired",
-        detail: n.title,
+        title,
+        detail,
         href: "/console/activity"
       });
     }

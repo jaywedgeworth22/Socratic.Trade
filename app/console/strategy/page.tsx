@@ -7,8 +7,8 @@
 
 import { useMemo, useState } from "react";
 import type { ScoringWeights } from "@/lib/types";
-import { activateProfile, savePolicy, ConsoleApiError } from "../lib/api";
-import { deriveReality } from "../lib/derive";
+import { activateProfile, copyProfileToAccount, savePolicy, ConsoleApiError } from "../lib/api";
+import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -41,6 +41,7 @@ export default function StrategyPage() {
   if (!snapshot || !reality) return null;
 
   const policy = snapshot.policy;
+  const activeAccount = activeConnectedAccount(snapshot);
   const prompt = promptDraft ?? snapshot.strategyPrompt;
   const promptDirty = promptDraft !== null && promptDraft !== snapshot.strategyPrompt;
 
@@ -198,39 +199,55 @@ export default function StrategyPage() {
           <Empty>No presets saved yet.</Empty>
         ) : (
           <div className="flex flex-col gap-2">
-            {snapshot.profiles.map((profile) => (
-              <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-line)] p-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{profile.name || EM_DASH}</span>
-                    {profile.active && <Chip tone="accent">active</Chip>}
+            {snapshot.profiles.map((profile) => {
+              // "applied" = what THIS account is running (policy.activeProfileId,
+              // stamped by the copy/apply path). Fall back to the library active
+              // flag only when the account has never had a preset applied.
+              const applied = policy.activeProfileId ? policy.activeProfileId === profile.id : profile.active;
+              return (
+                <div key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-line)] p-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">{profile.name || EM_DASH}</span>
+                      {applied && <Chip tone="accent">applied here</Chip>}
+                    </div>
+                    <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                      updated <Ago iso={profile.updatedAt} />
+                    </div>
                   </div>
-                  <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                    updated <Ago iso={profile.updatedAt} />
-                  </div>
+                  {!applied && (
+                    <Btn
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={async () => {
+                        setBusy(`profile-${profile.id}`);
+                        try {
+                          if (activeAccount) {
+                            // Preferred path: POST /api/profiles/[id]/copy — writes ONLY this
+                            // account's live strategy state and preserves its run-state and the
+                            // library active flag (applyProfileToAccount, server-enforced).
+                            await copyProfileToAccount(profile.id, activeAccount.id);
+                            toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account. Run state unchanged.");
+                          } else {
+                            // No connected account (fresh local install): the copy route has no
+                            // target, so fall back to library activation of the base policy.
+                            await activateProfile(profile.id);
+                            toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for the local simulator.");
+                          }
+                          await refresh();
+                        } catch (error) {
+                          toast.push("neg", "Preset not applied", error instanceof ConsoleApiError ? error.message : String(error));
+                        } finally {
+                          setBusy(null);
+                        }
+                      }}
+                    >
+                      {busy === `profile-${profile.id}` ? "Applying…" : "Apply to this account"}
+                    </Btn>
+                  )}
                 </div>
-                {!profile.active && (
-                  <Btn
-                    size="sm"
-                    disabled={busy !== null}
-                    onClick={async () => {
-                      setBusy(`profile-${profile.id}`);
-                      try {
-                        await activateProfile(profile.id);
-                        await refresh();
-                        toast.push("pos", `Applied “${profile.name}”`, "Copied onto this account. Run state unchanged.");
-                      } catch (error) {
-                        toast.push("neg", "Preset not applied", error instanceof ConsoleApiError ? error.message : String(error));
-                      } finally {
-                        setBusy(null);
-                      }
-                    }}
-                  >
-                    {busy === `profile-${profile.id}` ? "Applying…" : "Apply to this account"}
-                  </Btn>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

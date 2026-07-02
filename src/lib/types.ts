@@ -1340,6 +1340,10 @@ export interface NotificationEvent {
   webhookUrl?: string;
   payload: unknown;
   error?: string;
+  /** Connected account the event was recorded against (from the policy that
+   *  triggered it). Absent for user-wide events and rows written before the
+   *  column was surfaced — consumers must not assume the ACTIVE account. */
+  connectedAccountId?: string;
 }
 
 // --- Out-of-app multi-channel alert delivery (ported from Atlas) ---

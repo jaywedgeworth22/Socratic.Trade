@@ -126,7 +126,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
             </div>
           )}
           {snapshot.connectedAccounts.map((account) => {
-            const r = realityForAccount(account, snapshot.policy);
+            const r = realityForAccount(account);
             return (
               <div
                 key={account.id}

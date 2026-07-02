@@ -4,12 +4,24 @@
  *  review sheet, and asymmetric friction — tightening saves with one click,
  *  loosening on LIVE money requires typing CONFIRM. The commit model comes
  *  from the explainability design: you never "save settings", you review and
- *  commit a change. */
+ *  commit a change. The diff/classification logic lives in ../lib/policy-diff
+ *  (pure, unit-tested); this file is the React skin over it. */
 
 import { useMemo, useState, type ReactNode } from "react";
 import type { TradingPolicy } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import type { RealityInfo } from "../lib/derive";
+import {
+  buildPatch,
+  classifyExtraPatch,
+  clearedFallback,
+  computeDiff,
+  getAtPath,
+  isBlank,
+  type DiffEntry,
+  type ExtraDiffEntry,
+  type FieldDef
+} from "../lib/policy-diff";
 import { cx, fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -17,30 +29,8 @@ import { Btn, Chip, NumInput, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 import { TypedConfirm } from "./chrome";
 
-// ── Field metadata ───────────────────────────────────────────────────────────
-
-export type FieldKind = "money" | "pct" | "int" | "minutes" | "seconds" | "bool" | "text";
-
-export interface FieldDef {
-  /** Dot path into TradingPolicy, e.g. "maxOrderNotional" or "riskRules.stopLossPct". */
-  path: string;
-  label: string;
-  kind: FieldKind;
-  hint?: string;
-  /** Direction that LOOSENS the cage (drives the typed-confirm friction on live). */
-  looserWhen?: "up" | "down" | "on";
-  /** Optional numeric: blank clears the field (server strips nulls → guard off/default). */
-  optional?: boolean;
-}
-
-export function getAtPath(policy: TradingPolicy, path: string): unknown {
-  let value: unknown = policy;
-  for (const key of path.split(".")) {
-    if (value == null || typeof value !== "object") return undefined;
-    value = (value as Record<string, unknown>)[key];
-  }
-  return value;
-}
+export type { FieldDef, FieldKind, DiffEntry } from "../lib/policy-diff";
+export { getAtPath, computeDiff, buildPatch } from "../lib/policy-diff";
 
 // ── Draft state (sparse: only touched fields) ────────────────────────────────
 
@@ -59,67 +49,16 @@ export function usePolicyDraft(): PolicyDraft {
   };
 }
 
-export interface DiffEntry {
-  def: FieldDef;
-  from: unknown;
-  to: unknown;
-  direction: "looser" | "tighter" | "changed";
-}
-
-function isBlank(v: unknown): boolean {
-  return v === undefined || v === null || v === "";
-}
-
-function classify(def: FieldDef, from: unknown, to: unknown): DiffEntry["direction"] {
-  if (!def.looserWhen) return "changed";
-  if (def.kind === "bool") {
-    const on = to === true;
-    return def.looserWhen === "on" ? (on ? "looser" : "tighter") : on ? "tighter" : "looser";
-  }
-  const fromNum = typeof from === "number" && Number.isFinite(from) ? from : null;
-  const toNum = typeof to === "number" && Number.isFinite(to) ? to : null;
-  // Clearing a cap removes it entirely — the loosest possible move for "up" caps.
-  if (toNum === null && fromNum !== null) return def.looserWhen === "up" ? "looser" : "tighter";
-  if (fromNum === null && toNum !== null) return def.looserWhen === "up" ? "tighter" : "looser";
-  if (fromNum === null || toNum === null || fromNum === toNum) return "changed";
-  const up = toNum > fromNum;
-  return def.looserWhen === "up" ? (up ? "looser" : "tighter") : up ? "looser" : "tighter";
-}
-
-export function computeDiff(policy: TradingPolicy, draft: PolicyDraft, defs: FieldDef[]): DiffEntry[] {
-  const entries: DiffEntry[] = [];
-  for (const def of defs) {
-    if (!(def.path in draft.values)) continue;
-    const from = getAtPath(policy, def.path);
-    const to = draft.values[def.path];
-    const same = (isBlank(from) && isBlank(to)) || from === to;
-    if (same) continue;
-    entries.push({ def, from, to, direction: classify(def, from, to) });
-  }
-  return entries;
-}
-
-/** Nest sparse dot-path values into the PUT body shape. Sends null for cleared
- *  optional fields — the server's stripNullsDeep turns that into "absent". */
-export function buildPatch(diff: DiffEntry[]): PolicyPatchBody {
-  const patch: Record<string, unknown> = {};
-  for (const entry of diff) {
-    const parts = entry.def.path.split(".");
-    let target = patch;
-    for (let i = 0; i < parts.length - 1; i++) {
-      const key = parts[i];
-      if (typeof target[key] !== "object" || target[key] === null) target[key] = {};
-      target = target[key] as Record<string, unknown>;
-    }
-    target[parts[parts.length - 1]] = entry.to === undefined || entry.to === "" ? null : entry.to;
-  }
-  return patch;
-}
-
 // ── Field renderer ───────────────────────────────────────────────────────────
 
 function fmtValue(def: FieldDef, v: unknown): string {
-  if (isBlank(v)) return def.optional ? "off" : EM_DASH;
+  if (isBlank(v)) {
+    if (!def.optional) return EM_DASH;
+    // Honest blank label: the server re-applies the shipped default for fields
+    // that have one — only claim "off" when clearing truly turns the guard off.
+    const fallback = clearedFallback(def);
+    return fallback !== undefined ? `default (${fmtValue(def, fallback)})` : "off";
+  }
   if (def.kind === "bool") return v === true ? "on" : "off";
   if (def.kind === "money") return `$${fmtNum(v as number)}`;
   if (def.kind === "pct") return `${fmtNum(v as number)}%`;
@@ -132,6 +71,11 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
   const current = getAtPath(policy, def.path);
   const touched = def.path in draft.values;
   const value = touched ? draft.values[def.path] : current;
+  // While the input is focused we render the raw typed text, so transient
+  // states like "0." or "12." survive keystrokes (Number() would collapse
+  // them). The parsed number is still committed to the draft on every change;
+  // blur snaps the text back to the canonical value.
+  const [editText, setEditText] = useState<string | null>(null);
 
   if (def.kind === "bool") {
     return (
@@ -151,6 +95,8 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
   const unit = def.kind === "money" ? "$" : def.kind === "pct" ? "%" : def.kind === "minutes" ? "min" : def.kind === "seconds" ? "sec" : undefined;
   const numeric = def.kind !== "text";
   const display = isBlank(value) ? "" : String(value);
+  const blankFallback = def.optional ? clearedFallback(def) : undefined;
+  const blankPlaceholder = def.optional ? (blankFallback !== undefined ? `default ${blankFallback}` : "off") : undefined;
 
   return (
     <div className="py-2">
@@ -164,11 +110,15 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
           {numeric ? (
             <NumInput
               id={`pf-${def.path}`}
-              value={display}
-              placeholder={def.optional ? "off" : undefined}
+              value={editText ?? display}
+              placeholder={blankPlaceholder}
+              onFocus={() => setEditText(display)}
+              onBlur={() => setEditText(null)}
               onChange={(e) => {
                 const raw = e.target.value;
-                draft.set(def.path, raw === "" ? null : Number(raw));
+                setEditText(raw);
+                const parsed = Number(raw);
+                draft.set(def.path, raw === "" || !Number.isFinite(parsed) ? null : parsed);
               }}
             />
           ) : (
@@ -183,6 +133,18 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
 }
 
 // ── Save bar + review sheet ──────────────────────────────────────────────────
+
+function DirectionTag({ direction }: { direction: DiffEntry["direction"] }) {
+  if (direction === "changed") return null;
+  return (
+    <span
+      className={cx("text-[length:var(--con-fs-xs)] font-bold uppercase")}
+      style={{ color: direction === "looser" ? "var(--con-warn)" : "var(--con-pos)" }}
+    >
+      {direction}
+    </span>
+  );
+}
 
 export function PolicySaveBar({
   policy,
@@ -204,18 +166,20 @@ export function PolicySaveBar({
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const diff = useMemo(() => computeDiff(policy, draft, defs), [policy, draft, defs]);
-  const extraCount = extraPatch ? Object.keys(extraPatch).length : 0;
-  const changeCount = diff.length + extraCount;
+  const diff = useMemo(() => computeDiff(policy, draft.values, defs), [policy, draft, defs]);
+  const extraEntries: ExtraDiffEntry[] = useMemo(() => classifyExtraPatch(policy, extraPatch), [policy, extraPatch]);
+  const changeCount = diff.length + extraEntries.length;
   if (changeCount === 0) return null;
 
-  const hasLooser = diff.some((d) => d.direction === "looser");
+  // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can
+  // loosen the cage too — they must cost the typed word on LIVE like any field.
+  const hasLooser = diff.some((d) => d.direction === "looser") || extraEntries.some((e) => e.direction === "looser");
   const needsTyped = reality.tone === "live" && hasLooser;
 
   const commit = async () => {
     setBusy(true);
     try {
-      await savePolicy({ ...buildPatch(diff), ...(extraPatch ?? {}) });
+      await savePolicy({ ...buildPatch(diff, policy), ...(extraPatch ?? {}) });
       await refresh();
       draft.clear();
       setReviewOpen(false);
@@ -261,24 +225,19 @@ export function PolicySaveBar({
                 <span className="text-[color:var(--con-faint)]">{fmtValue(d.def, d.from)}</span>
                 <span className="text-[color:var(--con-faint)]">→</span>
                 <span>{fmtValue(d.def, d.to)}</span>
-                {d.direction !== "changed" && (
-                  <span
-                    className={cx("text-[length:var(--con-fs-xs)] font-bold uppercase")}
-                    style={{ color: d.direction === "looser" ? "var(--con-warn)" : "var(--con-pos)" }}
-                  >
-                    {d.direction}
-                  </span>
-                )}
+                <DirectionTag direction={d.direction} />
               </span>
             </div>
           ))}
-          {extraPatch &&
-            Object.keys(extraPatch).map((key) => (
-              <div key={key} className="py-2 text-[length:var(--con-fs-sm)]">
-                <span className="font-semibold">{key}</span>{" "}
-                <span className="text-[color:var(--con-faint)]">updated</span>
-              </div>
-            ))}
+          {extraEntries.map((entry) => (
+            <div key={entry.key} className="flex items-center justify-between gap-3 py-2 text-[length:var(--con-fs-sm)]">
+              <span className="font-semibold">{entry.label}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[color:var(--con-faint)]">{entry.summary}</span>
+                <DirectionTag direction={entry.direction} />
+              </span>
+            </div>
+          ))}
         </div>
 
         {needsTyped ? (
