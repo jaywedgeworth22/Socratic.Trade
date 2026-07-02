@@ -80,7 +80,11 @@ filling the missing pieces.
 > short-interest source with a ≥5pp disagreement bulletin" item below was removed as
 > non-deliverable — FMP publishes no short-interest data (no `/short_interest` endpoint;
 > verified against FMP's API docs + official MCP surface). Yahoo `shortPercentOfFloat` is the
-> single real source; a real second source would need Massive/Finnhub. Also: scoped the
+> single real source; a real second source would need Massive/Finnhub. **UPDATE 2026-07-01 (PR
+> #309): the real second source is now DELIVERED via Massive REST** — `MassiveEnrichmentProvider`
+> computes short % of float from Massive's FINRA short interest / free float and emits the ≥5pp
+> disagreement bulletin, gated on `MASSIVE_API_KEY` (default-inert without it). See
+> `docs/rollouts/2026-07-01-massive-short-interest-second-source.md`. Also: scoped the
 > default-off enrichment circuit breaker to trip per **credential lane** (a dead env lane no
 > longer disables a healthy user lane), and locked in `extractUnderlyingPrice`'s
 > `{ quotes: [...] }` envelope parsing with a regression test. See
