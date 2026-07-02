@@ -719,6 +719,71 @@
   margin: 0;
 }
 
+/* ── Symbol drilldown ──
+   Additive classes for the company drawer: metric tiles, 0–100 factor bars,
+   the analyst rating distribution bar, and the price-target range bar. All
+   derived from existing tokens so they adapt to light and dark. */
+.con-tile {
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 8px 10px;
+}
+
+/* 0–100 score bar (factor breakdown). Unlike .con-meter, high is GOOD here,
+   so the fill stays accent-colored at every level. */
+.con-score-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
+  overflow: hidden;
+}
+.con-score-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--con-accent);
+}
+
+/* Analyst rating distribution: stacked horizontal segments (strong buy → strong sell). */
+.con-dist-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--con-line);
+  overflow: hidden;
+  background: var(--con-surface-3);
+}
+.con-dist-bar > div {
+  height: 100%;
+}
+
+/* Price-target range: a track spanning low→high with point markers
+   (current price, mean target) positioned along it. */
+.con-range-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
+}
+.con-range-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--con-accent-soft);
+  border: 1px solid var(--con-accent-border);
+}
+.con-range-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .console-root * {
     animation-duration: 0.01ms !important;

@@ -1,0 +1,118 @@
+# 2026-07-02 — Console symbol drilldown: strictly better than the legacy drawer (Claude)
+
+Branch: `claude/console-drilldown-plus` (cut from `origin/main` @ 48fbe14).
+Part of the multi-agent /console parity port (Wave 2). This branch owns
+`app/console/ui/symbol-drilldown.tsx` only; scan/macro/orders/assistant and the
+shared console components/lib files were deliberately untouched (other agents
+own them concurrently). `SymbolButton` and `SymbolDrilldownSheet` keep their
+exact prop signatures so in-flight consumers keep compiling.
+
+## Summary
+
+The console company drawer (opened from any `<SymbolButton>`) now supersets
+the legacy `app/ui/symbol-drilldown.tsx` drawer the owner singled out:
+
+**Ported from legacy (full parity):**
+- All eleven derived-metric tiles — PEG, earnings yield, ROE, payout ratio,
+  daily $ volume, bid-ask spread (bps), Graham value, margin of safety,
+  % from 52w high, reward:risk (52w), sector relative strength — same math
+  (imports `deriveMetrics` from `src/lib/derived-metrics.ts`, the module that
+  also feeds the LLM), each with a what-it-is + how-to-read-this-value tooltip
+  that now includes a dynamic reading of the current number.
+- Seven-factor breakdown (Value/Momentum/Quality/Positioning/Sentiment/
+  Liquidity/Volatility) as 0–100 bars + composite score, with tooltips that
+  describe the ACTUAL scoring inputs from `src/lib/market.ts`.
+- Signal summary pros/cons with the identical legacy thresholds
+  (`buildSignalSummary` is a faithful port of the legacy `generateSummary`).
+- Evidence bulletins + recent headlines (collapsible).
+- Per-field source provenance (via `orderedSourceEntries`/`friendlySource`/
+  `provenanceLabel` from `src/lib/dashboard-ui.ts`, read-only import).
+
+**New over legacy:**
+- **Your exposure**: position qty/market value/entry basis/unrealized P&L
+  (same math as `enrichPositionsForDisplay`; shorts flagged, return % honestly
+  withheld when cost basis isn't positive), PENDING proposals for the symbol
+  (side/qty/thesis/confidence/age, rationale on hover, "Review →" link to
+  /console/approvals), and the last 4 orders in the symbol (side/qty@avg/state/
+  age). Renders honest one-liner when the account has nothing in the symbol.
+- **Analysts section**: rating label + blended score, a stacked rating-
+  distribution bar (strongBuy→strongSell from the first source with counts),
+  and a price-target range bar (low→high track, mean + current-price markers,
+  signed % to consensus).
+- **Signal chips**: news tone, insider sentiment, congressional net, and a
+  days-to-earnings chip (warn tone ≤7 trading days; also surfaces next to the
+  price when near) — each with plain-language tooltip + per-field provenance
+  ("Source: Yahoo Finance… Received …").
+- **Deep fundamentals** (collapsible): EPS, EPS growth, P/B, dividend yield,
+  FCF yield, debt/equity (display-normalized like the legacy scan table incl.
+  the sec-xbrl ratio exemption), beta, short % float, institutional ownership,
+  near-the-money IV, put/call, VWAP, bid/ask, market cap, share volume,
+  52w range — every row tooltipped with meaning + provenance, `.con-row` hover.
+- **Two-tier quote resolution**: prefers the fully-enriched
+  `topCandidates` MarketQuote (factor breakdown/volume/headlines), falls back
+  to the `quotesBySymbol` summary tier; when only the summary tier exists,
+  daily $ volume falls back to the latest daily history bar's real volume and
+  the tooltip says so.
+- **Data honesty**: P/E renders `n/a` only when eps ≤ 0 (real computed
+  no-ratio state) vs an em dash for missing data (repo convention); nothing is
+  ever labeled mock/fallback; a symbol absent from the last scan still opens a
+  useful drawer (chart + exposure) with an explicit notice.
+
+## Why
+
+The owner called the legacy symbol drawers one of the old app's strongest
+features and asked for a strictly-better version in the console. The console
+foundation version (Wave 1) had only chart + 4 stats. This brings full legacy
+parity plus account-awareness (exposure/pending/orders) and analyst detail the
+legacy drawer never had, in console tokens, light+dark, tooltips everywhere.
+
+## Files
+
+- `app/console/ui/symbol-drilldown.tsx` — rewritten sheet body (exports and
+  prop signatures unchanged: `SymbolButton`, `SymbolDrilldownSheet`).
+- `app/console/ui/drilldown-data.ts` — NEW pure helpers: `toQuoteView`,
+  `peDisplay`, `deriveForView`, `buildDerivedTiles`, `buildSignalSummary`,
+  `buildSignalChips`, `FACTOR_DEFS`, `positionEconomics`, `ratingDistribution`,
+  `ratingTooltip`, `targetUpsidePct`, `withProvenance`,
+  `normalizedDebtToEquity`, `fmtCompact`, `formatDollarsM`.
+- `app/console/ui/drilldown-sections.tsx` — NEW section components
+  (Exposure/SignalSummary/DerivedTiles/Factor/Analyst/Fundamentals/Evidence/
+  Sources).
+- `app/console/console.css` — additive classes only: `.con-tile`,
+  `.con-score-bar`, `.con-dist-bar`, `.con-range-bar`, `.con-range-fill`,
+  `.con-range-marker` (no existing class restyled).
+- `test/console-drilldown.test.ts` — NEW 23 tests over the pure helpers
+  (quote-view merging, P/E n/a-vs-dash honesty, deriveMetrics parity, volume
+  fallback labeling, legacy signal-threshold parity, chips, position econ incl.
+  shorts, analyst helpers, provenance, D/E normalization, factor order).
+- `STATUS.md`, `PLAN.md`, this note.
+
+## Verification
+
+Run in this order, all green:
+
+```bash
+npm run lint       # 0 errors (285 grandfathered warnings; 2 warnings in touched files are the pre-existing set-state-in-effect pattern from the foundation useHistory)
+npx tsc --noEmit   # clean
+npm test           # 235 files / 2264 tests pass (includes the 23 new drilldown tests)
+npm run build      # clean; /console routes prerender
+```
+
+Note: the first `npm test` run hit `ENOSPC` (the VM's /tmp held ~14 GB of
+stale per-run test SQLite files from parallel agents). An attempted cleanup of
+stale temp DBs was denied by the sandbox policy; space was released externally
+shortly after and the full suite then passed cleanly.
+
+## Follow-ups
+
+- Factor breakdown, headlines, intraday change, volume and sector relative
+  strength only exist for last-scan TOP CANDIDATES (the summary tier doesn't
+  persist them) — a future scan-summary enrichment could carry
+  `factorBreakdown` into `MarketQuoteSummary` so every scanned symbol gets the
+  bars (needs the src/lib owner; deliberately not touched here).
+- Snapshot `orders` are account-scoped current orders, not a full historical
+  fills ledger; if a per-symbol fills feed is later exposed on the snapshot,
+  swap the "Recent orders" list to it.
+- The legacy drawer's TradingView Lightweight-Charts candles were intentionally
+  NOT ported; the console keeps its honest self-contained SVG line (design-
+  system rule). Candle/volume overlays could be added to the SVG later.

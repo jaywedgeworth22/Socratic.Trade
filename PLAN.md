@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-drilldown-plus`, Claude): **Console symbol drilldown,
+> Wave 2** — the console company drawer is now a strict superset of the legacy
+> `app/ui/symbol-drilldown.tsx` drawer: full parity (11 derived-metric tiles reusing
+> `src/lib/derived-metrics`, 7-factor breakdown, legacy-threshold signal summary,
+> evidence/headlines, per-field provenance) PLUS account exposure (position P&L,
+> pending proposals → Approvals, recent orders), analyst rating distribution +
+> price-target range bar, signal/earnings-proximity chips, and a collapsible deep-
+> fundamentals table — tooltips on everything, light+dark, honest empty states, and
+> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents.
+> No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
+> See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
 > 2026-07-02 (`claude/console-port-foundation`, Claude): **Console parity-port
 > foundation (Wave 1)** — the legacy-dashboard feature parity port into `/console` is
 > now an explicit multi-agent track: Wave 1 (this branch) ships the shared primitives
