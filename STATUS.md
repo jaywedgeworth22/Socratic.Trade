@@ -4,6 +4,33 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console: 12 owner QA fixes (Claude)
+Branch `claude/console-qa-fixes` (cut from `origin/main` @ 8f828af, after #317+#319 landed).
+All 12 owner-walkthrough issues fixed, each diagnosis verified against real code first.
+Blockers: the gpt-5.5/high policy-validation gate no longer rejects UNRELATED saves (it
+fires only when the request changes llmModel/redTeamLlmModel/llmReasoningEffort; stale
+stored configs stay runtime-clamped), and the SPY benchmark is now deposit/withdrawal-
+aware — external flows are inferred from snapshot cash deltas minus recorded trade cash
+(no broker transfer ledger exists) and the account line chains a time-weighted return,
+flagged `cashFlowAdjusted` with honest copy either way (the owner's post-withdrawal -80%
+now reads ~0%). Results shows only the selected account's bucket with an explicit compare
+toggle. New `taxSettings.washSaleMinLossUsd` (account-scoped, default = every loss locks)
+skips sub-threshold losses in the wash-sale lockout, threaded through tax.ts incl. the
+per-account cross-account floor + Guardrails "Tax rules" group. Console red reduced: danger
+reserved for reality banner/frame, STOP, destructive confirms; LIVE primaries wear a LiveTag
+word chip. Unsaved-changes guard (beforeunload + nav confirm) across guardrails/strategy/
+settings drafts. Activity: run events consolidated into one run-<runId> card (summary
+rendered once), candidates/diversity audits now account-attributed, ops events humanized
+("Refreshed 103 congressional-trade entries") with raw JSON behind a toggle in a collapsed
+System bucket, and the cross-account notification leak fixed (other-account events hidden
+with an honest note; untagged legacy rows labeled "account unknown"). Strategy page gained
+the AI review panel (curated model picker -> POST /api/strategy/tune -> from->to diff with
+LOOSER/TIGHTER classification -> Apply via PUT /api/policy with LIVE typed-CONFIRM /
+Discard). Quartet green: lint 0 errors, tsc clean, 2241 tests pass, build ok. Docs:
+`docs/rollouts/2026-07-02-console-qa-fixes.md`. **Next:** land via PR
+"fix(console): 12 QA fixes from owner walkthrough" (auto-merge on green verify); consider
+real broker transfer data (Alpaca activities) to replace inferred cash flows.
+
 ## 2026-07-02 — /console: all 13 Codex review findings fixed (Claude)
 Branch `claude/console-codex-fixes` (cut from `claude/console-ground-up-ui` @ fb51554 — which has
 main merged in — because #317 sat un-merged with green checks past the wait window; lands cleanly

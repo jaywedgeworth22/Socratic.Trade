@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-qa-fixes`, Claude): **12 owner QA fixes on /console** —
+> policy saves no longer rejected by a stale stored gpt-5.5/high config; SPY benchmark
+> is deposit/withdrawal-aware (inferred flows + time-weighted return, honestly labeled);
+> Results shows the selected account's bucket with an explicit compare toggle; new
+> account-scoped `taxSettings.washSaleMinLossUsd` lockout floor; danger red reserved for
+> reality/STOP/destructive confirms (LIVE word chip on primaries); unsaved-changes
+> guards; Activity run-event consolidation + account scoping + humanized ops events in a
+> System bucket; AI strategy review panel ported to the console. No roadmap scope
+> change — a QA/hardening pass on the Console track. See
+> `docs/rollouts/2026-07-02-console-qa-fixes.md`.
 > 2026-07-02 (`claude/console-ground-up-ui`): **Ground-up "Console" UI** — a complete,
 > parallel greenfield interface at `/console` (new `app/console/` route group, new files
 > only; the legacy dashboard is untouched and remains the default UI). Synthesized from
