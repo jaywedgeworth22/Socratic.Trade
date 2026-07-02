@@ -26,6 +26,22 @@ static). **Found pre-existing:** `npm run dev` (Turbopack) 500s on main — Tail
 parse; `next dev --webpack`/CI build unaffected (reproduced with app/console removed). **Next:**
 human visual pass (no browser in this env), live-approval walkthrough, decide whether to link
 `/console` from anywhere. See `docs/rollouts/2026-07-02-console-ground-up-ui.md`.
+## 2026-07-02 — Sentry monitoring completed: scheduler Crons heartbeat + inert-by-default test (Claude)
+Branch `claude/sentry-monitoring`. The Sentry integration was already mostly on main (server/edge
+`instrumentation.ts` + browser `instrumentation-client.ts` + `global-error.tsx` + `withSentryConfig`,
+see `docs/rollouts/2026-06-29-sentry-browser-and-build-wrapper.md`). This adds the missing piece: an
+**env-gated Sentry Crons heartbeat** in the scheduler tick (`sendSentrySchedulerCheckIn` in
+`src/lib/scheduler.ts`, monitor slug `scheduler-tick`) — closes the confirmed gap where a dead
+scheduler still returns 200 from `/api/health`. Gated on `SENTRY_DSN` && `SENTRY_CRONS_ENABLED=1`,
+placed after the single-leader gate, fully try/catch-wrapped (monitoring can never break trading).
+Plus `test/sentry-inert.test.ts` (9 tests pinning the whole integration as inert with zero Sentry
+env — the SDK module is never even loaded) and `SENTRY_CRONS_ENABLED` documented in `.env.example`.
+Everything is a no-op until the owner creates the Sentry project and sets the env vars — safe to
+merge now. Quartet green with NO Sentry env set: tsc clean, lint 0 errors, **2215 tests** (9 new),
+build ok. Docs: `docs/rollouts/2026-07-02-sentry-monitoring.md` (owner activation steps inside),
+`docs/ops-observability-security.md` updated. **Next:** owner creates the Sentry project → sets
+`SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` (+`SENTRY_CRONS_ENABLED=1`) in Infisical/prod → alert on
+missed `scheduler-tick` check-ins.
 
 ## 2026-07-01 — Per-user LLM budget reservation: close the concurrent-run TOCTOU (Claude)
 On PR #293 (branch `claude/audit-work-split-f-g-o67jj2`). Built the deferred follow-up from the fg-codex
@@ -391,6 +407,38 @@ All knobs DEFAULT OFF / no-op with a per-flag byte-identical proof. Verify quart
 `npx tsc --noEmit` (clean) → `npm run lint` (0 errors, 276 grandfathered warnings) → `npm test` (195 files /
 1977 tests) → `npm run build` (clean; `/api/admin/tuning-dry-run` registered). See
 `docs/rollouts/2026-07-01-learning-loop-backlog.md` and `docs/phase-7-strategy.md` §3.E.8–E.15.
+
+## 2026-07-01 — NAV_V2 PR #8: wash-sale provenance + Test-account filter (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j`, **stacked on PR #7 in PR #310**. Phase 5;
+**touches the authoritative wash-sale gate — real-money tax safety.** `src/lib/tax.ts`: added per-symbol
+**provenance** (`WashSaleLock {account, clearDate}` + `getWashSaleLockProvenance` /
+`getUserWashSaleLockProvenance`; clearDate = binding loss exit + 30d) and **excluded Test/sim accounts** from
+contribution (`filter(a => a.broker !== "test")`) so a simulated loss can never lock a real taxable account.
+**Chose the parallel-accessor option:** the Set-returning functions are now projections of the provenance map
+(`new Set(map.keys())`) — one source of truth, and the enforcement gate (`policy.ts` `.has`) + `strategy.ts`
+consumers stay **byte-identical (gate never weakened)**. Tests: `washsale-test-account-excluded`,
+`washsale-provenance`; updated `chat-draft-policy` to source the loss from a real account (Test excluded) while
+keeping the 409 block. **Verify:** tsc clean · lint 0 · 212 files / 2090 tests · build ok. See
+`docs/rollouts/2026-07-01-nav-v2-pr8-washsale-provenance.md`.
+
+## 2026-07-01 — NAV_V2 PR #7 (⛔ gate): view/execution decouple + write-time validation (Claude)
+Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (own PR, after #305 merges). The delivery plan's
+real-money **gate** — **not flag-gated**. **⚠️ real-money code changed without browser QA — preview-QA before
+merge.** **Key finding (subagent map):** most of PR #7 was ALREADY built + tested — autonomy-reset-on-restart
+(`scheduler.reconcileAutonomyOnBoot`), per-account scheduler fan-out (pointer has zero exec effect), view-only
+pointer incl. mobile, `applyProfileToAccount` preserves systemState, API auth ignores body identity. Remaining
+coupling closed here in `src/lib/db-profiles.ts`:
+1. **Seed decouple (fail-closed):** the 3 not-active→halted seed coercions were gated on the ephemeral active
+   pointer; replaced with an unconditional fail-closed floor — a fresh account never auto-arms, view-pointer
+   independent (established rows untouched).
+2. **Ambient mirror neutralized:** `mirrorPolicyToActiveAccount` → `copyPolicyConfigToActiveAccount` — library
+   edits propagate CONFIG but preserve the account's run-state (no side-effect arm/disarm).
+3. **Explicit write-time guard:** new `assertConnectedAccountOwnedByUser` used by `applyProfileToAccount`.
+Deviation (documented): mirror made config-only rather than fully removed (full verb-split + copy-on-bind UI
+land with the shell PR #9). Tests: decouple-no-coercion, copy-config-preserves-arming,
+write-time-accountid-validation, mobile-view-scope, pr7-merge-gate. **Verify:** tsc clean · lint 0 · 208 files
+/ 2032 tests · build ok; pre-existing safety tests stay green. See
+`docs/rollouts/2026-07-01-nav-v2-pr7-execution-gate.md`.
 
 ## 2026-07-01 — NAV_V2 PRs #2–#6: mapping, settings search, glossary, /how-it-works, TuningCard (Claude)
 Branch `claude/settings-navigation-redesign-a3k1yv-mce45j` (restarted from `origin/main` after PR #1/#303

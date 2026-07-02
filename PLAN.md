@@ -13,6 +13,13 @@ filling the missing pieces.
 > light+dark theming required and implemented. This adds a candidate replacement UI
 > track without changing any existing phase's scope. See
 > `docs/rollouts/2026-07-02-console-ground-up-ui.md`.
+> 2026-07-02 (`claude/sentry-monitoring`, Claude): **Sentry monitoring completed** —
+> added the env-gated Sentry Crons scheduler heartbeat (`scheduler-tick` monitor,
+> `SENTRY_DSN` + `SENTRY_CRONS_ENABLED=1`, try/catch-wrapped, after the single-leader
+> gate) closing the dead-scheduler-but-health-200 gap, plus `test/sentry-inert.test.ts`
+> pinning the whole integration as a no-op with zero Sentry env. Inert until the owner
+> creates the Sentry project + sets env vars. No roadmap change; see
+> `docs/rollouts/2026-07-02-sentry-monitoring.md`.
 
 > 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
 > all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
@@ -177,6 +184,20 @@ filling the missing pieces.
 > structural changes — flags off ⇒ prod byte-identical. The physical settings/Strategy modal teardown is
 > staged to the shell (PR #9). Stopped before PR #7 (real-money execution gate) pending go-ahead.
 > tsc/lint/test(2020)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr2-6-batch.md`.
+> **PR #7 built (2026-07-01, own PR after #305): the ⛔ real-money gate — view/execution decouple.** Subagent
+> map found most of it already existed (autonomy-reset-on-boot, per-account scheduler fan-out, view-only
+> pointer incl. mobile, copy-preset preserves state, API auth ignores body). Remaining coupling closed in
+> `db-profiles.ts`: fail-closed fresh-seed (no auto-arm, view-pointer independent), ambient mirror made
+> config-only (`copyPolicyConfigToActiveAccount` preserves run-state), explicit
+> `assertConnectedAccountOwnedByUser` write guard. Not flag-gated; real-money — preview-QA before merge.
+> tsc/lint/test(2032)/build green. See `docs/rollouts/2026-07-01-nav-v2-pr7-execution-gate.md`.
+> **PR #8 built (2026-07-01, stacked on #7 in PR #310): wash-sale provenance + Test-account filter.**
+> `tax.ts` adds per-symbol provenance (`WashSaleLock {account, clearDate}`) and excludes Test/sim accounts
+> from contribution (a simulated loss can no longer lock a real taxable account). Chose the parallel-accessor
+> option: Set-returning helpers are projections of the provenance map, so the authoritative enforcement gate
+> (`policy.ts` `.has`) stays byte-identical. Tests: washsale-test-account-excluded, washsale-provenance;
+> chat-draft updated. Real-money tax safety. tsc/lint/test(2090)/build green. See
+> `docs/rollouts/2026-07-01-nav-v2-pr8-washsale-provenance.md`.
 > 2026-07-01 (`agent/claude-followon-b-learning`): **Learning-loop follow-on guardrails.**
 > Focused pass on `docs/reviews/2026-07-01-learning-loop-expansion.md` on top of Workstream B
 > (#296): (P0-4) a UNIFIED append-only learning-mutation ledger (`learning_mutations` table +
