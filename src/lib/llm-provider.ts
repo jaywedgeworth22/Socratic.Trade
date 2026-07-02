@@ -118,19 +118,12 @@ export function resolveLlmEndpoint(
     };
   }
 
-  if (/^(claude|anthropic)/i.test(model)) {
-    const url = "https://api.anthropic.com/v1/messages";
-    const cred = resolveLlmCredential("anthropic", userId);
-    return {
-      provider: "openai" as any,
-      url,
-      key: cred.key,
-      model,
-      keySource: cred.source === "operator" ? "operator" : "user",
-      keyRef: cred.keyRef,
-      transport: "chat-completions"
-    };
-  }
+  // NOTE: Anthropic ("claude*") models are resolved by the correct branch above
+  // (provider "anthropic", transport "anthropic-messages"). A previous dead branch here
+  // matched /^(claude|anthropic)/ and returned provider:"openai" pointed at the Anthropic
+  // /v1/messages endpoint with a chat-completions transport — unreachable (claude is caught
+  // above; no model is named "anthropic*") and broken (that endpoint is not OpenAI-compatible).
+  // Removed 2026-07-01 (Chat A item 8). All non-matching models fall through to OpenAI below.
 
   const url = process.env.OPENAI_API_URL?.trim() || defaultOpenAiUrl;
   const cred = resolveLlmCredential("openai", userId);

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeUserId, retrieveContext, retryAfterMs } from "../src/lib/vector-db";
 import {
   FinnhubEnrichmentProvider,
@@ -279,11 +279,6 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
   beforeEach(() => {
     clearEnrichmentCache();
     vi.stubGlobal("fetch", vi.fn());
-    // Exercise the FMP short_interest call's cache-poisoning participation (default-off in prod).
-    process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED = "on";
-  });
-  afterEach(() => {
-    delete process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED;
   });
 
   it("prevents cache writes on Finnhub when a transient error occurs in at least one promise", async () => {
@@ -332,14 +327,13 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     const res1 = await provider.enrich(["AAPL"]);
 
     expect(res1.AAPL).toEqual({ insiderSentiment: 100 });
-    // FMP now calls 5 endpoints: ratios-ttm, grades-consensus, insider-trading, senate-trading,
-    // short_interest (the second short-interest source added for the disagreement flag).
-    expect(mockFetch).toHaveBeenCalledTimes(5);
+    // FMP calls 4 endpoints: ratios-ttm, grades-consensus, insider-trading, senate-trading.
+    expect(mockFetch).toHaveBeenCalledTimes(4);
 
     // Call second time to ensure cache bypass
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({ insiderSentiment: 100 });
-    expect(mockFetch).toHaveBeenCalledTimes(10); // Bypassed cache!
+    expect(mockFetch).toHaveBeenCalledTimes(8); // Bypassed cache!
   });
 
   it("caches normally on Finnhub when all queries are successful or have non-transient errors", async () => {

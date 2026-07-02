@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ICON } from "./primitives";
 
 export interface Command {
   id: string;
@@ -78,7 +79,7 @@ export function CommandPalette({
         >
           {/* Clicking the dimmed backdrop closes the palette (the overlay container's
               own handler never fires because this backdrop covers it). */}
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onMouseDown={onClose} />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-scrim" onMouseDown={onClose} />
           <motion.div
             initial={{ opacity: 0, scale: 0.98, y: -8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -88,7 +89,7 @@ export function CommandPalette({
             onKeyDown={onKeyDown}
           >
             <div className="flex items-center gap-3 border-b border-line px-4">
-              <Search size={16} className="text-faint" />
+              <Search size={ICON.md} className="text-faint" />
               <input
                 ref={inputRef}
                 value={query}

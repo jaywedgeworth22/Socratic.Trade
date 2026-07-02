@@ -6,6 +6,7 @@ import { allowedSymbolsForPolicy } from "@/lib/policy";
 import { getBrokerGateway } from "@/lib/broker";
 import { fetchRecentGroupedBarsRest } from "@/lib/market-signals/massive";
 import { resolveRequestUserId } from "@/lib/request-user";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import type { EquityPosition } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,10 @@ export async function GET(request: Request) {
   let userId = "local";
   try {
     userId = resolveRequestUserId(request);
+    // Per-user rate limit: read-only, but each scan fans out to several data providers, so a
+    // tight refresh loop can hammer upstreams. Returns 429 with Retry-After; fails open on limiter error.
+    const limited = enforceRateLimit(userId, "scan", RATE_LIMITS.scan);
+    if (limited) return limited;
     const policy = getPolicy(userId);
     const symbols = allowedSymbolsForPolicy(policy);
     const gateway = getBrokerGateway(policy, userId);

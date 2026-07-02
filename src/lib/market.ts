@@ -369,7 +369,12 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
               congressCompositeWeights: { ...congressComposite.weights }
             }
           : {}),
-        evidenceBulletins: sig.bulletins.length > 0 ? sig.bulletins : quote.evidenceBulletins,
+        // MERGE (deduped) rather than replace — otherwise a disagreement bulletin already on the quote
+        // (e.g. the Yahoo-vs-FMP short-interest warning added in applyEnrichment) is silently dropped
+        // for any symbol that also has web-source (congress/insider/FINRA) bulletins.
+        evidenceBulletins: sig.bulletins.length > 0
+          ? Array.from(new Set([...(quote.evidenceBulletins ?? []), ...sig.bulletins]))
+          : quote.evidenceBulletins,
         sources
       };
       // Recompute the score: positioning depends on senateTrades/insiderSentiment and momentum
@@ -842,11 +847,6 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     targetHigh: extra.targetHigh ?? quote.targetHigh,
     targetLow: extra.targetLow ?? quote.targetLow,
     targetMedian: extra.targetMedian ?? quote.targetMedian,
-    // Surface a short-interest source disagreement as an evidence bulletin (deduped) so the prompt
-    // and dashboard don't silently trust one source. Kept out of the sourced-field cascade.
-    evidenceBulletins: extra.shortInterestDisagreement
-      ? Array.from(new Set([...(quote.evidenceBulletins ?? []), extra.shortInterestDisagreement]))
-      : quote.evidenceBulletins,
     sources: mergeSources(quote, extra)
   };
 }

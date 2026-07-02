@@ -180,12 +180,18 @@ enrichment checklist (`SymbolEnrichment` → `EnrichmentSourcedField` → `takeS
   + put/call ratio, long-TTL, default-off (`ROBINHOOD_OPTIONS_ENRICHMENT_ENABLED`).
 - **Active per-provider circuit breaker** — skips an enrichment lane whose db-health status
   is `stoppedWorking`, re-probing after a backoff; default-off
-  (`ENRICHMENT_CIRCUIT_BREAKER_ENABLED`).
-- **FMP second short-interest source** — carried alongside Yahoo (not first-wins); a
-  ≥`SHORT_INTEREST_DISAGREEMENT_PCT_PT` (default 5pp) Yahoo-vs-FMP gap surfaces a
-  disagreement bulletin. `MarketScan.source` credits `fmp` only when it actually contributed.
+  (`ENRICHMENT_CIRCUIT_BREAKER_ENABLED`). The trip is scoped to the provider's own
+  credential lane: a dead env-key lane no longer blacks out a healthy user-key provider
+  for the same service (keyless providers keep the all-lanes-for-service check).
+- **Short interest** — Yahoo Finance is the single source (`shortPercentOfFloat`). FMP does
+  **not** publish short interest — there is no `/short_interest` (or equivalent) endpoint on
+  FMP's API surface (verified 2026-07 against FMP's docs + official MCP surface). The earlier
+  "FMP second short-interest source" + Yahoo-vs-FMP disagreement bulletin were removed as
+  non-deliverable; a genuine second source would require a real provider (e.g. Massive,
+  Finnhub). See `docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.
 - **Finnhub REST-volume lever** — `FINNHUB_DROP_RECOMMENDATION` (default-off) drops the
   per-symbol `stock/recommendation` call (5→4); analyst ratings remain backstopped by the
   Yahoo/FMP/Alpha-Vantage tiers.
 
-See `docs/rollouts/2026-07-01-data-sources-breadth.md`.
+See `docs/rollouts/2026-07-01-data-sources-breadth.md` and
+`docs/rollouts/2026-07-01-followon-fmp-breaker-quotes.md`.

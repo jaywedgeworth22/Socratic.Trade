@@ -136,27 +136,27 @@ function buildSpecs(snapshot: FlowSnapshot): { specs: Spec[]; edges: Edge[] } {
   const sources: Spec[] = [
     {
       id: "market", col: 0, row: 0,
-      data: { label: "Market Data", subtext: "Quotes & technicals", icon: <LineChart size={15} />, iconColor: "bg-info",
+      data: { label: "Market Data", subtext: "Quotes & technicals", icon: <LineChart size={16} />, iconColor: "bg-info",
         status: candidateCount > 0 ? "active" : "ready", detail: scan?.source ? String(scan.source).split("+")[0] : "Yahoo (free)" }
     },
     {
       id: "macro", col: 0, row: 1,
-      data: { label: "Macro (FRED)", subtext: "Rates, CPI, VIX", icon: <Network size={15} />, iconColor: "bg-info",
+      data: { label: "Macro (FRED)", subtext: "Rates, CPI, VIX", icon: <Network size={16} />, iconColor: "bg-info",
         status: macroOn ? "active" : "ready", detail: typeof regime === "string" ? regime : undefined }
     },
     {
       id: "smart", col: 0, row: 2,
-      data: { label: "Smart Money", subtext: "Congress · Insider · FINRA", icon: <Landmark size={15} />, iconColor: "bg-info",
+      data: { label: "Smart Money", subtext: "Congress · Insider · FINRA", icon: <Landmark size={16} />, iconColor: "bg-info",
         status: dataStatus(smartEnabled, smartRecords), detail: smartEnabled ? `${smartRecords} rows${smartAge ? ` · ${smartAge}` : ""}` : "disabled" }
     },
     {
       id: "filings", col: 0, row: 3,
-      data: { label: "SEC Filings + RAG", subtext: "8-K · semantic search", icon: <Database size={15} />, iconColor: "bg-accent",
+      data: { label: "SEC Filings + RAG", subtext: "8-K · semantic search", icon: <Database size={16} />, iconColor: "bg-accent",
         status: dataStatus(Boolean(sec?.enabled), sec?.recordCount ?? 0), detail: sec?.enabled ? `${sec.recordCount ?? 0} docs` : "disabled" }
     },
     {
       id: "technical", col: 0, row: 4,
-      data: { label: "Technicals", subtext: tech?.source === "tradingview" ? "TradingView" : "Computed", icon: <Activity size={15} />, iconColor: "bg-info",
+      data: { label: "Technicals", subtext: tech?.source === "tradingview" ? "TradingView" : "Computed", icon: <Activity size={16} />, iconColor: "bg-info",
         status: dataStatus(Boolean(tech?.enabled), tech?.recordCount ?? 0), detail: tech?.enabled ? `${tech.recordCount ?? 0} signals` : "disabled" }
     }
   ];
@@ -165,37 +165,37 @@ function buildSpecs(snapshot: FlowSnapshot): { specs: Spec[]; edges: Edge[] } {
   const pipeline: Spec[] = [
     {
       id: "scan", col: 1, row: 2,
-      data: { label: "Scan & Score", subtext: "Multi-factor ranking", icon: <Gauge size={15} />, iconColor: "bg-accent",
+      data: { label: "Scan & Score", subtext: "Multi-factor ranking", icon: <Gauge size={16} />, iconColor: "bg-accent",
         status: candidateCount > 0 ? "active" : "ready", detail: candidateCount > 0 ? `${candidateCount} ranked${scanAge ? ` · ${scanAge}` : ""}` : "no recent scan" }
     },
     {
       id: "bull", col: 2, row: 1,
-      data: { label: "Strategy Agent", subtext: `Bull · ${model}`, icon: <Cpu size={15} />, iconColor: "bg-up",
+      data: { label: "Strategy Agent", subtext: `Bull · ${model}`, icon: <Cpu size={16} />, iconColor: "bg-up",
         status: run ? "active" : "ready", detail: run ? `${proposalCount} proposal${proposalCount === 1 ? "" : "s"}` : "no run yet" }
     },
     {
       id: "bear", col: 2, row: 3,
-      data: { label: "Bear / Red-Team", subtext: "Adversarial review", icon: <Cpu size={15} />, iconColor: "bg-warn",
+      data: { label: "Bear / Red-Team", subtext: "Adversarial review", icon: <Cpu size={16} />, iconColor: "bg-warn",
         status: run ? "active" : "ready", detail: "challenges each idea" }
     },
     {
       id: "evaluator", col: 2, row: 5,
-      data: { label: "Evaluator", subtext: "Learning loop", icon: <Cpu size={15} />, iconColor: "bg-accent",
+      data: { label: "Evaluator", subtext: "Learning loop", icon: <Cpu size={16} />, iconColor: "bg-accent",
         status: evidence > 0 ? "active" : "ready", detail: evidence > 0 ? `${evidence} thesis stats` : "awaiting closed trades" }
     },
     {
       id: "gates", col: 3, row: 2,
-      data: { label: "Policy Gates", subtext: "Deterministic limits", icon: <ShieldAlert size={15} />, iconColor: "bg-down",
+      data: { label: "Policy Gates", subtext: "Deterministic limits", icon: <ShieldAlert size={16} />, iconColor: "bg-down",
         status: policy.systemState === "halted" ? "warn" : "active", detail: `${gateCount} active${policy.systemState && policy.systemState !== "active" ? ` · ${policy.systemState}` : ""}` }
     },
     {
       id: "risk", col: 4, row: 2,
-      data: { label: "Risk Manager", subtext: "Sizing & stops", icon: <ShieldAlert size={15} />, iconColor: "bg-down",
+      data: { label: "Risk Manager", subtext: "Sizing & stops", icon: <ShieldAlert size={16} />, iconColor: "bg-down",
         status: "active", detail: `stop ${policy.riskRules?.stopLossPct ?? 8}% · take ${policy.riskRules?.takeProfitPct ?? 20}%` }
     },
     {
       id: "execution", col: 5, row: 2,
-      data: { label: "Execution", subtext: `${mode} · ${autonomous ? "Autonomous" : "Propose"}`, icon: <Rocket size={15} />, iconColor: running ? "bg-up" : "bg-info",
+      data: { label: "Execution", subtext: `${mode} · ${autonomous ? "Autonomous" : "Propose"}`, icon: <Rocket size={16} />, iconColor: running ? "bg-up" : "bg-info",
         status: running ? "active" : "off", detail: running ? "running" : "stopped" }
     }
   ];

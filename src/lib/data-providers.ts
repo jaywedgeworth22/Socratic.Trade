@@ -114,14 +114,6 @@ export interface SymbolEnrichment {
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
-  // A SECOND source's independent short-interest read (source-agnostic; gated OFF by default behind
-  // FUTURE_SOURCE_SHORT_INTEREST_ENABLED — see that helper), carried alongside the primary (Yahoo-first)
-  // value ONLY so the cascade can flag a material disagreement. Not a first-wins sourced field: the
-  // winning shortPercentOfFloat is still chosen by registration order via takeScalar.
-  shortPercentOfFloatSecondary?: number;
-  // Set by the cascade when the primary and the second source's short interest disagree beyond the
-  // threshold. Surfaced as an evidence bulletin rather than silently picking one source.
-  shortInterestDisagreement?: string;
   beta?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
@@ -209,6 +201,13 @@ export interface MarketEnrichmentProvider {
    *  "paid" providers receive a coverage hint so they can skip redundant sub-calls
    *  for symbols a free upstream (App A) already covered. */
   costTier?: "free" | "paid";
+  /** Credential lane this provider instance actually runs on ("user" | "env").
+   *  When set, the circuit breaker only trips this provider when the health lane
+   *  matching BOTH its service AND this key source is hard-stopped — so a dead
+   *  env-key lane can't disable a healthy user-key provider for the same service
+   *  (and vice-versa). Leave unset for keyless providers (Yahoo, etc.), which
+   *  fall back to the all-lanes-for-this-service check. */
+  healthKeySource?: ApiKeySource | null;
 }
 
 function flagEnabled(value: string | undefined): boolean {
@@ -621,6 +620,15 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
 // Builds a cascade: [Finnhub?, FMP?] → Yahoo Finance.
 // Yahoo Finance requires no API key and is always the final real tier.
 
+// Stamp a keyed provider with the credential lane it actually runs on, so the
+// circuit breaker only trips it when the health lane matching BOTH its service
+// AND this key source is hard-stopped (see applyCircuitBreaker). Keyless
+// providers are pushed without this and keep the all-lanes-for-service behavior.
+function withHealthLane(provider: MarketEnrichmentProvider, source: ApiKeySource): MarketEnrichmentProvider {
+  provider.healthKeySource = source;
+  return provider;
+}
+
 export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
@@ -646,7 +654,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // WITHOUT disturbing fundamentals sourcing (still finnhub/fmp/yahoo below). It
   // self-skips when either Alpaca key is absent — then the delayed sources fill these
   // fields in exactly the same order they would today.
-  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId));
+  if (alpacaData.apiKey && alpacaData.secretKey) providers.push(withHealthLane(new AlpacaSnapshotEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey, alpacaData.source, userId), alpacaData.source));
   // Tier 1.5 — Congress.Trade cross-app cache (fundamentals/analyst only, no price).
   // Gated by its OWN flag (CONGRESS_TRADE_FUNDAMENTALS_ENABLED), separate from the
   // price/history reads, so enabling price cache-aside doesn't silently give App A
@@ -660,16 +668,16 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // (This is delayed/averaged fundamentals — e.g. average_volume — not a real-time quote,
   // so it stays in the delayed tier rather than next to the Alpaca snapshot.)
   if (robinhoodEnrichmentEnabled()) providers.push(new RobinhoodEnrichmentProvider(userId));
-  if (intrinio.key) providers.push(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId));
-  if (tiingo.key) providers.push(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId));
-  if (fintech.key) providers.push(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId));
-  if (finnhub.key) providers.push(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId));
-  if (twelvedata.key) providers.push(new TwelveDataEnrichmentProvider(twelvedata.key, twelvedata.source, userId));
+  if (intrinio.key) providers.push(withHealthLane(new IntrinioEnrichmentProvider(intrinio.key, intrinio.source, userId), intrinio.source));
+  if (tiingo.key) providers.push(withHealthLane(new TiingoEnrichmentProvider(tiingo.key, tiingo.source, userId), tiingo.source));
+  if (fintech.key) providers.push(withHealthLane(new FintechStudiosEnrichmentProvider(fintech.key, fintech.source, userId), fintech.source));
+  if (finnhub.key) providers.push(withHealthLane(new FinnhubEnrichmentProvider(finnhub.key, finnhub.source, userId), finnhub.source));
+  if (twelvedata.key) providers.push(withHealthLane(new TwelveDataEnrichmentProvider(twelvedata.key, twelvedata.source, userId), twelvedata.source));
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
-  if (alpacaData.apiKey) providers.push(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId));
-  if (alphaVantage.key) providers.push(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId));
-  if (fmp.key) providers.push(new FmpEnrichmentProvider(fmp.key, fmp.source, userId));
+  if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
+  if (alphaVantage.key) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId), alphaVantage.source));
+  if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
   // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values when enabled.
@@ -722,9 +730,13 @@ export function applyCircuitBreaker(providers: MarketEnrichmentProvider[]): Mark
   const now = Date.now();
   return providers.map((p) => {
     const service = healthServiceForProvider(p.name);
-    // A provider maps to one or more health lanes (credential lanes). Trip only when EVERY lane for
-    // that service is stopped — a working lane means the provider can still serve someone.
-    const lanes = summaries.filter((s) => s.service === service);
+    // A provider maps to one or more health lanes (credential lanes). When the provider declares the
+    // credential lane it runs on (healthKeySource), only that lane's health can trip it — a dead env-key
+    // lane must not black out a healthy user-key provider for the same service (and vice-versa). Keyless
+    // providers (healthKeySource unset) keep the all-lanes-for-service check. Trip only when EVERY
+    // considered lane is stopped — a working lane means the provider can still serve someone.
+    const lane = p.healthKeySource;
+    const lanes = summaries.filter((s) => s.service === service && (lane == null || s.keySource === lane));
     if (lanes.length === 0) return p;
     // Only the 5-consecutive-failure condition trips the breaker. `stoppedWorking` is also set by
     // softer heuristics ("active this hour but no success yet") that a SINGLE cold failure on a
@@ -902,10 +914,6 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("institutionOwnershipPct", name, r.institutionOwnershipPct);
         takeScalar("nearTheMoneyIv", name, r.nearTheMoneyIv);
         takeScalar("putCallRatio", name, r.putCallRatio);
-        // FMP's independent short read is carried (not first-wins) so we can flag disagreement below.
-        if (base.shortPercentOfFloatSecondary === undefined && r.shortPercentOfFloatSecondary !== undefined) {
-          base.shortPercentOfFloatSecondary = r.shortPercentOfFloatSecondary;
-        }
         takeScalar("targetMean", name, r.targetMean);
         takeScalar("targetHigh", name, r.targetHigh);
         takeScalar("targetLow", name, r.targetLow);
@@ -957,29 +965,6 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         sources.sentiment = "alpha-vantage";
         this.contributingNames.add("alpha-vantage");
       }
-
-      // Short-interest cross-check: when the primary (Yahoo-first) shortPercentOfFloat and the
-      // SECOND source's independent read disagree by more than SHORT_INTEREST_DISAGREEMENT_PCT_PT
-      // percentage points, record a disagreement note. Source-agnostic: the second source is wired
-      // behind FUTURE_SOURCE_SHORT_INTEREST_ENABLED (see the fetch site) — currently the (dead) FMP
-      // endpoint, but the field/flag are named generically so a real source can replace it. We keep
-      // the first-wins primary value but flag it so the prompt/dashboard don't trust one source.
-      if (
-        typeof base.shortPercentOfFloat === "number" &&
-        typeof base.shortPercentOfFloatSecondary === "number" &&
-        base.sources?.shortPercentOfFloat !== "fmp"
-      ) {
-        const delta = Math.abs(base.shortPercentOfFloat - base.shortPercentOfFloatSecondary);
-        if (delta >= shortInterestDisagreementThresholdPct()) {
-          const primarySrc = sources.shortPercentOfFloat ?? "primary";
-          base.shortInterestDisagreement =
-            `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
-            `secondary ${base.shortPercentOfFloatSecondary.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
-          this.contributingNames.add("fmp");
-        }
-      }
-      // The carrier field never leaves the cascade — it exists only to compute the flag above.
-      delete base.shortPercentOfFloatSecondary;
 
       base.sources = sources;
       merged[symbol] = base;
@@ -1059,25 +1044,6 @@ export function enrichmentCircuitBreakerEnabled(): boolean {
 export function enrichmentCircuitBreakerBackoffMinutes(): number {
   const value = Number(process.env.ENRICHMENT_CIRCUIT_BREAKER_BACKOFF_MIN ?? 15);
   return Number.isFinite(value) && value > 0 ? value : 15;
-}
-
-/** Percentage-point delta at/above which Yahoo and FMP short interest are "materially" disagreeing. */
-export function shortInterestDisagreementThresholdPct(): number {
-  const value = Number(process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT ?? 5);
-  return Number.isFinite(value) && value > 0 ? value : 5;
-}
-
-/**
- * Whether to call the SECOND short-interest source for the disagreement cross-check. DEFAULT OFF and
- * source-agnostic on purpose: NONE of our integrated providers currently expose short interest % of
- * float (Yahoo is the only source; FMP has no such endpoint; FINRA is short *volume*, a different
- * metric). The only thing wired today is the (dead) FMP `/v4/short_interest` call, kept off so it
- * doesn't 404 every scan. Flip FUTURE_SOURCE_SHORT_INTEREST_ENABLED on — and point the fetch at a real
- * source — when a genuine second source is added (e.g. Finnhub's metric payload, already fetched).
- */
-export function secondSourceShortInterestEnabled(): boolean {
-  const v = (process.env.FUTURE_SOURCE_SHORT_INTEREST_ENABLED ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "on" || v === "yes";
 }
 
 // Opt-in: drop Finnhub's per-symbol `stock/recommendation` REST call (5 sub-calls → 4). Analyst ratings
@@ -2080,7 +2046,7 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // Price-target-consensus is OPT-IN (FMP_PRICE_TARGETS_ENABLED): an extra FMP call per symbol,
           // and not on every key tier. When off, targets stay undefined and ride null downstream.
           const wantTargets = fmpPriceTargetsEnabled() && !skipTargets;
-          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw, shortRaw] = await Promise.allSettled([
+          const [peRaw, consensusRaw, insiderRaw, senateRaw, targetRaw] = await Promise.allSettled([
             skipPe
               ? Promise.resolve(undefined)
               : this.getJson(`${this.base}/ratios-ttm?symbol=${symbol}&apikey=${this.apiKey}`),
@@ -2091,17 +2057,10 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             this.getJson(`https://financialmodelingprep.com/api/v4/senate-trading?symbol=${symbol}&apikey=${this.apiKey}`, false),
             wantTargets
               ? this.getJson(`${this.base}/price-target-consensus?symbol=${symbol}&apikey=${this.apiKey}`, false)
-              : Promise.resolve(undefined),
-            // SECOND short-interest source for the disagreement cross-check — source-agnostic, DEFAULT
-            // OFF (FUTURE_SOURCE_SHORT_INTEREST_ENABLED). The only URL wired today is FMP's
-            // /v4/short_interest, which DOESN'T EXIST in FMP's public API (their FAQ confirms it), so it
-            // 404s for every symbol and the cross-check can never fire — hence off by default so it
-            // doesn't waste a request per scan. When a REAL second source is added (e.g. parse a short
-            // field out of Finnhub's metric payload we already fetch), swap this URL and flip the flag;
-            // the disagreement machinery + shortPercentOfFloatSecondary field are named generically for it.
-            secondSourceShortInterestEnabled()
-              ? this.getJson(`https://financialmodelingprep.com/api/v4/short_interest?symbol=${symbol}&apikey=${this.apiKey}`, false, [403, 404])
               : Promise.resolve(undefined)
+            // NOTE: FMP does NOT provide short interest — there is no /short_interest (or equivalent)
+            // endpoint (verified via FMP's API docs + official MCP surface, 2026-07). A second
+            // short-interest source would need a real provider such as Massive or Finnhub.
           ]);
 
           let peRatio: number | undefined;
@@ -2179,26 +2138,11 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
             }
           }
 
-          // Short interest → percent of float. FMP shapes vary; accept shortPercentOfFloat /
-          // shortInterestRatio-style fields and normalize a 0–1 fraction to 0–100 percentage points.
-          let shortPercentOfFloatSecondary: number | undefined;
-          if (shortRaw.status === "fulfilled" && Array.isArray(shortRaw.value)) {
-            const row = (shortRaw.value as Array<Record<string, unknown>>)[0];
-            const raw = Number(
-              row?.shortPercentOfFloat ?? row?.shortPercentFloat ?? row?.shortInterestPercent ?? row?.percentOfFloat
-            );
-            if (Number.isFinite(raw) && raw >= 0) {
-              // Values ≤ 1 are treated as a fraction (0.08 → 8%); larger values are already percent.
-              shortPercentOfFloatSecondary = raw <= 1 ? Math.round(raw * 10000) / 100 : Math.round(raw * 100) / 100;
-            }
-          }
-
           const data: SymbolEnrichment = {
             ...(peRatio !== undefined && { peRatio }),
             ...(analystBySource !== undefined && { analystBySource }),
             ...(insiderSentiment !== undefined && { insiderSentiment }),
             ...(senateTrades !== undefined && { senateTrades }),
-            ...(shortPercentOfFloatSecondary !== undefined && { shortPercentOfFloatSecondary }),
             ...(targetMean !== undefined && { targetMean }),
             ...(targetHigh !== undefined && { targetHigh }),
             ...(targetLow !== undefined && { targetLow }),
@@ -2208,14 +2152,6 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           const promises = [peRaw, consensusRaw, insiderRaw, senateRaw];
           const allRejected = promises.every((p) => p.status === "rejected");
           const hasTransientError = promises.some((p) => p.status === "rejected" && isTransientError(p.reason));
-          // The optional short-interest source blocks caching on ANY recoverable failure — 429, every 5xx
-          // (incl. HTTP 500, which isTransientError intentionally doesn't match), network/timeout — so a
-          // full-TTL row missing shortPercentOfFloatSecondary can't freeze the Yahoo-vs-FMP disagreement signal
-          // until expiry. Only a permanent 4xx (403 non-premium / 404) is allowed to cache without it.
-          const shortReason = shortRaw.status === "rejected"
-            ? (shortRaw.reason instanceof Error ? shortRaw.reason.message : String(shortRaw.reason ?? ""))
-            : "";
-          const shortInterestRecoverableFailure = shortRaw.status === "rejected" && !/\b40[34]\b/.test(shortReason);
           const isEmpty = Object.keys(data).length === 0;
           // A coverage-trimmed fetch (we skipped ratios-ttm and/or grades-consensus)
           // yields a PARTIAL row. Don't write it to the normal fmp cache: a later scan
@@ -2227,12 +2163,11 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
           // must still be cached, or FMP's calls would repeat every scan.
           const trimmed = skipPe || skipConsensus || (skipTargets && fmpPriceTargetsEnabled());
 
-          if (allRejected || hasTransientError || shortInterestRecoverableFailure || isEmpty || trimmed) {
+          if (allRejected || hasTransientError || isEmpty || trimmed) {
             if (!trimmed) {
               console.warn(
                 `[data-providers] FMP enrichment for ${symbol} skipped caching: ` +
-                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, ` +
-                `shortInterestRecoverableFailure=${shortInterestRecoverableFailure}, isEmpty=${isEmpty})`
+                `(allRejected=${allRejected}, hasTransientError=${hasTransientError}, isEmpty=${isEmpty})`
               );
             }
           } else {

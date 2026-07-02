@@ -49,8 +49,10 @@ screen.
 
 ## Layout Model
 
-- The desktop app shell uses `height: 100dvh` and three fixed rows: command bar,
-  main cockpit, and bottom drawer.
+- The desktop app shell uses `height: 100dvh` with a fixed command-bar row above
+  the main cockpit. (The original always-on bottom-drawer row was replaced by an
+  on-demand right slide-over for the feeds — see "User-Facing Tabs" — so the shell
+  is no longer a three-row grid.)
 - As of 2026-06-19, the fixed-height cockpit shell is desktop-only (`xl+`).
   Mobile/tablet use `min-height: 100dvh`, normal page scrolling, responsive shrinking command-bar buttons (grouped into selects/utility vs actions) that stack as exactly two right-aligned lines below the `md` (768px) breakpoint, and a compact portfolio summary above the workspace.
 - The main cockpit has three regions: left rail, center workspace, and right
@@ -62,9 +64,26 @@ screen.
 
 ## User-Facing Tabs
 
-- Center workspace tabs: `Decision`, `Market Scan`, `Performance`, `Strategy`.
-- Right inspector tabs: `Operate`, `Risk`, `Profile`.
-- Bottom drawer tabs: `Activity`, `Runs`, `Notifications`.
+> Updated 2026-07-01 to match code. The tab set grew past the original
+> 4-workspace / 3-feed split described in the 2026-06-16 redesign banner above;
+> the lists below are the source of truth (`app/dashboard-client.tsx`
+> `WorkspaceTab` type and `FeedTab` type).
+
+- **Center workspace tabs (7):** `Decision`, `Assistant`, `Market Scan`,
+  `Macro`, `Performance`, `Tax`, `Strategy` (`WorkspaceTab` union,
+  `app/dashboard-client.tsx`). As of 2026-07-01, only the five primary tabs
+  (`Decision`, `Assistant`, `Market Scan`, `Performance`, `Strategy`) render
+  inline; `Macro` and `Tax` are demoted behind a **"More" overflow menu** on the
+  tab row to keep the single-screen row scannable. Both overflow tabs stay
+  reachable in one extra click, remain deep-linkable, and persist via the same
+  `workspaceTab` state / `WORKSPACE_TAB_KEY` local-storage key as the primary
+  tabs. The overflow menu preserves `role="tab"`/`aria-selected` semantics (see
+  Accessibility below), and the "More" trigger shows the active overflow tab's
+  label so the user always sees where they are.
+- **Right inspector tabs:** `Operate`, `Risk`, `Profile`.
+- **Feed tabs (4):** `Activity`, `Runs`, `Notifications`, `Audit` (`FeedTab`
+  union, `app/dashboard-client.tsx`). These render in the feed slide-over rather
+  than an always-on bottom drawer.
 
 The `Decision` tab remains the default because the app's core value is showing
 what the agent recommends or decided, not hiding that output in logs.
