@@ -495,17 +495,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
     const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? "block";
-    // IRA detection, belt-and-braces across all three places the regime can live. The
-    // ConnectedAccount row (context.accountTaxationType) is the SOURCE OF TRUTH — it wins over
-    // policy taxSettings server-side and must be checked because a legacy/manual IRA account can
-    // have capabilities absent (or reporting "brokerage") and a policy without taxationType.
+    // IRA detection. The ConnectedAccount row (context.accountTaxationType) is the SOURCE OF
+    // TRUTH: when the row states a regime it DECIDES — a stale IRA value left behind in policy
+    // taxSettings must not reclassify a now-taxable account (that would apply the Rev. Rul.
+    // 2008-5 hard block to a taxable rebuy the ask/auto/guard-off paths should govern). Only
+    // when the row is silent do the weaker signals speak, and then as a union, because falsely
+    // treating an IRA as taxable permanently destroys the disallowed basis: capabilities can
+    // misreport "brokerage" on legacy/manual IRA rows, and a legacy policy may carry the only
+    // record of the regime for accounts that predate the row-level field.
+    const isIraType = (regime: TaxationType | undefined): boolean =>
+      regime === "roth_ira" || regime === "traditional_ira";
     const buyerIsIra =
-      context.accountTaxationType === "roth_ira" ||
-      context.accountTaxationType === "traditional_ira" ||
-      taxSettings?.taxationType === "roth_ira" ||
-      taxSettings?.taxationType === "traditional_ira" ||
-      context.accountCapabilities?.accountType === "roth_ira" ||
-      context.accountCapabilities?.accountType === "traditional_ira";
+      context.accountTaxationType != null
+        ? isIraType(context.accountTaxationType)
+        : isIraType(taxSettings?.taxationType) ||
+          context.accountCapabilities?.accountType === "roth_ira" ||
+          context.accountCapabilities?.accountType === "traditional_ira";
     if (guardOn || buyerIsIra) {
       const lock = resolveWashSaleLock(context, symbol);
       if (lock) {

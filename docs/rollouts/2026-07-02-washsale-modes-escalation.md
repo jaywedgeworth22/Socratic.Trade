@@ -164,6 +164,38 @@ re-checks — without weakening any gate that guards *what* the proposal is.
 - `npm test` — full suite green (see STATUS.md for count)
 - `npm run build` — succeeds
 
+## Codex review fixes — round 2 (applied by the coordinator session; original lane hit its
+## session limit mid-loop)
+
+All three round-2 findings verified against the code and confirmed real before fixing:
+
+1. **IRA detection is precedence, not union** (`src/lib/policy.ts`). The old OR-chain let a
+   stale IRA value in `policy.taxSettings.taxationType` classify a buyer as an IRA even when
+   the ConnectedAccount row said `"taxable"` — wrongly applying the Rev. Rul. 2008-5 hard block
+   to taxable rebuys (unapprovable in ask mode, blocked even guard-off). Now
+   `context.accountTaxationType` DECIDES when present; only when the row is silent do the
+   weaker signals (policy taxSettings, broker capabilities) speak, still as a union — absent
+   the source of truth, mistaking an IRA for taxable permanently destroys basis, so the
+   conservative fallback stays. Tests: row-taxable + stale-policy-IRA escalates in ask mode /
+   proceeds guard-off; all pre-existing IRA fallback tests unchanged.
+2. **Cap demotion now binds the current run** (`src/lib/strategy.ts`
+   `autoRevertOnCapBreach`). The demotion wrote `strategyAuthority: "propose"` to storage but
+   left the loop's in-memory policy on `"decide"`, so later proposals in the same run kept
+   producing decide-style soft-blocked cards after the account was demoted to Ask-first. The
+   function now also updates the passed policy object in place, binding all four call sites.
+3. **Refusal-path writes can no longer revive non-pending rows** (`src/lib/strategy.ts` +
+   new `transitionProposalIfPending` in `src/lib/db-proposals.ts`). The wash-sale
+   re-escalation wrote `status='proposed'` unconditionally; a proposal expired by the
+   scheduler or rejected in another tab during the approval's async scan/review could be
+   resurrected with fresh override tokens. Both approval-refusal writes (re-queue 'proposed'
+   and retire 'blocked') now use an atomic `status='proposed'` CAS (same shape as
+   `claimProposalForExecution`); a lost race audits `proposal_reescalation_skipped` and
+   returns the row's actual status instead of re-queuing. Tests: 4 new CAS tests in
+   `test/deep-safety-fixes.test.ts`.
+
+Round-2 verification: lint 0 errors, tsc clean, **2298 tests pass (235 files)**, build green —
+after merging `origin/main` @ post-#324.
+
 ## Follow-ups
 
 - The approvals card renders escalated block reasons via the existing "Policy gate"

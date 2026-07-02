@@ -407,6 +407,32 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
     });
   }
 
+  // Codex review finding (round 2): the row is a SOURCE OF TRUTH, meaning PRECEDENCE — when the
+  // ConnectedAccount states "taxable", a stale IRA value left behind in policy taxSettings must
+  // not reclassify the buyer and apply the Rev. Rul. 2008-5 hard block to a taxable rebuy.
+  it("row-level 'taxable' overrides a stale IRA value in policy taxSettings — ask mode escalates instead of hard-blocking", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask", taxationType: "roth_ira" }) }), {
+        accountTaxationType: "taxable"
+      })
+    );
+    expect(decision.approved).toBe(false); // the symbol is still locked — but approvable
+    expect(decision.washSale?.outcome).toBe("ask_escalated");
+    expect((decision.escalations ?? []).some((entry) => entry.kind === "wash_sale_ask")).toBe(true);
+  });
+
+  it("row-level 'taxable' + stale policy IRA value + guard off: the taxable rebuy proceeds", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleGuard: false, taxationType: "traditional_ira" }) }), {
+        accountTaxationType: "taxable"
+      })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale).toBeUndefined();
+  });
+
   it("ignores override tokens — user approval can never authorize the permanent harm", () => {
     const decision = evaluateTradeProposal(
       buy,

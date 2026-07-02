@@ -26,7 +26,14 @@ Guardrails → Tax rules gains a washSaleHandling select (new "select" FieldKind
 LOOSER, typed CONFIRM on LIVE). LLM context gains priced `taxContext.washSaleRebuyCosts` in
 ask/auto; `STRATEGY_PROMPT_VERSION` → `agentic-strategy@1.1.0`. Quartet green: lint 0 errors, tsc
 clean, 2280 tests pass (235 files), build ok. Docs:
-`docs/rollouts/2026-07-02-washsale-modes-escalation.md`. **Next:** PR "feat(tax): wash-sale
+`docs/rollouts/2026-07-02-washsale-modes-escalation.md`. Codex round 2 (applied by the
+coordinator session after this lane hit its session limit): ConnectedAccount.taxationType now
+takes PRECEDENCE over a stale policy-taxSettings IRA value (row "taxable" ⇒ no Rev. Rul. hard
+block for taxable rebuys); the cap demotion binds the current run's in-memory policy, not just
+storage; approval-path refusal writes use an atomic still-pending CAS
+(`transitionProposalIfPending`, db-proposals) so wash-sale re-escalation can never resurrect an
+expired/rejected card — quartet re-green post-#324 merge, 2298 tests (235 files).
+**Next:** PR "feat(tax): wash-sale
 handling modes (block/ask/auto) + Decide-mode escalation" with auto-merge on green verify;
 polish: dedicated wash-sale cost callout on the approvals card + humanized Activity copy for the
 new audit events.

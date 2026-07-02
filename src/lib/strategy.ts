@@ -17,6 +17,7 @@ import {
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
+  transitionProposalIfPending,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -1812,6 +1813,12 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
   setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // The demotion must bind the REST of this run, not just the next one: callers keep using this
+  // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
+  // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a
+  // cap on proposal N would keep queueing decide-style soft-blocked cards for N+1... even though
+  // the account was just demoted to Ask-first.
+  policy.strategyAuthority = "propose";
   audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
   return true;
 }
@@ -2025,7 +2032,33 @@ export async function executeProposal(
           ...decision,
           escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
         };
-        updateProposalStatus(proposalId, "proposed", undefined, review, review.estimatedNotional, userId, undefined, undefined, reescalated);
+        // Guarded re-queue: only while the row is STILL pending. The scan/review above is async,
+        // so the scheduler can expire this proposal — or another tab can reject it — while this
+        // approval was in flight; an unconditional 'proposed' write here would resurrect that
+        // withdrawn card with fresh override tokens. If the row left the pending state, honor
+        // that outcome instead of re-queuing.
+        if (!transitionProposalIfPending(proposalId, "proposed", userId, { review, estimatedNotional: review.estimatedNotional, decision: reescalated })) {
+          const current = getProposal(proposalId, userId);
+          audit(
+            "proposal_reescalation_skipped",
+            {
+              proposalId,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              reasons: decision.reasons,
+              currentStatus: current?.status ?? "missing"
+            },
+            userId,
+            policy.connectedAccountId
+          );
+          return {
+            status: current?.status ?? "unknown",
+            reasons: [
+              `Proposal is no longer pending (now ${current?.status ?? "missing"}); the wash-sale re-escalation was not re-queued.`,
+              ...decision.reasons
+            ]
+          };
+        }
         audit(
           "proposal_reescalated",
           {
@@ -2055,7 +2088,9 @@ export async function executeProposal(
         return { status: "proposed", reasons: decision.reasons };
       }
 
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, decision);
+      // Same in-flight window as the re-escalation above: retire the card as blocked only if it
+      // is still pending — never overwrite a rejection/expiry that landed during the async review.
+      transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision });
       audit("proposal_approved", {
         proposalId,
         symbol: proposal.symbol,
