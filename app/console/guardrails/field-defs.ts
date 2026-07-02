@@ -1,0 +1,108 @@
+/** Guardrails field metadata (labels + honest one-liners + loosening
+ *  direction). Pure data, split out of the page component so the
+ *  LOOSER/TIGHTER classification over these defs is unit-testable.
+ *
+ *  looserWhen semantics (drives the typed-CONFIRM friction on LIVE):
+ *  - "up"/"down": which numeric direction loosens the cage.
+ *  - "on": ENABLING the toggle loosens (e.g. short selling, extended hours).
+ *  - "off": DISABLING the toggle loosens — used for protective switches
+ *    (panic brake, broker-held brackets), where turning protection off is
+ *    the risk-increasing move. */
+
+import type { IndexUniverse, OrderType } from "@/lib/types";
+import type { FieldDef } from "../lib/policy-diff";
+
+export const ESSENTIALS: FieldDef[] = [
+  { path: "maxOrderNotional", label: "Max per order", kind: "money", optional: true, looserWhen: "up", hint: "Hard dollar cap on any single order. Blank = no per-order dollar cap (the % of portfolio cap below still applies)." },
+  { path: "maxOrderPctOfNav", label: "Max per order (% of portfolio)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "maxDailyNotional", label: "Max spend per day", kind: "money", optional: true, looserWhen: "up", hint: "Opening orders only — protective exits never consume this cap." },
+  { path: "maxDailyOrders", label: "Max opening orders per day", kind: "int", looserWhen: "up" },
+  { path: "riskRules.stopLossPct", label: "Stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Sell automatically if a position drops this far. Wider = looser protection." },
+  { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true },
+  { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
+  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Circuit breaker: if the account loses this much in a day, new buys stop automatically (Exit-only). Protective sells keep working." },
+  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Circuit breaker on the fall from the account's high-water mark." },
+  { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
+  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on" },
+  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
+];
+
+export const EXPOSURE: FieldDef[] = [
+  { path: "maxSymbolExposurePct", label: "Max in one stock (%)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "maxSymbolExposureNotional", label: "Max in one stock ($)", kind: "money", optional: true, looserWhen: "up" },
+  { path: "maxGrossExposurePct", label: "Max gross exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "maxNetExposurePct", label: "Max net exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "maxPortfolioBeta", label: "Max portfolio beta", kind: "int", optional: true, looserWhen: "up", hint: "Risk-reducing trades always pass." },
+  { path: "maxAvgCorrelation", label: "Max avg correlation (0–1)", kind: "int", optional: true, looserWhen: "up", hint: "Skips opening a name too correlated with current holdings. Never blocks exits." },
+  { path: "maxOrderPctOfAdv", label: "Max order vs daily volume (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Market-impact cap: an opening order may not exceed this share of the name's recent daily dollar volume." }
+];
+
+export const ENTRY_QUALITY: FieldDef[] = [
+  { path: "maxEntryDriftPct", label: "Max entry drift (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Rejects a stale opening order whose price moved this far from where the idea was priced." },
+  { path: "maxQuoteAgeSec", label: "Max quote age", kind: "seconds", optional: true, looserWhen: "up", hint: "Opening orders blocked on stale quotes. Blank = gate off. Missing timestamps count as stale when on." },
+  { path: "maxFundamentalsAgeSec", label: "Max fundamentals age", kind: "seconds", optional: true, looserWhen: "up" },
+  { path: "marketableLimitEntries", label: "Marketable-limit entries", kind: "bool", hint: "Converts opening market orders to tightly-priced limits so a fast tape can't fill arbitrarily far past the quote." }
+];
+
+export const STOPS_PLUMBING: FieldDef[] = [
+  { path: "riskRules.trailingStopPct", label: "Trailing stop", kind: "pct", optional: true },
+  { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: "Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime. Turning this OFF is looser.", looserWhen: "off" },
+  { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", hint: "Opt-in true broker-side stop for live Robinhood positions." },
+  { path: "betaScaledStops", label: "Beta-scaled stops", kind: "bool", hint: "Stop distance scaled by the name's beta (clamped 0.5–2.0×)." },
+  { path: "atrStops", label: "ATR-based stops", kind: "bool", hint: "Stop distance from the name's own realized daily range instead of a flat %." },
+  { path: "riskRules.atrStopPeriod", label: "ATR period", kind: "int", optional: true },
+  { path: "riskRules.atrStopMultiple", label: "ATR multiple", kind: "int", optional: true },
+  { path: "allowExtendedHoursSyntheticStops", label: "App stops in extended hours", kind: "bool", looserWhen: "on" }
+];
+
+export const PANIC_BRAKE: FieldDef[] = [
+  { path: "volPanicBrakeEnabled", label: "Volatility panic brake", kind: "bool", looserWhen: "off", hint: "A rare tail-extreme reading on VIX/VVIX/SKEW flips the system to Exit-only automatically. Turning OFF is looser." },
+  { path: "volPanicVixThreshold", label: "VIX threshold", kind: "int", optional: true, looserWhen: "up" },
+  { path: "volPanicVvixThreshold", label: "VVIX threshold", kind: "int", optional: true, looserWhen: "up" },
+  { path: "volPanicSkewThreshold", label: "SKEW threshold", kind: "int", optional: true, looserWhen: "up" }
+];
+
+export const SHORTS: FieldDef[] = [
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: "Also requires the broker to allow shorting on this account. Every short must carry a short stop-loss." },
+  { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
+  { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Mandatory for any short — a short without one is rejected." }
+];
+
+export const HYGIENE: FieldDef[] = [
+  { path: "maxProposalsPerRun", label: "Max ideas per run", kind: "int", looserWhen: "up" },
+  { path: "maxHourlyNotional", label: "Max spend per hour", kind: "money", optional: true, looserWhen: "up", hint: "Rolling 60-minute ceiling. Breaching it auto-demotes the account back to Ask-first." },
+  { path: "proposalExpiryMinutes", label: "Proposal expiry", kind: "minutes", optional: true, hint: "Pending proposals older than this auto-expire. 0/blank = no hard expiry." },
+  { path: "proposalRevalidateCadenceHours", label: "Re-validate pending ideas every (hours)", kind: "int", optional: true, hint: "0 = every run." },
+  { path: "staleLimitOrderMinutes", label: "Stale limit-order alert (minutes)", kind: "int", optional: true }
+];
+
+export const UNIVERSE_FLOOR: FieldDef[] = [
+  { path: "universeFloor.minPrice", label: "Min share price", kind: "money", optional: true, looserWhen: "down", hint: "The penny-stock gate. Held positions and your explicit symbols are always exempt; exits never affected." },
+  { path: "universeFloor.minMarketCapUsd", label: "Min market cap", kind: "money", optional: true, looserWhen: "down" },
+  { path: "universeFloor.minDollarVolume", label: "Min daily dollar volume", kind: "money", optional: true, looserWhen: "down" }
+];
+
+export const ALL_DEFS: FieldDef[] = [
+  ...ESSENTIALS,
+  ...EXPOSURE,
+  ...ENTRY_QUALITY,
+  ...STOPS_PLUMBING,
+  ...PANIC_BRAKE,
+  ...SHORTS,
+  ...HYGIENE,
+  ...UNIVERSE_FLOOR
+];
+
+export const INDICES: Array<{ id: IndexUniverse; label: string }> = [
+  { id: "sp100", label: "S&P 100" },
+  { id: "sp500", label: "S&P 500" },
+  { id: "nasdaq100", label: "Nasdaq 100" },
+  { id: "nasdaqComposite", label: "Nasdaq Composite" },
+  { id: "dow30", label: "Dow 30" },
+  { id: "russell2000", label: "Russell 2000" },
+  { id: "nyseComposite", label: "NYSE Composite" },
+  { id: "ftWilshire5000", label: "FT Wilshire 5000" }
+];
+
+export const ORDER_TYPES: OrderType[] = ["market", "limit", "stop_market", "stop_limit"];

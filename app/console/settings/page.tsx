@@ -15,7 +15,7 @@ import {
   setAutoResume,
   ConsoleApiError
 } from "../lib/api";
-import { deriveReality, realityForAccount } from "../lib/derive";
+import { activeConnectedAccount, deriveReality, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
@@ -52,7 +52,6 @@ export default function SettingsPage() {
             changes here follow the account, not you
           </span>
         </div>
-        <EventNotificationsCard />
         <TaxSettingsCard />
       </section>
 
@@ -65,6 +64,10 @@ export default function SettingsPage() {
           </span>
         </div>
         <ConnectionsCard />
+        {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
+            in db-profiles): one event list + webhook overlaid on every account —
+            so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
+        <EventNotificationsCard />
         <DeliveryChannelsCard />
         <ScanShapeCard />
         <BootBehaviorCard />
@@ -74,7 +77,7 @@ export default function SettingsPage() {
   );
 }
 
-// ── This account: event notifications ───────────────────────────────────────
+// ── All accounts: event notifications (user-level policy field) ─────────────
 
 function EventNotificationsCard() {
   const { snapshot, refresh } = useConsoleData();
@@ -121,7 +124,9 @@ function EventNotificationsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which events this account reports. Where they go (push/email/SMS/webhook) is configured once per user, below.
+        Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
+        every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
+        user, below.
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
         {NOTIFICATION_EVENT_TYPES.map((type) => {
@@ -150,6 +155,12 @@ function EventNotificationsCard() {
 
 // ── This account: tax settings ───────────────────────────────────────────────
 
+const TAXATION_LABEL: Record<TaxationType, string> = {
+  taxable: "taxable brokerage",
+  roth_ira: "Roth IRA",
+  traditional_ira: "traditional IRA"
+};
+
 function TaxSettingsCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -164,7 +175,13 @@ function TaxSettingsCard() {
   if (!snapshot) return null;
 
   const current = snapshot.policy.taxSettings;
-  const taxation: TaxationType = draft?.taxationType ?? current?.taxationType ?? "taxable";
+  // The connected account's own taxationType (set when it was linked) WINS over
+  // policy.taxSettings server-side (dashboard tax summary reads
+  // activeAccount.taxationType ?? policy.taxSettings.taxationType), and no API
+  // exists to edit it here — so when the account defines it, show it read-only
+  // instead of a select whose "saved" value would be silently overridden.
+  const accountTaxationType = activeConnectedAccount(snapshot)?.taxationType;
+  const taxation: TaxationType = accountTaxationType ?? draft?.taxationType ?? current?.taxationType ?? "taxable";
   const washSaleGuard: boolean = draft?.washSaleGuard ?? current?.washSaleGuard ?? true;
   const subtractFromResults: boolean = draft?.subtractFromResults ?? current?.subtractFromResults ?? false;
   const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
@@ -201,17 +218,28 @@ function TaxSettingsCard() {
       }
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Account type" hint="IRAs zero the rates and skip the per-account wash-sale guard automatically." htmlFor="taxtype">
-          <Select
-            id="taxtype"
-            value={taxation}
-            onChange={(e) => setDraft((d) => ({ ...(d ?? {}), taxationType: e.target.value as TaxationType }))}
+        {accountTaxationType ? (
+          <Field
+            label="Account type"
+            hint="Set on the connected account when it was linked — that value always wins over anything saved here, and this console can't change it yet."
           >
-            <option value="taxable">taxable brokerage</option>
-            <option value="roth_ira">Roth IRA</option>
-            <option value="traditional_ira">traditional IRA</option>
-          </Select>
-        </Field>
+            <div className="con-input flex items-center bg-[color:var(--con-surface-2)] text-[color:var(--con-muted)]">
+              {TAXATION_LABEL[accountTaxationType] ?? accountTaxationType}
+            </div>
+          </Field>
+        ) : (
+          <Field label="Account type" hint="IRAs zero the rates and skip the per-account wash-sale guard automatically." htmlFor="taxtype">
+            <Select
+              id="taxtype"
+              value={taxation}
+              onChange={(e) => setDraft((d) => ({ ...(d ?? {}), taxationType: e.target.value as TaxationType }))}
+            >
+              <option value="taxable">taxable brokerage</option>
+              <option value="roth_ira">Roth IRA</option>
+              <option value="traditional_ira">traditional IRA</option>
+            </Select>
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Short-term rate %" htmlFor="st-rate">
             <NumInput
@@ -278,7 +306,7 @@ function ConnectionsCard() {
       ) : (
         <div className="flex flex-col gap-2">
           {snapshot.connectedAccounts.map((account) => {
-            const r = realityForAccount(account, snapshot.policy);
+            const r = realityForAccount(account);
             const caps = account.capabilities;
             return (
               <div key={account.id} className="rounded-lg border border-[color:var(--con-line)] p-3">
@@ -376,7 +404,7 @@ function DeliveryChannelsCard() {
       </p>
       {status.enabledEvents.length > 0 && (
         <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Events currently enabled on this account: {status.enabledEvents.join(", ")}
+          Events currently enabled for you (all accounts): {status.enabledEvents.join(", ")}
         </p>
       )}
     </Card>

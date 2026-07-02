@@ -171,8 +171,27 @@ export function activateAccount(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}/activate`, { method: "POST" });
 }
 
+/** Library-activate a preset (flips the library's active flag and writes the
+ *  user-level base policy — including the preset's stored systemState). Only
+ *  used as the fallback when NO connected account exists; prefer
+ *  copyProfileToAccount, which preserves the account's run-state. */
 export function activateProfile(id: string): Promise<unknown> {
   return request<unknown>(`/api/profiles/${encodeURIComponent(id)}/activate`, { method: "POST" });
+}
+
+/** Copy a saved preset onto a CHOSEN connected account's live strategy state
+ *  (POST /api/profiles/[id]/copy → applyProfileToAccount). The target
+ *  account's current run-state (systemState) is preserved server-side — a
+ *  preset can never arm or disarm anything — and the library active flag is
+ *  left untouched. */
+export function copyProfileToAccount(
+  profileId: string,
+  connectedAccountId: string
+): Promise<{ profileId: string; connectedAccountId: string }> {
+  return request<{ profileId: string; connectedAccountId: string }>(
+    `/api/profiles/${encodeURIComponent(profileId)}/copy`,
+    { method: "POST", body: JSON.stringify({ connectedAccountId }) }
+  );
 }
 
 export function setAutoResume(enabled: boolean): Promise<{ autoResumeOnBoot: boolean }> {

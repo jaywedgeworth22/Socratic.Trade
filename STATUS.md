@@ -4,6 +4,34 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console: all 13 Codex review findings fixed (Claude)
+Branch `claude/console-codex-fixes` (cut from `claude/console-ground-up-ui` @ fb51554 — which has
+main merged in — because #317 sat un-merged with green checks past the wait window; lands cleanly
+on the #317 squash). Every finding verified against the real code first; all 13 valid and fixed.
+Safety ones: per-account reality chips no longer inherit the ACTIVE policy's paperMode (a
+Test-active session erased the LIVE real-money warning in the account switcher); extraPatch edits
+(universe/blocklist/order types/sell-to-fund-buy) now classify LOOSER/TIGHTER and arm the LIVE
+typed-CONFIRM; the vol-panic-brake and broker-brackets toggles had inverted loosening direction
+(OFF is the loosening now); protection labels require a CLOSING stop for the position's direction
+and use shortStopLossPct→stopLossPct for shorts (and surface that the stop monitor skips shorts
+while shortSellingEnabled is off). Honesty ones: cleared optional fields say `default (X)` when
+mergePolicy re-applies a shipped default instead of falsely claiming "off", and classification
+compares against the post-clear effective value; buildPatch seeds nested parents so a sparse
+universeFloor edit can't wipe sibling floors; account taxationType renders read-only when the
+connected account defines it (that value wins server-side; no PATCH endpoint exists); the
+notificationSettings card moved under ALL YOUR ACCOUNTS (USER_LEVEL_POLICY_FIELDS); user-wide
+kill_switch alerts are labeled with their account via new optional
+`NotificationEvent.connectedAccountId` (surfaced from the existing DB column — the only src/lib
+change); toasts moved inside `.console-root` so `--con-*` tokens apply; preset Apply prefers
+`POST /api/profiles/[id]/copy` with the active connectedAccountId (run-state preserving;
+library-activate only as the no-account fallback); numeric policy inputs keep a focused string
+draft so "0." survives typing. New pure modules `app/console/lib/policy-diff.ts` +
+`app/console/guardrails/field-defs.ts`; `test/console-policy-diff.test.ts` (12 tests) pins
+findings 2/3/4/9 against the real field defs. Quartet green: tsc clean, lint 0 errors, all tests
+pass, build ok. Docs: `docs/rollouts/2026-07-02-console-codex-fixes.md`. **Next:** land via
+`scripts/land.sh` once #317 merges; consider a connected-account PATCH endpoint so taxationType
+becomes editable from the console.
+
 ## 2026-07-02 — Ground-up "Console" UI at /console (Claude)
 Branch `claude/console-ground-up-ui`. Built a complete greenfield interface (`app/console/` route
 group, **new files only** — zero edits to src/lib, app/api, middleware, or the legacy UI, which was

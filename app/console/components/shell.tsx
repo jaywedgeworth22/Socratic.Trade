@@ -20,11 +20,9 @@ import { DesktopRail, MobileTabBar } from "./nav";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
   return (
-    <ToastProvider>
-      <ConsoleDataProvider>
-        <ShellFrame>{children}</ShellFrame>
-      </ConsoleDataProvider>
-    </ToastProvider>
+    <ConsoleDataProvider>
+      <ShellFrame>{children}</ShellFrame>
+    </ConsoleDataProvider>
   );
 }
 
@@ -86,17 +84,24 @@ function ShellFrame({ children }: { children: ReactNode }) {
       data-theme={dataTheme}
       suppressHydrationWarning
     >
-      {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
-      <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
-        <RealityBanner snapshot={snapshot} />
-        <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
-      </div>
-      <div className="mx-auto flex w-full max-w-[1400px] flex-1">
-        <DesktopRail pendingCount={snapshot.pendingProposals.length} />
-        <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
-      </div>
-      <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
-      <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+      {/* ToastProvider must live INSIDE .console-root: it renders the .con-toasts
+          viewport as its last child, and the --con-* design tokens (colors, radii,
+          shadows) are scoped to .console-root — a toast mounted outside it would
+          render unstyled. The provider adds no DOM around the children, so the
+          flex column layout is unchanged; the toasts div is position:fixed. */}
+      <ToastProvider>
+        {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
+        <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
+          <RealityBanner snapshot={snapshot} />
+          <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+        </div>
+        <div className="mx-auto flex w-full max-w-[1400px] flex-1">
+          <DesktopRail pendingCount={snapshot.pendingProposals.length} />
+          <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
+        </div>
+        <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
+        <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+      </ToastProvider>
     </div>
   );
 }
