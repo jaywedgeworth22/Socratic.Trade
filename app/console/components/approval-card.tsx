@@ -18,10 +18,13 @@ import {
 } from "../lib/api";
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
+import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
+import { ModelBadge } from "../ui/provider-logo";
 import { Sheet } from "../ui/sheet";
+import { TickerLogo } from "../ui/ticker-logo";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
 
@@ -53,6 +56,14 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const live = reality.tone === "live";
   const notional = estNotional(pending);
   const expiresAt = snapshot ? expiryIso(pending, snapshot.policy) : null;
+
+  // Model attribution is policy-derived (the model configured NOW), not yet
+  // persisted per-proposal — if the owner swaps models between proposal and
+  // review this can be stale. Fast-follow: persist proposedByModel with the
+  // proposal (coordinates with src/lib/strategy.ts).
+  const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
+  const greenModel = greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
+  const redModel = snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -104,12 +115,16 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
 
   return (
     <article className={cx("con-card overflow-hidden", live && "border-[color:var(--con-live-border)]")}>
-      {/* Header: verb + symbol + reality word */}
+      {/* Header: verb + company logo + symbol + reality word */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
-        <span className={cx("text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
-          {SIDE_LABEL[p.side] ?? p.side.toUpperCase()} {p.symbol}
+        <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
+          {SIDE_LABEL[p.side] ?? p.side.toUpperCase()}
+          <TickerLogo symbol={p.symbol} size="sm" />
+          {p.symbol}
         </span>
-        <span className="con-num text-[length:var(--con-fs-md)] font-semibold">{sizeText}</span>
+        <span className="con-num cursor-default text-[length:var(--con-fs-md)] font-semibold" title="Proposed order size (approximate notional or share count).">
+          {sizeText}
+        </span>
         {isExit(p.side) && (
           <Chip tone="warn" title="Risk-reducing exits are never trapped by caps or universe rules.">
             <ShieldCheck size={11} /> risk-reducing
@@ -122,29 +137,66 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       </header>
 
       <div className="flex flex-col gap-3 px-4 py-3 text-[length:var(--con-fs-sm)]">
-        {/* Thesis line */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip tone="accent">{p.tradeThesisTag}</Chip>
-          {typeof p.confidenceScore === "number" && <span className="con-num text-[color:var(--con-muted)]">Confidence {p.confidenceScore}/100</span>}
-          <span className="text-[color:var(--con-faint)]">Regime at proposal: {p.entryMarketRegime || EM_DASH}</span>
-          <span className="text-[color:var(--con-faint)]">
-            Proposed <Ago iso={pending.createdAt} />
-          </span>
-        </div>
-
-        {/* Why */}
-        <div>
-          <div className="con-card-title mb-1">Why (the strategist)</div>
-          <p className="leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
-        </div>
-
-        {/* Red team */}
-        {p.redTeamVerdict?.available && (
-          <div className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3">
-            <div className="con-card-title mb-1 flex items-center gap-1.5">
-              <Swords size={12} /> Devil&apos;s advocate
+        {/* Green team: the proposing (bull) model + its conviction, always shown. */}
+        <div className="con-team con-team-green">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div
+                className="con-card-title mb-1.5"
+                title="Green team = the proposer (bull): the model that generated this trade idea and argues for it."
+              >
+                Proposed by (green team)
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <ModelBadge modelId={greenModel} size="md" title="The model that generated this proposal" />
+                {!greenModelConfigured && (
+                  <span
+                    className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+                    title="No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                  >
+                    (policy default)
+                  </span>
+                )}
+              </div>
             </div>
-            <p className="leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
+            {typeof p.confidenceScore === "number" && (
+              <div
+                className="shrink-0 cursor-default text-right"
+                title="The proposing model's stated conviction in this trade, on a 0–100 scale. Higher = stronger conviction; high scores can trigger the red-team debate and influence sizing."
+              >
+                <span className="con-confidence-num">{p.confidenceScore}</span>
+                <span className="con-num text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-faint)]">/100</span>
+                <div className="con-card-title">confidence</div>
+              </div>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
+              {p.tradeThesisTag}
+            </Chip>
+            <span className="cursor-default text-[color:var(--con-faint)]" title="The market regime the strategist saw when it proposed this trade.">
+              Regime at proposal: {p.entryMarketRegime || EM_DASH}
+            </span>
+            <span className="text-[color:var(--con-faint)]">
+              Proposed <Ago iso={pending.createdAt} />
+            </span>
+          </div>
+          <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
+        </div>
+
+        {/* Red team: the adversarial (bear) model + its verdict, when the debate ran. */}
+        {p.redTeamVerdict?.available && (
+          <div className="con-team con-team-red">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <div
+                className="con-card-title flex items-center gap-1.5"
+                title="Red team = the adversarial reviewer (bear): a model tasked with attacking the proposal before you see it."
+              >
+                <Swords size={12} /> Devil&apos;s advocate (red team)
+              </div>
+              <ModelBadge modelId={redModel} title="The adversarial reviewer model that critiqued this proposal" />
+            </div>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
             <p className="mt-1 text-[length:var(--con-fs-xs)] font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
               {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
             </p>
