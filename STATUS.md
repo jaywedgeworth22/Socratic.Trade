@@ -59,6 +59,7 @@ green: tsc clean, lint 0 errors, 2241 tests / 234 files, build ok. Docs:
 verify); consider a structured error code from `/api/strategy/run` instead of string
 classification; after #324 lands, approvals renders the learned-context inbox the badge
 already counts.
+
 ## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
 Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
 `/console/orders` page (nav linked it since Wave 1): open working orders for the
