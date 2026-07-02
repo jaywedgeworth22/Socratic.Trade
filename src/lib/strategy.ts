@@ -1086,7 +1086,7 @@ export async function runStrategyOnce(
       llmSteps,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
       topSkipped: skippedEvidence
-    }, userId);
+    }, userId, connectedAccountId);
 
     // SignalSnapshot: the full scored set, each a complete CandidateEvidence digest.
     // getSignalEfficacy joins closed lots → signals by runId|symbol, so skipped entries
@@ -1120,7 +1120,9 @@ export async function runStrategyOnce(
       .join(" ");
 
     // Persist diversity result as an advisory audit event (no schema migration needed).
-    audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId);
+    // Account-attributed like strategy_run/signal_snapshot so the Activity feed can say
+    // WHICH account's run this analyzed (#8).
+    audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
     finishStrategyRun(runId, "completed", summary, userId);
     if (!executionState.usesLocalSimulation) {
       recordPortfolioSnapshot({

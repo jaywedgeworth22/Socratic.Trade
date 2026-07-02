@@ -482,6 +482,112 @@ describe("dashboard feed helpers", () => {
     expect(tradeGroup!.detail).not.toContain("Rejected manually");
   });
 
+  it("consolidates a strategy run's audit events into ONE run group with sub-rows (#8)", () => {
+    const runId = "run-consolidate";
+    const feed = buildUnifiedFeed({
+      audit: [
+        {
+          id: "a-run",
+          createdAt: "2026-07-01T10:00:00.000Z",
+          kind: "strategy_run",
+          payload: { runId, status: "completed", summary: "Evaluated 3 proposal(s)." },
+          connectedAccountId: "acct-1"
+        },
+        {
+          id: "a-div",
+          createdAt: "2026-07-01T10:00:01.000Z",
+          kind: "rationale_diversity",
+          payload: { runId, count: 3, meanPairwiseSimilarity: 0.42 }
+        },
+        {
+          id: "a-cand",
+          createdAt: "2026-07-01T10:00:02.000Z",
+          kind: "candidates_considered",
+          payload: { runId, chosen: [{ symbol: "PLTR" }], topSkipped: [] }
+        },
+        {
+          id: "a-snap",
+          createdAt: "2026-07-01T10:00:03.000Z",
+          kind: "signal_snapshot",
+          payload: { runId, asOf: "2026-07-01", signals: [] }
+        }
+      ] as AuditEvent[] & Array<{ connectedAccountId?: string }>,
+      notifications: [],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      accountLabelById: { "acct-1": "Alpaca Paper" }
+    });
+
+    const runGroups = feed.filter((g) => g.id === `run-${runId}`);
+    expect(runGroups.length).toBe(1);
+    const group = runGroups[0]!;
+    expect(group.events.length).toBe(4);
+    // The strategy_run event is the primary: rendered once as the card's title/detail.
+    expect(group.title).toBe("Strategy run completed");
+    expect(group.detail).toContain("Evaluated 3 proposal(s).");
+    expect(group.status).toBe("completed");
+    // Account attribution from any event in the group reaches the card (#8).
+    expect(group.connectedAccountId).toBe("acct-1");
+    expect(group.accountLabel).toBe("Alpaca Paper");
+    // No stray one-event groups remain for the run-scoped kinds.
+    expect(feed.some((g) => g.id === "audit-a-div" || g.id === "audit-a-cand" || g.id === "audit-a-snap")).toBe(false);
+  });
+
+  it("humanizes web_source_refresh and congress_share_daily ops events (#9, #11)", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "ws-1",
+          createdAt: "2026-07-01T04:00:00.000Z",
+          kind: "web_source_refresh",
+          payload: { id: "congress", ok: true, recordCount: 103, sources: ["congress.trade"] }
+        },
+        {
+          id: "cs-1",
+          createdAt: "2026-07-01T04:01:00.000Z",
+          kind: "congress_share_daily",
+          payload: { ok: false, tickers: 515, priced: 515, posts: 34, failedPosts: 30, sent: [] }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Web source refresh");
+    expect(feed[0]?.detail).toBe("Refreshed 103 congressional-trade entries");
+    expect(feed[0]?.fullText).toContain('"recordCount":103'); // raw JSON stays available behind a toggle
+
+    expect(feed[1]?.title).toBe("Congress daily share");
+    expect(feed[1]?.detail).toBe("515 of 515 tickers priced · 34 posts sent · 30 failed");
+    expect(feed[1]?.fullText).toContain('"failedPosts":30');
+  });
+
+  it("carries a notification's connectedAccountId onto its unified-feed group (#10)", () => {
+    const feed = buildUnifiedFeed({
+      audit: [],
+      notifications: [
+        {
+          id: "n-other-acct",
+          createdAt: "2026-07-01T12:00:00.000Z",
+          type: "pending_approval",
+          title: "Buy PLTR Proposal Pending",
+          status: "skipped",
+          payload: { proposalId: "p-acct", proposal: { symbol: "PLTR", side: "buy" } },
+          connectedAccountId: "acct-test"
+        } as NotificationEvent
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      accountLabelById: { "acct-test": "Local simulator" },
+      getProposalById: () => ({ proposal: proposal({ symbol: "PLTR", side: "buy" }) })
+    });
+
+    const group = feed.find((g) => g.proposalId === "p-acct");
+    expect(group).toBeDefined();
+    expect(group!.connectedAccountId).toBe("acct-test");
+    expect(group!.accountLabel).toBe("Local simulator");
+  });
+
   it("caps buildUnifiedFeed output at the source-level limit, newest-first", () => {
     // 200 independent (ungrouped) fills — well above the client's 50-group render slice — so the
     // only thing keeping the payload bounded is the source-level cap inside buildUnifiedFeed.
