@@ -13,6 +13,39 @@ filling the missing pieces.
 > preview and stage into the existing Approvals rail instead of an in-chat
 > approve/reject. No roadmap scope change — part of the console feature-parity
 > track. See `docs/rollouts/2026-07-02-console-assistant.md`.
+> 2026-07-02 (`claude/washsale-modes-escalation`, Claude): **Wash-sale handling modes +
+> Decide-mode escalation** — owner-locked spec. Account-scoped
+> `taxSettings.washSaleHandling` (block default / ask = priced pending-approval card in
+> both authorities / auto = deterministic edge >= 3x tax-cost guard, logged, never
+> silent); IRA-replacement rebuys hard-blocked in every mode (Rev. Rul. 2008-5); narrow
+> escalation framework routing ask-mode wash sales + time-context gate failures
+> (daily/hourly notional, order cap, quote staleness; Decide only) to pending cards that
+> RE-RUN the full gate at approval via a server-stored override token (wash-sale gate
+> only — no client-settable bypass). Guardrails Tax rules select (LOOSER classification
+> on block->ask/auto). No roadmap scope change — extends the tax-guardrail track. See
+> `docs/rollouts/2026-07-02-washsale-modes-escalation.md`.
+> 2026-07-02 (`claude/console-drilldown-plus`, Claude): **Console symbol drilldown,
+> Wave 2** — the console company drawer is now a strict superset of the legacy
+> `app/ui/symbol-drilldown.tsx` drawer: full parity (11 derived-metric tiles reusing
+> `src/lib/derived-metrics`, 7-factor breakdown, legacy-threshold signal summary,
+> evidence/headlines, per-field provenance) PLUS account exposure (position P&L,
+> pending proposals → Approvals, recent orders), analyst rating distribution +
+> price-target range bar, signal/earnings-proximity chips, and a collapsible deep-
+> fundamentals table — tooltips on everything, light+dark, honest empty states, and
+> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents
+> (extended with one OPTIONAL `quote?: MarketQuote` override so screens rendering
+> freshly fetched /api/scan rows — the Scan lane, per the Codex finding on #327 — can
+> make the drilldown match the row instead of the snapshot's last run).
+> No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
+> See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
+> 2026-07-02 (`claude/console-learned-context`, Claude): **Learned-context approval
+> inbox ported to /console** — the legacy "Pending Learned Changes" queue now lives on
+> `/console/approvals` as a Learned context section (own data source; approve/reject
+> with optimistic UI, confirm sheet showing the exact AI-LEARNED block with the honest
+> approval-date stamp, full provenance + tooltips + row hover per the owner's new UX
+> standard). Console feature-parity track only — no roadmap scope change. Follow-ups:
+> sharing prefs in Settings, nav/needs-attention count. See
+> `docs/rollouts/2026-07-02-console-learned-context.md`.
 > 2026-07-02 (`claude/console-parity-tail`, Claude): **Console parity tail** — the
 > closing lane of the parallel legacy→console port: Run-once blocked-reason routing
 > (why + one-click route to the fix), chrome sign-out with signed-in identity,

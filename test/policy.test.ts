@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, evaluateTradeProposal } from "../src/lib/policy";
 import type { AccountCapabilities, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
-import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
+import { getUserWashSaleLockProvenance } from "../src/lib/tax";
+import type { WashSaleLockMap } from "../src/lib/tax";
 
 // Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
 vi.mock("../src/lib/tax", () => ({
   getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn((_userId: string): WashSaleLockMap => new Map()),
 }));
 
 // Minimal AccountCapabilities that grants short-selling for tests that verify the enabled path.
@@ -124,10 +126,12 @@ describe("evaluateTradeProposal", () => {
   });
 
   // Authoritative cross-account wash-sale gate (architecture-blueprint §3.3):
-  // the gate must block the buy even when the caller omits washSaleLockedSymbols,
-  // resolving the set via getUserWashSaleLockedSymbols(userId) itself.
+  // the gate must block the buy even when the caller omits the locked set/map,
+  // resolving the provenance via getUserWashSaleLockProvenance(userId) itself.
   it("blocks a buy of a wash-sale-locked symbol at the gate even when washSaleLockedSymbols is omitted", () => {
-    vi.mocked(getUserWashSaleLockedSymbols).mockReturnValueOnce(new Set(["TSLA"]));
+    vi.mocked(getUserWashSaleLockProvenance).mockReturnValueOnce(
+      new Map([["TSLA", { account: "ACC1", clearDate: new Date("2026-07-20T00:00:00.000Z"), lossUsd: 100 }]])
+    );
     const decision = evaluateTradeProposal(proposal, {
       policy: enabledPolicy,
       portfolio,
@@ -136,15 +140,15 @@ describe("evaluateTradeProposal", () => {
       dailyOrderCount: 0,
       estimatedNotional: 10,
       userId: "user-test",
-      // intentionally omitting washSaleLockedSymbols — gate must resolve it itself
+      // intentionally omitting washSaleLocks/washSaleLockedSymbols — gate must resolve it itself
     });
-    expect(getUserWashSaleLockedSymbols).toHaveBeenCalledWith("user-test", expect.any(Date));
+    expect(getUserWashSaleLockProvenance).toHaveBeenCalledWith("user-test", expect.any(Date));
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
   });
 
-  it("does not call getUserWashSaleLockedSymbols when washSaleLockedSymbols is pre-populated", () => {
-    vi.mocked(getUserWashSaleLockedSymbols).mockClear();
+  it("does not call getUserWashSaleLockProvenance when washSaleLockedSymbols is pre-populated", () => {
+    vi.mocked(getUserWashSaleLockProvenance).mockClear();
     const decision = evaluateTradeProposal(proposal, {
       policy: enabledPolicy,
       portfolio,
@@ -156,7 +160,7 @@ describe("evaluateTradeProposal", () => {
       userId: "user-test",
     });
     // Pre-populated set is used directly; no extra DB call.
-    expect(getUserWashSaleLockedSymbols).not.toHaveBeenCalled();
+    expect(getUserWashSaleLockProvenance).not.toHaveBeenCalled();
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
   });

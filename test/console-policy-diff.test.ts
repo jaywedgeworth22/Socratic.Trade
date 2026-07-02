@@ -131,3 +131,32 @@ describe("console guardrails: cleared-field honesty (Codex finding 9)", () => {
     expect(patch.universeFloor.minDollarVolume).toBe(policy.universeFloor?.minDollarVolume);
   });
 });
+
+describe("console guardrails: washSaleHandling select classification", () => {
+  const def = defByPath("taxSettings.washSaleHandling");
+
+  it("is a select field with the three modes ranked block < ask < auto", () => {
+    expect(def.kind).toBe("select");
+    expect(def.options?.map((o) => o.value)).toEqual(["block", "ask", "auto"]);
+    expect(def.looseRank).toEqual({ block: 0, ask: 1, auto: 2 });
+  });
+
+  it("classifies block->ask and block->auto as LOOSER (typed word on LIVE)", () => {
+    expect(classify(def, "block", "ask")).toBe("looser");
+    expect(classify(def, "block", "auto")).toBe("looser");
+    expect(classify(def, "ask", "auto")).toBe("looser");
+  });
+
+  it("classifies tightening back toward block as TIGHTER (one click, no typed word)", () => {
+    expect(classify(def, "auto", "ask")).toBe("tighter");
+    expect(classify(def, "ask", "block")).toBe("tighter");
+    expect(classify(def, "auto", "block")).toBe("tighter");
+  });
+
+  it("treats a blank stored value as the shipped default ('block')", () => {
+    // Legacy policies without the field: blank -> "ask" must still cost the typed word.
+    expect(classify(def, undefined, "ask")).toBe("looser");
+    expect(classify(def, "ask", undefined)).toBe("tighter");
+    expect(classify(def, undefined, "block")).toBe("changed");
+  });
+});

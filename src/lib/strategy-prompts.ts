@@ -1,4 +1,5 @@
-import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
+import { OPENING_ORDER_HEADROOM_PCT, WASH_SALE_AUTO_EDGE_MULTIPLE } from "./policy";
+import type { WashSaleHandling } from "./types";
 
 /**
  * Versioned strategy Bull/Bear system prompts (Chat A item 2). Extracted from strategy.ts so the
@@ -15,7 +16,7 @@ import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.0.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.1.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -64,6 +65,12 @@ export interface BullSystemParams {
   reflection: string;
   /** Whether a taxContext block is present (gates the tax-efficiency paragraph). */
   hasTaxContext: boolean;
+  /**
+   * taxSettings.washSaleHandling ?? "block" — selects the wash-sale guidance line. "block"
+   * keeps the original absolute prohibition byte-identical; "ask"/"auto" explain the priced
+   * `taxContext.washSaleRebuyCosts` so the model weighs a locked rebuy honestly.
+   */
+  washSaleHandling?: WashSaleHandling;
   /** policy.holdingHorizon ?? "swing". */
   holdingHorizon: string;
   /** policy.maxSymbolExposurePct. */
@@ -105,7 +112,11 @@ export function buildBullSystem(p: BullSystemParams): string {
       ? [
           "",
           "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
-          "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
+          p.washSaleHandling === "ask"
+            ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
+            : p.washSaleHandling === "auto"
+              ? `- Symbols in \`washSaleLockedSymbols\` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the deterministic policy gate ONLY when its expected edge is at least ${WASH_SALE_AUTO_EDGE_MULTIPLE}x the priced tax cost in \`taxContext.washSaleRebuyCosts\`; otherwise it is skipped. Propose one only with genuinely high conviction and a clear catalyst, and account for the tax cost in your rationale.`
+              : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
           "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
           "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
         ]
