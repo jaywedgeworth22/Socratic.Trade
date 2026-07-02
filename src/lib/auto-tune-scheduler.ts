@@ -7,6 +7,7 @@
 
 import { getInternalSetting, setInternalSetting } from "./db-settings";
 import { getPolicy } from "./db";
+import { releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 import { applyAutonomousWeightTuning, type AutonomousWeightApplyResult } from "./strategy-tuning";
 
 /** Minimum interval (ms) between autonomous auto-tune attempts. Env-tunable; default 24h. */
@@ -40,9 +41,19 @@ export async function maybeAutoTuneWeights(userId: string = "local", now: number
     if (typeof last === "number" && now - last < autoTuneMinIntervalMs()) {
       return { ran: false, skippedReason: "cadence_window" };
     }
-    setInternalSetting(cadenceKey(userId), now);
-    const result = await applyAutonomousWeightTuning(userId);
-    return { ran: true, ...result };
+    // Auto-tune's LLM call runs in the scheduler AFTER runStrategyOnce released its reservation, so it must
+    // take its OWN per-user reservation — otherwise it spends against headroom a concurrent same-user run's
+    // reservation has claimed (its budget checks read only the committed ledger). Reserve BEFORE marking the
+    // cadence so a stand-down retries next run instead of burning the 24h window. Default-OFF budget → no-op.
+    const reservation = reserveLlmRunBudget(userId, undefined, new Date(now));
+    if (!reservation.ok) return { ran: false, skippedReason: "budget_reservation" };
+    try {
+      setInternalSetting(cadenceKey(userId), now);
+      const result = await applyAutonomousWeightTuning(userId);
+      return { ran: true, ...result };
+    } finally {
+      if (reservation.reservationId) releaseLlmReservation(userId, reservation.reservationId);
+    }
   } catch (err) {
     console.error("[auto-tune] autonomous weight tuning error:", err);
     return { ran: false, skippedReason: "error" };

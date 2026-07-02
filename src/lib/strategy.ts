@@ -73,7 +73,7 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget } from "./llm-budget";
+import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -225,6 +225,13 @@ export async function runStrategyOnce(
   insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
   let llmSteps: StrategyLlmStep[] = [];
+  // Per-USER LLM budget reservation id (set at the budget gate below, released in the finally). Held
+  // for the run so a CONCURRENT same-user account run's reserve sees this hold and skips LLM instead of
+  // both reading "under budget" and overshooting the ceiling (the TOCTOU the ledger read can't close).
+  let llmReservationId: string | undefined;
+  // Fire-and-forget post-mortem reflection promise (set on the success path). The finally holds the LLM
+  // reservation until this settles so the reflection's LLM spend stays inside the reserved headroom.
+  let reflectionPromise: Promise<unknown> | undefined;
   const manualRun = Boolean(options.manual);
 
   try {
@@ -368,13 +375,28 @@ export async function runStrategyOnce(
     // for EVERY run entry (event trigger, interval scheduler, manual "Run once" API, mobile command,
     // future). Default OFF unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
     //
-    // Known limitation (bounded, documented — docs/rollouts/2026-07-01-fg-codex-review-fixes.md): a
-    // read-of-the-ledger admission check, NOT a reservation, so concurrent same-user account runs can
-    // overshoot by up to the in-flight runs' spend (bounded by scheduler concurrency). A true hard cap
-    // needs a per-user reservation / run serialization — deferred as a follow-up.
+    // Two-part admission control. (1) checkLlmDailyBudget is the ledger READ — already over budget?
+    // Then (2) reserveLlmRunBudget is the reservation that closes the TOCTOU the read can't: it CAS-holds
+    // this run's worst-case estimate against today's ledger + other live reservations, so a concurrent
+    // same-user account run's reserve fails and skips LLM rather than both overshooting the ceiling.
+    // A reservation failure (over budget OR fail-closed DB error) degrades to "skip LLM", never a failed
+    // run. No ceiling configured → reserve returns ok with no id (default OFF preserved). See
+    // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
-    if (skipLlmDueToBudget) {
+    if (!skipLlmDueToBudget) {
+      const reservation = reserveLlmRunBudget(userId, connectedAccountId);
+      llmReservationId = reservation.reservationId;
+      if (!reservation.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget_reservation",
+          { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
+          userId
+        );
+      }
+    }
+    if (skipLlmDueToBudget && budget.ok === false) {
       audit(
         "strategy_run_suppressed_budget",
         { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
@@ -445,25 +467,32 @@ export async function runStrategyOnce(
     }
 
     let ragContext = "";
-    try {
-      const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
-      const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
-      const contexts = await Promise.all(topSymbols.map(sym =>
-        // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
-        // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
-        // never wired through this call site before. Advisory context only — not a money-path gate.
-        retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
-          docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
-          minScore: defaultMinScore(),
-          connectedAccountId: policy.connectedAccountId
-        })
-      ));
-      const validContexts = contexts.flat().filter(Boolean);
-      if (validContexts.length > 0) {
-        ragContext = validContexts.map(c => c.text).join("\n\n");
+    // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
+    // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
+    // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
+    // Voyage/Pinecone budget the other run has claimed (the RAG half of the TOCTOU). It's advisory context
+    // for the (now-skipped) proposal step anyway, so there is nothing to retrieve for.
+    if (!skipLlmDueToBudget) {
+      try {
+        const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
+        const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
+        const contexts = await Promise.all(topSymbols.map(sym =>
+          // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
+          // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
+          // never wired through this call site before. Advisory context only — not a money-path gate.
+          retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
+            docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+            minScore: defaultMinScore(),
+            connectedAccountId: policy.connectedAccountId
+          })
+        ));
+        const validContexts = contexts.flat().filter(Boolean);
+        if (validContexts.length > 0) {
+          ragContext = validContexts.map(c => c.text).join("\n\n");
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
       }
-    } catch (e) {
-      console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
     }
 
     // Parallel to RAG: pull advisory learned-context FACTS (private fact-tier only in this slice).
@@ -1122,9 +1151,14 @@ export async function runStrategyOnce(
     }
     result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
-    // Phase 7: Async trigger post-mortem reflection
-    generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
-    
+    // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
+    // (it spends LLM via withLlmGeneration + semantic gate, whose checks read only the committed ledger, not
+    // the live reservation). The finally holds the reservation until this promise settles so the reflection
+    // spend stays inside the reserved headroom rather than racing a queued same-user run.
+    reflectionPromise = skipLlmDueToBudget
+      ? undefined
+      : generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
+
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
     if (error instanceof StrategyLlmStepFailure) {
@@ -1139,7 +1173,15 @@ export async function runStrategyOnce(
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
+    // Release the strategy lock promptly so this account can run again. The LLM reservation is held a bit
+    // longer — until the fire-and-forget post-mortem reflection settles — so that background spend stays
+    // inside the reserved headroom instead of racing a queued same-user run (the TTL is the crash backstop).
+    // We do NOT await here, so runStrategyOnce's return isn't delayed by the reflection.
     releaseStrategyLock(userId, connectedAccountId);
+    if (llmReservationId) {
+      const rid = llmReservationId;
+      void Promise.resolve(reflectionPromise).finally(() => releaseLlmReservation(userId, rid));
+    }
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.

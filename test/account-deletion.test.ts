@@ -87,6 +87,25 @@ describe("account deletion", () => {
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM account_deletion_requests WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
   });
 
+  it("purges the per-user LLM budget reservation settings row (deletion sweep coverage)", async () => {
+    const db = await import("../src/lib/db");
+    const deletion = await import("../src/lib/account-deletion");
+    const userId = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const email = "reservation-delete@example.com";
+    const key = `llm_budget_reservation:${userId}`;
+    // Seed a leftover reservation row (as if a run crashed without releasing it).
+    db.getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(key, JSON.stringify({ reservations: [] }), new Date().toISOString());
+    const count = () => (db.getDb().prepare("SELECT COUNT(*) AS c FROM settings WHERE key = ?").get(key) as { c: number }).c;
+    expect(count()).toBe(1);
+
+    deletion.prepareAccountDeletion({ userId, email });
+    const result = deletion.confirmAndDeleteAccount({ userId, email, body: confirmation(email) });
+    expect(result.ok).toBe(true);
+    expect(count()).toBe(0); // the sweep deleted the reservation row
+  });
+
   it("blocks final deletion while order placement or reconciliation is in flight", async () => {
     const db = await import("../src/lib/db");
     const deletion = await import("../src/lib/account-deletion");

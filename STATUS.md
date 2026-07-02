@@ -4,6 +4,18 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Per-user LLM budget reservation: close the concurrent-run TOCTOU (Claude)
+On PR #293 (branch `claude/audit-work-split-f-g-o67jj2`). Built the deferred follow-up from the fg-codex
+note (item 13): the daily LLM ceiling was a read-of-the-ledger admission check, so a same-user
+multi-account scheduler fan-out (concurrency 3) could have two runs both pass just under the limit and
+then both spend. Added a per-USER **reservation** (`reserveLlmBudget`/`reserveLlmRunBudget`/
+`releaseLlmReservation`/`reservedLlmSpend` in `src/lib/llm-budget.ts`), CAS'd in the `settings` KV row
+exactly like `acquireStrategyLock` (no migration, 5-min TTL reclaim, fail-closed → skip LLM, default-OFF).
+Wired into `runStrategyOnce`: reserve at the budget gate (after the non-LLM breakers), release in the
+`finally`; a concurrent same-user reserve now sees the hold and skips LLM. Quartet green: tsc 0, lint 0
+errors, **2064 tests** (7 new reservation tests; one known `approval-lock` flake, green on re-run), build
+ok. Docs: `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`, fg-codex note item 13 + Follow-ups
+marked DONE. **Next:** task E — spec revisions #1–#16 on `docs/single-adversary-consolidation.md` (#290).
 ## 2026-07-01 — Massive REST as a REAL second short-interest source (Claude, PR #309)
 Repurposed the stalled #309 (`fix/fmp-short-interest-gate`) per owner direction on the merge conflict:
 main had already removed the dead FMP `/v4/short_interest` scaffold, so instead of closing #309 or
