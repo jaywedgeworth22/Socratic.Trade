@@ -4,6 +4,31 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console/scan: Market Scan + Smart Money, Wave 2 (Claude)
+Branch `claude/console-scan` (cut from `origin/main` @ 48fbe14, after foundation PR #321).
+The Scan destination the Wave-1 nav already linked: new `app/console/scan/` (page.tsx,
+scan-table.tsx, columns.tsx, smart-money.tsx, use-live-scan.ts) — nothing outside that dir
+touched (parallel agents own the other console areas + src/lib). Market scan tab: sortable
+12-column table over the scan's `topCandidates` (Symbol w/ TickerLogo+SymbolButton
+drilldown, Score, Price, Chg, Vol, P/E, EPS gr, Div, Sentiment, Rating, Congress, Sector),
+tooltips on every header/cell with per-field provenance strictly from `quote.sources`
+(never hardcoded), scan-level "Received" stamps, the P/E `n/a`-vs-`—` rule (checked
+against `eps`), "held" chips, missing-last sorting, and a sticky symbol column for mobile
+horizontal scroll (opaque group-hover bg so the row wash stays uniform). Smart money tab:
+full `snapshot.smartMoney` congress/insider datasets with `webSources` feed metadata
+(record counts, derived source labels, freshness), BUY/SELL/MIXED chips, amount bands,
+`.con-row` hover. Refresh = `GET /api/scan` (the route is a GET; runs a fresh read-only
+scan) with busy spinner, success/failure toasts, muted non-blocking inline error (last
+good scan stays up), auto-fetch on mount; the table shows the NEWEST of {page refresh,
+`latestStrategyRun.marketScan`} by `generatedAt` with an honest fresh/last-run chip;
+`MarketScan.source` shown as derived from the `+`-joined string, raw string verbatim in
+the tooltip. Quartet green in a fresh worktree: tsc clean, lint 0 errors (2 grandfathered
+set-state-in-effect warnings — same idiom as useConsoleData), 2241 tests / 234 files pass,
+build ok (+ runtime smoke: /console/scan 200, live /api/scan payload verified). Docs:
+`docs/rollouts/2026-07-02-console-scan.md`. **Next:** land via PR (auto-merge on green
+verify); follow-ups in the rollout note (drilldown live-scan quotes, optional column
+chooser, derived-metric columns).
+
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:

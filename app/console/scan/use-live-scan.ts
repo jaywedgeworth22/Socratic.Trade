@@ -1,0 +1,115 @@
+"use client";
+
+/** Live market-scan fetcher for the console's Scan destination.
+ *
+ *  GET /api/scan runs a fresh, read-only scan of the configured universe
+ *  (screener + per-symbol enrichment; the server caches aggressively, so
+ *  repeat calls are cheap, but a cold scan can take up to ~25s). The
+ *  snapshot's `latestStrategyRun.marketScan` is only the scan captured at the
+ *  last strategy run — this hook keeps the table current between runs.
+ *  Failures never blank anything: the caller keeps rendering the last good
+ *  scan and surfaces `error` as a non-blocking notice. */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { MarketScan } from "@/lib/types";
+
+function isMarketScan(value: unknown): value is MarketScan {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      Array.isArray((value as MarketScan).topCandidates) &&
+      typeof (value as MarketScan).generatedAt === "string"
+  );
+}
+
+async function readErrorMessage(res: Response): Promise<string> {
+  try {
+    const body: unknown = await res.json();
+    if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
+      return (body as { error: string }).error;
+    }
+  } catch {
+    /* body wasn't JSON — fall through to a generic message */
+  }
+  if (res.status === 429) return "Scan rate limit reached — wait a minute before refreshing again.";
+  return `Market scan failed (${res.status}).`;
+}
+
+export type RefreshOutcome =
+  | { status: "ok"; scan: MarketScan }
+  | { status: "error"; message: string }
+  /** Aborted because a newer request started or the page unmounted. */
+  | { status: "superseded" };
+
+export interface LiveScan {
+  /** Latest scan fetched by this page (null until the first fetch succeeds). */
+  scan: MarketScan | null;
+  /** A scan request is currently in flight. */
+  refreshing: boolean;
+  /** Last fetch error, in plain language. The previous scan stays rendered. */
+  error: string | null;
+  /** Run a fresh scan now. */
+  refresh: () => Promise<RefreshOutcome>;
+}
+
+export function useLiveScan(): LiveScan {
+  const [scan, setScan] = useState<MarketScan | null>(null);
+  // Starts true because the mount effect always kicks off a fetch — this keeps
+  // the first paint on "scanning" instead of flashing an empty state.
+  const [refreshing, setRefreshing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
+
+  const refresh = useCallback(async (): Promise<RefreshOutcome> => {
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+    setRefreshing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/scan", { cache: "no-store", signal: controller.signal });
+      if (!res.ok) throw new Error(await readErrorMessage(res));
+      const data: unknown = await res.json();
+      if (!isMarketScan(data)) throw new Error("The scan service returned an unexpected payload.");
+      if (controller.signal.aborted) return { status: "superseded" };
+      setScan(data);
+      return { status: "ok", scan: data };
+    } catch (err) {
+      if ((err instanceof DOMException && err.name === "AbortError") || controller.signal.aborted) {
+        return { status: "superseded" };
+      }
+      // Browser network failures surface unhelpful engine-specific strings
+      // ("Failed to fetch", "Load failed") — translate those to a plain
+      // sentence; pass real server messages through untouched.
+      const raw = err instanceof Error ? err.message : "";
+      const isNetwork = /load failed|failed to fetch|networkerror|network connection|aborted/i.test(raw);
+      const message = isNetwork || !raw ? "Couldn't reach the scan service." : raw;
+      setError(message);
+      return { status: "error", message };
+    } finally {
+      // Only the newest request may clear the busy flag — an aborted older
+      // request finishing late must not hide a still-running newer one.
+      if (inFlight.current === controller) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const controllers = inFlight;
+    return () => controllers.current?.abort();
+  }, [refresh]);
+
+  return { scan, refreshing, error, refresh };
+}
+
+/** Prefer whichever scan is newest by `generatedAt` — a strategy run that
+ *  completes after the page's own refresh should win, and vice versa. */
+export function newestScan(a: MarketScan | null | undefined, b: MarketScan | null | undefined): MarketScan | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const ta = Date.parse(a.generatedAt);
+  const tb = Date.parse(b.generatedAt);
+  if (!Number.isFinite(ta)) return b;
+  if (!Number.isFinite(tb)) return a;
+  return tb > ta ? b : a;
+}

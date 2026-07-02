@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-scan`, Claude): **Console parity-port Wave 2 — Scan
+> destination** — `/console/scan` now exists (the Wave-1 nav link is live): a sortable
+> Market Scan table over the latest scan's candidates with tooltips + per-field
+> provenance from `EnrichmentSources`, the P/E `n/a`-vs-`—` convention, a sticky symbol
+> column for mobile, an honest freshness model (newest of page-refreshed `GET /api/scan`
+> vs the last strategy run's captured scan), and a Smart Money tab (congress + insider
+> feeds with source metadata). New files only, all under `app/console/scan/`. No roadmap
+> scope change — one of the four Wave-2 destinations delivered (macro/orders/assistant
+> owned by parallel agents). See `docs/rollouts/2026-07-02-console-scan.md`.
 > 2026-07-02 (`claude/console-port-foundation`, Claude): **Console parity-port
 > foundation (Wave 1)** — the legacy-dashboard feature parity port into `/console` is
 > now an explicit multi-agent track: Wave 1 (this branch) ships the shared primitives
