@@ -15,7 +15,7 @@ import type { TradingPolicy } from "@/lib/types";
 
 // ── Field metadata ───────────────────────────────────────────────────────────
 
-export type FieldKind = "money" | "pct" | "int" | "minutes" | "seconds" | "bool" | "text";
+export type FieldKind = "money" | "pct" | "int" | "minutes" | "seconds" | "bool" | "text" | "select";
 
 export interface FieldDef {
   /** Dot path into TradingPolicy, e.g. "maxOrderNotional" or "riskRules.stopLossPct". */
@@ -30,6 +30,12 @@ export interface FieldDef {
   /** Optional numeric: blank clears the field. What that MEANS depends on the
    *  server default — see clearedFallback. */
   optional?: boolean;
+  /** kind "select": the enum choices, in render order. */
+  options?: Array<{ value: string; label: string }>;
+  /** kind "select": looseness rank per value (higher = looser). Moving to a higher-ranked
+   *  value classifies as LOOSER (typed word on LIVE); lower = tighter. Blank values fall back
+   *  to the DEFAULT_POLICY value at `path`. Omit for selects with no safety ordering. */
+  looseRank?: Record<string, number>;
 }
 
 export function getAtPath(policy: TradingPolicy, path: string): unknown {
@@ -68,6 +74,16 @@ export interface DiffEntry {
 }
 
 export function classify(def: FieldDef, from: unknown, to: unknown): DiffEntry["direction"] {
+  if (def.kind === "select") {
+    const rank = def.looseRank;
+    if (!rank) return "changed";
+    // Blank means "the shipped default" (mergePolicy re-applies DEFAULT_POLICY on read).
+    const fallback = String(getAtPath(DEFAULT_POLICY, def.path) ?? "");
+    const fromRank = rank[isBlank(from) ? fallback : String(from)];
+    const toRank = rank[isBlank(to) ? fallback : String(to)];
+    if (fromRank === undefined || toRank === undefined || fromRank === toRank) return "changed";
+    return toRank > fromRank ? "looser" : "tighter";
+  }
   if (!def.looserWhen) return "changed";
   if (def.kind === "bool") {
     const on = to === true;

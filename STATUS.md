@@ -47,6 +47,39 @@ a PARTIALLY failing FRED fetch still placeholder-fills individual series while
 flagged sourced (per-field sourcing). **Next:** land PR #326 (auto-merge
 armed); wire news/mover ticker chips to the scan drilldown once `/console/scan`
 lands.
+## 2026-07-02 — Wash-sale handling modes (block/ask/auto) + Decide-mode escalation (Claude)
+Branch `claude/washsale-modes-escalation` (cut from `origin/main` @ 78ecc98). Owner-locked spec,
+built on the fresh `washSaleMinLossUsd` floor + tax.ts `WashSaleLockMap` provenance. New
+account-scoped `taxSettings.washSaleHandling` (default `"block"` = behavior unchanged): `"ask"`
+turns a wash-sale-locked BUY into a pending-approval card in BOTH authorities, priced with the
+forfeited deduction (`WashSaleLock.lossUsd` × shortTermRatePct — lossUsd is new: summed
+still-in-window disallowed loss); `"auto"` proceeds only when
+`washSaleExpectedEdgeUsd (notional × takeProfitPct × confidence) >= 3× cost`
+(`WASH_SALE_AUTO_EDGE_MULTIPLE`), else skips with the math logged — both outcomes audited, never
+silent. IRA-replacement rebuys are HARD-blocked in every mode (Rev. Rul. 2008-5; via
+taxationType OR broker accountCapabilities.accountType; ignores overrides; enforced even with
+washSaleGuard off). Narrow escalation framework: `PolicyDecision.escalations` closed allowlist —
+ask-mode wash sales (both authorities) + time-context gates (daily/hourly notional, daily order
+cap, quote staleness; Decide only) become pending cards with the block reason; red-team/negative-
+EV/conviction stay blocked entries; IRA/per-order caps/shorting/blocklist can never escalate.
+policy.ts stays authoritative: approval re-runs the FULL gate; only the wash-sale gate honors a
+server-minted token stored in the proposal row's decision JSON (`approvedEscalationsFromDecision`)
+— no client-settable bypass exists; honoring is audited (`wash_sale_override_applied`). Console
+Guardrails → Tax rules gains a washSaleHandling select (new "select" FieldKind; block→ask/auto =
+LOOSER, typed CONFIRM on LIVE). LLM context gains priced `taxContext.washSaleRebuyCosts` in
+ask/auto; `STRATEGY_PROMPT_VERSION` → `agentic-strategy@1.1.0`. Quartet green: lint 0 errors, tsc
+clean, 2280 tests pass (235 files), build ok. Docs:
+`docs/rollouts/2026-07-02-washsale-modes-escalation.md`. Codex round 2 (applied by the
+coordinator session after this lane hit its session limit): ConnectedAccount.taxationType now
+takes PRECEDENCE over a stale policy-taxSettings IRA value (row "taxable" ⇒ no Rev. Rul. hard
+block for taxable rebuys); the cap demotion binds the current run's in-memory policy, not just
+storage; approval-path refusal writes use an atomic still-pending CAS
+(`transitionProposalIfPending`, db-proposals) so wash-sale re-escalation can never resurrect an
+expired/rejected card — quartet re-green post-#324 merge, 2298 tests (235 files).
+**Next:** PR "feat(tax): wash-sale
+handling modes (block/ask/auto) + Decide-mode escalation" with auto-merge on green verify;
+polish: dedicated wash-sale cost callout on the approvals card + humanized Activity copy for the
+new audit events.
 
 ## 2026-07-02 — /console symbol drilldown superset of the legacy drawer (Claude)
 Branch `claude/console-drilldown-plus` (cut from `origin/main` @ 48fbe14, Wave 2 of the
@@ -126,6 +159,7 @@ green: tsc clean, lint 0 errors, 2241 tests / 234 files, build ok. Docs:
 verify); consider a structured error code from `/api/strategy/run` instead of string
 classification; after #324 lands, approvals renders the learned-context inbox the badge
 already counts.
+
 ## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
 Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
 `/console/orders` page (nav linked it since Wave 1): open working orders for the
@@ -169,6 +203,7 @@ on :3123 confirmed page + all three APIs 200 with matching shapes. Docs:
 `docs/rollouts/2026-07-02-console-settings-expansions.md`. **Next:** land via PR (auto-merge on
 green verify); after the foundation lane's provider-logo/models modules land, upgrade the native
 selects to the logo picker and unify the duplicated model catalog data.
+
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:
