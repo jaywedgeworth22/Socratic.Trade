@@ -308,16 +308,6 @@ export function PolicySaveBar({
 
 // ── Section wrapper ──────────────────────────────────────────────────────────
 
-export function FieldGroup({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
-  return (
-    <div>
-      <div className="con-card-title">{title}</div>
-      {subtitle && <p className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{subtitle}</p>}
-      <div className="mt-1 divide-y divide-[color:var(--con-line)]">{children}</div>
-    </div>
-  );
-}
-
 export function AdvancedGroup({ title, children, defaultOpen }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
   return (
     <details className="con-disclosure border-t border-[color:var(--con-line)]" open={defaultOpen}>
@@ -326,5 +316,3 @@ export function AdvancedGroup({ title, children, defaultOpen }: { title: string;
     </details>
   );
 }
-
-export { Field };
