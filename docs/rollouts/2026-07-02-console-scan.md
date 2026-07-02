@@ -85,12 +85,78 @@ mapping against live data. Note for other agents: ports 3123 etc. may be occupie
 OTHER worktrees' smoke servers — first attempt on 3123 accidentally hit a sibling agent's
 server (hence its 404 for this route); re-ran on a unique port and killed only my PID.
 
+## Post-review pass (same day): merge from main + all 4 Codex findings fixed
+
+PR #327 went `mergeable_state: dirty` when #322 (settings expansions) landed — merged
+`origin/main` cleanly (STATUS.md/PLAN.md auto-merged, both sides kept newest-first),
+re-ran the full quartet, pushed. Codex then left 4 review findings; each was **verified
+against the real code first** and all 4 were valid:
+
+1. **(P1) Stale live scan across account switches** — the page stays mounted when the
+   chrome switches the active account, and `/api/scan` runs against the SERVER's current
+   active policy, so a retained `live.scan` from the previous account kept winning the
+   newest-scan comparison (wrong universe + wrong "held" chips). Fix: `useLiveScan` now
+   takes a `scopeKey` (`activeConnectedAccount(snapshot)?.id + policy.accountNumber`);
+   on a scope CHANGE (first observation is only recorded — the mount fetch already ran
+   under the same server-side scope) it drops the scan and refetches.
+2. **(P2) Partial historical run scans could crash** — `latestStrategyRun` is built from
+   the raw `strategy_run` audit payload without validation; `src/lib/dashboard.ts` has
+   `fullMarketScan()` for exactly this but applies it only to `scanForInternals`, not the
+   snapshot field. Fix: new client-side mirror `asFullMarketScan()` (non-empty
+   `topCandidates`, string `generatedAt`, first candidate has string `symbol` + numeric
+   `price`/`intradayChangePct`; normalizes a missing `warnings` array) gates the run scan;
+   plus defensive `typeof` guards on the Score cell and a symbol-shape row filter in the
+   table.
+3. **(P2) Price provenance misattribution** — verified in `src/lib/market.ts`:
+   `mergeQuoteData` can replace `price` and updates quote-level `provider`/`asOf` but NOT
+   `sources.price` (its `refreshSideProvenance` refreshes only bid/ask/volume), so
+   `sources.price` alone misattributes a merged live price. Client-side fix (src/lib is
+   another agent's): new `priceTitle()` names the single provider when quote-level
+   `provider` and `sources.price` agree or only one exists, and names BOTH
+   ("X + Y (merged quote + enrichment)") when they differ — the pipeline doesn't record
+   which value survived, so no single winner is guessed.
+4. **(P2) Silent smart-money truncation** — the snapshot slices congress to 12 / insider
+   to 8 (`src/lib/dashboard.ts`) while `webSources.recordCount` reports the full feed.
+   Fix: subtitles now read "latest 12 of 47 on file" whenever `recordCount` exceeds the
+   rendered list, with the cap explained in the tooltip. A fuller (paginated) view stays a
+   follow-up below.
+
+Verification after the pass: `npx tsc --noEmit` clean; `npm run lint` exit 0 (same 2
+grandfathered warnings); `npm test` 2241/2241; `npm run build` ok. Each PR thread got a
+reply describing the fix and was resolved.
+
+### Second Codex round (3 P2s on the merge commit), all verified and handled
+
+5. **(P2) Shorts not marked held** — verified: `marketValue = quantity × mark`
+   (`src/lib/dashboard.ts:373`, Alpaca `market_value` likewise), so a short position has a
+   NEGATIVE `positionMarketValue` and the old `> 0` check hid its chip. Fix: any non-zero
+   finite value now marks the row — positive renders the accent "held" chip, negative a
+   warn-toned "short" chip with an honest tooltip (absolute value + why it's negative).
+6. **(P2) Congress card order** — verified: the snapshot sorts (and caps) congress rows by
+   `tradedAt` while the card is about disclosure recency. Client-side fix: the capped
+   subset is re-sorted by `disclosedAt ?? tradedAt` desc and the card tooltip now says
+   "most recently disclosed first (trade date shown on each row)". The server's 12-row cap
+   itself is still trade-date ordered — changing that lives in `src/lib/dashboard.ts`
+   (another lane) and is a follow-up below.
+7. **(P2) Drilldown resolves from the run-captured scan only** — confirmed (it was already
+   flagged in this note's follow-ups). The fix belongs in the shared
+   `app/console/ui/symbol-drilldown.tsx`, which a parallel agent's in-flight PR owns; that
+   PR is adding an optional quote-override prop. Adopting it in the scan table is a
+   tracked follow-up below; the thread was answered honestly and resolved without
+   touching the other lane's file.
+
 ## Follow-ups
 
+- A fuller Smart Money view (pagination or a dedicated endpoint beyond the snapshot's
+  12/8 caps) — the caps are now labeled honestly but the full cached feed is still only
+  server-side. Also: the server's congress cap slices by TRADE date
+  (`src/lib/dashboard.ts`); switching the cap to disclosure date belongs to the src/lib
+  lane.
 - The drilldown sheet resolves quotes from `latestStrategyRun.marketScan.quotesBySymbol`,
   so a symbol only present in a page-refreshed scan shows `—` for its stats (degrades
-  honestly). Wiring the live scan into the drilldown would need a change to the shared
-  `symbol-drilldown.tsx` (not owned by this branch).
+  honestly). The shared `symbol-drilldown.tsx` (another agent's in-flight PR) is gaining
+  an optional quote-override prop — once it lands, pass the live scan's quote from the
+  scan table's `SymbolButton` so the drilldown matches the row.
 - Column show/hide + persisted order (legacy `SCAN_COLS_KEY` chooser) was intentionally
   dropped for a curated 12-column set; add back if the owner misses it.
 - Legacy derived columns (PEG, vs VWAP, spread bps, Graham MoS, …) from

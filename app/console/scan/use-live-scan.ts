@@ -11,7 +11,7 @@
  *  scan and surfaces `error` as a non-blocking notice. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MarketScan } from "@/lib/types";
+import type { MarketQuote, MarketScan } from "@/lib/types";
 
 function isMarketScan(value: unknown): value is MarketScan {
   return Boolean(
@@ -52,13 +52,21 @@ export interface LiveScan {
   refresh: () => Promise<RefreshOutcome>;
 }
 
-export function useLiveScan(): LiveScan {
+/** `scopeKey` identifies the account scope the scan was requested under (the
+ *  active connected account + broker account number). /api/scan runs against
+ *  the SERVER's current active policy, so when the user switches accounts in
+ *  the chrome (this page stays mounted), a retained scan from the previous
+ *  scope must be dropped and refetched — otherwise its universe and "held"
+ *  chips would keep winning the newest-scan comparison. Pass null while the
+ *  snapshot hasn't loaded yet. */
+export function useLiveScan(scopeKey: string | null): LiveScan {
   const [scan, setScan] = useState<MarketScan | null>(null);
   // Starts true because the mount effect always kicks off a fetch — this keeps
   // the first paint on "scanning" instead of flashing an empty state.
   const [refreshing, setRefreshing] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef<AbortController | null>(null);
+  const lastScope = useRef<string | null>(null);
 
   const refresh = useCallback(async (): Promise<RefreshOutcome> => {
     inFlight.current?.abort();
@@ -99,7 +107,44 @@ export function useLiveScan(): LiveScan {
     return () => controllers.current?.abort();
   }, [refresh]);
 
+  // Account-scope change: drop the previous scope's scan and refetch. The
+  // FIRST observed scope is just recorded — the mount fetch above already ran
+  // against the server's current (same) active account.
+  useEffect(() => {
+    if (scopeKey === null) return; // snapshot not loaded yet — nothing to compare
+    if (lastScope.current === null) {
+      lastScope.current = scopeKey;
+      return;
+    }
+    if (lastScope.current !== scopeKey) {
+      lastScope.current = scopeKey;
+      setScan(null);
+      setError(null);
+      void refresh();
+    }
+  }, [scopeKey, refresh]);
+
   return { scan, refreshing, error, refresh };
+}
+
+/** Client-side mirror of `fullMarketScan()` in src/lib/dashboard.ts: the
+ *  latest strategy_run audit can carry a compact/historical scan shape whose
+ *  candidates lack per-quote fields (price, intraday change) and whose
+ *  top-level `warnings`/counters may be absent. Only a shape the full table
+ *  can render is accepted; anything else returns null so the page falls back
+ *  to the live scan / loading / empty state instead of crashing. */
+export function asFullMarketScan(scan: unknown): MarketScan | null {
+  if (!scan || typeof scan !== "object") return null;
+  const s = scan as Partial<MarketScan>;
+  if (!Array.isArray(s.topCandidates) || s.topCandidates.length === 0) return null;
+  if (typeof s.generatedAt !== "string") return null;
+  const first = s.topCandidates[0] as Partial<MarketQuote> | undefined;
+  if (typeof first?.symbol !== "string" || typeof first.price !== "number" || typeof first.intradayChangePct !== "number") {
+    return null;
+  }
+  // Older persisted runs may predate `warnings`; normalize so the page never
+  // dereferences a missing array.
+  return { ...(s as MarketScan), warnings: Array.isArray(s.warnings) ? s.warnings : [] };
 }
 
 /** Prefer whichever scan is newest by `generatedAt` — a strategy run that

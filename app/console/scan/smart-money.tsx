@@ -48,12 +48,18 @@ function fmtDiscDate(iso: string): string {
   });
 }
 
-/** "12 on file · Congress.Trade, Capitol Trades" — counts + pretty source list
- *  derived from the feed's own recorded source keys. */
-function feedSubtitle(meta: FeedMeta | undefined, fallback: string): string {
+/** Counts + pretty source list derived from the feed's own recorded source
+ *  keys. The snapshot deliberately caps these lists (newest first) while
+ *  `recordCount` reports the FULL cached feed — when they differ, say so
+ *  honestly ("latest 12 of 47 on file") instead of silently truncating. */
+function feedSubtitle(meta: FeedMeta | undefined, shownCount: number, fallback: string): string {
   if (!meta) return fallback;
   const sources = formatSourceList(meta.sources.join("+"));
-  return `${meta.recordCount} on file${sources ? ` · ${sources}` : ""}`;
+  const counts =
+    shownCount > 0 && meta.recordCount > shownCount
+      ? `latest ${shownCount} of ${meta.recordCount} on file`
+      : `${meta.recordCount} on file`;
+  return `${counts}${sources ? ` · ${sources}` : ""}`;
 }
 
 function FeedFreshness({ meta }: { meta: FeedMeta | undefined }) {
@@ -128,7 +134,15 @@ function InsiderRow({ f }: { f: InsiderFiling }) {
 }
 
 export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const congress = snapshot.smartMoney?.congress ?? [];
+  // The snapshot sorts (and caps) congress rows by TRADE date, but the useful
+  // recency for this card is when a trade became PUBLIC — re-sort the capped
+  // subset by disclosedAt (falling back to tradedAt) so a freshly disclosed
+  // older trade surfaces on top. Note: the server's cap itself is trade-date
+  // ordered (src/lib/dashboard.ts); a disclosure-date server cap is a recorded
+  // follow-up owned by the src/lib lane.
+  const congress = [...(snapshot.smartMoney?.congress ?? [])].sort((a, b) =>
+    (b.disclosedAt ?? b.tradedAt ?? "").localeCompare(a.disclosedAt ?? a.tradedAt ?? "")
+  );
   const insider = snapshot.smartMoney?.insider ?? [];
   const ws = snapshot.webSources;
 
@@ -136,7 +150,10 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
     <div className="grid gap-4 lg:grid-cols-2">
       <Card
         title={
-          <span className="flex items-center gap-2" title="Recent stock trades disclosed by members of Congress, newest first.">
+          <span
+            className="flex items-center gap-2"
+            title="Recent stock trades disclosed by members of Congress, most recently disclosed first (trade date shown on each row)."
+          >
             Congressional trades
             <FeedFreshness meta={ws?.congress} />
           </span>
@@ -144,9 +161,17 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
         action={
           <span
             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title={ws?.congress ? `Feed sources (raw): ${ws.congress.sources.join("+") || "none recorded"}` : "Feed status isn't available yet."}
+            title={
+              ws?.congress
+                ? `Feed sources (raw): ${ws.congress.sources.join("+") || "none recorded"}.${
+                    ws.congress.recordCount > congress.length && congress.length > 0
+                      ? ` The console shows the ${congress.length} most recent disclosures; the full ${ws.congress.recordCount}-record feed stays cached server-side.`
+                      : ""
+                  }`
+                : "Feed status isn't available yet."
+            }
           >
-            {feedSubtitle(ws?.congress, "Congressional trade feeds")}
+            {feedSubtitle(ws?.congress, congress.length, "Congressional trade feeds")}
           </span>
         }
         padded={false}
@@ -178,9 +203,17 @@ export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot })
         action={
           <span
             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title={ws?.insider ? `Feed sources (raw): ${ws.insider.sources.join("+") || "none recorded"}` : "Feed status isn't available yet."}
+            title={
+              ws?.insider
+                ? `Feed sources (raw): ${ws.insider.sources.join("+") || "none recorded"}.${
+                    ws.insider.recordCount > insider.length && insider.length > 0
+                      ? ` The console shows the ${insider.length} most recent filings; the full ${ws.insider.recordCount}-record feed stays cached server-side.`
+                      : ""
+                  }`
+                : "Feed status isn't available yet."
+            }
           >
-            {feedSubtitle(ws?.insider, "Open-market insider filings")}
+            {feedSubtitle(ws?.insider, insider.length, "Open-market insider filings")}
           </span>
         }
         padded={false}

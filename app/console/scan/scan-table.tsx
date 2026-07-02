@@ -40,9 +40,12 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
 
   const rows = useMemo(() => {
+    // Shape defense (not data hiding): a candidate without a symbol can't be
+    // keyed or drilled into — old/compact run captures may carry such rows.
+    const candidates = scan.topCandidates.filter((q) => typeof q?.symbol === "string" && q.symbol.length > 0);
     const col = SCAN_COLUMNS.find((c) => c.id === sort.col);
-    if (!col) return scan.topCandidates;
-    return [...scan.topCandidates].sort((a, b) => compareValues(col.sortValue(a), col.sortValue(b), sort.dir));
+    if (!col) return candidates;
+    return [...candidates].sort((a, b) => compareValues(col.sortValue(a), col.sortValue(b), sort.dir));
   }, [scan, sort]);
 
   // The quote-level `asOf` can be a display sentence rather than a timestamp;

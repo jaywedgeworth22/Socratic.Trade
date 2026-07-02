@@ -17,23 +17,34 @@ import { RefreshCw } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
+import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty } from "../ui/primitives";
 import { useToast } from "../ui/toast";
 import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
-import { newestScan, useLiveScan } from "./use-live-scan";
+import { asFullMarketScan, newestScan, useLiveScan } from "./use-live-scan";
 
 type Tab = "scan" | "smart";
 
 export default function ScanPage() {
   const { snapshot } = useConsoleData();
   const toast = useToast();
-  const live = useLiveScan();
+  // Scope the live scan to the active account: /api/scan runs against the
+  // server's CURRENT active policy, so switching accounts in the chrome (this
+  // page stays mounted) must drop and refetch a scan taken under the previous
+  // account — its universe and "held" chips would otherwise keep winning the
+  // newest-scan comparison below.
+  const scopeKey = snapshot
+    ? `${activeConnectedAccount(snapshot)?.id ?? ""}:${snapshot.policy.accountNumber ?? ""}`
+    : null;
+  const live = useLiveScan(scopeKey);
   const [tab, setTab] = useState<Tab>("scan");
 
-  const runScan = snapshot?.latestStrategyRun?.marketScan;
+  // Validate the run-captured scan before trusting it — historical/compact
+  // strategy_run audits can carry a partial shape the table can't render.
+  const runScan = asFullMarketScan(snapshot?.latestStrategyRun?.marketScan);
   const scan: MarketScan | null = newestScan(live.scan, runScan);
   const smartCount = (snapshot?.smartMoney?.congress?.length ?? 0) + (snapshot?.smartMoney?.insider?.length ?? 0);
 

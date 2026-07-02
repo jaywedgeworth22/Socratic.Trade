@@ -27,6 +27,30 @@ export function fieldTitle(label: string, source?: string, asOf?: string): strin
   return parts.join("\n");
 }
 
+/** Price provenance is two-stage server-side: enrichment can refine the
+ *  screener price (recording `sources.price`), and a later live broker/Yahoo
+ *  quote merge (mergeQuoteData in src/lib/market.ts) can replace the price
+ *  again — that merge updates the quote-level `provider` but NOT
+ *  `sources.price`, so the two can legitimately disagree. Reading only
+ *  `sources.price` would misattribute a merged live price to the older
+ *  provider. When they agree (or only one is recorded) name it; when both
+ *  exist and differ, name both honestly — the pipeline doesn't record which
+ *  value survived, so we never guess a single winner. */
+function priceTitle(q: MarketQuote): string {
+  const quoteProvider = q.provider;
+  const enrichedPrice = q.sources?.price;
+  const parts = ["Last price"];
+  if (quoteProvider && enrichedPrice && friendlySource(quoteProvider) !== friendlySource(enrichedPrice)) {
+    parts.push(`Source: ${friendlySource(quoteProvider)} + ${friendlySource(enrichedPrice)} (merged quote + enrichment)`);
+  } else {
+    const single = quoteProvider ?? enrichedPrice;
+    if (single) parts.push(`Source: ${friendlySource(single)}`);
+  }
+  const received = receivedLabel(q.asOf);
+  if (received) parts.push(received);
+  return parts.join("\n");
+}
+
 function SentimentChip({ value }: { value: number }) {
   const tone = value >= 60 ? "pos" : value <= 40 ? "neg" : "muted";
   const word = value >= 60 ? "Positive" : value <= 40 ? "Negative" : "Neutral";
@@ -67,10 +91,22 @@ export const SCAN_COLUMNS: ScanColumn[] = [
           symbol={q.symbol}
           title={q.companyName ? `${q.companyName} — open ${q.symbol} details` : `Open ${q.symbol} details`}
         />
-        {q.positionMarketValue > 0 && (
-          <Chip tone="accent" title={`You hold a position in ${q.symbol} — about ${fmtMoney(q.positionMarketValue)} at scan time.`}>
-            held
-          </Chip>
+        {/* marketValue = quantity × mark (see src/lib/dashboard.ts / alpaca.ts),
+            so a SHORT position carries a NEGATIVE value — any non-zero value is
+            an open position, and the sign distinguishes direction. */}
+        {typeof q.positionMarketValue === "number" && Number.isFinite(q.positionMarketValue) && q.positionMarketValue !== 0 && (
+          q.positionMarketValue < 0 ? (
+            <Chip
+              tone="warn"
+              title={`You hold a SHORT position in ${q.symbol} — about ${fmtMoney(Math.abs(q.positionMarketValue))} of market value at scan time (position value is negative because it's owed).`}
+            >
+              short
+            </Chip>
+          ) : (
+            <Chip tone="accent" title={`You hold a position in ${q.symbol} — about ${fmtMoney(q.positionMarketValue)} at scan time.`}>
+              held
+            </Chip>
+          )
         )}
       </span>
     ),
@@ -83,22 +119,26 @@ export const SCAN_COLUMNS: ScanColumn[] = [
       "Composite 0–100 scan score — a weighted blend of liquidity, momentum, value, quality, volatility, sentiment and diversification factors, computed by the scanner (weights are configurable in strategy settings). Higher = ranked more attractive this run.",
     num: true,
     sortValue: (q) => q.score,
-    render: (q) => <span className="font-semibold">{q.score.toFixed(1)}</span>,
+    // Defensive typeof: historical/compact run captures may omit per-quote
+    // fields the current MarketScan type marks required.
+    render: (q) => (typeof q.score === "number" ? <span className="font-semibold">{q.score.toFixed(1)}</span> : <Dash />),
     cellTitle: (q) =>
-      fieldTitle(
-        `Scan score ${q.score.toFixed(1)}/100 — computed by the scanner from this run's per-factor inputs, not a provider value.`,
-        undefined,
-        q.asOf
-      )
+      typeof q.score === "number"
+        ? fieldTitle(
+            `Scan score ${q.score.toFixed(1)}/100 — computed by the scanner from this run's per-factor inputs, not a provider value.`,
+            undefined,
+            q.asOf
+          )
+        : "No scan score was recorded for this candidate."
   },
   {
     id: "price",
     label: "Price",
-    headerTitle: "Last traded price (may be delayed). Hover a cell for the exact provider that supplied it.",
+    headerTitle: "Last traded price (may be delayed). Hover a cell for the provider(s) that supplied it.",
     num: true,
     sortValue: (q) => q.price,
     render: (q) => (q.price > 0 ? fmtMoney(q.price) : <Dash />),
-    cellTitle: (q) => fieldTitle("Last price", q.sources?.price, q.asOf)
+    cellTitle: (q) => priceTitle(q)
   },
   {
     id: "change",

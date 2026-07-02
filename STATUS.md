@@ -25,9 +25,21 @@ good scan stays up), auto-fetch on mount; the table shows the NEWEST of {page re
 the tooltip. Quartet green in a fresh worktree: tsc clean, lint 0 errors (2 grandfathered
 set-state-in-effect warnings — same idiom as useConsoleData), 2241 tests / 234 files pass,
 build ok (+ runtime smoke: /console/scan 200, live /api/scan payload verified). Docs:
-`docs/rollouts/2026-07-02-console-scan.md`. **Next:** land via PR (auto-merge on green
-verify); follow-ups in the rollout note (drilldown live-scan quotes, optional column
-chooser, derived-metric columns).
+`docs/rollouts/2026-07-02-console-scan.md`. **Next:** land via PR #327 (auto-merge on
+green verify); follow-ups in the rollout note (drilldown live-scan quotes, optional column
+chooser, derived-metric columns). **Post-review update:** merged origin/main after #322
+landed (clean; both STATUS/PLAN sides kept newest-first) and fixed all 4 Codex findings on
+PR #327 — account-scoped live-scan invalidation (`useLiveScan(scopeKey)`),
+`asFullMarketScan()` guard mirroring dashboard.ts's `fullMarketScan()` for
+compact/historical run captures, honest dual-provider price tooltip (mergeQuoteData
+updates quote-level `provider` but not `sources.price`), and "latest N of M on file"
+labels on the snapshot-capped smart-money lists. Second Codex round (3 P2s) also fixed:
+short positions now get a warn "short" chip (marketValue is negative for shorts, so the
+old `> 0` check hid them), congress rows re-sorted client-side by `disclosedAt ??
+tradedAt` desc (server cap is still trade-date ordered — src/lib follow-up), and the
+drilldown-stale-quote thread answered honestly (fix lands via the parallel
+symbol-drilldown PR's quote-override prop; adoption here is a tracked follow-up). Quartet
+re-run green; every review thread replied to + resolved. Details in the same rollout note.
 
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
