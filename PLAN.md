@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/sentry-monitoring`, Claude): **Sentry monitoring completed** —
+> added the env-gated Sentry Crons scheduler heartbeat (`scheduler-tick` monitor,
+> `SENTRY_DSN` + `SENTRY_CRONS_ENABLED=1`, try/catch-wrapped, after the single-leader
+> gate) closing the dead-scheduler-but-health-200 gap, plus `test/sentry-inert.test.ts`
+> pinning the whole integration as a no-op with zero Sentry env. Inert until the owner
+> creates the Sentry project + sets env vars. No roadmap change; see
+> `docs/rollouts/2026-07-02-sentry-monitoring.md`.
+
 > 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
 > all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
 > CLOSED (un-critiqued Bull proposals route to human in decide mode, not auto-executed);

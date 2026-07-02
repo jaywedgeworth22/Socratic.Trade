@@ -33,6 +33,48 @@ function singleLeaderEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(v);
 }
 
+// Sentry Crons heartbeat for the scheduler tick. Addresses a confirmed monitoring gap: a
+// dead/hung scheduler still leaves /api/health returning 200, so an external dead-man's-switch
+// is needed. When enabled, every tick reports "ok" to the 'scheduler-tick' monitor and Sentry
+// alerts when check-ins stop arriving. Opt-in — requires BOTH SENTRY_DSN (the SDK is only
+// initialized in instrumentation.ts when it is set) AND SENTRY_CRONS_ENABLED=1 — and fully
+// try/catch-wrapped: monitoring must never be able to break trading.
+export const SENTRY_CRON_MONITOR_SLUG = "scheduler-tick";
+
+function sentryCronsEnabled(): boolean {
+  return Boolean(process.env.SENTRY_DSN) && process.env.SENTRY_CRONS_ENABLED === "1";
+}
+
+/** Exported for tests only — asserts the env gate and that failures can never propagate. */
+export async function sendSentrySchedulerCheckIn(): Promise<void> {
+  if (!sentryCronsEnabled()) return;
+  try {
+    // Dynamic import keeps the Sentry SDK out of the module graph of every scheduler consumer
+    // (tests, API routes) and makes the disabled path a true no-op. Interop note: depending on
+    // the module system the CJS exports can surface on `.default` instead of as named exports
+    // (raw Node ESM import of @sentry/nextjs does this), so resolve defensively and silently
+    // skip — never throw — if the API is unavailable.
+    const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
+      default?: typeof import("@sentry/nextjs");
+    };
+    const captureCheckIn = mod.captureCheckIn ?? mod.default?.captureCheckIn;
+    if (typeof captureCheckIn !== "function") return;
+    // The upsert monitor config auto-creates/updates the monitor on first check-in: expected
+    // every minute (TICK_MS), flagged missed after a 5-minute margin.
+    captureCheckIn(
+      { monitorSlug: SENTRY_CRON_MONITOR_SLUG, status: "ok" },
+      {
+        schedule: { type: "interval", value: 1, unit: "minute" },
+        checkinMargin: 5,
+        maxRuntime: 10,
+        timezone: "UTC"
+      }
+    );
+  } catch (err) {
+    console.error("[scheduler] sentry cron check-in error:", err);
+  }
+}
+
 let timer: NodeJS.Timeout | null = null;
 // Schedule state is per (userId, connectedAccountId): each connected account runs autonomously on
 // its own cadence/state, so two accounts of the same user neither share a cadence clock nor block
@@ -154,6 +196,11 @@ async function tick(): Promise<void> {
   if (singleLeaderEnabled() && !acquireOrRenewLeadership(new Date())) {
     return; // not the leader this tick — no side effects
   }
+
+  // Sentry Crons check-in (opt-in, see sendSentrySchedulerCheckIn above). Deliberately AFTER the
+  // single-leader gate: only the process actually running the tick body reports "ok", so a dead
+  // leader is not masked by idle followers. Fire-and-forget + self-guarded — can't break a tick.
+  void sendSentrySchedulerCheckIn();
 
   // Refresh backend web sources (congressional trades, etc.) independently of the
   // trading loop — these are low-frequency (cadence-gated, ~daily) data reads that
