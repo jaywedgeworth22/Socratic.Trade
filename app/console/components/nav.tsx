@@ -10,9 +10,13 @@ import {
   Activity as ActivityIcon,
   BarChart3,
   Brain,
+  Globe,
   Inbox,
   LayoutDashboard,
+  ListChecks,
+  MessageSquare,
   MoreHorizontal,
+  Radar,
   Settings as SettingsIcon,
   Shield
 } from "lucide-react";
@@ -24,16 +28,22 @@ interface Destination {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
+  /** Concise hover explanation (native title) — every destination has one. */
+  desc: string;
 }
 
 const DESTINATIONS: Destination[] = [
-  { href: "/console", label: "Home", icon: LayoutDashboard },
-  { href: "/console/approvals", label: "Approvals", icon: Inbox },
-  { href: "/console/activity", label: "Activity", icon: ActivityIcon },
-  { href: "/console/strategy", label: "Strategy", icon: Brain },
-  { href: "/console/guardrails", label: "Guardrails", icon: Shield },
-  { href: "/console/results", label: "Results", icon: BarChart3 },
-  { href: "/console/settings", label: "Settings", icon: SettingsIcon }
+  { href: "/console", label: "Home", icon: LayoutDashboard, desc: "Account overview: portfolio, positions, and what needs attention." },
+  { href: "/console/approvals", label: "Approvals", icon: Inbox, desc: "Pending trade proposals waiting for your decision." },
+  { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Everything that happened, newest first." },
+  { href: "/console/scan", label: "Scan", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
+  { href: "/console/macro", label: "Macro", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
+  { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
+  { href: "/console/assistant", label: "Assistant", icon: MessageSquare, desc: "Chat with the assistant about your accounts and the market." },
+  { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The strategy prompt, models, and run cadence." },
+  { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Hard limits the policy gate enforces on every trade." },
+  { href: "/console/results", label: "Results", icon: BarChart3, desc: "Realized performance, equity curve, and thesis scorecards." },
+  { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -53,11 +63,16 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
             href={d.href}
             className="con-nav-item"
             data-active={isActive(pathname, d.href)}
+            title={d.desc}
             onClick={(e) => guardNav(e)}
           >
             <Icon size={16} />
             <span className="flex-1">{d.label}</span>
-            {d.href === "/console/approvals" && pendingCount > 0 && <span className="con-badge">{pendingCount}</span>}
+            {d.href === "/console/approvals" && pendingCount > 0 && (
+              <span className="con-badge" title={`${pendingCount} proposal${pendingCount === 1 ? "" : "s"} waiting for your decision`}>
+                {pendingCount}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -90,6 +105,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 href={d.href}
                 className="con-tab-item"
                 data-active={isActive(pathname, d.href)}
+                title={d.desc}
                 onClick={(e) => guardNav(e)}
               >
                 <span className="relative">
@@ -102,7 +118,13 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
               </Link>
             );
           })}
-          <button type="button" className={cx("con-tab-item")} data-active={moreActive} onClick={() => setMoreOpen(true)}>
+          <button
+            type="button"
+            className={cx("con-tab-item")}
+            data-active={moreActive}
+            title="All remaining console screens"
+            onClick={() => setMoreOpen(true)}
+          >
             <MoreHorizontal size={19} />
             More
           </button>
@@ -119,6 +141,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 href={d.href}
                 className="con-nav-item"
                 data-active={isActive(pathname, d.href)}
+                title={d.desc}
                 onClick={(e) => {
                   if (guardNav(e)) setMoreOpen(false);
                 }}

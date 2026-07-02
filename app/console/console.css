@@ -481,6 +481,19 @@
   vertical-align: top;
 }
 .con-table tr:last-child td { border-bottom: none; }
+
+/* Row hover/focus highlight — every tabular surface highlights the row under
+   the cursor AND the row containing keyboard focus, in both themes. Applies
+   automatically to .con-table bodies; put .con-row on non-table list rows
+   (feeds, card lists) to opt in. Derived from --con-fg so it stays a subtle
+   neutral wash on light and dark alike. */
+.con-table tbody tr:hover,
+.con-table tbody tr:focus-within,
+.con-row:hover,
+.con-row:focus-within,
+.con-row:focus-visible {
+  background: color-mix(in oklab, var(--con-fg) 6%, transparent);
+}
 .con-table .num,
 .con-table th.num,
 .con-table td.num {
@@ -617,6 +630,61 @@
 @keyframes con-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* ── Logos ── */
+/* Neutral tile behind ticker/company logos so white- or dark-glyph marks stay
+   visible in BOTH themes. Light: a dark slate tile (many marks are white-on-
+   transparent); dark: a translucent raised surface. The monogram fallback
+   reuses the same tile with a readable letter color. */
+.con-logo-tile {
+  border-radius: 6px;
+  border: 1px solid var(--con-line);
+  background: #334155;
+  color: rgba(255, 255, 255, 0.92);
+}
+.console-root[data-theme="dark"] .con-logo-tile {
+  background: color-mix(in oklab, var(--con-surface-3) 85%, transparent);
+  color: var(--con-fg);
+}
+@media (prefers-color-scheme: dark) {
+  .console-root:not([data-theme="light"]) .con-logo-tile {
+    background: color-mix(in oklab, var(--con-surface-3) 85%, transparent);
+    color: var(--con-fg);
+  }
+}
+
+/* ── Model-attribution team blocks (approval cards) ──
+   The proposer (green team / bull) and the adversarial reviewer (red team /
+   bear) each get a faintly tinted block derived from --con-pos / --con-neg, so
+   the tint adapts to both themes and text keeps its normal contrast. */
+.con-team {
+  border-radius: var(--con-radius-sm);
+  padding: 12px;
+}
+.con-team-green {
+  background: color-mix(in oklab, var(--con-pos) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--con-pos) 28%, transparent);
+}
+.con-team-red {
+  background: color-mix(in oklab, var(--con-neg) 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--con-neg) 28%, transparent);
+}
+
+/* The big confidence figure: the one number that carries the decision. Heavier
+   and tighter than the surrounding text, in the positive (bull) hue on the
+   green block. --con-pos meets AA on both themes' surfaces, and the faint tint
+   behind it barely shifts the contrast. */
+.con-confidence-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--con-pos);
+}
+.con-team-red .con-confidence-num {
+  color: var(--con-neg);
 }
 
 /* Details / disclosure groups */
