@@ -95,7 +95,14 @@ function EventNotificationsCard() {
   const save = async () => {
     setBusy(true);
     try {
-      await savePolicy({ notificationSettings: { enabledEvents: events, webhookUrl: webhook } });
+      // Minimal patch: only the fields the user actually touched. The server
+      // deep-merges notificationSettings, so untouched fields stay as they are.
+      await savePolicy({
+        notificationSettings: {
+          ...(draftEvents !== null ? { enabledEvents: events } : {}),
+          ...(draftWebhook !== null && draftWebhook !== (current.webhookUrl ?? "") ? { webhookUrl: webhook } : {})
+        }
+      });
       await refresh();
       setDraftEvents(null);
       setDraftWebhook(null);
