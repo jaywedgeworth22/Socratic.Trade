@@ -17,6 +17,45 @@ errors, **2064 tests** (7 new reservation tests; one known `approval-lock` flake
 ok. Docs: `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`, fg-codex note item 13 + Follow-ups
 marked DONE. **Next:** task E — spec revisions #1–#16 on `docs/single-adversary-consolidation.md` (#290).
 
+## 2026-07-01 — Strategy LLM money-path hardening: Audit Chat A, all 8 items (Claude)
+Branch `chat-a-llm-money-path`. Implemented all of **Chat A — LLM & prompting
+(money-path)** from `docs/reviews/2026-07-01-audit-work-split.md`: (1) inline Bear
+red-team now fails CLOSED (routes un-critiqued Bull proposals to human in decide mode
+instead of auto-executing) — the only default-behavior change, in the fail-safe
+direction; (2) versioned Bull/Bear prompts extracted to `src/lib/strategy-prompts.ts`
+(`STRATEGY_PROMPT_VERSION`) + a deterministic offline eval (`npm run
+eval:strategy-offline`, 3 scorers) + a nullable `trade_proposals.prompt_version`
+column (db migration v9) stamped on every proposal; (3) Anthropic prompt caching on the
+strategy/red-team path; (4) ordered cross-provider Bull failover behind `policy.
+llmFallbackModels` (default-off, recorded via `strategy_llm_failover` audit); (5)
+truncation-aware Bull cap (`detectLlmTruncation` → distinct reason, never a silent
+no-op); (6) strict `json_schema` for the red-team on OpenAI-compatible providers; (7)
+rationale-collapse gate behind `policy.tuning.gateOnRationaleCollapse` (default-off);
+(8) deleted the dead/broken Anthropic branch in `resolveLlmEndpoint`. All behavior
+changes except item 1 are default-off flags (Phase-0 byte-identical when off).
+**Verified:** `tsc` clean, `lint` 0 errors, `npm test` green (178 files / 1692 tests),
+`npm run build` passes, `eval:strategy-offline` green. Next: open the PR (ready).
+See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+## 2026-07-01 - Single-adversary consolidation design spec (design only)
+Branch `claude/wonderful-bell-32958a`. Added
+`docs/single-adversary-consolidation.md` — a verified, adversarially-reviewed
+spec to collapse the strategy engine's two adversarial LLM passes (in-flow Bear
+in `proposeTrades` + standalone `debateProposal`) into one hardened "Adversary
+Review". Motivated by a `gemini-3.5-flash (fallback)` tooltip that traced to three
+problems: the two adversaries run the identical model twice (both read
+`policy.redTeamLlmModel`); the adversary parse path bare-`JSON.parse`s with no
+fence-stripping/retries so Gemini's fenced JSON silently failed the review; and an
+adversary-unavailable proposal is indistinguishable in the UI from a routine
+manual-approval one. Spec decides: one post-sizing adversary
+(approve/approve-at-half/reject, down-only, placeability-checked), net-exposure
+gating (never blocks a risk-reducing trade), never-fail-silent (fail closed in
+broker modes), enforced model independence (kill the hidden `RED_TEAM_LLM_PROVIDER`
+env override), reliability fixes (shared fence-stripping, strict schema, bounded
+retry/failover, fail-closed on unknown verdict), and visibility fixes (badge +
+un-overwritten notification title + persisted `decision.reasons`). **No code
+changed.** Blocked on user decisions O1-O4 (spec §9) before implementation; a
+separate fill-confirmation/reconciliation design pass is still owed. See
+`docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
 ## 2026-07-01 — Account deletion: block while a mobile command is in flight (Claude)
 On PR #293 (branch HEAD `e4ff311`). Codex P2 on my workstream-G change: `mobile_commands` was added to
 the deletion sweep but `getAccountDeletionBlockers()` didn't count in-flight commands, so a `running`
