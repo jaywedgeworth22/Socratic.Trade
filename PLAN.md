@@ -15,6 +15,39 @@ filling the missing pieces.
 > the tooltips-everywhere/row-hover UX standard. Remaining Wave-2 routes
 > (`/console/scan`, `/console/orders`, `/console/assistant`) are owned by parallel
 > agents. See `docs/rollouts/2026-07-02-console-macro.md`.
+> 2026-07-02 (`claude/console-drilldown-plus`, Claude): **Console symbol drilldown,
+> Wave 2** — the console company drawer is now a strict superset of the legacy
+> `app/ui/symbol-drilldown.tsx` drawer: full parity (11 derived-metric tiles reusing
+> `src/lib/derived-metrics`, 7-factor breakdown, legacy-threshold signal summary,
+> evidence/headlines, per-field provenance) PLUS account exposure (position P&L,
+> pending proposals → Approvals, recent orders), analyst rating distribution +
+> price-target range bar, signal/earnings-proximity chips, and a collapsible deep-
+> fundamentals table — tooltips on everything, light+dark, honest empty states, and
+> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents
+> (extended with one OPTIONAL `quote?: MarketQuote` override so screens rendering
+> freshly fetched /api/scan rows — the Scan lane, per the Codex finding on #327 — can
+> make the drilldown match the row instead of the snapshot's last run).
+> No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
+> See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
+> 2026-07-02 (`claude/console-learned-context`, Claude): **Learned-context approval
+> inbox ported to /console** — the legacy "Pending Learned Changes" queue now lives on
+> `/console/approvals` as a Learned context section (own data source; approve/reject
+> with optimistic UI, confirm sheet showing the exact AI-LEARNED block with the honest
+> approval-date stamp, full provenance + tooltips + row hover per the owner's new UX
+> standard). Console feature-parity track only — no roadmap scope change. Follow-ups:
+> sharing prefs in Settings, nav/needs-attention count. See
+> `docs/rollouts/2026-07-02-console-learned-context.md`.
+> 2026-07-02 (`claude/console-parity-tail`, Claude): **Console parity tail** — the
+> closing lane of the parallel legacy→console port: Run-once blocked-reason routing
+> (why + one-click route to the fix), chrome sign-out with signed-in identity,
+> allocation bars on Home (position/sector lenses), a new `/console/watchlist`
+> destination with price alerts (existing /api/watchlist + /api/alerts), the blocking
+> shared-data-pool consent gate ported un-weakened into the console shell, a Data
+> sharing settings card (pool consent + learned-context include/contribute flags),
+> a DANGER account-deletion flow mirroring the server's gates, admin-only OPERATOR
+> links in Settings, and pending learned-context items folded into the single red
+> Approvals badge. Owner-skipped: ⌘K palette, Strategy Flow visualizer. Console track
+> only — no roadmap scope change. See `docs/rollouts/2026-07-02-console-parity-tail.md`.
 > 2026-07-02 (`claude/console-orders`, Claude): **Console Wave 2 — Orders destination**
 > — `/console/orders` implemented (one of the parallel Wave-2 lanes on the #321
 > foundation): open working orders for the active account with stale-limit detection

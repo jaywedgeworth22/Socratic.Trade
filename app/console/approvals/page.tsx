@@ -3,12 +3,18 @@
 /** Approvals — the decision inbox. One receipt-style card per pending
  *  proposal. Approve/reject hit the real endpoints; LIVE approvals go through
  *  the server's typed-confirmation contract. Also narrates the halted rule:
- *  approvals are refused while the system is stopped. */
+ *  approvals are refused while the system is stopped.
+ *
+ *  Below the trade proposals sits the learned-context inbox: AI-inferred
+ *  facts/directives queued for the owner's approve/reject (its own data
+ *  source — GET /api/learned-context/pending — so it never disturbs the
+ *  proposal flow). */
 
 import { deriveStateInfo } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { ApprovalCard } from "../components/approval-card";
 import { Card, Chip } from "../ui/primitives";
+import { LearnedContextInbox } from "./learned-context";
 
 export default function ApprovalsPage() {
   const { snapshot } = useConsoleData();
@@ -39,7 +45,9 @@ export default function ApprovalsPage() {
       {pending.length === 0 ? (
         <Card>
           <div className="py-8 text-center">
-            <p className="font-semibold">Nothing is waiting for you.</p>
+            {/* Scoped to trade proposals only — the learned-context inbox below
+                is its own queue and may still hold items awaiting review. */}
+            <p className="font-semibold">No trade proposals are waiting for you.</p>
             <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
               When a run proposes a trade, it appears here as a receipt — with the strategist&apos;s reasoning, the
               devil&apos;s-advocate review, and how the idea has moved since. Nothing trades without you while authority
@@ -50,6 +58,8 @@ export default function ApprovalsPage() {
       ) : (
         pending.map((p) => <ApprovalCard key={p.id} pending={p} />)
       )}
+
+      <LearnedContextInbox />
 
       <p className="text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Rejections are data, not failures — every idea you pass on keeps being scored, and Results shows how your
