@@ -31,6 +31,10 @@ export function returnSinceProposalPct(
 ): number | undefined {
   if (referencePrice == null || !(referencePrice > 0) || currentPrice == null || !(currentPrice > 0)) return undefined;
   const raw = ((currentPrice - referencePrice) / referencePrice) * 100;
+  // Sign convention by intended benefit direction, not just open/close:
+  //   price-up-is-good   = { buy (open long), cover (close short) } -> keep raw
+  //   price-down-is-good = { short (open short), sell (close long) } -> negate raw
+  // So a proposed sell followed by a price drop reads as "the call worked" (positive).
   const adjusted = side === "sell" || side === "short" ? -raw : raw;
   return Math.round(adjusted * 100) / 100;
 }

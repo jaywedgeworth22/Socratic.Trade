@@ -61,17 +61,18 @@ export function dailyExecutionStats(
   return rows.reduce(
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
-      const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
       // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
       // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
-      const notional = isBuy
+      const notional = isOpening
         ? (row.estimated_notional != null
             ? row.estimated_notional
             : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
       return {
         orderCount: acc.orderCount + 1,
-        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
         notional: acc.notional + notional
       };
     },
@@ -94,14 +95,15 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   return rows.reduce(
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
-      const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
       // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
-      const notional = isBuy
+      const notional = isOpening
         ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
       return {
         orderCount: acc.orderCount + 1,
-        openingOrderCount: acc.openingOrderCount + (isBuy ? 1 : 0),
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
         notional: acc.notional + notional
       };
     },

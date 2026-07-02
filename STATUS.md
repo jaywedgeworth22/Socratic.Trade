@@ -4,6 +4,25 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Integration worktree sync + unfinished local changes (Cursor)
+Integration worktree (`main`) was **51 commits behind `origin/main`** with
+uncommitted local edits (Sentry SDK bump + short/cover clarity comments).
+Fast-forwarded to `78ea1376` (includes console Wave 2, IRA wash-sale, Sentry
+Crons monitoring, etc.), reapplied the local diff cleanly, and verified:
+`npm run lint` (0 errors), `npx tsc --noEmit` (clean after `rm -rf .next/dev &&
+npm run build`), `npm test` (237 files / 2350 tests), `npm run build` (green).
+`trading-main` (4001 / beta) restarted after build. **Uncommitted on disk:**
+`@sentry/nextjs` ^10.60.0 → ^10.63.0 + wizard `withSentryConfig` webpack
+options (`automaticVercelMonitors`, `removeDebugLogging` treeshake); comment-only
+short/cover clarifications in `db-execution.ts` (`isOpening` rename),
+`performance.ts` (return sign convention), `policy.ts` (add-to-position gate).
+See `docs/rollouts/2026-07-02-cursor-integration-sync.md`. **Update (Claude,
+same day):** owner directed all uncompleted tasks be worked, so the full delta
+(Sentry bump + wizard config + risk-path clarity comments) is landing as a PR
+from throwaway worktree branch `claude/sentry-bump-shortcover-clarity`
+(auto-merge on green `verify`). Once merged, the integration tree's uncommitted
+copy is redundant: `git stash && git pull --ff-only && git stash drop` there.
+
 ## 2026-07-02 — /console/macro destination, Wave 2 (Claude)
 Branch `claude/console-macro` (cut from post-foundation `origin/main`). Fills the
 `/console/macro` dead link from the Wave-1 nav with the macro / market-regime board,
