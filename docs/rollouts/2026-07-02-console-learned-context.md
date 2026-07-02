@@ -30,7 +30,13 @@ Improvements over the legacy version:
   plain-language tooltip.
 - **Honest copy everywhere**: "Not applied until you approve" on every card; the risk
   tier explicitly says approval NEVER changes numeric risk limits (those live in
-  Guardrails); rejection copy says nothing was applied anywhere.
+  Guardrails); rejection copy says nothing was applied anywhere. Post-review
+  correction (valid Codex finding on PR #324): an approved risk observation is stored
+  with `riskTier: "risk"`, but `listLearnedContextForDecision` (db-learning.ts) only
+  retrieves `risk_tier = 'fact'` rows — so approved risk rows are recorded durably yet
+  NOT fed back into runs today. All risk-tier copy (card caption, confirm sheet, toast,
+  tooltips) now says "recorded, not yet fed into runs" instead of "the AI reads it on
+  future runs".
 - **Resilient**: the queue has its own data source (GET pending, 60s visibility-guarded
   poll + refresh button); fetch errors surface as a non-blocking warn notice while the
   last good list stays rendered; action failures toast the server's own error text and
@@ -102,6 +108,12 @@ other console file owned by parallel agents.
 
 ## Follow-ups
 
+- **Approved risk-tier observations are stored but never retrieved**: the approve path
+  (`applyApprovedPending`) inserts a `learned_context` row with `riskTier: "risk"`, but
+  `listLearnedContextForDecision` filters `risk_tier = 'fact'`, so the row never reaches
+  the strategy/chat prompt. Whether approved risk rows should be retrieved is a
+  deliberate feedback-loop design decision owned by the learning-loop work — NOT wired
+  up here; the UI copy states the current behavior honestly.
 - Sharing preferences (`/api/learned-context/sharing`) still have no console surface;
   they belong in Settings ("ALL YOUR ACCOUNTS" scope) once the parallel settings work
   lands.

@@ -4,7 +4,10 @@
  *  wants to remember (risk observations / strategy directives from autonomous
  *  runs or document ingestion) awaiting the owner's explicit approve/reject.
  *  A queued item is NOT in the brain — nothing influences the AI until it is
- *  approved here, and an approval NEVER changes numeric risk limits.
+ *  approved here, and an approval NEVER changes numeric risk limits. Honesty
+ *  note: an approved 'risk' observation is recorded durably (advisory row) but
+ *  is NOT yet retrieved into runs — listLearnedContextForDecision only reads
+ *  fact-tier rows — so the copy says "recorded", never "the AI reads it".
  *
  *  Console rules honored: asymmetric friction (reject is one tap; approve —
  *  which adds standing influence — shows exactly what will be applied first),
@@ -39,7 +42,7 @@ function tierMeta(tier: PendingLearnedItem["riskTier"]): { label: string; tone: 
         label: "Risk observation",
         tone: "warn",
         explain:
-          "A risk-related takeaway. Approving stores it as advisory context the AI reads; it never changes your numeric risk limits."
+          "A risk-related takeaway. Approving records it durably in the learned-context store; it is not yet fed back into runs, and it never changes your numeric risk limits."
       }
     : {
         label: "Strategy directive",
@@ -96,7 +99,9 @@ function ApprovalEffect({ item, withPreview }: { item: PendingLearnedItem; withP
   }
   return (
     <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
-      Approving stores this as advisory context the AI reads on future runs. It{" "}
+      Approving records this observation durably in the learned-context store — kept and auditable, but{" "}
+      <strong className="font-semibold text-[color:var(--con-muted)]">not yet fed back into runs</strong> (today only
+      fact-tier items and approved strategy directives reach the AI). It also{" "}
       <strong className="font-semibold text-[color:var(--con-muted)]">never</strong> changes your numeric risk limits —
       those only move when you edit them yourself in Guardrails.
     </p>
@@ -254,7 +259,7 @@ export function LearnedContextInbox() {
         `Approved "${item.subject}"`,
         item.riskTier === "strategy-directive"
           ? "The attributed block was appended to your strategy prompt."
-          : "Stored as advisory context. Your numeric risk limits are unchanged."
+          : "Recorded in the learned-context store. It is not yet fed into runs, and your numeric risk limits are unchanged."
       );
       // A directive approval edits the strategy prompt, which lives in the shared
       // console snapshot — refresh it so Strategy shows the new prompt immediately.
@@ -368,7 +373,7 @@ export function LearnedContextInbox() {
                 title={
                   confirming.riskTier === "strategy-directive"
                     ? "Append the block above to your strategy prompt now."
-                    : "Store this as advisory context for the AI now. Numeric risk limits are unchanged."
+                    : "Record this observation durably now. It is not yet fed into runs; numeric risk limits are unchanged."
                 }
               >
                 Approve
