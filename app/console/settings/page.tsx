@@ -7,7 +7,8 @@
  *  have to remember the storage tier. Sub-sections live in sibling modules
  *  (brokers/api-keys/models/delivery/help) with their fetch helpers in ./lib. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import type { NotificationEventType, TaxationType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
@@ -18,9 +19,11 @@ import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
+import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
 import { ModelsCard } from "./models";
+import { DataSharingCard } from "./sharing";
 
 const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   fill: "an order filled",
@@ -38,6 +41,19 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
 export default function SettingsPage() {
   const { snapshot } = useConsoleData();
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  const ready = snapshot !== null && reality !== null;
+
+  // Deep links (e.g. the Run-once blocked sheet routes to /console/settings#api-keys):
+  // the page renders only after the snapshot arrives, so the native anchor jump
+  // misses — scroll once the target section actually exists.
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const timer = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    return () => clearTimeout(timer);
+  }, [ready]);
+
   if (!snapshot || !reality) return null;
 
   return (
@@ -76,17 +92,41 @@ export default function SettingsPage() {
             applies everywhere, for you
           </span>
         </div>
-        <BrokerAccountsCard />
-        <ApiKeysCard />
+        {/* Anchor ids (#brokers/#api-keys) are deep-link targets used by the
+            Run-once blocked-reason sheet; scroll-mt clears the sticky chrome. */}
+        <div id="brokers" className="scroll-mt-28">
+          <BrokerAccountsCard />
+        </div>
+        <div id="api-keys" className="scroll-mt-28">
+          <ApiKeysCard />
+        </div>
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
         <EventNotificationsCard />
         <DeliveryChannelsCard />
+        <div id="sharing" className="scroll-mt-28">
+          <DataSharingCard />
+        </div>
         <ScanShapeCard />
         <BootBehaviorCard />
         <YouCard />
       </section>
+
+      {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
+      {snapshot.currentUser?.isAdmin && (
+        <section id="admin" className="flex scroll-mt-28 flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <Chip tone="accent" title="Visible because this login has operator/admin rights on the server.">
+              OPERATOR
+            </Chip>
+            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              server-wide diagnostics, outside the console
+            </span>
+          </div>
+          <AdminLinksCard />
+        </section>
+      )}
 
       {/* ── REFERENCE ── */}
       <section className="flex flex-col gap-4">
@@ -97,7 +137,52 @@ export default function SettingsPage() {
         </div>
         <HelpGlossaryCard />
       </section>
+
+      {/* ── DANGER ── */}
+      <section id="danger" className="flex scroll-mt-28 flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="neg" title="Irreversible actions live here, behind typed confirmations — nothing in this section happens by accident.">
+            DANGER
+          </Chip>
+        </div>
+        <AccountDeletionCard />
+      </section>
     </div>
+  );
+}
+
+// ── Operator/admin links (links only — the pages themselves live at /admin) ──
+
+const ADMIN_LINKS: Array<{ href: string; label: string; desc: string }> = [
+  { href: "/admin/connections", label: "API connections health", desc: "Live status of every upstream data/broker connection the server uses." },
+  { href: "/admin/llm-usage", label: "LLM usage & cost", desc: "Token and dollar spend per model and per day, across all users." },
+  { href: "/admin/rag-coverage", label: "RAG coverage", desc: "What the retrieval index covers and where it is thin." },
+  { href: "/admin/transcript", label: "Chat transcript", desc: "Raw assistant transcript view for debugging conversations." }
+];
+
+function AdminLinksCard() {
+  return (
+    <Card title="Admin pages">
+      <p className="mb-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+        Operator diagnostics from the legacy app — they open outside the console and keep their own styling.
+      </p>
+      <div className="flex flex-col gap-1">
+        {ADMIN_LINKS.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            className="con-row flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[length:var(--con-fs-sm)]"
+            title={`${link.desc} Opens outside the console.`}
+          >
+            <span>
+              <span className="font-semibold">{link.label}</span>
+              <span className="ml-2 hidden text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] sm:inline">{link.desc}</span>
+            </span>
+            <ExternalLink size={13} className="shrink-0 text-[color:var(--con-faint)]" />
+          </a>
+        ))}
+      </div>
+    </Card>
   );
 }
 
