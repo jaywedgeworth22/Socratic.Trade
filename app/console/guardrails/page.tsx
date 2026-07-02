@@ -139,8 +139,8 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Tax rules">
             <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. This rule
-              tunes how strict the rebuy lockout is for this account.
+              The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. These rules
+              tune what a rebuy lockout means for this account and how strict it is.
             </p>
             {TAX_RULES.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />

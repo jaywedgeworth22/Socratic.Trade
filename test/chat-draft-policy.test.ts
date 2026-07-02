@@ -312,4 +312,125 @@ describe("chat draft policy bridge", () => {
     expect(body.reasons.join(" ")).toContain("wash-sale lockout");
     expect(listPendingProposals("TEST", DEFAULT_REQUEST_USER_ID)).toHaveLength(0);
   });
+
+  it("stages a wash-sale-locked buy draft as a priced pending-approval card under washSaleHandling='ask'", async () => {
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    const { getPolicy, insertFillEvent, listPendingProposals, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { POST } = await import("../app/api/proposals/from-draft/route");
+
+    // Fresh per-test DB (see beforeEach): seed the same fixture as the block-mode case — the
+    // AAPL loss lives in a REAL taxable account; the active account is Test so the route resolves
+    // the local-sim gateway. Only the handling mode differs: block -> ask.
+    upsertConnectedAccount({
+      id: "chat-draft-ask-real-taxable",
+      userId: DEFAULT_REQUEST_USER_ID,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "REAL",
+      label: "Taxable",
+      taxationType: "taxable",
+      isActive: false
+    });
+    upsertConnectedAccount({
+      id: "chat-draft-ask-active-test",
+      userId: DEFAULT_REQUEST_USER_ID,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Sim",
+      taxationType: "taxable",
+      isActive: true
+    });
+    const nowIso = new Date();
+    const daysAgo = (n: number) => new Date(nowIso.getTime() - n * 86_400_000).toISOString();
+    insertFillEvent({
+      userId: DEFAULT_REQUEST_USER_ID,
+      accountNumber: "REAL",
+      source: "paper",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "filled",
+      filledAt: daysAgo(20)
+    });
+    insertFillEvent({
+      userId: DEFAULT_REQUEST_USER_ID,
+      accountNumber: "REAL",
+      source: "paper",
+      symbol: "AAPL",
+      side: "sell",
+      quantity: 1,
+      price: 90,
+      notional: 90,
+      status: "filled",
+      filledAt: daysAgo(5) // $10 loss, 5 days ago -> inside the 30-day wash window
+    });
+    const base = getPolicy(DEFAULT_REQUEST_USER_ID);
+    setPolicy(
+      {
+        ...base,
+        systemState: "active",
+        accountNumber: "TEST",
+        activeBroker: "test",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        maxOrderNotional: 100000,
+        maxOrderPctOfNav: undefined,
+        maxDailyNotional: 1000000,
+        taxSettings: { ...(base.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 }), washSaleHandling: "ask" }
+      },
+      DEFAULT_REQUEST_USER_ID
+    );
+
+    const draft = {
+      draft_id: "draft-aapl-wash-sale-ask",
+      symbol: "AAPL",
+      side: "buy",
+      qty: 1,
+      order_type: "market",
+      limit_usd: null,
+      rationale: "test",
+      account_label: "Test",
+      is_real: false,
+      blocked: false,
+      warnings: [],
+      executed: false
+    };
+
+    // Dry-run reports stageable-with-escalation (not a plain block) so the Stage button can show.
+    const dryRun = await POST(
+      new Request("http://localhost/api/proposals/from-draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dryRun: true, draft })
+      })
+    );
+    expect(dryRun.status).toBe(200);
+    const dryBody = await dryRun.json();
+    expect(dryBody.decision?.approved).toBe(false);
+    expect(dryBody.escalatable).toBe(true);
+
+    // Commit stages the pending card (201) instead of 409 POLICY_BLOCKED.
+    const response = await POST(
+      new Request("http://localhost/api/proposals/from-draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ draft })
+      })
+    );
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.escalated).toBe(true);
+    expect(body.proposalId).toBeTruthy();
+    // The priced ask copy rides on the stored decision: $10 loss x 24% short-term rate = $2.40.
+    const askReason = (body.decision?.reasons as string[]).find((r) => r.includes("Your call."));
+    expect(askReason).toContain("$2.40");
+    // Server-minted override token persisted on the stored escalation (never client-supplied).
+    const pending = listPendingProposals("TEST", DEFAULT_REQUEST_USER_ID);
+    expect(pending).toHaveLength(1);
+    const storedEscalations = pending[0].decision.escalations ?? [];
+    expect(storedEscalations.some((e) => e.kind === "wash_sale_ask" && typeof e.token === "string" && e.token.length > 0)).toBe(true);
+  });
 });

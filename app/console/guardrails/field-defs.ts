@@ -79,6 +79,24 @@ export const HYGIENE: FieldDef[] = [
 
 export const TAX_RULES: FieldDef[] = [
   {
+    path: "taxSettings.washSaleHandling",
+    label: "Wash-sale rebuy handling",
+    kind: "select",
+    options: [
+      { value: "block", label: "Block (default)" },
+      { value: "ask", label: "Ask me (priced approval)" },
+      { value: "auto", label: "Auto (edge must beat cost)" }
+    ],
+    // block -> ask -> auto is strictly looser: each step lets a tax-costly rebuy get closer to
+    // executing. Moving down this ladder on LIVE costs the typed word.
+    looseRank: { block: 0, ask: 1, auto: 2 },
+    hint:
+      "What happens when the strategy wants to rebuy a stock sold at a loss in the last 30 days (wash sale). " +
+      "Block: refused outright. Ask: it becomes a pending approval showing the tax deduction you'd forfeit (loss × your short-term rate) — your call. " +
+      "Auto: the system may rebuy on its own, but only when the trade's expected edge is at least 3× that forfeited deduction; otherwise it skips and logs why. " +
+      "In every mode, rebuying inside an IRA while a taxable-account loss is locked stays blocked — that deduction would be permanently destroyed (Rev. Rul. 2008-5)."
+  },
+  {
     path: "taxSettings.washSaleMinLossUsd",
     label: "Wash-sale lockout: minimum loss",
     kind: "money",

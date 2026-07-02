@@ -8,6 +8,7 @@
  *  (pure, unit-tested); this file is the React skin over it. */
 
 import { useMemo, useState, type ReactNode } from "react";
+import { DEFAULT_POLICY } from "@/lib/defaults";
 import type { TradingPolicy } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import type { RealityInfo } from "../lib/derive";
@@ -26,7 +27,7 @@ import { cx, fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, LiveTag, NumInput, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Chip, LiveTag, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 import { TypedConfirm } from "./chrome";
 
@@ -53,6 +54,10 @@ export function usePolicyDraft(): PolicyDraft {
 // ── Field renderer ───────────────────────────────────────────────────────────
 
 function fmtValue(def: FieldDef, v: unknown): string {
+  if (def.kind === "select") {
+    const label = (value: unknown) => def.options?.find((o) => o.value === String(value))?.label ?? String(value);
+    return isBlank(v) ? `default (${label(getAtPath(DEFAULT_POLICY, def.path))})` : label(v);
+  }
   if (isBlank(v)) {
     if (!def.optional) return EM_DASH;
     // Honest blank label: the server re-applies the shipped default for fields
@@ -89,6 +94,31 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
           {def.hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{def.hint}</p>}
         </div>
         <Toggle checked={value === true} onChange={(next) => draft.set(def.path, next)} label={def.label} />
+      </div>
+    );
+  }
+
+  if (def.kind === "select") {
+    const fallback = String(getAtPath(DEFAULT_POLICY, def.path) ?? "");
+    const selected = isBlank(value) ? fallback : String(value);
+    return (
+      <div className="py-2">
+        <div className="flex items-end justify-between gap-4">
+          <label className="text-[length:var(--con-fs-sm)] font-semibold" htmlFor={`pf-${def.path}`}>
+            {def.label}
+            {touched && <span className="ml-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">edited</span>}
+          </label>
+          <div className="w-52">
+            <Select id={`pf-${def.path}`} value={selected} onChange={(e) => draft.set(def.path, e.target.value)}>
+              {(def.options ?? []).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        {def.hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{def.hint}</p>}
       </div>
     );
   }
