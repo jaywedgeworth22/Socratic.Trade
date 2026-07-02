@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-ground-up-ui`): **Ground-up "Console" UI** — a complete,
+> parallel greenfield interface at `/console` (new `app/console/` route group, new files
+> only; the legacy dashboard is untouched and remains the default UI). Synthesized from
+> three blind design studies (novice/operator/explainability-first — see
+> `app/console/README.md`); wired to the real dashboard snapshot + mutation endpoints;
+> light+dark theming required and implemented. This adds a candidate replacement UI
+> track without changing any existing phase's scope. See
+> `docs/rollouts/2026-07-02-console-ground-up-ui.md`.
 > 2026-07-02 (`claude/sentry-monitoring`, Claude): **Sentry monitoring completed** —
 > added the env-gated Sentry Crons scheduler heartbeat (`scheduler-tick` monitor,
 > `SENTRY_DSN` + `SENTRY_CRONS_ENABLED=1`, try/catch-wrapped, after the single-leader

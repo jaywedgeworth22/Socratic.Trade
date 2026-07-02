@@ -4,6 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Ground-up "Console" UI at /console (Claude)
+Branch `claude/console-ground-up-ui`. Built a complete greenfield interface (`app/console/` route
+group, **new files only** — zero edits to src/lib, app/api, middleware, or the legacy UI, which was
+never read per the design-blindness constraint) synthesized from the three blind design studies
+(Steadyhand/TradeDeck/Ledgerline; synthesis rationale in `app/console/README.md`). Screens: Home
+(value, honest day P&L, spend meter, needs-attention, positions w/ protection column, latest run),
+Approvals (receipt cards; LIVE approvals implement the server's `LIVE_CONFIRMATION_REQUIRED` typed
+contract verbatim), Activity (feed/runs-forensics/fills/alerts), Strategy (prompt/models/weights/
+presets), Guardrails (essentials→advanced rulebook; diff-review commit with typed CONFIRM only when
+loosening on LIVE; Autopilot typed ritual), Results (bucketed perf never merging practice+real,
+SPY benchmark, scorecards, tax), Settings (scope-split THIS ACCOUNT vs ALL YOUR ACCOUNTS). Global
+chrome everywhere: word-first reality banner (TEST/PAPER/LIVE + viewport frame), scope selector,
+state chip, one-click **STOP that never sells** (+ Close-only middle verb, typed wind-down), wired
+Run-once, freshness strip. Data layer: one polled `GET /api/dashboard` hook + typed mutation client.
+Theming: semantic `--con-*` tokens with complete light+dark palettes (owner upgraded light mode to
+required mid-build), system-default + persisted toggle (`console:theme`), WCAG-AA-aimed, no raw hex
+in components. Quartet green: lint 0 errors, tsc clean, **2189 tests**, build ok (all 7 routes
+static). **Found pre-existing:** `npm run dev` (Turbopack) 500s on main — Tailwind scans the literal
+`shadow-[var(--shadow✱)]` (real asterisk in that file) in `docs/rollouts/2026-07-01-ux-ia-aesthetics.md` and the CSS fails to
+parse; `next dev --webpack`/CI build unaffected (reproduced with app/console removed). **Next:**
+human visual pass (no browser in this env), live-approval walkthrough, decide whether to link
+`/console` from anywhere. See `docs/rollouts/2026-07-02-console-ground-up-ui.md`.
 ## 2026-07-02 — Sentry monitoring completed: scheduler Crons heartbeat + inert-by-default test (Claude)
 Branch `claude/sentry-monitoring`. The Sentry integration was already mostly on main (server/edge
 `instrumentation.ts` + browser `instrumentation-client.ts` + `global-error.tsx` + `withSentryConfig`,
