@@ -182,6 +182,61 @@ describe("macro.ts cache-provenance", () => {
     // must be false so the dashboard blanks those fields instead of showing them.
     expect(result.fredSourced).toBe(false);
   });
+
+  it("configured-but-failing FRED key (every series non-OK) is NOT marked sourced; falls back to live VIX", async () => {
+    // An invalid / rate-limited key makes every fetchFredSeries return undefined,
+    // building an all-placeholder payload. That must take the same unsourced path
+    // as the no-key case — never fredSourced: true.
+    process.env.FRED_API_KEY = "invalid-or-rate-limited-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("stlouisfed.org")) {
+          return { ok: false, status: 429, json: async () => ({}) }; // FRED rejects every series
+        }
+        // Yahoo ^VIX fallback succeeds.
+        return {
+          ok: true,
+          json: async () => ({ chart: { result: [{ indicators: { quote: [{ close: [23.0] }] } }] } })
+        };
+      })
+    );
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(result.fredSourced).toBe(false);
+    expect(parseFloat(result.vix)).toBeCloseTo(23.0, 1); // live Yahoo reading, not the placeholder
+    expect(result.asOf).not.toBe("unavailable");
+    // FRED fields fell back to placeholders — the false flag is what tells the UI to blank them.
+    expect(result.fedFundsRate).toBe("5.25%");
+
+    // The honest flag is what got CACHED — the 24h TTL cannot resurrect a false positive.
+    const cached = await fetchMacroData(undefined);
+    expect(cached.fredSourced).toBe(false);
+  });
+
+  it("configured-but-failing FRED key with Yahoo also down falls back to asOf=unavailable, unsourced", async () => {
+    process.env.FRED_API_KEY = "invalid-or-rate-limited-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("stlouisfed.org")
+          ? { ok: false, status: 403, json: async () => ({}) }
+          : (() => {
+              throw new Error("Yahoo down too");
+            })()
+      )
+    );
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(result.asOf).toBe("unavailable");
+    expect(result.fredSourced).toBe(false);
+  });
 });
 
 // ─── macro-history.ts cache-provenance ────────────────────────────────────────

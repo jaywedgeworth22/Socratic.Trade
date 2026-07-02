@@ -31,14 +31,23 @@ constants client-indistinguishable from real data — fixed with an additive
 filters it so the LLM prompt payload stays byte-identical; `determineMarketRegime`
 untouched), client-side per-source blanking (live VIX tile stays, FRED tiles blank,
 regime hero gets a "degraded — curve input unsourced" warn state), and tests on all
-three fetch paths + a no-prompt-leak pruneMacro test. Quartet green post-fix and
-post-main-merge: tsc clean, lint 0 errors, 2242 tests / 234 files pass, build ok
-(+ runtime smoke: /console/macro 200, payload shows fredSourced:false with live
-VIX). Docs: `docs/rollouts/2026-07-02-console-macro.md`. **Remaining backend
-follow-up (src/lib owner):** the strategist still receives placeholder FRED
-constants in its prompt and a regime computed from a placeholder curve in the
-no-FRED setup. **Next:** land PR #326 (auto-merge armed); wire news/mover ticker
-chips to the scan drilldown once `/console/scan` lands.
+three fetch paths + a no-prompt-leak pruneMacro test. P2 follow-up also fixed:
+a configured-but-FAILING FRED key (invalid/rate-limited — every series returns
+undefined) previously built an all-placeholder payload flagged `fredSourced:
+true` and cached it 24h; sourcing is now derived from the data (zero real
+series → the shared `fetchVixOnlyFallback()` helper, identical to the no-key
+path, honest flag cached), with failing-key tests for both Yahoo-up and
+Yahoo-down. Quartet green post-fixes and post-main-merges: tsc clean, lint 0
+errors, 2244 tests / 234 files pass, build ok (+ runtime smoke: /console/macro
+200, payload shows fredSourced:false with live VIX). Docs:
+`docs/rollouts/2026-07-02-console-macro.md`. **Remaining backend follow-up
+(src/lib owner):** the strategist still receives placeholder FRED constants in
+its prompt and a regime computed from a placeholder curve in the no-FRED setup;
+a PARTIALLY failing FRED fetch still placeholder-fills individual series while
+flagged sourced (per-field sourcing). **Next:** land PR #326 (auto-merge
+armed); wire news/mover ticker chips to the scan drilldown once `/console/scan`
+lands.
+
 ## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
 Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
 `/console/orders` page (nav linked it since Wave 1): open working orders for the

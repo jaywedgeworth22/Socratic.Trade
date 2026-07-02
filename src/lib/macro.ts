@@ -140,25 +140,8 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 
   const apiKey = resolveApiKeyWithSource("fred", userId).key;
   if (!apiKey) {
-    // No FRED key for the full FRED suite. Try to at least fetch live ^VIX from Yahoo Finance
-    // (key-free) so the regime classifier gets a real volatility reading instead of staying
-    // "Unknown". Other macro fields stay at DEFAULT_MACRO approximations — VIX is the primary
-    // regime axis anyway (see determineMarketRegime).
-    const liveVix = await fetchVixFromYahoo();
-    if (liveVix !== null) {
-      const lightMacro: MacroData = {
-        ...DEFAULT_MACRO,
-        vix: liveVix.toFixed(2),
-        asOf: new Date().toISOString().split("T")[0],
-        fredSourced: false // only the VIX is live; every FRED field is a placeholder constant
-      };
-      writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
-      return lightMacro;
-    }
-    // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
-    const fallback = { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
-    writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
-    return fallback;
+    // No FRED key for the full FRED suite — take the key-free fallback path.
+    return fetchVixOnlyFallback(userId, now);
   }
 
   try {
@@ -190,6 +173,21 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       fetchFredSeries("VXVCLS", apiKey) // 3-month VIX (term structure)
     ]);
 
+    // Sourcing is derived from the DATA, not from key presence: an invalid /
+    // rate-limited / erroring key makes every fetchFredSeries return undefined,
+    // which would otherwise build an all-placeholder payload that looked
+    // sourced (and the 24h cache would pin that lie). Zero real series =>
+    // exactly the no-key path (try live VIX, else "unavailable"), and the
+    // honest flag is what gets cached.
+    const anyFredValue = [
+      fedFunds, dgs3mo, dgs2, dgs10, breakeven10y, cpi, corePce, realGdp, unemployment,
+      claims, m2, m2Growth, hySpread, usd, oil, houst, umcsent, vix, vix3m
+    ].some((value) => Boolean(value));
+    if (!anyFredValue) {
+      console.error("[macro] FRED key configured but every series fetch failed — treating as unsourced");
+      return fetchVixOnlyFallback(userId, now);
+    }
+
     const data: MacroData = {
       fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : DEFAULT_MACRO.fedFundsRate,
       dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : DEFAULT_MACRO.dgs3moTreasury,
@@ -219,8 +217,35 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
     // Fetch failed — same as unsourced: flag it so the regime classifier stays Unknown.
-    return { ...DEFAULT_MACRO, asOf: "unavailable" };
+    return { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
   }
+}
+
+/**
+ * Shared fallback for "no usable FRED data" (no key, or a configured key whose every
+ * series fetch failed). Tries to at least fetch a live ^VIX from Yahoo Finance
+ * (key-free) so the regime classifier gets a real volatility reading instead of
+ * staying "Unknown"; every FRED field stays a DEFAULT_MACRO placeholder and
+ * `fredSourced` is false either way. Cached under the SHARED scope: neither result
+ * carries licensed/user-keyed data (Yahoo ^VIX is key-free; "unavailable" carries
+ * nothing), so sharing is safe — mirroring the original no-key behavior.
+ */
+async function fetchVixOnlyFallback(userId: string | undefined, now: number): Promise<MacroData> {
+  const liveVix = await fetchVixFromYahoo();
+  if (liveVix !== null) {
+    const lightMacro: MacroData = {
+      ...DEFAULT_MACRO,
+      vix: liveVix.toFixed(2),
+      asOf: new Date().toISOString().split("T")[0],
+      fredSourced: false // only the VIX is live; every FRED field is a placeholder constant
+    };
+    writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
+    return lightMacro;
+  }
+  // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
+  const fallback = { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
+  writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
+  return fallback;
 }
 
 /** Clear both caches (test helper). */

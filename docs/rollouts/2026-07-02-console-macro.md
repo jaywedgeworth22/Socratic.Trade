@@ -79,6 +79,30 @@ stamps the regime (and feeds the strategist) from placeholder curve constants
 in this setup — the strategy-side fix (skip curve effects when unsourced, or
 per-field sourcing on the prompt payload) belongs to the src/lib owner.
 
+## Update 2 (same day) — P2: configured-but-failing FRED key marked as sourced
+
+Follow-up finding on the P1 fix: `fredSourced: true` was set whenever a FRED
+key was *configured*, but `fetchFredSeries` returns `undefined` per-series on
+any failure (invalid key, 403/429 rate limit, network error) — so a bad key
+built an all-placeholder payload flagged as sourced, and the 24h cache pinned
+that false positive for a day. Fixed in `src/lib/macro.ts`:
+
+- Sourcing is now derived from the DATA, not key presence: if zero of the 19
+  series returned a value, the keyed path takes `fetchVixOnlyFallback()` — the
+  exact same fallback as the no-key case (try live Yahoo ^VIX with
+  `fredSourced: false` / `asOf` = today, else `asOf: "unavailable"`) —
+  extracted into a shared helper so the two paths cannot drift. The honest
+  flag is what gets cached, so the TTL cannot resurrect a false positive.
+- The exception catch path also sets `fredSourced: false` explicitly.
+- Tests (`test/cache-provenance.test.ts`): failing-key + Yahoo-up path (flag
+  false, VIX live at the stubbed value, FRED fields at placeholders, cached
+  re-read stays false) and failing-key + Yahoo-down path
+  (`asOf: "unavailable"`, flag false).
+
+Residual (unchanged, already recorded above): a PARTIALLY failing FRED fetch
+still falls back per-series to placeholder constants while `fredSourced`
+stays true — per-field sourcing remains the src/lib owner's follow-up.
+
 ## Why
 
 - Parallel-agent parity port of legacy dashboard features into the ground-up
