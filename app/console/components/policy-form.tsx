@@ -24,6 +24,7 @@ import {
 } from "../lib/policy-diff";
 import { cx, fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
+import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
 import { Btn, Chip, LiveTag, NumInput, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
@@ -169,6 +170,9 @@ export function PolicySaveBar({
   const diff = useMemo(() => computeDiff(policy, draft.values, defs), [policy, draft, defs]);
   const extraEntries: ExtraDiffEntry[] = useMemo(() => classifyExtraPatch(policy, extraPatch), [policy, extraPatch]);
   const changeCount = diff.length + extraEntries.length;
+  // Register the uncommitted draft with the shell's unsaved-changes guard
+  // (beforeunload + nav interception). Must run before the early return.
+  useUnsavedChanges(changeCount > 0);
   if (changeCount === 0) return null;
 
   // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can

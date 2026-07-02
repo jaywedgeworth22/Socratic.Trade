@@ -11,6 +11,7 @@ import { activateProfile, copyProfileToAccount, savePolicy, ConsoleApiError } fr
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
+import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, NumInput, Select, TextArea, TextInput } from "../ui/primitives";
 
@@ -38,6 +39,10 @@ export default function StrategyPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  // Unsaved-draft registration must run unconditionally (before the null return).
+  useUnsavedChanges(
+    (promptDraft !== null && promptDraft !== snapshot?.strategyPrompt) || modelDraft !== null || weightsDraft !== null
+  );
   if (!snapshot || !reality) return null;
 
   const policy = snapshot.policy;
