@@ -123,12 +123,11 @@ other console file owned by parallel agents.
   the strategy/chat prompt. Whether approved risk rows should be retrieved is a
   deliberate feedback-loop design decision owned by the learning-loop work — NOT wired
   up here; the UI copy states the current behavior honestly.
-- Sharing preferences (`/api/learned-context/sharing`) still have no console surface;
-  they belong in Settings ("ALL YOUR ACCOUNTS" scope) once the parallel settings work
-  lands.
-- No count badge on the console nav for pending learned items (nav.tsx is owned by a
-  parallel agent); the section heading carries the count. Consider folding the pending
-  count into the needs-attention inbox on Home later.
+- ~~Sharing preferences surface~~ and ~~nav count badge~~: both DONE by the parallel
+  PR #329 (parity tail) while this PR was in review — `app/console/settings/sharing.tsx`
+  now surfaces `/api/learned-context/sharing`, and `app/console/components/nav.tsx`
+  folds the pending learned-context count into the Approvals badge (which routes to the
+  page this inbox lives on). No further action here.
 - The legacy dashboard listens to the `pending-learned-change` SSE event for instant
   badge refresh; the console inbox polls (60s, visibility-guarded) + refreshes after
   actions. Wire SSE if the console ever grows an event stream.
