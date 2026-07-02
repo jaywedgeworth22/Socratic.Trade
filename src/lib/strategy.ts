@@ -812,12 +812,14 @@ export async function runStrategyOnce(
           : 0
       });
 
-      // "auto" wash-sale handling proceeded: the gate allowed a locked rebuy because the expected
-      // edge cleared the priced tax cost by the required multiple. NEVER silent — the guard math
-      // goes to the audit ledger (Activity) before the order takes any further step.
-      if (decision.approved && decision.washSale?.outcome === "auto_proceeded") {
+      // Wash-sale proceed trails — NEVER silent; the record goes to the audit ledger (Activity)
+      // before the order takes any further step:
+      //   auto_proceeded  — the "auto" guard allowed a locked rebuy (edge cleared the cost multiple).
+      //   ira_disregarded — an IRA rebuy proceeded under iraWashSaleHandling "disregard", carrying
+      //                     the verbatim IRA_WASH_SALE_DISREGARD_NOTE + priced provenance.
+      if (decision.approved && (decision.washSale?.outcome === "auto_proceeded" || decision.washSale?.outcome === "ira_disregarded")) {
         audit(
-          "wash_sale_auto_proceed",
+          decision.washSale.outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_auto_proceed",
           {
             runId,
             symbol: normalizedProposal.symbol,
@@ -1996,14 +1998,17 @@ export async function executeProposal(
         : 0
     });
 
-    // Auditable wash-sale override/auto trail on the approval path — never silent. The override
-    // token in the record ties this execution back to the exact escalated card the owner approved.
+    // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
+    // token ties this execution back to the exact escalated card the owner approved; for IRA
+    // disregards the record carries the verbatim note + priced provenance.
     if (
       decision.washSale &&
-      (decision.washSale.outcome === "approved_via_override" || decision.washSale.outcome === "auto_proceeded")
+      (decision.washSale.outcome === "approved_via_override" ||
+        decision.washSale.outcome === "auto_proceeded" ||
+        decision.washSale.outcome === "ira_disregarded")
     ) {
       audit(
-        "wash_sale_override_applied",
+        decision.washSale.outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_override_applied",
         {
           proposalId,
           symbol: proposal.symbol,

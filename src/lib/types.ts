@@ -145,11 +145,28 @@ export interface AccountCapabilities {
  *   - "auto":  the system decides deterministically — the buy proceeds only when its expected
  *              edge exceeds the priced tax cost by WASH_SALE_AUTO_EDGE_MULTIPLE (policy.ts);
  *              otherwise it is skipped with the math logged. Never silent.
- * The IRA-replacement hard block (Rev. Rul. 2008-5) applies REGARDLESS of this mode: an IRA
- * buying a symbol locked by a taxable-account loss is always refused, because the replacement
- * purchase inside the IRA permanently destroys the disallowed loss.
+ * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
+ * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss is
+ * hard-blocked by default in every mode above, because the replacement purchase inside the IRA
+ * permanently destroys the disallowed loss — but the owner may opt an account into
+ * "disregard" (see IraWashSaleHandling).
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
+
+/**
+ * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
+ *   - "block" (default): the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
+ *     2008-5: buying the replacement inside the IRA permanently destroys the disallowed loss,
+ *     with no basis adjustment ever recoverable. This is today's behavior, byte-compatible.
+ *   - "disregard": the buy proceeds through the normal authority flow (all other gates
+ *     unchanged). Rationale (owner decision): brokers do not report cross-account IRA wash
+ *     sales to the IRS — the rule only bites under audit — so respecting it is the account
+ *     owner's call. NEVER silent: the decision carries outcome "ira_disregarded" with the
+ *     verbatim annotation "Wash Sale (Technically, but IRA purchase unreported to IRS)" plus
+ *     the priced lock provenance, an audit event fires, and the note renders wherever the
+ *     purchase shows. Choosing "disregard" is an explicit audit-risk acceptance.
+ */
+export type IraWashSaleHandling = "block" | "disregard";
 
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
@@ -158,6 +175,8 @@ export interface TaxSettings {
   washSaleGuard: boolean;
   /** How a wash-sale lockout is handled for BUYs. Default "block" (see WashSaleHandling). */
   washSaleHandling?: WashSaleHandling;
+  /** How an IRA-replacement wash sale is handled. Default "block" (see IraWashSaleHandling). */
+  iraWashSaleHandling?: IraWashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
    * Losses smaller than this are ignored when building the 30-day locked-symbol set, so a
@@ -1140,9 +1159,16 @@ export interface WashSaleGateAudit {
   edgeMultiple?: number;
   /** Token of the honored server-stored override (outcome approved_via_override). */
   overrideToken?: string;
+  /**
+   * Human-facing annotation for outcomes that proceed despite a technical wash sale — set to
+   * IRA_WASH_SALE_DISREGARD_NOTE (verbatim) for outcome "ira_disregarded". Rendered wherever
+   * the purchase shows (approvals card, activity) so the acceptance is never invisible.
+   */
+  note?: string;
   outcome:
     | "blocked" // handling "block" (default): refused outright
-    | "blocked_ira" // IRA replacement purchase — hard block in every mode (Rev. Rul. 2008-5)
+    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; iraWashSaleHandling "block", the default)
+    | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" — annotated + audited, never silent
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
     | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed
     | "auto_skipped" // handling "auto": edge did not clear the cost multiple — refused

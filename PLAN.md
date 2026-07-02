@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/ira-washsale-disregard`, Claude): **IRA wash-sale disregard setting** —
+> owner-requested: the Rev. Rul. 2008-5 IRA hard block is now the DEFAULT of per-account
+> `taxSettings.iraWashSaleHandling` ("block" default / "disregard" = proceed annotated with the
+> verbatim "Wash Sale (Technically, but IRA purchase unreported to IRS)" note, audited via
+> `wash_sale_ira_disregarded`, rendered on the approvals card + Activity). block->disregard is
+> LOOSER (typed word on LIVE). Extends the tax-guardrail track; taxable-buyer machinery
+> untouched. See `docs/rollouts/2026-07-02-ira-washsale-disregard.md`.
 > 2026-07-02 (`claude/washsale-modes-escalation`, Claude): **Wash-sale handling modes +
 > Decide-mode escalation** — owner-locked spec. Account-scoped
 > `taxSettings.washSaleHandling` (block default / ask = priced pending-approval card in

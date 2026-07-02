@@ -10,6 +10,7 @@ import type {
   TaxationType,
   TradeProposal,
   TradingPolicy,
+  IraWashSaleHandling,
   WashSaleGateAudit,
   WashSaleHandling
 } from "./types";
@@ -109,6 +110,14 @@ export const WASH_SALE_AUTO_EDGE_MULTIPLE = 3;
  * what the user accepted).
  */
 export const WASH_SALE_OVERRIDE_COST_TOLERANCE_MIN_USD = 1;
+
+/**
+ * Verbatim owner-approved annotation attached (decision.washSale.note) to every IRA rebuy that
+ * proceeds under taxSettings.iraWashSaleHandling = "disregard". Rendered wherever the purchase
+ * shows (approvals card, activity) and carried in the wash_sale_ira_disregarded audit event —
+ * a disregarded wash sale is never invisible.
+ */
+export const IRA_WASH_SALE_DISREGARD_NOTE = "Wash Sale (Technically, but IRA purchase unreported to IRS)";
 export const WASH_SALE_OVERRIDE_COST_TOLERANCE_PCT = 1;
 
 export function washSaleOverrideCostTolerance(approvedCostUsd: number): number {
@@ -483,14 +492,23 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   //                       priced cost; otherwise refuse with the math in the reason. Both
   //                       outcomes are recorded on decision.washSale — never silent.
   //
-  // IRA-REPLACEMENT HARD BLOCK (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
+  // IRA-REPLACEMENT RULE (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
   // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
   // (IRA losses never contribute locks — see tax.ts), and buying the replacement inside the IRA
-  // PERMANENTLY destroys the disallowed loss. This is enforced in EVERY handling mode, ignores
-  // override tokens, and — unlike the taxable-buyer lockout — runs even when the per-account
-  // washSaleGuard flag is off: resolveTaxSettings deliberately force-disables that flag for IRAs
-  // (a wash sale has no benefit INSIDE the account), so it cannot be allowed to switch off the
-  // cross-account permanent-harm rule.
+  // PERMANENTLY destroys the disallowed loss. Governed by taxSettings.iraWashSaleHandling:
+  //   "block" (default) — hard block in EVERY washSaleHandling mode, ignoring override tokens,
+  //     and — unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is
+  //     off: resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has
+  //     no benefit INSIDE the account), so it cannot switch off the cross-account
+  //     permanent-harm rule. Byte-compatible with the pre-setting behavior.
+  //   "disregard" — owner-approved per-account opt-in: the buy PROCEEDS through the normal
+  //     authority flow (all other gates unchanged). Rationale: brokers do not report
+  //     cross-account IRA wash sales to the IRS — the rule only bites under audit — so
+  //     respecting it is the account owner's call. NEVER silent: decision.washSale records
+  //     outcome "ira_disregarded" with the verbatim IRA_WASH_SALE_DISREGARD_NOTE plus the
+  //     priced provenance, the run loop / approval path audit it
+  //     (wash_sale_ira_disregarded), and the note renders wherever the purchase shows.
+  //     Override tokens stay irrelevant to IRA outcomes in both settings.
   if (proposal.side === "buy") {
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
@@ -534,14 +552,22 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
             entry.token.length > 0
         );
         if (buyerIsIra) {
-          reasons.push(
-            `${symbol} is in a 30-day wash-sale lockout (${lockNote}). Rebuying it inside this IRA would PERMANENTLY ` +
-              `destroy the disallowed loss` +
-              (estimatedTaxCostUsd != null ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited forever)` : "") +
-              ` — a replacement purchase in an IRA can never recover the basis (Rev. Rul. 2008-5). ` +
-              `This is blocked in every wash-sale handling mode.`
-          );
-          washSaleAudit = { ...auditBase, outcome: "blocked_ira" };
+          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? "block";
+          if (iraHandling === "disregard") {
+            // Owner-approved opt-in: proceed, annotated + audited (see the gate comment above).
+            // No reason is pushed, so the buy flows through the normal authority path; every
+            // other gate still applies at full strength. Override tokens are irrelevant here.
+            washSaleAudit = { ...auditBase, outcome: "ira_disregarded", note: IRA_WASH_SALE_DISREGARD_NOTE };
+          } else {
+            reasons.push(
+              `${symbol} is in a 30-day wash-sale lockout (${lockNote}). Rebuying it inside this IRA would PERMANENTLY ` +
+                `destroy the disallowed loss` +
+                (estimatedTaxCostUsd != null ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited forever)` : "") +
+                ` — a replacement purchase in an IRA can never recover the basis (Rev. Rul. 2008-5). ` +
+                `This is blocked in every wash-sale handling mode (change "IRA wash-sale rebuys" in Tax rules to override).`
+            );
+            washSaleAudit = { ...auditBase, outcome: "blocked_ira" };
+          }
         } else if (override && (handling === "ask" || handling === "auto")) {
           // "Locked but user-approved via the ask/auto path": the server-stored token is honored
           // WITHOUT weakening the default block — if handling was tightened back to "block" since

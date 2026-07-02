@@ -251,6 +251,14 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               prices, caps, and wash-sale state.
             </p>
           )}
+          {pending.decision.washSale?.note && (
+            <p
+              className="mt-1 font-semibold text-[color:var(--con-warn)]"
+              title="This account's Tax rules disregard IRA wash sales (Rev. Rul. 2008-5 would otherwise block this rebuy). The purchase is annotated and audited; disregarding is an audit-risk acceptance."
+            >
+              {pending.decision.washSale.note}
+            </p>
+          )}
         </div>
 
         {/* Three outcomes */}
