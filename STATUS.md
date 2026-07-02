@@ -4,6 +4,47 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console/scan: Market Scan + Smart Money, Wave 2 (Claude)
+Branch `claude/console-scan` (cut from `origin/main` @ 48fbe14, after foundation PR #321).
+The Scan destination the Wave-1 nav already linked: new `app/console/scan/` (page.tsx,
+scan-table.tsx, columns.tsx, smart-money.tsx, use-live-scan.ts) — nothing outside that dir
+touched (parallel agents own the other console areas + src/lib). Market scan tab: sortable
+12-column table over the scan's `topCandidates` (Symbol w/ TickerLogo+SymbolButton
+drilldown, Score, Price, Chg, Vol, P/E, EPS gr, Div, Sentiment, Rating, Congress, Sector),
+tooltips on every header/cell with per-field provenance strictly from `quote.sources`
+(never hardcoded), scan-level "Received" stamps, the P/E `n/a`-vs-`—` rule (checked
+against `eps`), "held" chips, missing-last sorting, and a sticky symbol column for mobile
+horizontal scroll (opaque group-hover bg so the row wash stays uniform). Smart money tab:
+full `snapshot.smartMoney` congress/insider datasets with `webSources` feed metadata
+(record counts, derived source labels, freshness), BUY/SELL/MIXED chips, amount bands,
+`.con-row` hover. Refresh = `GET /api/scan` (the route is a GET; runs a fresh read-only
+scan) with busy spinner, success/failure toasts, muted non-blocking inline error (last
+good scan stays up), auto-fetch on mount; the table shows the NEWEST of {page refresh,
+`latestStrategyRun.marketScan`} by `generatedAt` with an honest fresh/last-run chip;
+`MarketScan.source` shown as derived from the `+`-joined string, raw string verbatim in
+the tooltip. Quartet green in a fresh worktree: tsc clean, lint 0 errors (2 grandfathered
+set-state-in-effect warnings — same idiom as useConsoleData), 2241 tests / 234 files pass,
+build ok (+ runtime smoke: /console/scan 200, live /api/scan payload verified). Docs:
+`docs/rollouts/2026-07-02-console-scan.md`. **Next:** land via PR #327 (auto-merge on
+green verify); follow-ups in the rollout note (drilldown live-scan quotes, optional column
+chooser, derived-metric columns). **Post-review update:** merged origin/main after #322
+landed (clean; both STATUS/PLAN sides kept newest-first) and fixed all 4 Codex findings on
+PR #327 — account-scoped live-scan invalidation (`useLiveScan(scopeKey)`),
+`asFullMarketScan()` guard mirroring dashboard.ts's `fullMarketScan()` for
+compact/historical run captures, honest dual-provider price tooltip (mergeQuoteData
+updates quote-level `provider` but not `sources.price`), and "latest N of M on file"
+labels on the snapshot-capped smart-money lists. Second Codex round (3 P2s) also fixed:
+short positions now get a warn "short" chip (marketValue is negative for shorts, so the
+old `> 0` check hid them), congress rows re-sorted client-side by `disclosedAt ??
+tradedAt` desc (server cap is still trade-date ordered — src/lib follow-up), and the
+drilldown-stale-quote fix: after the drilldown PR landed the `quote` override prop, the
+scan table now passes each row's quote into `SymbolButton` so the sheet renders the same
+scan the table shows. Final round: `asFullMarketScan()` loosened to ACCEPT a valid
+zero-candidate scan (empty universe renders its explicit zero-candidates state instead of
+"no scan yet"); compact `{sym, px}` prompt shapes still rejected; meta line defensive
+about missing counters. Merged origin/main repeatedly as parallel lanes landed
+(#322/#328/#329/#330 etc.), quartet re-run green each time; every review thread replied
+to + resolved. Details in the same rollout note.
 ## 2026-07-02 — /console: Assistant chat destination (Claude)
 Branch `claude/console-assistant` (cut from `origin/main` @ 78ecc98; parallel console-port
 lane — new files only under `app/console/assistant/`, per the collision contract no edits to
