@@ -157,6 +157,18 @@ All four P2 findings were verified against the code and confirmed; fixed in
 
 Full verify gate re-run after these fixes (tsc / lint / test / build — green).
 
+A fifth P2 followed (`draft-card.tsx`): the dry-run preview effect depended
+only on the draft, so switching the active account left the PREVIOUS scope's
+approved/blocked verdict + estimated notional on screen while the reality chip
+updated (presentation-honesty bug; the server still re-checks at commit and
+approval). Fixed by deriving a stable `scopeKey` from the console snapshot
+(active connected-account id + `policy.accountNumber` + reality mode — stable
+strings, so the 15s poll can't re-trigger it) and including it in the preview
+effect deps; `runPreview` now clears the old verdict up front so the card shows
+"Checking against your guardrails…" instead of a stale verdict while re-running.
+Once staged/discarded (or mid-commit), a scope flip deliberately does NOT
+restart the preview — the created proposal is a fact about the old scope.
+
 ## Follow-ups
 
 - **Chat idempotency (server-side, separate PR)**: accept an optional

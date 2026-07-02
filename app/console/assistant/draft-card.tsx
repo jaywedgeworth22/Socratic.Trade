@@ -10,7 +10,7 @@
  *  staleness-only still stages — the server folds that into its decision). */
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Loader2, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { ChatDraft } from "@/lib/chat/types";
 import type { RealityInfo } from "../lib/derive";
@@ -37,7 +37,7 @@ function reasonsFrom(body: Record<string, unknown>, fallback: string): string[] 
 }
 
 export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: RealityInfo }) {
-  const { refresh } = useConsoleData();
+  const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>("checking");
   const [decision, setDecision] = useState<Decision | null>(null);
@@ -45,9 +45,21 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [proposalId, setProposalId] = useState<string | null>(null);
 
+  // Stable key for the account/policy scope this preview is computed under.
+  // Switching the active account rescopes the server-side policy evaluation,
+  // so a verdict computed for the previous account must not keep presenting
+  // "Stage" under the new reality chip (worst case: a TEST verdict shown
+  // right after a switch to LIVE). Built from stable ids — not snapshot
+  // object identity — so the 15s poll never re-triggers it; only a real
+  // scope change does.
+  const activeAccount = snapshot?.connectedAccounts.find((a) => a.isActive);
+  const scopeKey = `${activeAccount?.id ?? "local-sim"}:${snapshot?.policy.accountNumber ?? ""}:${reality.mode}`;
+
   const runPreview = useCallback(async () => {
     setPhase("checking");
     setPreviewError(null);
+    setDecision(null); // never show a verdict from another scope while re-checking
+    setEstimatedNotional(undefined);
     try {
       const res = await fetch("/api/proposals/from-draft", {
         method: "POST",
@@ -72,9 +84,19 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     setPhase("ready");
   }, [draft]);
 
+  // Track the phase in a ref so the scope-change effect can consult it without
+  // re-firing on every phase transition.
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  // Run the preview on mount AND whenever the account scope changes. Once the
+  // draft is staged (a proposal exists — that's a fact about the OLD scope) or
+  // discarded, or while a commit is in flight, a scope flip must not restart
+  // the preview and wipe that state.
   useEffect(() => {
+    if (phaseRef.current === "staged" || phaseRef.current === "discarded" || phaseRef.current === "staging") return;
     void runPreview();
-  }, [runPreview]);
+  }, [runPreview, scopeKey]);
 
   const stage = async () => {
     setPhase("staging");
