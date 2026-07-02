@@ -18,7 +18,7 @@ import type { MarketScan } from "@/lib/types";
 import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
-import { cx, fmtExact } from "../lib/format";
+import { cx, fmtExact, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty } from "../ui/primitives";
 import { useToast } from "../ui/toast";
@@ -238,9 +238,9 @@ function MarketScanTab({
       >
         <p
           className="cursor-default px-4 pb-2 pt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-          title={`Scanned ${scan.scannedSymbols} symbols; ${scan.returnedQuotes} returned quotes; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
+          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
         >
-          {scan.returnedQuotes} quotes · {scan.topCandidates.length}/{limit} candidates
+          {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {scan.topCandidates.length}/{limit} candidates
           {outliers > 0 ? ` · ${outliers} outlier${outliers === 1 ? "" : "s"}` : ""}
           {typeof scan.breadthPct === "number" && (
             <span title="Market breadth — the share of the full screened universe advancing today. A quick risk-on/risk-off gauge.">

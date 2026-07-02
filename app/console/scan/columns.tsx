@@ -87,8 +87,12 @@ export const SCAN_COLUMNS: ScanColumn[] = [
     sortValue: (q) => q.symbol,
     render: (q) => (
       <span className="flex items-center gap-1.5 whitespace-nowrap">
+        {/* Pass the row's own quote so the drilldown renders the SAME scan the
+            table shows — a page-refreshed scan can be fresher than the run
+            capture the sheet would otherwise resolve from. */}
         <SymbolButton
           symbol={q.symbol}
+          quote={q}
           title={q.companyName ? `${q.companyName} — open ${q.symbol} details` : `Open ${q.symbol} details`}
         />
         {/* marketValue = quantity × mark (see src/lib/dashboard.ts / alpaca.ts),

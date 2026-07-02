@@ -37,9 +37,14 @@ labels on the snapshot-capped smart-money lists. Second Codex round (3 P2s) also
 short positions now get a warn "short" chip (marketValue is negative for shorts, so the
 old `> 0` check hid them), congress rows re-sorted client-side by `disclosedAt ??
 tradedAt` desc (server cap is still trade-date ordered — src/lib follow-up), and the
-drilldown-stale-quote thread answered honestly (fix lands via the parallel
-symbol-drilldown PR's quote-override prop; adoption here is a tracked follow-up). Quartet
-re-run green; every review thread replied to + resolved. Details in the same rollout note.
+drilldown-stale-quote fix: after the drilldown PR landed the `quote` override prop, the
+scan table now passes each row's quote into `SymbolButton` so the sheet renders the same
+scan the table shows. Final round: `asFullMarketScan()` loosened to ACCEPT a valid
+zero-candidate scan (empty universe renders its explicit zero-candidates state instead of
+"no scan yet"); compact `{sym, px}` prompt shapes still rejected; meta line defensive
+about missing counters. Merged origin/main repeatedly as parallel lanes landed
+(#322/#328/#329/#330 etc.), quartet re-run green each time; every review thread replied
+to + resolved. Details in the same rollout note.
 ## 2026-07-02 — /console symbol drilldown superset of the legacy drawer (Claude)
 Branch `claude/console-drilldown-plus` (cut from `origin/main` @ 48fbe14, Wave 2 of the
 parity port; owns ONLY `app/console/ui/symbol-drilldown.tsx` + new files — scan/macro/

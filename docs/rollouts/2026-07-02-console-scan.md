@@ -125,7 +125,7 @@ Verification after the pass: `npx tsc --noEmit` clean; `npm run lint` exit 0 (sa
 grandfathered warnings); `npm test` 2241/2241; `npm run build` ok. Each PR thread got a
 reply describing the fix and was resolved.
 
-### Second Codex round (3 P2s on the merge commit), all verified and handled
+### Later Codex rounds (4 more P2s), all verified and handled
 
 5. **(P2) Shorts not marked held** — verified: `marketValue = quantity × mark`
    (`src/lib/dashboard.ts:373`, Alpaca `market_value` likewise), so a short position has a
@@ -138,12 +138,22 @@ reply describing the fix and was resolved.
    "most recently disclosed first (trade date shown on each row)". The server's 12-row cap
    itself is still trade-date ordered — changing that lives in `src/lib/dashboard.ts`
    (another lane) and is a follow-up below.
-7. **(P2) Drilldown resolves from the run-captured scan only** — confirmed (it was already
-   flagged in this note's follow-ups). The fix belongs in the shared
-   `app/console/ui/symbol-drilldown.tsx`, which a parallel agent's in-flight PR owns; that
-   PR is adding an optional quote-override prop. Adopting it in the scan table is a
-   tracked follow-up below; the thread was answered honestly and resolved without
-   touching the other lane's file.
+7. **(P2) Zero-candidate scans wrongly discarded** — the first `asFullMarketScan()` cut
+   required a NON-empty `topCandidates`, so a valid scan that legitimately returned zero
+   candidates (empty universe / no provider quotes) was treated as "no scan" instead of
+   rendering the explicit zero-candidates state. Fixed: an empty array is accepted when
+   the scan otherwise has the full shape (string `generatedAt`, array `topCandidates`,
+   normalized `warnings`); the first-candidate shape check applies only when candidates
+   exist — the compact prompt shape (`compactMarketScanForPrompt`, `{sym, px, ...}` keys)
+   is still rejected, so the original crash finding stays fixed. The candidates meta line
+   also became defensive about missing `returnedQuotes`/`scannedSymbols` counters.
+8. **(P2) Drilldown resolves from the run-captured scan only** — confirmed (it was already
+   flagged in this note's follow-ups). Initially answered as a cross-lane follow-up; then
+   the parallel drilldown PR landed on main WITH the optional `quote` override prop on
+   `SymbolButton`/`SymbolDrilldownSheet`, so after merging main this branch ADOPTED it:
+   the scan table's symbol column now passes the row's own `MarketQuote` into
+   `SymbolButton`, making the drilldown render the same scan the table shows. Fully
+   closed — removed from follow-ups.
 
 ## Follow-ups
 
@@ -152,11 +162,9 @@ reply describing the fix and was resolved.
   server-side. Also: the server's congress cap slices by TRADE date
   (`src/lib/dashboard.ts`); switching the cap to disclosure date belongs to the src/lib
   lane.
-- The drilldown sheet resolves quotes from `latestStrategyRun.marketScan.quotesBySymbol`,
-  so a symbol only present in a page-refreshed scan shows `—` for its stats (degrades
-  honestly). The shared `symbol-drilldown.tsx` (another agent's in-flight PR) is gaining
-  an optional quote-override prop — once it lands, pass the live scan's quote from the
-  scan table's `SymbolButton` so the drilldown matches the row.
+- ~~Drilldown stale-vs-live quotes~~ — DONE: the drilldown PR landed the `quote` override
+  prop on `SymbolButton` and the scan table now passes each row's quote through (see
+  finding 8 above).
 - Column show/hide + persisted order (legacy `SCAN_COLS_KEY` chooser) was intentionally
   dropped for a curated 12-column set; add back if the owner misses it.
 - Legacy derived columns (PEG, vs VWAP, spread bps, Graham MoS, …) from
