@@ -74,16 +74,34 @@ function holdingDays(entryAt: string | undefined, exitAt: string | undefined): n
  * locked until every contributing loss ages out of the window).
  */
 export interface WashSaleLock {
-  account: string; // the contributing account's number/id
+  account: string; // the BINDING contributing account's number/id (latest clear date)
   clearDate: Date; // date the symbol becomes rebuyable (binding loss exit + 30d)
+  /**
+   * Total positive dollars of still-in-window realized loss on the symbol, SUMMED across every
+   * contributing lot and account (a rebuy now washes all of them under IRC §1091 — the rule
+   * applies across the taxpayer's accounts). This is the disallowed-loss amount the "ask"/"auto"
+   * wash-sale handling modes price: estimated tax cost = lossUsd × shortTermRatePct.
+   * Losses below the per-account washSaleMinLossUsd floor contribute neither lock nor lossUsd.
+   */
+  lossUsd: number;
 }
 export type WashSaleLockMap = Map<string, WashSaleLock>;
 
 // Keep the BINDING loss per symbol — the one with the latest clear date, since the symbol stays
-// locked until the most recent contributing loss ages out of the 30-day window.
+// locked until the most recent contributing loss ages out of the 30-day window. lossUsd SUMS
+// across contributions (see WashSaleLock.lossUsd) while account/clearDate track the binding loss.
 function mergeWashSaleLock(map: WashSaleLockMap, symbol: string, lock: WashSaleLock): void {
   const existing = map.get(symbol);
-  if (!existing || lock.clearDate.getTime() > existing.clearDate.getTime()) map.set(symbol, lock);
+  if (!existing) {
+    map.set(symbol, lock);
+    return;
+  }
+  const binding = lock.clearDate.getTime() > existing.clearDate.getTime() ? lock : existing;
+  map.set(symbol, {
+    account: binding.account,
+    clearDate: binding.clearDate,
+    lossUsd: Number((existing.lossUsd + lock.lossUsd).toFixed(2))
+  });
 }
 
 /**
@@ -111,7 +129,8 @@ export function getWashSaleLockProvenance(
     const exitT = new Date(lot.exitAt).getTime();
     if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) {
       const clearDate = new Date(exitT + WASH_WINDOW_DAYS * MS_PER_DAY);
-      mergeWashSaleLock(locked, normalizeSymbol(lot.symbol), { account: accountNumber, clearDate });
+      const lossUsd = Number(Math.abs(lot.pnl).toFixed(2));
+      mergeWashSaleLock(locked, normalizeSymbol(lot.symbol), { account: accountNumber, clearDate, lossUsd });
     }
   }
   return locked;

@@ -137,11 +137,27 @@ export interface AccountCapabilities {
   accountType: "brokerage" | "traditional_ira" | "roth_ira" | "crypto_exchange";
 }
 
+/**
+ * What a wash-sale lockout MEANS for a BUY in a taxable account (taxSettings.washSaleHandling):
+ *   - "block" (default): the buy is refused outright — the pre-existing behavior.
+ *   - "ask":   the buy becomes a PENDING-APPROVAL card (in both propose and decide authority)
+ *              priced with the estimated forfeited deduction; the owner decides.
+ *   - "auto":  the system decides deterministically — the buy proceeds only when its expected
+ *              edge exceeds the priced tax cost by WASH_SALE_AUTO_EDGE_MULTIPLE (policy.ts);
+ *              otherwise it is skipped with the math logged. Never silent.
+ * The IRA-replacement hard block (Rev. Rul. 2008-5) applies REGARDLESS of this mode: an IRA
+ * buying a symbol locked by a taxable-account loss is always refused, because the replacement
+ * purchase inside the IRA permanently destroys the disallowed loss.
+ */
+export type WashSaleHandling = "block" | "ask" | "auto";
+
 export interface TaxSettings {
   /** Tax treatment driving rates + wash-sale handling. Defaults to "taxable". */
   taxationType?: TaxationType;
   /** Block the agent from rebuying a symbol it closed at a loss within 30 days (IRC §1091). */
   washSaleGuard: boolean;
+  /** How a wash-sale lockout is handled for BUYs. Default "block" (see WashSaleHandling). */
+  washSaleHandling?: WashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
    * Losses smaller than this are ignored when building the 30-day locked-symbol set, so a
@@ -1050,9 +1066,92 @@ export interface MarketDataProvider {
   scan(symbols: string[], positions: EquityPosition[], options?: MarketDataProviderOptions): Promise<MarketScan>;
 }
 
+/**
+ * Which policy gates may mark a failure ESCALATABLE (routable to a pending-approval card
+ * instead of a dead blocked entry). This is a closed allowlist — gates not named here
+ * (per-order notional caps, blocklist/universe, shorting disabled, IRA wash-sale, margin
+ * minimum, ...) can never produce an escalation entry, so they can never be escalated.
+ */
+export type GateEscalationKind =
+  | "wash_sale_ask" // taxSettings.washSaleHandling === "ask": rebuy needs the owner's call
+  | "daily_notional_cap" // time-context: today's opening-notional budget already consumed
+  | "hourly_notional_cap" // time-context: rolling 60-minute notional budget consumed
+  | "daily_order_cap" // time-context: today's opening-order count consumed
+  | "quote_staleness"; // time-context: quote/scan data older than the freshness gate allows
+
+/**
+ * One escalatable gate failure inside a PolicyDecision. Produced ONLY by
+ * evaluateTradeProposal (server-side); `token` is minted ONLY by the strategy run loop when it
+ * persists the escalated pending card, and is read back ONLY from that stored row at approval
+ * time — no client payload can create, inject, or alter it.
+ */
+export interface GateEscalation {
+  kind: GateEscalationKind;
+  /** The exact matching entry in decision.reasons that this escalation covers. */
+  reason: string;
+  /** Normalized symbol the escalation is scoped to. */
+  symbol: string;
+  /** Wash-sale provenance + priced cost (kind "wash_sale_ask" only). */
+  washSale?: {
+    /** Account whose loss binds the lockout. */
+    account?: string;
+    /** ISO date the lockout clears (binding loss exit + 30d). */
+    clearDate?: string;
+    /** Total still-in-window disallowed loss dollars for the symbol. */
+    disallowedLossUsd?: number;
+    /** disallowedLossUsd × taxSettings.shortTermRatePct — the deduction value forfeited. */
+    estimatedTaxCostUsd?: number;
+  };
+  /** Server-minted, server-stored approval token (see interface doc). */
+  token?: string;
+}
+
+/** Approval-path override handle: derived server-side from a STORED escalated proposal row. */
+export interface ApprovedEscalation {
+  kind: GateEscalationKind;
+  symbol: string;
+  token: string;
+}
+
+/**
+ * Audit record of what the wash-sale gate did for a BUY of a locked symbol — attached to the
+ * decision whether the gate blocked, escalated, or allowed, so no outcome is ever silent.
+ */
+export interface WashSaleGateAudit {
+  handling: WashSaleHandling;
+  symbol: string;
+  /** Account whose loss binds the lockout (when provenance is available). */
+  account?: string;
+  /** ISO timestamp the lockout clears. */
+  clearDate?: string;
+  disallowedLossUsd?: number;
+  estimatedTaxCostUsd?: number;
+  /** "auto" guard math (outcome auto_proceeded / auto_skipped). */
+  expectedEdgeUsd?: number;
+  requiredEdgeUsd?: number;
+  edgeMultiple?: number;
+  /** Token of the honored server-stored override (outcome approved_via_override). */
+  overrideToken?: string;
+  outcome:
+    | "blocked" // handling "block" (default): refused outright
+    | "blocked_ira" // IRA replacement purchase — hard block in every mode (Rev. Rul. 2008-5)
+    | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
+    | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed
+    | "auto_skipped" // handling "auto": edge did not clear the cost multiple — refused
+    | "approved_via_override"; // approval path honored the stored ask/auto override token
+}
+
 export interface PolicyDecision {
   approved: boolean;
   reasons: string[];
+  /**
+   * Escalatable failures among `reasons` (see GateEscalation). Present only when the gate
+   * refused the proposal AND at least one failure belongs to the escalatable allowlist. The
+   * strategy loop escalates ONLY when EVERY reason is covered (shouldEscalateDecision).
+   */
+  escalations?: GateEscalation[];
+  /** Wash-sale gate audit trail — present whenever a BUY hit a wash-sale lock (never silent). */
+  washSale?: WashSaleGateAudit;
   projectedSymbolExposurePct?: number;
   dailyNotionalUsed?: number;
 }

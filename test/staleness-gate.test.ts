@@ -9,6 +9,7 @@ beforeAll(() => {
 
 vi.mock("../src/lib/tax", () => ({
   getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn((_userId: string) => new Map()),
 }));
 
 // import AFTER env + mock are set

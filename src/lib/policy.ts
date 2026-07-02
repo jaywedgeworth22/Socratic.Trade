@@ -1,7 +1,21 @@
-import type { AccountCapabilities, EquityPosition, MarketScan, PolicyDecision, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type {
+  AccountCapabilities,
+  ApprovedEscalation,
+  EquityPosition,
+  GateEscalation,
+  GateEscalationKind,
+  MarketScan,
+  PolicyDecision,
+  Portfolio,
+  TradeProposal,
+  TradingPolicy,
+  WashSaleGateAudit,
+  WashSaleHandling
+} from "./types";
 import { normalizeSymbol } from "./money";
 import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./index-universes";
-import { getUserWashSaleLockedSymbols } from "./tax";
+import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
+import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
 
 export interface PolicyContext {
@@ -18,10 +32,28 @@ export interface PolicyContext {
   /** Symbols closed at a loss within the last 30 days; buying them now would create a wash sale. */
   washSaleLockedSymbols?: Set<string>;
   /**
+   * Preferred richer form of washSaleLockedSymbols: the cross-account lock PROVENANCE map
+   * (tax.ts WashSaleLockMap — binding account, clear date, and summed disallowed lossUsd).
+   * The "ask"/"auto" wash-sale handling modes need lossUsd to price the forfeited deduction;
+   * when only the legacy Set is supplied the gate still enforces the lockout but treats the
+   * cost as unknown (which fails the "auto" guard — fail-safe).
+   */
+  washSaleLocks?: WashSaleLockMap;
+  /**
    * User identifier. Required for the wash-sale gate to resolve the cross-account locked set
-   * when washSaleLockedSymbols is not pre-populated by the caller.
+   * when neither washSaleLocks nor washSaleLockedSymbols is pre-populated by the caller.
    */
   userId?: string;
+  /**
+   * APPROVAL-PATH ONLY. Escalation override handles derived by the server from a STORED
+   * escalated proposal row (strategy.ts approvedEscalationsFromDecision) — the tokens were
+   * minted server-side when the run loop escalated the card, persisted in the trade_proposals
+   * decision JSON, and are read back from that row here. No API accepts these from a client,
+   * so this can never act as a client-settable bypass flag. The wash-sale gate honors a
+   * matching handle ONLY when taxSettings.washSaleHandling is "ask"/"auto" and the buyer is
+   * not an IRA; every other gate ignores it and re-runs at full strength.
+   */
+  approvedEscalations?: ApprovedEscalation[];
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
   /**
@@ -49,8 +81,90 @@ export interface PolicyContext {
 export const MARGIN_MINIMUM_EQUITY = 2_000;
 export const OPENING_ORDER_HEADROOM_PCT = 5;
 
+/**
+ * "auto" wash-sale handling: a locked rebuy proceeds only when its expected edge (dollars) is at
+ * least this multiple of the priced tax cost (disallowed loss × shortTermRatePct). 3× is the
+ * owner-approved "sane multiple" — the trade's conviction-weighted profit target must clearly
+ * dominate a CERTAIN, immediate tax cost before the system spends it autonomously.
+ */
+export const WASH_SALE_AUTO_EDGE_MULTIPLE = 3;
+
 function dollars(value: number): string {
   return `$${value.toFixed(2)}`;
+}
+
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+/**
+ * Deterministic expected edge (dollars) used by the "auto" wash-sale guard.
+ *
+ * Signal choice (documented per the owner spec — "pick the most defensible signal"):
+ *
+ *   expectedEdge$ = estimatedNotional × (takeProfit% / 100) × (confidenceScore / 100)
+ *
+ * i.e. the trade's own planned profit target in dollars, discounted by the model's stated
+ * conviction. These are the two per-proposal signals the platform already trusts with money:
+ * confidenceScore drives the deterministic sizer's conviction multiplier, and
+ * riskRules.takeProfitPct is the planned exit that the proactive trim engine executes. A
+ * proposal-level bracketTakeProfit (with a known referencePrice) takes precedence over the
+ * policy-level percentage because it is the more specific target for THIS trade.
+ *
+ * Fail-safe degradation: a missing/invalid conviction, target, or notional yields $0 edge, which
+ * always FAILS the guard — when the upside can't be priced, the system never spends a certain,
+ * priced tax cost on it.
+ */
+export function washSaleExpectedEdgeUsd(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  estimatedNotional: number
+): number {
+  if (!Number.isFinite(estimatedNotional) || estimatedNotional <= 0) return 0;
+  const rawConfidence = proposal.confidenceScore;
+  const confidence =
+    typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
+      ? Math.max(0, Math.min(100, rawConfidence))
+      : 0;
+  let targetPct = policy.riskRules?.takeProfitPct ?? 0;
+  if (
+    proposal.bracketTakeProfit != null &&
+    proposal.referencePrice != null &&
+    proposal.referencePrice > 0 &&
+    proposal.bracketTakeProfit > proposal.referencePrice
+  ) {
+    targetPct = ((proposal.bracketTakeProfit - proposal.referencePrice) / proposal.referencePrice) * 100;
+  }
+  if (!Number.isFinite(targetPct) || targetPct <= 0) return 0;
+  return round2(estimatedNotional * (targetPct / 100) * (confidence / 100));
+}
+
+/** Partial lock info — full provenance when a WashSaleLockMap is available, bare when only the legacy Set is. */
+interface ResolvedWashSaleLock {
+  account?: string;
+  clearDate?: Date;
+  lossUsd?: number;
+}
+
+/**
+ * Resolve the wash-sale lock (if any) binding this symbol. Preference order: the provenance map
+ * (rich), the legacy Set (bare), then — authoritative fallback so the gate cannot be silently
+ * bypassed by a caller that omits the locked set — a direct cross-account provenance read.
+ */
+function resolveWashSaleLock(context: PolicyContext, symbol: string): ResolvedWashSaleLock | undefined {
+  if (context.washSaleLocks) return context.washSaleLocks.get(symbol);
+  if (context.washSaleLockedSymbols) return context.washSaleLockedSymbols.has(symbol) ? {} : undefined;
+  if (context.userId != null) {
+    return getUserWashSaleLockProvenance(context.userId, context.now ?? new Date()).get(symbol);
+  }
+  return undefined;
+}
+
+function describeWashSaleLock(lock: ResolvedWashSaleLock): string {
+  const clearsOn = lock.clearDate ? lock.clearDate.toISOString().slice(0, 10) : undefined;
+  if (lock.account && clearsOn) return `loss in ${lock.account}, clears ${clearsOn}`;
+  if (lock.account) return `loss in ${lock.account}`;
+  return "a position was closed at a loss within the last 30 days";
 }
 
 export function applyOpeningOrderHeadroom(value: number): number {
@@ -61,7 +175,16 @@ export function applyOpeningOrderHeadroom(value: number): number {
 
 export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyContext): PolicyDecision {
   const reasons: string[] = [];
+  // Escalatable failures (closed allowlist — see GateEscalationKind). Only the reasons pushed
+  // through pushEscalatable can ever be routed to a pending-approval card by the strategy loop;
+  // every reason pushed directly onto `reasons` stays a hard block.
+  const escalations: GateEscalation[] = [];
+  let washSaleAudit: WashSaleGateAudit | undefined;
   const symbol = normalizeSymbol(proposal.symbol);
+  const pushEscalatable = (kind: GateEscalationKind, reason: string, washSale?: GateEscalation["washSale"]) => {
+    reasons.push(reason);
+    escalations.push({ kind, reason, symbol, ...(washSale ? { washSale } : {}) });
+  };
   const estimatedNotional = context.estimatedNotional ?? estimateNotional(proposal);
 
   if (context.policy.systemState === "halted" && proposal.side !== "sell" && proposal.side !== "cover") {
@@ -139,15 +262,18 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
         context.marketScan?.quotesBySymbol[symbol]?.asOf ??
         context.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.asOf;
       const asOfMs = quoteAsOf ? new Date(quoteAsOf).getTime() : NaN;
+      // Staleness failures are TIME-CONTEXT gates: they are escalatable (Decide mode) because a
+      // later human approval re-runs this gate against a FRESH scan, so the condition self-heals.
       if (!quoteAsOf || Number.isNaN(asOfMs)) {
-        reasons.push(
+        pushEscalatable(
+          "quote_staleness",
           `staleness_gate: ${symbol} quote timestamp is missing/unparseable; treating as stale ` +
             `(maxQuoteAgeSec=${maxQuoteAgeSec}).`
         );
       } else {
         const ageSec = Math.round((now - asOfMs) / 1000);
         if (ageSec > maxQuoteAgeSec) {
-          reasons.push(`staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
+          pushEscalatable("quote_staleness", `staleness_gate: ${symbol} quote is ${ageSec}s old (max ${maxQuoteAgeSec}s).`);
         }
       }
     }
@@ -156,14 +282,15 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
       const scanGeneratedAt = context.marketScan?.generatedAt;
       const genMs = scanGeneratedAt ? new Date(scanGeneratedAt).getTime() : NaN;
       if (!scanGeneratedAt || Number.isNaN(genMs)) {
-        reasons.push(
+        pushEscalatable(
+          "quote_staleness",
           `staleness_gate: market-scan timestamp is missing/unparseable; treating fundamentals as stale ` +
             `(maxFundamentalsAgeSec=${maxFundamentalsAgeSec}).`
         );
       } else {
         const ageSec = Math.round((now - genMs) / 1000);
         if (ageSec > maxFundamentalsAgeSec) {
-          reasons.push(`staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
+          pushEscalatable("quote_staleness", `staleness_gate: market scan is ${ageSec}s old (max ${maxFundamentalsAgeSec}s).`);
         }
       }
     }
@@ -256,18 +383,23 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     context.policy.maxDailyNotional ?? Infinity,
     context.policy.maxDailyPctOfNav ? (context.policy.maxDailyPctOfNav / 100) * context.portfolio.totalMarketValue : Infinity
   );
+  // Daily/hourly notional + daily order-count failures are TIME-CONTEXT gates: the budget they
+  // guard replenishes on its own (midnight / rolling hour), so they are escalatable — a pending
+  // card approved later re-runs this gate against the then-current consumption and only places
+  // if the cap genuinely has room. The PER-ORDER caps above are NOT time-context (the order is
+  // simply too big) and stay hard blocks.
   if (isOpening && context.dailyNotionalUsed + estimatedNotional > effectiveMaxDailyNotional) {
-    reasons.push("Daily notional limit would be exceeded.");
+    pushEscalatable("daily_notional_cap", "Daily notional limit would be exceeded.");
   }
   if (
     isOpening &&
     context.policy.maxHourlyNotional != null &&
     (context.hourlyNotionalUsed ?? 0) + estimatedNotional > context.policy.maxHourlyNotional
   ) {
-    reasons.push("Hourly notional limit would be exceeded.");
+    pushEscalatable("hourly_notional_cap", "Hourly notional limit would be exceeded.");
   }
   if (isOpening && context.dailyOrderCount + 1 > context.policy.maxDailyOrders) {
-    reasons.push("Daily opening-order count limit would be exceeded.");
+    pushEscalatable("daily_order_cap", "Daily opening-order count limit would be exceeded.");
   }
   // Affordability: block an opening order the account can't fund rather than outsourcing the
   // check to the broker's margin rejection. buyingPower is broker-accurate for live/paper
@@ -302,25 +434,134 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   const crisisOpeningExposureReason = deRiskInCrisisReason(proposal, context, estimatedNotional);
   if (crisisOpeningExposureReason) reasons.push(crisisOpeningExposureReason);
 
-  // Wash-sale guardrail (IRC §1091): don't rebuy a symbol closed at a loss within
-  // the last 30 days, which would disallow the loss. Configurable via taxSettings.
-  // Wash sales are only relevant for BUY orders (re-establishing a long position).
-  // Covers are buy-to-close on a short and do NOT re-establish the sold long position,
-  // so they are intentionally excluded here.
+  // Wash-sale guardrail (IRC §1091 + Rev. Rul. 2008-5): don't rebuy a symbol closed at a loss
+  // within the last 30 days, which would disallow the loss. Wash sales are only relevant for BUY
+  // orders (re-establishing a long position). Covers are buy-to-close on a short and do NOT
+  // re-establish the sold long position, so they are intentionally excluded here.
   //
-  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the
-  // caller did not pre-populate washSaleLockedSymbols, resolve it now using
-  // getUserWashSaleLockedSymbols so the gate cannot be silently bypassed by a caller
-  // that omits the locked set.
-  if (
-    proposal.side === "buy" &&
-    (context.policy.taxSettings?.washSaleGuard ?? true)
-  ) {
-    const lockedSymbols: Set<string> =
-      context.washSaleLockedSymbols ??
-      (context.userId != null ? getUserWashSaleLockedSymbols(context.userId, context.now ?? new Date()) : new Set<string>());
-    if (lockedSymbols.has(symbol)) {
-      reasons.push(`${symbol} is in a 30-day wash-sale lockout (a position was closed at a loss within the last 30 days); rebuying now would disallow that loss.`);
+  // Authoritative cross-account enforcement (architecture-blueprint §3.3): if the caller did not
+  // pre-populate washSaleLocks/washSaleLockedSymbols, resolve the cross-account provenance map
+  // now (resolveWashSaleLock) so the gate cannot be silently bypassed by a caller that omits the
+  // locked set. This gate is server-side only and stays the single point of truth.
+  //
+  // taxSettings.washSaleHandling decides what a lockout MEANS for a TAXABLE buyer:
+  //   "block" (default) — refuse the buy outright (the original behavior, byte-compatible).
+  //   "ask"             — refuse here, but mark the failure ESCALATABLE with the priced cost
+  //                       (disallowed loss × shortTermRatePct). The strategy loop turns it into
+  //                       a pending-approval card (both propose and decide authority). Approving
+  //                       that card re-runs THIS gate with a server-stored override token
+  //                       (context.approvedEscalations, read from the proposal row the server
+  //                       itself wrote) — the ONLY way a locked buy passes in "ask" mode.
+  //   "auto"            — deterministic guard: proceed only when the proposal's expected edge
+  //                       (washSaleExpectedEdgeUsd) is >= WASH_SALE_AUTO_EDGE_MULTIPLE × the
+  //                       priced cost; otherwise refuse with the math in the reason. Both
+  //                       outcomes are recorded on decision.washSale — never silent.
+  //
+  // IRA-REPLACEMENT HARD BLOCK (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
+  // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
+  // (IRA losses never contribute locks — see tax.ts), and buying the replacement inside the IRA
+  // PERMANENTLY destroys the disallowed loss. This is enforced in EVERY handling mode, ignores
+  // override tokens, and — unlike the taxable-buyer lockout — runs even when the per-account
+  // washSaleGuard flag is off: resolveTaxSettings deliberately force-disables that flag for IRAs
+  // (a wash sale has no benefit INSIDE the account), so it cannot be allowed to switch off the
+  // cross-account permanent-harm rule.
+  if (proposal.side === "buy") {
+    const taxSettings = context.policy.taxSettings;
+    const guardOn = taxSettings?.washSaleGuard ?? true;
+    const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? "block";
+    const buyerIsIra =
+      taxSettings?.taxationType === "roth_ira" ||
+      taxSettings?.taxationType === "traditional_ira" ||
+      context.accountCapabilities?.accountType === "roth_ira" ||
+      context.accountCapabilities?.accountType === "traditional_ira";
+    if (guardOn || buyerIsIra) {
+      const lock = resolveWashSaleLock(context, symbol);
+      if (lock) {
+        const shortTermRatePct = taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
+        const estimatedTaxCostUsd = lock.lossUsd != null ? round2((lock.lossUsd * shortTermRatePct) / 100) : undefined;
+        const clearsOn = lock.clearDate ? lock.clearDate.toISOString().slice(0, 10) : undefined;
+        const lockNote = describeWashSaleLock(lock);
+        const auditBase: Omit<WashSaleGateAudit, "outcome"> = {
+          handling,
+          symbol,
+          ...(lock.account ? { account: lock.account } : {}),
+          ...(lock.clearDate ? { clearDate: lock.clearDate.toISOString() } : {}),
+          ...(lock.lossUsd != null ? { disallowedLossUsd: round2(lock.lossUsd) } : {}),
+          ...(estimatedTaxCostUsd != null ? { estimatedTaxCostUsd } : {})
+        };
+        const override = (context.approvedEscalations ?? []).find(
+          (entry) =>
+            entry.kind === "wash_sale_ask" &&
+            normalizeSymbol(entry.symbol) === symbol &&
+            typeof entry.token === "string" &&
+            entry.token.length > 0
+        );
+        if (buyerIsIra) {
+          reasons.push(
+            `${symbol} is in a 30-day wash-sale lockout (${lockNote}). Rebuying it inside this IRA would PERMANENTLY ` +
+              `destroy the disallowed loss` +
+              (estimatedTaxCostUsd != null ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited forever)` : "") +
+              ` — a replacement purchase in an IRA can never recover the basis (Rev. Rul. 2008-5). ` +
+              `This is blocked in every wash-sale handling mode.`
+          );
+          washSaleAudit = { ...auditBase, outcome: "blocked_ira" };
+        } else if (override && (handling === "ask" || handling === "auto")) {
+          // "Locked but user-approved via the ask/auto path": the server-stored token is honored
+          // WITHOUT weakening the default block — if handling was tightened back to "block" since
+          // the card was escalated, this branch is unreachable and the buy blocks again below.
+          washSaleAudit = { ...auditBase, outcome: "approved_via_override", overrideToken: override.token };
+        } else if (handling === "ask") {
+          const reason =
+            `Rebuying ${symbol} now forfeits ` +
+            (estimatedTaxCostUsd != null ? `~${dollars(estimatedTaxCostUsd)}` : "an unpriced amount") +
+            ` of tax deduction (wash sale — ${lockNote}). Your call.`;
+          pushEscalatable("wash_sale_ask", reason, {
+            ...(lock.account ? { account: lock.account } : {}),
+            ...(lock.clearDate ? { clearDate: lock.clearDate.toISOString() } : {}),
+            ...(lock.lossUsd != null ? { disallowedLossUsd: round2(lock.lossUsd) } : {}),
+            ...(estimatedTaxCostUsd != null ? { estimatedTaxCostUsd } : {})
+          });
+          washSaleAudit = { ...auditBase, outcome: "ask_escalated" };
+        } else if (handling === "auto") {
+          const expectedEdgeUsd = washSaleExpectedEdgeUsd(proposal, context.policy, estimatedNotional);
+          const requiredEdgeUsd =
+            estimatedTaxCostUsd != null ? round2(estimatedTaxCostUsd * WASH_SALE_AUTO_EDGE_MULTIPLE) : undefined;
+          if (estimatedTaxCostUsd != null && requiredEdgeUsd != null && expectedEdgeUsd >= requiredEdgeUsd) {
+            washSaleAudit = {
+              ...auditBase,
+              outcome: "auto_proceeded",
+              expectedEdgeUsd,
+              requiredEdgeUsd,
+              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
+            };
+          } else {
+            reasons.push(
+              `wash_sale_auto_skip: rebuying ${symbol} forfeits ` +
+                (estimatedTaxCostUsd != null ? `~${dollars(estimatedTaxCostUsd)}` : "an unpriceable amount") +
+                ` of tax deduction (wash sale — ${lockNote}), and the expected edge ${dollars(expectedEdgeUsd)}` +
+                (requiredEdgeUsd != null
+                  ? ` is below the required ${WASH_SALE_AUTO_EDGE_MULTIPLE}x cost = ${dollars(requiredEdgeUsd)}.`
+                  : ` cannot clear a cost that could not be priced (fail-safe skip).`)
+            );
+            washSaleAudit = {
+              ...auditBase,
+              outcome: "auto_skipped",
+              expectedEdgeUsd,
+              ...(requiredEdgeUsd != null ? { requiredEdgeUsd } : {}),
+              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
+            };
+          }
+        } else {
+          reasons.push(
+            `${symbol} is in a 30-day wash-sale lockout (${lockNote}); rebuying now would disallow that loss` +
+              (estimatedTaxCostUsd != null
+                ? ` (~${dollars(estimatedTaxCostUsd)} of tax deduction forfeited${clearsOn ? `; clears ${clearsOn}` : ""})`
+                : "") +
+              `.`
+          );
+          washSaleAudit = { ...auditBase, outcome: "blocked" };
+        }
+      }
     }
   }
 
@@ -428,6 +669,8 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   return {
     approved: reasons.length === 0,
     reasons,
+    ...(reasons.length > 0 && escalations.length > 0 ? { escalations } : {}),
+    ...(washSaleAudit ? { washSale: washSaleAudit } : {}),
     projectedSymbolExposurePct,
     // Opening sides accumulate daily notional; closing sides (sell/cover) do not (matches the
     // daily/hourly cap checks above, which are gated on isOpening). (T14)
