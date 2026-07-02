@@ -65,11 +65,42 @@ run failures.
   `how-it-works/page.js` type errors are the known `.next/types` staleness, not source errors).
 - `npm run lint` — 0 errors (279 grandfathered warnings, none in touched files).
 
+## Codex review round (7 P2s, all fixed in one batch)
+
+After #316 was opened, Codex posted 7 substantive P2s. All addressed:
+
+1. **Reject-below-estimate regression (llm-budget.ts).** The admission check summed the run's OWN estimate
+   (`ledger + reserved + est >= limit`), so any budget below the 80k-token / $1 estimate refused even the
+   FIRST run at zero usage — a modest UI budget would skip LLM all day. Fixed: the first run is admitted
+   whenever the committed ledger is under the limit (its own estimate never refuses it; per-spend
+   `assertWithinLlmBudget` still caps real spend); the estimate-inclusive check now applies ONLY when a
+   CONCURRENT reservation exists (that's the real serialization). Added a regression test.
+2. **TTL could expire mid-run (llm-budget.ts).** The fixed 5-min TTL matched the strategy lock but a long
+   run (Bull+Bear+per-proposal Red Team+RAG) can exceed it, freeing the hold mid-run. Bumped to a
+   configurable `LLM_RESERVATION_TTL_MS`, default 15min (backstop for a crashed run only; the normal path
+   releases explicitly).
+3. **RAG not gated on reservation-deny (strategy.ts).** A reservation-denied run still ran the RAG block
+   (`retrieveContextDetailed` checks only the committed ledger), spending Voyage/Pinecone budget a
+   concurrent run held. Gated the RAG block on `!skipLlmDueToBudget` (it's advisory context for the
+   now-skipped proposal step anyway).
+4. **Reflection ran / outlived the hold (strategy.ts).** The fire-and-forget post-mortem `generateReflectionSummary`
+   (a) ran even when the run was budget/reservation-suppressed, and (b) spent LLM after the finally released
+   the reservation. Now skipped when `skipLlmDueToBudget`, and the finally holds the reservation until the
+   reflection promise settles (releasing the strategy lock promptly, without awaiting).
+5. **Auto-tune outside any reservation (auto-tune-scheduler.ts).** The scheduler chains `maybeAutoTuneWeights`
+   after `runStrategyOnce` releases its hold, so its tuning LLM call saw only the committed ledger. It now
+   takes its OWN per-user reservation (reserve before marking cadence so a stand-down retries next run;
+   release in a finally).
+6. **Reservation row not purged on account deletion (account-deletion.ts).** Added `llm_budget_reservation:<user>`
+   to both the settings-row count (`countUserSettingsRows`) and the delete sweep. Added a purge test.
+
+Verify after fixes: tsc 0, `npm test` **2176 passed**, build 0, lint 0 errors.
+
 ## Follow-ups
 
-- The reservation estimate is a fixed worst-case guard, not per-run modeling. Too-high wastes headroom
-  under the cap; too-low re-opens a smaller overshoot. Tune `LLM_RUN_RESERVATION_TOKENS` /
+- The reservation estimate is a fixed worst-case guard, not per-run modeling. Tune `LLM_RUN_RESERVATION_TOKENS` /
   `LLM_RUN_RESERVATION_COST_USD` if real per-run spend diverges materially from 80k tokens / $1.
-- Reservation covers the `runStrategyOnce` entry (the concurrent multi-account fan-out). Other LLM entry
-  points (chat, ad-hoc) still rely on the ledger read; they aren't part of the concurrent-scheduler
-  overshoot this fixes.
+- Reservation covers `runStrategyOnce` + its post-mortem reflection + scheduler auto-tune. Other LLM entry
+  points (chat, ad-hoc) still rely on the ledger read; they aren't part of the concurrent-scheduler overshoot.
+- The 15-min TTL is a static backstop, not renewal; a run exceeding 15min (well beyond current timeouts)
+  could still expire mid-run. Renewal-while-active remains a possible future enhancement.

@@ -101,9 +101,15 @@ export function checkLlmDailyBudget(userId: string, now: Date = new Date(), conn
 
 interface LlmReservation { id: string; tokens: number; costUsd: number; reservedAt: string; expiresAt: string }
 
-// Pin to the strategy lock's staleMs — a run can't outlive its own strategy lock, so a live run's
-// reservation never expires mid-run.
-const RESERVATION_TTL_MS = 5 * 60_000;
+// TTL for a reservation hold. It must comfortably exceed the longest strategy run + its fire-and-forget
+// post-mortem so a LIVE run's reservation never expires before its finally release — an early expiry would
+// let a queued same-user run reserve the same headroom and reopen the concurrent-run TOCTOU this closes.
+// The TTL is only a backstop for a CRASHED run that never releases; the normal path releases explicitly.
+// Env LLM_RESERVATION_TTL_MS, default 15min (well above a worst-case Bull+Bear+Red-Team+RAG+reflection run).
+function reservationTtlMs(): number {
+  const v = Number(process.env.LLM_RESERVATION_TTL_MS);
+  return Number.isFinite(v) && v > 0 ? v : 15 * 60_000;
+}
 
 const reservationKey = (userId: string): string => `llm_budget_reservation:${userId}`;
 
@@ -174,14 +180,25 @@ export function reserveLlmBudget(
       const ledger = sumLedgerUsage(userId, sinceIso);
       const reservedTokens = reservations.reduce((s, r) => s + (r.tokens ?? 0), 0);
       const reservedCost = reservations.reduce((s, r) => s + (r.costUsd ?? 0), 0);
-      if (Number.isFinite(tokenLimit) && ledger.tokens + reservedTokens + estTokens >= tokenLimit) {
-        return { ok: false as const, reason: "token_budget" as const };
-      }
-      if (Number.isFinite(costLimit) && ledger.costUsd + reservedCost + estCostUsd >= costLimit) {
-        return { ok: false as const, reason: "cost_budget" as const };
+      // Admission rule. The FIRST run is always admitted when the committed ledger is under the limit —
+      // its OWN worst-case estimate must never refuse it, or an account whose budget is smaller than the
+      // estimate (e.g. < 80k tokens / < $1) would skip LLM all day even at zero usage. Real spend is still
+      // capped per-call by assertWithinLlmBudget. Refuse only when (a) the committed ledger already meets
+      // the limit, or (b) a CONCURRENT run's live reservation already claims the headroom this estimate
+      // needs — case (b) IS the TOCTOU serialization (a second same-user run stands down).
+      const hasConcurrentReservation = reservations.length > 0;
+      if (Number.isFinite(tokenLimit) && ledger.tokens >= tokenLimit) return { ok: false as const, reason: "token_budget" as const };
+      if (Number.isFinite(costLimit) && ledger.costUsd >= costLimit) return { ok: false as const, reason: "cost_budget" as const };
+      if (hasConcurrentReservation) {
+        if (Number.isFinite(tokenLimit) && ledger.tokens + reservedTokens + estTokens >= tokenLimit) {
+          return { ok: false as const, reason: "token_budget" as const };
+        }
+        if (Number.isFinite(costLimit) && ledger.costUsd + reservedCost + estCostUsd >= costLimit) {
+          return { ok: false as const, reason: "cost_budget" as const };
+        }
       }
       const id = randomUUID();
-      reservations.push({ id, tokens: estTokens, costUsd: estCostUsd, reservedAt: now.toISOString(), expiresAt: new Date(nowMs + RESERVATION_TTL_MS).toISOString() });
+      reservations.push({ id, tokens: estTokens, costUsd: estCostUsd, reservedAt: now.toISOString(), expiresAt: new Date(nowMs + reservationTtlMs()).toISOString() });
       db.prepare(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
       ).run(key, JSON.stringify({ reservations }), now.toISOString());

@@ -165,22 +165,34 @@ describe("LLM budget reservation — concurrency admission control (TOCTOU fix)"
     expect(reserveLlmBudget("local", 8_000, 0).ok).toBe(true); // reclaimed
   });
 
-  it("committed ledger usage PLUS the estimate trips the reservation", async () => {
+  it("admits the FIRST run even when its estimate exceeds remaining headroom, but refuses a concurrent second", async () => {
     await setTokenBudget("local", 10_000);
     await seedUsage("local", 5_000);
     const { reserveLlmBudget } = await import("../src/lib/llm-budget");
-    // 5_000 ledger + 6_000 est ≥ 10_000 → refused.
-    expect(reserveLlmBudget("local", 6_000, 0).ok).toBe(false);
-    // 5_000 ledger + 4_000 est = 9_000 < 10_000 → allowed.
-    expect(reserveLlmBudget("local", 4_000, 0).ok).toBe(true);
+    // First run: committed ledger 5_000 < 10_000 → admitted even though its 6_000 estimate exceeds the
+    // 5_000 remaining headroom (its own estimate must never refuse it — per-spend guard caps real spend).
+    const first = reserveLlmBudget("local", 6_000, 0);
+    expect(first.ok).toBe(true);
+    // Concurrent SECOND run: 5_000 ledger + 6_000 held + 4_000 est ≥ 10_000 → refused (serialization).
+    expect(reserveLlmBudget("local", 4_000, 0).ok).toBe(false);
   });
 
-  it("the cost dimension trips the reservation on the cost ceiling", async () => {
+  it("admits a run whose estimate exceeds a SMALL budget (regression: modest budgets aren't skipped all day)", async () => {
+    await setTokenBudget("local", 5_000); // smaller than the default 80k per-run estimate
+    const { reserveLlmRunBudget } = await import("../src/lib/llm-budget");
+    // Zero committed usage → the single run MUST be admitted despite the 80k estimate > 5k budget.
+    expect(reserveLlmRunBudget("local").ok).toBe(true);
+  });
+
+  it("the cost dimension serializes concurrent runs on the cost ceiling", async () => {
     process.env.TRIGGER_LLM_DAILY_COST_BUDGET_USD = "5";
     const { reserveLlmBudget } = await import("../src/lib/llm-budget");
-    const r = reserveLlmBudget("local", 0, 6);
-    expect(r.ok).toBe(false);
-    expect(r.reason).toBe("cost_budget");
+    const first = reserveLlmBudget("local", 0, 3); // first run admitted (ledger $0 < $5)
+    expect(first.ok).toBe(true);
+    // Concurrent second: $0 ledger + $3 held + $3 est ≥ $5 → refused on cost.
+    const second = reserveLlmBudget("local", 0, 3);
+    expect(second.ok).toBe(false);
+    expect(second.reason).toBe("cost_budget");
   });
 
   it("expired reservations no longer count (TTL reclaim frees a crashed run's hold)", async () => {
@@ -188,7 +200,7 @@ describe("LLM budget reservation — concurrency admission control (TOCTOU fix)"
     const { reserveLlmBudget, reservedLlmSpend } = await import("../src/lib/llm-budget");
     const t0 = new Date("2026-07-01T12:00:00.000Z");
     expect(reserveLlmBudget("local", 8_000, 0, t0).ok).toBe(true);
-    const later = new Date(t0.getTime() + 6 * 60_000); // > 5-min TTL
+    const later = new Date(t0.getTime() + 16 * 60_000); // > 15-min default TTL
     expect(reservedLlmSpend("local", later).tokens).toBe(0);
     // The expired hold is dropped, so a fresh run can reserve again.
     expect(reserveLlmBudget("local", 8_000, 0, later).ok).toBe(true);
