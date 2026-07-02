@@ -220,19 +220,33 @@ describe("chat draft policy bridge", () => {
     const { getPolicy, insertFillEvent, listPendingProposals, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { POST } = await import("../app/api/proposals/from-draft/route");
 
+    // PR #8: the wash-sale loss lives in a REAL (alpaca) taxable account — its loss locks the
+    // symbol across all accounts. A Test/sim account is EXCLUDED from wash-sale contribution, so
+    // the loss must come from a real account. The active account below stays Test purely so the
+    // from-draft route resolves the local-sim broker gateway (no broker credentials in tests).
     upsertConnectedAccount({
-      id: "chat-draft-taxable",
+      id: "chat-draft-real-taxable",
+      userId: DEFAULT_REQUEST_USER_ID,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "REAL",
+      label: "Taxable",
+      taxationType: "taxable",
+      isActive: false
+    });
+    upsertConnectedAccount({
+      id: "chat-draft-active-test",
       userId: DEFAULT_REQUEST_USER_ID,
       broker: "test",
       environment: "paper",
       accountNumber: "TEST",
-      label: "Taxable test",
+      label: "Sim",
       taxationType: "taxable",
       isActive: true
     });
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
-      accountNumber: "TEST",
+      accountNumber: "REAL",
       source: "paper",
       symbol: "AAPL",
       side: "buy",
@@ -244,7 +258,7 @@ describe("chat draft policy bridge", () => {
     });
     insertFillEvent({
       userId: DEFAULT_REQUEST_USER_ID,
-      accountNumber: "TEST",
+      accountNumber: "REAL",
       source: "paper",
       symbol: "AAPL",
       side: "sell",

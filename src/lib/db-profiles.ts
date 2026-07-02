@@ -175,7 +175,8 @@ function toStrategyProfile(row: RawStrategyProfile): StrategyProfile {
 // strategy_profiles is the user-level copyable LIBRARY; account_strategy_state is
 // what a given connected account is actually running. Reads go through getPolicy
 // (which prefers the account's live row); every effective-policy writer mirrors into
-// it via mirrorPolicyToActiveAccount, so the live row never goes stale. Lazily seeded
+// it via copyPolicyConfigToActiveAccount (config only — never arms/disarms), so the
+// live row never goes stale. Lazily seeded
 // on first read so existing single-account users are byte-identical day one.
 
 type RawAccountStrategyState = {
@@ -246,7 +247,7 @@ function updateAccountStrategyPolicy(
  * Called by every effective-policy writer so account_strategy_state never goes stale.
  * No-op when there is no active connected account (legacy single-context behavior).
  */
-function mirrorPolicyToActiveAccount(
+function copyPolicyConfigToActiveAccount(
   userId: string,
   policy: TradingPolicy,
   prompt: string,
@@ -255,7 +256,18 @@ function mirrorPolicyToActiveAccount(
 ): void {
   const account = getActiveConnectedAccount(userId);
   if (!account) return;
-  writeAccountStrategyState(userId, account.id, { policy, prompt, scoringWeights, derivedFromProfileId });
+  // PR #7: propagate strategy CONFIG (prompt/weights/caps) to the active account,
+  // but NEVER arm or disarm it as a side-effect of a library-profile edit — preserve
+  // the account's own run-state (systemState). This mirrors applyProfileToAccount's
+  // per-account autonomy guard; arming stays an explicit per-account action. peekPolicy
+  // is read-only (no seeding) and returns the fail-closed floor for a fresh account.
+  const currentState = peekPolicy(userId, account.id).systemState;
+  writeAccountStrategyState(userId, account.id, {
+    policy: { ...policy, systemState: currentState },
+    prompt,
+    scoringWeights,
+    derivedFromProfileId
+  });
 }
 
 function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
@@ -265,7 +277,6 @@ function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
   const accounts = listConnectedAccounts(userId);
   if (accounts.length === 0) return;
 
-  const activeId = getActiveConnectedAccount(userId)?.id;
   for (const account of accounts) {
     const state = getAccountStrategyStateRow(userId, account.id);
     if (state) {
@@ -280,7 +291,12 @@ function migrateLegacyStrategyModelFieldsToAccounts(userId: string): void {
     }
 
     let policy = getBasePolicy(userId);
-    if (account.id !== activeId && policy.systemState === "active") {
+    // PR #7: view/execution decouple. A freshly-seeded account never inherits an
+    // "active" (armed) run-state — fail-closed to "halted" regardless of which
+    // account is the view pointer. (Previously the seed compared against the active
+    // account pointer, coupling the seed to the ephemeral view. Arming is now an
+    // explicit per-account action; boot-reset (reconcileAutonomyOnBoot) is the other guard.)
+    if (policy.systemState === "active") {
       policy = { ...policy, systemState: "halted" };
     }
     writeAccountStrategyState(userId, account.id, {
@@ -345,8 +361,9 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
       }
     } else {
       policy = getBasePolicy(userId);
-      const activeId = getActiveConnectedAccount(userId)?.id;
-      if (account.id !== activeId && policy.systemState === "active") {
+      // PR #7: fail-closed seed — a fresh account never auto-arms, independent of
+      // the ephemeral active-account pointer (see migrateLegacyStrategyModelFieldsToAccounts).
+      if (policy.systemState === "active") {
         policy = { ...policy, systemState: "halted" };
       }
       writeAccountStrategyState(userId, account.id, {
@@ -392,8 +409,9 @@ export function peekPolicy(userId: string = "local", connectedAccountId?: string
       policy = mergePolicy({ ...withLegacyStrategyModelSeed(userId, stripUserFields(stored)), scoringWeights });
     } else {
       policy = getBasePolicy(userId);
-      const activeId = getActiveConnectedAccount(userId)?.id;
-      if (account.id !== activeId && policy.systemState === "active") {
+      // PR #7: fail-closed projection — mirrors the seed decouple in getPolicy so
+      // peek never reports a fresh account as auto-armed via the active pointer.
+      if (policy.systemState === "active") {
         policy = { ...policy, systemState: "halted" };
       }
     }
@@ -483,7 +501,7 @@ export function createStrategyProfile(input: { name: string; policy?: Partial<Tr
   if (input.active) {
     setSettingDirect(userId, "policy", policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
-    mirrorPolicyToActiveAccount(userId, policy, prompt, policy.scoringWeights, id);
+    copyPolicyConfigToActiveAccount(userId, policy, prompt, policy.scoringWeights, id);
   }
   audit("profile_change", { action: "create", id, name: input.name, active: Boolean(input.active) }, userId);
   return getStrategyProfile(id, userId)!;
@@ -509,7 +527,7 @@ export function updateStrategyProfile(id: string, patch: { name?: string; policy
   if (existing.active) {
     setSettingDirect(userId, "policy", policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
-    mirrorPolicyToActiveAccount(userId, policy, prompt, scoringWeights, id);
+    copyPolicyConfigToActiveAccount(userId, policy, prompt, scoringWeights, id);
   }
   audit("profile_change", { action: "update", id, name: patch.name ?? existing.name }, userId);
   return getStrategyProfile(id, userId)!;
@@ -528,9 +546,22 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
   });
   activate();
   // Activating a library strategy copies it into the active account's live state.
-  mirrorPolicyToActiveAccount(userId, mergePolicy({ ...profile.policy, activeProfileId: id }), profile.prompt, profile.policy.scoringWeights, id);
+  copyPolicyConfigToActiveAccount(userId, mergePolicy({ ...profile.policy, activeProfileId: id }), profile.prompt, profile.policy.scoringWeights, id);
   audit("profile_change", { action: "activate", id, name: profile.name }, userId);
   return getStrategyProfile(id, userId)!;
+}
+
+/**
+ * PR #7 — write-time account ownership guard (the real safety boundary). Every mutating write that
+ * targets a specific connected account must re-validate that the account belongs to the session
+ * `userId`. Session identity comes from the verified request header (never the body), so a stale or
+ * malicious tab cannot act on an account the user does not own, regardless of the id it supplies.
+ * Throws when the account is missing or owned by another user.
+ */
+export function assertConnectedAccountOwnedByUser(userId: string, connectedAccountId: string): void {
+  if (!getConnectedAccount(connectedAccountId, userId)) {
+    throw new Error("Connected account not found for this user.");
+  }
 }
 
 /**
@@ -551,8 +582,10 @@ export function applyProfileToAccount(
 ): { profileId: string; connectedAccountId: string } {
   const profile = getStrategyProfile(profileId, userId);
   if (!profile) throw new Error("Strategy profile not found.");
-  const account = getConnectedAccount(connectedAccountId, userId);
-  if (!account) throw new Error("Connected account not found.");
+  // PR #7: write-time accountId validation is the real safety boundary. A stale tab
+  // cannot commit a write against an account the session user does not own, regardless
+  // of the URL/body it supplies.
+  assertConnectedAccountOwnedByUser(userId, connectedAccountId);
 
   const currentState = getPolicy(userId, connectedAccountId).systemState;
   const scoringWeights = normalizeScoringWeights(profile.policy.scoringWeights);
