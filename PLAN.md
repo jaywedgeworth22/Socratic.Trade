@@ -14,6 +14,14 @@ filling the missing pieces.
 > feeds with source metadata). New files only, all under `app/console/scan/`. No roadmap
 > scope change — one of the four Wave-2 destinations delivered (macro/orders/assistant
 > owned by parallel agents). See `docs/rollouts/2026-07-02-console-scan.md`.
+> 2026-07-02 (`claude/console-assistant`, Claude): **/console Assistant destination** —
+> ported the legacy AI Assistant chat into the console as `/console/assistant`
+> (new files only under `app/console/assistant/`; parallel console-port lane).
+> Chat + persisted transcript, grouped model picker with per-provider key gating,
+> and an improved draft→approval handoff: drafts auto-run the policy dry-run
+> preview and stage into the existing Approvals rail instead of an in-chat
+> approve/reject. No roadmap scope change — part of the console feature-parity
+> track. See `docs/rollouts/2026-07-02-console-assistant.md`.
 > 2026-07-02 (`claude/washsale-modes-escalation`, Claude): **Wash-sale handling modes +
 > Decide-mode escalation** — owner-locked spec. Account-scoped
 > `taxSettings.washSaleHandling` (block default / ask = priced pending-approval card in
