@@ -20,6 +20,7 @@ import {
 } from "./congress-trade-client";
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
+import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
 import { recordProviderCall } from "./usage-monitor-push";
 import { robinhoodMcpDataEnabled } from "./robinhood";
 import { RobinhoodOptionsEnrichmentProvider } from "./robinhood-options";
@@ -356,6 +357,14 @@ async function fetchWithRetry(
 ): Promise<Response> {
   const retries = options.retries ?? 1;
   const backoffMs = options.backoffMs ?? 600;
+  // Per-credential-lane circuit breaker: short-circuit a call whose (service, keySource) lane is
+  // currently backed off (recently stopped working). Thrown BEFORE the fetch so no health row is
+  // written for the skip (which would self-perpetuate the trip); providers catch the rejection and
+  // degrade to the next tier exactly like a real fetch failure.
+  if (options.service) {
+    const breaker = apiCircuitBreakerShouldSkip(options.service, options.keySource ?? null);
+    if (breaker.skip) throw new CircuitOpenError(options.service, options.keySource ?? null, breaker.reason);
+  }
   const start = Date.now();
   try {
     for (let attempt = 0; ; attempt++) {

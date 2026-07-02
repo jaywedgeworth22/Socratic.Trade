@@ -26,6 +26,10 @@ import {
 // (user API keys, consent records) does not leak between test files.
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-data-providers-${randomUUID()}.db`)}`;
+  // These tests seed provider failures then assert subsequent-call/caching behavior; the per-lane
+  // circuit breaker (default ON) would otherwise trip a lane mid-file (the temp health log accumulates
+  // failures across tests) and skip those follow-up calls. The breaker has its own dedicated test.
+  process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
 });
 
 describe("market enrichment provider", () => {
