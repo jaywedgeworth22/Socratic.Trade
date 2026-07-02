@@ -4,7 +4,7 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
-import type { SystemState, TradingPolicy } from "@/lib/types";
+import type { StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
   status: number;
@@ -121,6 +121,22 @@ export type PolicyPatchBody = Record<string, unknown> & { strategyPrompt?: strin
 
 export function savePolicy(patch: PolicyPatchBody): Promise<TradingPolicy> {
   return request<TradingPolicy>("/api/policy", { method: "PUT", body: JSON.stringify(patch) });
+}
+
+/** AI strategy review (#12): POST the existing tune endpoint. The server builds
+ *  the evidence pack (performance, missed opportunities, factor scorecard,
+ *  macro) and returns a reviewed proposal; nothing is applied until the user
+ *  commits it through savePolicy. `tuningConfigWarnings` piggybacks on the
+ *  manual path as cautions (never blocks). */
+export interface StrategyTuneResult extends StrategyTuningProposal {
+  tuningConfigWarnings?: Array<{ message: string }>;
+}
+
+export function tuneStrategy(model?: string): Promise<StrategyTuneResult> {
+  return request<StrategyTuneResult>("/api/strategy/tune", {
+    method: "POST",
+    body: JSON.stringify(model ? { model } : {})
+  });
 }
 
 // ── Proposals ────────────────────────────────────────────────────────────────

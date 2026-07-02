@@ -6,14 +6,27 @@
  *  copy-not-link and can never arm or disarm anything (server-enforced). */
 
 import { useMemo, useState } from "react";
-import type { ScoringWeights } from "@/lib/types";
-import { activateProfile, copyProfileToAccount, savePolicy, ConsoleApiError } from "../lib/api";
-import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import type { ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
+// Pure curated-model DATA (no legacy UI components) — the same catalog the rest
+// of the app offers, so the console review picker stays consistent with it.
+import { CURATED_LLM_MODEL_GROUPS } from "../../ui/llm-model-catalog";
+import {
+  activateProfile,
+  copyProfileToAccount,
+  savePolicy,
+  tuneStrategy,
+  ConsoleApiError,
+  type StrategyTuneResult
+} from "../lib/api";
+import { activeConnectedAccount, deriveReality, type RealityInfo } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
+import { classify, getAtPath, type FieldDef } from "../lib/policy-diff";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { ALL_DEFS } from "../guardrails/field-defs";
+import { TypedConfirm } from "../components/chrome";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Empty, Field, NumInput, Select, TextArea, TextInput } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, NumInput, Select, TextArea, TextInput } from "../ui/primitives";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -194,6 +207,9 @@ export default function StrategyPage() {
         </div>
       </Card>
 
+      {/* AI review */}
+      <AiReviewPanel policy={policy} strategyPrompt={snapshot.strategyPrompt} reality={reality} />
+
       {/* Presets */}
       <Card title="Preset library">
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -257,5 +273,289 @@ export default function StrategyPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+// ── AI review (#12) ──────────────────────────────────────────────────────────
+
+interface ReviewChange {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  direction: "looser" | "tighter" | "changed";
+}
+
+const DEFS_BY_PATH = new Map<string, FieldDef>(ALL_DEFS.map((def) => [def.path, def]));
+
+function fmtRaw(def: FieldDef | undefined, value: unknown): string {
+  if (value === undefined || value === null || value === "") return "unset";
+  if (typeof value === "boolean") return value ? "on" : "off";
+  if (typeof value === "number") {
+    if (def?.kind === "money") return `$${value}`;
+    if (def?.kind === "pct") return `${value}%`;
+    if (def?.kind === "minutes") return `${value} min`;
+    if (def?.kind === "seconds") return `${value} s`;
+    return String(value);
+  }
+  return String(value);
+}
+
+/** Flatten the tune proposal's policy/weights patch into labeled from→to rows,
+ *  classified LOOSER/TIGHTER via the same guardrail metadata the Guardrails
+ *  editor uses — so LIVE loosening costs the same typed word here too. */
+function reviewChanges(patch: StrategyTuningPatch, policy: TradingPolicy): ReviewChange[] {
+  const rows: ReviewChange[] = [];
+
+  const push = (path: string, label: string, from: unknown, to: unknown, direction?: ReviewChange["direction"]) => {
+    const same = (from === undefined && to === undefined) || from === to;
+    if (same) return;
+    const def = DEFS_BY_PATH.get(path);
+    rows.push({
+      key: path,
+      label,
+      from: fmtRaw(def, from),
+      to: fmtRaw(def, to),
+      direction: direction ?? (def ? classify(def, from, to) : "changed")
+    });
+  };
+
+  for (const [k, v] of Object.entries(patch.scoringWeights ?? {})) {
+    push(`scoringWeights.${k}`, `Weight: ${k}`, policy.scoringWeights?.[k as keyof ScoringWeights], v);
+  }
+
+  const p = patch.policy ?? {};
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "riskRules" || k === "sectorCaps") continue;
+    if (k === "strategyAuthority") {
+      const from = policy.strategyAuthority;
+      if (v !== from) {
+        // propose→decide arms Autopilot — the loosest possible move.
+        push(k, "Autonomy", from === "decide" ? "Autopilot" : "Ask-first", v === "decide" ? "Autopilot" : "Ask-first", v === "decide" ? "looser" : "tighter");
+      }
+      continue;
+    }
+    push(k, DEFS_BY_PATH.get(k)?.label ?? k, getAtPath(policy, k), v);
+  }
+  for (const [k, v] of Object.entries(p.riskRules ?? {})) {
+    push(`riskRules.${k}`, DEFS_BY_PATH.get(`riskRules.${k}`)?.label ?? `riskRules.${k}`, getAtPath(policy, `riskRules.${k}`), v);
+  }
+  for (const [k, v] of Object.entries(p.sectorCaps ?? {})) {
+    const from = policy.sectorCaps?.[k];
+    if (from === v) continue;
+    rows.push({
+      key: `sectorCaps.${k}`,
+      label: `Sector cap: ${k}`,
+      from: from === undefined ? "unset" : `${from}%`,
+      to: `${v}%`,
+      // Raising a sector cap allows more concentration — looser.
+      direction: typeof from === "number" ? (v > from ? "looser" : "tighter") : "changed"
+    });
+  }
+  return rows;
+}
+
+function AiReviewPanel({
+  policy,
+  strategyPrompt,
+  reality
+}: {
+  policy: TradingPolicy;
+  strategyPrompt: string;
+  reality: RealityInfo;
+}) {
+  const { refresh } = useConsoleData();
+  const toast = useToast();
+  const [model, setModel] = useState<string>("");
+  const [busy, setBusy] = useState<"review" | "apply" | null>(null);
+  const [review, setReview] = useState<StrategyTuneResult | null>(null);
+  const [typed, setTyped] = useState("");
+  useUnsavedChanges(review !== null);
+
+  const changes = useMemo(() => (review ? reviewChanges(review.proposedPatch, policy) : []), [review, policy]);
+  const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);
+  const hasAnyChange = changes.length > 0 || promptChanged;
+  const hasLooser = changes.some((c) => c.direction === "looser");
+  const needsTyped = reality.tone === "live" && hasLooser;
+
+  const generate = async () => {
+    setBusy("review");
+    try {
+      const result = await tuneStrategy(model || undefined);
+      setReview(result);
+      setTyped("");
+    } catch (error) {
+      toast.push("neg", "Review failed", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const apply = async () => {
+    if (!review) return;
+    const patch = review.proposedPatch;
+    setBusy("apply");
+    try {
+      const { riskRules, sectorCaps, ...policyRest } = patch.policy ?? {};
+      // Same write path as every other strategy edit: PUT /api/policy. The server
+      // deep-merges scoringWeights/riskRules; sectorCaps is whole-replace, so merge
+      // over the current caps here to keep untouched sectors intact.
+      await savePolicy({
+        ...policyRest,
+        ...(riskRules ? { riskRules } : {}),
+        ...(sectorCaps ? { sectorCaps: { ...policy.sectorCaps, ...sectorCaps } } : {}),
+        ...(patch.scoringWeights ? { scoringWeights: patch.scoringWeights } : {}),
+        ...(patch.prompt ? { strategyPrompt: patch.prompt } : {})
+      });
+      await refresh();
+      setReview(null);
+      setTyped("");
+      toast.push("pos", "Review changes applied", "Takes effect on the next run.");
+    } catch (error) {
+      toast.push("neg", "Not applied", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card
+      title="AI review"
+      action={
+        review ? (
+          <Btn variant="ghost" size="sm" disabled={busy !== null} onClick={() => { setReview(null); setTyped(""); }}>
+            Discard
+          </Btn>
+        ) : undefined
+      }
+    >
+      <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        A reviewer model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
+        market backdrop, then proposes prompt/weight/guardrail changes. Nothing is applied until you review the exact
+        diff and commit it — the same rules as editing by hand, including the typed word for LIVE loosening.
+      </p>
+
+      {!review ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-64">
+            <Field label="Reviewer model" hint="Blank = the account's tuning default." htmlFor="ai-review-model">
+              <Select id="ai-review-model" value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">account default</option>
+                {CURATED_LLM_MODEL_GROUPS.map((group) => (
+                  <optgroup key={group.provider} label={group.label}>
+                    {group.options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          <Btn variant="primary" disabled={busy !== null} onClick={() => void generate()}>
+            {busy === "review" ? "Reviewing…" : "Generate review"}
+          </Btn>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip tone={review.generatedBy === "llm" ? "accent" : "muted"}>
+              {review.generatedBy === "llm" ? "LLM review" : "local rules (no LLM)"}
+            </Chip>
+            <span className="con-num text-[color:var(--con-muted)]">Confidence {review.confidenceScore}/100</span>
+          </div>
+          <p className="leading-relaxed">{review.summary}</p>
+          {review.rationale && <p className="leading-relaxed text-[color:var(--con-muted)]">{review.rationale}</p>}
+          {(review.marketContext || review.performanceReadout) && (
+            <details className="con-disclosure">
+              <summary>Evidence the reviewer saw</summary>
+              <div className="flex flex-col gap-2 pb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                {review.performanceReadout && <p>{review.performanceReadout}</p>}
+                {review.marketContext && <p>{review.marketContext}</p>}
+              </div>
+            </details>
+          )}
+          {review.cautions.length > 0 && (
+            <ul className="list-disc pl-4 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+              {review.cautions.map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          )}
+
+          {/* The diff — exactly what Apply would write. */}
+          <div className="rounded-lg border border-[color:var(--con-line)] p-3">
+            <div className="con-card-title mb-1">Proposed changes</div>
+            {!hasAnyChange ? (
+              <p className="text-[color:var(--con-muted)]">No changes proposed — the reviewer left everything as is.</p>
+            ) : (
+              <div className="flex flex-col divide-y divide-[color:var(--con-line)]">
+                {promptChanged && (
+                  <details className="con-disclosure">
+                    <summary>Prompt rewrite proposed</summary>
+                    <div className="grid gap-2 pb-2 sm:grid-cols-2">
+                      <div>
+                        <div className="con-card-title mb-1">Current</div>
+                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed">{strategyPrompt}</pre>
+                      </div>
+                      <div>
+                        <div className="con-card-title mb-1">Proposed</div>
+                        <pre className="con-mono max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed">{review.proposedPatch.prompt}</pre>
+                      </div>
+                    </div>
+                  </details>
+                )}
+                {changes.map((c) => (
+                  <div key={c.key} className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="font-semibold">{c.label}</span>
+                    <span className="con-num flex items-center gap-2">
+                      <span className="text-[color:var(--con-faint)]">{c.from}</span>
+                      <span className="text-[color:var(--con-faint)]">→</span>
+                      <span>{c.to}</span>
+                      {c.direction !== "changed" && (
+                        <span
+                          className="text-[length:var(--con-fs-xs)] font-bold uppercase"
+                          style={{ color: c.direction === "looser" ? "var(--con-warn)" : "var(--con-pos)" }}
+                        >
+                          {c.direction}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {hasAnyChange &&
+            (needsTyped ? (
+              <TypedConfirm
+                phrase="CONFIRM"
+                value={typed}
+                onChange={setTyped}
+                busy={busy === "apply"}
+                variant="primary"
+                confirmLabel={
+                  <>
+                    Apply review changes <LiveTag />
+                  </>
+                }
+                note="At least one proposed change LOOSENS a limit on a LIVE (real money) account. Loosening costs a typed word here exactly like it does in Guardrails."
+                onConfirm={() => void apply()}
+              />
+            ) : (
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" disabled={busy !== null} onClick={() => { setReview(null); setTyped(""); }}>
+                  Discard
+                </Btn>
+                <Btn variant="primary" disabled={busy !== null} onClick={() => void apply()}>
+                  {busy === "apply" ? "Applying…" : "Apply changes"}
+                </Btn>
+              </div>
+            ))}
+        </div>
+      )}
+    </Card>
   );
 }
