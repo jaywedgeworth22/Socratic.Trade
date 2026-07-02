@@ -117,7 +117,7 @@ function countLearnedContext(userId: string): number {
 }
 
 function countUserSettingsRows(userId: string): number {
-  const exactKeys = [`strategy_run_lock:${userId}`, `robinhood_mcp_oauth_token:${userId}`];
+  const exactKeys = [`strategy_run_lock:${userId}`, `robinhood_mcp_oauth_token:${userId}`, `llm_budget_reservation:${userId}`];
   const exactCount = getDb()
     .prepare(`SELECT COUNT(*) AS count FROM settings WHERE key IN (${exactKeys.map(() => "?").join(",")})`)
     .get(...exactKeys) as { count: number };
@@ -294,6 +294,8 @@ export function confirmAndDeleteAccount(input: {
     db.prepare("DELETE FROM learned_context WHERE user_id = ? OR contributor_user_id = ?").run(input.userId, input.userId);
     // Remove the user's run lock AND every per-account run lock (strategy_run_lock:<user>:<account>).
     db.prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?").run(`strategy_run_lock:${input.userId}`, `strategy_run_lock:${input.userId}:%`);
+    // Remove the user's LLM budget reservation row (llm_budget_reservation:<user>).
+    db.prepare("DELETE FROM settings WHERE key = ?").run(`llm_budget_reservation:${input.userId}`);
     db.prepare("DELETE FROM account_deletion_requests WHERE user_id = ?").run(input.userId);
   })();
 

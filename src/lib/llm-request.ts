@@ -66,6 +66,19 @@ export function llmFetch(url: string, init: RequestInit = {}): Promise<Response>
   return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
 }
 
+/** HTTP statuses worth failing over to another provider (rate limit / transient upstream errors). */
+const RETRYABLE_LLM_STATUSES = new Set([429, 500, 502, 503, 504]);
+export function isRetryableLlmStatus(status: number): boolean {
+  return RETRYABLE_LLM_STATUSES.has(status);
+}
+/** True for timeouts (AbortSignal.timeout → AbortError/TimeoutError) and transient network errors. */
+export function isRetryableLlmError(error: unknown): boolean {
+  const name = (error as { name?: string } | null)?.name;
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  const msg = String((error as { message?: string } | null)?.message ?? error ?? "");
+  return /abort|timed? ?out|timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network|fetch failed/i.test(msg);
+}
+
 export const LLM_OUTPUT_TOKEN_CAPS = {
   strategyProposal: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   strategyCritique: LLM_REQUEST_DEFAULTS.maxOutputTokens,

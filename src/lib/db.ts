@@ -250,6 +250,18 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_mobile_commands_status ON mobile_commands (status, queued_at);
       `);
     }
+  },
+  {
+    // Stamp which versioned strategy prompt (STRATEGY_PROMPT_VERSION) produced each proposal, so a
+    // proposal can be traced to the exact Bull/Bear prompt revision. Nullable — legacy rows stay null.
+    version: 9,
+    name: "trade_proposals_prompt_version",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(trade_proposals)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "prompt_version")) {
+        database.exec("ALTER TABLE trade_proposals ADD COLUMN prompt_version TEXT");
+      }
+    }
   }
 ];
 
@@ -471,7 +483,8 @@ function migrate(database: Database.Database): void {
       trade_thesis_tag TEXT,
       entry_market_regime TEXT,
       execution_mode TEXT,
-      error_message TEXT
+      error_message TEXT,
+      prompt_version TEXT
     );
 
     CREATE TABLE IF NOT EXISTS strategy_profiles (

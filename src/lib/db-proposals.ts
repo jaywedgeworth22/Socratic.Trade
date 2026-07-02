@@ -320,10 +320,12 @@ export function insertProposal(input: {
   tradeThesisTag?: string;
   entryMarketRegime?: string;
   executionMode?: ExecutionMode;
+  /** The versioned strategy prompt (STRATEGY_PROMPT_VERSION) that produced this proposal. */
+  promptVersion?: string;
 }): void {
   getDb()
     .prepare(
-      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime, execution_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO trade_proposals (id, user_id, run_id, account_number, created_at, proposal, decision, review, estimated_notional, ref_id, order_id, status, trade_thesis_tag, entry_market_regime, execution_mode, prompt_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       input.id,
@@ -340,6 +342,7 @@ export function insertProposal(input: {
       input.status,
       input.tradeThesisTag ?? null,
       input.entryMarketRegime ?? null,
-      input.executionMode ?? null
+      input.executionMode ?? null,
+      input.promptVersion ?? null
     );
 }

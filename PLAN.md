@@ -5,6 +5,26 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
+> all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
+> CLOSED (un-critiqued Bull proposals route to human in decide mode, not auto-executed);
+> Bull/Bear prompts extracted to a versioned `strategy-prompts.ts` + deterministic
+> offline eval (`npm run eval:strategy-offline`) + `trade_proposals.prompt_version`
+> stamp; Anthropic prompt caching; default-off ordered cross-provider failover
+> (`policy.llmFallbackModels`); truncation-aware Bull cap; strict red-team `json_schema`;
+> default-off rationale-collapse gate; removed a dead Anthropic endpoint branch. All but
+> the fail-closed safety fix are default-off flags. Verified tsc/lint/test(1692)/build +
+> eval green. See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+
+> 2026-07-01 (`claude/wonderful-bell-32958a`): **Design spec — single-adversary ("Red Team")
+> consolidation.** `docs/single-adversary-consolidation.md` proposes collapsing today's two
+> adversarial LLM passes (in-flow Bear + standalone `debateProposal`) into one hardened Red
+> Team: reviews the finalized trade, fails closed + visible when unavailable, never blocks a
+> risk-reducing exit, provably independent of the proposer. Design-only (not implemented);
+> decisions O1–O4 resolved (spec §9); Codex review refinements folded in as §12 R1–R20. Owning
+> phase doc: `docs/phase-7-strategy.md` §F. See
+> `docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
+
 > 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Follow-up Codex review on the durable budget** —
 > three findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
 > of `0` now opts OUT of an operator env default (`0` = no limit, not "block everything") — `resolveLimit`
@@ -24,11 +44,12 @@ filling the missing pieces.
 > **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
 > enforces at the spend primitives and is user-editable in Settings; known limitations left for a
 > follow-up:
-> 1. **Concurrent-run budget reservation.** The daily ceiling is a read-of-the-ledger admission
->    check, not a reservation. Two of the same user's account runs launched concurrently by the
->    scheduler can each start just under the limit and both spend, so the cap can be exceeded by up to
->    the in-flight runs' spend (bounded by the scheduler's concurrency cap). A truly hard cap needs a
->    per-user token reservation / run serialization — an architecturally-significant concurrency change.
+> 1. ~~**Concurrent-run budget reservation.**~~ **DONE (2026-07-01).** A per-USER LLM budget
+>    **reservation** now closes this: `reserveLlmBudget`/`reserveLlmRunBudget`/`releaseLlmReservation` in
+>    `src/lib/llm-budget.ts`, CAS'd in the `settings` KV row like `acquireStrategyLock` (no migration,
+>    5-min TTL, fail-closed → skip LLM, default-OFF). `runStrategyOnce` reserves its worst-case estimate
+>    at the budget gate and releases in the `finally`, so a concurrent same-user run sees the hold and
+>    skips LLM instead of both overshooting. See `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
 > 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
 >    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
 >    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
@@ -60,7 +81,11 @@ filling the missing pieces.
 > short-interest source with a ≥5pp disagreement bulletin" item below was removed as
 > non-deliverable — FMP publishes no short-interest data (no `/short_interest` endpoint;
 > verified against FMP's API docs + official MCP surface). Yahoo `shortPercentOfFloat` is the
-> single real source; a real second source would need Massive/Finnhub. Also: scoped the
+> single real source; a real second source would need Massive/Finnhub. **UPDATE 2026-07-01 (PR
+> #309): the real second source is now DELIVERED via Massive REST** — `MassiveEnrichmentProvider`
+> computes short % of float from Massive's FINRA short interest / free float and emits the ≥5pp
+> disagreement bulletin, gated on `MASSIVE_API_KEY` (default-inert without it). See
+> `docs/rollouts/2026-07-01-massive-short-interest-second-source.md`. Also: scoped the
 > default-off enrichment circuit breaker to trip per **credential lane** (a dead env lane no
 > longer disables a healthy user lane), and locked in `extractUnderlyingPrice`'s
 > `{ quotes: [...] }` envelope parsing with a regression test. See

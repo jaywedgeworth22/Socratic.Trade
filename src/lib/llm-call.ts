@@ -51,7 +51,9 @@ export function llmAuthHeaders(endpoint: Pick<LlmEndpoint, "provider" | "key">):
     return {
       "content-type": "application/json",
       "x-api-key": endpoint.key ?? "",
-      "anthropic-version": "2023-06-01"
+      "anthropic-version": "2023-06-01",
+      // Honour cache_control blocks on the system prompt (prompt caching). (Chat A item 3.)
+      "anthropic-beta": "prompt-caching-2024-07-31"
     };
   }
   return {
@@ -72,7 +74,12 @@ export function buildLlmRequestBody(
   if (transport === "anthropic-messages") {
     const base: Record<string, unknown> = {
       model: spec.model,
-      system: systemPrompt,
+      // Prompt-caching: send the (stable) system prompt as a single ephemeral cache block so
+      // Anthropic reuses the cached KV across repeated strategy/red-team calls. The per-run dynamic
+      // data lives in the user message, not here, so the whole system prefix is cacheable. The
+      // caching beta header is added in llmAuthHeaders. (Chat A item 3; finer-grained prefix/suffix
+      // splitting can follow if a dynamic tail is ever moved into the system prompt.)
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userContent }]
     };
     if (schema) {
@@ -126,9 +133,36 @@ function openAiResponsesTextFormat(
   schema: LlmJsonSchema | undefined,
   openAiJsonObject: boolean | undefined
 ): Record<string, unknown> | undefined {
-  if (schema && !openAiJsonObject) return { type: "json_schema", name: schema.name, schema: schema.schema };
+  // strict:true matches the chat-completions branch — without it the Responses API treats the
+  // schema as advisory and schema-drifting output can slip through as merely JSON-shaped data.
+  // Every schema routed here (Bull/Bear proposals, red-team verdict, revalidation, tuning) is
+  // strict-conformant: additionalProperties:false + full required lists, null via type unions.
+  if (schema && !openAiJsonObject) return { type: "json_schema", name: schema.name, strict: true, schema: schema.schema };
   if (schema || openAiJsonObject) return { type: "json_object" };
   return undefined;
+}
+
+/**
+ * True when the model stopped because it hit the output-token cap (a truncated answer), across
+ * transports: OpenAI chat-completions `finish_reason:"length"`, OpenAI responses API
+ * `incomplete_details.reason:"max_output_tokens"` / top-level `status:"incomplete"`, and Anthropic
+ * Messages `stop_reason:"max_tokens"`. A truncated JSON answer usually fails to parse, so callers use
+ * this to distinguish "output cap too small" from a genuine empty result.
+ */
+export function detectLlmTruncation(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const p = payload as {
+    stop_reason?: unknown;
+    choices?: unknown;
+    status?: unknown;
+    incomplete_details?: { reason?: unknown } | null;
+    output?: unknown;
+  };
+  if (p.stop_reason === "max_tokens") return true;
+  if (Array.isArray(p.choices) && p.choices.some((c) => (c as { finish_reason?: unknown } | null)?.finish_reason === "length")) return true;
+  if (p.status === "incomplete" && p.incomplete_details?.reason === "max_output_tokens") return true;
+  if (Array.isArray(p.output) && p.output.some((o) => (o as { status?: unknown } | null)?.status === "incomplete")) return true;
+  return false;
 }
 
 /**

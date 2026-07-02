@@ -17,6 +17,8 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.TRIGGER_LLM_DAILY_TOKEN_BUDGET;
   delete process.env.TRIGGER_LLM_DAILY_COST_BUDGET_USD;
+  delete process.env.LLM_RUN_RESERVATION_TOKENS;
+  delete process.env.LLM_RUN_RESERVATION_COST_USD;
 });
 
 async function seedUsage(userId: string, totalTokens: number, costUsd?: number): Promise<void> {
@@ -128,5 +130,97 @@ describe("LLM budget — durable spend-primitive enforcement", () => {
     expect(decision.ok).toBe(false);
     expect(decision.reason).toBe("token_budget");
     expect(decision.tokensToday).toBeGreaterThanOrEqual(1500);
+  });
+});
+
+describe("LLM budget reservation — concurrency admission control (TOCTOU fix)", () => {
+  it("returns ok with NO reservation id when no ceiling is configured (default OFF)", async () => {
+    const { reserveLlmBudget } = await import("../src/lib/llm-budget");
+    const r = reserveLlmBudget("local", 50_000, 5);
+    expect(r.ok).toBe(true);
+    expect(r.reservationId).toBeUndefined();
+  });
+
+  it("a live reservation holds headroom so a CONCURRENT same-user reserve is refused", async () => {
+    await setTokenBudget("local", 10_000);
+    const { reserveLlmBudget, reservedLlmSpend } = await import("../src/lib/llm-budget");
+    const first = reserveLlmBudget("local", 8_000, 0);
+    expect(first.ok).toBe(true);
+    expect(first.reservationId).toBeTruthy();
+    expect(reservedLlmSpend("local").tokens).toBe(8_000);
+    // Second concurrent run: 0 ledger + 8_000 reserved + 8_000 est ≥ 10_000 → refused.
+    const second = reserveLlmBudget("local", 8_000, 0);
+    expect(second.ok).toBe(false);
+    expect(second.reason).toBe("token_budget");
+  });
+
+  it("releasing a reservation frees the headroom for the next run", async () => {
+    await setTokenBudget("local", 10_000);
+    const { reserveLlmBudget, releaseLlmReservation, reservedLlmSpend } = await import("../src/lib/llm-budget");
+    const first = reserveLlmBudget("local", 8_000, 0);
+    expect(first.ok).toBe(true);
+    expect(reserveLlmBudget("local", 8_000, 0).ok).toBe(false); // no headroom while held
+    releaseLlmReservation("local", first.reservationId!);
+    expect(reservedLlmSpend("local").tokens).toBe(0);
+    expect(reserveLlmBudget("local", 8_000, 0).ok).toBe(true); // reclaimed
+  });
+
+  it("admits the FIRST run even when its estimate exceeds remaining headroom, but refuses a concurrent second", async () => {
+    await setTokenBudget("local", 10_000);
+    await seedUsage("local", 5_000);
+    const { reserveLlmBudget } = await import("../src/lib/llm-budget");
+    // First run: committed ledger 5_000 < 10_000 → admitted even though its 6_000 estimate exceeds the
+    // 5_000 remaining headroom (its own estimate must never refuse it — per-spend guard caps real spend).
+    const first = reserveLlmBudget("local", 6_000, 0);
+    expect(first.ok).toBe(true);
+    // Concurrent SECOND run: 5_000 ledger + 6_000 held + 4_000 est ≥ 10_000 → refused (serialization).
+    expect(reserveLlmBudget("local", 4_000, 0).ok).toBe(false);
+  });
+
+  it("admits a run whose estimate exceeds a SMALL budget (regression: modest budgets aren't skipped all day)", async () => {
+    await setTokenBudget("local", 5_000); // smaller than the default 80k per-run estimate
+    const { reserveLlmRunBudget } = await import("../src/lib/llm-budget");
+    // Zero committed usage → the single run MUST be admitted despite the 80k estimate > 5k budget.
+    expect(reserveLlmRunBudget("local").ok).toBe(true);
+  });
+
+  it("the cost dimension serializes concurrent runs on the cost ceiling", async () => {
+    process.env.TRIGGER_LLM_DAILY_COST_BUDGET_USD = "5";
+    const { reserveLlmBudget } = await import("../src/lib/llm-budget");
+    const first = reserveLlmBudget("local", 0, 3); // first run admitted (ledger $0 < $5)
+    expect(first.ok).toBe(true);
+    // Concurrent second: $0 ledger + $3 held + $3 est ≥ $5 → refused on cost.
+    const second = reserveLlmBudget("local", 0, 3);
+    expect(second.ok).toBe(false);
+    expect(second.reason).toBe("cost_budget");
+  });
+
+  it("expired reservations no longer count (TTL reclaim frees a crashed run's hold)", async () => {
+    await setTokenBudget("local", 10_000);
+    const { reserveLlmBudget, reservedLlmSpend } = await import("../src/lib/llm-budget");
+    const t0 = new Date("2026-07-01T12:00:00.000Z");
+    expect(reserveLlmBudget("local", 8_000, 0, t0).ok).toBe(true);
+    const later = new Date(t0.getTime() + 16 * 60_000); // > 15-min default TTL
+    expect(reservedLlmSpend("local", later).tokens).toBe(0);
+    // The expired hold is dropped, so a fresh run can reserve again.
+    expect(reserveLlmBudget("local", 8_000, 0, later).ok).toBe(true);
+  });
+
+  it("releaseLlmReservation is a no-op for an unknown id and never throws", async () => {
+    await setTokenBudget("local", 10_000);
+    const { reserveLlmBudget, releaseLlmReservation, reservedLlmSpend } = await import("../src/lib/llm-budget");
+    const first = reserveLlmBudget("local", 5_000, 0);
+    expect(() => releaseLlmReservation("local", "does-not-exist")).not.toThrow();
+    expect(reservedLlmSpend("local").tokens).toBe(5_000); // real reservation untouched
+    releaseLlmReservation("local", first.reservationId!);
+  });
+
+  it("reserveLlmRunBudget uses the env-tunable per-run estimate", async () => {
+    await setTokenBudget("local", 10_000);
+    process.env.LLM_RUN_RESERVATION_TOKENS = "3000";
+    const { reserveLlmRunBudget, reservedLlmSpend } = await import("../src/lib/llm-budget");
+    const r = reserveLlmRunBudget("local");
+    expect(r.ok).toBe(true);
+    expect(reservedLlmSpend("local").tokens).toBe(3_000);
   });
 });
