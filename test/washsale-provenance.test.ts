@@ -51,5 +51,21 @@ describe("wash-sale provenance (PR #8)", () => {
 
     const aapl = getUserWashSaleLockProvenance(u, now).get("AAPL");
     expect(aapl?.clearDate.getTime()).toBe(new Date(laterExit).getTime() + WASH_WINDOW_DAYS * MS_PER_DAY);
+    // lossUsd SUMS across contributing lots (a rebuy washes all of them): $10 + $10.
+    expect(aapl?.lossUsd).toBeCloseTo(20);
+  });
+
+  it("carries the disallowed lossUsd so ask/auto handling can price the forfeited deduction", async () => {
+    const db = await import("../src/lib/db");
+    const { getUserWashSaleLockProvenance } = await import("../src/lib/tax");
+    const u = `user-${randomUUID()}`;
+    db.upsertConnectedAccount({ id: `r-${randomUUID()}`, userId: u, broker: "alpaca", environment: "paper", accountNumber: "REAL", label: "Taxable", taxationType: "taxable", isActive: true });
+    // One MSFT round-trip: buy @200, sell @150 => $50 in-window loss.
+    db.insertFillEvent({ userId: u, accountNumber: "REAL", source: "paper", symbol: "MSFT", side: "buy", quantity: 2, price: 200, notional: 400, status: "filled", filledAt: "2026-06-15T14:30:00.000Z" });
+    db.insertFillEvent({ userId: u, accountNumber: "REAL", source: "paper", symbol: "MSFT", side: "sell", quantity: 2, price: 150, notional: 300, status: "filled", filledAt: "2026-06-24T14:30:00.000Z" });
+
+    const msft = getUserWashSaleLockProvenance(u, now).get("MSFT");
+    expect(msft?.lossUsd).toBeCloseTo(100); // 2 shares × $50
+    expect(msft?.account).toBe("REAL");
   });
 });

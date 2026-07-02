@@ -1,0 +1,482 @@
+/**
+ * Wash-sale handling modes (taxSettings.washSaleHandling: block | ask | auto) + the Decide-mode
+ * escalation framework — gate-level, end-to-end through evaluateTradeProposal, plus the strategy
+ * helpers that route escalations (shouldEscalateDecision / approvedEscalationsFromDecision).
+ *
+ * Safety contract under test (owner-locked spec):
+ *   - default ("block") behavior byte-compatible with the pre-existing hard block;
+ *   - "ask" refuses at the gate but marks the failure escalatable with the PRICED tax cost
+ *     (disallowed loss × shortTermRatePct) — approvable later only via a server-stored token;
+ *   - "auto" proceeds ONLY when expected edge >= WASH_SALE_AUTO_EDGE_MULTIPLE × cost, and both
+ *     outcomes are recorded on decision.washSale (never silent);
+ *   - IRA replacement purchases are hard-blocked in EVERY mode (Rev. Rul. 2008-5), ignoring
+ *     override tokens and even the per-account washSaleGuard flag;
+ *   - the override token never weakens the default block (ignored when handling is "block")
+ *     and never bypasses OTHER gates at approval time;
+ *   - only the closed escalation allowlist (ask-mode wash sale + time-context gates) can ever
+ *     escalate; per-order caps / blocklist / shorting-disabled failures never do.
+ */
+import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
+import { evaluateTradeProposal, washSaleExpectedEdgeUsd, WASH_SALE_AUTO_EDGE_MULTIPLE } from "../src/lib/policy";
+import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy";
+import type { WashSaleLockMap } from "../src/lib/tax";
+import type {
+  AccountCapabilities,
+  EquityPosition,
+  PolicyDecision,
+  Portfolio,
+  TaxSettings,
+  TradeProposal,
+  TradingPolicy
+} from "../src/lib/types";
+
+// Mock the tax module so the gate tests don't need a DB (the gate's fallback resolver is
+// exercised by policy.test.ts; here every test passes washSaleLocks/washSaleLockedSymbols).
+vi.mock("../src/lib/tax", () => ({
+  getUserWashSaleLockedSymbols: vi.fn(() => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn(() => new Map())
+}));
+
+const portfolio: Portfolio = {
+  accountNumber: "A1",
+  totalMarketValue: 100_000,
+  buyingPower: 50_000,
+  equityMarketValue: 50_000,
+  optionMarketValue: 0,
+  cash: 50_000
+};
+
+const positions: EquityPosition[] = [];
+
+const CLEAR_DATE = new Date("2026-07-20T00:00:00.000Z");
+
+/** TSLA locked by a $500 loss in taxable account ACC1 → at 24% short-term rate the priced
+ *  forfeited deduction is $120; the 3× auto guard therefore requires $360 of expected edge. */
+function locks(lossUsd = 500): WashSaleLockMap {
+  return new Map([["TSLA", { account: "ACC1", clearDate: CLEAR_DATE, lossUsd }]]);
+}
+
+function taxSettings(overrides: Partial<TaxSettings> = {}): TaxSettings {
+  return { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15, ...overrides };
+}
+
+function policyWith(overrides: Partial<TradingPolicy> = {}): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    systemState: "active",
+    strategyAuthority: "decide",
+    accountNumber: "A1",
+    includedIndices: [],
+    additionalSymbols: ["TSLA", "AAPL"],
+    maxOrderNotional: 50_000,
+    maxOrderPctOfNav: undefined,
+    maxDailyNotional: 50_000,
+    taxSettings: taxSettings(),
+    ...overrides
+  };
+}
+
+const buy: TradeProposal = {
+  symbol: "TSLA",
+  side: "buy",
+  type: "market",
+  dollarAmount: 3000,
+  timeInForce: "gfd",
+  marketHours: "regular_hours",
+  rationale: "test",
+  tradeThesisTag: "Momentum-Breakout",
+  entryMarketRegime: "Neutral",
+  confidenceScore: 80
+};
+
+function ctx(policy: TradingPolicy, extra: Record<string, unknown> = {}) {
+  return {
+    policy,
+    portfolio,
+    positions,
+    dailyNotionalUsed: 0,
+    dailyOrderCount: 0,
+    estimatedNotional: 3000,
+    washSaleLocks: locks(),
+    ...extra
+  };
+}
+
+const iraCapable: AccountCapabilities = {
+  equityTrading: true,
+  shortSelling: false,
+  optionsTrading: false,
+  futuresTrading: false,
+  cryptoTrading: false,
+  marginEnabled: false,
+  accountType: "roth_ira"
+};
+
+describe("wash-sale handling — mode 'block' (default)", () => {
+  it("blocks a locked rebuy when washSaleHandling is unset (default unchanged)", () => {
+    const decision = evaluateTradeProposal(buy, ctx(policyWith()));
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("wash-sale lockout"))).toBe(true);
+    // Not escalatable: block mode produces no escalation entry.
+    expect(decision.escalations ?? []).toHaveLength(0);
+    expect(decision.washSale?.outcome).toBe("blocked");
+    expect(decision.washSale?.handling).toBe("block");
+  });
+
+  it("prices the forfeited deduction and names the provenance in the block reason", () => {
+    const decision = evaluateTradeProposal(buy, ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "block" }) })));
+    const reason = decision.reasons.join(" ");
+    expect(reason).toContain("loss in ACC1");
+    expect(reason).toContain("$120.00"); // 500 × 24%
+    expect(decision.washSale?.disallowedLossUsd).toBe(500);
+    expect(decision.washSale?.estimatedTaxCostUsd).toBe(120);
+  });
+
+  it("an override token can NEVER weaken the default block", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "block" }) }), {
+        approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-1" }]
+      })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("blocked");
+  });
+});
+
+describe("wash-sale handling — mode 'ask'", () => {
+  const askPolicy = policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask" }) });
+
+  it("refuses the buy but marks it escalatable with the priced cost and 'Your call.' copy", () => {
+    const decision = evaluateTradeProposal(buy, ctx(askPolicy));
+    expect(decision.approved).toBe(false);
+    const reason = decision.reasons.find((r) => r.includes("Your call."));
+    expect(reason).toBeDefined();
+    expect(reason).toContain("Rebuying TSLA now forfeits ~$120.00 of tax deduction");
+    expect(reason).toContain("loss in ACC1");
+    expect(reason).toContain("clears 2026-07-20");
+    const escalation = (decision.escalations ?? []).find((e) => e.kind === "wash_sale_ask");
+    expect(escalation).toBeDefined();
+    expect(escalation?.symbol).toBe("TSLA");
+    expect(escalation?.reason).toBe(reason);
+    expect(escalation?.washSale?.disallowedLossUsd).toBe(500);
+    expect(escalation?.washSale?.estimatedTaxCostUsd).toBe(120);
+    // Tokens are minted by the strategy loop at persist time, never by the pure gate.
+    expect(escalation?.token).toBeUndefined();
+    expect(decision.washSale?.outcome).toBe("ask_escalated");
+  });
+
+  it("still escalates (cost unpriced) when only the legacy Set is available", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(askPolicy, { washSaleLocks: undefined, washSaleLockedSymbols: new Set(["TSLA"]) })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("an unpriced amount");
+    expect((decision.escalations ?? []).some((e) => e.kind === "wash_sale_ask")).toBe(true);
+  });
+
+  it("honors a matching server-stored override token (approved, audited) — the ask/auto approval path", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(askPolicy, { approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }] })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("approved_via_override");
+    expect(decision.washSale?.overrideToken).toBe("tok-abc");
+    expect(decision.washSale?.estimatedTaxCostUsd).toBe(120);
+  });
+
+  it("ignores an override for a different symbol", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(askPolicy, { approvedEscalations: [{ kind: "wash_sale_ask", symbol: "AAPL", token: "tok-abc" }] })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("ask_escalated");
+  });
+
+  it("an override never bypasses OTHER gates — the full gate re-runs at approval time", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(askPolicy, {
+        approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }],
+        dailyNotionalUsed: 49_500 // 49,500 + 3,000 > 50,000 daily cap
+      })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons).toContain("Daily notional limit would be exceeded.");
+    // The wash-sale gate itself was satisfied by the override…
+    expect(decision.washSale?.outcome).toBe("approved_via_override");
+    // …but the still-binding daily cap keeps the decision refused.
+  });
+});
+
+describe("wash-sale handling — mode 'auto' (deterministic edge-vs-cost guard)", () => {
+  const autoPolicy = policyWith({ taxSettings: taxSettings({ washSaleHandling: "auto" }) });
+
+  it("proceeds when expected edge >= 3x the priced cost, recording the math (never silent)", () => {
+    // edge = 3000 × 20% take-profit × 80% confidence = $480 >= required 3 × $120 = $360.
+    const decision = evaluateTradeProposal(buy, ctx(autoPolicy));
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
+    expect(decision.washSale?.expectedEdgeUsd).toBe(480);
+    expect(decision.washSale?.requiredEdgeUsd).toBe(360);
+    expect(decision.washSale?.edgeMultiple).toBe(WASH_SALE_AUTO_EDGE_MULTIPLE);
+  });
+
+  it("skips with the guard math in the reason when the edge is too small", () => {
+    // Confidence 40 → edge = 3000 × 0.2 × 0.4 = $240 < $360 required.
+    const decision = evaluateTradeProposal({ ...buy, confidenceScore: 40 }, ctx(autoPolicy));
+    expect(decision.approved).toBe(false);
+    const reason = decision.reasons.join(" ");
+    expect(reason).toContain("wash_sale_auto_skip");
+    expect(reason).toContain("$240.00");
+    expect(reason).toContain("$360.00");
+    expect(decision.washSale?.outcome).toBe("auto_skipped");
+    // Auto skips are NOT escalatable — they stay visible blocked entries.
+    expect(decision.escalations ?? []).toHaveLength(0);
+  });
+
+  it("fail-safe: skips when the cost cannot be priced (legacy Set, no provenance)", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(autoPolicy, { washSaleLocks: undefined, washSaleLockedSymbols: new Set(["TSLA"]) })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("fail-safe skip");
+    expect(decision.washSale?.outcome).toBe("auto_skipped");
+  });
+
+  it("fail-safe: missing conviction prices the edge at $0 and skips", () => {
+    const decision = evaluateTradeProposal({ ...buy, confidenceScore: undefined }, ctx(autoPolicy));
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("auto_skipped");
+    expect(decision.washSale?.expectedEdgeUsd).toBe(0);
+  });
+});
+
+describe("washSaleExpectedEdgeUsd — documented guard math", () => {
+  const policy = policyWith();
+
+  it("= notional × takeProfitPct × confidence", () => {
+    expect(washSaleExpectedEdgeUsd(buy, policy, 3000)).toBe(480); // 3000 × 0.20 × 0.80
+  });
+
+  it("prefers the proposal's own bracketTakeProfit over the policy percentage", () => {
+    const withBracket = { ...buy, referencePrice: 100, bracketTakeProfit: 110 }; // 10% target
+    expect(washSaleExpectedEdgeUsd(withBracket, policy, 3000)).toBe(240); // 3000 × 0.10 × 0.80
+  });
+
+  it("degrades to $0 (fail-safe) without conviction or a positive target", () => {
+    expect(washSaleExpectedEdgeUsd({ ...buy, confidenceScore: undefined }, policy, 3000)).toBe(0);
+    const noTarget = policyWith({ riskRules: { ...policy.riskRules, takeProfitPct: 0 } });
+    expect(washSaleExpectedEdgeUsd(buy, noTarget, 3000)).toBe(0);
+    expect(washSaleExpectedEdgeUsd(buy, policy, 0)).toBe(0);
+  });
+});
+
+describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
+  for (const handling of ["block", "ask", "auto"] as const) {
+    it(`blocks an IRA rebuy of a taxable-loss-locked symbol in mode '${handling}'`, () => {
+      const decision = evaluateTradeProposal(
+        { ...buy, confidenceScore: 100 },
+        ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: handling, taxationType: "roth_ira" }) }))
+      );
+      expect(decision.approved).toBe(false);
+      const reason = decision.reasons.join(" ");
+      expect(reason).toContain("PERMANENTLY");
+      expect(reason).toContain("Rev. Rul. 2008-5");
+      expect(decision.washSale?.outcome).toBe("blocked_ira");
+      // Never escalatable.
+      expect(decision.escalations ?? []).toHaveLength(0);
+    });
+  }
+
+  it("detects the IRA via broker-reported accountCapabilities.accountType too", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask" }) }), { accountCapabilities: iraCapable })
+    );
+    expect(decision.washSale?.outcome).toBe("blocked_ira");
+  });
+
+  it("ignores override tokens — user approval can never authorize the permanent harm", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask", taxationType: "traditional_ira" }) }), {
+        approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }]
+      })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("blocked_ira");
+  });
+
+  it("applies even when the per-account washSaleGuard flag is off (resolveTaxSettings disables it for IRAs)", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleGuard: false, taxationType: "roth_ira" }) }))
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("blocked_ira");
+  });
+
+  it("taxable buyer with washSaleGuard off is still allowed (pre-existing behavior unchanged)", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleGuard: false }) }))
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale).toBeUndefined();
+  });
+});
+
+describe("time-context gate escalations (closed allowlist)", () => {
+  const cleanLocks = { washSaleLocks: new Map() as WashSaleLockMap };
+
+  it("daily notional cap failure is escalatable", () => {
+    const decision = evaluateTradeProposal(buy, ctx(policyWith(), { ...cleanLocks, dailyNotionalUsed: 49_500 }));
+    expect(decision.approved).toBe(false);
+    expect(decision.escalations?.map((e) => e.kind)).toContain("daily_notional_cap");
+  });
+
+  it("hourly notional cap failure is escalatable", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ maxHourlyNotional: 1000 }), { ...cleanLocks, hourlyNotionalUsed: 900 })
+    );
+    expect(decision.escalations?.map((e) => e.kind)).toContain("hourly_notional_cap");
+  });
+
+  it("daily opening-order cap failure is escalatable", () => {
+    const decision = evaluateTradeProposal(buy, ctx(policyWith(), { ...cleanLocks, dailyOrderCount: DEFAULT_POLICY.maxDailyOrders }));
+    expect(decision.escalations?.map((e) => e.kind)).toContain("daily_order_cap");
+  });
+
+  it("quote staleness failure is escalatable", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ maxQuoteAgeSec: 60 }), {
+        ...cleanLocks,
+        now: new Date("2026-07-02T15:00:00.000Z"),
+        marketScan: {
+          source: "test",
+          generatedAt: "2026-07-02T15:00:00.000Z",
+          scannedSymbols: 1,
+          returnedQuotes: 1,
+          topCandidates: [],
+          sectorBySymbol: {},
+          quotesBySymbol: { TSLA: { symbol: "TSLA", price: 100, volume: 1, intradayChangePct: 0, positionMarketValue: 0, score: 1, asOf: "2026-07-02T14:00:00.000Z" } },
+          warnings: []
+        }
+      })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.escalations?.map((e) => e.kind)).toContain("quote_staleness");
+  });
+
+  it("PER-ORDER caps are never escalatable (hard class)", () => {
+    // Daily budget has plenty of room — ONLY the per-order cap trips.
+    const decision = evaluateTradeProposal(
+      { ...buy, dollarAmount: 60_000 },
+      ctx(policyWith({ maxDailyNotional: 100_000 }), { ...cleanLocks, estimatedNotional: 60_000 })
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");
+    expect((decision.escalations ?? []).map((e) => e.kind)).toHaveLength(0);
+    // The per-order failure contributed no escalation entry, so the decision can never
+    // satisfy shouldEscalateDecision's every-reason-covered rule.
+    expect(shouldEscalateDecision(decision, policyWith())).toBe(false);
+  });
+
+  it("blocklisted symbols are never escalatable (hard class)", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ blocklist: ["TSLA"] }), cleanLocks)
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
+    expect(shouldEscalateDecision(decision, policyWith())).toBe(false);
+  });
+});
+
+describe("shouldEscalateDecision — escalation routing rules", () => {
+  const askDecision: PolicyDecision = {
+    approved: false,
+    reasons: ["Rebuying TSLA now forfeits ~$120.00 of tax deduction (wash sale — loss in ACC1, clears 2026-07-20). Your call."],
+    escalations: [
+      {
+        kind: "wash_sale_ask",
+        reason: "Rebuying TSLA now forfeits ~$120.00 of tax deduction (wash sale — loss in ACC1, clears 2026-07-20). Your call.",
+        symbol: "TSLA"
+      }
+    ]
+  };
+  const capDecision: PolicyDecision = {
+    approved: false,
+    reasons: ["Daily notional limit would be exceeded."],
+    escalations: [{ kind: "daily_notional_cap", reason: "Daily notional limit would be exceeded.", symbol: "TSLA" }]
+  };
+
+  it("ask-mode wash sales escalate under BOTH authorities", () => {
+    expect(shouldEscalateDecision(askDecision, policyWith({ strategyAuthority: "propose" }))).toBe(true);
+    expect(shouldEscalateDecision(askDecision, policyWith({ strategyAuthority: "decide" }))).toBe(true);
+  });
+
+  it("time-context gates escalate ONLY under decide authority", () => {
+    expect(shouldEscalateDecision(capDecision, policyWith({ strategyAuthority: "decide" }))).toBe(true);
+    expect(shouldEscalateDecision(capDecision, policyWith({ strategyAuthority: "propose" }))).toBe(false);
+  });
+
+  it("a single uncovered reason keeps the whole proposal blocked", () => {
+    const mixed: PolicyDecision = {
+      ...askDecision,
+      reasons: [...askDecision.reasons, "Order of $60000.00 exceeds the maximum order limit of $50000.00"]
+    };
+    expect(shouldEscalateDecision(mixed, policyWith({ strategyAuthority: "decide" }))).toBe(false);
+  });
+
+  it("approved or reason-less decisions never escalate", () => {
+    expect(shouldEscalateDecision({ approved: true, reasons: [] }, policyWith())).toBe(false);
+    expect(shouldEscalateDecision({ approved: false, reasons: ["x"] }, policyWith())).toBe(false);
+  });
+});
+
+describe("approvedEscalationsFromDecision — server-stored override extraction", () => {
+  it("yields only tokenized wash_sale_ask handles (time-context entries just re-gate)", () => {
+    const stored: PolicyDecision = {
+      approved: false,
+      reasons: ["a", "b", "c"],
+      escalations: [
+        { kind: "wash_sale_ask", reason: "a", symbol: "TSLA", token: "tok-1" },
+        { kind: "daily_notional_cap", reason: "b", symbol: "TSLA", token: "tok-2" },
+        { kind: "wash_sale_ask", reason: "c", symbol: "AAPL" } // token-less: never minted → no handle
+      ]
+    };
+    expect(approvedEscalationsFromDecision(stored)).toEqual([{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-1" }]);
+    expect(approvedEscalationsFromDecision(undefined)).toEqual([]);
+    expect(approvedEscalationsFromDecision({ approved: true, reasons: [] })).toEqual([]);
+  });
+
+  it("round-trip: a stored escalated card re-gates to approved via its token — and only then", () => {
+    const askPolicy = policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask" }) });
+    // 1. Gate refuses and marks escalatable (run loop would persist this with a minted token).
+    const gateDecision = evaluateTradeProposal(buy, ctx(askPolicy));
+    expect(gateDecision.approved).toBe(false);
+    const persisted: PolicyDecision = {
+      ...gateDecision,
+      escalations: (gateDecision.escalations ?? []).map((e) => ({ ...e, token: "srv-tok" }))
+    };
+    // 2. Approval path derives override handles from the STORED row only.
+    const overrides = approvedEscalationsFromDecision(persisted);
+    expect(overrides).toEqual([{ kind: "wash_sale_ask", symbol: "TSLA", token: "srv-tok" }]);
+    // 3. Full re-gate with the override → approved, audited.
+    const regate = evaluateTradeProposal(buy, ctx(askPolicy, { approvedEscalations: overrides }));
+    expect(regate.approved).toBe(true);
+    expect(regate.washSale?.outcome).toBe("approved_via_override");
+    // 4. Without the stored token the same approval attempt still blocks.
+    const noToken = evaluateTradeProposal(buy, ctx(askPolicy));
+    expect(noToken.approved).toBe(false);
+  });
+});
