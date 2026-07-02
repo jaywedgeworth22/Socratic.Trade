@@ -1,25 +1,26 @@
 "use client";
 
 /** Settings — scope-split and visibly tagged: what belongs to THIS ACCOUNT
- *  (event notifications, tax treatment) vs ALL YOUR ACCOUNTS (connections,
- *  boot behavior, delivery channels, scan shape). The tag is the perception
- *  device — you never have to remember the storage tier. */
+ *  (tax treatment, LLM models) vs ALL YOUR ACCOUNTS (broker connections, API
+ *  keys, event notifications, delivery channels, scan shape, boot behavior),
+ *  plus a REFERENCE glossary. The tag is the perception device — you never
+ *  have to remember the storage tier. Sub-sections live in sibling modules
+ *  (brokers/api-keys/models/delivery/help) with their fetch helpers in ./lib. */
 
 import { useMemo, useState } from "react";
 import type { NotificationEventType, TaxationType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
-import {
-  activateAccount,
-  savePolicy,
-  sendTestNotification,
-  setAutoResume,
-  ConsoleApiError
-} from "../lib/api";
-import { activeConnectedAccount, deriveReality, realityForAccount } from "../lib/derive";
+import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
+import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, LiveTag, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { ApiKeysCard } from "./api-keys";
+import { BrokerAccountsCard } from "./brokers";
+import { DeliveryChannelsCard } from "./delivery";
+import { HelpGlossaryCard } from "./help";
+import { ModelsCard } from "./models";
 
 const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   fill: "an order filled",
@@ -46,7 +47,10 @@ export default function SettingsPage() {
       {/* ── THIS ACCOUNT ── */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <Chip tone={reality.tone}>
+          <Chip
+            tone={reality.tone}
+            title="Settings tagged THIS ACCOUNT are stored on the account itself — switch scope and you'll see that account's values instead."
+          >
             THIS ACCOUNT — {reality.account?.label ?? "Local simulator"} · {reality.word}
           </Chip>
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -54,17 +58,26 @@ export default function SettingsPage() {
           </span>
         </div>
         <TaxSettingsCard />
+        {/* llmModel / redTeamLlmModel live on the account's policy — same
+            save path (PUT /api/policy) as everything else account-scoped. */}
+        <ModelsCard />
       </section>
 
       {/* ── ALL ACCOUNTS ── */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <Chip tone="accent">ALL YOUR ACCOUNTS</Chip>
+          <Chip
+            tone="accent"
+            title="Settings tagged ALL YOUR ACCOUNTS are stored per user — they overlay every account you connect, in every scope."
+          >
+            ALL YOUR ACCOUNTS
+          </Chip>
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             applies everywhere, for you
           </span>
         </div>
-        <ConnectionsCard />
+        <BrokerAccountsCard />
+        <ApiKeysCard />
         {/* notificationSettings is a USER-level policy field (USER_LEVEL_POLICY_FIELDS
             in db-profiles): one event list + webhook overlaid on every account —
             so the card lives under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
@@ -73,6 +86,16 @@ export default function SettingsPage() {
         <ScanShapeCard />
         <BootBehaviorCard />
         <YouCard />
+      </section>
+
+      {/* ── REFERENCE ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="muted" title="Nothing here changes any setting — it's the app's vocabulary, searchable.">
+            REFERENCE
+          </Chip>
+        </div>
+        <HelpGlossaryCard />
       </section>
     </div>
   );
@@ -124,10 +147,10 @@ function EventNotificationsCard() {
       action={
         dirty ? (
           <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" onClick={() => { setDraftEvents(null); setDraftWebhook(null); }}>
+            <Btn variant="ghost" size="sm" title="Throw away the unsaved event/webhook edits." onClick={() => { setDraftEvents(null); setDraftWebhook(null); }}>
               Discard
             </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()}>
+            <Btn variant="primary" size="sm" disabled={busy} title="Save the event list and webhook for your whole login." onClick={() => void save()}>
               {busy ? "Saving…" : "Save"}
             </Btn>
           </div>
@@ -143,7 +166,11 @@ function EventNotificationsCard() {
         {NOTIFICATION_EVENT_TYPES.map((type) => {
           const on = events.includes(type);
           return (
-            <label key={type} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
+            <label
+              key={type}
+              title={`When on, you get a notification whenever ${EVENT_HINT[type] ?? `a "${type}" event happens`}.`}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[length:var(--con-fs-sm)] transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]"
+            >
               <input
                 type="checkbox"
                 checked={on}
@@ -157,7 +184,13 @@ function EventNotificationsCard() {
       </div>
       <div className="mt-3 max-w-md">
         <Field label="Webhook URL (optional)" hint="Rich embeds for chat webhooks; generic JSON otherwise." htmlFor="webhook">
-          <TextInput id="webhook" value={webhook} placeholder="https://…" onChange={(e) => setDraftWebhook(e.target.value)} />
+          <TextInput
+            id="webhook"
+            value={webhook}
+            placeholder="https://…"
+            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON."
+            onChange={(e) => setDraftWebhook(e.target.value)}
+          />
         </Field>
       </div>
     </Card>
@@ -219,10 +252,10 @@ function TaxSettingsCard() {
       action={
         draft ? (
           <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" onClick={() => setDraft(null)}>
+            <Btn variant="ghost" size="sm" title="Throw away the unsaved tax edits." onClick={() => setDraft(null)}>
               Discard
             </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()}>
+            <Btn variant="primary" size="sm" disabled={busy} title="Save tax treatment for this account." onClick={() => void save()}>
               {busy ? "Saving…" : "Save"}
             </Btn>
           </div>
@@ -244,6 +277,7 @@ function TaxSettingsCard() {
             <Select
               id="taxtype"
               value={taxation}
+              title="How gains in this account are taxed. Drives the tax estimates and the wash-sale handling."
               onChange={(e) => setDraft((d) => ({ ...(d ?? {}), taxationType: e.target.value as TaxationType }))}
             >
               <option value="taxable">taxable brokerage</option>
@@ -257,6 +291,7 @@ function TaxSettingsCard() {
             <NumInput
               id="st-rate"
               value={String(shortTermRatePct)}
+              title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice."
               onChange={(e) => setDraft((d) => ({ ...(d ?? {}), shortTermRatePct: Number(e.target.value) }))}
             />
           </Field>
@@ -264,13 +299,17 @@ function TaxSettingsCard() {
             <NumInput
               id="lt-rate"
               value={String(longTermRatePct)}
+              title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice."
               onChange={(e) => setDraft((d) => ({ ...(d ?? {}), longTermRatePct: Number(e.target.value) }))}
             />
           </Field>
         </div>
       </div>
       <div className="mt-3 flex flex-col gap-2.5">
-        <div className="flex items-center justify-between gap-4">
+        <div
+          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+          title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
+        >
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Wash-sale guard</div>
             <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -284,7 +323,10 @@ function TaxSettingsCard() {
             label="Wash-sale guard"
           />
         </div>
-        <div className="flex items-center justify-between gap-4">
+        <div
+          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+          title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."
+        >
           <div>
             <div className="text-[length:var(--con-fs-sm)] font-semibold">Show results net of estimated tax</div>
             <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Estimates only — not tax advice.</p>
@@ -296,135 +338,6 @@ function TaxSettingsCard() {
           />
         </div>
       </div>
-    </Card>
-  );
-}
-
-// ── All accounts: connections ────────────────────────────────────────────────
-
-function ConnectionsCard() {
-  const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [busyId, setBusyId] = useState<string | null>(null);
-  if (!snapshot) return null;
-
-  return (
-    <Card title="Connected accounts">
-      {snapshot.connectedAccounts.length === 0 ? (
-        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-          No brokerage connected — everything runs in the local simulator (TEST · practice money). You can stay here
-          forever; connecting a broker is never required. Adding a new connection isn&apos;t available in this console yet.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {snapshot.connectedAccounts.map((account) => {
-            const r = realityForAccount(account);
-            const caps = account.capabilities;
-            return (
-              <div key={account.id} className="rounded-lg border border-[color:var(--con-line)] p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-semibold">{account.label || account.broker}</span>
-                    <Chip tone={r.tone}>
-                      {r.word} · {r.phrase}
-                    </Chip>
-                    {account.isActive && <Chip tone="accent">active</Chip>}
-                  </div>
-                  {!account.isActive && (
-                    <Btn
-                      size="sm"
-                      variant="outline"
-                      disabled={busyId !== null}
-                      onClick={async () => {
-                        setBusyId(account.id);
-                        try {
-                          await activateAccount(account.id);
-                          await refresh();
-                          toast.push("info", "Active account switched");
-                        } catch (error) {
-                          toast.push("neg", "Could not switch", error instanceof ConsoleApiError ? error.message : String(error));
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
-                    >
-                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
-                        <>
-                          Make active <LiveTag />
-                        </>
-                      ) : (
-                        "Make active"
-                      )}
-                    </Btn>
-                  )}
-                </div>
-                <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  {account.broker} · {account.environment}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-                  {caps
-                    ? ` — broker allows: stocks ${caps.equityTrading ? "yes" : "no"} · shorting ${caps.shortSelling ? "yes" : "no"} · options ${caps.optionsTrading ? `level ${caps.optionsLevel ?? "?"}` : "no"} · margin ${caps.marginEnabled ? "yes" : "no"}`
-                    : " — capabilities not confirmed by the broker yet: everything reads as off"}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-// ── All accounts: delivery channels ──────────────────────────────────────────
-
-function DeliveryChannelsCard() {
-  const { snapshot } = useConsoleData();
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  if (!snapshot) return null;
-
-  const status = snapshot.notificationStatus;
-
-  return (
-    <Card
-      title="Delivery channels"
-      action={
-        <Btn
-          size="sm"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              const { results } = await sendTestNotification();
-              const ok = results.filter((r) => r.ok).length;
-              const skipped = results.filter((r) => r.skipped).length;
-              toast.push(
-                ok > 0 ? "pos" : "warn",
-                `Test sent — ${ok} delivered`,
-                results
-                  .map((r) => `${r.channel}: ${r.ok ? "ok" : r.skipped ?? r.error ?? "failed"}`)
-                  .join(" · ") + (ok === 0 && skipped === results.length ? " — no channel is configured yet" : "")
-              );
-            } catch (error) {
-              toast.push("neg", "Test failed", error instanceof ConsoleApiError ? error.message : String(error));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Sending…" : "Send test"}
-        </Btn>
-      }
-    >
-      <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-        {status.configured
-          ? "At least one out-of-app channel is configured. Use the test to confirm your phone actually hears an alert before trusting real-money notifications."
-          : "No out-of-app channel is configured yet — events are only recorded in Activity. Channel targets (push topic, email, phone, webhook) are managed by the server's notification preferences."}
-      </p>
-      {status.enabledEvents.length > 0 && (
-        <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Events currently enabled for you (all accounts): {status.enabledEvents.join(", ")}
-        </p>
-      )}
     </Card>
   );
 }
@@ -461,10 +374,10 @@ function ScanShapeCard() {
       action={
         draft ? (
           <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" onClick={() => setDraft(null)}>
+            <Btn variant="ghost" size="sm" title="Throw away the unsaved scan-shape edits." onClick={() => setDraft(null)}>
               Discard
             </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()}>
+            <Btn variant="primary" size="sm" disabled={busy} title="Save the scan shape — applies to every account's runs." onClick={() => void save()}>
               {busy ? "Saving…" : "Save"}
             </Btn>
           </div>
@@ -480,6 +393,7 @@ function ScanShapeCard() {
           <NumInput
             id="scan-limit"
             value={String(draft?.marketScanCandidateLimit ?? policy.marketScanCandidateLimit ?? "")}
+            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs."
             onChange={(e) => setDraft((d) => ({ ...(d ?? {}), marketScanCandidateLimit: Number(e.target.value) }))}
           />
         </Field>
@@ -487,6 +401,7 @@ function ScanShapeCard() {
           <NumInput
             id="scan-reserve"
             value={String(draft?.marketScanOutlierReserve ?? policy.marketScanOutlierReserve ?? "")}
+            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity)."
             onChange={(e) => setDraft((d) => ({ ...(d ?? {}), marketScanOutlierReserve: Number(e.target.value) }))}
           />
         </Field>
@@ -505,7 +420,10 @@ function BootBehaviorCard() {
 
   return (
     <Card title="After a restart">
-      <div className="flex items-center justify-between gap-4">
+      <div
+        className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+        title="Controls what happens to Running accounts when the server process restarts. Off keeps the safety net: a human must start trading again."
+      >
         <div>
           <div className="text-[length:var(--con-fs-sm)] font-semibold">Auto-resume on boot</div>
           <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
@@ -545,10 +463,20 @@ function YouCard() {
   return (
     <Card title="You">
       <div className="flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
-        <span className="font-semibold">{user.name ?? user.email ?? user.userId}</span>
+        <span className="font-semibold" title="The signed-in user every ALL YOUR ACCOUNTS setting belongs to.">
+          {user.name ?? user.email ?? user.userId}
+        </span>
         {user.email && user.name && <span className="text-[color:var(--con-faint)]">{user.email}</span>}
-        {user.isAdmin && <Chip tone="accent">admin</Chip>}
-        {user.loginProvider && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">via {user.loginProvider}</span>}
+        {user.isAdmin && (
+          <Chip tone="accent" title="This login has operator/admin rights on the server.">
+            admin
+          </Chip>
+        )}
+        {user.loginProvider && (
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Which identity provider authenticated this session.">
+            via {user.loginProvider}
+          </span>
+        )}
       </div>
     </Card>
   );
