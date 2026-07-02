@@ -5,62 +5,110 @@
  *  figures render as "—" with a reason, not an estimate. Tax figures are
  *  estimates only, clearly labeled. */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
 import { EquityChart } from "../components/equity-chart";
+import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+import { Btn, Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
 
 export default function ResultsPage() {
   const { snapshot } = useConsoleData();
-  if (!snapshot) return null;
+  const [compare, setCompare] = useState(false);
+  const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  if (!snapshot || !reality) return null;
 
   const perf = snapshot.performance;
   const tax = snapshot.tax;
 
+  // The selected account lives in exactly ONE money-reality, so only its bucket
+  // shows by default. The other bucket is one explicit toggle away — never
+  // silently mixed onto the page as if it belonged to this account.
+  const liveSelected = reality.tone === "live";
+  const practiceBucket = (
+    <BucketCard
+      title="Practice money (Test + Paper)"
+      tone="paper"
+      realized={perf?.paperRealizedPnl}
+      unrealized={perf?.paperUnrealizedPnl}
+      winRate={perf?.paperWinRate}
+      avgReturn={perf?.paperAverageReturnPct}
+      curve={perf?.paperEquityCurve ?? []}
+    />
+  );
+  const liveBucket = (
+    <BucketCard
+      title="Real money (Live)"
+      tone="live"
+      realized={perf?.liveRealizedPnl}
+      unrealized={perf?.liveUnrealizedPnl}
+      winRate={perf?.liveWinRate}
+      avgReturn={perf?.liveAverageReturnPct}
+      curve={perf?.liveEquityCurve ?? []}
+    />
+  );
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
-      <h1 className="text-[length:var(--con-fs-lg)] font-bold">Results</h1>
-
-      {/* Buckets */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <BucketCard
-          title="Practice money (Test + Paper)"
-          tone="paper"
-          realized={perf?.paperRealizedPnl}
-          unrealized={perf?.paperUnrealizedPnl}
-          winRate={perf?.paperWinRate}
-          avgReturn={perf?.paperAverageReturnPct}
-          curve={perf?.paperEquityCurve ?? []}
-        />
-        <BucketCard
-          title="Real money (Live)"
-          tone="live"
-          realized={perf?.liveRealizedPnl}
-          unrealized={perf?.liveUnrealizedPnl}
-          winRate={perf?.liveWinRate}
-          avgReturn={perf?.liveAverageReturnPct}
-          curve={perf?.liveEquityCurve ?? []}
-        />
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-[length:var(--con-fs-lg)] font-bold">Results</h1>
+        <Chip tone={reality.tone}>
+          {reality.word} · {reality.phrase}
+        </Chip>
+        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          for {reality.account?.label ?? "the local simulator"}
+        </span>
+        <div className="flex-1" />
+        <Btn size="sm" variant="ghost" onClick={() => setCompare((v) => !v)}>
+          {compare
+            ? "Hide comparison"
+            : liveSelected
+              ? "Compare with practice money"
+              : "Compare with real money"}
+        </Btn>
       </div>
+
+      {/* Buckets: selected reality first; the other only on explicit compare. */}
+      <div className={compare ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
+        {liveSelected ? liveBucket : practiceBucket}
+        {compare && (liveSelected ? practiceBucket : liveBucket)}
+      </div>
+      {compare && (
+        <p className="-mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Comparison only — the two buckets are different money-realities and never share an axis or a total.
+        </p>
+      )}
 
       {/* Benchmark */}
       <Card title="Versus the market (SPY buy-and-hold)">
         {perf?.benchmark ? (
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Stat label="Your account" value={fmtPct(perf.benchmark.accountReturnPct, 2, true)} sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`} />
-            <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" />
-            <div>
-              <div className="con-card-title">Excess return</div>
-              <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
-                <SignedText value={perf.benchmark.excessReturnPct}>{fmtPct(perf.benchmark.excessReturnPct, 2, true)}</SignedText>
-              </div>
-              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                positive = beating the market
+          <>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Stat
+                label="Your account"
+                value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
+                sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
+              />
+              <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" />
+              <div>
+                <div className="con-card-title">Excess return</div>
+                <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
+                  <SignedText value={perf.benchmark.excessReturnPct}>{fmtPct(perf.benchmark.excessReturnPct, 2, true)}</SignedText>
+                </div>
+                <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                  positive = beating the market
+                </div>
               </div>
             </div>
-          </div>
+            <p className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              {perf.benchmark.cashFlowAdjusted
+                ? `Time-weighted return — adjusted for ${fmtMoney(Math.abs(perf.benchmark.netExternalFlows ?? 0))} of detected ${
+                    (perf.benchmark.netExternalFlows ?? 0) < 0 ? "withdrawals" : "deposits"
+                  } so transfers don't read as gains or losses. Flows are inferred from account snapshots, not a broker transfer ledger.`
+                : "Raw equity growth over the window — no deposits or withdrawals were detected. If money moved in or out without being captured in snapshots, this includes those transfers and is not a pure return figure."}
+            </p>
+          </>
         ) : (
           <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">
             Not computable yet — the comparison needs enough overlapping history between your equity snapshots and SPY.
@@ -154,6 +202,12 @@ function BucketCard({
       </div>
       <div className="mt-3 border-t border-[color:var(--con-line)] pt-3">
         <EquityChart points={curve} label={tone === "live" ? "real-money" : "practice-money"} />
+        {curve.length >= 2 && (
+          <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            Raw account equity — includes any deposits/withdrawals, so a transfer moves this line without being a
+            gain or loss. The market comparison below adjusts for detected transfers.
+          </p>
+        )}
       </div>
     </Card>
   );

@@ -32,6 +32,7 @@ import {
   PANIC_BRAKE,
   SHORTS,
   STOPS_PLUMBING,
+  TAX_RULES,
   UNIVERSE_FLOOR
 } from "./field-defs";
 
@@ -133,6 +134,15 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Proposal hygiene & pace">
             {HYGIENE.map((def) => (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            ))}
+          </AdvancedGroup>
+          <AdvancedGroup title="Tax rules">
+            <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. This rule
+              tunes how strict the rebuy lockout is for this account.
+            </p>
+            {TAX_RULES.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
@@ -285,7 +295,7 @@ function AutonomyCard() {
             {busy ? "Switching…" : "Switch to Ask-first"}
           </Btn>
         ) : (
-          <Btn variant="dangerOutline" size="sm" onClick={() => setArming((v) => !v)}>
+          <Btn variant="outline" size="sm" onClick={() => setArming((v) => !v)}>
             Turn on Autopilot…
           </Btn>
         )}
@@ -296,6 +306,7 @@ function AutonomyCard() {
           value={typed}
           onChange={setTyped}
           busy={busy}
+          variant="primary"
           confirmLabel="Enable Autopilot"
           note={
             reality.tone === "live"

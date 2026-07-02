@@ -142,6 +142,14 @@ export interface TaxSettings {
   taxationType?: TaxationType;
   /** Block the agent from rebuying a symbol it closed at a loss within 30 days (IRC §1091). */
   washSaleGuard: boolean;
+  /**
+   * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
+   * Losses smaller than this are ignored when building the 30-day locked-symbol set, so a
+   * trivial loss doesn't freeze a symbol for a month. Default undefined = every loss locks
+   * (current behavior). This changes only THIS APP's guardrail — the IRS still applies
+   * §1091 to any size of loss; the disallowed-loss REPORTING here is unaffected.
+   */
+  washSaleMinLossUsd?: number;
   /** Marginal rate applied to short-term realized gains (ordinary income), e.g. 24. */
   shortTermRatePct: number;
   /** Marginal rate applied to long-term realized gains, e.g. 15. */
@@ -1274,6 +1282,10 @@ export interface EquityCurvePoint {
   timestamp: string;
   equity: number;
   source: FillSource;
+  /** Cash balance at the snapshot (when the underlying portfolio snapshot recorded one).
+   *  Used to infer external deposits/withdrawals for time-weighted return math; absent on
+   *  synthetic curves so consumers must degrade honestly rather than assume zero flows. */
+  cash?: number;
 }
 
 export interface RunAttribution {
@@ -1312,6 +1324,14 @@ export interface BenchmarkComparison {
   endDate: string;
   points: number;
   benchmarkSymbol: string;
+  /** True when the account line is a time-weighted return chained over inferred external
+   *  deposits/withdrawals (at least one material flow was detected and neutralized).
+   *  False/absent = plain equity growth, which counts any transfers as if they were returns. */
+  cashFlowAdjusted?: boolean;
+  /** Net inferred external flow over the window in dollars (deposits positive, withdrawals
+   *  negative). Present only when cashFlowAdjusted is true. Inferred from snapshot cash deltas
+   *  minus recorded trade cash — an estimate, not a broker transfer ledger. */
+  netExternalFlows?: number;
 }
 
 export interface PerformanceSummary {

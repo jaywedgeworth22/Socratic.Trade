@@ -14,6 +14,7 @@ import { deriveReality } from "../lib/derive";
 import { cx } from "../lib/format";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
+import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { ToastProvider } from "../ui/toast";
 import { FreshnessStrip, RealityBanner, RunOnceButton, ScopeSelector, StateChip, StopButton } from "./chrome";
 import { DesktopRail, MobileTabBar } from "./nav";
@@ -21,7 +22,11 @@ import { DesktopRail, MobileTabBar } from "./nav";
 export function ConsoleShell({ children }: { children: ReactNode }) {
   return (
     <ConsoleDataProvider>
-      <ShellFrame>{children}</ShellFrame>
+      {/* DirtyGuardProvider wraps the nav AND the pages so unsaved drafts can
+          intercept both tab-close (beforeunload) and in-console navigation. */}
+      <DirtyGuardProvider>
+        <ShellFrame>{children}</ShellFrame>
+      </DirtyGuardProvider>
     </ConsoleDataProvider>
   );
 }

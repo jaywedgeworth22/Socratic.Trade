@@ -283,11 +283,14 @@ export function getPerformanceSummary(
     liveEquityCurve: liveSnapshots.map((snapshot) => ({
       timestamp: snapshot.createdAt,
       equity: snapshot.equity,
-      source: "live"
+      source: "live",
+      // Cash rides along so the SPY benchmark can infer external deposits/withdrawals
+      // (time-weighted return) instead of counting a transfer as a gain/loss.
+      cash: snapshot.cash
     })),
     paperEquityCurve:
       paperSnapshots.length > 0
-        ? paperSnapshots.map((snapshot) => ({ timestamp: snapshot.createdAt, equity: snapshot.equity, source: "paper" }))
+        ? paperSnapshots.map((snapshot) => ({ timestamp: snapshot.createdAt, equity: snapshot.equity, source: "paper", cash: snapshot.cash }))
         : syntheticPaperCurve(paperFills),
     liveRealizedPnl: livePnl.realized,
     paperRealizedPnl: paperPnl.realized,

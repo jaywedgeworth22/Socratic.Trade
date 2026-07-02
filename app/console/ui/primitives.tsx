@@ -85,6 +85,14 @@ export function Chip({ tone = "muted", className, title, children }: { tone?: Ch
   );
 }
 
+/** Small "LIVE" word tag for approve/commit primary actions on real-money
+ *  accounts. The console reserves the full danger (red) treatment for the
+ *  reality banner/frame, STOP, and destructive confirms — a primary action on
+ *  LIVE carries this word chip instead of turning the whole button red. */
+export function LiveTag() {
+  return <span className="con-live-tag">LIVE</span>;
+}
+
 // ── Status dot ───────────────────────────────────────────────────────────────
 
 const DOT_COLOR: Record<string, string> = {

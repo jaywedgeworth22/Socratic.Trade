@@ -7,8 +7,9 @@
 
 import { useMemo, useState } from "react";
 import type { FillEvent, NotificationEvent, RecentProposal, StrategyRunRow } from "@/lib/types";
+import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-feed";
 import type { UnifiedActivityGroup } from "../../dashboard-types";
-import { realityForMode } from "../lib/derive";
+import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Card, Chip, Empty, SignedText, type ChipTone } from "../ui/primitives";
@@ -120,58 +121,154 @@ function DayGroups<T>({
   );
 }
 
-function UnifiedFeed({ groups }: { groups: UnifiedActivityGroup[] }) {
-  const sorted = useMemo(
-    () => [...groups].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 60),
-    [groups]
-  );
+function auditKind(e: UnifiedActivitySubEvent): string | undefined {
+  if (e.type !== "audit" || !e.raw || typeof e.raw !== "object") return undefined;
+  const kind = (e.raw as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : undefined;
+}
+
+/** Pure-ops group: every sub-event is a background/housekeeping audit event
+ *  (web-source refreshes, daily share batches). Collapsed into "System". */
+function isOpsGroup(g: UnifiedActivityGroup): boolean {
+  return g.events.length > 0 && g.events.every((e) => OPS_AUDIT_KINDS.has(auditKind(e) ?? ""));
+}
+
+/** Raw payloads never render inline — they live behind an explicit toggle. */
+function RawToggle({ text }: { text: string | undefined }) {
+  if (!text || !text.trim().startsWith("{")) return null;
   return (
-    <DayGroups
-      items={sorted}
-      timestamp={(g) => g.updatedAt}
-      emptyText="Nothing has happened yet. Run the strategy once and its story starts here."
-      renderItem={(g) => (
-        <details key={g.id} className="con-card con-disclosure px-4">
-          <summary>
+    <details className="mt-1">
+      <summary className="cursor-pointer text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">raw data</summary>
+      <pre className="con-mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[color:var(--con-surface-2)] p-2 text-[10px] leading-relaxed text-[color:var(--con-muted)]">
+        {text}
+      </pre>
+    </details>
+  );
+}
+
+function UnifiedFeed({ groups }: { groups: UnifiedActivityGroup[] }) {
+  const { snapshot } = useConsoleData();
+  const activeAccountId = snapshot ? activeConnectedAccount(snapshot)?.id : undefined;
+  const multiAccount = (snapshot?.connectedAccounts.length ?? 0) > 1;
+
+  const { visible, system, hiddenOtherAccount } = useMemo(() => {
+    const sorted = [...groups].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // Account scoping (#10): a group tagged with a DIFFERENT account never renders in
+    // this account's feed. Untagged groups stay visible (fills/orders are already
+    // account-scoped server-side; legacy audit/notification rows are labeled unknown).
+    const inScope = sorted.filter((g) => !g.connectedAccountId || g.connectedAccountId === activeAccountId);
+    const hiddenOtherAccount = sorted.length - inScope.length;
+    return {
+      visible: inScope.filter((g) => !isOpsGroup(g)).slice(0, 60),
+      system: inScope.filter(isOpsGroup).slice(0, 40),
+      hiddenOtherAccount
+    };
+  }, [groups, activeAccountId]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {hiddenOtherAccount > 0 && (
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          {hiddenOtherAccount} event{hiddenOtherAccount === 1 ? "" : "s"} from your other accounts{" "}
+          {hiddenOtherAccount === 1 ? "is" : "are"} not shown — switch the account scope to see them.
+        </p>
+      )}
+      <DayGroups
+        items={visible}
+        timestamp={(g) => g.updatedAt}
+        emptyText="Nothing has happened yet. Run the strategy once and its story starts here."
+        renderItem={(g) => <FeedGroupCard key={g.id} g={g} multiAccount={multiAccount} />}
+      />
+      {system.length > 0 && <SystemBucket groups={system} />}
+    </div>
+  );
+}
+
+function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAccount: boolean }) {
+  // De-duplication (#8): the summary line already shows title + detail, so the body
+  // must not repeat them — no fullText echo, and no sub-row that just restates the card.
+  const subEvents = g.events.filter((e) => !(e.title === g.title && e.detail === g.detail));
+  const bodyText = g.fullText && g.fullText !== g.detail && !g.fullText.trim().startsWith("{") ? g.fullText : null;
+  return (
+    <details className="con-card con-disclosure px-4">
+      <summary>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-semibold text-[color:var(--con-fg)]">{g.title}</span>
+          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            {g.detail}
+          </span>
+        </span>
+        {g.status && <Chip tone={statusTone(g.status)}>{g.status}</Chip>}
+        <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+          <Ago iso={g.updatedAt} />
+        </span>
+      </summary>
+      <div className="border-t border-[color:var(--con-line)] py-2">
+        {bodyText && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{bodyText}</p>}
+        {subEvents.length > 0 && (
+          <ul className="flex flex-col gap-1.5">
+            {subEvents.map((e) => (
+              <li key={e.id} className="flex items-start gap-2 text-[length:var(--con-fs-xs)]">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--con-faint)]" />
+                <span className="min-w-0 flex-1">
+                  <span className="font-semibold">{e.title}</span>{" "}
+                  <span className="text-[color:var(--con-muted)]">{e.detail}</span>
+                  {e.error && <span className="text-[color:var(--con-neg)]"> — {e.error}</span>}
+                  {e.fullText && e.fullText !== e.detail && <RawToggle text={e.fullText} />}
+                </span>
+                <span className="shrink-0 text-[color:var(--con-faint)]">
+                  <Ago iso={e.createdAt} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {subEvents.length === 0 && g.events.length === 0 && (
+          <p className="py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No sub-events recorded.</p>
+        )}
+        <RawToggle text={g.fullText !== g.detail ? g.fullText : undefined} />
+        {g.accountLabel ? (
+          <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Account: {g.accountLabel}</p>
+        ) : multiAccount && !g.events.some((e) => e.type === "fill" || e.type === "order") ? (
+          <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            Account: unknown — recorded without an account tag, so it may concern any of your accounts.
+          </p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+/** Collapsed "System" bucket (#9/#11): background data refreshes and housekeeping,
+ *  humanized one line each, raw JSON behind an explicit toggle. */
+function SystemBucket({ groups }: { groups: UnifiedActivityGroup[] }) {
+  return (
+    <details className="con-card con-disclosure px-4">
+      <summary>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold text-[color:var(--con-fg)]">System</span>
+          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            {groups.length} background event{groups.length === 1 ? "" : "s"} — data refreshes and housekeeping, no
+            account decisions
+          </span>
+        </span>
+      </summary>
+      <ul className="flex flex-col gap-1.5 border-t border-[color:var(--con-line)] py-2">
+        {groups.map((g) => (
+          <li key={g.id} className="flex items-start gap-2 text-[length:var(--con-fs-xs)]">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--con-faint)]" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-semibold text-[color:var(--con-fg)]">{g.title}</span>
-              <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-                {g.detail}
-              </span>
+              <span className="font-semibold">{g.title}</span>{" "}
+              <span className="text-[color:var(--con-muted)]">{g.detail}</span>
+              <RawToggle text={g.fullText !== g.detail ? g.fullText : undefined} />
             </span>
-            {g.status && <Chip tone={statusTone(g.status)}>{g.status}</Chip>}
-            <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            <span className="shrink-0 text-[color:var(--con-faint)]">
               <Ago iso={g.updatedAt} />
             </span>
-          </summary>
-          <div className="border-t border-[color:var(--con-line)] py-2">
-            {g.fullText && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{g.fullText}</p>}
-            {g.events.length === 0 ? (
-              <p className="py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">No sub-events recorded.</p>
-            ) : (
-              <ul className="flex flex-col gap-1.5">
-                {g.events.map((e) => (
-                  <li key={e.id} className="flex items-start gap-2 text-[length:var(--con-fs-xs)]">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--con-faint)]" />
-                    <span className="min-w-0 flex-1">
-                      <span className="font-semibold">{e.title}</span>{" "}
-                      <span className="text-[color:var(--con-muted)]">{e.detail}</span>
-                      {e.error && <span className="text-[color:var(--con-neg)]"> — {e.error}</span>}
-                    </span>
-                    <span className="shrink-0 text-[color:var(--con-faint)]">
-                      <Ago iso={e.createdAt} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {g.accountLabel && (
-              <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">Account: {g.accountLabel}</p>
-            )}
-          </div>
-        </details>
-      )}
-    />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -322,27 +419,46 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
 // ── Alerts / notifications ───────────────────────────────────────────────────
 
 function AlertsList({ notifications }: { notifications: NotificationEvent[] }) {
-  const sorted = useMemo(
-    () => [...notifications].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 100),
-    [notifications]
-  );
+  const { snapshot } = useConsoleData();
+  const activeAccountId = snapshot ? activeConnectedAccount(snapshot)?.id : undefined;
+  const multiAccount = (snapshot?.connectedAccounts.length ?? 0) > 1;
+  const { sorted, hiddenOtherAccount } = useMemo(() => {
+    const all = [...notifications].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    // Notifications are user-wide rows (#10): show this account's and untagged legacy
+    // ones (labeled), never another account's.
+    const inScope = all.filter((n) => !n.connectedAccountId || n.connectedAccountId === activeAccountId);
+    return { sorted: inScope.slice(0, 100), hiddenOtherAccount: all.length - inScope.length };
+  }, [notifications, activeAccountId]);
   return (
-    <DayGroups
-      items={sorted}
-      timestamp={(n) => n.createdAt}
-      emptyText="No notification events yet."
-      renderItem={(n) => (
-        <div key={n.id} className="con-card flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-[length:var(--con-fs-sm)]">
-          <Chip tone={n.type === "kill_switch" ? "neg" : n.type === "pending_approval" ? "accent" : "muted"}>{n.type}</Chip>
-          <span className="min-w-0 flex-1 truncate font-semibold">{n.title}</span>
-          <Chip tone={statusTone(n.status)} title={n.error ?? undefined}>
-            {n.status}
-          </Chip>
-          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-            <Ago iso={n.createdAt} />
-          </span>
-        </div>
+    <div className="flex flex-col gap-4">
+      {hiddenOtherAccount > 0 && (
+        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          {hiddenOtherAccount} alert{hiddenOtherAccount === 1 ? "" : "s"} from your other accounts{" "}
+          {hiddenOtherAccount === 1 ? "is" : "are"} not shown — switch the account scope to see them.
+        </p>
       )}
-    />
+      <DayGroups
+        items={sorted}
+        timestamp={(n) => n.createdAt}
+        emptyText="No notification events yet."
+        renderItem={(n) => (
+          <div key={n.id} className="con-card flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-[length:var(--con-fs-sm)]">
+            <Chip tone={n.type === "kill_switch" ? "neg" : n.type === "pending_approval" ? "accent" : "muted"}>{n.type}</Chip>
+            <span className="min-w-0 flex-1 truncate font-semibold">{n.title}</span>
+            {!n.connectedAccountId && multiAccount && (
+              <Chip tone="muted" title="Recorded without an account tag — it may concern any of your accounts.">
+                account unknown
+              </Chip>
+            )}
+            <Chip tone={statusTone(n.status)} title={n.error ?? undefined}>
+              {n.status}
+            </Chip>
+            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              <Ago iso={n.createdAt} />
+            </span>
+          </div>
+        )}
+      />
+    </div>
   );
 }

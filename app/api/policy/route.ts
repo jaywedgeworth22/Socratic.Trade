@@ -96,13 +96,27 @@ export async function PUT(request: Request) {
   // a field actually turns the guard off / reverts it to its default.
   stripNullsDeep(policy as unknown as Record<string, unknown>);
   normalizeExclusivePolicyCaps(policy);
-  const validationError = await validatePolicy(policy, userId);
+  // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually
+  // changes the model/effort combination. validatePolicy runs against the MERGED policy, so a
+  // stored gpt-5.5+high config used to fail EVERY unrelated save (notification prefs, short
+  // selling, ...) with a confusing model error. Stale stored configs are already safe at run
+  // time — interactiveStrategyReasoningEffort clamps them to medium — so unrelated writes may
+  // pass through; only a write that sets the disallowed combo is rejected.
+  const reasoningConfigChanged =
+    policy.llmModel !== current.llmModel ||
+    policy.redTeamLlmModel !== current.redTeamLlmModel ||
+    policy.llmReasoningEffort !== current.llmReasoningEffort;
+  const validationError = await validatePolicy(policy, userId, { enforceInteractiveReasoningRule: reasoningConfigChanged });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
   return NextResponse.json(policy);
 }
 
-async function validatePolicy(policy: TradingPolicy, userId: string): Promise<string | undefined> {
+async function validatePolicy(
+  policy: TradingPolicy,
+  userId: string,
+  options: { enforceInteractiveReasoningRule?: boolean } = {}
+): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
   // bad data cannot block unrelated policy updates. Newly added custom Additional Watchlist symbols are
   // quote-checked before save so the user gets an explicit reason when a ticker cannot be tracked.
@@ -113,8 +127,9 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
   if (
-    isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
-    isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, policy.llmReasoningEffort)
+    (options.enforceInteractiveReasoningRule ?? true) &&
+    (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
+      isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, policy.llmReasoningEffort))
   ) return "gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
@@ -177,9 +192,10 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
   if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
   if (policy.taxSettings) {
-    const { shortTermRatePct, longTermRatePct } = policy.taxSettings;
+    const { shortTermRatePct, longTermRatePct, washSaleMinLossUsd } = policy.taxSettings;
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";
     if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
+    if (washSaleMinLossUsd !== undefined && (!Number.isFinite(washSaleMinLossUsd) || washSaleMinLossUsd < 0)) return "taxSettings.washSaleMinLossUsd must be a non-negative dollar amount (blank = every loss locks).";
   }
   if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
     return "llmFallbackModels must be an array of model-id strings.";

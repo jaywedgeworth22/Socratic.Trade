@@ -17,8 +17,9 @@ import {
 } from "../lib/api";
 import { activeConnectedAccount, deriveReality, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
+import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Card, Chip, Field, LiveTag, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
 
 const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   fill: "an order filled",
@@ -85,17 +86,27 @@ function EventNotificationsCard() {
   const [draftEvents, setDraftEvents] = useState<NotificationEventType[] | null>(null);
   const [draftWebhook, setDraftWebhook] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const dirty =
+    draftEvents !== null ||
+    (draftWebhook !== null && draftWebhook !== (snapshot?.policy.notificationSettings.webhookUrl ?? ""));
+  useUnsavedChanges(dirty);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
   const events = draftEvents ?? current.enabledEvents;
   const webhook = draftWebhook ?? current.webhookUrl ?? "";
-  const dirty = draftEvents !== null || (draftWebhook !== null && draftWebhook !== (current.webhookUrl ?? ""));
 
   const save = async () => {
     setBusy(true);
     try {
-      await savePolicy({ notificationSettings: { enabledEvents: events, webhookUrl: webhook } });
+      // Minimal patch: only the fields the user actually touched. The server
+      // deep-merges notificationSettings, so untouched fields stay as they are.
+      await savePolicy({
+        notificationSettings: {
+          ...(draftEvents !== null ? { enabledEvents: events } : {}),
+          ...(draftWebhook !== null && draftWebhook !== (current.webhookUrl ?? "") ? { webhookUrl: webhook } : {})
+        }
+      });
       await refresh();
       setDraftEvents(null);
       setDraftWebhook(null);
@@ -172,6 +183,7 @@ function TaxSettingsCard() {
     subtractFromResults: boolean;
   }> | null>(null);
   const [busy, setBusy] = useState(false);
+  useUnsavedChanges(draft !== null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.taxSettings;
@@ -321,7 +333,7 @@ function ConnectionsCard() {
                   {!account.isActive && (
                     <Btn
                       size="sm"
-                      variant={r.tone === "live" ? "dangerOutline" : "outline"}
+                      variant="outline"
                       disabled={busyId !== null}
                       onClick={async () => {
                         setBusyId(account.id);
@@ -336,7 +348,13 @@ function ConnectionsCard() {
                         }
                       }}
                     >
-                      {busyId === account.id ? "Switching…" : "Make active"}
+                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
+                        <>
+                          Make active <LiveTag />
+                        </>
+                      ) : (
+                        "Make active"
+                      )}
                     </Btn>
                   )}
                 </div>
@@ -418,6 +436,7 @@ function ScanShapeCard() {
   const toast = useToast();
   const [draft, setDraft] = useState<{ marketScanCandidateLimit?: number; marketScanOutlierReserve?: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  useUnsavedChanges(draft !== null);
   if (!snapshot) return null;
 
   const policy = snapshot.policy;

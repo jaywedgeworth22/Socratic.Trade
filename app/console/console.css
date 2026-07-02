@@ -319,6 +319,31 @@
 .con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
 .con-chip-live { border-color: var(--con-live-border); color: var(--con-live); background: var(--con-live-soft); }
 
+/* Small LIVE word tag inside neutral primary actions (danger is reserved for
+   the reality banner/frame, STOP, and destructive confirms). On soft surfaces
+   it uses the live tint; inside filled buttons it inverts to the button's
+   contrast color so it stays WCAG-readable in both themes. */
+.con-live-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--con-live-border);
+  background: var(--con-live-soft);
+  color: var(--con-live);
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  line-height: 1.3;
+}
+.con-btn-primary .con-live-tag,
+.con-btn-pos .con-live-tag,
+.con-btn-danger .con-live-tag {
+  border-color: transparent;
+  background: var(--con-accent-contrast);
+  color: var(--con-live);
+}
+
 /* ── Reality banner ── */
 .con-reality {
   border-bottom: 1px solid var(--con-line);

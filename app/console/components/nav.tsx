@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Sheet } from "../ui/sheet";
 import { cx } from "../lib/format";
+import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 
 interface Destination {
   href: string;
@@ -41,12 +42,19 @@ function isActive(pathname: string, href: string): boolean {
 
 export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
+  const guardNav = useNavDirtyGuard();
   return (
     <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex" aria-label="Console navigation">
       {DESTINATIONS.map((d) => {
         const Icon = d.icon;
         return (
-          <Link key={d.href} href={d.href} className="con-nav-item" data-active={isActive(pathname, d.href)}>
+          <Link
+            key={d.href}
+            href={d.href}
+            className="con-nav-item"
+            data-active={isActive(pathname, d.href)}
+            onClick={(e) => guardNav(e)}
+          >
             <Icon size={16} />
             <span className="flex-1">{d.label}</span>
             {d.href === "/console/approvals" && pendingCount > 0 && <span className="con-badge">{pendingCount}</span>}
@@ -63,6 +71,7 @@ const MOBILE_MORE = DESTINATIONS.slice(3);
 export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const [moreOpen, setMoreOpen] = useState(false);
+  const guardNav = useNavDirtyGuard();
   const moreActive = MOBILE_MORE.some((d) => isActive(pathname, d.href));
 
   return (
@@ -76,7 +85,13 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
           {MOBILE_PRIMARY.map((d) => {
             const Icon = d.icon;
             return (
-              <Link key={d.href} href={d.href} className="con-tab-item" data-active={isActive(pathname, d.href)}>
+              <Link
+                key={d.href}
+                href={d.href}
+                className="con-tab-item"
+                data-active={isActive(pathname, d.href)}
+                onClick={(e) => guardNav(e)}
+              >
                 <span className="relative">
                   <Icon size={19} />
                   {d.href === "/console/approvals" && pendingCount > 0 && (
@@ -104,7 +119,9 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 href={d.href}
                 className="con-nav-item"
                 data-active={isActive(pathname, d.href)}
-                onClick={() => setMoreOpen(false)}
+                onClick={(e) => {
+                  if (guardNav(e)) setMoreOpen(false);
+                }}
               >
                 <Icon size={16} />
                 {d.label}

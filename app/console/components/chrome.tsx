@@ -8,7 +8,7 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, OctagonMinus, Play, ShieldCheck } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -29,7 +29,7 @@ import {
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
+import { Btn, Chip, Dot, LiveTag, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
 // ── Reality banner ───────────────────────────────────────────────────────────
@@ -144,8 +144,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                     {account.isActive && <Chip tone="accent">active</Chip>}
                   </div>
                   {!account.isActive && (
-                    <Btn size="sm" variant={r.tone === "live" ? "dangerOutline" : "outline"} disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
-                      {busyId === account.id ? "Switching…" : r.tone === "live" ? "Switch — real money" : "Switch"}
+                    <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
+                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
+                        <>
+                          Switch — real money <LiveTag />
+                        </>
+                      ) : (
+                        "Switch"
+                      )}
                     </Btn>
                   )}
                 </div>
@@ -331,8 +337,8 @@ function ControlSheet({
                 )}
                 {o.id === "start" &&
                   (startPhrase ? (
-                    <Btn variant="dangerOutline" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
-                      Start…
+                    <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
+                      Start… <LiveTag />
                     </Btn>
                   ) : (
                     <Btn variant="pos" size="sm" disabled={busy !== null} onClick={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}>
@@ -361,8 +367,12 @@ function ControlSheet({
                   value={armText}
                   onChange={setArmText}
                   busy={busy === "start"}
-                  confirmLabel="Start on real money"
-                  variant="danger"
+                  confirmLabel={
+                    <>
+                      Start on real money <LiveTag />
+                    </>
+                  }
+                  variant="primary"
                   note="This is a LIVE account. Starting is the risk-increasing direction, so it costs a typed phrase — stopping never does."
                   onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on — on real money.")}
                 />
@@ -389,13 +399,21 @@ export function TypedConfirm({
   onChange: (v: string) => void;
   onConfirm: () => void;
   busy?: boolean;
-  confirmLabel: string;
-  variant?: "danger" | "pos";
+  confirmLabel: ReactNode;
+  /** "danger" only for DESTRUCTIVE confirms (wind-down/sells). Commit/arm
+   *  rituals use "primary" — the typed word is the friction, not the color. */
+  variant?: "danger" | "pos" | "primary";
   note?: string;
 }) {
   const matches = value.trim().toUpperCase() === phrase;
+  // Only a destructive confirm gets the red frame; other typed rituals use the
+  // caution (warn) tint so red stays reserved for reality/STOP/destruction.
+  const frameClass =
+    variant === "danger"
+      ? "border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)]"
+      : "border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)]";
   return (
-    <div className="mt-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3">
+    <div className={cx("mt-3 rounded-lg border p-3", frameClass)}>
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
       <label className="con-label">
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>

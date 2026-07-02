@@ -319,6 +319,50 @@ function formatAuditEvent(
     };
   }
 
+  // ── Ops / housekeeping events: humanized one-liners (raw JSON only in fullText) ──
+
+  if (kind === "web_source_refresh") {
+    const id = stringValue(payload.id) ?? "web source";
+    const label = WEB_SOURCE_LABELS[id] ?? id;
+    const ok = payload.ok === true;
+    const recordCount = numberValue(payload.recordCount) ?? 0;
+    const fresh = numberValue(payload.fresh);
+    const warning = stringValue(payload.warning) ?? stringValue(payload.reason);
+    return {
+      title: "Web source refresh",
+      detail: ok
+        ? joinDetail([
+            `Refreshed ${recordCount} ${label} ${recordCount === 1 ? "entry" : "entries"}`,
+            fresh !== undefined ? `${fresh} new` : undefined,
+            warning
+          ]) ?? `Refreshed ${label}`
+        : joinDetail([`${capitalize(label)} refresh failed`, warning]) ?? `${capitalize(label)} refresh failed`,
+      fullText: serializeAuditPayload(payload)
+    };
+  }
+
+  if (kind === "congress_share_daily") {
+    const ok = payload.ok === true;
+    const reason = stringValue(payload.reason);
+    const tickers = numberValue(payload.tickers) ?? 0;
+    const priced = numberValue(payload.priced) ?? 0;
+    const posts = numberValue(payload.posts) ?? 0;
+    const failedPosts = numberValue(payload.failedPosts) ?? 0;
+    return {
+      title: "Congress daily share",
+      detail:
+        reason === "nothing-to-send"
+          ? "Nothing to send today"
+          : joinDetail([
+              `${priced} of ${tickers} tickers priced`,
+              `${posts} post${posts === 1 ? "" : "s"} sent`,
+              failedPosts > 0 ? `${failedPosts} failed` : undefined,
+              !ok && failedPosts === 0 ? "did not complete" : undefined
+            ]) ?? "Daily share batch recorded",
+      fullText: serializeAuditPayload(payload)
+    };
+  }
+
   const serializedPayload = serializeAuditPayload(payload);
   const detail = genericAuditDetail(payload) ?? serializedPayload ?? "Event recorded";
   return {
@@ -406,6 +450,36 @@ function humanizeNotificationType(type?: string): string {
 
 function humanizeKind(kind: string): string {
   return kind.replace(/_/g, " ");
+}
+
+/** Human names for the web-source connector ids used in `web_source_refresh` audits. */
+const WEB_SOURCE_LABELS: Record<string, string> = {
+  congress: "congressional-trade",
+  "congress-analytics": "congressional-analytics",
+  insider: "insider-filing (SEC Form 4)",
+  finra: "short-interest (FINRA)",
+  sec8k: "SEC 8-K filing",
+  technical: "technical-signal"
+};
+
+/** Pure-ops audit kinds: background data refreshes and housekeeping that are not
+ *  account decisions. The console collapses these into a "System" group. */
+export const OPS_AUDIT_KINDS = new Set(["web_source_refresh", "congress_share_daily", "notify.bridge.error"]);
+
+/** Audit kinds that belong to one strategy run and are consolidated into a single
+ *  `run-<runId>` group in the unified feed (plus any `run_skipped_*` kind). */
+const RUN_SCOPED_AUDIT_KINDS = new Set([
+  "strategy_run",
+  "rationale_diversity",
+  "candidates_considered",
+  "signal_snapshot",
+  "llm_step"
+]);
+
+function runGroupIdForAudit(kind: string, payload: Record<string, unknown>): string | undefined {
+  if (!RUN_SCOPED_AUDIT_KINDS.has(kind) && !kind.startsWith("run_skipped_")) return undefined;
+  const runId = stringValue(payload.runId);
+  return runId ? `run-${runId}` : undefined;
 }
 
 function trimNumber(value: number): string {
@@ -658,7 +732,10 @@ export function buildUnifiedFeed(input: {
       raw: { kind: event.kind }
     };
 
-    const groupId = proposalId ? `prop-${proposalId}` : `audit-${event.id}`;
+    // Run-scoped events (run completed / rationale diversity / candidates considered /
+    // signal snapshot / llm steps) consolidate into ONE `run-<runId>` group instead of
+    // one card each (#8). Everything else without a proposal stays its own group.
+    const groupId = proposalId ? `prop-${proposalId}` : runGroupIdForAudit(event.kind, payload) ?? `audit-${event.id}`;
     if (proposalId) {
       proposalIdByGroupId.set(groupId, proposalId);
     }
@@ -702,6 +779,9 @@ export function buildUnifiedFeed(input: {
     }
     if (symbol) symbolByGroupId.set(groupId, symbol);
     if (side) sideByGroupId.set(groupId, side);
+    // Notifications are USER-wide rows: carry their account attribution onto the group so
+    // another account's proposal/fill alerts can be filtered out of this account's feed (#10).
+    if (event.connectedAccountId) accountIdByGroupId.set(groupId, event.connectedAccountId);
 
     addSubEvent(groupId, subEvent);
   }
@@ -910,11 +990,28 @@ export function buildUnifiedFeed(input: {
       } else {
         detail = events[0]!.detail;
       }
+    } else if (groupId.startsWith("run-")) {
+      // Consolidated strategy-run card (#8): the strategy_run event is the primary
+      // (title + summary rendered ONCE); diversity/candidates/signal-snapshot rows
+      // stay visible as sub-rows. Falls back to the first event if the run summary
+      // audit aged out of the window.
+      const primary = events.find(
+        (ev) => ev.type === "audit" && stringValue(asRecord(ev.raw).kind) === "strategy_run"
+      );
+      const anchor = primary ?? events[0]!;
+      title = anchor.title;
+      detail = anchor.detail;
+      status = primary ? (primary.title.toLowerCase().includes("failed") ? "failed" : "completed") : events[0]!.status ?? "completed";
     } else {
       title = events[0]!.title;
       detail = events[0]!.detail;
       status = events[0]!.status ?? "completed";
     }
+    // Single-event groups surface the sub-event's fullText (e.g. an ops event's raw
+    // JSON payload) so the client can offer a raw-data toggle; grouped cards keep the
+    // summary as fullText.
+    const groupFullText = proposalId || groupId.startsWith("run-") ? detail : events[0]!.fullText ?? detail;
+
     const tagsList = Array.from(tagsSet);
     const isPolicyUpdate = tagsList.includes("policy change") || title.includes("Policy updated") || title.includes("Profile");
 
@@ -947,7 +1044,7 @@ export function buildUnifiedFeed(input: {
       companyName,
       title,
       detail,
-      fullText: detail,
+      fullText: groupFullText,
       status,
       tags: tagsList,
       events,
