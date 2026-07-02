@@ -16,8 +16,7 @@ import {
   deriveReality,
   deriveSpend,
   deriveStateInfo,
-  realityForAccount,
-  type RealityInfo
+  realityForAccount
 } from "../lib/derive";
 import {
   activateAccount,
