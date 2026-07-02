@@ -19,6 +19,14 @@ filling the missing pieces.
 > make the drilldown match the row instead of the snapshot's last run).
 > No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
 > See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
+> 2026-07-02 (`claude/console-learned-context`, Claude): **Learned-context approval
+> inbox ported to /console** — the legacy "Pending Learned Changes" queue now lives on
+> `/console/approvals` as a Learned context section (own data source; approve/reject
+> with optimistic UI, confirm sheet showing the exact AI-LEARNED block with the honest
+> approval-date stamp, full provenance + tooltips + row hover per the owner's new UX
+> standard). Console feature-parity track only — no roadmap scope change. Follow-ups:
+> sharing prefs in Settings, nav/needs-attention count. See
+> `docs/rollouts/2026-07-02-console-learned-context.md`.
 > 2026-07-02 (`claude/console-parity-tail`, Claude): **Console parity tail** — the
 > closing lane of the parallel legacy→console port: Run-once blocked-reason routing
 > (why + one-click route to the fix), chrome sign-out with signed-in identity,
