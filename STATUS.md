@@ -4,6 +4,29 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
+Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
+`/console/orders` page (nav linked it since Wave 1): open working orders for the
+active account from `snapshot.orders` (symbol drilldown + logo, side, type, size
+with partial-fill breakdown, last-scan price, age, broker-state chip, reality +
+account chips), stale-limit detection mirroring the server's `listStaleLimitOrders`
+rule exactly (limit/stop-limit, working, unfilled remainder, older than
+`policy.staleLimitOrderMinutes`, default 15m — same rule that gates the replace
+endpoint, so the UI only offers what the server accepts), a replace-at-market
+confirm sheet (cancel → re-check → market order for the remainder; LIVE runs the
+server's typed `REPLACE LIVE <SYM>` ritual with 409 reasons/expectedText rendered
+verbatim), a cancel flow over the pre-existing `POST /api/orders/cancel` (legacy
+had no cancel UI), and a latest-20 finished-orders history table. All new files
+live under `app/console/orders/**` only (own lane; shared console files and
+src/lib untouched — the fetch helpers are self-contained in
+`app/console/orders/api.ts` by design). **Finding:** `EquityOrder` carries no
+limit price / TIF (both broker mappings drop them), so the limit-vs-market gap
+column can't be shown honestly yet — follow-up for the src/lib owner. Quartet
+green: tsc clean, lint 0 errors (284 grandfathered warnings), 2241 tests / 234
+files pass, build ok; runtime smoke: /console/orders 200, replace-market 409
+system_stopped while halted. Docs: `docs/rollouts/2026-07-02-console-orders.md`.
+**Next:** land via PR; src/lib follow-up to surface limitPrice/timeInForce.
+
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
 console port, settings lane. Five sections added to `/console/settings`, all under
