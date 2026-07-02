@@ -886,6 +886,9 @@ function projectedSectorExposurePct(
   return { sector, projectedPct, cap };
 }
 
+// Add-to-position risk rules (stop-loss / take-profit) apply only to OPENING sides:
+// buy (add to a long) and short (add to a short). Exit sides (sell/cover) intentionally
+// fall through to `return undefined` — they carry no add-to-position risk to gate here.
 function riskRuleReason(proposal: TradeProposal, context: PolicyContext): string | undefined {
   const position = context.positions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(proposal.symbol));
   if (!position || position.averageCost <= 0) return undefined;
