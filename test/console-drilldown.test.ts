@@ -8,6 +8,7 @@ import {
   normalizedDebtToEquity,
   peDisplay,
   positionEconomics,
+  preferFreshQuote,
   ratingDistribution,
   targetUpsidePct,
   toQuoteView,
@@ -102,6 +103,36 @@ describe("console drilldown: toQuoteView", () => {
   it("drops non-positive prices instead of rendering them", () => {
     const view = toQuoteView(undefined, { ...summaryQuote, price: 0 });
     expect(view?.price).toBeUndefined();
+  });
+});
+
+describe("console drilldown: preferFreshQuote (caller-supplied quote override)", () => {
+  const at = (iso: string): MarketQuote => ({ ...fullQuote, asOf: iso });
+
+  it("uses whichever side exists when the other is absent", () => {
+    expect(preferFreshQuote(undefined, fullQuote)).toBe(fullQuote);
+    const override = at("2026-07-02T10:00:00Z");
+    expect(preferFreshQuote(override, undefined)).toBe(override);
+    expect(preferFreshQuote(undefined, undefined)).toBeUndefined();
+  });
+
+  it("prefers the caller's on-screen quote so the drilldown can't disagree with the row", () => {
+    const override = at("2026-07-02T10:00:00Z");
+    const older = at("2026-07-02T09:00:00Z");
+    expect(preferFreshQuote(override, older)).toBe(override);
+  });
+
+  it("still yields to a verifiably NEWER run-captured quote", () => {
+    const override = at("2026-07-02T09:00:00Z");
+    const newer = at("2026-07-02T10:00:00Z");
+    expect(preferFreshQuote(override, newer)).toBe(newer);
+  });
+
+  it("keeps the override when timestamps are missing or unparseable", () => {
+    const override = { ...fullQuote, asOf: undefined };
+    const runQuote = at("2026-07-02T10:00:00Z");
+    expect(preferFreshQuote(override, runQuote)).toBe(override);
+    expect(preferFreshQuote(at("not-a-date"), runQuote)).toEqual(at("not-a-date"));
   });
 });
 

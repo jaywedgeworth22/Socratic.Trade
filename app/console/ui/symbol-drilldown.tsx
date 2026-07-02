@@ -17,7 +17,7 @@ import { cx, fmtMoney, fmtPct, EM_DASH } from "../lib/format";
 import { Chip } from "./primitives";
 import { Sheet } from "./sheet";
 import { TickerLogo } from "./ticker-logo";
-import { deriveForView, toQuoteView, withProvenance } from "./drilldown-data";
+import { deriveForView, preferFreshQuote, toQuoteView, withProvenance } from "./drilldown-data";
 import {
   AnalystSection,
   DerivedTilesSection,
@@ -190,18 +190,26 @@ function PriceHistoryChart({ bars }: { bars: HistoryBar[] }) {
 export function SymbolDrilldownSheet({
   symbol,
   open,
-  onClose
+  onClose,
+  quote
 }: {
   symbol: string;
   open: boolean;
   onClose: () => void;
+  /** Optional: the quote object the opening screen is currently rendering
+   *  (e.g. a freshly fetched /api/scan row). When provided — and not older
+   *  than the snapshot's run-captured quote — the sheet renders from it, so
+   *  the drilldown can never disagree with the row the user clicked. */
+  quote?: MarketQuote;
 }) {
   const { snapshot } = useConsoleData();
   const normalized = symbol.trim().toUpperCase();
   const history = useHistory(normalized, open);
 
   const scan = snapshot?.latestStrategyRun?.marketScan;
-  const fullQuote = resolveFullQuote(scan?.topCandidates, normalized);
+  const override = quote && quote.symbol?.trim().toUpperCase() === normalized ? quote : undefined;
+  const fullQuote = preferFreshQuote(override, resolveFullQuote(scan?.topCandidates, normalized));
+  const usingOverride = override !== undefined && fullQuote === override;
   const summaryQuote = resolveQuote(scan?.quotesBySymbol, normalized);
   const view = useMemo(() => toQuoteView(fullQuote, summaryQuote ?? undefined), [fullQuote, summaryQuote]);
 
@@ -264,7 +272,15 @@ export function SymbolDrilldownSheet({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span
             className="con-num text-[length:var(--con-fs-xl)] font-semibold leading-tight cursor-default"
-            title={view ? withProvenance("Latest price known to the last market scan.", view, "price") : "Latest daily close from the price history."}
+            title={
+              view
+                ? withProvenance(
+                    usingOverride ? "Latest price from the scan currently on screen." : "Latest price known to the last market scan.",
+                    view,
+                    "price"
+                  )
+                : "Latest daily close from the price history."
+            }
           >
             {fmtMoney(price)}
           </span>
@@ -351,9 +367,10 @@ export function SymbolDrilldownSheet({
         {view?.asOf && (
           <p
             className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-            title="When the last market scan captured this symbol's quote data. The chart above refreshes independently from free daily history."
+            title="When this symbol's quote data was captured. The chart above refreshes independently from free daily history."
           >
-            Quote data from the last market scan ({new Date(view.asOf).toLocaleString()}).
+            Quote data from {usingOverride ? "the scan currently on screen" : "the last market scan"} (
+            {new Date(view.asOf).toLocaleString()}).
           </p>
         )}
       </div>
@@ -371,6 +388,7 @@ export function SymbolButton({
   title,
   showLogo = true,
   logoSize = "sm",
+  quote,
   children
 }: {
   symbol: string;
@@ -378,6 +396,10 @@ export function SymbolButton({
   title?: string;
   showLogo?: boolean;
   logoSize?: "sm" | "md" | "lg";
+  /** Optional: the quote object this button's row is currently rendering
+   *  (e.g. a freshly fetched /api/scan result). Passed through to the sheet
+   *  so the drilldown matches the row instead of the snapshot's last run. */
+  quote?: MarketQuote;
   /** Optional custom label; defaults to the symbol text. */
   children?: ReactNode;
 }) {
@@ -401,7 +423,7 @@ export function SymbolButton({
         {showLogo && <TickerLogo symbol={normalized} size={logoSize} />}
         <span>{children ?? normalized}</span>
       </button>
-      {open && <SymbolDrilldownSheet symbol={normalized} open={open} onClose={() => setOpen(false)} />}
+      {open && <SymbolDrilldownSheet symbol={normalized} open={open} onClose={() => setOpen(false)} quote={quote} />}
     </>
   );
 }

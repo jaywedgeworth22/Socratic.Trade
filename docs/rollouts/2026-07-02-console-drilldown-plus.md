@@ -57,6 +57,18 @@ the legacy `app/ui/symbol-drilldown.tsx` drawer the owner singled out:
   no-ratio state) vs an em dash for missing data (repo convention); nothing is
   ever labeled mock/fallback; a symbol absent from the last scan still opens a
   useful drawer (chart + exposure) with an explicit notice.
+- **Optional `quote?: MarketQuote` override prop** on BOTH `SymbolButton` and
+  `SymbolDrilldownSheet` (coordination request from the Scan lane / Codex
+  finding on #327): a caller rendering a FRESHLY-fetched /api/scan result can
+  pass the exact quote object its row shows, and the sheet renders from it
+  instead of the snapshot's run-captured scan — so the drilldown can never
+  disagree with the row the user clicked. Chooser is `preferFreshQuote`
+  (drilldown-data.ts): the override wins unless the run-captured quote's
+  `asOf` is verifiably newer; the price tooltip and the footer say which scan
+  the data came from ("the scan currently on screen" vs "the last market
+  scan"). Fully backward compatible — optional prop, no renames; existing
+  consumers (positions, approvals, orders) are unchanged. The scan lane can
+  adopt it as a follow-up with `<SymbolButton symbol={q.symbol} quote={q} />`.
 
 ## Why
 
@@ -81,10 +93,11 @@ legacy drawer never had, in console tokens, light+dark, tooltips everywhere.
 - `app/console/console.css` — additive classes only: `.con-tile`,
   `.con-score-bar`, `.con-dist-bar`, `.con-range-bar`, `.con-range-fill`,
   `.con-range-marker` (no existing class restyled).
-- `test/console-drilldown.test.ts` — NEW 23 tests over the pure helpers
-  (quote-view merging, P/E n/a-vs-dash honesty, deriveMetrics parity, volume
-  fallback labeling, legacy signal-threshold parity, chips, position econ incl.
-  shorts, analyst helpers, provenance, D/E normalization, factor order).
+- `test/console-drilldown.test.ts` — NEW 27 tests over the pure helpers
+  (quote-view merging, quote-override preference, P/E n/a-vs-dash honesty,
+  deriveMetrics parity, volume fallback labeling, legacy signal-threshold
+  parity, chips, position econ incl. shorts, analyst helpers, provenance,
+  D/E normalization, factor order).
 - `STATUS.md`, `PLAN.md`, this note.
 
 ## Verification
@@ -92,16 +105,21 @@ legacy drawer never had, in console tokens, light+dark, tooltips everywhere.
 Run in this order, all green:
 
 ```bash
-npm run lint       # 0 errors (285 grandfathered warnings; 2 warnings in touched files are the pre-existing set-state-in-effect pattern from the foundation useHistory)
+npm run lint       # 0 errors (grandfathered warnings only; 2 warnings in touched files are the pre-existing set-state-in-effect pattern from the foundation useHistory)
 npx tsc --noEmit   # clean
-npm test           # 235 files / 2264 tests pass (includes the 23 new drilldown tests)
+npm test           # 235 files / 2268 tests pass (includes the 27 new drilldown tests)
 npm run build      # clean; /console routes prerender
 ```
 
-Note: the first `npm test` run hit `ENOSPC` (the VM's /tmp held ~14 GB of
-stale per-run test SQLite files from parallel agents). An attempted cleanup of
-stale temp DBs was denied by the sandbox policy; space was released externally
-shortly after and the full suite then passed cleanly.
+The full quartet was run twice: once before merging `origin/main` (93aed63,
+the settings-expansions PR — clean merge, no overlapping files) and once after
+the merge + the `quote` override addition.
+
+Note: one `npm test` run hit `ENOSPC` (the VM's /tmp held ~14 GB of stale
+per-run test SQLite files from parallel agents). An attempted cleanup of stale
+temp DBs was denied by the sandbox policy; space was released externally and
+the suite then passed cleanly. The final run pointed TMPDIR at a
+worktree-local dir (reclaimed afterwards) to avoid re-filling the shared /tmp.
 
 ## Follow-ups
 

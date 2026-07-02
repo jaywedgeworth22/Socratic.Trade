@@ -22,8 +22,13 @@ congress/earnings-proximity with warn ≤7 trading days), collapsible deep funda
 (17 fields incl. D/E normalized like the legacy scan table), two-tier quote resolution
 (full topCandidates quote → summary tier; $-volume falls back to the latest daily bar's
 real volume, labeled). Honesty rules kept: P/E `n/a` only when eps ≤ 0, em dash for
-missing, not-in-scan symbols still get chart + exposure + an explicit notice. New files:
-`app/console/ui/drilldown-data.ts` (pure, 23 new tests in
+missing, not-in-scan symbols still get chart + exposure + an explicit notice. Per a Scan-
+lane coordination request (Codex finding on #327): BOTH exports now take an optional
+`quote?: MarketQuote` override — a screen rendering a freshly fetched /api/scan row can
+pass its exact quote object and the sheet renders from it (unless the run-captured quote
+is verifiably newer via `asOf`), so drilldown and row can't disagree; footer/price
+tooltip say which scan the data came from. New files:
+`app/console/ui/drilldown-data.ts` (pure, 27 new tests in
 `test/console-drilldown.test.ts`), `app/console/ui/drilldown-sections.tsx`; console.css
 gained additive-only classes (`.con-tile`, `.con-score-bar`, `.con-dist-bar`,
 `.con-range-*`). Quartet green: lint 0 errors, tsc clean, 2264 tests / 235 files, build

@@ -80,6 +80,24 @@ const posNum = (v: unknown): number | undefined => {
   return n !== undefined && n > 0 ? n : undefined;
 };
 
+/** Choose between a caller-supplied quote override (the quote object the
+ *  opening screen is currently rendering — e.g. a freshly fetched /api/scan
+ *  row) and the run-captured top-candidate quote from the snapshot. The
+ *  override wins unless the run-captured quote is verifiably NEWER (both
+ *  `asOf` timestamps parse and the run quote's is strictly later): what the
+ *  user sees in the row and what the drilldown shows must not disagree. */
+export function preferFreshQuote(
+  override: MarketQuote | undefined,
+  runQuote: MarketQuote | undefined
+): MarketQuote | undefined {
+  if (!override) return runQuote;
+  if (!runQuote) return override;
+  const overrideAt = override.asOf ? Date.parse(override.asOf) : NaN;
+  const runAt = runQuote.asOf ? Date.parse(runQuote.asOf) : NaN;
+  if (Number.isFinite(overrideAt) && Number.isFinite(runAt) && runAt > overrideAt) return runQuote;
+  return override;
+}
+
 /** Merge the best-available scan data for a symbol into one view. Prefers the
  *  fully-enriched top-candidate quote; falls back to the lighter summary tier;
  *  null when the last scan didn't know the symbol at all. */

@@ -13,7 +13,10 @@ filling the missing pieces.
 > pending proposals → Approvals, recent orders), analyst rating distribution +
 > price-target range bar, signal/earnings-proximity chips, and a collapsible deep-
 > fundamentals table — tooltips on everything, light+dark, honest empty states, and
-> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents.
+> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents
+> (extended with one OPTIONAL `quote?: MarketQuote` override so screens rendering
+> freshly fetched /api/scan rows — the Scan lane, per the Codex finding on #327 — can
+> make the drilldown match the row instead of the snapshot's last run).
 > No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
 > See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
 > 2026-07-02 (`claude/console-settings-expansions`, Claude): **/console/settings
