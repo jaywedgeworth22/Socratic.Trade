@@ -159,6 +159,17 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     disclosure: "advanced",
     help: "Blocks rebuying a stock within 30 days of selling it at a loss — in any of your accounts."
   },
+  {
+    id: "guardrails.washSaleHandling",
+    label: "Wash-sale rebuy handling",
+    synonyms: ["wash sale mode", "wash sale ask", "wash sale auto", "rebuy handling", "tax cost approval"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tax",
+    backingField: "taxSettings.washSaleHandling",
+    disclosure: "advanced",
+    help: "Block a wash-sale rebuy outright (default), route it to you priced with the forfeited deduction (ask), or let the system rebuy only when the edge clearly beats the tax cost (auto). IRA rebuys stay blocked in every mode."
+  },
   // Strategy (account scope)
   {
     id: "strategy.scoringWeights",
