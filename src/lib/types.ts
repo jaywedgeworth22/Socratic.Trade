@@ -1274,6 +1274,10 @@ export interface EquityCurvePoint {
   timestamp: string;
   equity: number;
   source: FillSource;
+  /** Cash balance at the snapshot (when the underlying portfolio snapshot recorded one).
+   *  Used to infer external deposits/withdrawals for time-weighted return math; absent on
+   *  synthetic curves so consumers must degrade honestly rather than assume zero flows. */
+  cash?: number;
 }
 
 export interface RunAttribution {
@@ -1312,6 +1316,14 @@ export interface BenchmarkComparison {
   endDate: string;
   points: number;
   benchmarkSymbol: string;
+  /** True when the account line is a time-weighted return chained over inferred external
+   *  deposits/withdrawals (at least one material flow was detected and neutralized).
+   *  False/absent = plain equity growth, which counts any transfers as if they were returns. */
+  cashFlowAdjusted?: boolean;
+  /** Net inferred external flow over the window in dollars (deposits positive, withdrawals
+   *  negative). Present only when cashFlowAdjusted is true. Inferred from snapshot cash deltas
+   *  minus recorded trade cash — an estimate, not a broker transfer ledger. */
+  netExternalFlows?: number;
 }
 
 export interface PerformanceSummary {

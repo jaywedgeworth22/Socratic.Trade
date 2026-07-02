@@ -394,7 +394,10 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   // failure or sparse history simply leaves performance.benchmark undefined (UI shows "—").
   if (performance) {
     const curve = scorecardSource === "live" ? performance.liveEquityCurve : performance.paperEquityCurve;
-    const benchmark = await computeSpyBenchmark(curve, userId).catch(() => null);
+    // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
+    // cash) so the account return line is time-weighted instead of counting transfers as P&L.
+    const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
+    const benchmark = await computeSpyBenchmark(curve, userId, Date.now(), benchmarkFills).catch(() => null);
     if (benchmark) performance.benchmark = benchmark;
   }
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
