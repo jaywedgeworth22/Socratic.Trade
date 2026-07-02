@@ -4,6 +4,28 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console: Assistant chat destination (Claude)
+Branch `claude/console-assistant` (cut from `origin/main` @ 78ecc98; parallel console-port
+lane — new files only under `app/console/assistant/`, per the collision contract no edits to
+console.css/nav/api.ts/approvals/settings or src/lib). Ported the legacy AI Assistant into the
+console at `/console/assistant`: transcript from `GET /api/chat-history` (server persists both
+turns), composer (Enter sends, Shift+Enter newline, auto-grow), suggestion chips, native grouped
+model `<select>` with per-provider "no key" disabling from `/api/chat/providers` + custom model
+id + sticky localStorage choice, per-provider missing-key gate (mirrors the server 412, names
+the provider the SELECTED model routes to), Clear-conversation (DELETE /api/chat-history),
+Retry-on-failed-send (no fabricated apology turns). Trade drafts render as order tickets that
+AUTO-run the policy dry-run preview (`/api/proposals/from-draft dryRun`) then "Stage for
+approval" hands off to Approvals (409 POLICY_BLOCKED reasons shown plainly; snapshot refresh
+bumps the badge; dedupe honored). Owner UX standard baked in: `title=` tooltips on every
+control (no Tooltip primitive exists — native title is the floor) and `--con-*` hover
+highlights on row-like elements. Markdown replies via react-markdown/remark-gfm styled with
+con tokens. Quartet green: tsc clean, lint 0 errors, 2241 tests, build ok (`/console/assistant`
+static); smoke-tested chat/providers/history/from-draft against `next start`. Post-merge of
+#321 (console-port foundation): provider routing/labels now delegate to
+`app/console/lib/models`, and assistant replies wear the shared `ModelBadge` (plain text for
+the offline mock — no faked vendor logo); the nav's Assistant entry comes from #321. Docs:
+`docs/rollouts/2026-07-02-console-assistant.md`. **Next:** open PR (auto-merge on green
+verify); if the console grows a shared picker catalog, fold the grouped select options there.
 ## 2026-07-02 — Wash-sale handling modes (block/ask/auto) + Decide-mode escalation (Claude)
 Branch `claude/washsale-modes-escalation` (cut from `origin/main` @ 78ecc98). Owner-locked spec,
 built on the fresh `washSaleMinLossUsd` floor + tax.ts `WashSaleLockMap` provenance. New
