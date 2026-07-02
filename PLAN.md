@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-settings-expansions`, Claude): **/console/settings
+> expansions** — the settings lane of the parallel legacy→console port. Adds broker
+> connect/manage (Robinhood OAuth + Alpaca key-pair, disconnect with explicit confirm),
+> API-key CRUD (/api/keys; write-only, source-attributed), LLM model pickers
+> (llmModel/redTeamLlmModel via native grouped selects, provider availability from
+> /api/chat/providers, saved through PUT /api/policy), full delivery-channels editor
+> (/api/notifications port), and a searchable help/glossary — all as new
+> `app/console/settings/*` modules; plus the owner's cross-cutting UX standard
+> (hover tooltips on virtually everything, row hover highlights). Console track only —
+> no roadmap scope change. See `docs/rollouts/2026-07-02-console-settings-expansions.md`.
 > 2026-07-02 (`claude/console-qa-fixes`, Claude): **12 owner QA fixes on /console** —
 > policy saves no longer rejected by a stale stored gpt-5.5/high config; SPY benchmark
 > is deposit/withdrawal-aware (inferred flows + time-weighted return, honestly labeled);
