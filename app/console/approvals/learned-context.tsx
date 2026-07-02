@@ -197,6 +197,10 @@ export function LearnedContextInbox() {
   const [confirming, setConfirming] = useState<PendingLearnedItem | null>(null);
   const inFlight = useRef<AbortController | null>(null);
   const mounted = useRef(true);
+  /** IDs this session has confirmed approved/rejected. A load that started
+   *  BEFORE an action can resolve AFTER it — filtering these out stops a stale
+   *  response from resurrecting an already-resolved card. */
+  const resolvedIds = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     inFlight.current?.abort();
@@ -205,7 +209,7 @@ export function LearnedContextInbox() {
     try {
       const data = await fetchPendingLearnedContext(controller.signal);
       if (!mounted.current || controller.signal.aborted) return;
-      setItems(data);
+      setItems(data.filter((i) => !resolvedIds.current.has(i.id)));
       setError(null);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -236,10 +240,13 @@ export function LearnedContextInbox() {
 
   const reject = async (item: PendingLearnedItem) => {
     setBusyId(item.id);
+    inFlight.current?.abort(); // a load already in flight predates this action — never let it apply
     setItems((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev)); // optimistic
     try {
       await rejectPendingLearnedContext(item.id);
+      resolvedIds.current.add(item.id); // confirmed resolved — stale loads must not resurrect it
       toast.push("info", `Rejected "${item.subject}"`, "Discarded. Nothing was applied anywhere.");
+      void load(); // converge with the server's truth
     } catch (err) {
       toast.push("neg", "Rejection failed", err instanceof Error ? err.message : String(err));
       void load(); // reconcile with the server's truth (restores the card if it is still pending)
@@ -251,9 +258,11 @@ export function LearnedContextInbox() {
   const approve = async (item: PendingLearnedItem) => {
     setConfirming(null);
     setBusyId(item.id);
+    inFlight.current?.abort(); // a load already in flight predates this action — never let it apply
     setItems((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev)); // optimistic
     try {
       await approvePendingLearnedContext(item.id);
+      resolvedIds.current.add(item.id); // confirmed resolved — stale loads must not resurrect it
       toast.push(
         "pos",
         `Approved "${item.subject}"`,
@@ -261,6 +270,7 @@ export function LearnedContextInbox() {
           ? "The attributed block was appended to your strategy prompt."
           : "Recorded in the learned-context store. It is not yet fed into runs, and your numeric risk limits are unchanged."
       );
+      void load(); // converge with the server's truth
       // A directive approval edits the strategy prompt, which lives in the shared
       // console snapshot — refresh it so Strategy shows the new prompt immediately.
       if (item.riskTier === "strategy-directive") void refresh();

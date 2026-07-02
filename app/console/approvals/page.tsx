@@ -45,7 +45,9 @@ export default function ApprovalsPage() {
       {pending.length === 0 ? (
         <Card>
           <div className="py-8 text-center">
-            <p className="font-semibold">Nothing is waiting for you.</p>
+            {/* Scoped to trade proposals only — the learned-context inbox below
+                is its own queue and may still hold items awaiting review. */}
+            <p className="font-semibold">No trade proposals are waiting for you.</p>
             <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
               When a run proposes a trade, it appears here as a receipt — with the strategist&apos;s reasoning, the
               devil&apos;s-advocate review, and how the idea has moved since. Nothing trades without you while authority

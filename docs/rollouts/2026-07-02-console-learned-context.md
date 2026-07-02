@@ -37,6 +37,15 @@ Improvements over the legacy version:
   NOT fed back into runs today. All risk-tier copy (card caption, confirm sheet, toast,
   tooltips) now says "recorded, not yet fed into runs" instead of "the AI reads it on
   future runs".
+- **Race + copy hardening (two more valid Codex P2s on PR #324)**: (1) a poll /
+  tab-visible / manual load in flight when the user approves/rejects could resolve
+  AFTER the action and resurrect the just-resolved card (second click then hit the 404
+  path) — fixed by aborting any in-flight load when an action starts, tracking
+  session-resolved IDs and filtering them out of every applied load, and refetching
+  after successful actions so state converges; (2) with zero trade proposals but
+  pending learned items, the page's "Nothing is waiting for you" empty card sat
+  directly above cards that WERE waiting — the empty state is now explicitly scoped:
+  "No trade proposals are waiting for you."
 - **Resilient**: the queue has its own data source (GET pending, 60s visibility-guarded
   poll + refresh button); fetch errors surface as a non-blocking warn notice while the
   last good list stays rendered; action failures toast the server's own error text and
