@@ -14,6 +14,16 @@ filling the missing pieces.
 > feeds with source metadata). New files only, all under `app/console/scan/`. No roadmap
 > scope change — one of the four Wave-2 destinations delivered (macro/orders/assistant
 > owned by parallel agents). See `docs/rollouts/2026-07-02-console-scan.md`.
+> 2026-07-02 (`claude/console-settings-expansions`, Claude): **/console/settings
+> expansions** — the settings lane of the parallel legacy→console port. Adds broker
+> connect/manage (Robinhood OAuth + Alpaca key-pair, disconnect with explicit confirm),
+> API-key CRUD (/api/keys; write-only, source-attributed), LLM model pickers
+> (llmModel/redTeamLlmModel via native grouped selects, provider availability from
+> /api/chat/providers, saved through PUT /api/policy), full delivery-channels editor
+> (/api/notifications port), and a searchable help/glossary — all as new
+> `app/console/settings/*` modules; plus the owner's cross-cutting UX standard
+> (hover tooltips on virtually everything, row hover highlights). Console track only —
+> no roadmap scope change. See `docs/rollouts/2026-07-02-console-settings-expansions.md`.
 > 2026-07-02 (`claude/console-port-foundation`, Claude): **Console parity-port
 > foundation (Wave 1)** — the legacy-dashboard feature parity port into `/console` is
 > now an explicit multi-agent track: Wave 1 (this branch) ships the shared primitives
