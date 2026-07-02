@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-ground-up-ui`): **Ground-up "Console" UI** — a complete,
+> parallel greenfield interface at `/console` (new `app/console/` route group, new files
+> only; the legacy dashboard is untouched and remains the default UI). Synthesized from
+> three blind design studies (novice/operator/explainability-first — see
+> `app/console/README.md`); wired to the real dashboard snapshot + mutation endpoints;
+> light+dark theming required and implemented. This adds a candidate replacement UI
+> track without changing any existing phase's scope. See
+> `docs/rollouts/2026-07-02-console-ground-up-ui.md`.
+
 > 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
 > all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
 > CLOSED (un-critiqued Bull proposals route to human in decide mode, not auto-executed);
