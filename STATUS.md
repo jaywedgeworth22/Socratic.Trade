@@ -21,8 +21,16 @@ gains the "IRA wash-sale rebuys" select with honest audit-risk copy; block->disr
 02c5532 buyerIsIra precedence untouched. Tests: disregard in all three washSaleHandling modes
 + verbatim note, other-gates-still-bind, tokens-irrelevant, row-level detection, LOOSER
 classification, API enum round-trip. Quartet green: lint 0 errors, tsc clean, 2344 tests
-pass (237 files), build ok. Docs:
-`docs/rollouts/2026-07-02-ira-washsale-disregard.md`. **Next:** PR with auto-merge on green
+pass (237 files), build ok. Codex round 1 (applied by the coordinator session after the build
+agent hit its usage-credit limit): (1) threaded the disregard mode into the LLM prompt — shared
+`isIraTaxRegime` helper (gate + prompt can't drift), `ExecutionAccount` widened with
+`taxationType`, `iraWashSaleDisregard` in taxContext + a prompt line that PERMITS locked rebuys
+for a disregard IRA; `STRATEGY_PROMPT_VERSION` → 1.2.0; (2) deferred the
+`wash_sale_ira_disregarded`/`wash_sale_auto_proceed` audit from gate-eval to the actual
+paper-fill/live-placement points (a pending propose-mode card no longer logs a forfeiture that
+never happened); (3) gated the executeProposal proceed-audit on `decision.approved`. Quartet
+re-green: 2345 tests (237 files). Docs:
+`docs/rollouts/2026-07-02-ira-washsale-disregard.md`. **Next:** PR #331 with auto-merge on green
 verify; consider porting the note rendering to the legacy dashboard approvals UI if it
 outlives the console.
 

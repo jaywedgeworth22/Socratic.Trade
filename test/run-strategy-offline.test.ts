@@ -81,4 +81,16 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
     expect(buildBearSystem({ shortAllowed: false })).toContain("Bear Agent");
     expect(buildBearSystem({ shortAllowed: true })).toContain("Short selling is enabled");
   });
+
+  it("wash-sale prompt guidance: IRA-disregard PERMITS locked rebuys, taking precedence over washSaleHandling", async () => {
+    const { buildBullSystem } = await import("../src/lib/strategy-prompts");
+    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    // Default block: absolute prohibition.
+    expect(buildBullSystem({ ...taxBase, washSaleHandling: "block" })).toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
+    // IRA-disregard PERMITS the rebuy and takes precedence even when washSaleHandling is the default block.
+    const iraPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "block", iraWashSaleDisregard: true });
+    expect(iraPrompt).toContain("You MAY propose a BUY of a symbol in `washSaleLockedSymbols`");
+    expect(iraPrompt).toContain("annotated as a technically-forfeited wash sale");
+    expect(iraPrompt).not.toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
+  });
 });

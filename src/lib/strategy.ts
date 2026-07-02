@@ -63,7 +63,7 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { fetchDailyOHLC } from "./history";
@@ -812,25 +812,13 @@ export async function runStrategyOnce(
           : 0
       });
 
-      // Wash-sale proceed trails — NEVER silent; the record goes to the audit ledger (Activity)
-      // before the order takes any further step:
-      //   auto_proceeded  — the "auto" guard allowed a locked rebuy (edge cleared the cost multiple).
-      //   ira_disregarded — an IRA rebuy proceeded under iraWashSaleHandling "disregard", carrying
-      //                     the verbatim IRA_WASH_SALE_DISREGARD_NOTE + priced provenance.
-      if (decision.approved && (decision.washSale?.outcome === "auto_proceeded" || decision.washSale?.outcome === "ira_disregarded")) {
-        audit(
-          decision.washSale.outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_auto_proceed",
-          {
-            runId,
-            symbol: normalizedProposal.symbol,
-            side: normalizedProposal.side,
-            estimatedNotional: review.estimatedNotional,
-            washSale: decision.washSale
-          },
-          userId,
-          connectedAccountId
-        );
-      }
+      // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
+      // audited at the ACTUAL execution point (auditWashSaleProceed at the paper-fill and live-placed
+      // paths below), NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
+      // sell-to-fund-propose) an approved gate result only becomes a PENDING card — no purchase has
+      // happened yet — so logging "the wash sale was disregarded / the deduction was forfeited" here
+      // would be false if the owner rejects or lets it expire. When such a card is later approved,
+      // executeProposal emits the same trail (gated on decision.approved) as the order actually places.
 
       if (!decision.approved) {
         // ── Escalation framework ─────────────────────────────────────────────────────────────
@@ -995,6 +983,8 @@ export async function runStrategyOnce(
           marketScan,
           status: "filled"
         });
+        // Wash-sale proceed trail at the actual (simulated) fill — see auditWashSaleProceed.
+        auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
         await sendNotification(
           {
             type: "fill",
@@ -1109,6 +1099,8 @@ export async function runStrategyOnce(
       }
 
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
+      // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
+      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const fill = recordFillFromProposal({
         userId,
         accountNumber: policy.accountNumber,
@@ -1811,6 +1803,33 @@ function formatWholeDollars(value: number): string {
 // R1 §1.4.3 — if an autonomous ("decide") run trips a notional/order cap, drop the account back to
 // "propose" so a human is back in the loop before any further orders. Returns true if it reverted.
 const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit", "Daily opening-order count limit"];
+/**
+ * Emit the wash-sale "proceed" trail at the point an order ACTUALLY executes (paper fill or live
+ * placement) — never at gate-eval time, where an approved result may still only become a pending
+ * card. No-op unless the decision carries an auto_proceeded / ira_disregarded outcome, so it is safe
+ * to call on every executed proposal. Keeps the run loop's two execution paths from drifting.
+ */
+function auditWashSaleProceed(
+  decision: PolicyDecision,
+  meta: { runId?: string; proposalId?: string; symbol: string; side: OrderSide; estimatedNotional?: number; userId?: string; connectedAccountId?: string }
+): void {
+  const outcome = decision.washSale?.outcome;
+  if (outcome !== "auto_proceeded" && outcome !== "ira_disregarded") return;
+  audit(
+    outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_auto_proceed",
+    {
+      ...(meta.runId ? { runId: meta.runId } : {}),
+      ...(meta.proposalId ? { proposalId: meta.proposalId } : {}),
+      symbol: meta.symbol,
+      side: meta.side,
+      estimatedNotional: meta.estimatedNotional,
+      washSale: decision.washSale
+    },
+    meta.userId,
+    meta.connectedAccountId
+  );
+}
+
 function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
@@ -2001,7 +2020,15 @@ export async function executeProposal(
     // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
     // token ties this execution back to the exact escalated card the owner approved; for IRA
     // disregards the record carries the verbatim note + priced provenance.
+    //
+    // Gated on decision.approved: a re-evaluation at approval time can return approved:false while
+    // still carrying an ira_disregarded / auto_proceeded / approved_via_override outcome (the
+    // wash-sale gate itself didn't block, but a later gate — daily cap, buying power, staleness —
+    // did). Logging the proceed-trail then would tell Activity the wash sale was disregarded and the
+    // deduction forfeited even though the order is blocked below and no purchase happens. When
+    // approved, this function proceeds to place/fill the order, so the trail is accurate.
     if (
+      decision.approved &&
       decision.washSale &&
       (decision.washSale.outcome === "approved_via_override" ||
         decision.washSale.outcome === "auto_proceeded" ||
@@ -2444,6 +2471,17 @@ async function proposeTrades(input: {
   // locked rebuy honestly instead of just seeing a forbidden list. In the default "block" mode the
   // context stays byte-identical (locked names remain a hard no).
   const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? "block";
+  // IRA-disregard: when the buyer is an IRA whose owner opted into iraWashSaleHandling "disregard",
+  // the gate PERMITS locked rebuys (annotated + audited). The prompt must know this or the model,
+  // still told "NEVER propose a locked buy", would never surface the very rebuys the setting exists
+  // to allow. IRA detection uses the SAME source-of-truth precedence as the gate (isIraTaxRegime).
+  const iraWashSaleDisregard =
+    (input.policy.taxSettings?.iraWashSaleHandling ?? "block") === "disregard" &&
+    isIraTaxRegime(
+      input.activeAccount?.taxationType,
+      input.policy.taxSettings?.taxationType,
+      input.activeAccount?.capabilities?.accountType
+    );
   const washSaleRebuyCosts = (() => {
     if (washSaleHandling === "block" || !taxSummary) return undefined;
     const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
@@ -2465,6 +2503,7 @@ async function proposeTrades(input: {
         estimatedTaxLiability: taxSummary.estimatedTaxLiability,
         washSaleLockedSymbols: taxSummary.lockedSymbols,
         ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
+        ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
         ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
         positionsNearLongTerm: taxSummary.openLots
           .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
@@ -2494,6 +2533,7 @@ async function proposeTrades(input: {
     reflection,
     hasTaxContext: taxContext != null,
     washSaleHandling,
+    iraWashSaleDisregard,
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,

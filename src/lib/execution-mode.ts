@@ -2,7 +2,10 @@ import type { ConnectedAccount, ExecutionMode, FillSource, TradingPolicy } from 
 
 export type LlmExecutionMode = ExecutionMode;
 
-export type ExecutionAccount = Pick<ConnectedAccount, "id" | "broker" | "environment" | "accountNumber" | "label" | "capabilities">;
+// taxationType is included so the strategy prompt builder can classify an IRA buyer with the same
+// source-of-truth precedence as the wash-sale gate (isIraTaxRegime). The runtime value passed here
+// is the full ConnectedAccount row, so this only widens the compile-time view — no call site change.
+export type ExecutionAccount = Pick<ConnectedAccount, "id" | "broker" | "environment" | "accountNumber" | "label" | "capabilities" | "taxationType">;
 
 export interface ExecutionState {
   mode: LlmExecutionMode;

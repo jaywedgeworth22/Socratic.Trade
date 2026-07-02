@@ -69,6 +69,39 @@ Activity, and every disregarded execution is audited.
 - `npm test` — 2344 passed (237 files)
 - `npm run build` — succeeds
 
+## Codex review fixes — round 1 (applied by the coordinator session; the build agent hit its
+## usage-credit limit before this review arrived)
+
+All three P2 findings verified against the code and confirmed real:
+
+1. **Surface IRA-disregard to proposal generation** (`strategy.ts` prompt path +
+   `strategy-prompts.ts` + `execution-mode.ts` + `policy.ts`). The gate now permits IRA
+   locked rebuys under `disregard`, but the LLM prompt still told the model to "NEVER propose"
+   a locked buy (its `washSaleHandling` defaults to `block`), so autonomous runs would never
+   surface the very rebuys the setting exists to allow. Fix: extracted the gate's IRA-buyer
+   precedence into a shared exported `isIraTaxRegime(...)` (so the gate and the prompt cannot
+   drift); widened `ExecutionAccount` to carry `taxationType` (additive — the full row is already
+   passed at runtime); threaded an `iraWashSaleDisregard` flag into `taxContext` and
+   `buildBullSystem`; added a wash-sale guidance line that PERMITS proposing locked rebuys for a
+   disregard IRA (annotated + audited), taking precedence over the taxable-buyer
+   block/ask/auto branch. `STRATEGY_PROMPT_VERSION` → `agentic-strategy@1.2.0`.
+2. **Defer the IRA-disregarded audit to actual execution** (`strategy.ts` run loop). The
+   `wash_sale_ira_disregarded` / `wash_sale_auto_proceed` trail fired at gate-eval time, so an
+   idea that only became a PENDING card under Ask-first/propose authority logged an Activity
+   entry claiming the wash sale was disregarded and the deduction forfeited even if the owner
+   rejected or let it expire. Fix: removed the gate-time audit; a new `auditWashSaleProceed(...)`
+   helper fires the trail only at the actual paper-fill and live-placement points. A propose-mode
+   card that is later approved gets the trail from `executeProposal` when the order places.
+3. **Require an approved decision before logging the disregard** (`strategy.ts`
+   `executeProposal`). The approval-path trail fired before the `!decision.approved` block, so a
+   re-evaluation that returned `approved:false` for another gate (daily cap, buying power,
+   staleness) while still carrying `ira_disregarded` logged a forfeiture for an order that never
+   placed. Fix: gated that audit on `decision.approved`.
+
+Round-1 verification: tsc clean, lint 0 errors, full suite green, build ok (after merging
+`origin/main` post-#325/#327). Tests extended in `test/washsale-modes.test.ts` (prompt-guidance
+assertions) — the audit-timing paths are covered by the gate-outcome tests plus the deferral logic.
+
 ## Follow-ups
 
 - The mobile policy.patch whitelist intentionally does NOT accept `iraWashSaleHandling`
