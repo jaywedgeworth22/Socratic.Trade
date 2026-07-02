@@ -14,6 +14,17 @@ filling the missing pieces.
 > feeds with source metadata). New files only, all under `app/console/scan/`. No roadmap
 > scope change — one of the four Wave-2 destinations delivered (macro/orders/assistant
 > owned by parallel agents). See `docs/rollouts/2026-07-02-console-scan.md`.
+> 2026-07-02 (`claude/washsale-modes-escalation`, Claude): **Wash-sale handling modes +
+> Decide-mode escalation** — owner-locked spec. Account-scoped
+> `taxSettings.washSaleHandling` (block default / ask = priced pending-approval card in
+> both authorities / auto = deterministic edge >= 3x tax-cost guard, logged, never
+> silent); IRA-replacement rebuys hard-blocked in every mode (Rev. Rul. 2008-5); narrow
+> escalation framework routing ask-mode wash sales + time-context gate failures
+> (daily/hourly notional, order cap, quote staleness; Decide only) to pending cards that
+> RE-RUN the full gate at approval via a server-stored override token (wash-sale gate
+> only — no client-settable bypass). Guardrails Tax rules select (LOOSER classification
+> on block->ask/auto). No roadmap scope change — extends the tax-guardrail track. See
+> `docs/rollouts/2026-07-02-washsale-modes-escalation.md`.
 > 2026-07-02 (`claude/console-drilldown-plus`, Claude): **Console symbol drilldown,
 > Wave 2** — the console company drawer is now a strict superset of the legacy
 > `app/ui/symbol-drilldown.tsx` drawer: full parity (11 derived-metric tiles reusing

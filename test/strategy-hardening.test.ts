@@ -17,8 +17,11 @@ import type {
   TradingPolicy
 } from "../src/lib/types";
 
-// The wash-sale gate resolves a DB-backed locked set when the caller omits one; stub it out.
-vi.mock("../src/lib/tax", () => ({ getUserWashSaleLockedSymbols: vi.fn(() => new Set<string>()) }));
+// The wash-sale gate resolves a DB-backed locked provenance map when the caller omits one; stub it out.
+vi.mock("../src/lib/tax", () => ({
+  getUserWashSaleLockedSymbols: vi.fn(() => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn(() => new Map())
+}));
 
 const shortCapable: AccountCapabilities = {
   equityTrading: true, shortSelling: true, optionsTrading: false,

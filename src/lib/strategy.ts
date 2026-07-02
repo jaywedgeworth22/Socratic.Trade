@@ -17,6 +17,7 @@ import {
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
+  transitionProposalIfPending,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -63,10 +64,11 @@ import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./str
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal } from "./policy";
+import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
-import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
+import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
@@ -87,7 +89,7 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ScoringWeights, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ScoringWeights, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -303,7 +305,9 @@ export async function runStrategyOnce(
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const washSaleLockedSymbols = getUserWashSaleLockedSymbols(userId, new Date());
+    // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
+    // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
+    const washSaleLocks = getUserWashSaleLockProvenance(userId, new Date());
 
     // In Test mode, decisions run against the standalone local account
     // (starting cash + prior simulated fills, marked to live prices).
@@ -795,7 +799,11 @@ export async function runStrategyOnce(
         dailyOrderCount: dailyNow.openingOrderCount,
         estimatedNotional: review.estimatedNotional,
         marketScan,
-        washSaleLockedSymbols,
+        washSaleLocks,
+        // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+        // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+        // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+        accountTaxationType: activeAccount?.taxationType,
         accountCapabilities: selected?.capabilities,
         isLiveExecution,
         // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -804,7 +812,75 @@ export async function runStrategyOnce(
           : 0
       });
 
+      // "auto" wash-sale handling proceeded: the gate allowed a locked rebuy because the expected
+      // edge cleared the priced tax cost by the required multiple. NEVER silent — the guard math
+      // goes to the audit ledger (Activity) before the order takes any further step.
+      if (decision.approved && decision.washSale?.outcome === "auto_proceeded") {
+        audit(
+          "wash_sale_auto_proceed",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            estimatedNotional: review.estimatedNotional,
+            washSale: decision.washSale
+          },
+          userId,
+          connectedAccountId
+        );
+      }
+
       if (!decision.approved) {
+        // ── Escalation framework ─────────────────────────────────────────────────────────────
+        // A soft-blocked proposal whose EVERY failure is escalatable (ask-mode wash sale in any
+        // authority; time-context caps/staleness in Decide authority — see shouldEscalateDecision)
+        // becomes a pending-approval card instead of dying as a blocked entry. The card stores the
+        // block reasons plus server-minted override tokens; approval re-runs the FULL policy gate,
+        // where only the wash-sale gate honors its stored token (time-context gates simply
+        // re-evaluate against then-current caps/quotes). policy.ts stays authoritative throughout.
+        if (shouldEscalateDecision(decision, policy)) {
+          const proposalId = crypto.randomUUID();
+          const escalatedDecision: PolicyDecision = {
+            ...decision,
+            // Mint one server-side override token per escalatable failure. The token lives ONLY in
+            // this stored decision row and the audit ledger; the approval path re-reads it from the
+            // DB (approvedEscalationsFromDecision). No client payload can create or alter it.
+            escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+          };
+          insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+          audit(
+            "proposal_escalated",
+            {
+              runId,
+              proposalId,
+              symbol: normalizedProposal.symbol,
+              side: normalizedProposal.side,
+              reasons: decision.reasons,
+              escalations: escalatedDecision.escalations,
+              ...(decision.washSale ? { washSale: decision.washSale } : {})
+            },
+            userId,
+            connectedAccountId
+          );
+          const washAsk = escalatedDecision.escalations?.find((entry) => entry.kind === "wash_sale_ask");
+          const askCost = washAsk?.washSale?.estimatedTaxCostUsd;
+          await sendNotification(
+            {
+              type: "pending_approval",
+              title: washAsk
+                ? `${normalizedProposal.symbol} rebuy needs your call (wash sale${askCost != null ? ` — ~$${askCost.toFixed(2)} deduction at stake` : ""})`
+                : `${normalizedProposal.symbol} awaiting approval (soft-blocked: ${decision.reasons[0]})`,
+              payload: { runId, proposalId, proposal: normalizedProposal, review, decision: escalatedDecision, escalated: true }
+            },
+            { policy, userId }
+          );
+          // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
+          // the account back to Ask-first even though the tripping proposal survives as a card.
+          autoRevertOnCapBreach(decision.reasons, policy, userId);
+          results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
+          continue;
+        }
+
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         await sendNotification(
@@ -1192,6 +1268,55 @@ export async function runStrategyOnce(
   // next poll (the SSE bus is in-process; no-op when nothing is subscribed).
   emitDashboardEvent({ type: "run-complete", userId, at: new Date().toISOString(), detail: { runId } });
   return result;
+}
+
+/**
+ * Escalation framework — decide whether a policy-refused proposal may become a PENDING-APPROVAL
+ * card (with its block reasons on it) instead of dying as a blocked entry.
+ *
+ * Rules (owner-locked spec):
+ * - "wash_sale_ask" failures escalate under BOTH authorities (propose and decide) — that is the
+ *   entire point of taxSettings.washSaleHandling = "ask".
+ * - Time-context failures (daily/hourly notional caps, daily opening-order cap, quote staleness)
+ *   escalate ONLY under "decide" authority: in propose mode every idea already waits for a human,
+ *   so a time-gated one stays a visible blocked entry rather than a card implying it can be
+ *   approved right now.
+ * - EVERY reason must be covered by an escalatable entry. Anything else — red-team veto,
+ *   negative-EV skip, and below-threshold conviction happen upstream and never reach this path;
+ *   per-order notional caps, shorting disabled, blocklisted/universe symbols, the IRA wash-sale
+ *   hard block, margin minimum, etc. produce NO escalation entry — keeps the proposal blocked.
+ */
+export function shouldEscalateDecision(decision: PolicyDecision, policy: TradingPolicy): boolean {
+  if (decision.approved || decision.reasons.length === 0) return false;
+  const escalations = decision.escalations ?? [];
+  if (escalations.length === 0) return false;
+  return decision.reasons.every((reason) => {
+    const entry = escalations.find((candidate) => candidate.reason === reason);
+    if (!entry) return false;
+    if (entry.kind === "wash_sale_ask") return true;
+    return policy.strategyAuthority === "decide";
+  });
+}
+
+/**
+ * Approval-path override extraction: the ask-mode wash-sale override handles stored on an
+ * escalated proposal row. Reads ONLY the server-written decision JSON (tokens were minted by the
+ * run loop at escalation time) — no client input flows in, so this can never be a client-settable
+ * bypass. Only "wash_sale_ask" entries yield a handle: time-context escalations carry tokens for
+ * audit but are deliberately NOT overridable — their gates simply re-run against current state.
+ */
+export function approvedEscalationsFromDecision(decision: PolicyDecision | undefined): ApprovedEscalation[] {
+  return (decision?.escalations ?? [])
+    .filter((entry) => entry.kind === "wash_sale_ask" && typeof entry.token === "string" && entry.token.length > 0)
+    .map((entry) => ({
+      kind: entry.kind,
+      symbol: entry.symbol,
+      token: entry.token as string,
+      // The cost PRICED ON THE CARD the user approved. The gate honors the token only while the
+      // freshly recomputed cost stays within washSaleOverrideCostTolerance of this (stale-price
+      // guard) — otherwise it re-escalates at the current price instead of executing.
+      ...(entry.washSale?.estimatedTaxCostUsd != null ? { approvedCostUsd: entry.washSale.estimatedTaxCostUsd } : {})
+    }));
 }
 
 export function shouldRunRedTeamDebate(proposal: TradeProposal, policy: TradingPolicy): boolean {
@@ -1688,6 +1813,12 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
   setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // The demotion must bind the REST of this run, not just the next one: callers keep using this
+  // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
+  // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a
+  // cap on proposal N would keep queueing decide-style soft-blocked cards for N+1... even though
+  // the account was just demoted to Ask-first.
+  policy.strategyAuthority = "propose";
   audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
   return true;
 }
@@ -1848,7 +1979,15 @@ export async function executeProposal(
       dailyOrderCount: daily.openingOrderCount,
       estimatedNotional: review.estimatedNotional,
       marketScan: approvalScan,
-      washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
+      washSaleLocks: getUserWashSaleLockProvenance(userId, new Date()),
+      // Escalated-card override handles from the STORED row (server-minted at escalation time).
+      // Empty for ordinary proposals. Only the wash-sale gate consults these, and only while
+      // taxSettings.washSaleHandling is ask/auto; every other gate re-runs at full strength.
+      approvedEscalations: approvedEscalationsFromDecision(row.decision),
+      // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+      // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+      // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+      accountTaxationType: activeAccount?.taxationType,
       accountCapabilities: activeAccount?.capabilities,
       isLiveExecution,
       // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -1857,8 +1996,101 @@ export async function executeProposal(
         : 0
     });
 
+    // Auditable wash-sale override/auto trail on the approval path — never silent. The override
+    // token in the record ties this execution back to the exact escalated card the owner approved.
+    if (
+      decision.washSale &&
+      (decision.washSale.outcome === "approved_via_override" || decision.washSale.outcome === "auto_proceeded")
+    ) {
+      audit(
+        "wash_sale_override_applied",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          estimatedNotional: review.estimatedNotional,
+          washSale: decision.washSale
+        },
+        userId,
+        policy.connectedAccountId
+      );
+    }
+
     if (!decision.approved) {
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, decision);
+      // Wash-sale re-escalation instead of death: when the ONLY thing standing between this
+      // approval and execution is an ask-mode wash-sale failure (fresh lock discovered at
+      // approval time, or a stale override refused because the priced cost moved past
+      // washSaleOverrideCostTolerance — outcome "reescalated_cost_changed"), keep the card
+      // PENDING with the freshly priced reason and newly minted server-side tokens so the owner
+      // can approve again at the current cost. Every other refusal (still-binding caps, IRA
+      // hard block, universe, ...) retires the card as blocked exactly as before.
+      const washReescalation =
+        (decision.escalations ?? []).some((entry) => entry.kind === "wash_sale_ask") &&
+        shouldEscalateDecision(decision, policy);
+      if (washReescalation) {
+        const reescalated: PolicyDecision = {
+          ...decision,
+          escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+        };
+        // Guarded re-queue: only while the row is STILL pending. The scan/review above is async,
+        // so the scheduler can expire this proposal — or another tab can reject it — while this
+        // approval was in flight; an unconditional 'proposed' write here would resurrect that
+        // withdrawn card with fresh override tokens. If the row left the pending state, honor
+        // that outcome instead of re-queuing.
+        if (!transitionProposalIfPending(proposalId, "proposed", userId, { review, estimatedNotional: review.estimatedNotional, decision: reescalated })) {
+          const current = getProposal(proposalId, userId);
+          audit(
+            "proposal_reescalation_skipped",
+            {
+              proposalId,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              reasons: decision.reasons,
+              currentStatus: current?.status ?? "missing"
+            },
+            userId,
+            policy.connectedAccountId
+          );
+          return {
+            status: current?.status ?? "unknown",
+            reasons: [
+              `Proposal is no longer pending (now ${current?.status ?? "missing"}); the wash-sale re-escalation was not re-queued.`,
+              ...decision.reasons
+            ]
+          };
+        }
+        audit(
+          "proposal_reescalated",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            action: "approval",
+            result: "reescalated",
+            reasons: decision.reasons,
+            escalations: reescalated.escalations,
+            ...(decision.washSale ? { washSale: decision.washSale } : {})
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title:
+              decision.washSale?.outcome === "reescalated_cost_changed"
+                ? `${proposal.symbol} rebuy needs a fresh call (wash-sale cost changed)`
+                : `${proposal.symbol} rebuy needs your call (wash sale)`,
+            payload: { proposalId, proposal, review, decision: reescalated, escalated: true }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: decision.reasons };
+      }
+
+      // Same in-flight window as the re-escalation above: retire the card as blocked only if it
+      // is still pending — never overwrite a rejection/expiry that landed during the async review.
+      transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision });
       audit("proposal_approved", {
         proposalId,
         symbol: proposal.symbol,
@@ -2202,6 +2434,24 @@ async function proposeTrades(input: {
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
     : null;
+  // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
+  // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
+  // locked rebuy honestly instead of just seeing a forbidden list. In the default "block" mode the
+  // context stays byte-identical (locked names remain a hard no).
+  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? "block";
+  const washSaleRebuyCosts = (() => {
+    if (washSaleHandling === "block" || !taxSummary) return undefined;
+    const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
+    const locks = getUserWashSaleLockProvenance(input.userId, new Date());
+    if (locks.size === 0) return undefined;
+    return Array.from(locks.entries()).map(([sym, lock]) => ({
+      symbol: sym,
+      lossAccount: lock.account,
+      clearsOn: lock.clearDate.toISOString().slice(0, 10),
+      disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
+      estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
+    }));
+  })();
   const taxContext = taxSummary
     ? {
         taxYear: taxSummary.taxYear,
@@ -2209,6 +2459,8 @@ async function proposeTrades(input: {
         longTermRealizedYTD: taxSummary.longTermRealized,
         estimatedTaxLiability: taxSummary.estimatedTaxLiability,
         washSaleLockedSymbols: taxSummary.lockedSymbols,
+        ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
+        ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
         positionsNearLongTerm: taxSummary.openLots
           .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
           .map((lot) => ({
@@ -2236,6 +2488,7 @@ async function proposeTrades(input: {
     strategyPrompt: input.prompt,
     reflection,
     hasTaxContext: taxContext != null,
+    washSaleHandling,
     holdingHorizon: input.policy.holdingHorizon ?? "swing",
     maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
     stopLossPct: input.policy.riskRules.stopLossPct ?? 8,

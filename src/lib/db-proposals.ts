@@ -257,6 +257,35 @@ export function claimProposalForExecution(
 }
 
 /**
+ * Guarded status write for the approval gate's REFUSAL paths: applies only while the row is
+ * still pending (atomic `status = 'proposed'` CAS, same shape as claimProposalForExecution)
+ * and returns false when the row left the pending state while the approval was in flight —
+ * expired by the scheduler or rejected in another tab. Without this guard the wash-sale
+ * re-escalation path (toStatus 'proposed', fresh tokens in `decision`) could RESURRECT a
+ * withdrawn card, and a refusal (toStatus 'blocked') could overwrite an owner's rejection.
+ */
+export function transitionProposalIfPending(
+  id: string,
+  toStatus: string,
+  userId: string = "local",
+  opts: { review?: ReviewedOrder; estimatedNotional?: number; decision?: PolicyDecision } = {}
+): boolean {
+  const info = getDb()
+    .prepare(
+      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), decision = COALESCE(?, decision) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+    )
+    .run(
+      toStatus,
+      opts.review ? JSON.stringify(opts.review) : null,
+      opts.estimatedNotional ?? null,
+      opts.decision ? JSON.stringify(opts.decision) : null,
+      id,
+      userId
+    );
+  return info.changes === 1;
+}
+
+/**
  * Crash-recovery support: "placing" rows older than the cutoff. A "placing" row is an
  * order-placement INTENT written just before the broker call; it normally flips to "placed"
  * (or "placing_failed") synchronously. One that lingers means a prior run died mid-placement,

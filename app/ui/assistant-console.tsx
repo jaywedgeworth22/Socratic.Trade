@@ -56,7 +56,7 @@ interface ChatMessage {
 type DraftPhase = "draft" | "checking" | "checked" | "sending" | "proposed" | "placing" | "done" | "rejecting" | "rejected" | "discarded";
 interface DraftState {
   phase: DraftPhase;
-  decision?: { approved: boolean; reasons: string[] };
+  decision?: { approved: boolean; reasons: string[]; escalatable?: boolean };
   estimatedNotional?: number;
   proposalId?: string;
 }
@@ -250,9 +250,14 @@ export function AssistantView({
         patchDraft(msgId, { phase: "checked", decision: { approved: false, reasons } });
         return;
       }
+      const checkedDecision = body.decision as { approved: boolean; reasons: string[]; escalatable?: boolean };
+      // Additive server flag: refused ONLY for escalatable reasons (e.g. an "ask"-mode wash-sale
+      // lock) => the draft is still stageable; staging creates a pending card the user approves
+      // with the priced cost on it.
+      if (body.escalatable === true) checkedDecision.escalatable = true;
       patchDraft(msgId, {
         phase: "checked",
-        decision: body.decision as { approved: boolean; reasons: string[] },
+        decision: checkedDecision,
         estimatedNotional: body.estimatedNotional as number | undefined
       });
     } catch (e) {
@@ -481,6 +486,9 @@ function DraftOrderCard({
   const sideUp = draft.side.toUpperCase();
   const orderLine = `${sideUp} ${draft.qty} ${draft.symbol} · ${draft.order_type}${draft.order_type === "limit" && draft.limit_usd != null ? ` @ $${draft.limit_usd}` : ""}`;
   const blocked = state.decision && !state.decision.approved;
+  // An escalatable refusal (ask-mode wash sale) is stageable: staging creates a pending-approval
+  // card that carries the priced reason; the authoritative gate re-runs at confirm time.
+  const escalatable = Boolean(blocked && state.decision?.escalatable);
 
   return (
     <div className="mt-2 rounded-lg border border-line bg-surface p-3">
@@ -491,17 +499,28 @@ function DraftOrderCard({
       {draft.rationale && <p className="mt-1 text-xs text-muted">{draft.rationale}</p>}
 
       {state.decision && (
-        <div className={cn("mt-2 rounded-md px-2.5 py-1.5 text-xs", blocked ? "bg-down/10 text-down" : "bg-up/10 text-up")}>
+        <div
+          className={cn(
+            "mt-2 rounded-md px-2.5 py-1.5 text-xs",
+            escalatable ? "bg-warn/10 text-warn" : blocked ? "bg-down/10 text-down" : "bg-up/10 text-up"
+          )}
+        >
           <div className="flex items-center gap-1.5 font-medium">
             {blocked ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
-            {blocked ? "Blocked by policy" : "Passes policy"} {state.estimatedNotional != null && <span className="text-muted">· est. {money(state.estimatedNotional)}</span>}
+            {escalatable ? "Needs your call" : blocked ? "Blocked by policy" : "Passes policy"}{" "}
+            {state.estimatedNotional != null && <span className="text-muted">· est. {money(state.estimatedNotional)}</span>}
           </div>
           {blocked && state.decision.reasons.length > 0 && (
-            <ul className="mt-1 list-disc pl-4 text-down/90">
+            <ul className={cn("mt-1 list-disc pl-4", escalatable ? "text-warn/90" : "text-down/90")}>
               {state.decision.reasons.map((r, i) => (
                 <li key={i}>{r}</li>
               ))}
             </ul>
+          )}
+          {escalatable && (
+            <p className="mt-1 text-muted">
+              Staging queues it for your approval with this cost on the card — nothing trades until you confirm.
+            </p>
           )}
         </div>
       )}
@@ -512,7 +531,7 @@ function DraftOrderCard({
             <Button size="sm" variant="subtle" onClick={onCheck} disabled={state.phase === "checking"}>
               {state.phase === "checking" ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Check policy
             </Button>
-            {state.phase === "checked" && !blocked && (
+            {state.phase === "checked" && (!blocked || escalatable) && (
               <Button size="sm" onClick={onSend}>
                 Stage for approval
               </Button>

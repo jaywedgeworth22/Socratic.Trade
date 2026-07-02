@@ -4,6 +4,10 @@ import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT, DEFAULT_MARKET_SCAN_OUTLIER_RESERV
 
 export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   washSaleGuard: true,
+  // "block" preserves the original behavior: a wash-sale-locked rebuy is refused outright.
+  // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
+  // edge-vs-tax-cost guard decide (see policy.ts). IRA replacements are always blocked.
+  washSaleHandling: "block",
   shortTermRatePct: 24,
   longTermRatePct: 15
 };
