@@ -295,7 +295,7 @@ function AutonomyCard() {
             {busy ? "Switching…" : "Switch to Ask-first"}
           </Btn>
         ) : (
-          <Btn variant="dangerOutline" size="sm" onClick={() => setArming((v) => !v)}>
+          <Btn variant="outline" size="sm" onClick={() => setArming((v) => !v)}>
             Turn on Autopilot…
           </Btn>
         )}
@@ -306,6 +306,7 @@ function AutonomyCard() {
           value={typed}
           onChange={setTyped}
           busy={busy}
+          variant="primary"
           confirmLabel="Enable Autopilot"
           note={
             reality.tone === "live"

@@ -20,7 +20,7 @@ import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Chip, Dash, SignedText, TextInput } from "../ui/primitives";
+import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
@@ -238,8 +238,17 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         <Btn variant="ghost" disabled={busy !== null} onClick={() => void reject()}>
           {busy === "reject" ? "Rejecting…" : "Reject"}
         </Btn>
-        <Btn variant={live ? "danger" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
-          {busy === "approve" ? "Approving…" : live ? "Approve with real money…" : "Approve"}
+        {/* Danger is reserved for reality/STOP/destructive confirms — a LIVE approval
+            is a neutral primary action wearing the LIVE word, and the typed ritual
+            in the sheet is the real friction. */}
+        <Btn variant={live ? "primary" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
+          {busy === "approve" ? "Approving…" : live ? (
+            <>
+              Approve with real money… <LiveTag />
+            </>
+          ) : (
+            "Approve"
+          )}
         </Btn>
       </footer>
 
@@ -364,8 +373,12 @@ function LiveApproveSheet({
         <Btn variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
         </Btn>
-        <Btn variant="danger" disabled={!matches || busy} onClick={() => void submit()}>
-          {busy ? "Placing…" : "Place real order"}
+        <Btn variant="primary" disabled={!matches || busy} onClick={() => void submit()}>
+          {busy ? "Placing…" : (
+            <>
+              Place real order <LiveTag />
+            </>
+          )}
         </Btn>
       </div>
     </Sheet>

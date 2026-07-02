@@ -18,7 +18,7 @@ import {
 import { activeConnectedAccount, deriveReality, realityForAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Card, Chip, Field, LiveTag, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
 
 const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   fill: "an order filled",
@@ -328,7 +328,7 @@ function ConnectionsCard() {
                   {!account.isActive && (
                     <Btn
                       size="sm"
-                      variant={r.tone === "live" ? "dangerOutline" : "outline"}
+                      variant="outline"
                       disabled={busyId !== null}
                       onClick={async () => {
                         setBusyId(account.id);
@@ -343,7 +343,13 @@ function ConnectionsCard() {
                         }
                       }}
                     >
-                      {busyId === account.id ? "Switching…" : "Make active"}
+                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
+                        <>
+                          Make active <LiveTag />
+                        </>
+                      ) : (
+                        "Make active"
+                      )}
                     </Btn>
                   )}
                 </div>

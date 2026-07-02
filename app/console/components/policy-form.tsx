@@ -25,7 +25,7 @@ import {
 import { cx, fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, NumInput, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Chip, LiveTag, NumInput, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 import { TypedConfirm } from "./chrome";
 
@@ -246,7 +246,12 @@ export function PolicySaveBar({
             value={typed}
             onChange={setTyped}
             busy={busy}
-            confirmLabel="Commit changes"
+            variant="primary"
+            confirmLabel={
+              <>
+                Commit changes <LiveTag />
+              </>
+            }
             note="At least one change LOOSENS a limit on a LIVE (real money) account. Loosening costs a typed word; tightening never does."
             onConfirm={() => void commit()}
           />
