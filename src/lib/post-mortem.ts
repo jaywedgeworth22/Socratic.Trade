@@ -10,6 +10,7 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
 import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
+import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
@@ -65,6 +66,16 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // network, but this whole function is gated above, so it runs only on new trades.
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const source = fillSourceForExecutionMode(executionState);
+
+  // Budget guard: when over the daily LLM budget, skip ONLY the LLM reflection call — but still run the
+  // non-LLM excursion enrichment (persistExcursionsBackground: MAE/MFE, no OpenAI key required). A spend
+  // cap suppresses LLM spend, not non-LLM maintenance, so returning here (instead of before) keeps
+  // excursion data current on over-budget days. Default OFF → this branch never taken (runs normally).
+  if (isOverLlmBudget(userId)) {
+    persistExcursionsBackground(accountNumber, source, userId);
+    return;
+  }
+
   const executionMode = llmExecutionMode(executionState);
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);

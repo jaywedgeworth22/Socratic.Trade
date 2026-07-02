@@ -26,6 +26,10 @@ import {
 // (user API keys, consent records) does not leak between test files.
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-data-providers-${randomUUID()}.db`)}`;
+  // These tests seed provider failures then assert subsequent-call/caching behavior; the per-lane
+  // circuit breaker (default ON) would otherwise trip a lane mid-file (the temp health log accumulates
+  // failures across tests) and skip those follow-up calls. The breaker has its own dedicated test.
+  process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
 });
 
 describe("market enrichment provider", () => {
@@ -1358,5 +1362,111 @@ describe("enrichment short-circuit (App A coverage hint → paid providers skip 
     await cascade.enrich(["AAA", "BBB"]);
     expect(calls).toEqual([["AAA", "BBB"]]);
     expect(contexts[0]).toBeUndefined();
+  });
+});
+
+describe("short-interest second source (Massive) — cross-check + disagreement bulletin", () => {
+  const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
+    name,
+    configured: true,
+    async enrich() {
+      return data;
+    }
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT;
+  });
+
+  it("flags a disagreement when the primary and Massive second source differ beyond the threshold", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 5 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortPercentOfFloat).toBe(20); // first-wins primary preserved
+    expect(out.AAPL.shortPercentOfFloatSecondary).toBeUndefined(); // carrier never leaves the cascade
+    expect(out.AAPL.shortInterestDisagreement).toBe(
+      "Short interest disagreement: yahoo-finance 20.0% vs massive 5.0% (15.0pp apart)."
+    );
+    expect(cascade.activeSources).toContain("massive");
+  });
+
+  it("does NOT flag when the two sources agree within the threshold (carrier still dropped)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 8 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 6 } }) // 2pp < 5pp default
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+    expect(out.AAPL.shortPercentOfFloatSecondary).toBeUndefined();
+  });
+
+  it("does NOT flag when only one source is present (no second source to compare)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+    expect(out.AAPL.shortPercentOfFloat).toBe(20);
+  });
+
+  it("honors the SHORT_INTEREST_DISAGREEMENT_PCT_PT threshold override", async () => {
+    process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT = "20"; // now 15pp gap is within tolerance
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 5 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+  });
+
+  it("MassiveEnrichmentProvider computes short % of float = short_interest / free_float and uses Bearer auth", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const seenAuth: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      if (auth) seenAuth.push(auth);
+      if (String(url).includes("short-interest")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "AAPL", short_interest: 144248476 }] }));
+      }
+      if (String(url).includes("/float")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "AAPL", free_float: 13515457484 }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["AAPL"]);
+    // 144,248,476 / 13,515,457,484 * 100 = 1.0672… → rounded to 1.07
+    expect(res.AAPL?.shortPercentOfFloatSecondary).toBeCloseTo(1.07, 2);
+    expect(seenAuth).toContain("Bearer massive-key");
+  });
+
+  it("MassiveEnrichmentProvider omits the field when float is missing/zero (never fabricates)", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("short-interest")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "ZZZ", short_interest: 1000 }] }));
+      }
+      if (String(url).includes("/float")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "ZZZ", free_float: 0 }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["ZZZ"]);
+    expect(res.ZZZ?.shortPercentOfFloatSecondary).toBeUndefined();
+  });
+
+  it("MassiveEnrichmentProvider tolerates a 404 (no row for the ticker) without throwing", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["NONE"]);
+    expect(res.NONE).toEqual({});
   });
 });

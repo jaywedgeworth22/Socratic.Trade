@@ -87,6 +87,25 @@ describe("account deletion", () => {
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM account_deletion_requests WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
   });
 
+  it("purges the per-user LLM budget reservation settings row (deletion sweep coverage)", async () => {
+    const db = await import("../src/lib/db");
+    const deletion = await import("../src/lib/account-deletion");
+    const userId = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const email = "reservation-delete@example.com";
+    const key = `llm_budget_reservation:${userId}`;
+    // Seed a leftover reservation row (as if a run crashed without releasing it).
+    db.getDb()
+      .prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+      .run(key, JSON.stringify({ reservations: [] }), new Date().toISOString());
+    const count = () => (db.getDb().prepare("SELECT COUNT(*) AS c FROM settings WHERE key = ?").get(key) as { c: number }).c;
+    expect(count()).toBe(1);
+
+    deletion.prepareAccountDeletion({ userId, email });
+    const result = deletion.confirmAndDeleteAccount({ userId, email, body: confirmation(email) });
+    expect(result.ok).toBe(true);
+    expect(count()).toBe(0); // the sweep deleted the reservation row
+  });
+
   it("blocks final deletion while order placement or reconciliation is in flight", async () => {
     const db = await import("../src/lib/db");
     const deletion = await import("../src/lib/account-deletion");
@@ -102,5 +121,31 @@ describe("account deletion", () => {
 
     deletion.prepareAccountDeletion({ userId, email });
     expect(() => deletion.confirmAndDeleteAccount({ userId, email, body: confirmation(email) })).toThrow("Account deletion is blocked by in-flight trading activity.");
+  });
+
+  it("blocks final deletion while a mobile command is in flight (queued/running)", async () => {
+    const db = await import("../src/lib/db");
+    const deletion = await import("../src/lib/account-deletion");
+    const userId = `u_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const email = "blocked-mobile@example.com";
+
+    // A running mobile command whose worker still holds the payload — deleting the row mid-flight
+    // would let it keep mutating policy/watchlists, so it must block deletion.
+    const now = new Date().toISOString();
+    db.getDb()
+      .prepare(
+        `INSERT INTO mobile_commands (id, user_id, command_type, status, payload, created_at, queued_at, updated_at)
+         VALUES (?, ?, 'run_strategy', 'running', '{}', ?, ?, ?)`
+      )
+      .run(randomUUID(), userId, now, now, now);
+
+    expect(deletion.getAccountDeletionBlockers(userId).activeMobileCommands).toBe(1);
+
+    deletion.prepareAccountDeletion({ userId, email });
+    expect(() => deletion.confirmAndDeleteAccount({ userId, email, body: confirmation(email) })).toThrow("Account deletion is blocked by in-flight trading activity.");
+
+    // A finished command (succeeded) no longer blocks — the worker is done with the payload.
+    db.getDb().prepare("UPDATE mobile_commands SET status = 'succeeded' WHERE user_id = ?").run(userId);
+    expect(deletion.getAccountDeletionBlockers(userId).activeMobileCommands).toBe(0);
   });
 });

@@ -98,7 +98,7 @@ export function ConfirmationModal({
       onClose={onClose}
       title={confirmed ? "Trade Confirmed" : "Confirm Live Trade"}
       subtitle={confirmed ? "Executing your order…" : undefined}
-      icon={confirmed ? <Check size={18} /> : <AlertTriangle size={18} />}
+      icon={confirmed ? <Check size={20} /> : <AlertTriangle size={20} />}
       size="sm"
       footer={
         confirmed ? null : (
@@ -131,7 +131,7 @@ export function ConfirmationModal({
       {confirmed ? (
         <div className="flex flex-col items-center justify-center py-4 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-up/20">
-            <Check size={24} className="text-up" />
+            <Check size={20} className="text-up" />
           </div>
           <p className="text-sm font-medium text-fg">Order is being placed for {symbol}</p>
         </div>

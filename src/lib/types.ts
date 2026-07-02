@@ -209,6 +209,15 @@ export interface TuningSettings {
   /** Edge threshold (%) for skipNegativeExpectancy: skip when shrunk avg edge ≤ this. Default 0. */
   skipNegativeExpectancyEdgePct?: number;
   /**
+   * Default OFF. When true, a run whose proposal rationales COLLAPSE to near-identical reasoning
+   * (mean pairwise trigram similarity above the collapse threshold — a sign the LLM is emitting
+   * input-agnostic boilerplate rather than name-specific analysis) has its OPENING proposals
+   * (buy/short) routed to human review instead of auto-executing. Exits (sell/cover) are never gated
+   * — routing a risk-reducing trade to a human is unsafe. Off = today's advisory-only behavior
+   * (the collapse is logged but never affects proposal generation, selection, or execution).
+   */
+  gateOnRationaleCollapse?: boolean;
+  /**
    * When true (DEFAULT), proposed factor-weight changes are WITHHELD (stripped from the patch)
    * whenever the OOS walk-forward gate could not validate them (data-fetch failure, insufficient
    * snapshot history, or missing composite IC). When false, the prior behavior is restored:
@@ -230,6 +239,20 @@ export interface TuningSettings {
    * Default 0 (unfiltered — preserves current behavior). Exposed in Settings → Tuning.
    */
   minProposalScoreThreshold?: number;
+  /**
+   * Hard per-user/day LLM + RAG TOKEN ceiling. When today's summed model + retrieval usage reaches
+   * this, the run skips every model/RAG spend for the rest of the day (non-LLM risk maintenance still
+   * runs). `undefined` (blank in the UI) INHERITS the operator env default
+   * `TRIGGER_LLM_DAILY_TOKEN_BUDGET`; an explicit `0` means NO LIMIT (opt out of the default); a
+   * positive value is that ceiling. Modifiable in Settings → Tuning. Enforced at the spend primitives
+   * (`withLlmGeneration`, `retrieveContextDetailed`), so it covers every spend site.
+   */
+  llmDailyTokenBudget?: number;
+  /**
+   * Hard per-user/day LLM + RAG COST ceiling in USD (estimated). Same semantics as
+   * `llmDailyTokenBudget`: `undefined` inherits env `TRIGGER_LLM_DAILY_COST_BUDGET_USD`, `0` = no limit.
+   */
+  llmDailyCostBudgetUsd?: number;
 
   // ── Workstream B: learning-loop auto-tuning (all DEFAULT OFF) ──────────────────
   /**
@@ -546,6 +569,14 @@ export interface TradingPolicy {
   llmModel?: string;
   /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
   redTeamLlmModel?: string;
+  /**
+   * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
+   * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
+   * SAME request against each model in order; the first success serves the run. The failover is
+   * recorded loudly — a `strategy_llm_failover` audit per hop, plus the served model/provider and a
+   * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
+   */
+  llmFallbackModels?: string[];
   /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
@@ -765,6 +796,18 @@ export interface TradeProposal {
    */
   takeProfitBand?: number;
   takeProfitBasis?: number;
+  /**
+   * Red Team (Bear) debate verdict for this proposal, mirroring `RedTeamDebateResult`
+   * (src/lib/red-team.ts). Set by the strategy loop when the Red Team debate runs on a
+   * high-conviction proposal; surfaced as its own "Bear Review" block in the dashboard so the
+   * critique isn't buried inside the truncated rationale. Optional so existing/persisted proposals
+   * and test fixtures that predate the field render unchanged.
+   *   - `rejected`: the Bear found a critical flaw (the proposal is dropped upstream, so a persisted
+   *     proposal will normally have `rejected: false`; the field records the surviving verdict).
+   *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
+   *   - `reason`: the Bear's counter-argument or approval reasoning.
+   */
+  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string };
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the

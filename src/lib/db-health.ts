@@ -7,6 +7,52 @@ import { getDb } from "./db";
 // single cold failure can trip. Exported so consumers key off the condition, not a brittle string.
 export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
 
+/**
+ * Per-credential-lane health for the API circuit breaker. A "lane" is (service, keySource) — the SAME
+ * granularity `getServiceHealthSummaries` and the whole health store already use — NOT per-user, so a
+ * globally-dead env key trips once (not per user) and a user's own bad key trips only that user's lane
+ * without stopping the shared env lane. `stoppedWorking` reuses the exact predicate below (kept in sync
+ * with getServiceHealthSummaries): the last 5 calls all failed, or active-this-hour with no recent
+ * success. Read-only; never throws (returns a not-stopped default on any DB error).
+ */
+export function getLaneHealth(
+  service: string,
+  keySource: string | null
+): { stoppedWorking: boolean; reason: string | null; lastFailureTs: string | null } {
+  try {
+    const db = getDb();
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const last5 = db
+      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ? ORDER BY ts DESC LIMIT 5`)
+      .all(service, keySource) as Array<{ ok: number }>;
+    const lastSuccess = db
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ? AND ok = 1 ORDER BY ts DESC LIMIT 1`)
+      .get(service, keySource) as { ts: string } | undefined;
+    const lastFailure = db
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ? AND ok = 0 ORDER BY ts DESC LIMIT 1`)
+      .get(service, keySource) as { ts: string } | undefined;
+    const callsLastHour = (
+      db.prepare(`SELECT COUNT(*) as cnt FROM api_health_log WHERE service = ? AND key_source IS ? AND ts >= ?`).get(service, keySource, hourAgo) as { cnt: number }
+    ).cnt;
+
+    let stoppedWorking = false;
+    let reason: string | null = null;
+    if (last5.length >= 5 && last5.every((r) => r.ok === 0)) {
+      stoppedWorking = true;
+      reason = HEALTH_REASON_CONSECUTIVE_FAILURES;
+    } else if (callsLastHour > 0 && !lastSuccess) {
+      stoppedWorking = true;
+      reason = "Active in past hour but no successful call ever";
+    } else if (callsLastHour > 0 && lastSuccess && lastSuccess.ts < hourAgo) {
+      stoppedWorking = true;
+      reason = "Active in past hour but no success in 60 min";
+    }
+    return { stoppedWorking, reason, lastFailureTs: lastFailure?.ts ?? null };
+  } catch {
+    return { stoppedWorking: false, reason: null, lastFailureTs: null };
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ServiceHealthSummary {

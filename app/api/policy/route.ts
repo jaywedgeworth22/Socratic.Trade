@@ -124,6 +124,8 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
   if (policy.maxPortfolioBeta !== undefined && (!Number.isFinite(policy.maxPortfolioBeta) || policy.maxPortfolioBeta <= 0 || policy.maxPortfolioBeta > 10)) return "maxPortfolioBeta must be a positive number (≤ 10).";
   if (policy.maxAvgCorrelation !== undefined && (!Number.isFinite(policy.maxAvgCorrelation) || policy.maxAvgCorrelation <= 0 || policy.maxAvgCorrelation > 1)) return "maxAvgCorrelation must be between 0 (off) and 1.";
   if (policy.maxEntryDriftPct !== undefined && (!Number.isFinite(policy.maxEntryDriftPct) || policy.maxEntryDriftPct < 0 || policy.maxEntryDriftPct > 100)) return "maxEntryDriftPct must be between 0 (off) and 100.";
+  if (policy.tuning?.llmDailyTokenBudget !== undefined && (!Number.isFinite(policy.tuning.llmDailyTokenBudget) || policy.tuning.llmDailyTokenBudget < 0)) return "tuning.llmDailyTokenBudget must be a non-negative number (0 = no limit).";
+  if (policy.tuning?.llmDailyCostBudgetUsd !== undefined && (!Number.isFinite(policy.tuning.llmDailyCostBudgetUsd) || policy.tuning.llmDailyCostBudgetUsd < 0)) return "tuning.llmDailyCostBudgetUsd must be a non-negative number (0 = no limit).";
   if (policy.atrStops !== undefined && typeof policy.atrStops !== "boolean") return "atrStops must be a boolean.";
   if (policy.riskRules.atrStopPeriod !== undefined && (!Number.isInteger(policy.riskRules.atrStopPeriod) || policy.riskRules.atrStopPeriod < 5 || policy.riskRules.atrStopPeriod > 100)) return "riskRules.atrStopPeriod must be an integer between 5 and 100.";
   if (policy.riskRules.atrStopMultiple !== undefined && (!Number.isFinite(policy.riskRules.atrStopMultiple) || policy.riskRules.atrStopMultiple <= 0 || policy.riskRules.atrStopMultiple > 10)) return "riskRules.atrStopMultiple must be between 0 (exclusive) and 10.";
@@ -179,8 +181,11 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";
     if (!Number.isFinite(longTermRatePct) || longTermRatePct < 0 || longTermRatePct > 100) return "longTermRatePct must be between 0 and 100.";
   }
+  if (policy.llmFallbackModels !== undefined && (!Array.isArray(policy.llmFallbackModels) || policy.llmFallbackModels.some((m) => typeof m !== "string"))) {
+    return "llmFallbackModels must be an array of model-id strings.";
+  }
   if (policy.tuning) {
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, redTeamConvictionThreshold, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct } = policy.tuning;
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, redTeamConvictionThreshold, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
     if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
     if (sizingFloorPct !== undefined && (!Number.isFinite(sizingFloorPct) || sizingFloorPct < 0 || sizingFloorPct > 100)) return "tuning.sizingFloorPct must be between 0 and 100.";
@@ -191,6 +196,7 @@ async function validatePolicy(policy: TradingPolicy, userId: string): Promise<st
     if (bearVetoFcfYieldFloorPct !== undefined && (!Number.isFinite(bearVetoFcfYieldFloorPct) || bearVetoFcfYieldFloorPct < -100 || bearVetoFcfYieldFloorPct > 100)) return "tuning.bearVetoFcfYieldFloorPct must be between -100 and 100.";
     if (bearVetoDebtToEquityCeiling !== undefined && (!Number.isFinite(bearVetoDebtToEquityCeiling) || bearVetoDebtToEquityCeiling < 0)) return "tuning.bearVetoDebtToEquityCeiling must be a non-negative number.";
     if (skipNegativeExpectancy !== undefined && typeof skipNegativeExpectancy !== "boolean") return "tuning.skipNegativeExpectancy must be a boolean.";
+    if (gateOnRationaleCollapse !== undefined && typeof gateOnRationaleCollapse !== "boolean") return "tuning.gateOnRationaleCollapse must be a boolean.";
     if (skipNegativeExpectancyEdgePct !== undefined && (!Number.isFinite(skipNegativeExpectancyEdgePct) || skipNegativeExpectancyEdgePct < -100 || skipNegativeExpectancyEdgePct > 100)) return "tuning.skipNegativeExpectancyEdgePct must be between -100 and 100.";
   }
   if (policy.notificationSettings.webhookUrl?.trim()) {

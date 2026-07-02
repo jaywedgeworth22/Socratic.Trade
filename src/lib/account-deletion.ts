@@ -5,6 +5,14 @@ import { clearMcpOAuthForUser } from "./mcp-oauth";
 export const ACCOUNT_DELETE_PHRASE = "DELETE MY ACCOUNT";
 export const LOCAL_OPERATOR_DELETE_PHRASE = "DELETE LOCAL OPERATOR ACCOUNT";
 
+// G9(b) audit (2026-07-01): cross-checked against every table's FULLY-MIGRATED runtime schema
+// (several tables — strategy_runs, trade_proposals, strategy_profiles, portfolio_snapshots,
+// fill_events, notification_events, audit_events, api_health_log — only gain user_id via an ALTER
+// TABLE in db.ts migrate(), not their original CREATE TABLE, so a static grep of CREATE TABLE alone
+// would miss them). Four tables were found user-scoped but MISSING from this list and have been
+// added: api_health_log, mobile_commands, rag_usage, take_profit_trims. See
+// test/account-deletion-coverage.test.ts, which queries sqlite_master + PRAGMA table_info at runtime
+// so a future new user-scoped db-*.ts table can't silently escape deletion again — keep it green.
 const DELETE_TABLES_BY_USER_ID = [
   "user_api_keys",
   "connected_accounts",
@@ -29,10 +37,18 @@ const DELETE_TABLES_BY_USER_ID = [
   "learned_context_pending",
   "synthetic_trailing_stops",
   "broker_protective_stops",
-  "audit_events"
+  "audit_events",
+  // Added by the G9(b) coverage cross-check (2026-07-01) — previously missing:
+  "api_health_log",
+  "mobile_commands",
+  "rag_usage",
+  "take_profit_trims"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];
+
+/** Test-only read view of the deletion table list (avoids re-exporting it as public API surface). */
+export const DELETE_TABLES_BY_USER_ID_FOR_TEST: readonly string[] = DELETE_TABLES_BY_USER_ID;
 
 export interface AccountDeletionConnectedAccountPreview {
   id: string;
@@ -47,6 +63,14 @@ export interface AccountDeletionBlockers {
   runningStrategyRuns: number;
   placingProposals: number;
   pendingReconciliationFills: number;
+  /**
+   * In-flight mobile commands (status 'queued'/'running'). `confirmAndDeleteAccount` sweeps the
+   * `mobile_commands` table, so a command already claimed by a worker (status 'running') could keep
+   * mutating policy/watchlists — or try to finish against a row that was just deleted — if we deleted
+   * mid-flight. Counted as a blocker so deletion waits until the command drains, matching the
+   * running-strategy-run / placing-proposal / pending-fill blockers.
+   */
+  activeMobileCommands: number;
 }
 
 export interface AccountDeletionPreview {
@@ -93,7 +117,7 @@ function countLearnedContext(userId: string): number {
 }
 
 function countUserSettingsRows(userId: string): number {
-  const exactKeys = [`strategy_run_lock:${userId}`, `robinhood_mcp_oauth_token:${userId}`];
+  const exactKeys = [`strategy_run_lock:${userId}`, `robinhood_mcp_oauth_token:${userId}`, `llm_budget_reservation:${userId}`];
   const exactCount = getDb()
     .prepare(`SELECT COUNT(*) AS count FROM settings WHERE key IN (${exactKeys.map(() => "?").join(",")})`)
     .get(...exactKeys) as { count: number };
@@ -133,10 +157,14 @@ export function getAccountDeletionBlockers(userId: string): AccountDeletionBlock
          AND (source = 'live' OR execution_mode IN ('broker/paper', 'broker/live'))`
     )
     .get(userId) as { count: number };
+  const activeMobileCommands = db
+    .prepare("SELECT COUNT(*) AS count FROM mobile_commands WHERE user_id = ? AND status IN ('queued','running')")
+    .get(userId) as { count: number };
   return {
     runningStrategyRuns: runningStrategyRuns.count,
     placingProposals: placingProposals.count,
-    pendingReconciliationFills: pendingReconciliationFills.count
+    pendingReconciliationFills: pendingReconciliationFills.count,
+    activeMobileCommands: activeMobileCommands.count
   };
 }
 
@@ -236,7 +264,8 @@ export function confirmAndDeleteAccount(input: {
   }
 
   const blockers = getAccountDeletionBlockers(input.userId);
-  const blockerCount = blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills;
+  const blockerCount =
+    blockers.runningStrategyRuns + blockers.placingProposals + blockers.pendingReconciliationFills + blockers.activeMobileCommands;
   if (blockerCount > 0) {
     throw Object.assign(new Error("Account deletion is blocked by in-flight trading activity."), { status: 409, blockers });
   }
@@ -265,6 +294,8 @@ export function confirmAndDeleteAccount(input: {
     db.prepare("DELETE FROM learned_context WHERE user_id = ? OR contributor_user_id = ?").run(input.userId, input.userId);
     // Remove the user's run lock AND every per-account run lock (strategy_run_lock:<user>:<account>).
     db.prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?").run(`strategy_run_lock:${input.userId}`, `strategy_run_lock:${input.userId}:%`);
+    // Remove the user's LLM budget reservation row (llm_budget_reservation:<user>).
+    db.prepare("DELETE FROM settings WHERE key = ?").run(`llm_budget_reservation:${input.userId}`);
     db.prepare("DELETE FROM account_deletion_requests WHERE user_id = ?").run(input.userId);
   })();
 

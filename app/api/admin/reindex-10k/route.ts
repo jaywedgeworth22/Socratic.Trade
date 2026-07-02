@@ -2,31 +2,31 @@ import { NextResponse } from "next/server";
 import { listIngestedAccessions } from "@/lib/db";
 import { refreshFilingBodies } from "@/lib/web-sources/sec-filings";
 import { getVectorStoreStats } from "@/lib/vector-db";
+import { requireAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
 // Admin/operator route to trigger a full 10-K/10-Q backfill once a paid Voyage key is set.
-// Gate: only runs outside production, OR when ADMIN_REINDEX_TOKEN matches x-admin-token header.
+// Admin-gated via the shared requireAdmin gate: verified ADMIN_USER_EMAILS / primary operator, OR a
+// timing-safe x-admin-token match against ADMIN_REINDEX_TOKEN, OR non-production. (Previously a local
+// `authorized()` helper compared the token with `===`; migrated to the shared, constant-time gate.)
 // Returns { indexed, skipped, errors } so the operator can confirm a successful backfill.
-function authorized(request: Request): boolean {
-  const token = process.env.ADMIN_REINDEX_TOKEN;
-  if (token && request.headers.get("x-admin-token") === token) return true;
-  return process.env.NODE_ENV !== "production";
-}
 
 export async function GET(request: Request) {
-  if (!authorized(request)) {
-    return NextResponse.json({ ok: false, error: "Not authorized in production without ADMIN_REINDEX_TOKEN." }, { status: 403 });
-  }
+  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
+  // email (app auth unconfigured) must not be able to trigger this paid Voyage backfill.
+  const denied = requireAdmin(request, { requireTokenInProd: true });
+  if (denied) return denied;
   const recent = listIngestedAccessions(50);
   const stats = await getVectorStoreStats();
   return NextResponse.json({ ok: true, ingestedAccessions: recent, vectorStore: stats });
 }
 
 export async function POST(request: Request) {
-  if (!authorized(request)) {
-    return NextResponse.json({ ok: false, error: "Not authorized in production without ADMIN_REINDEX_TOKEN." }, { status: 403 });
-  }
+  // requireTokenInProd: in production the x-admin-token is mandatory — a synthetic/injected admin
+  // email (app auth unconfigured) must not be able to trigger this paid Voyage backfill.
+  const denied = requireAdmin(request, { requireTokenInProd: true });
+  if (denied) return denied;
 
   let symbols: string[] = [];
   let limit = Number.POSITIVE_INFINITY;

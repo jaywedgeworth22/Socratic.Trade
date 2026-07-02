@@ -5,12 +5,87 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-01 (`chat-a-llm-money-path`): Audit Chat A — LLM & prompting (money-path),
+> all 8 items. Hardened the autonomous strategy path: inline Bear red-team now fails
+> CLOSED (un-critiqued Bull proposals route to human in decide mode, not auto-executed);
+> Bull/Bear prompts extracted to a versioned `strategy-prompts.ts` + deterministic
+> offline eval (`npm run eval:strategy-offline`) + `trade_proposals.prompt_version`
+> stamp; Anthropic prompt caching; default-off ordered cross-provider failover
+> (`policy.llmFallbackModels`); truncation-aware Bull cap; strict red-team `json_schema`;
+> default-off rationale-collapse gate; removed a dead Anthropic endpoint branch. All but
+> the fail-closed safety fix are default-off flags. Verified tsc/lint/test(1692)/build +
+> eval green. See `docs/rollouts/2026-07-01-strategy-llm-money-path.md`.
+
+> 2026-07-01 (`claude/wonderful-bell-32958a`): **Design spec — single-adversary ("Red Team")
+> consolidation.** `docs/single-adversary-consolidation.md` proposes collapsing today's two
+> adversarial LLM passes (in-flow Bear + standalone `debateProposal`) into one hardened Red
+> Team: reviews the finalized trade, fails closed + visible when unavailable, never blocks a
+> risk-reducing exit, provably independent of the proposer. Design-only (not implemented);
+> decisions O1–O4 resolved (spec §9); Codex review refinements folded in as §12 R1–R20. Owning
+> phase doc: `docs/phase-7-strategy.md` §F. See
+> `docs/rollouts/2026-07-01-single-adversary-consolidation-spec.md`.
+
+> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): **Follow-up Codex review on the durable budget** —
+> three findings were **fixed in code with tests** (not deferred): (a) an EXPLICIT per-user policy budget
+> of `0` now opts OUT of an operator env default (`0` = no limit, not "block everything") — `resolveLimit`
+> only inherits the env default on `undefined`/blank; (b) RAG (Voyage/Pinecone) spend from the
+> `rag_usage` ledger now counts toward the same ceiling as `llm_usage`, so RAG-only spend can trip the
+> cap (previously it could not); (c) the retrieval RAG meters (`meterEmbed`/`meterPineconeQuery`/
+> `meterRerank` in `retrieveContextDetailed`) now book under the requesting `userId` instead of defaulting
+> to `"local"` — otherwise a non-`local` user's retrieval spend was never counted against *their* ceiling,
+> silently defeating (b) for the multi-user case. Covered by `test/llm-budget-enforcement.test.ts` and
+> `test/rag-metering.test.ts`. A later pass added three more **fixed-in-code** items: (d) over-budget
+> `generateReflectionSummary` no longer skips the non-LLM excursion enrichment (budget suppresses only
+> the LLM reflection now); (e) a run that crosses the budget mid-run (revalidation/RAG spend) re-reads
+> the budget before `proposeTrades` and gracefully skips instead of surfacing as a FAILED run; (f)
+> `embedQueryCached` only caches VALID embeddings, so a transient malformed Voyage response no longer
+> poisons the query LRU. Covered by `test/post-mortem.test.ts` and `test/query-embedding-cache.test.ts`.
+>
+> **Future considerations (deferred, not blocking PR #293)** — the durable per-user LLM budget now
+> enforces at the spend primitives and is user-editable in Settings; known limitations left for a
+> follow-up:
+> 1. ~~**Concurrent-run budget reservation.**~~ **DONE (2026-07-01).** A per-USER LLM budget
+>    **reservation** now closes this: `reserveLlmBudget`/`reserveLlmRunBudget`/`releaseLlmReservation` in
+>    `src/lib/llm-budget.ts`, CAS'd in the `settings` KV row like `acquireStrategyLock` (no migration,
+>    5-min TTL, fail-closed → skip LLM, default-OFF). `runStrategyOnce` reserves its worst-case estimate
+>    at the budget gate and releases in the `finally`, so a concurrent same-user run sees the hold and
+>    skips LLM instead of both overshooting. See `docs/rollouts/2026-07-01-llm-budget-reservation-toctou.md`.
+> 2. **Chat-path spend coverage.** `/api/chat` LLM spend does not route through `withLlmGeneration`, so
+>    it is outside the budget gate. If a *total* per-user/day ceiling (strategy + chat) is desired,
+>    wire the chat LLM path through the same `assertWithinLlmBudget(userId)` guard.
+> 3. **Multi-account budget target.** The ceiling is keyed by `userId`, so it is a per-*user* daily cap
+>    that spans all of that user's accounts, not a per-*account* cap. If a user runs several accounts and
+>    the intent is an independent budget per account, the gate would need to key on the account id (and
+>    the ledger read filter + the Settings UI would need a per-account budget field). Today it is
+>    deliberately per-user so one runaway account can't drain a shared daily allowance unnoticed.
+> 4. **(Earlier-noted) `strategy.ts` god-module split** (~3k lines) remains a separate large refactor.
+> See `docs/rollouts/2026-07-01-llm-budget-durable-enforcement.md` and
+> `docs/rollouts/2026-07-01-fg-codex-review-fixes.md`.
+> 2026-07-01 (`claude/audit-work-split-f-g-o67jj2`): audit workstreams **F**
+> (UX/IA/aesthetics) and **G** (security/risk/testing/ops) implemented together via
+> 4 parallel agents on disjoint files. F: first-class `redTeamVerdict` + "Bear
+> Review" block, Bear-veto audit, visible ⌘K, Macro/Tax tab overflow, tap-to-expand
+> rationale, EmptyState/skeleton + elevation/blur/icon token scales, `docs/design/
+> visual-system.md`, phase-8 IA fix. G: chat/scan rate limits, OAuth-token at-rest
+> encryption, constant-time admin compare + CSP/security headers (default-off),
+> drawdown/correlation-gate verification, an e2e money-path test + default-safe
+> live-order pre-flight guard, a default-off per-user/day token-budget ceiling +
+> query-embedding LRU, an **account-deletion coverage fix** (4 user-scoped tables
+> were escaping deletion), and Langfuse prompt-version/veto stamping. All new
+> behavior is default-off; paper/Test mode unchanged. Deferred (noted): the
+> `strategy.ts` god-module split and interval-scheduler budget wiring. Verify quartet
+> green locally (1720 tests); see `docs/rollouts/2026-07-01-{ux-ia-aesthetics,
+> security-hardening,strategy-money-path-f-g,cost-ops-controls}.md`.
 > 2026-07-01 (`claude/trading-audit-d-e-dpw0h7`, follow-on): closed issue #306's
 > non-mechanical follow-ups from Chats D+E. **Scope correction:** the "FMP as a second
 > short-interest source with a ≥5pp disagreement bulletin" item below was removed as
 > non-deliverable — FMP publishes no short-interest data (no `/short_interest` endpoint;
 > verified against FMP's API docs + official MCP surface). Yahoo `shortPercentOfFloat` is the
-> single real source; a real second source would need Massive/Finnhub. Also: scoped the
+> single real source; a real second source would need Massive/Finnhub. **UPDATE 2026-07-01 (PR
+> #309): the real second source is now DELIVERED via Massive REST** — `MassiveEnrichmentProvider`
+> computes short % of float from Massive's FINRA short interest / free float and emits the ≥5pp
+> disagreement bulletin, gated on `MASSIVE_API_KEY` (default-inert without it). See
+> `docs/rollouts/2026-07-01-massive-short-interest-second-source.md`. Also: scoped the
 > default-off enrichment circuit breaker to trip per **credential lane** (a dead env lane no
 > longer disables a healthy user lane), and locked in `extractUnderlyingPrice`'s
 > `{ quotes: [...] }` envelope parsing with a regression test. See

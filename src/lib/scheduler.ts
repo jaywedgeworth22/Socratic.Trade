@@ -315,6 +315,10 @@ async function tick(): Promise<void> {
     const executing = new Set<Promise<unknown>>();
 
     for (const { userId, accountId } of dueRuns) {
+      // The daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
+      // breakers + reconciliation, before proposal generation), NOT here — suppressing the run at this
+      // outer gate would also skip the drawdown/volatility breakers + fill reconciliation, disabling
+      // safety maintenance for the rest of the day. So we always enter the run; it skips only LLM work.
       const p = runStrategyOnce(userId, { connectedAccountId: accountId })
         // Item 1 (opt-in): after a successful cadence run, attempt cadence-gated autonomous weight tuning.
         // No-op unless policy.tuning.autoApplyWeights is on; fully self-guarded so it can never break the tick.
