@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-learned-context`, Claude): **Learned-context approval
+> inbox ported to /console** — the legacy "Pending Learned Changes" queue now lives on
+> `/console/approvals` as a Learned context section (own data source; approve/reject
+> with optimistic UI, confirm sheet showing the exact AI-LEARNED block with the honest
+> approval-date stamp, full provenance + tooltips + row hover per the owner's new UX
+> standard). Console feature-parity track only — no roadmap scope change. Follow-ups:
+> sharing prefs in Settings, nav/needs-attention count. See
+> `docs/rollouts/2026-07-02-console-learned-context.md`.
 > 2026-07-02 (`claude/console-qa-fixes`, Claude): **12 owner QA fixes on /console** —
 > policy saves no longer rejected by a stale stored gpt-5.5/high config; SPY benchmark
 > is deposit/withdrawal-aware (inferred flows + time-weighted return, honestly labeled);

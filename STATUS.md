@@ -4,6 +4,26 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console: learned-context approval inbox (Claude)
+Branch `claude/console-learned-context` (cut from `origin/main` @ 78ecc98; parallel port effort —
+touches ONLY `app/console/approvals/*` + new `app/console/lib/learned-context.ts` to stay clear of
+the other agents' files). Ported the legacy "Pending Learned Changes" queue into the console:
+`/console/approvals` now has a **Learned context** section below the trade proposals listing every
+AI-inferred risk observation / strategy directive awaiting the owner's approve/reject
+(`GET /api/learned-context/pending`, own 60s visibility-guarded poll + refresh). Cards show full
+provenance (origin/source/kind/classifier reason/timestamp) with tooltips on everything and a row
+hover highlight (owner's new cross-cutting UX standard, done with inline Tailwind + existing
+`--con-*` tokens — console.css untouched). Reject is one tap (optimistic + toast + reconcile);
+Approve opens a confirm sheet stating exactly what applies — for directives the EXACT attributed
+AI-LEARNED block, previewed with the APPROVAL-date stamp the server actually writes (legacy
+previewed `createdAt`, which never matched). Approving a directive refreshes the shared snapshot so
+Strategy shows the new prompt. Verified end-to-end on a temp DB (seeded both tiers; approve
+appended the block + audit row; repeat-reject surfaced the server's 404 text). Quartet green: tsc
+clean, lint 0 errors, 2241 tests, build ok. Docs:
+`docs/rollouts/2026-07-02-console-learned-context.md`. **Next:** land via PR (auto-merge on green
+verify); follow-ups: sharing-prefs surface in Settings, nav badge / needs-attention count once
+those files free up.
+
 ## 2026-07-02 — /console: 12 owner QA fixes (Claude)
 Branch `claude/console-qa-fixes` (cut from `origin/main` @ 8f828af, after #317+#319 landed).
 All 12 owner-walkthrough issues fixed, each diagnosis verified against real code first.
