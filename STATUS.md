@@ -4,6 +4,33 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console/macro destination, Wave 2 (Claude)
+Branch `claude/console-macro` (cut from post-foundation `origin/main`). Fills the
+`/console/macro` dead link from the Wave-1 nav with the macro / market-regime board,
+new files only under `app/console/macro/` (`page.tsx`, `indicators.ts`, `trends.tsx`).
+Renders everything the legacy `app/ui/macro-panel.tsx` showed — rates/curves,
+inflation & growth, risk & volatility (VIX/SKEW/VVIX/HY/ERP), CFTC + factor
+positioning, full-market breadth with movers, ~90d sparklines, market news — and
+improves on it: the regime is the hero card (severity chip, plain-words meaning,
+classifier inputs, the user's realized per-regime scorecard stat linked to Results,
+and a disclosure of exactly where the label changes strategist behavior — stamping,
+thesis-x-regime sizing, Risk-Off/Crisis below-median-buy veto, crisis/inverted
+exposure cap, flip-triggered runs); every tile carries a plain-language "what it is"
+line plus a dynamic banded interpretation of the current reading; all tiles render
+with missing = em dash; and when `macro.asOf === "unavailable"` the FRED-derived
+tiles are honestly blanked with an explanatory notice instead of showing the
+backend's placeholder constants (legacy showed them). Owner UX standard throughout:
+native `title` tooltips on every data point/label/control, `.con-row` hover on all
+tiles/rows, light+dark tokens only, responsive grids, non-blocking refresh-error
+notice, honest empty state when the snapshot has no `macroBoard`. Hard constraints
+respected: no shared console files, no `src/lib/*` touched. Quartet green: tsc clean,
+lint 0 errors, 2241 tests / 234 files pass, build ok (+ runtime smoke: /console/macro
+200, live macroBoard payload inspected). Docs:
+`docs/rollouts/2026-07-02-console-macro.md`. **Known caveat:** the backend's
+"light macro" path (no FRED key, Yahoo VIX ok) is client-indistinguishable from
+sourced data — per-field sourcing flags need the src/lib owner. **Next:** land via
+PR; wire news/mover ticker chips to the scan drilldown once `/console/scan` lands.
+
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:
