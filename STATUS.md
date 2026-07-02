@@ -4,6 +4,20 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-01 — Massive REST as a REAL second short-interest source (Claude, PR #309)
+Repurposed the stalled #309 (`fix/fmp-short-interest-gate`) per owner direction on the merge conflict:
+main had already removed the dead FMP `/v4/short_interest` scaffold, so instead of closing #309 or
+shipping inert scaffold, wired a **real** second source. Merged main (resolved short-interest conflicts to
+main's clean removal), then added `MassiveEnrichmentProvider` — fetches Massive's FINRA short interest +
+free float and computes short % of float, cross-checks it against Yahoo's `shortPercentOfFloat`, and emits
+a `shortInterestDisagreement` evidence bulletin when they differ > `SHORT_INTEREST_DISAGREEMENT_PCT_PT`
+(5pp). Base `https://api.massive.com` + `Authorization: Bearer` verified from Massive's official REST docs
++ MCP server source (not guessed). Gated on `MASSIVE_API_KEY` + `massiveShortInterestEnabled()` (default
+ON) — inert/no calls in the default keyless setup. Quartet green: tsc 0, lint 0 errors, **2173 tests** (7
+new), build ok. Docs: `docs/rollouts/2026-07-01-massive-short-interest-second-source.md`, `.env.example`
+new Massive-REST section. Codex/Cursor review comments on #309 were both usage-limit-reached notices (no
+actionable feedback). **NOTE:** the earlier separate reservation work is on PR #316 (`claude/llm-budget-reservation`).
+
 ## 2026-07-01 — Strategy LLM money-path hardening: Audit Chat A, all 8 items (Claude)
 Branch `chat-a-llm-money-path`. Implemented all of **Chat A — LLM & prompting
 (money-path)** from `docs/reviews/2026-07-01-audit-work-split.md`: (1) inline Bear

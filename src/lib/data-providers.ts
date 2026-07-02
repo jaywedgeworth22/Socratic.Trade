@@ -114,6 +114,16 @@ export interface SymbolEnrichment {
   companyName?: string;
   pbRatio?: number;
   shortPercentOfFloat?: number;
+  // A SECOND source's independent short-interest read (Massive/FINRA: short_interest ÷ free float),
+  // carried alongside the primary (Yahoo-first) value ONLY so the cascade can flag a material
+  // disagreement. NOT a first-wins sourced field — the winning shortPercentOfFloat is still chosen by
+  // registration order via takeScalar. This carrier is deleted after the flag is computed and never
+  // leaves the cascade (so it needs no MarketQuote / applyEnrichment wiring).
+  shortPercentOfFloatSecondary?: number;
+  // Set by the cascade when the primary and the second source's short interest disagree beyond the
+  // threshold. Surfaced as an evidence bulletin (applyEnrichment in market.ts) rather than silently
+  // trusting one source.
+  shortInterestDisagreement?: string;
   beta?: number;
   fiftyTwoWeekHigh?: number;
   fiftyTwoWeekLow?: number;
@@ -638,6 +648,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   const intrinio = resolveApiKeyWithSource("intrinio", userId);
   const tiingo = resolveApiKeyWithSource("tiingo", userId);
   const twelvedata = resolveApiKeyWithSource("twelvedata", userId);
+  const massive = resolveApiKeyWithSource("massive", userId);
   // Alpaca MARKET DATA: own key (individual) → operator's paper key (shared) for background/tenants.
   // Trading is unaffected (alpaca.ts resolves Alpaca strictly per-user).
   const alpacaData = resolveAlpacaMarketData(userId);
@@ -678,6 +689,11 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
   if (alphaVantage.key) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId), alphaVantage.source));
   if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
+  // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
+  // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
+  // (no price/fundamentals), so ordering doesn't affect first-wins fields. Registered only when a
+  // MASSIVE_API_KEY is present AND massiveShortInterestEnabled() (default ON) — inert otherwise.
+  if (massive.key && massiveShortInterestEnabled()) providers.push(withHealthLane(new MassiveEnrichmentProvider(massive.key, massive.source, userId), massive.source));
   // SEC EDGAR XBRL: keyless, default-OFF. Fills debtToEquity from authoritative SEC filings.
   // Positioned after FMP (paid key wins) but before Yahoo (keyless fallback) so SEC authoritative
   // data supersedes Yahoo's scraped values when enabled.
@@ -902,6 +918,11 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         takeScalar("companyName", name, r.companyName);
         takeScalar("pbRatio", name, r.pbRatio);
         takeScalar("shortPercentOfFloat", name, r.shortPercentOfFloat);
+        // The second source's short read is CARRIED (not first-wins) so the disagreement check below
+        // can compare it against the primary. Keep the first non-undefined one.
+        if (base.shortPercentOfFloatSecondary === undefined && r.shortPercentOfFloatSecondary !== undefined) {
+          base.shortPercentOfFloatSecondary = r.shortPercentOfFloatSecondary;
+        }
         takeScalar("beta", name, r.beta);
         takeScalar("fiftyTwoWeekHigh", name, r.fiftyTwoWeekHigh);
         takeScalar("fiftyTwoWeekLow", name, r.fiftyTwoWeekLow);
@@ -966,6 +987,29 @@ export class CascadingEnrichmentProvider implements MarketEnrichmentProvider {
         this.contributingNames.add("alpha-vantage");
       }
 
+      // Short-interest cross-check: when the primary (Yahoo-first) shortPercentOfFloat and the SECOND
+      // source's independent read (Massive/FINRA) disagree by more than SHORT_INTEREST_DISAGREEMENT_PCT_PT
+      // percentage points, record a disagreement note surfaced as an evidence bulletin — rather than
+      // silently trusting one source. We keep the first-wins primary value; only the flag is added. Both
+      // must be present, and the primary must not itself be the second source (defensive; Massive only
+      // supplies the carrier, never the first-wins shortPercentOfFloat).
+      if (
+        typeof base.shortPercentOfFloat === "number" &&
+        typeof base.shortPercentOfFloatSecondary === "number" &&
+        sources.shortPercentOfFloat !== "massive"
+      ) {
+        const delta = Math.abs(base.shortPercentOfFloat - base.shortPercentOfFloatSecondary);
+        if (delta >= shortInterestDisagreementThresholdPct()) {
+          const primarySrc = sources.shortPercentOfFloat ?? "primary";
+          base.shortInterestDisagreement =
+            `Short interest disagreement: ${primarySrc} ${base.shortPercentOfFloat.toFixed(1)}% vs ` +
+            `massive ${base.shortPercentOfFloatSecondary.toFixed(1)}% (${delta.toFixed(1)}pp apart).`;
+          this.contributingNames.add("massive");
+        }
+      }
+      // The carrier never leaves the cascade — it exists only to compute the flag above.
+      delete base.shortPercentOfFloatSecondary;
+
       base.sources = sources;
       merged[symbol] = base;
     }
@@ -1024,6 +1068,40 @@ export function webullUnofficialEnabled(): boolean {
 
 export function secXbrlEnrichmentEnabled(): boolean {
   return ["1", "true", "on", "yes"].includes(String(process.env.SEC_XBRL_ENRICHMENT_ENABLED ?? "").trim().toLowerCase());
+}
+
+/**
+ * Percentage-point gap between the primary and the second short-interest source above which the cascade
+ * emits a `shortInterestDisagreement` bulletin. Env `SHORT_INTEREST_DISAGREEMENT_PCT_PT`, default 5pp.
+ */
+export function shortInterestDisagreementThresholdPct(): number {
+  const value = Number(process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT);
+  return Number.isFinite(value) && value > 0 ? value : 5;
+}
+
+/**
+ * Whether the Massive REST second short-interest source runs (the disagreement cross-check). Gated on a
+ * MASSIVE_API_KEY being present too (see getEnrichmentProvider) — this flag is the operator OFF-switch
+ * for the extra 2 calls/symbol, default ON so a configured Massive key is actually used. Massive is a
+ * REAL source (FINRA short interest ÷ free float), unlike the removed dead FMP `/v4/short_interest`.
+ */
+export function massiveShortInterestEnabled(): boolean {
+  const raw = (process.env.MASSIVE_SHORT_INTEREST_ENABLED ?? "").trim().toLowerCase();
+  if (raw === "") return true; // default ON when a key is present
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+}
+
+/** TTL for a cached Massive short-interest row. FINRA reports on a ~2-week cadence, so a long TTL avoids
+ *  needless calls. Env `MASSIVE_SHORT_INTEREST_TTL_MS`, default 12h. */
+export function massiveShortInterestTtlMs(): number {
+  const value = Number(process.env.MASSIVE_SHORT_INTEREST_TTL_MS);
+  return Number.isFinite(value) && value > 0 ? value : 12 * 60 * 60 * 1000;
+}
+
+/** Base URL for the Massive REST API. Env `MASSIVE_REST_BASE_URL`, default the verified public host. */
+export function massiveRestBaseUrl(): string {
+  const raw = (process.env.MASSIVE_REST_BASE_URL ?? "").trim().replace(/\/+$/, "");
+  return raw || "https://api.massive.com";
 }
 
 // Opt-in Robinhood option-chain enrichment tier (near-the-money IV + put/call ratio). Default OFF —
@@ -2203,6 +2281,113 @@ export class FmpEnrichmentProvider implements MarketEnrichmentProvider {
   }
 }
 
+// ── Massive REST provider (second short-interest source) ─────────────────────
+//
+// A REAL second short-interest read for the primary-vs-secondary disagreement cross-check. Massive
+// exposes FINRA-reported short interest (shares short, ~2-week cadence) and free float (shares) as
+// separate REST endpoints; short % of float = short_interest / free_float * 100 — apples-to-apples
+// with Yahoo's shortPercentOfFloat. Auth is `Authorization: Bearer <MASSIVE_API_KEY>` against
+// https://api.massive.com (base + auth verified against Massive's official REST docs + MCP server,
+// 2026-07). Populates ONLY the carrier field shortPercentOfFloatSecondary; the cascade computes the
+// disagreement flag and then drops the carrier. Registered only when a MASSIVE_API_KEY is present AND
+// massiveShortInterestEnabled(), so it is inert (no calls) in the default keyless setup.
+export class MassiveEnrichmentProvider implements MarketEnrichmentProvider {
+  readonly name = "massive";
+  readonly costTier = "paid" as const;
+  readonly configured = true;
+  private readonly base = massiveRestBaseUrl();
+  private readonly scope: CacheScope;
+  private readonly keySource: ApiKeySource;
+
+  constructor(
+    private readonly apiKey: string,
+    keySource: ApiKeySource = "env",
+    private readonly userId?: string
+  ) {
+    this.scope = cacheScopeForKeySource(keySource, userId);
+    this.keySource = keySource;
+  }
+
+  async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
+    const normalized = Array.from(new Set(symbols.map(normalizeSymbol))).filter(Boolean).slice(0, maxSymbols());
+    if (normalized.length === 0) return {};
+
+    const now = Date.now();
+    const consented = hasDataPoolConsent(this.userId ?? "local");
+    const result: Record<string, SymbolEnrichment> = {};
+    const misses: string[] = [];
+    for (const symbol of normalized) {
+      const cached = readEnrichmentCache("massive", symbol, this.userId, consented, now);
+      if (cached) result[symbol] = cached.data;
+      else misses.push(symbol);
+    }
+
+    for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      const chunk = misses.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            // Two independent reads: FINRA short interest (shares) + free float (shares). Both are
+            // needed to compute short % of float — Massive returns neither as a ready-made percentage.
+            const [shortRaw, floatRaw] = await Promise.allSettled([
+              this.getJson(`${this.base}/stocks/v1/short-interest?ticker=${encodeURIComponent(symbol)}&limit=1&sort=settlement_date.desc`),
+              this.getJson(`${this.base}/stocks/vX/float?ticker=${encodeURIComponent(symbol)}&limit=1`)
+            ]);
+
+            const shortInterest = shortRaw.status === "fulfilled" ? massiveFirstResult(shortRaw.value)?.short_interest : undefined;
+            const freeFloat = floatRaw.status === "fulfilled" ? massiveFirstResult(floatRaw.value)?.free_float : undefined;
+
+            let shortPercentOfFloatSecondary: number | undefined;
+            const si = Number(shortInterest);
+            const ff = Number(freeFloat);
+            if (Number.isFinite(si) && si >= 0 && Number.isFinite(ff) && ff > 0) {
+              shortPercentOfFloatSecondary = Math.round((si / ff) * 100 * 100) / 100; // % of float, 2dp
+            }
+
+            const data: SymbolEnrichment =
+              shortPercentOfFloatSecondary !== undefined ? { shortPercentOfFloatSecondary } : {};
+
+            // Only cache when BOTH calls succeeded — a transient failure on either shouldn't freeze an
+            // empty row for the full TTL and suppress the cross-check until expiry. A 404 (no row for
+            // this ticker) is a "fulfilled" empty result and DOES cache (a real, stable "no data").
+            if (shortRaw.status === "fulfilled" && floatRaw.status === "fulfilled") {
+              writeEnrichmentCache("massive", symbol, this.scope, this.userId, data, now + massiveShortInterestTtlMs());
+            }
+            result[symbol] = data;
+          } catch {
+            result[symbol] = {};
+          }
+        })
+      );
+    }
+    return result;
+  }
+
+  private async getJson(url: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetchWithRetry(
+        url,
+        { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${this.apiKey}` } },
+        {
+          service: this.name,
+          keySource: this.keySource,
+          userId: this.userId,
+          // 404 = no short-interest / float row for this ticker (expected for some symbols) — don't log
+          // it as a lane failure. Real auth/quota errors (401/403/429/5xx) still surface to health.
+          suppressHealthStatuses: [404]
+        }
+      );
+      if (response.status === 404) return { results: [] };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 // ── Alpha Vantage provider ───────────────────────────────────────────────────
 
 export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider {
@@ -2320,6 +2505,15 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
 function num(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// Massive REST responses wrap rows in `{ status, request_id, results: [...] }`. Return the first row.
+function massiveFirstResult(value: unknown): Record<string, unknown> | undefined {
+  const results = (value as { results?: unknown } | null)?.results;
+  if (Array.isArray(results) && results.length > 0 && typeof results[0] === "object" && results[0] !== null) {
+    return results[0] as Record<string, unknown>;
+  }
+  return undefined;
 }
 
 function firstNumber(row: Record<string, unknown>, keys: string[]): number | undefined {
