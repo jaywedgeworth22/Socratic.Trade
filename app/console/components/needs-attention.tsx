@@ -11,9 +11,9 @@ import { deriveAttention, type AttentionItem } from "../lib/derive";
 import { Card } from "../ui/primitives";
 
 const TONE_STYLE: Record<AttentionItem["tone"], { border: string; color: string }> = {
-  neg: { border: "rgba(240, 99, 94, 0.45)", color: "var(--con-neg)" },
-  warn: { border: "rgba(229, 170, 75, 0.45)", color: "var(--con-warn)" },
-  accent: { border: "rgba(91, 157, 255, 0.45)", color: "var(--con-accent)" }
+  neg: { border: "var(--con-neg-border)", color: "var(--con-neg)" },
+  warn: { border: "var(--con-warn-border)", color: "var(--con-warn)" },
+  accent: { border: "var(--con-accent-border)", color: "var(--con-accent)" }
 };
 
 function ItemIcon({ tone }: { tone: AttentionItem["tone"] }) {

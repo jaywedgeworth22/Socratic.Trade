@@ -395,7 +395,7 @@ export function TypedConfirm({
 }) {
   const matches = value.trim().toUpperCase() === phrase;
   return (
-    <div className="mt-3 rounded-lg border border-[color:rgba(255,93,93,0.4)] bg-[color:var(--con-live-soft)] p-3">
+    <div className="mt-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3">
       {note && <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{note}</p>}
       <label className="con-label">
         Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{phrase}</span>

@@ -103,7 +103,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   };
 
   return (
-    <article className={cx("con-card overflow-hidden", live && "border-[color:rgba(255,93,93,0.5)]")}>
+    <article className={cx("con-card overflow-hidden", live && "border-[color:var(--con-live-border)]")}>
       {/* Header: verb + symbol + reality word */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
@@ -319,7 +319,7 @@ function LiveApproveSheet({
 
   return (
     <Sheet open={open} onClose={onClose} title="Real-money approval" tone="live">
-      <div className="mb-3 rounded-lg border border-[color:rgba(255,93,93,0.45)] bg-[color:var(--con-live-soft)] p-3 text-[length:var(--con-fs-sm)]">
+      <div className="mb-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3 text-[length:var(--con-fs-sm)]">
         <div className="font-bold text-[color:var(--con-live)]">LIVE · real money</div>
         <p className="con-num mt-1">
           {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
@@ -333,7 +333,7 @@ function LiveApproveSheet({
       </div>
 
       {serverReasons.length > 0 && (
-        <div className="mb-3 rounded-lg border border-[color:rgba(229,170,75,0.5)] p-3 text-[length:var(--con-fs-xs)]">
+        <div className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] p-3 text-[length:var(--con-fs-xs)]">
           <div className="font-semibold text-[color:var(--con-warn)]">The server refused the confirmation:</div>
           <ul className="mt-1 list-disc pl-4 text-[color:var(--con-muted)]">
             {serverReasons.map((r, i) => (

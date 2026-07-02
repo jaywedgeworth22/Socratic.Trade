@@ -1,49 +1,75 @@
 /* ── Console design tokens ──────────────────────────────────────────────────
-   Ground-up design system for the /console interface. Everything is scoped
-   under .console-root so nothing leaks into (or depends on) the legacy UI.
-   Dark-first professional fintech: near-black blue canvas, hairline borders,
-   restrained accent, tabular numerals for every money figure.
+   Ground-up design system for the /console interface, scoped under
+   .console-root so nothing leaks into (or depends on) the legacy UI.
+
+   THEMING MODEL
+   - Semantic tokens only (surface/fg/muted/line/accent/up-down/warn/reality).
+     Components never hardcode raw hex — they reference var(--con-*).
+   - Light is the base set; dark overrides it. Resolution order:
+       1. explicit choice via [data-theme="light"|"dark"] on .console-root
+          (persisted in localStorage under a console-scoped key), else
+       2. prefers-color-scheme.
+     The dark token block therefore appears twice (explicit + media query) —
+     KEEP THE TWO BLOCKS IDENTICAL.
+   - Soft fills and borders are derived from the base palette with color-mix,
+     so they adapt to both themes automatically.
 
    Money-reality is WORD-FIRST. The three reality tones (test / paper / live)
-   exist to reinforce words, never to replace them. */
+   exist to reinforce words, never to replace them. Both palettes aim WCAG AA
+   for text tokens on their surfaces. */
 
 .console-root {
-  /* Canvas + surfaces */
-  --con-bg: #0b0e14;
-  --con-surface: #121722;
-  --con-surface-2: #171e2c;
-  --con-surface-3: #1d2536;
-  --con-line: rgba(148, 163, 184, 0.13);
-  --con-line-strong: rgba(148, 163, 184, 0.24);
+  /* ── LIGHT (base) ── */
+  --con-bg: #eef1f6;
+  --con-surface: #ffffff;
+  --con-surface-2: #f4f6fa;
+  --con-surface-3: #e9edf4;
+  --con-line: rgba(23, 32, 46, 0.1);
+  --con-line-strong: rgba(23, 32, 46, 0.2);
 
-  /* Type */
-  --con-fg: #e8edf4;
-  --con-muted: #9aa8bc;
-  --con-faint: #5f6d82;
+  --con-fg: #17202e;
+  --con-muted: #46556b;   /* ≥7:1 on surface */
+  --con-faint: #566478;   /* ≥5.5:1 on surface */
 
-  /* Restrained accent + semantic colors */
-  --con-accent: #5b9dff;
-  --con-accent-soft: rgba(91, 157, 255, 0.14);
-  --con-pos: #37c58c;
-  --con-pos-soft: rgba(55, 197, 140, 0.13);
-  --con-neg: #f0635e;
-  --con-neg-soft: rgba(240, 99, 94, 0.13);
-  --con-warn: #e5aa4b;
-  --con-warn-soft: rgba(229, 170, 75, 0.14);
+  --con-accent: #2563eb;
+  --con-accent-contrast: #ffffff;
+  --con-pos: #157f4e;
+  --con-pos-contrast: #ffffff;
+  --con-neg: #d1332e;
+  --con-neg-contrast: #ffffff;
+  --con-warn: #9a6209;
+  --con-warn-contrast: #ffffff;
 
   /* Money-reality tones (reinforcement only — the word is load-bearing) */
-  --con-test: #2fd4bd;
-  --con-test-soft: rgba(47, 212, 189, 0.12);
-  --con-paper: #8f9cff;
-  --con-paper-soft: rgba(143, 156, 255, 0.13);
-  --con-live: #ff5d5d;
-  --con-live-soft: rgba(255, 93, 93, 0.14);
+  --con-test: #0f766e;
+  --con-paper: #4f46e5;
+  --con-live: #d1332e;
 
-  /* Shape + depth */
+  --con-shadow: 0 8px 24px -12px rgba(23, 32, 46, 0.18);
+  --con-shadow-lg: 0 24px 60px -24px rgba(23, 32, 46, 0.28);
+  --con-scrim: rgba(23, 32, 46, 0.4);
+
+  color-scheme: light;
+
+  /* ── Derived tones (theme-agnostic: computed from the palette above) ── */
+  --con-accent-soft: color-mix(in oklab, var(--con-accent) 11%, transparent);
+  --con-accent-border: color-mix(in oklab, var(--con-accent) 45%, transparent);
+  --con-pos-soft: color-mix(in oklab, var(--con-pos) 11%, transparent);
+  --con-pos-border: color-mix(in oklab, var(--con-pos) 45%, transparent);
+  --con-neg-soft: color-mix(in oklab, var(--con-neg) 10%, transparent);
+  --con-neg-border: color-mix(in oklab, var(--con-neg) 50%, transparent);
+  --con-warn-soft: color-mix(in oklab, var(--con-warn) 12%, transparent);
+  --con-warn-border: color-mix(in oklab, var(--con-warn) 45%, transparent);
+  --con-test-soft: color-mix(in oklab, var(--con-test) 10%, transparent);
+  --con-test-border: color-mix(in oklab, var(--con-test) 45%, transparent);
+  --con-paper-soft: color-mix(in oklab, var(--con-paper) 10%, transparent);
+  --con-paper-border: color-mix(in oklab, var(--con-paper) 45%, transparent);
+  --con-live-soft: color-mix(in oklab, var(--con-live) 11%, transparent);
+  --con-live-border: color-mix(in oklab, var(--con-live) 55%, transparent);
+
+  /* Shape */
   --con-radius: 12px;
   --con-radius-sm: 8px;
-  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
-  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
 
   /* Type scale */
   --con-fs-xs: 11px;
@@ -54,7 +80,6 @@
   --con-fs-xl: 23px;
   --con-fs-xxl: 30px;
 
-  color-scheme: dark;
   background: var(--con-bg);
   color: var(--con-fg);
   font-size: var(--con-fs-base);
@@ -62,6 +87,75 @@
   font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
+}
+
+/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
+.console-root[data-theme="dark"] {
+  --con-bg: #0b0e14;
+  --con-surface: #121722;
+  --con-surface-2: #171e2c;
+  --con-surface-3: #1d2536;
+  --con-line: rgba(148, 163, 184, 0.13);
+  --con-line-strong: rgba(148, 163, 184, 0.26);
+
+  --con-fg: #e8edf4;
+  --con-muted: #a5b2c4;
+  --con-faint: #8492a6;
+
+  --con-accent: #5b9dff;
+  --con-accent-contrast: #0a1220;
+  --con-pos: #37c58c;
+  --con-pos-contrast: #04170e;
+  --con-neg: #f0635e;
+  --con-neg-contrast: #1c0605;
+  --con-warn: #e5aa4b;
+  --con-warn-contrast: #201302;
+
+  --con-test: #2fd4bd;
+  --con-paper: #98a3ff;
+  --con-live: #ff5d5d;
+
+  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
+  --con-scrim: rgba(4, 6, 10, 0.66);
+
+  color-scheme: dark;
+}
+
+/* ── DARK (system preference, unless explicitly light) — keep IDENTICAL to
+      the block above ── */
+@media (prefers-color-scheme: dark) {
+  .console-root:not([data-theme="light"]) {
+    --con-bg: #0b0e14;
+    --con-surface: #121722;
+    --con-surface-2: #171e2c;
+    --con-surface-3: #1d2536;
+    --con-line: rgba(148, 163, 184, 0.13);
+    --con-line-strong: rgba(148, 163, 184, 0.26);
+
+    --con-fg: #e8edf4;
+    --con-muted: #a5b2c4;
+    --con-faint: #8492a6;
+
+    --con-accent: #5b9dff;
+    --con-accent-contrast: #0a1220;
+    --con-pos: #37c58c;
+    --con-pos-contrast: #04170e;
+    --con-neg: #f0635e;
+    --con-neg-contrast: #1c0605;
+    --con-warn: #e5aa4b;
+    --con-warn-contrast: #201302;
+
+    --con-test: #2fd4bd;
+    --con-paper: #98a3ff;
+    --con-live: #ff5d5d;
+
+    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
+    --con-scrim: rgba(4, 6, 10, 0.66);
+
+    color-scheme: dark;
+  }
 }
 
 /* LIVE reality: an unmissable frame around the whole viewport. Words carry the
@@ -77,7 +171,7 @@
 }
 
 .console-root ::selection {
-  background: rgba(91, 157, 255, 0.35);
+  background: color-mix(in oklab, var(--con-accent) 30%, transparent);
 }
 
 .console-root :focus-visible {
@@ -134,10 +228,10 @@
 }
 .con-btn-primary {
   background: var(--con-accent);
-  color: #0a1220;
+  color: var(--con-accent-contrast);
 }
 .con-btn-primary:hover:not(:disabled) {
-  background: #74adff;
+  background: color-mix(in oklab, var(--con-accent) 85%, var(--con-fg));
 }
 .con-btn-outline {
   background: transparent;
@@ -158,14 +252,14 @@
 }
 .con-btn-danger {
   background: var(--con-neg);
-  color: #1c0605;
+  color: var(--con-neg-contrast);
 }
 .con-btn-danger:hover:not(:disabled) {
-  background: #ff7d78;
+  background: color-mix(in oklab, var(--con-neg) 85%, var(--con-fg));
 }
 .con-btn-danger-outline {
   background: transparent;
-  border-color: rgba(240, 99, 94, 0.55);
+  border-color: var(--con-neg-border);
   color: var(--con-neg);
 }
 .con-btn-danger-outline:hover:not(:disabled) {
@@ -173,10 +267,10 @@
 }
 .con-btn-pos {
   background: var(--con-pos);
-  color: #04170e;
+  color: var(--con-pos-contrast);
 }
 .con-btn-pos:hover:not(:disabled) {
-  background: #52d8a2;
+  background: color-mix(in oklab, var(--con-pos) 85%, var(--con-fg));
 }
 .con-btn-sm {
   padding: 4px 10px;
@@ -189,9 +283,9 @@
   align-items: center;
   gap: 6px;
   border-radius: var(--con-radius-sm);
-  border: 1.5px solid rgba(240, 99, 94, 0.7);
-  background: rgba(240, 99, 94, 0.09);
-  color: #ff8a86;
+  border: 1.5px solid var(--con-neg-border);
+  background: var(--con-neg-soft);
+  color: var(--con-neg);
   font-weight: 700;
   font-size: var(--con-fs-sm);
   letter-spacing: 0.06em;
@@ -200,7 +294,7 @@
   transition: background 120ms ease;
 }
 .con-stop-btn:hover {
-  background: rgba(240, 99, 94, 0.2);
+  background: color-mix(in oklab, var(--con-neg) 20%, transparent);
 }
 
 /* ── Chips ── */
@@ -217,24 +311,28 @@
   color: var(--con-muted);
   white-space: nowrap;
 }
-.con-chip-accent { border-color: rgba(91, 157, 255, 0.5); color: var(--con-accent); background: var(--con-accent-soft); }
-.con-chip-pos { border-color: rgba(55, 197, 140, 0.5); color: var(--con-pos); background: var(--con-pos-soft); }
-.con-chip-neg { border-color: rgba(240, 99, 94, 0.5); color: var(--con-neg); background: var(--con-neg-soft); }
-.con-chip-warn { border-color: rgba(229, 170, 75, 0.5); color: var(--con-warn); background: var(--con-warn-soft); }
-.con-chip-test { border-color: rgba(47, 212, 189, 0.5); color: var(--con-test); background: var(--con-test-soft); }
-.con-chip-paper { border-color: rgba(143, 156, 255, 0.5); color: var(--con-paper); background: var(--con-paper-soft); }
-.con-chip-live { border-color: rgba(255, 93, 93, 0.6); color: var(--con-live); background: var(--con-live-soft); }
+.con-chip-accent { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
+.con-chip-pos { border-color: var(--con-pos-border); color: var(--con-pos); background: var(--con-pos-soft); }
+.con-chip-neg { border-color: var(--con-neg-border); color: var(--con-neg); background: var(--con-neg-soft); }
+.con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
+.con-chip-test { border-color: var(--con-test-border); color: var(--con-test); background: var(--con-test-soft); }
+.con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
+.con-chip-live { border-color: var(--con-live-border); color: var(--con-live); background: var(--con-live-soft); }
 
 /* ── Reality banner ── */
 .con-reality {
   border-bottom: 1px solid var(--con-line);
   font-size: var(--con-fs-sm);
 }
-.con-reality-test { background: linear-gradient(90deg, rgba(47, 212, 189, 0.11), rgba(47, 212, 189, 0.03)); }
-.con-reality-paper { background: linear-gradient(90deg, rgba(143, 156, 255, 0.12), rgba(143, 156, 255, 0.03)); }
+.con-reality-test {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-test) 12%, transparent), color-mix(in oklab, var(--con-test) 3%, transparent));
+}
+.con-reality-paper {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-paper) 12%, transparent), color-mix(in oklab, var(--con-paper) 3%, transparent));
+}
 .con-reality-live {
-  background: linear-gradient(90deg, rgba(255, 93, 93, 0.2), rgba(255, 93, 93, 0.06));
-  border-bottom-color: rgba(255, 93, 93, 0.45);
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-live) 18%, transparent), color-mix(in oklab, var(--con-live) 5%, transparent));
+  border-bottom-color: var(--con-live-border);
 }
 .con-reality-word { font-weight: 800; letter-spacing: 0.12em; }
 .con-reality-test .con-reality-word { color: var(--con-test); }
@@ -306,7 +404,7 @@
   transition: transform 140ms ease, background 140ms ease;
 }
 .con-toggle[aria-checked="true"] {
-  background: rgba(91, 157, 255, 0.35);
+  background: color-mix(in oklab, var(--con-accent) 35%, transparent);
   border-color: var(--con-accent);
 }
 .con-toggle[aria-checked="true"]::after {
@@ -323,6 +421,7 @@
   height: 6px;
   border-radius: 999px;
   background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
   overflow: hidden;
 }
 .con-meter > div {
@@ -405,7 +504,7 @@
   padding: 0 5px;
   border-radius: 999px;
   background: var(--con-neg);
-  color: #fff;
+  color: var(--con-neg-contrast);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -415,7 +514,7 @@
 .con-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 10, 0.66);
+  background: var(--con-scrim);
   backdrop-filter: blur(2px);
   z-index: 100;
 }
@@ -450,7 +549,7 @@
   }
 }
 .con-sheet-live {
-  border-color: rgba(255, 93, 93, 0.6);
+  border-color: var(--con-live-border);
 }
 
 /* ── Toasts ── */
@@ -468,16 +567,16 @@
   .con-toasts { bottom: 76px; }
 }
 .con-toast {
-  background: var(--con-surface-2);
+  background: var(--con-surface);
   border: 1px solid var(--con-line-strong);
   border-radius: var(--con-radius-sm);
   box-shadow: var(--con-shadow);
   padding: 10px 12px;
   font-size: var(--con-fs-sm);
 }
-.con-toast-pos { border-color: rgba(55, 197, 140, 0.5); }
-.con-toast-neg { border-color: rgba(240, 99, 94, 0.55); }
-.con-toast-warn { border-color: rgba(229, 170, 75, 0.5); }
+.con-toast-pos { border-color: var(--con-pos-border); }
+.con-toast-neg { border-color: var(--con-neg-border); }
+.con-toast-warn { border-color: var(--con-warn-border); }
 
 /* ── Status dot ── */
 .con-dot {
