@@ -9,6 +9,7 @@ import { ArrowRight } from "lucide-react";
 import { deriveDayPnl, deriveReality, deriveSpend, deriveStateInfo } from "./lib/derive";
 import { fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil, EM_DASH } from "./lib/format";
 import { useConsoleData } from "./lib/useConsoleData";
+import { AllocationCard } from "./components/allocation";
 import { NeedsAttention } from "./components/needs-attention";
 import { PositionsCard } from "./components/positions";
 import { RunOnceButton } from "./components/chrome";
@@ -76,6 +77,8 @@ export default function ConsoleHomePage() {
       <NeedsAttention snapshot={snapshot} />
 
       <PositionsCard snapshot={snapshot} />
+
+      <AllocationCard snapshot={snapshot} />
 
       {/* Latest run */}
       <Card

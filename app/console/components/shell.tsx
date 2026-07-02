@@ -16,7 +16,8 @@ import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { ToastProvider } from "../ui/toast";
-import { FreshnessStrip, RealityBanner, RunOnceButton, ScopeSelector, StateChip, StopButton } from "./chrome";
+import { FreshnessStrip, RealityBanner, RunOnceButton, ScopeSelector, StateChip, StopButton, UserMenu } from "./chrome";
+import { ConsentGate } from "./consent-gate";
 import { DesktopRail, MobileTabBar } from "./nav";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
@@ -106,6 +107,9 @@ function ShellFrame({ children }: { children: ReactNode }) {
         </div>
         <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
         <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+        {/* Blocking shared-data-pool consent gate — same semantics as the
+            legacy dashboard gate; renders nothing once answered. */}
+        <ConsentGate />
       </ToastProvider>
     </div>
   );
@@ -128,6 +132,7 @@ function ChromeBar({
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />
         <ThemeToggle theme={theme} cycle={cycleTheme} />
+        <UserMenu snapshot={snapshot} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>

@@ -40,6 +40,56 @@ tradedAt` desc (server cap is still trade-date ordered — src/lib follow-up), a
 drilldown-stale-quote thread answered honestly (fix lands via the parallel
 symbol-drilldown PR's quote-override prop; adoption here is a tracked follow-up). Quartet
 re-run green; every review thread replied to + resolved. Details in the same rollout note.
+## 2026-07-02 — /console parity tail: 9 audit items in one lane (Claude)
+Branch `claude/console-parity-tail` (cut from `origin/main` @ 93aed63, after #321+#322).
+Final lane of the parallel legacy→console parity port — the remaining smaller audit items,
+all on existing endpoints (no new backend surface): (a) Run-once blocked-reason routing —
+blocked/failed manual runs open a sheet saying WHY with a one-click route to the fix
+(Settings#api-keys/#brokers, Guardrails, Strategy, Activity), classified from the server's
+own refusal strings; halt copy stays honest (Stopped pauses app-managed stops too);
+(b) sign-out + signed-in identity in the chrome (`UserMenu` → existing `/logout` route);
+(c) allocation card on Home (bars, by-position/by-sector lenses, Cash segment, "No sector
+data" bucket never guessed, reality chip); (d) `/console/watchlist` destination — watchlist
+CRUD with broker quotes ("—" when unavailable) + price alerts (above/below, armed/triggered,
+honest ~1-min check cadence, notify-only) over `/api/watchlist` + `/api/alerts`; (e) OPERATOR
+settings section (admin-only links to the four `/admin/*` pages, links only); (f) blocking
+shared-data-pool consent gate ported to the console shell (same un-weakened semantics, fails
+closed); (g) DANGER settings section — full account-deletion flow mirroring
+`src/lib/account-deletion.ts` gates (preview, blockers, prepare-stops-strategy, 5
+acknowledgements, typed email + phrase, local-operator phrase, sign-out on success);
+(h) Data-sharing settings card (pool consent toggle + `learned-context/sharing`
+include/contribute flags, fact-tier-only honesty); (i) the single red Approvals badge now
+folds in pending learned-context items (60s poll, tooltip breaks the count down — still one
+badge). Files: `app/console/components/{chrome,shell,nav}.tsx`, new
+`components/{consent-gate,allocation}.tsx`, `app/console/page.tsx`, new
+`watchlist/page.tsx`, `settings/page.tsx` + new `settings/{sharing,danger}.tsx`. Quartet
+green: tsc clean, lint 0 errors, 2241 tests / 234 files, build ok. Docs:
+`docs/rollouts/2026-07-02-console-parity-tail.md`. **Next:** land via PR (auto-merge on green
+verify); consider a structured error code from `/api/strategy/run` instead of string
+classification; after #324 lands, approvals renders the learned-context inbox the badge
+already counts.
+## 2026-07-02 — /console/orders: Orders destination, Wave 2 (Claude)
+Branch `claude/console-orders` (cut from `origin/main` @ 48fbe14, after #321). New
+`/console/orders` page (nav linked it since Wave 1): open working orders for the
+active account from `snapshot.orders` (symbol drilldown + logo, side, type, size
+with partial-fill breakdown, last-scan price, age, broker-state chip, reality +
+account chips), stale-limit detection mirroring the server's `listStaleLimitOrders`
+rule exactly (limit/stop-limit, working, unfilled remainder, older than
+`policy.staleLimitOrderMinutes`, default 15m — same rule that gates the replace
+endpoint, so the UI only offers what the server accepts), a replace-at-market
+confirm sheet (cancel → re-check → market order for the remainder; LIVE runs the
+server's typed `REPLACE LIVE <SYM>` ritual with 409 reasons/expectedText rendered
+verbatim), a cancel flow over the pre-existing `POST /api/orders/cancel` (legacy
+had no cancel UI), and a latest-20 finished-orders history table. All new files
+live under `app/console/orders/**` only (own lane; shared console files and
+src/lib untouched — the fetch helpers are self-contained in
+`app/console/orders/api.ts` by design). **Finding:** `EquityOrder` carries no
+limit price / TIF (both broker mappings drop them), so the limit-vs-market gap
+column can't be shown honestly yet — follow-up for the src/lib owner. Quartet
+green: tsc clean, lint 0 errors (284 grandfathered warnings), 2241 tests / 234
+files pass, build ok; runtime smoke: /console/orders 200, replace-market 409
+system_stopped while halted. Docs: `docs/rollouts/2026-07-02-console-orders.md`.
+**Next:** land via PR; src/lib follow-up to surface limitPrice/timeInForce.
 
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
