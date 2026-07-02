@@ -19,11 +19,12 @@ import {
 import { getBrokerGateway } from "@/lib/broker";
 import { dynamicIndexUniversesForPolicy } from "@/lib/index-universes";
 import { allowedSymbolsForPolicy, evaluateTradeProposal } from "@/lib/policy";
+import { shouldEscalateDecision } from "@/lib/strategy";
 import { emitDashboardEvent } from "@/lib/events";
 import { chatDraftToProposal } from "@/lib/chat/promote-draft";
 import { deriveExecutionState } from "@/lib/execution-mode";
 import type { ChatDraft } from "@/lib/chat/types";
-import type { ReviewedOrder } from "@/lib/types";
+import type { PolicyDecision, ReviewedOrder } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +90,10 @@ export async function POST(request: Request) {
     hourlyNotionalUsed: hourly.notional,
     dailyOrderCount: daily.openingOrderCount,
     estimatedNotional: review?.estimatedNotional,
+    // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime — required
+    // so the IRA-replacement wash-sale hard block (Rev. Rul. 2008-5) can never miss an IRA whose
+    // capabilities are absent/"brokerage" and whose policy taxSettings lack taxationType.
+    accountTaxationType: activeAccount?.taxationType,
     accountCapabilities: activeAccount?.capabilities,
     isLiveExecution: executionMode === "broker/live",
     userId,
@@ -121,8 +126,26 @@ export async function POST(request: Request) {
   const stalenessOnly = !decision.approved && blockingReasons.length === 0;
   const effectiveDecision = stalenessOnly ? { ...decision, approved: true } : decision;
 
+  // Escalation framework parity for assistant drafts: a draft refused ONLY for escalatable
+  // reasons (e.g. an "ask"-mode wash-sale lock) is STAGEABLE — it becomes a pending-approval
+  // card carrying the priced block reason, exactly like the run loop, instead of a 409. The
+  // preview-spurious staleness failures are excluded from the determination the same way the
+  // stalenessOnly carve-out excludes them (no market scan exists at preview time; the
+  // authoritative gate re-runs at approve time). shouldEscalateDecision applies the authority
+  // rules: ask-mode wash sales stage under BOTH authorities; time-context caps stage in
+  // Decide mode only.
+  const previewDecision: PolicyDecision = {
+    ...decision,
+    reasons: blockingReasons,
+    escalations: (decision.escalations ?? []).filter((entry) => entry.kind !== "quote_staleness")
+  };
+  const escalatable = !effectiveDecision.approved && shouldEscalateDecision(previewDecision, policy);
+
   if (body.dryRun) {
-    return NextResponse.json({ dryRun: true, decision: effectiveDecision, estimatedNotional, proposal });
+    // `escalatable` is additive: consumers keying off decision.approved keep working; the
+    // assistant UI uses it to offer Stage with a "needs your call" framing instead of a
+    // plain block.
+    return NextResponse.json({ dryRun: true, decision: effectiveDecision, estimatedNotional, proposal, escalatable });
   }
 
   // Commit: idempotent on the synthetic runId so one draft can't mint duplicate proposed rows. Dedupe
@@ -134,12 +157,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ proposalId: existing, deduped: true, decision: effectiveDecision, estimatedNotional, proposal }, { status: 200 });
   }
 
-  if (!effectiveDecision.approved) {
+  if (!effectiveDecision.approved && !escalatable) {
     return NextResponse.json(
       { error: "POLICY_BLOCKED", reasons: blockingReasons, decision: effectiveDecision, estimatedNotional, proposal },
       { status: 409 }
     );
   }
+
+  // Escalated staging mirrors the run loop exactly: server-minted override tokens are persisted
+  // in the stored decision (never accepted from any client), and executeProposal re-runs the
+  // FULL gate at confirm time — the wash-sale gate honors the stored token only while handling
+  // is still ask/auto and the priced cost hasn't moved past tolerance.
+  const storedDecision: PolicyDecision = escalatable
+    ? {
+        ...previewDecision,
+        escalations: (previewDecision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+      }
+    : decision;
 
   const proposalId = crypto.randomUUID();
   insertProposal({
@@ -148,7 +182,7 @@ export async function POST(request: Request) {
     runId,
     accountNumber: policy.accountNumber,
     proposal,
-    decision,
+    decision: storedDecision,
     review,
     estimatedNotional,
     status: "proposed",
@@ -156,8 +190,25 @@ export async function POST(request: Request) {
     entryMarketRegime: proposal.entryMarketRegime,
     executionMode
   });
-  audit("proposal_from_chat", { userId, proposalId, draftId: body.draft.draft_id, symbol: proposal.symbol, side: proposal.side }, userId);
+  if (escalatable) {
+    audit(
+      "proposal_escalated",
+      {
+        userId,
+        proposalId,
+        draftId: body.draft.draft_id,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        source: "chat",
+        reasons: previewDecision.reasons,
+        escalations: storedDecision.escalations,
+        ...(previewDecision.washSale ? { washSale: previewDecision.washSale } : {})
+      },
+      userId
+    );
+  }
+  audit("proposal_from_chat", { userId, proposalId, draftId: body.draft.draft_id, symbol: proposal.symbol, side: proposal.side, escalated: escalatable }, userId);
   emitDashboardEvent({ type: "proposal", userId, at: now.toISOString(), detail: { proposalId, status: "proposed", source: "chat" } });
 
-  return NextResponse.json({ proposalId, decision, estimatedNotional, proposal }, { status: 201 });
+  return NextResponse.json({ proposalId, decision: storedDecision, estimatedNotional, proposal, escalated: escalatable }, { status: 201 });
 }

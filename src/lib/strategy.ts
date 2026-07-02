@@ -799,6 +799,10 @@ export async function runStrategyOnce(
         estimatedNotional: review.estimatedNotional,
         marketScan,
         washSaleLocks,
+        // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+        // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+        // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+        accountTaxationType: activeAccount?.taxationType,
         accountCapabilities: selected?.capabilities,
         isLiveExecution,
         // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -1303,7 +1307,15 @@ export function shouldEscalateDecision(decision: PolicyDecision, policy: Trading
 export function approvedEscalationsFromDecision(decision: PolicyDecision | undefined): ApprovedEscalation[] {
   return (decision?.escalations ?? [])
     .filter((entry) => entry.kind === "wash_sale_ask" && typeof entry.token === "string" && entry.token.length > 0)
-    .map((entry) => ({ kind: entry.kind, symbol: entry.symbol, token: entry.token as string }));
+    .map((entry) => ({
+      kind: entry.kind,
+      symbol: entry.symbol,
+      token: entry.token as string,
+      // The cost PRICED ON THE CARD the user approved. The gate honors the token only while the
+      // freshly recomputed cost stays within washSaleOverrideCostTolerance of this (stale-price
+      // guard) — otherwise it re-escalates at the current price instead of executing.
+      ...(entry.washSale?.estimatedTaxCostUsd != null ? { approvedCostUsd: entry.washSale.estimatedTaxCostUsd } : {})
+    }));
 }
 
 export function shouldRunRedTeamDebate(proposal: TradeProposal, policy: TradingPolicy): boolean {
@@ -1965,6 +1977,10 @@ export async function executeProposal(
       // Empty for ordinary proposals. Only the wash-sale gate consults these, and only while
       // taxSettings.washSaleHandling is ask/auto; every other gate re-runs at full strength.
       approvedEscalations: approvedEscalationsFromDecision(row.decision),
+      // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+      // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+      // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+      accountTaxationType: activeAccount?.taxationType,
       accountCapabilities: activeAccount?.capabilities,
       isLiveExecution,
       // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -1994,6 +2010,51 @@ export async function executeProposal(
     }
 
     if (!decision.approved) {
+      // Wash-sale re-escalation instead of death: when the ONLY thing standing between this
+      // approval and execution is an ask-mode wash-sale failure (fresh lock discovered at
+      // approval time, or a stale override refused because the priced cost moved past
+      // washSaleOverrideCostTolerance — outcome "reescalated_cost_changed"), keep the card
+      // PENDING with the freshly priced reason and newly minted server-side tokens so the owner
+      // can approve again at the current cost. Every other refusal (still-binding caps, IRA
+      // hard block, universe, ...) retires the card as blocked exactly as before.
+      const washReescalation =
+        (decision.escalations ?? []).some((entry) => entry.kind === "wash_sale_ask") &&
+        shouldEscalateDecision(decision, policy);
+      if (washReescalation) {
+        const reescalated: PolicyDecision = {
+          ...decision,
+          escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+        };
+        updateProposalStatus(proposalId, "proposed", undefined, review, review.estimatedNotional, userId, undefined, undefined, reescalated);
+        audit(
+          "proposal_reescalated",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            action: "approval",
+            result: "reescalated",
+            reasons: decision.reasons,
+            escalations: reescalated.escalations,
+            ...(decision.washSale ? { washSale: decision.washSale } : {})
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title:
+              decision.washSale?.outcome === "reescalated_cost_changed"
+                ? `${proposal.symbol} rebuy needs a fresh call (wash-sale cost changed)`
+                : `${proposal.symbol} rebuy needs your call (wash sale)`,
+            payload: { proposalId, proposal, review, decision: reescalated, escalated: true }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: decision.reasons };
+      }
+
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, decision);
       audit("proposal_approved", {
         proposalId,

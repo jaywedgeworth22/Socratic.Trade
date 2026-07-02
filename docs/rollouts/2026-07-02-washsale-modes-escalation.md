@@ -76,6 +76,47 @@ Wash-sale handling modes + a narrow Decide-mode escalation framework:
   wash-sale line explains the mode; in "block" the prompt/context stay byte-identical.
   `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.1.0`.
 
+## Codex review fixes (post-PR; all three findings verified against the code and confirmed)
+
+1. **P1 — IRA detection missed `ConnectedAccount.taxationType`.** The gate checked only
+   `policy.taxSettings.taxationType` and broker `accountCapabilities.accountType`; a
+   legacy/manual IRA row (capabilities absent or reporting "brokerage", policy without
+   taxationType) was treated as taxable, so ask/auto could escalate/auto-approve a rebuy
+   whose deduction Rev. Rul. 2008-5 destroys permanently. Fixed: new
+   `PolicyContext.accountTaxationType` (the ConnectedAccount row's value — the source of
+   truth, mirroring dashboard.ts's tax-summary overlay) threaded from `activeAccount` at
+   ALL THREE gate call sites (run loop, `executeProposal`, from-draft route) and checked
+   FIRST in the IRA detection. Tests: IRA-by-connected-account-only in ask AND auto, with
+   capabilities absent and with capabilities reporting "brokerage".
+2. **P2 — stale-priced override tokens.** The approval-time override was honored by
+   kind/symbol/token alone; if another taxable loss posted between escalation and
+   approval, the user approved at the old (lower) cost and the order executed at a
+   materially higher real cost. Fixed: `ApprovedEscalation.approvedCostUsd` carries the
+   cost PRICED ON THE APPROVED CARD (from the stored escalation's washSale payload); the
+   gate honors the token only while the recomputed cost is within
+   `washSaleOverrideCostTolerance` = max($1, 1%) of it (decreases always honor).
+   Otherwise outcome `"reescalated_cost_changed"`: the stale token is refused with a
+   "changed since you approved (~$old -> ~$new)" reason plus a FRESH escalatable entry at
+   the current price, and `executeProposal` keeps the card PENDING (status stays
+   proposed) with newly minted tokens + a `proposal_reescalated` audit + notification —
+   the owner re-approves at the honest price. Tests: unchanged/decreased/within-tolerance
+   honor; increase beyond tolerance re-escalates with both figures; unpriced-then-priced
+   re-escalates.
+3. **P2 — ask-mode drafts 409'd.** `app/api/proposals/from-draft` rejected every
+   non-approved decision except staleness-only, so an assistant-drafted wash-sale BUY
+   under handling "ask" got `409 POLICY_BLOCKED` instead of the promised pending card.
+   Fixed: the route now mirrors the run loop — when every (non-preview-staleness) reason
+   is escalatable per `shouldEscalateDecision`, it stages the proposal `proposed` with
+   server-minted tokens persisted in the stored decision, audits `proposal_escalated`
+   (source chat), and returns `201 { escalated: true }`; dry-run returns an additive
+   `escalatable: true` so the assistant UI (`app/ui/assistant-console.tsx`) shows a
+   "Needs your call" state with the priced reasons and a Stage button instead of a plain
+   block. handling "block" still 409s (test kept); the new ask-mode staging test seeds
+   its own per-test DB fixture.
+
+Additional files touched by the review fixes: `app/api/proposals/from-draft/route.ts`,
+`app/ui/assistant-console.tsx`, plus the test files above.
+
 ## Why
 
 Owner-approved design: a hard 30-day block is the right default, but for a taxable

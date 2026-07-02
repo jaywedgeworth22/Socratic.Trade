@@ -1111,6 +1111,14 @@ export interface ApprovedEscalation {
   kind: GateEscalationKind;
   symbol: string;
   token: string;
+  /**
+   * The estimatedTaxCostUsd PRICED ON THE CARD the user approved (from the stored escalation's
+   * washSale payload). The wash-sale gate honors the token only while the freshly recomputed
+   * cost stays within washSaleOverrideCostTolerance of this figure — if new losses posted since
+   * escalation and the real cost is now materially higher, the stale approval is refused and
+   * the card is re-escalated at the current price instead of executing.
+   */
+  approvedCostUsd?: number;
 }
 
 /**
@@ -1138,7 +1146,8 @@ export interface WashSaleGateAudit {
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
     | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed
     | "auto_skipped" // handling "auto": edge did not clear the cost multiple — refused
-    | "approved_via_override"; // approval path honored the stored ask/auto override token
+    | "approved_via_override" // approval path honored the stored ask/auto override token
+    | "reescalated_cost_changed"; // stale override refused: cost moved past tolerance since approval — re-escalated at the current price
 }
 
 export interface PolicyDecision {

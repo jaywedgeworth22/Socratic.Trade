@@ -18,7 +18,12 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { evaluateTradeProposal, washSaleExpectedEdgeUsd, WASH_SALE_AUTO_EDGE_MULTIPLE } from "../src/lib/policy";
+import {
+  evaluateTradeProposal,
+  washSaleExpectedEdgeUsd,
+  washSaleOverrideCostTolerance,
+  WASH_SALE_AUTO_EDGE_MULTIPLE
+} from "../src/lib/policy";
 import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy";
 import type { WashSaleLockMap } from "../src/lib/tax";
 import type {
@@ -180,12 +185,81 @@ describe("wash-sale handling — mode 'ask'", () => {
   it("honors a matching server-stored override token (approved, audited) — the ask/auto approval path", () => {
     const decision = evaluateTradeProposal(
       buy,
-      ctx(askPolicy, { approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }] })
+      ctx(askPolicy, { approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc", approvedCostUsd: 120 }] })
     );
     expect(decision.approved).toBe(true);
     expect(decision.washSale?.outcome).toBe("approved_via_override");
     expect(decision.washSale?.overrideToken).toBe("tok-abc");
     expect(decision.washSale?.estimatedTaxCostUsd).toBe(120);
+  });
+
+  // Codex review finding 2: stale-priced override tokens. The user approved a card priced at
+  // approvedCostUsd; if provenance changed and the recomputed cost moved past tolerance, the
+  // stale token must be refused and the failure re-escalated at the CURRENT price.
+  describe("override stale-price guard", () => {
+    const override = (approvedCostUsd?: number) => ({
+      approvedEscalations: [{ kind: "wash_sale_ask" as const, symbol: "TSLA", token: "tok-abc", ...(approvedCostUsd != null ? { approvedCostUsd } : {}) }]
+    });
+
+    it("tolerance = max($1, 1% of the approved cost)", () => {
+      expect(washSaleOverrideCostTolerance(120)).toBe(1.2);
+      expect(washSaleOverrideCostTolerance(10)).toBe(1); // floor
+    });
+
+    it("honors when the cost is unchanged", () => {
+      const decision = evaluateTradeProposal(buy, ctx(askPolicy, override(120))); // current cost $120
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("approved_via_override");
+    });
+
+    it("honors when the cost DECREASED since approval (strictly better for the user)", () => {
+      const decision = evaluateTradeProposal(buy, ctx(askPolicy, { ...override(500), washSaleLocks: locks(500) })); // approved $500, now $120
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("approved_via_override");
+    });
+
+    it("honors a small increase within tolerance", () => {
+      // Approved at $119.00; current $120.00; tolerance max($1, 1%*119=$1.19) => $120.19 >= $120.
+      const decision = evaluateTradeProposal(buy, ctx(askPolicy, override(119)));
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("approved_via_override");
+    });
+
+    it("refuses and RE-ESCALATES at the current price when the cost increased beyond tolerance", () => {
+      // Approved at $120 but another $4,500 of losses posted: lossUsd 5000 -> current cost $1,200.
+      const decision = evaluateTradeProposal(buy, ctx(askPolicy, { ...override(120), washSaleLocks: locks(5000) }));
+      expect(decision.approved).toBe(false);
+      const reason = decision.reasons.join(" ");
+      expect(reason).toContain("changed since you approved");
+      expect(reason).toContain("$120.00");
+      expect(reason).toContain("$1200.00");
+      expect(decision.washSale?.outcome).toBe("reescalated_cost_changed");
+      // A FRESH escalatable entry carries the CURRENT cost so the re-approval prices honestly.
+      const entry = (decision.escalations ?? []).find((e) => e.kind === "wash_sale_ask");
+      expect(entry?.washSale?.estimatedTaxCostUsd).toBe(1200);
+      // ...and it routes back to a pending card in either authority.
+      expect(shouldEscalateDecision(decision, askPolicy)).toBe(true);
+    });
+
+    it("re-escalates when the approved card was unpriced but the cost is now priceable", () => {
+      const decision = evaluateTradeProposal(buy, ctx(askPolicy, override(undefined))); // approved unpriced; now $120
+      expect(decision.approved).toBe(false);
+      expect(decision.washSale?.outcome).toBe("reescalated_cost_changed");
+      expect(decision.reasons.join(" ")).toContain("unpriced -> ~$120.00");
+    });
+
+    it("approvedEscalationsFromDecision carries the card's priced cost into the override handle", () => {
+      const stored: PolicyDecision = {
+        approved: false,
+        reasons: ["r"],
+        escalations: [
+          { kind: "wash_sale_ask", reason: "r", symbol: "TSLA", token: "tok-9", washSale: { estimatedTaxCostUsd: 120, disallowedLossUsd: 500 } }
+        ]
+      };
+      expect(approvedEscalationsFromDecision(stored)).toEqual([
+        { kind: "wash_sale_ask", symbol: "TSLA", token: "tok-9", approvedCostUsd: 120 }
+      ]);
+    });
   });
 
   it("ignores an override for a different symbol", () => {
@@ -201,7 +275,7 @@ describe("wash-sale handling — mode 'ask'", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(askPolicy, {
-        approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }],
+        approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc", approvedCostUsd: 120 }],
         dailyNotionalUsed: 49_500 // 49,500 + 3,000 > 50,000 daily cap
       })
     );
@@ -301,6 +375,37 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
     );
     expect(decision.washSale?.outcome).toBe("blocked_ira");
   });
+
+  // Codex review finding 1: the ConnectedAccount row's taxationType is the SOURCE OF TRUTH.
+  // A legacy/manual IRA can have capabilities absent (or reporting "brokerage") AND a policy
+  // taxSettings without taxationType — the hard block must still fire in ask AND auto modes.
+  for (const handling of ["ask", "auto"] as const) {
+    it(`hard-blocks in mode '${handling}' when ONLY ConnectedAccount.taxationType marks the buyer as an IRA (no capabilities)`, () => {
+      const decision = evaluateTradeProposal(
+        { ...buy, confidenceScore: 100 },
+        ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: handling }) }), {
+          accountTaxationType: "roth_ira"
+          // capabilities intentionally absent; taxSettings carries no taxationType
+        })
+      );
+      expect(decision.approved).toBe(false);
+      expect(decision.washSale?.outcome).toBe("blocked_ira");
+      expect(decision.escalations ?? []).toHaveLength(0);
+    });
+
+    it(`hard-blocks in mode '${handling}' when capabilities say "brokerage" but the ConnectedAccount is a traditional IRA`, () => {
+      const brokerageCaps: AccountCapabilities = { ...iraCapable, accountType: "brokerage" };
+      const decision = evaluateTradeProposal(
+        { ...buy, confidenceScore: 100 },
+        ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: handling }) }), {
+          accountTaxationType: "traditional_ira",
+          accountCapabilities: brokerageCaps
+        })
+      );
+      expect(decision.approved).toBe(false);
+      expect(decision.washSale?.outcome).toBe("blocked_ira");
+    });
+  }
 
   it("ignores override tokens — user approval can never authorize the permanent harm", () => {
     const decision = evaluateTradeProposal(
@@ -468,9 +573,10 @@ describe("approvedEscalationsFromDecision — server-stored override extraction"
       ...gateDecision,
       escalations: (gateDecision.escalations ?? []).map((e) => ({ ...e, token: "srv-tok" }))
     };
-    // 2. Approval path derives override handles from the STORED row only.
+    // 2. Approval path derives override handles from the STORED row only — including the cost
+    //    priced on the approved card (the stale-price guard's baseline).
     const overrides = approvedEscalationsFromDecision(persisted);
-    expect(overrides).toEqual([{ kind: "wash_sale_ask", symbol: "TSLA", token: "srv-tok" }]);
+    expect(overrides).toEqual([{ kind: "wash_sale_ask", symbol: "TSLA", token: "srv-tok", approvedCostUsd: 120 }]);
     // 3. Full re-gate with the override → approved, audited.
     const regate = evaluateTradeProposal(buy, ctx(askPolicy, { approvedEscalations: overrides }));
     expect(regate.approved).toBe(true);

@@ -7,6 +7,7 @@ import type {
   MarketScan,
   PolicyDecision,
   Portfolio,
+  TaxationType,
   TradeProposal,
   TradingPolicy,
   WashSaleGateAudit,
@@ -54,6 +55,15 @@ export interface PolicyContext {
    * not an IRA; every other gate ignores it and re-runs at full strength.
    */
   approvedEscalations?: ApprovedEscalation[];
+  /**
+   * The BUYING ConnectedAccount's taxationType (db row, as configured in Settings → Tax
+   * treatment). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
+   * policy.taxSettings.taxationType (see dashboard.ts's tax-summary overlay) and must be
+   * threaded here because legacy/manually-configured IRA accounts may have capabilities absent
+   * (or reporting "brokerage") AND a policy taxSettings without taxationType; without this the
+   * IRA-replacement hard block (Rev. Rul. 2008-5) could mis-treat the buyer as taxable.
+   */
+  accountTaxationType?: TaxationType;
   /** Capabilities of the connected account executing the order. When absent, all capabilities are treated as false (safe default). */
   accountCapabilities?: AccountCapabilities;
   /**
@@ -88,6 +98,22 @@ export const OPENING_ORDER_HEADROOM_PCT = 5;
  * dominate a CERTAIN, immediate tax cost before the system spends it autonomously.
  */
 export const WASH_SALE_AUTO_EDGE_MULTIPLE = 3;
+
+/**
+ * Tolerance for honoring a stored ask/auto wash-sale override token at approval time: the freshly
+ * recomputed tax cost may exceed the cost PRICED ON THE APPROVED CARD by at most
+ * max($1, 1% of the approved cost). Within that band the difference is rounding/noise; beyond it
+ * the user approved a materially different (cheaper) trade-off — e.g. another taxable loss posted
+ * between escalation and approval — so the stale token is refused and the card re-escalates at
+ * the current price for a fresh decision. A DECREASED cost always honors (strictly better than
+ * what the user accepted).
+ */
+export const WASH_SALE_OVERRIDE_COST_TOLERANCE_MIN_USD = 1;
+export const WASH_SALE_OVERRIDE_COST_TOLERANCE_PCT = 1;
+
+export function washSaleOverrideCostTolerance(approvedCostUsd: number): number {
+  return Math.max(WASH_SALE_OVERRIDE_COST_TOLERANCE_MIN_USD, approvedCostUsd * (WASH_SALE_OVERRIDE_COST_TOLERANCE_PCT / 100));
+}
 
 function dollars(value: number): string {
   return `$${value.toFixed(2)}`;
@@ -469,7 +495,13 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
     const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? "block";
+    // IRA detection, belt-and-braces across all three places the regime can live. The
+    // ConnectedAccount row (context.accountTaxationType) is the SOURCE OF TRUTH — it wins over
+    // policy taxSettings server-side and must be checked because a legacy/manual IRA account can
+    // have capabilities absent (or reporting "brokerage") and a policy without taxationType.
     const buyerIsIra =
+      context.accountTaxationType === "roth_ira" ||
+      context.accountTaxationType === "traditional_ira" ||
       taxSettings?.taxationType === "roth_ira" ||
       taxSettings?.taxationType === "traditional_ira" ||
       context.accountCapabilities?.accountType === "roth_ira" ||
@@ -509,7 +541,36 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           // "Locked but user-approved via the ask/auto path": the server-stored token is honored
           // WITHOUT weakening the default block — if handling was tightened back to "block" since
           // the card was escalated, this branch is unreachable and the buy blocks again below.
-          washSaleAudit = { ...auditBase, outcome: "approved_via_override", overrideToken: override.token };
+          //
+          // STALE-PRICE GUARD: the user approved a card priced at approvedCostUsd. Honor the token
+          // only while the freshly recomputed cost stays within washSaleOverrideCostTolerance of
+          // that figure (decreases always honor). If new losses posted since escalation and the
+          // real cost is materially higher — or the pricing situation changed shape (an unpriced
+          // card is now priceable, or vice versa) — refuse the stale approval and RE-ESCALATE at
+          // the current price so a fresh card asks again. Never execute at a cost the user
+          // didn't see.
+          const approvedCostUsd = override.approvedCostUsd;
+          const costStillHonorable =
+            (approvedCostUsd == null && estimatedTaxCostUsd == null) ||
+            (approvedCostUsd != null &&
+              estimatedTaxCostUsd != null &&
+              estimatedTaxCostUsd <= approvedCostUsd + washSaleOverrideCostTolerance(approvedCostUsd));
+          if (costStillHonorable) {
+            washSaleAudit = { ...auditBase, outcome: "approved_via_override", overrideToken: override.token };
+          } else {
+            const fmtCost = (v: number | undefined) => (v != null ? `~${dollars(v)}` : "unpriced");
+            const reason =
+              `Rebuying ${symbol}: the forfeited tax deduction changed since you approved ` +
+              `(${fmtCost(approvedCostUsd)} -> ${fmtCost(estimatedTaxCostUsd)}; wash sale — ${lockNote}). ` +
+              `Approve again at the current cost. Your call.`;
+            pushEscalatable("wash_sale_ask", reason, {
+              ...(lock.account ? { account: lock.account } : {}),
+              ...(lock.clearDate ? { clearDate: lock.clearDate.toISOString() } : {}),
+              ...(lock.lossUsd != null ? { disallowedLossUsd: round2(lock.lossUsd) } : {}),
+              ...(estimatedTaxCostUsd != null ? { estimatedTaxCostUsd } : {})
+            });
+            washSaleAudit = { ...auditBase, outcome: "reescalated_cost_changed", overrideToken: override.token };
+          }
         } else if (handling === "ask") {
           const reason =
             `Rebuying ${symbol} now forfeits ` +
