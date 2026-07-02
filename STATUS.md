@@ -4,6 +4,37 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console symbol drilldown superset of the legacy drawer (Claude)
+Branch `claude/console-drilldown-plus` (cut from `origin/main` @ 48fbe14, Wave 2 of the
+parity port; owns ONLY `app/console/ui/symbol-drilldown.tsx` + new files — scan/macro/
+orders/assistant/components/lib untouched, `SymbolButton`/`SymbolDrilldownSheet` prop
+signatures unchanged for in-flight consumers). The console company drawer now supersets
+the legacy one: all 11 legacy derived tiles (PEG, earnings yield, ROE, payout, daily $
+volume, spread bps, Graham value, margin of safety, % from 52w high, reward:risk 52w,
+sector rel. strength — same math via `src/lib/derived-metrics.deriveMetrics`, read-only
+import) with what-it-is + how-to-read tooltips incl. dynamic readings; the 7-factor
+breakdown bars + composite with tooltips describing the real `src/lib/market.ts` scoring
+inputs; legacy-threshold signal summary; evidence bulletins/headlines; per-field source
+provenance. NEW over legacy: "Your exposure" (position qty/value/basis/unrealized P&L,
+pending proposals with rationale-on-hover + Approvals link, last 4 orders), analyst
+rating-distribution bar + price-target range bar vs current, signal chips (news/insider/
+congress/earnings-proximity with warn ≤7 trading days), collapsible deep fundamentals
+(17 fields incl. D/E normalized like the legacy scan table), two-tier quote resolution
+(full topCandidates quote → summary tier; $-volume falls back to the latest daily bar's
+real volume, labeled). Honesty rules kept: P/E `n/a` only when eps ≤ 0, em dash for
+missing, not-in-scan symbols still get chart + exposure + an explicit notice. Per a Scan-
+lane coordination request (Codex finding on #327): BOTH exports now take an optional
+`quote?: MarketQuote` override — a screen rendering a freshly fetched /api/scan row can
+pass its exact quote object and the sheet renders from it (unless the run-captured quote
+is verifiably newer via `asOf`), so drilldown and row can't disagree; footer/price
+tooltip say which scan the data came from. New files:
+`app/console/ui/drilldown-data.ts` (pure, 27 new tests in
+`test/console-drilldown.test.ts`), `app/console/ui/drilldown-sections.tsx`; console.css
+gained additive-only classes (`.con-tile`, `.con-score-bar`, `.con-dist-bar`,
+`.con-range-*`). Quartet green: lint 0 errors, tsc clean, 2264 tests / 235 files, build
+ok. Docs: `docs/rollouts/2026-07-02-console-drilldown-plus.md`. **Next:** carry
+`factorBreakdown` into `MarketQuoteSummary` (src/lib owner) so non-candidate symbols get
+factor bars too.
 ## 2026-07-02 — /console: learned-context approval inbox (Claude)
 Branch `claude/console-learned-context` (cut from `origin/main` @ 78ecc98; parallel port effort —
 touches ONLY `app/console/approvals/*` + new `app/console/lib/learned-context.ts` to stay clear of
