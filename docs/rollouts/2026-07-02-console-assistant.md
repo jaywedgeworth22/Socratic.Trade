@@ -122,8 +122,48 @@ where it genuinely helps, without a broad refactor:
 
 Full verify gate re-run after the merge (results below are post-merge).
 
+## Codex review fixes (PR #325, same day)
+
+All four P2 findings were verified against the code and confirmed; fixed in
+`app/console/assistant/chat.tsx`:
+
+1. **Late history clobbered live messages** — a send before the initial
+   `GET /api/chat-history` resolved would be replaced by the late
+   `setMessages(history)`. Fixed with a `localEchoRef` "conversation changed
+   locally" flag: a late history response is discarded (those turns persist
+   server-side and appear on the next full load).
+2. **Clear during an in-flight send** — confirming Clear mid-reply could delete
+   the persisted user turn while the in-flight request later re-appends its
+   assistant turn (client- and server-side). Fixed two ways: the Clear button
+   is disabled while sending/clearing (title says why), and a `clearGenRef`
+   generation counter makes a still-unfinished send drop its late reply after
+   a successful clear. Sending is likewise blocked while the DELETE is in
+   flight.
+3. **Retry double-persists the prompt** — confirmed in
+   `src/lib/chat/orchestrator.ts`: the user turn is `appendTurn`ed BEFORE the
+   provider call, so a post-receipt failure + Retry re-POSTs an
+   already-persisted prompt. `/api/chat` has no idempotency key and `src/lib`
+   is out of scope for this PR, so the client is honest instead: on Retry it
+   probes the transcript tail (`GET /api/chat-history?limit=1`) and, when the
+   failed prompt is already the trailing persisted user turn, tells the user
+   plainly ("history will show this message twice") while keeping the
+   on-screen transcript deduped (Retry reuses the existing bubble, never adds
+   a second one). Server-side dedupe recorded as a follow-up below.
+4. **Clear copy claimed account scoping** — `DELETE /api/chat-history` calls
+   `clearTurns(userId)`, which clears the transcript for the whole user across
+   ALL accounts. The confirm title and the success toast now say exactly that
+   (your entire assistant conversation, one transcript shared across all your
+   accounts); the server was deliberately not re-scoped.
+
+Full verify gate re-run after these fixes (tsc / lint / test / build — green).
+
 ## Follow-ups
 
+- **Chat idempotency (server-side, separate PR)**: accept an optional
+  `clientTurnId` on `POST /api/chat` and skip the user-turn `appendTurn` when
+  that id is already recorded, so a client Retry after a post-receipt failure
+  cannot duplicate the prompt in the transcript (the clean fix for review
+  finding 3; requires a `src/lib/chat` change, which is out of this PR's lane).
 - The grouped select catalog in `models.tsx` still mirrors
   `app/ui/llm-model-catalog.ts` — if the console ever grows a shared picker
   catalog, fold it there.

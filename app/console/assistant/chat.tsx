@@ -118,9 +118,16 @@ export function AssistantChat() {
    *  the gate never flashes before the check resolves). */
   const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
   const [clearArmed, setClearArmed] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const seq = useRef(0);
+  /** True once the user has locally changed the conversation (sent a message or
+   *  cleared) — a late initial-history response must not clobber that. */
+  const localEchoRef = useRef(false);
+  /** Bumped on every successful Clear; an in-flight send compares against it so
+   *  a late reply can't repopulate a transcript the user just cleared. */
+  const clearGenRef = useRef(0);
 
   const reality = snapshot ? deriveReality(snapshot) : null;
 
@@ -143,6 +150,14 @@ export function AssistantChat() {
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as { turns: HistoryTurn[] };
         if (cancelled) return;
+        if (localEchoRef.current) {
+          // The user already sent (or cleared) while this load was in flight —
+          // the fetched snapshot is older than what's on screen. Keep the live
+          // conversation instead of clobbering it (their turns persist
+          // server-side and will be in the next full load anyway).
+          setHistoryState("ready");
+          return;
+        }
         setMessages(
           body.turns.map((t) => ({
             id: t.id,
@@ -206,7 +221,7 @@ export function AssistantChat() {
   const send = useCallback(
     async (override?: string, retryId?: string) => {
       const text = (override ?? input).trim();
-      if (!text || sending || keyMissing) return;
+      if (!text || sending || clearing || keyMissing) return;
       if (customPending) {
         toast.push("warn", "Enter a model id", "Type a model id next to the picker, or choose a listed model.");
         return;
@@ -214,6 +229,8 @@ export function AssistantChat() {
       if (override === undefined) setInput("");
       const stamp = `${Date.now()}-${seq.current++}`;
       const userId = retryId ?? `u-${stamp}`;
+      localEchoRef.current = true;
+      const gen = clearGenRef.current;
       setMessages((m) =>
         retryId
           ? m.map((x) => (x.id === retryId ? { ...x, failed: false } : x))
@@ -221,6 +238,30 @@ export function AssistantChat() {
       );
       setSending(true);
       try {
+        if (retryId) {
+          // The server records the user turn BEFORE calling the provider, so a
+          // failure after the request arrived means this prompt is already in
+          // the saved transcript, and re-sending records it a second time (a
+          // repeat send is the only way to get an answer — the chat API has no
+          // idempotency key today). The screen shows it once either way; be
+          // honest about what the saved history will contain.
+          try {
+            const probe = await fetch("/api/chat-history?limit=1");
+            if (probe.ok) {
+              const tail = ((await probe.json()) as { turns: HistoryTurn[] }).turns;
+              const last = tail[tail.length - 1];
+              if (last && last.role === "user" && last.text === text) {
+                toast.push(
+                  "info",
+                  "Retrying",
+                  "The first attempt was recorded in the saved transcript before it failed, so history will show this message twice."
+                );
+              }
+            }
+          } catch {
+            /* best-effort probe — retry proceeds either way */
+          }
+        }
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -228,6 +269,9 @@ export function AssistantChat() {
         });
         if (!res.ok) throw new Error(await apiErrorMessage(res, "Chat request failed"));
         const reply = (await res.json()) as LiveReply;
+        // If the user cleared the conversation while this was in flight, drop
+        // the late reply instead of repopulating the transcript they deleted.
+        if (clearGenRef.current !== gen) return;
         setMessages((m) => [
           ...m,
           {
@@ -241,6 +285,7 @@ export function AssistantChat() {
           }
         ]);
       } catch (e) {
+        if (clearGenRef.current !== gen) return;
         const message = e instanceof Error ? e.message : "Chat request failed.";
         setMessages((m) => m.map((x) => (x.id === userId ? { ...x, failed: true } : x)));
         toast.push("neg", "Message not answered", message);
@@ -248,23 +293,36 @@ export function AssistantChat() {
         setSending(false);
       }
     },
-    [input, sending, keyMissing, customPending, model, toast]
+    [input, sending, clearing, keyMissing, customPending, model, toast]
   );
 
   const clearConversation = async () => {
+    // Disabled while a reply is in flight (see the button), but guard anyway:
+    // deleting mid-turn would race the server, which persists the in-flight
+    // turn's messages around the DELETE and would orphan/repopulate history.
+    if (sending || clearing) return;
     if (!clearArmed) {
       setClearArmed(true);
       window.setTimeout(() => setClearArmed(false), 4000);
       return;
     }
     setClearArmed(false);
+    setClearing(true);
     try {
       const res = await fetch("/api/chat-history", { method: "DELETE" });
       if (!res.ok) throw new Error(String(res.status));
+      clearGenRef.current += 1; // any still-unfinished send drops its late reply
+      localEchoRef.current = true;
       setMessages([]);
-      toast.push("info", "Conversation cleared", "The saved transcript was deleted. Staged proposals are untouched.");
+      toast.push(
+        "info",
+        "Conversation cleared",
+        "Your whole assistant transcript was deleted — it is one conversation shared across all your accounts. Staged proposals are untouched."
+      );
     } catch {
       toast.push("neg", "Could not clear", "The transcript is unchanged — try again.");
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -275,7 +333,7 @@ export function AssistantChat() {
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   };
 
-  const canSend = !sending && !keyMissing && !customPending && input.trim().length > 0;
+  const canSend = !sending && !clearing && !keyMissing && !customPending && input.trim().length > 0;
 
   return (
     <section className="con-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden lg:h-[calc(100dvh-12rem)]">
@@ -332,16 +390,21 @@ export function AssistantChat() {
           <button
             type="button"
             onClick={() => void clearConversation()}
+            disabled={sending || clearing}
             className={cx(
-              "flex h-7 items-center gap-1 rounded-lg border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors",
+              "flex h-7 items-center gap-1 rounded-lg border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
               clearArmed
                 ? "border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] text-[color:var(--con-neg)]"
                 : "border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
             )}
-            title="Deletes the saved chat transcript for this account. It does not touch staged proposals, orders, or positions. Click twice to confirm."
+            title={
+              sending
+                ? "Wait for the current reply to finish — clearing mid-reply could orphan it in the saved history."
+                : "Deletes your ENTIRE saved assistant conversation — one transcript shared across all your accounts, not just the one selected. Staged proposals, orders, and positions are untouched. Click twice to confirm."
+            }
           >
             <Trash2 size={13} aria-hidden />
-            {clearArmed ? "Really clear?" : "Clear"}
+            {clearArmed ? "Really clear?" : clearing ? "Clearing…" : "Clear"}
           </button>
         </div>
       </header>
@@ -439,7 +502,7 @@ export function AssistantChat() {
                   <button
                     type="button"
                     onClick={() => void send(m.text, m.id)}
-                    disabled={sending}
+                    disabled={sending || clearing}
                     className="flex items-center gap-1 rounded border border-[color:var(--con-line-strong)] px-1.5 py-0.5 font-semibold text-[color:var(--con-fg)] transition-colors hover:bg-[color:var(--con-surface-2)] disabled:opacity-50"
                     title="Send this message again."
                   >
