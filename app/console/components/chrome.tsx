@@ -9,7 +9,8 @@
  *  - data freshness strip */
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, OctagonMinus, Play, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, LogOut, OctagonMinus, Play, ShieldCheck, UserRound } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   activeConnectedAccount,
@@ -440,46 +441,236 @@ export function TypedConfirm({
 
 // ── Run once ─────────────────────────────────────────────────────────────────
 
+/** Why a manual run can't go ahead, plus where to fix it. Shown in a sheet —
+ *  never buried in a disabled button's hover tooltip (useless on mobile). */
+interface RunBlock {
+  title: string;
+  detail: string;
+  /** Extra honest context (e.g. what Stopped really pauses). */
+  note?: string;
+  fixHref?: string;
+  fixLabel?: string;
+}
+
+/** Pre-flight blocks the snapshot already knows about, before any request. */
+function deriveRunBlock(snapshot: DashboardSnapshot): RunBlock | null {
+  if (snapshot.llmConfigured === false) {
+    return {
+      title: "No LLM key is configured",
+      detail:
+        "Proposal generation is LLM-driven, so a manual run needs a working LLM provider key. Market data, positions, and guardrails all work without one — only runs and chat are gated.",
+      fixHref: "/console/settings#api-keys",
+      fixLabel: "Open Settings → API keys"
+    };
+  }
+  if (snapshot.accountReadiness && !snapshot.accountReadiness.ok) {
+    return {
+      title: snapshot.accountReadiness.reason ?? "The account isn't ready to run",
+      detail: snapshot.accountReadiness.detail,
+      fixHref: "/console/settings#brokers",
+      fixLabel: "Open Settings → Broker accounts"
+    };
+  }
+  return null;
+}
+
+/** Map a refusal from POST /api/strategy/run (412 LLM gate, 400 failed run)
+ *  onto a reason + the screen that fixes it. Matching is on the server's own
+ *  summary strings (src/lib/strategy.ts / llm-required.ts). */
+function classifyRunFailure(message: string, status?: number): RunBlock {
+  const m = message.toLowerCase();
+  if (status === 412 || m.includes("llm provider") || m.includes("llm key")) {
+    return {
+      title: "No LLM key is configured",
+      detail: message,
+      fixHref: "/console/settings#api-keys",
+      fixLabel: "Open Settings → API keys"
+    };
+  }
+  if (m.includes("kill switch")) {
+    return {
+      title: "A circuit breaker is holding new entries",
+      detail: message,
+      note: "A breaker tripping means a hard limit did its job. Review what fired before loosening anything.",
+      fixHref: "/console/guardrails",
+      fixLabel: "Review Guardrails"
+    };
+  }
+  if (m.includes("halted") || m.includes("stopped")) {
+    return {
+      title: "The system is stopped",
+      detail: `${message} Start it (or switch to Close-only) from the run-state chip in the top bar.`,
+      note:
+        "While stopped, nothing buys or sells — and this app's automatic stop-losses are paused too. Broker-held brackets keep resting at your broker."
+    };
+  }
+  if (m.includes("already in progress")) {
+    return {
+      title: "A run is already in progress",
+      detail: `${message} Wait for it to finish — Activity shows it as it happens.`,
+      fixHref: "/console/activity",
+      fixLabel: "Open Activity"
+    };
+  }
+  if (m.includes("budget")) {
+    return {
+      title: "The daily LLM budget is used up",
+      detail: message,
+      note: "The budget ceiling lives in the strategy's tuning settings. Raising it raises what a day of runs can cost.",
+      fixHref: "/console/strategy",
+      fixLabel: "Open Strategy"
+    };
+  }
+  if (m.includes("account")) {
+    return {
+      title: "Account problem",
+      detail: message,
+      fixHref: "/console/settings#brokers",
+      fixLabel: "Open Settings → Broker accounts"
+    };
+  }
+  return {
+    title: "The run failed",
+    detail: message,
+    fixHref: "/console/activity",
+    fixLabel: "See the full story in Activity"
+  };
+}
+
 export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot; size?: "sm" }) {
   const { refresh } = useConsoleData();
   const toast = useToast();
   const [running, setRunning] = useState(false);
+  const [block, setBlock] = useState<RunBlock | null>(null);
 
-  const blockedReason =
-    snapshot.llmConfigured === false
-      ? "Add an LLM key first — proposal generation needs one."
-      : snapshot.accountReadiness && !snapshot.accountReadiness.ok
-        ? snapshot.accountReadiness.detail
-        : null;
+  const preflight = deriveRunBlock(snapshot);
 
   const run = async () => {
+    // Blocked runs still respond to the click: they open the "why" sheet with
+    // the route to the fix, instead of being a dead disabled button.
+    if (preflight) {
+      setBlock(preflight);
+      return;
+    }
     setRunning(true);
     try {
       const result = await runOnce();
       await refresh();
       if (result.status === "failed") {
-        toast.push("neg", "Run failed", result.summary);
+        setBlock(classifyRunFailure(result.summary || "The run failed."));
       } else {
         toast.push("pos", "Run complete", result.summary);
       }
     } catch (error) {
-      toast.push("neg", "Run failed", error instanceof ConsoleApiError ? error.message : String(error));
+      if (error instanceof ConsoleApiError) {
+        setBlock(classifyRunFailure(error.message, error.status));
+      } else {
+        setBlock(classifyRunFailure(String(error)));
+      }
+      void refresh();
     } finally {
       setRunning(false);
     }
   };
 
   return (
-    <Btn
-      variant="primary"
-      size={size}
-      disabled={running || blockedReason !== null}
-      onClick={() => void run()}
-      title={blockedReason ?? "Manual runs always ask first — they can only propose, never place on their own."}
-    >
-      <Play size={13} />
-      {running ? "Running…" : "Run once"}
-    </Btn>
+    <>
+      <Btn
+        variant="primary"
+        size={size}
+        disabled={running}
+        onClick={() => void run()}
+        title={
+          preflight
+            ? `Blocked: ${preflight.title}. Click to see why and where to fix it.`
+            : "Manual runs always ask first — they can only propose, never place on their own."
+        }
+      >
+        <Play size={13} />
+        {running ? "Running…" : "Run once"}
+      </Btn>
+
+      <Sheet open={block !== null} onClose={() => setBlock(null)} title="Run once can't go ahead">
+        {block && (
+          <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+            <div className="flex items-center gap-2">
+              <Chip tone="warn">blocked</Chip>
+              <span className="font-semibold">{block.title}</span>
+            </div>
+            <p className="leading-relaxed text-[color:var(--con-muted)]">{block.detail}</p>
+            {block.note && (
+              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                {block.note}
+              </p>
+            )}
+            {block.fixHref && (
+              <Link
+                href={block.fixHref}
+                onClick={() => setBlock(null)}
+                className="con-btn con-btn-primary self-start"
+                title="Takes you straight to the screen where this is fixed."
+              >
+                {block.fixLabel ?? "Go to the fix"}
+              </Link>
+            )}
+            <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              Manual runs always ask first — they can only propose, never place on their own.
+            </p>
+          </div>
+        )}
+      </Sheet>
+    </>
+  );
+}
+
+// ── Signed-in identity + sign out ────────────────────────────────────────────
+
+export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const [open, setOpen] = useState(false);
+  const user = snapshot.currentUser;
+  // No session identity (single-user/local operation) → nothing to sign out of.
+  if (!user) return null;
+
+  const who = user.name ?? user.email ?? user.userId;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={`Signed in as ${user.email ?? who}. Click for account and sign out.`}
+        aria-label={`Signed in as ${user.email ?? who} — account menu`}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+      >
+        <UserRound size={15} />
+      </button>
+
+      <Sheet open={open} onClose={() => setOpen(false)} title="Your session">
+        <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+          <div>
+            <div className="font-semibold">{who}</div>
+            {user.email && user.name && <div className="text-[color:var(--con-muted)]">{user.email}</div>}
+            <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              {user.loginProvider ? `Signed in via ${user.loginProvider}` : "Signed in"}
+              {user.isAdmin ? " · operator/admin rights" : ""}
+            </div>
+          </div>
+          <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+            Signing out only ends this browser session. The strategy keeps its current run state on the server — it
+            does not stop, start, or sell anything.
+          </p>
+          {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
+          <a
+            href="/logout"
+            className="con-btn con-btn-outline self-start"
+            title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
+          >
+            <LogOut size={14} />
+            Sign out
+          </a>
+        </div>
+      </Sheet>
+    </>
   );
 }
 
