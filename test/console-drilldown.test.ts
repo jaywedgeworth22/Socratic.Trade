@@ -13,7 +13,7 @@ import {
   targetUpsidePct,
   toQuoteView,
   withProvenance,
-  FACTOR_DEFS,
+  factorRows,
   type QuoteView
 } from "../app/console/ui/drilldown-data";
 import { deriveMetrics } from "../src/lib/derived-metrics";
@@ -137,13 +137,24 @@ describe("console drilldown: preferFreshQuote (caller-supplied quote override)",
 });
 
 describe("console drilldown: P/E honesty (repo convention)", () => {
-  it("shows the number when a P/E exists", () => {
+  it("shows the number when a positive P/E exists and earnings are positive", () => {
     expect(peDisplay(30.04, 6.6)).toEqual({ text: "30.0", na: false });
+    expect(peDisplay(30.04, undefined)).toEqual({ text: "30.0", na: false });
   });
 
   it("shows n/a for negative/zero earnings (real computed no-ratio state)", () => {
     expect(peDisplay(undefined, -2.4)).toEqual({ text: "n/a", na: true });
     expect(peDisplay(undefined, 0)).toEqual({ text: "n/a", na: true });
+  });
+
+  it("lets eps decide FIRST: eps <= 0 wins even when a provider still reports a ratio", () => {
+    expect(peDisplay(25.3, -1.2)).toEqual({ text: "n/a", na: true });
+    expect(peDisplay(25.3, 0)).toEqual({ text: "n/a", na: true });
+  });
+
+  it("never displays a non-positive ratio as a number", () => {
+    expect(peDisplay(-12.5, undefined)).toBeNull();
+    expect(peDisplay(0, undefined)).toBeNull();
   });
 
   it("returns null (em dash) when the data simply wasn't available", () => {
@@ -296,15 +307,41 @@ describe("console drilldown: provenance + misc formatting", () => {
     expect(formatDollarsM(0.5)).toBe("$500K");
   });
 
-  it("exposes the same seven factors the legacy drawer displayed, in order", () => {
-    expect(FACTOR_DEFS.map((f) => f.key)).toEqual([
+});
+
+describe("console drilldown: factor rows derive from the breakdown's own keys", () => {
+  it("shows every weighted factor — including diversification — but never weightedTotal", () => {
+    const rows = factorRows(fullQuote.factorBreakdown!);
+    expect(rows.map((r) => r.key)).toEqual([
       "value",
       "momentum",
       "quality",
       "positioning",
       "sentiment",
       "liquidity",
-      "volatility"
+      "volatility",
+      "diversification"
     ]);
+    const div = rows.find((r) => r.key === "diversification")!;
+    expect(div.value).toBe(80);
+    expect(div.label).toBe("Diversification");
+    expect(div.title).toContain("holds no position");
+  });
+
+  it("keeps unknown future factors visible with a fallback label and explainer", () => {
+    const fb = { ...fullQuote.factorBreakdown!, catalystDensity: 63 } as never;
+    const rows = factorRows(fb);
+    const unknown = rows.find((r) => r.key === "catalystDensity")!;
+    expect(unknown.value).toBe(63);
+    expect(unknown.label).toBe("Catalyst density");
+    expect(unknown.title).toContain("Factor sub-score");
+    // Unknown keys sort after the known set.
+    expect(rows[rows.length - 1].key).toBe("catalystDensity");
+  });
+
+  it("drops non-numeric entries instead of rendering fabricated bars", () => {
+    const fb = { ...fullQuote.factorBreakdown!, momentum: Number.NaN } as never;
+    const rows = factorRows(fb);
+    expect(rows.some((r) => r.key === "momentum")).toBe(false);
   });
 });

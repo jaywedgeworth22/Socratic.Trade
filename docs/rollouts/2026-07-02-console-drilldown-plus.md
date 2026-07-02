@@ -121,6 +121,35 @@ temp DBs was denied by the sandbox policy; space was released externally and
 the suite then passed cleanly. The final run pointed TMPDIR at a
 worktree-local dir (reclaimed afterwards) to avoid re-filling the shared /tmp.
 
+## Review fixes (Codex, PR #330 @ 71a04f2 — both verified against the code first)
+
+1. **Factor breakdown no longer hides `diversification`.** Verified:
+   `scoreFactors` (src/lib/market.ts) weighs EIGHT factors into
+   `weightedTotal`, including `diversification` (80 = account holds no
+   position in the name, 45 = it does); the hard-coded seven-factor list
+   (inherited from the legacy drawer, which had the same blind spot) made the
+   bars unable to reconcile with the composite. Fix: `factorRows(fb)` derives
+   the row list from the breakdown object's OWN keys (excluding
+   `weightedTotal`), with a label/explainer map for known factors — incl. a
+   new Diversification tooltip describing its actual scoring input — and a
+   titleized-label + generic-explainer fallback so a future factor can never
+   silently vanish. Non-numeric entries are dropped, not rendered as bars.
+2. **P/E precedence now lets eps decide first.** Verified: the old order
+   displayed any finite provider ratio (even negative/zero) before checking
+   eps. New order per the repo convention: eps <= 0 => `n/a` (computed
+   no-ratio state) BEFORE accepting any provider-reported ratio (a positive
+   ratio alongside eps <= 0 is stale/inconsistent cross-provider data — the
+   conservative read wins); only a strictly positive ratio renders as a
+   number (the same `peRatio > 0` guard the legacy scan table uses); em dash
+   only when the data is missing. Deliberately stricter than the legacy
+   scan-table expression in one corner: legacy shows a positive ratio even
+   when eps <= 0; the convention text ("check eps to decide") and the
+   reviewer both treat eps as authoritative, so the console does too.
+
+Tests: +8 (eps-decides-first, non-positive-ratio guard, factor-rows key
+derivation incl. diversification, unknown-key fallback, NaN drop) — 31
+drilldown tests total.
+
 ## Follow-ups
 
 - Factor breakdown, headlines, intraday change, volume and sector relative

@@ -158,15 +158,20 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
 
 // ── P/E honesty (repo convention) ────────────────────────────────────────────
 
-/** P/E display per the repo convention: a number when we have one; "n/a" when
- *  earnings are negative/zero (a real, computed "no ratio" state — check eps);
- *  null when the data simply wasn't available (render an em dash). */
+/** P/E display per the repo convention: eps DECIDES the no-ratio state —
+ *  negative/zero trailing earnings ⇒ "n/a" (a real, computed "no ratio"
+ *  state) BEFORE any provider-reported ratio is accepted (a positive ratio
+ *  alongside eps ≤ 0 is stale/inconsistent cross-provider data; the
+ *  conservative honest read wins). Otherwise only a strictly POSITIVE ratio
+ *  renders as a number — a non-positive ratio is never displayed as one
+ *  (same guard as the legacy scan table). null = the data simply wasn't
+ *  available (render an em dash). */
 export function peDisplay(peRatio?: number, eps?: number): { text: string; na: boolean } | null {
-  if (typeof peRatio === "number" && Number.isFinite(peRatio)) {
-    return { text: peRatio.toFixed(1), na: false };
-  }
   if (typeof eps === "number" && Number.isFinite(eps) && eps <= 0) {
     return { text: "n/a", na: true };
+  }
+  if (typeof peRatio === "number" && Number.isFinite(peRatio) && peRatio > 0) {
+    return { text: peRatio.toFixed(1), na: false };
   }
   return null;
 }
@@ -445,19 +450,52 @@ export function buildSignalChips(view: QuoteView): SignalChip[] {
   return chips;
 }
 
-// ── Factor breakdown definitions (labels + honest explainers) ────────────────
+// ── Factor breakdown rows (labels + honest explainers) ───────────────────────
 
-/** The seven factors the legacy drawer displayed, in the same order.
- *  Explanations follow the actual scoring inputs in src/lib/market.ts. */
-export const FACTOR_DEFS: Array<{ key: keyof MarketFactorBreakdown & string; label: string; title: string }> = [
-  { key: "value", label: "Value", title: "How cheap the stock looks: P/E bands (≤15 scores best) lifted or dinged by free-cash-flow yield. 0–100; higher = cheaper." },
-  { key: "momentum", label: "Momentum", title: "Price strength: today's move blended with the position in the 52-week range and, when available, bar-based technical reads (RSI/MACD/moving averages). Higher = stronger trend." },
-  { key: "quality", label: "Quality", title: "Business sturdiness: size/liquidity base adjusted by debt-to-equity (lower is better) and EPS growth (higher is better). Higher = sturdier fundamentals." },
-  { key: "positioning", label: "Positioning", title: "Smart-money positioning: net congressional buying, insider open-market buying, and squeeze-level short interest. 50 = neutral; higher = accumulation." },
-  { key: "sentiment", label: "Sentiment", title: "News tone from recent headlines, 0–100. 50 = neutral; higher = more positive coverage." },
-  { key: "liquidity", label: "Liquidity", title: "How easily a position trades, from daily share volume (or market cap as a proxy). Higher = cheaper to get in and out." },
-  { key: "volatility", label: "Volatility", title: "Price steadiness: penalizes large intraday swings and high beta. Higher = calmer, easier to size." }
-];
+/** Known factor labels/explainers, following the actual scoring inputs in
+ *  src/lib/market.ts (scoreFactors). Order mirrors the legacy drawer's seven,
+ *  with diversification — which the legacy drawer omitted even though it is a
+ *  weighted input of the composite — appended last. */
+const FACTOR_META: Record<string, { label: string; title: string; order: number }> = {
+  value: { order: 0, label: "Value", title: "How cheap the stock looks: P/E bands (≤15 scores best) lifted or dinged by free-cash-flow yield. 0–100; higher = cheaper." },
+  momentum: { order: 1, label: "Momentum", title: "Price strength: today's move blended with the position in the 52-week range and, when available, bar-based technical reads (RSI/MACD/moving averages). Higher = stronger trend." },
+  quality: { order: 2, label: "Quality", title: "Business sturdiness: size/liquidity base adjusted by debt-to-equity (lower is better) and EPS growth (higher is better). Higher = sturdier fundamentals." },
+  positioning: { order: 3, label: "Positioning", title: "Smart-money positioning: net congressional buying, insider open-market buying, and squeeze-level short interest. 50 = neutral; higher = accumulation." },
+  sentiment: { order: 4, label: "Sentiment", title: "News tone from recent headlines, 0–100. 50 = neutral; higher = more positive coverage." },
+  liquidity: { order: 5, label: "Liquidity", title: "How easily a position trades, from daily share volume (or market cap as a proxy). Higher = cheaper to get in and out." },
+  volatility: { order: 6, label: "Volatility", title: "Price steadiness: penalizes large intraday swings and high beta. Higher = calmer, easier to size." },
+  diversification: { order: 7, label: "Diversification", title: "Portfolio-concentration guard: 80 when this account holds no position in the name, 45 when it already does — steering the ranking toward names you don't already own." }
+};
+
+export interface FactorRow {
+  key: string;
+  label: string;
+  title: string;
+  value: number;
+}
+
+/** Every weighted factor sub-score actually present on the breakdown (the
+ *  composite `weightedTotal` is excluded — it's rendered separately). Derived
+ *  from the object's own keys so a factor added to ScoringWeights later can
+ *  never silently vanish from the drawer; unknown keys get a titleized label
+ *  and a generic explainer. */
+export function factorRows(fb: MarketFactorBreakdown): FactorRow[] {
+  return Object.entries(fb)
+    .filter(([key, value]) => key !== "weightedTotal" && typeof value === "number" && Number.isFinite(value))
+    .map(([key, value]) => ({
+      key,
+      label: FACTOR_META[key]?.label ?? key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, " $1").toLowerCase(),
+      title:
+        FACTOR_META[key]?.title ??
+        "Factor sub-score (0–100) included in the composite scan score at the weight your policy assigns it.",
+      value: value as number
+    }))
+    .sort((a, b) => {
+      const ao = FACTOR_META[a.key]?.order ?? Number.MAX_SAFE_INTEGER;
+      const bo = FACTOR_META[b.key]?.order ?? Number.MAX_SAFE_INTEGER;
+      return ao !== bo ? ao - bo : a.key.localeCompare(b.key);
+    });
+}
 
 // ── Position economics (same math as the legacy positions table) ─────────────
 

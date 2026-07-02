@@ -15,6 +15,7 @@ import {
   buildDerivedTiles,
   buildSignalChips,
   buildSignalSummary,
+  factorRows,
   fmtCompact,
   normalizedDebtToEquity,
   peDisplay,
@@ -23,7 +24,6 @@ import {
   ratingTooltip,
   targetUpsidePct,
   withProvenance,
-  FACTOR_DEFS,
   type DerivedResult,
   type QuoteView
 } from "./drilldown-data";
@@ -290,26 +290,25 @@ export function DerivedTilesSection({ view, derived }: { view: QuoteView; derive
 export function FactorSection({ view }: { view: QuoteView }) {
   const fb = view.factorBreakdown;
   if (!fb) return null;
+  const rows = factorRows(fb);
+  if (rows.length === 0) return null;
   return (
     <Section
       title="Factor breakdown"
-      titleHint="The seven sub-scores (0–100 each) behind this symbol's composite scan score. The composite is the policy-weighted total the screener ranked by."
+      titleHint="Every weighted sub-score (0–100 each) behind this symbol's composite scan score. The composite is the policy-weighted total the screener ranked by."
     >
       <div className="space-y-2">
-        {FACTOR_DEFS.map((f) => {
-          const value = typeof fb[f.key] === "number" ? (fb[f.key] as number) : undefined;
-          return (
-            <div key={f.key} className="con-row -mx-1 cursor-default rounded px-1 py-0.5" title={f.title}>
-              <div className="mb-0.5 flex items-baseline justify-between text-[length:var(--con-fs-xs)]">
-                <span className="text-[color:var(--con-faint)]">{f.label}</span>
-                <span className="con-num font-semibold">{typeof value === "number" ? value.toFixed(1) : EM_DASH}</span>
-              </div>
-              <div className="con-score-bar">
-                <div style={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }} />
-              </div>
+        {rows.map((f) => (
+          <div key={f.key} className="con-row -mx-1 cursor-default rounded px-1 py-0.5" title={f.title}>
+            <div className="mb-0.5 flex items-baseline justify-between text-[length:var(--con-fs-xs)]">
+              <span className="text-[color:var(--con-faint)]">{f.label}</span>
+              <span className="con-num font-semibold">{f.value.toFixed(1)}</span>
             </div>
-          );
-        })}
+            <div className="con-score-bar">
+              <div style={{ width: `${Math.max(0, Math.min(100, f.value))}%` }} />
+            </div>
+          </div>
+        ))}
         <div
           className="flex items-baseline justify-between border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-sm)] font-semibold"
           title="The weighted total of all factor sub-scores using the active policy's scoring weights — the number the screener ranked this symbol by."
