@@ -4,6 +4,35 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console parity tail: 9 audit items in one lane (Claude)
+Branch `claude/console-parity-tail` (cut from `origin/main` @ 93aed63, after #321+#322).
+Final lane of the parallel legacy→console parity port — the remaining smaller audit items,
+all on existing endpoints (no new backend surface): (a) Run-once blocked-reason routing —
+blocked/failed manual runs open a sheet saying WHY with a one-click route to the fix
+(Settings#api-keys/#brokers, Guardrails, Strategy, Activity), classified from the server's
+own refusal strings; halt copy stays honest (Stopped pauses app-managed stops too);
+(b) sign-out + signed-in identity in the chrome (`UserMenu` → existing `/logout` route);
+(c) allocation card on Home (bars, by-position/by-sector lenses, Cash segment, "No sector
+data" bucket never guessed, reality chip); (d) `/console/watchlist` destination — watchlist
+CRUD with broker quotes ("—" when unavailable) + price alerts (above/below, armed/triggered,
+honest ~1-min check cadence, notify-only) over `/api/watchlist` + `/api/alerts`; (e) OPERATOR
+settings section (admin-only links to the four `/admin/*` pages, links only); (f) blocking
+shared-data-pool consent gate ported to the console shell (same un-weakened semantics, fails
+closed); (g) DANGER settings section — full account-deletion flow mirroring
+`src/lib/account-deletion.ts` gates (preview, blockers, prepare-stops-strategy, 5
+acknowledgements, typed email + phrase, local-operator phrase, sign-out on success);
+(h) Data-sharing settings card (pool consent toggle + `learned-context/sharing`
+include/contribute flags, fact-tier-only honesty); (i) the single red Approvals badge now
+folds in pending learned-context items (60s poll, tooltip breaks the count down — still one
+badge). Files: `app/console/components/{chrome,shell,nav}.tsx`, new
+`components/{consent-gate,allocation}.tsx`, `app/console/page.tsx`, new
+`watchlist/page.tsx`, `settings/page.tsx` + new `settings/{sharing,danger}.tsx`. Quartet
+green: tsc clean, lint 0 errors, 2241 tests / 234 files, build ok. Docs:
+`docs/rollouts/2026-07-02-console-parity-tail.md`. **Next:** land via PR (auto-merge on green
+verify); consider a structured error code from `/api/strategy/run` instead of string
+classification; after #324 lands, approvals renders the learned-context inbox the badge
+already counts.
+
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
 console port, settings lane. Five sections added to `/console/settings`, all under

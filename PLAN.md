@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-parity-tail`, Claude): **Console parity tail** — the
+> closing lane of the parallel legacy→console port: Run-once blocked-reason routing
+> (why + one-click route to the fix), chrome sign-out with signed-in identity,
+> allocation bars on Home (position/sector lenses), a new `/console/watchlist`
+> destination with price alerts (existing /api/watchlist + /api/alerts), the blocking
+> shared-data-pool consent gate ported un-weakened into the console shell, a Data
+> sharing settings card (pool consent + learned-context include/contribute flags),
+> a DANGER account-deletion flow mirroring the server's gates, admin-only OPERATOR
+> links in Settings, and pending learned-context items folded into the single red
+> Approvals badge. Owner-skipped: ⌘K palette, Strategy Flow visualizer. Console track
+> only — no roadmap scope change. See `docs/rollouts/2026-07-02-console-parity-tail.md`.
 > 2026-07-02 (`claude/console-settings-expansions`, Claude): **/console/settings
 > expansions** — the settings lane of the parallel legacy→console port. Adds broker
 > connect/manage (Robinhood OAuth + Alpaca key-pair, disconnect with explicit confirm),
