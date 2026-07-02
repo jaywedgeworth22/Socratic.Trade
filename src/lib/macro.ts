@@ -29,8 +29,9 @@ export interface MacroData {
   asOf: string;
   /**
    * Sourcing flag for the FRED suite (dashboard-only; excluded from the LLM prompt by pruneMacro):
-   * true  = the full FRED fetch ran with an API key this session (fields are real, modulo
-   *         rare per-series fallbacks to DEFAULT_MACRO when one series returns nothing);
+   * true  = a keyed FRED fetch ran this session and the present fields are real. Any series that
+   *         failed is blanked to "" (NOT a DEFAULT_MACRO placeholder), so a partial fetch never
+   *         renders a fabricated value — the console shows those specific tiles as "—";
    * false = no FRED fetch happened — every field except possibly `vix` is a DEFAULT_MACRO
    *         placeholder constant. `vix` is a live reading iff `asOf` is a real date (the
    *         key-free Yahoo ^VIX fallback succeeded); `asOf === "unavailable"` means even
@@ -141,7 +142,7 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
   const apiKey = resolveApiKeyWithSource("fred", userId).key;
   if (!apiKey) {
     // No FRED key for the full FRED suite — take the key-free fallback path.
-    return fetchVixOnlyFallback(userId, now);
+    return fetchVixOnlyFallback(scope, userId, now);
   }
 
   try {
@@ -185,29 +186,35 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
     ].some((value) => Boolean(value));
     if (!anyFredValue) {
       console.error("[macro] FRED key configured but every series fetch failed — treating as unsourced");
-      return fetchVixOnlyFallback(userId, now);
+      return fetchVixOnlyFallback(scope, userId, now);
     }
 
+    // PARTIAL FRED fetch: some series returned, some failed. Each field that has no real value is
+    // blanked to "" — NOT a DEFAULT_MACRO placeholder — so a single failed series can never render as
+    // a fabricated live reading. `fredSourced` stays true (a real keyed fetch DID run and the present
+    // fields are real); the console blanks each empty field per-tile (its mv/mn helpers treat "" as
+    // missing → EM_DASH), so no fredSourced-gated tile shows a placeholder. This closes the "partial
+    // payload flagged fully sourced" gap without discarding the series that did resolve.
     const data: MacroData = {
-      fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : DEFAULT_MACRO.fedFundsRate,
-      dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : DEFAULT_MACRO.dgs3moTreasury,
-      dgs2Treasury: dgs2 ? `${Number(dgs2).toFixed(2)}%` : DEFAULT_MACRO.dgs2Treasury,
-      dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : DEFAULT_MACRO.dgs10Treasury,
-      inflationExpectation10y: breakeven10y ? `${Number(breakeven10y).toFixed(2)}%` : DEFAULT_MACRO.inflationExpectation10y,
-      cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : DEFAULT_MACRO.cpiInflation,
-      corePCE: corePce ? `${Number(corePce).toFixed(2)}%` : DEFAULT_MACRO.corePCE,
-      realGDPGrowth: realGdp ? `${Number(realGdp).toFixed(2)}%` : DEFAULT_MACRO.realGDPGrowth,
-      unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : DEFAULT_MACRO.unemploymentRate,
-      initialClaims: claims ? `${Math.round(Number(claims) / 1000)}K` : DEFAULT_MACRO.initialClaims,
-      m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : DEFAULT_MACRO.m2MoneySupply,
-      m2GrowthYoY: m2Growth ? `${Number(m2Growth).toFixed(2)}%` : DEFAULT_MACRO.m2GrowthYoY,
-      hyCreditSpread: hySpread ? `${Number(hySpread).toFixed(2)}%` : DEFAULT_MACRO.hyCreditSpread,
-      usdIndex: usd ? `${Number(usd).toFixed(2)}` : DEFAULT_MACRO.usdIndex,
-      wtiOil: oil ? `$${Number(oil).toFixed(2)}` : DEFAULT_MACRO.wtiOil,
-      housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : DEFAULT_MACRO.housingStarts,
-      consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
-      vix: vix ? `${Number(vix).toFixed(2)}` : DEFAULT_MACRO.vix,
-      vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : DEFAULT_MACRO.vix3m,
+      fedFundsRate: fedFunds ? `${Number(fedFunds).toFixed(2)}%` : "",
+      dgs3moTreasury: dgs3mo ? `${Number(dgs3mo).toFixed(2)}%` : "",
+      dgs2Treasury: dgs2 ? `${Number(dgs2).toFixed(2)}%` : "",
+      dgs10Treasury: dgs10 ? `${Number(dgs10).toFixed(2)}%` : "",
+      inflationExpectation10y: breakeven10y ? `${Number(breakeven10y).toFixed(2)}%` : "",
+      cpiInflation: cpi ? `${Number(cpi).toFixed(2)}%` : "",
+      corePCE: corePce ? `${Number(corePce).toFixed(2)}%` : "",
+      realGDPGrowth: realGdp ? `${Number(realGdp).toFixed(2)}%` : "",
+      unemploymentRate: unemployment ? `${Number(unemployment).toFixed(2)}%` : "",
+      initialClaims: claims ? `${Math.round(Number(claims) / 1000)}K` : "",
+      m2MoneySupply: m2 ? `${(Number(m2) / 1000).toFixed(2)}T` : "",
+      m2GrowthYoY: m2Growth ? `${Number(m2Growth).toFixed(2)}%` : "",
+      hyCreditSpread: hySpread ? `${Number(hySpread).toFixed(2)}%` : "",
+      usdIndex: usd ? `${Number(usd).toFixed(2)}` : "",
+      wtiOil: oil ? `$${Number(oil).toFixed(2)}` : "",
+      housingStarts: houst ? `${(Number(houst) / 1000).toFixed(2)}M` : "",
+      consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : "",
+      vix: vix ? `${Number(vix).toFixed(2)}` : "",
+      vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : "",
       asOf: new Date().toISOString().split("T")[0],
       fredSourced: true
     };
@@ -222,15 +229,18 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
 }
 
 /**
- * Shared fallback for "no usable FRED data" (no key, or a configured key whose every
- * series fetch failed). Tries to at least fetch a live ^VIX from Yahoo Finance
- * (key-free) so the regime classifier gets a real volatility reading instead of
- * staying "Unknown"; every FRED field stays a DEFAULT_MACRO placeholder and
- * `fredSourced` is false either way. Cached under the SHARED scope: neither result
- * carries licensed/user-keyed data (Yahoo ^VIX is key-free; "unavailable" carries
- * nothing), so sharing is safe — mirroring the original no-key behavior.
+ * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
+ * Tries to at least fetch a live ^VIX from Yahoo Finance (key-free) so the regime classifier gets a
+ * real volatility reading instead of staying "Unknown"; every FRED field stays a DEFAULT_MACRO
+ * placeholder and `fredSourced` is false either way.
+ *
+ * Cached under the CALLER's scope (not hardcoded "shared"): a configured per-USER key that failed
+ * must write only that user's PRIVATE entry. Hardcoding "shared" here poisoned the global cache —
+ * another user, or the env/operator-key path, would then read this VIX-only/unavailable payload for
+ * up to 24h before ever attempting its own valid FRED fetch. The no-key path (source "none") and the
+ * env-key path resolve to "shared" via macroCacheScopeForKeySource, so their behavior is unchanged.
  */
-async function fetchVixOnlyFallback(userId: string | undefined, now: number): Promise<MacroData> {
+async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | undefined, now: number): Promise<MacroData> {
   const liveVix = await fetchVixFromYahoo();
   if (liveVix !== null) {
     const lightMacro: MacroData = {
@@ -239,12 +249,12 @@ async function fetchVixOnlyFallback(userId: string | undefined, now: number): Pr
       asOf: new Date().toISOString().split("T")[0],
       fredSourced: false // only the VIX is live; every FRED field is a placeholder constant
     };
-    writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
+    writeMacroCache(scope, userId, lightMacro, now + CACHE_TTL_MS);
     return lightMacro;
   }
   // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
   const fallback = { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
-  writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
+  writeMacroCache(scope, userId, fallback, now + CACHE_TTL_MS);
   return fallback;
 }
 

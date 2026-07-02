@@ -237,6 +237,69 @@ describe("macro.ts cache-provenance", () => {
     expect(result.asOf).toBe("unavailable");
     expect(result.fredSourced).toBe(false);
   });
+
+  it("PARTIAL FRED fetch blanks only the failed series (empty string) and keeps the suite sourced", async () => {
+    // One series (VIXCLS) fails while the rest succeed. The suite is still a real keyed fetch
+    // (fredSourced true), but the failed field must be "" — never a DEFAULT_MACRO placeholder —
+    // so the console blanks that single tile instead of showing a fabricated live reading.
+    process.env.FRED_API_KEY = "env-key-partial";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes("stlouisfed.org")) {
+          if (u.includes("series_id=VIXCLS")) return { ok: false, status: 429, json: async () => ({}) };
+          return { ok: true, json: async () => JSON.parse(mockFredObs("4.50")) };
+        }
+        // No Yahoo call is expected on a partial fetch (anyFredValue is true), but stub it safe.
+        return { ok: true, json: async () => ({ chart: { result: [{ indicators: { quote: [{ close: [23.0] }] } }] } }) };
+      })
+    );
+
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const result = await fetchMacroData(undefined);
+    expect(result.fredSourced).toBe(true); // a real keyed fetch DID run
+    expect(result.vix).toBe(""); // the ONE failed series is blanked, not the "15.00" placeholder
+    expect(result.vix).not.toBe("15.00");
+    expect(result.fedFundsRate).toBe("4.50%"); // sourced fields stay real
+    expect(result.asOf).not.toBe("unavailable");
+  });
+
+  it("a failed USER-key fetch does NOT poison the shared cache (env/other users still fetch fresh)", async () => {
+    // userA's stored FRED key fails => VIX-only fallback. That fallback must be cached PRIVATE to
+    // userA, not SHARED — otherwise the env-key path (and every other user) would read the blank
+    // VIX-only payload for 24h before ever trying its own valid FRED fetch.
+    delete process.env.FRED_API_KEY;
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { fetchMacroData, clearMacroCacheForTests } = await import("../src/lib/macro");
+    clearMacroCacheForTests();
+
+    const userA = `u-${randomUUID()}`;
+    const userB = `u-${randomUUID()}`;
+    upsertUserApiKey(userA, "fred", "user-fred-key-that-fails");
+
+    // userA: FRED rejects every series; Yahoo VIX succeeds => VIX-only fallback (private scope).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("stlouisfed.org")
+          ? { ok: false, status: 429, json: async () => ({}) }
+          : { ok: true, json: async () => ({ chart: { result: [{ indicators: { quote: [{ close: [23.0] }] } }] } }) }
+      )
+    );
+    const resultA = await fetchMacroData(userA);
+    expect(resultA.fredSourced).toBe(false); // userA got the blank fallback
+
+    // Now an env key is configured (shared scope) and FRED works. userB must fetch FRESH — the
+    // shared cache was NOT poisoned by userA's private failure.
+    process.env.FRED_API_KEY = "env-key-good";
+    stubFredFetch("4.50");
+    const resultB = await fetchMacroData(userB);
+    expect(resultB.fredSourced).toBe(true);
+    expect(resultB.fedFundsRate).toBe("4.50%");
+  });
 });
 
 // ─── macro-history.ts cache-provenance ────────────────────────────────────────

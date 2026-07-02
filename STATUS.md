@@ -40,13 +40,18 @@ path, honest flag cached), with failing-key tests for both Yahoo-up and
 Yahoo-down. Quartet green post-fixes and post-main-merges: tsc clean, lint 0
 errors, 2244 tests / 234 files pass, build ok (+ runtime smoke: /console/macro
 200, payload shows fredSourced:false with live VIX). Docs:
-`docs/rollouts/2026-07-02-console-macro.md`. **Remaining backend follow-up
+`docs/rollouts/2026-07-02-console-macro.md`. Codex round 3 (coordinator session,
+after the build agent hit its credit limit): (1) a PARTIAL FRED fetch now blanks
+each failed series to `""` instead of a `DEFAULT_MACRO` placeholder — the console
+blanks those tiles per-field (mv/mn treat `""` as `EM_DASH`) with no client
+change, so a single missing series can no longer render as a fabricated live
+reading (closes the per-field-sourcing residual); (2) `fetchVixOnlyFallback` now
+writes to the caller's cache scope, so a failed per-USER FRED key no longer
+poisons the shared cache for env/other users. **Remaining backend follow-up
 (src/lib owner):** the strategist still receives placeholder FRED constants in
-its prompt and a regime computed from a placeholder curve in the no-FRED setup;
-a PARTIALLY failing FRED fetch still placeholder-fills individual series while
-flagged sourced (per-field sourcing). **Next:** land PR #326 (auto-merge
-armed); wire news/mover ticker chips to the scan drilldown once `/console/scan`
-lands.
+its prompt and a regime computed from a placeholder curve in the no-FRED (VIX-only)
+setup. **Next:** land PR #326 (auto-merge armed); wire news/mover ticker chips to
+the scan drilldown once `/console/scan` lands.
 ## 2026-07-02 — /console: Assistant chat destination (Claude)
 Branch `claude/console-assistant` (cut from `origin/main` @ 78ecc98; parallel console-port
 lane — new files only under `app/console/assistant/`, per the collision contract no edits to

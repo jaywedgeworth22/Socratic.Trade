@@ -103,6 +103,38 @@ Residual (unchanged, already recorded above): a PARTIALLY failing FRED fetch
 still falls back per-series to placeholder constants while `fredSourced`
 stays true — per-field sourcing remains the src/lib owner's follow-up.
 
+## Update 3 (same day) — two more Codex P2s (applied by the coordinator session
+## after this lane's build agent hit its usage-credit limit)
+
+Both verified against the code and fixed in `src/lib/macro.ts`:
+
+1. **Partial FRED payload no longer fabricates** (closes the residual above). A
+   fetch where some series succeed and some fail set `fredSourced: true` while
+   filling the failed fields from `DEFAULT_MACRO`, and the console's
+   `fredSourced` gate then rendered every FRED tile as real — a single missing
+   series became a fabricated live reading for the cache TTL. Fix: each field
+   with no real value is now blanked to `""` (NOT a `DEFAULT_MACRO`
+   placeholder). `fredSourced` stays true (a real keyed fetch did run and the
+   present fields are real), and the console's existing `mv`/`mn` tile helpers
+   already treat `""` as missing → `EM_DASH`, so each unsourced tile blanks
+   per-field with NO client change while the series that resolved stay real.
+   `determineMarketRegime` is NaN-safe (blank → not-finite → neutral), so no
+   regime crash; and blanking is strictly more honest than the old placeholder
+   fill for the regime input too.
+2. **Failed user-key fetch no longer poisons the shared cache.**
+   `fetchVixOnlyFallback` hardcoded `writeMacroCache("shared", ...)`, so a
+   configured per-USER FRED key that failed wrote the blank VIX-only payload to
+   the GLOBAL shared entry — another user, or the env/operator-key path, then
+   read it for up to 24h before ever trying its own valid fetch. Fix: the helper
+   now takes the caller's `scope` and writes there — a user-key failure caches
+   PRIVATE (only that user sees the blank fallback); the no-key and env-key
+   paths still resolve to `shared` via `macroCacheScopeForKeySource`, unchanged.
+
+Tests (`test/cache-provenance.test.ts`): partial-fetch blanks the one failed
+series to `""` while keeping the suite sourced and the resolved fields real; a
+failed user-key fetch leaves the shared cache clean so a later env-key user
+fetches fresh (`fredSourced: true`).
+
 ## Why
 
 - Parallel-agent parity port of legacy dashboard features into the ground-up
