@@ -168,7 +168,18 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
     legacySection: "tax",
     backingField: "taxSettings.washSaleHandling",
     disclosure: "advanced",
-    help: "Block a wash-sale rebuy outright (default), route it to you priced with the forfeited deduction (ask), or let the system rebuy only when the edge clearly beats the tax cost (auto). IRA rebuys stay blocked in every mode."
+    help: "Block a wash-sale rebuy outright (default), route it to you priced with the forfeited deduction (ask), or let the system rebuy only when the edge clearly beats the tax cost (auto). IRA rebuys are governed by the separate IRA wash-sale setting."
+  },
+  {
+    id: "guardrails.iraWashSaleHandling",
+    label: "IRA wash-sale rebuys",
+    synonyms: ["ira wash sale", "disregard wash sale", "roth rebuy", "rev rul 2008-5", "audit risk"],
+    scope: "account",
+    destination: "guardrails",
+    legacySection: "tax",
+    backingField: "taxSettings.iraWashSaleHandling",
+    disclosure: "advanced",
+    help: "Block (default) refuses an IRA rebuy of a taxable-loss-locked stock — Rev. Rul. 2008-5 permanently destroys the deduction. Disregard lets it proceed, annotated and audited: brokers don't report cross-account IRA wash sales to the IRS, so this is an explicit audit-risk acceptance."
   },
   // Strategy (account scope)
   {

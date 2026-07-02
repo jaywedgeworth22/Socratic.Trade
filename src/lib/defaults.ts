@@ -6,8 +6,12 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   washSaleGuard: true,
   // "block" preserves the original behavior: a wash-sale-locked rebuy is refused outright.
   // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
-  // edge-vs-tax-cost guard decide (see policy.ts). IRA replacements are always blocked.
+  // edge-vs-tax-cost guard decide (see policy.ts).
   washSaleHandling: "block",
+  // IRA-replacement rebuys (Rev. Rul. 2008-5) hard-block by default in every mode above;
+  // "disregard" is an explicit per-account opt-in that proceeds annotated + audited instead
+  // (owner rationale: brokers don't report cross-account IRA wash sales to the IRS).
+  iraWashSaleHandling: "block",
   shortTermRatePct: 24,
   longTermRatePct: 15
 };

@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.1.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.2.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -71,6 +71,13 @@ export interface BullSystemParams {
    * `taxContext.washSaleRebuyCosts` so the model weighs a locked rebuy honestly.
    */
   washSaleHandling?: WashSaleHandling;
+  /**
+   * True when the buyer is an IRA whose owner set iraWashSaleHandling = "disregard": the gate PERMITS
+   * locked rebuys here (brokers don't report cross-account IRA wash sales; the forfeited deduction is
+   * the owner's accepted trade-off), so the wash-sale guidance line PERMITS proposing them instead of
+   * forbidding — takes precedence over washSaleHandling, which governs the taxable-buyer case.
+   */
+  iraWashSaleDisregard?: boolean;
   /** policy.holdingHorizon ?? "swing". */
   holdingHorizon: string;
   /** policy.maxSymbolExposurePct. */
@@ -112,7 +119,9 @@ export function buildBullSystem(p: BullSystemParams): string {
       ? [
           "",
           "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
-          p.washSaleHandling === "ask"
+          p.iraWashSaleDisregard
+            ? "- This is an IRA and the owner has chosen to DISREGARD wash-sale lockouts for it (brokers do not report cross-account IRA wash sales to the IRS; permanently forfeiting the loss deduction is the owner's accepted trade-off). You MAY propose a BUY of a symbol in `washSaleLockedSymbols`; each such purchase is annotated as a technically-forfeited wash sale and audited. Judge the setup on its own merits and note the forfeited deduction in the rationale."
+            : p.washSaleHandling === "ask"
             ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
             : p.washSaleHandling === "auto"
               ? `- Symbols in \`washSaleLockedSymbols\` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the deterministic policy gate ONLY when its expected edge is at least ${WASH_SALE_AUTO_EDGE_MULTIPLE}x the priced tax cost in \`taxContext.washSaleRebuyCosts\`; otherwise it is skipped. Propose one only with genuinely high conviction and a clear catalyst, and account for the tax cost in your rationale.`

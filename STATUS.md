@@ -52,6 +52,77 @@ poisons the shared cache for env/other users. **Remaining backend follow-up
 its prompt and a regime computed from a placeholder curve in the no-FRED (VIX-only)
 setup. **Next:** land PR #326 (auto-merge armed); wire news/mover ticker chips to
 the scan drilldown once `/console/scan` lands.
+## 2026-07-02 — IRA wash-sale disregard setting (Claude)
+
+Branch `claude/ira-washsale-disregard` (cut from `origin/main` @ 0cdd509, after #323 + the
+round-2 fixes in 02c5532 merged). Owner-requested: the Rev. Rul. 2008-5 IRA-replacement hard
+block becomes the DEFAULT of a per-account setting. New `taxSettings.iraWashSaleHandling:
+"block" | "disregard"` (default "block" = byte-compatible hard block; /api/policy validates).
+"disregard" lets an IRA rebuy of a taxable-loss-locked symbol proceed through the normal
+authority flow (all other gates unchanged; override tokens stay irrelevant to IRA outcomes) —
+NEVER silent: decision.washSale records outcome "ira_disregarded" with the verbatim note
+"Wash Sale (Technically, but IRA purchase unreported to IRS)" + priced provenance, the run
+loop/approval path audit `wash_sale_ira_disregarded`, the approvals card renders the note, and
+Activity humanizes the event (note + account + technically-forfeited $). Guardrails Tax rules
+gains the "IRA wash-sale rebuys" select with honest audit-risk copy; block->disregard = LOOSER
+(typed CONFIRM on LIVE); settings-search entry. Taxable-buyer block/ask/auto machinery and the
+02c5532 buyerIsIra precedence untouched. Tests: disregard in all three washSaleHandling modes
++ verbatim note, other-gates-still-bind, tokens-irrelevant, row-level detection, LOOSER
+classification, API enum round-trip. Quartet green: lint 0 errors, tsc clean, 2344 tests
+pass (237 files), build ok. Codex round 1 (applied by the coordinator session after the build
+agent hit its usage-credit limit): (1) threaded the disregard mode into the LLM prompt — shared
+`isIraTaxRegime` helper (gate + prompt can't drift), `ExecutionAccount` widened with
+`taxationType`, `iraWashSaleDisregard` in taxContext + a prompt line that PERMITS locked rebuys
+for a disregard IRA; `STRATEGY_PROMPT_VERSION` → 1.2.0; (2) deferred the
+`wash_sale_ira_disregarded`/`wash_sale_auto_proceed` audit from gate-eval to the actual
+paper-fill/live-placement points (a pending propose-mode card no longer logs a forfeiture that
+never happened); (3) gated the executeProposal proceed-audit on `decision.approved`. Quartet
+re-green: 2345 tests (237 files). Docs:
+`docs/rollouts/2026-07-02-ira-washsale-disregard.md`. **Next:** PR #331 with auto-merge on green
+verify; consider porting the note rendering to the legacy dashboard approvals UI if it
+outlives the console.
+
+## 2026-07-02 — /console/scan: Market Scan + Smart Money, Wave 2 (Claude)
+Branch `claude/console-scan` (cut from `origin/main` @ 48fbe14, after foundation PR #321).
+The Scan destination the Wave-1 nav already linked: new `app/console/scan/` (page.tsx,
+scan-table.tsx, columns.tsx, smart-money.tsx, use-live-scan.ts) — nothing outside that dir
+touched (parallel agents own the other console areas + src/lib). Market scan tab: sortable
+12-column table over the scan's `topCandidates` (Symbol w/ TickerLogo+SymbolButton
+drilldown, Score, Price, Chg, Vol, P/E, EPS gr, Div, Sentiment, Rating, Congress, Sector),
+tooltips on every header/cell with per-field provenance strictly from `quote.sources`
+(never hardcoded), scan-level "Received" stamps, the P/E `n/a`-vs-`—` rule (checked
+against `eps`), "held" chips, missing-last sorting, and a sticky symbol column for mobile
+horizontal scroll (opaque group-hover bg so the row wash stays uniform). Smart money tab:
+full `snapshot.smartMoney` congress/insider datasets with `webSources` feed metadata
+(record counts, derived source labels, freshness), BUY/SELL/MIXED chips, amount bands,
+`.con-row` hover. Refresh = `GET /api/scan` (the route is a GET; runs a fresh read-only
+scan) with busy spinner, success/failure toasts, muted non-blocking inline error (last
+good scan stays up), auto-fetch on mount; the table shows the NEWEST of {page refresh,
+`latestStrategyRun.marketScan`} by `generatedAt` with an honest fresh/last-run chip;
+`MarketScan.source` shown as derived from the `+`-joined string, raw string verbatim in
+the tooltip. Quartet green in a fresh worktree: tsc clean, lint 0 errors (2 grandfathered
+set-state-in-effect warnings — same idiom as useConsoleData), 2241 tests / 234 files pass,
+build ok (+ runtime smoke: /console/scan 200, live /api/scan payload verified). Docs:
+`docs/rollouts/2026-07-02-console-scan.md`. **Next:** land via PR #327 (auto-merge on
+green verify); follow-ups in the rollout note (drilldown live-scan quotes, optional column
+chooser, derived-metric columns). **Post-review update:** merged origin/main after #322
+landed (clean; both STATUS/PLAN sides kept newest-first) and fixed all 4 Codex findings on
+PR #327 — account-scoped live-scan invalidation (`useLiveScan(scopeKey)`),
+`asFullMarketScan()` guard mirroring dashboard.ts's `fullMarketScan()` for
+compact/historical run captures, honest dual-provider price tooltip (mergeQuoteData
+updates quote-level `provider` but not `sources.price`), and "latest N of M on file"
+labels on the snapshot-capped smart-money lists. Second Codex round (3 P2s) also fixed:
+short positions now get a warn "short" chip (marketValue is negative for shorts, so the
+old `> 0` check hid them), congress rows re-sorted client-side by `disclosedAt ??
+tradedAt` desc (server cap is still trade-date ordered — src/lib follow-up), and the
+drilldown-stale-quote fix: after the drilldown PR landed the `quote` override prop, the
+scan table now passes each row's quote into `SymbolButton` so the sheet renders the same
+scan the table shows. Final round: `asFullMarketScan()` loosened to ACCEPT a valid
+zero-candidate scan (empty universe renders its explicit zero-candidates state instead of
+"no scan yet"); compact `{sym, px}` prompt shapes still rejected; meta line defensive
+about missing counters. Merged origin/main repeatedly as parallel lanes landed
+(#322/#328/#329/#330 etc.), quartet re-run green each time; every review thread replied
+to + resolved. Details in the same rollout note.
 ## 2026-07-02 — /console: Assistant chat destination (Claude)
 Branch `claude/console-assistant` (cut from `origin/main` @ 78ecc98; parallel console-port
 lane — new files only under `app/console/assistant/`, per the collision contract no edits to

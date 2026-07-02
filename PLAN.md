@@ -15,6 +15,22 @@ filling the missing pieces.
 > the tooltips-everywhere/row-hover UX standard. Remaining Wave-2 routes
 > (`/console/scan`, `/console/orders`, `/console/assistant`) are owned by parallel
 > agents. See `docs/rollouts/2026-07-02-console-macro.md`.
+> 2026-07-02 (`claude/ira-washsale-disregard`, Claude): **IRA wash-sale disregard setting** —
+> owner-requested: the Rev. Rul. 2008-5 IRA hard block is now the DEFAULT of per-account
+> `taxSettings.iraWashSaleHandling` ("block" default / "disregard" = proceed annotated with the
+> verbatim "Wash Sale (Technically, but IRA purchase unreported to IRS)" note, audited via
+> `wash_sale_ira_disregarded`, rendered on the approvals card + Activity). block->disregard is
+> LOOSER (typed word on LIVE). Extends the tax-guardrail track; taxable-buyer machinery
+> untouched. See `docs/rollouts/2026-07-02-ira-washsale-disregard.md`.
+> 2026-07-02 (`claude/console-scan`, Claude): **Console parity-port Wave 2 — Scan
+> destination** — `/console/scan` now exists (the Wave-1 nav link is live): a sortable
+> Market Scan table over the latest scan's candidates with tooltips + per-field
+> provenance from `EnrichmentSources`, the P/E `n/a`-vs-`—` convention, a sticky symbol
+> column for mobile, an honest freshness model (newest of page-refreshed `GET /api/scan`
+> vs the last strategy run's captured scan), and a Smart Money tab (congress + insider
+> feeds with source metadata). New files only, all under `app/console/scan/`. No roadmap
+> scope change — one of the four Wave-2 destinations delivered (macro/orders/assistant
+> owned by parallel agents). See `docs/rollouts/2026-07-02-console-scan.md`.
 > 2026-07-02 (`claude/console-assistant`, Claude): **/console Assistant destination** —
 > ported the legacy AI Assistant chat into the console as `/console/assistant`
 > (new files only under `app/console/assistant/`; parallel console-port lane).

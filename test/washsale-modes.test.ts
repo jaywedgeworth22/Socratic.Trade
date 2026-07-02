@@ -22,6 +22,7 @@ import {
   evaluateTradeProposal,
   washSaleExpectedEdgeUsd,
   washSaleOverrideCostTolerance,
+  IRA_WASH_SALE_DISREGARD_NOTE,
   WASH_SALE_AUTO_EDGE_MULTIPLE
 } from "../src/lib/policy";
 import { approvedEscalationsFromDecision, shouldEscalateDecision } from "../src/lib/strategy";
@@ -460,6 +461,76 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
     );
     expect(decision.approved).toBe(true);
     expect(decision.washSale).toBeUndefined();
+  });
+
+  it("explicit iraWashSaleHandling 'block' behaves exactly like the default", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "block" }) }))
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("blocked_ira");
+  });
+});
+
+describe("IRA wash-sale disregard (taxSettings.iraWashSaleHandling = 'disregard')", () => {
+  const iraDisregard = (handling: "block" | "ask" | "auto") =>
+    policyWith({
+      taxSettings: taxSettings({ washSaleHandling: handling, taxationType: "roth_ira", iraWashSaleHandling: "disregard" })
+    });
+
+  for (const handling of ["block", "ask", "auto"] as const) {
+    it(`proceeds with outcome 'ira_disregarded' + the verbatim note in washSaleHandling mode '${handling}'`, () => {
+      const decision = evaluateTradeProposal(buy, ctx(iraDisregard(handling)));
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("ira_disregarded");
+      // VERBATIM owner-approved annotation.
+      expect(decision.washSale?.note).toBe("Wash Sale (Technically, but IRA purchase unreported to IRS)");
+      expect(decision.washSale?.note).toBe(IRA_WASH_SALE_DISREGARD_NOTE);
+      // Priced provenance still rides the audit record.
+      expect(decision.washSale?.account).toBe("ACC1");
+      expect(decision.washSale?.disallowedLossUsd).toBe(500);
+      expect(decision.washSale?.estimatedTaxCostUsd).toBe(120);
+      // Nothing was escalated and no reason was pushed — the normal authority flow decides.
+      expect(decision.reasons).toHaveLength(0);
+      expect(decision.escalations ?? []).toHaveLength(0);
+    });
+  }
+
+  it("still respects every OTHER gate — a binding daily cap refuses the buy, annotation intact", () => {
+    const decision = evaluateTradeProposal(buy, ctx(iraDisregard("block"), { dailyNotionalUsed: 49_500 }));
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons).toContain("Daily notional limit would be exceeded.");
+    // The wash-sale gate itself disregarded (annotated) — the refusal is purely the cap.
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
+  });
+
+  it("override tokens stay irrelevant to IRA outcomes — disregard proceeds AS a disregard, not as an override", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(iraDisregard("ask"), { approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc", approvedCostUsd: 120 }] })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
+    expect(decision.washSale?.overrideToken).toBeUndefined();
+  });
+
+  it("detected via the ConnectedAccount row alone (source of truth), disregard still applies", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ iraWashSaleHandling: "disregard" }) }), { accountTaxationType: "roth_ira" })
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
+  });
+
+  it("taxable buyers are untouched by the IRA setting — ask machinery unchanged", () => {
+    const decision = evaluateTradeProposal(
+      buy,
+      ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask", iraWashSaleHandling: "disregard" }) }))
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.washSale?.outcome).toBe("ask_escalated");
   });
 });
 
