@@ -847,6 +847,11 @@ export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): Ma
     targetHigh: extra.targetHigh ?? quote.targetHigh,
     targetLow: extra.targetLow ?? quote.targetLow,
     targetMedian: extra.targetMedian ?? quote.targetMedian,
+    // Surface the cascade's short-interest cross-check (primary vs the Massive second source) as an
+    // evidence bulletin so the dashboard/prompt see a single-source short read isn't corroborated.
+    evidenceBulletins: extra.shortInterestDisagreement
+      ? Array.from(new Set([...(quote.evidenceBulletins ?? []), extra.shortInterestDisagreement]))
+      : quote.evidenceBulletins,
     sources: mergeSources(quote, extra)
   };
 }

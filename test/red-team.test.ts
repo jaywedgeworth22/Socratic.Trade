@@ -110,6 +110,12 @@ describe("debateProposal LLM request bounds", () => {
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
     expect(bodies[0].max_output_tokens).toBeUndefined();
+    // Item 6: OpenAI-compatible providers request STRICT json_schema (not a bare json_object), so the
+    // verdict is schema-enforced rather than regex/prose-parsed.
+    expect(bodies[0].response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "red_team_verdict", strict: true, schema: expect.any(Object) }
+    });
   });
 });
 
@@ -161,9 +167,12 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
     expect(calls[0].url).toContain("api.anthropic.com");
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");
     expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
+    expect(calls[0].headers["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
     expect(calls[0].headers.authorization).toBeUndefined();
-    // Forced tool-use is how Claude returns guaranteed JSON.
-    expect(calls[0].body.system).toContain("Red Team");
+    // Forced tool-use is how Claude returns guaranteed JSON. System is a single ephemeral cache
+    // block now (Chat A item 3 prompt caching).
+    expect(calls[0].body.system[0].text).toContain("Red Team");
+    expect(calls[0].body.system[0].cache_control).toEqual({ type: "ephemeral" });
     expect(calls[0].body.tool_choice).toEqual({ type: "tool", name: "red_team_verdict" });
     expect(calls[0].body.max_tokens).toBeGreaterThan(0);
   });
