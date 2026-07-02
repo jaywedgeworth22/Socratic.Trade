@@ -4,6 +4,54 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — /console/macro destination, Wave 2 (Claude)
+Branch `claude/console-macro` (cut from post-foundation `origin/main`). Fills the
+`/console/macro` dead link from the Wave-1 nav with the macro / market-regime board,
+new files only under `app/console/macro/` (`page.tsx`, `indicators.ts`, `trends.tsx`).
+Renders everything the legacy `app/ui/macro-panel.tsx` showed — rates/curves,
+inflation & growth, risk & volatility (VIX/SKEW/VVIX/HY/ERP), CFTC + factor
+positioning, full-market breadth with movers, ~90d sparklines, market news — and
+improves on it: the regime is the hero card (severity chip, plain-words meaning,
+classifier inputs, the user's realized per-regime scorecard stat linked to Results,
+and a disclosure of exactly where the label changes strategist behavior — stamping,
+thesis-x-regime sizing, Risk-Off/Crisis below-median-buy veto, crisis/inverted
+exposure cap, flip-triggered runs); every tile carries a plain-language "what it is"
+line plus a dynamic banded interpretation of the current reading; all tiles render
+with missing = em dash; and when `macro.asOf === "unavailable"` the FRED-derived
+tiles are honestly blanked with an explanatory notice instead of showing the
+backend's placeholder constants (legacy showed them). Owner UX standard throughout:
+native `title` tooltips on every data point/label/control, `.con-row` hover on all
+tiles/rows, light+dark tokens only, responsive grids, non-blocking refresh-error
+notice, honest empty state when the snapshot has no `macroBoard`. Hard constraints
+respected: no shared console files; `src/lib/macro.ts` touched ONLY via a
+coordinator-approved narrow exception for a Codex P1 on PR #326: the backend's
+"light macro" path (no FRED key, Yahoo VIX ok) returned DEFAULT_MACRO placeholder
+constants client-indistinguishable from real data — fixed with an additive
+`MacroData.fredSourced?: boolean` (set at all three fetch paths; `pruneMacro` now
+filters it so the LLM prompt payload stays byte-identical; `determineMarketRegime`
+untouched), client-side per-source blanking (live VIX tile stays, FRED tiles blank,
+regime hero gets a "degraded — curve input unsourced" warn state), and tests on all
+three fetch paths + a no-prompt-leak pruneMacro test. P2 follow-up also fixed:
+a configured-but-FAILING FRED key (invalid/rate-limited — every series returns
+undefined) previously built an all-placeholder payload flagged `fredSourced:
+true` and cached it 24h; sourcing is now derived from the data (zero real
+series → the shared `fetchVixOnlyFallback()` helper, identical to the no-key
+path, honest flag cached), with failing-key tests for both Yahoo-up and
+Yahoo-down. Quartet green post-fixes and post-main-merges: tsc clean, lint 0
+errors, 2244 tests / 234 files pass, build ok (+ runtime smoke: /console/macro
+200, payload shows fredSourced:false with live VIX). Docs:
+`docs/rollouts/2026-07-02-console-macro.md`. Codex round 3 (coordinator session,
+after the build agent hit its credit limit): (1) a PARTIAL FRED fetch now blanks
+each failed series to `""` instead of a `DEFAULT_MACRO` placeholder — the console
+blanks those tiles per-field (mv/mn treat `""` as `EM_DASH`) with no client
+change, so a single missing series can no longer render as a fabricated live
+reading (closes the per-field-sourcing residual); (2) `fetchVixOnlyFallback` now
+writes to the caller's cache scope, so a failed per-USER FRED key no longer
+poisons the shared cache for env/other users. **Remaining backend follow-up
+(src/lib owner):** the strategist still receives placeholder FRED constants in
+its prompt and a regime computed from a placeholder curve in the no-FRED (VIX-only)
+setup. **Next:** land PR #326 (auto-merge armed); wire news/mover ticker chips to
+the scan drilldown once `/console/scan` lands.
 ## 2026-07-02 — IRA wash-sale disregard setting (Claude)
 
 Branch `claude/ira-washsale-disregard` (cut from `origin/main` @ 0cdd509, after #323 + the

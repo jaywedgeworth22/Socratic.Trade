@@ -112,4 +112,22 @@ describe("pruneMacro", () => {
     expect(omitted).not.toContain("cpiInflation");
     expect(omitted).not.toContain("vix");
   });
+
+  it("never leaks the fredSourced meta flag into the LLM prompt payload (first run and delta)", () => {
+    const flagged: MacroData = { ...base, fredSourced: true };
+
+    // First run: the flag is excluded from the prompt record entirely.
+    const first = pruneMacro(flagged);
+    expect(Object.keys(first.macro)).not.toContain("fredSourced");
+    expect(first.omitted).not.toContain("fredSourced");
+    // …and the string data fields all still go through.
+    expect(Object.keys(first.macro).sort()).toEqual(Object.keys(base).sort());
+
+    // Delta run (flag flipped between runs): still never surfaces in macro OR omitted.
+    const next: MacroData = { ...base, fredSourced: false, cpiInflation: "3.40%" };
+    const delta = pruneMacro(next, flagged);
+    expect(Object.keys(delta.macro)).not.toContain("fredSourced");
+    expect(delta.omitted).not.toContain("fredSourced");
+    expect(delta.macro.cpiInflation).toBe("3.40%");
+  });
 });

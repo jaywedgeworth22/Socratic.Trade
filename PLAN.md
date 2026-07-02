@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-macro`, Claude): **Console parity port, Wave 2 —
+> `/console/macro`** — the macro / market-regime board destination is built (new files
+> only: `app/console/macro/{page.tsx,indicators.ts,trends.tsx}`), completing one of the
+> four Wave-2 routes the foundation nav scaffolded. Legacy `app/ui/macro-panel.tsx`
+> parity plus: hero regime card (meaning, classifier inputs, per-regime realized
+> scorecard, how-the-strategist-uses-it), per-indicator plain-language explanations
+> with dynamic banded readings, honest blanking of unsourced FRED placeholders, and
+> the tooltips-everywhere/row-hover UX standard. Remaining Wave-2 routes
+> (`/console/scan`, `/console/orders`, `/console/assistant`) are owned by parallel
+> agents. See `docs/rollouts/2026-07-02-console-macro.md`.
 > 2026-07-02 (`claude/ira-washsale-disregard`, Claude): **IRA wash-sale disregard setting** —
 > owner-requested: the Rev. Rul. 2008-5 IRA hard block is now the DEFAULT of per-account
 > `taxSettings.iraWashSaleHandling` ("block" default / "disregard" = proceed annotated with the
