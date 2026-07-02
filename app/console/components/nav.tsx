@@ -1,15 +1,18 @@
 "use client";
 
 /** Destinations: left rail on desktop (≥1024px), bottom tab bar on mobile.
- *  Approvals carries the console's only red badge. */
+ *  Approvals carries the console's only red badge — its count is everything
+ *  waiting for a decision there: pending trade proposals PLUS pending
+ *  learned-context confirmations (one badge, one number, never two). */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity as ActivityIcon,
   BarChart3,
   Brain,
+  Eye,
   Globe,
   Inbox,
   LayoutDashboard,
@@ -24,6 +27,46 @@ import { Sheet } from "../ui/sheet";
 import { cx } from "../lib/format";
 import { useNavDirtyGuard } from "../lib/useDirtyGuard";
 
+/** Pending learned-context confirmations (risk-tier queue). Not part of the
+ *  dashboard snapshot, so it's polled here — cheap endpoint, 60s cadence,
+ *  refreshed when the tab becomes visible. Errors leave the last good count. */
+function useLearnedPendingCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void fetch("/api/learned-context/pending", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
+        .then((rows) => {
+          if (!cancelled && Array.isArray(rows)) setCount(rows.length);
+        })
+        .catch(() => {});
+    };
+    load();
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      load();
+    }, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  return count;
+}
+
+function badgeTitle(proposals: number, learned: number): string {
+  const parts: string[] = [];
+  if (proposals > 0) parts.push(`${proposals} trade proposal${proposals === 1 ? "" : "s"}`);
+  if (learned > 0) parts.push(`${learned} learned-context item${learned === 1 ? "" : "s"}`);
+  return `${parts.join(" and ")} waiting for your decision`;
+}
+
 interface Destination {
   href: string;
   label: string;
@@ -37,6 +80,7 @@ const DESTINATIONS: Destination[] = [
   { href: "/console/approvals", label: "Approvals", icon: Inbox, desc: "Pending trade proposals waiting for your decision." },
   { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Everything that happened, newest first." },
   { href: "/console/scan", label: "Scan", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
+  { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols you follow, with price alerts that notify you when a level is crossed." },
   { href: "/console/macro", label: "Macro", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
   { href: "/console/assistant", label: "Assistant", icon: MessageSquare, desc: "Chat with the assistant about your accounts and the market." },
@@ -53,6 +97,8 @@ function isActive(pathname: string, href: string): boolean {
 export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const guardNav = useNavDirtyGuard();
+  const learnedCount = useLearnedPendingCount();
+  const decisionCount = pendingCount + learnedCount;
   return (
     <nav className="hidden w-52 shrink-0 flex-col gap-1 px-3 py-4 lg:flex" aria-label="Console navigation">
       {DESTINATIONS.map((d) => {
@@ -68,9 +114,9 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
           >
             <Icon size={16} />
             <span className="flex-1">{d.label}</span>
-            {d.href === "/console/approvals" && pendingCount > 0 && (
-              <span className="con-badge" title={`${pendingCount} proposal${pendingCount === 1 ? "" : "s"} waiting for your decision`}>
-                {pendingCount}
+            {d.href === "/console/approvals" && decisionCount > 0 && (
+              <span className="con-badge" title={badgeTitle(pendingCount, learnedCount)}>
+                {decisionCount}
               </span>
             )}
           </Link>
@@ -87,6 +133,8 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
   const [moreOpen, setMoreOpen] = useState(false);
   const guardNav = useNavDirtyGuard();
+  const learnedCount = useLearnedPendingCount();
+  const decisionCount = pendingCount + learnedCount;
   const moreActive = MOBILE_MORE.some((d) => isActive(pathname, d.href));
 
   return (
@@ -110,8 +158,10 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
               >
                 <span className="relative">
                   <Icon size={19} />
-                  {d.href === "/console/approvals" && pendingCount > 0 && (
-                    <span className="con-badge absolute -right-2.5 -top-1.5">{pendingCount}</span>
+                  {d.href === "/console/approvals" && decisionCount > 0 && (
+                    <span className="con-badge absolute -right-2.5 -top-1.5" title={badgeTitle(pendingCount, learnedCount)}>
+                      {decisionCount}
+                    </span>
                   )}
                 </span>
                 {d.label}
