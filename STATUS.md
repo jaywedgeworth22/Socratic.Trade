@@ -23,6 +23,26 @@ clean, lint 0 errors, 2241 tests, build ok. Docs:
 `docs/rollouts/2026-07-02-console-learned-context.md`. **Next:** land via PR (auto-merge on green
 verify); follow-ups: sharing-prefs surface in Settings, nav badge / needs-attention count once
 those files free up.
+## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
+Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team
+console port, settings lane. Five sections added to `/console/settings`, all under
+`app/console/settings/` (new `lib.ts` fetch helpers + `brokers/api-keys/models/delivery/help.tsx`;
+only `page.tsx` edited — no shared console file, no `src/lib/*`): Broker connections (Robinhood
+OAuth start/health-aware sync, Alpaca key-pair connect sheet with live paper/live inference,
+make-active, disconnect with explicit confirm incl. LIVE warning), API keys (full CRUD over
+/api/keys, write-only keys never displayed, source chips your-key/server-key/not-set, docs
+links), LLM models (strategist `llmModel` + reviewer `redTeamLlmModel` as native grouped selects
+under THIS ACCOUNT, saved via the same PUT /api/policy path; /api/chat/providers disables
+no-key providers; blank→null clears honestly; custom stored ids still render), Delivery channels
+(full port of the legacy panel: per-channel toggle+target, server-unconfigured channels labeled,
+save + send-test with per-channel results, dirty-guarded), and a searchable REFERENCE glossary of
+the console's load-bearing vocabulary. Owner UX standard baked in everywhere: native `title=`
+tooltips on virtually every control/row/chip, and row hover highlight via `--con-*` tokens
+(light+dark). Quartet green: tsc clean, lint 0 errors, 2241 tests pass, build ok; runtime smoke
+on :3123 confirmed page + all three APIs 200 with matching shapes. Docs:
+`docs/rollouts/2026-07-02-console-settings-expansions.md`. **Next:** land via PR (auto-merge on
+green verify); after the foundation lane's provider-logo/models modules land, upgrade the native
+selects to the logo picker and unify the duplicated model catalog data.
 ## 2026-07-02 — /console parity-port foundation, Wave 1 (Claude)
 Branch `claude/console-port-foundation` (cut from `origin/main` @ 78ecc98). Shared
 primitives for the multi-agent parity port of legacy dashboard features into /console:
