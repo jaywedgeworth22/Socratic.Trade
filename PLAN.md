@@ -16,6 +16,20 @@ filling the missing pieces.
 > only — no client-settable bypass). Guardrails Tax rules select (LOOSER classification
 > on block->ask/auto). No roadmap scope change — extends the tax-guardrail track. See
 > `docs/rollouts/2026-07-02-washsale-modes-escalation.md`.
+> 2026-07-02 (`claude/console-drilldown-plus`, Claude): **Console symbol drilldown,
+> Wave 2** — the console company drawer is now a strict superset of the legacy
+> `app/ui/symbol-drilldown.tsx` drawer: full parity (11 derived-metric tiles reusing
+> `src/lib/derived-metrics`, 7-factor breakdown, legacy-threshold signal summary,
+> evidence/headlines, per-field provenance) PLUS account exposure (position P&L,
+> pending proposals → Approvals, recent orders), analyst rating distribution +
+> price-target range bar, signal/earnings-proximity chips, and a collapsible deep-
+> fundamentals table — tooltips on everything, light+dark, honest empty states, and
+> unchanged `SymbolButton`/`SymbolDrilldownSheet` APIs for the parallel Wave-2 agents
+> (extended with one OPTIONAL `quote?: MarketQuote` override so screens rendering
+> freshly fetched /api/scan rows — the Scan lane, per the Codex finding on #327 — can
+> make the drilldown match the row instead of the snapshot's last run).
+> No roadmap scope change — a Wave-2 deliverable of the Console parity-port track.
+> See `docs/rollouts/2026-07-02-console-drilldown-plus.md`.
 > 2026-07-02 (`claude/console-learned-context`, Claude): **Learned-context approval
 > inbox ported to /console** — the legacy "Pending Learned Changes" queue now lives on
 > `/console/approvals` as a Learned context section (own data source; approve/reject
