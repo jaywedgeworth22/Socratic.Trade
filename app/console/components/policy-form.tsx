@@ -13,7 +13,7 @@ import type { RealityInfo } from "../lib/derive";
 import { cx, fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, Field, NumInput, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Chip, NumInput, TextInput, Toggle } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 import { TypedConfirm } from "./chrome";
 

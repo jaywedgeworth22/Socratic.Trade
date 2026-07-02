@@ -86,8 +86,11 @@ function ShellFrame({ children }: { children: ReactNode }) {
       data-theme={dataTheme}
       suppressHydrationWarning
     >
-      <RealityBanner snapshot={snapshot} />
-      <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+      {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
+      <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
+        <RealityBanner snapshot={snapshot} />
+        <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+      </div>
       <div className="mx-auto flex w-full max-w-[1400px] flex-1">
         <DesktopRail pendingCount={snapshot.pendingProposals.length} />
         <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>

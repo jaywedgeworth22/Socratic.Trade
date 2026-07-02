@@ -1,0 +1,305 @@
+"use client";
+
+/** Results — measurement, never fabrication. Practice-money and real-money
+ *  buckets are reported separately and never share an axis. Uncomputable
+ *  figures render as "—" with a reason, not an estimate. Tax figures are
+ *  estimates only, clearly labeled. */
+
+import { useMemo } from "react";
+import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import { EquityChart } from "../components/equity-chart";
+import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { useConsoleData } from "../lib/useConsoleData";
+import { Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+
+export default function ResultsPage() {
+  const { snapshot } = useConsoleData();
+  if (!snapshot) return null;
+
+  const perf = snapshot.performance;
+  const tax = snapshot.tax;
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <h1 className="text-[length:var(--con-fs-lg)] font-bold">Results</h1>
+
+      {/* Buckets */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <BucketCard
+          title="Practice money (Test + Paper)"
+          tone="paper"
+          realized={perf?.paperRealizedPnl}
+          unrealized={perf?.paperUnrealizedPnl}
+          winRate={perf?.paperWinRate}
+          avgReturn={perf?.paperAverageReturnPct}
+          curve={perf?.paperEquityCurve ?? []}
+        />
+        <BucketCard
+          title="Real money (Live)"
+          tone="live"
+          realized={perf?.liveRealizedPnl}
+          unrealized={perf?.liveUnrealizedPnl}
+          winRate={perf?.liveWinRate}
+          avgReturn={perf?.liveAverageReturnPct}
+          curve={perf?.liveEquityCurve ?? []}
+        />
+      </div>
+
+      {/* Benchmark */}
+      <Card title="Versus the market (SPY buy-and-hold)">
+        {perf?.benchmark ? (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Stat label="Your account" value={fmtPct(perf.benchmark.accountReturnPct, 2, true)} sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`} />
+            <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" />
+            <div>
+              <div className="con-card-title">Excess return</div>
+              <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
+                <SignedText value={perf.benchmark.excessReturnPct}>{fmtPct(perf.benchmark.excessReturnPct, 2, true)}</SignedText>
+              </div>
+              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                positive = beating the market
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">
+            Not computable yet — the comparison needs enough overlapping history between your equity snapshots and SPY.
+            It appears here on its own; nothing is estimated in the meantime.
+          </p>
+        )}
+      </Card>
+
+      {/* Scorecards */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ScorecardCard
+          title="By thesis"
+          rows={(snapshot.thesisScorecard ?? []).map((t: ThesisStat) => ({
+            name: t.thesisTag,
+            trades: t.trades,
+            winRate: t.winRate,
+            avgReturnPct: t.avgReturnPct,
+            totalPnl: t.totalPnl
+          }))}
+          nameLabel="Thesis"
+        />
+        <ScorecardCard
+          title="By market regime at entry"
+          rows={(snapshot.regimeScorecard ?? []).map((r: RegimeStat) => ({
+            name: r.regime,
+            trades: r.trades,
+            winRate: r.winRate,
+            avgReturnPct: r.avgReturnPct,
+            totalPnl: r.totalPnl
+          }))}
+          nameLabel="Regime"
+        />
+      </div>
+
+      {/* Tax */}
+      <Card
+        title="Tax"
+        action={<Chip tone="warn">estimates only — not tax advice</Chip>}
+      >
+        {!tax ? (
+          <Empty>No tax summary available for this account yet.</Empty>
+        ) : (
+          <TaxBlock />
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function BucketCard({
+  title,
+  tone,
+  realized,
+  unrealized,
+  winRate,
+  avgReturn,
+  curve
+}: {
+  title: string;
+  tone: "paper" | "live";
+  realized?: number;
+  unrealized?: number;
+  winRate?: number;
+  avgReturn?: number;
+  curve: Array<{ timestamp: string; equity: number; source: "live" | "paper" }>;
+}) {
+  const hasAny = curve.length > 0 || (realized ?? 0) !== 0 || (unrealized ?? 0) !== 0;
+  return (
+    <Card title={title}>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="con-card-title">Realized P&amp;L</div>
+          <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
+            {typeof realized === "number" ? <SignedText value={realized}>{fmtSignedMoney(realized)}</SignedText> : <Dash />}
+          </div>
+        </div>
+        <div>
+          <div className="con-card-title">Unrealized P&amp;L</div>
+          <div className="con-num mt-0.5 text-[length:var(--con-fs-lg)] font-semibold">
+            {typeof unrealized === "number" ? <SignedText value={unrealized}>{fmtSignedMoney(unrealized)}</SignedText> : <Dash />}
+          </div>
+        </div>
+        <div>
+          <div className="con-card-title">Win rate</div>
+          <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
+        </div>
+        <div>
+          <div className="con-card-title">Avg return / closed trade</div>
+          <div className="con-num mt-0.5">{hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}</div>
+        </div>
+      </div>
+      <div className="mt-3 border-t border-[color:var(--con-line)] pt-3">
+        <EquityChart points={curve} label={tone === "live" ? "real-money" : "practice-money"} />
+      </div>
+    </Card>
+  );
+}
+
+function ScorecardCard({
+  title,
+  rows,
+  nameLabel
+}: {
+  title: string;
+  rows: Array<{ name: string; trades: number; winRate: number; avgReturnPct: number; totalPnl: number }>;
+  nameLabel: string;
+}) {
+  const sorted = useMemo(() => [...rows].sort((a, b) => b.trades - a.trades), [rows]);
+  return (
+    <Card title={title} padded={false}>
+      {sorted.length === 0 ? (
+        <Empty>No closed trades to score yet.</Empty>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="con-table">
+            <thead>
+              <tr>
+                <th>{nameLabel}</th>
+                <th className="num">n</th>
+                <th className="num">Win</th>
+                <th className="num">Avg</th>
+                <th className="num">P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((row) => {
+                const thin = row.trades < 5;
+                return (
+                  <tr key={row.name} className={thin ? "opacity-60" : undefined} title={thin ? "Small sample — read with caution." : undefined}>
+                    <td className="font-semibold">{row.name}</td>
+                    <td className="num con-num">{row.trades}</td>
+                    <td className="num con-num">{fmtPct(row.winRate, 0)}</td>
+                    <td className="num">
+                      <SignedText value={row.avgReturnPct}>{fmtPct(row.avgReturnPct, 2, true)}</SignedText>
+                    </td>
+                    <td className="num">
+                      <SignedText value={row.totalPnl}>{fmtSignedMoney(row.totalPnl)}</SignedText>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function TaxBlock() {
+  const { snapshot } = useConsoleData();
+  const tax = snapshot?.tax;
+  if (!tax) return null;
+
+  const ira = tax.settings.taxationType === "roth_ira" || tax.settings.taxationType === "traditional_ira";
+
+  return (
+    <div className="flex flex-col gap-4 text-[length:var(--con-fs-sm)]">
+      {ira && (
+        <p className="text-[color:var(--con-muted)]">
+          This is an IRA — no yearly taxes on trades here, so rates are zeroed. A loss realized in a <em>taxable</em>{" "}
+          account still locks rebuys of that symbol across all your accounts, including this one.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label={`Short-term realized ${tax.taxYear}`} value={fmtSignedMoney(tax.shortTermRealized)} />
+        <Stat label="Long-term realized" value={fmtSignedMoney(tax.longTermRealized)} />
+        <Stat label="Disallowed wash-sale loss" value={fmtMoney(tax.disallowedWashSaleLoss)} />
+        <Stat label="Estimated tax liability" value={fmtMoney(tax.estimatedTaxLiability)} sub={`ST ${fmtMoney(tax.estimatedShortTermTax)} · LT ${fmtMoney(tax.estimatedLongTermTax)}`} />
+      </div>
+
+      {tax.lockedSymbols.length > 0 && (
+        <div>
+          <div className="con-card-title mb-1">Wash-sale lockouts (all your accounts)</div>
+          <div className="flex flex-wrap gap-1.5">
+            {tax.lockedSymbols.map((s) => (
+              <Chip key={s} tone="warn" title="Rebuying within 30 days of the loss would forfeit the loss deduction. The buy gate enforces this automatically.">
+                {s} locked
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tax.openLots.length > 0 && (
+        <div>
+          <div className="con-card-title mb-1">Open lots — days to long-term treatment</div>
+          <div className="overflow-x-auto">
+            <table className="con-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Days held</th>
+                  <th className="num">To long-term</th>
+                  <th className="num">Unrealized</th>
+                  <th className="num">Early-exit tax cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...tax.openLots]
+                  .sort((a, b) => a.daysToLongTerm - b.daysToLongTerm)
+                  .slice(0, 12)
+                  .map((lot, i) => (
+                    <tr key={`${lot.symbol}-${i}`}>
+                      <td className="font-semibold">{lot.symbol}</td>
+                      <td className="num con-num">{fmtQty(lot.quantity)}</td>
+                      <td className="num con-num">{lot.daysHeld}</td>
+                      <td className="num con-num">{lot.isLongTerm ? "long-term" : `${lot.daysToLongTerm}d`}</td>
+                      <td className="num">
+                        {typeof lot.unrealizedGain === "number" ? (
+                          <SignedText value={lot.unrealizedGain}>{fmtSignedMoney(lot.unrealizedGain)}</SignedText>
+                        ) : (
+                          EM_DASH
+                        )}
+                      </td>
+                      <td className="num con-num" title="Extra estimated tax if sold now vs waiting for long-term treatment.">
+                        {typeof lot.earlyExitTaxPremium === "number" ? `~${fmtMoney(lot.earlyExitTaxPremium)}` : EM_DASH}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tax.harvestCandidates.length > 0 && (
+        <div>
+          <div className="con-card-title mb-1">Loss-harvest candidates</div>
+          <div className="flex flex-wrap gap-1.5">
+            {tax.harvestCandidates.slice(0, 8).map((h) => (
+              <Chip key={h.symbol} tone="muted">
+                {h.symbol} {fmtSignedMoney(h.unrealizedLoss)}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
