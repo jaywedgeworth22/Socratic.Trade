@@ -319,6 +319,26 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "wash_sale_ira_disregarded") {
+    // IRA rebuy proceeded under taxSettings.iraWashSaleHandling = "disregard" — surface the
+    // verbatim annotation + priced provenance so the acceptance is visible in Activity.
+    const symbol = stringValue(payload.symbol);
+    const washSale = asRecord(payload.washSale);
+    const note = stringValue(washSale.note) ?? "Wash Sale (Technically, but IRA purchase unreported to IRS)";
+    const cost = numberValue(washSale.estimatedTaxCostUsd);
+    const account = stringValue(washSale.account);
+    return {
+      title: `IRA wash sale disregarded${symbol ? ` — ${symbol}` : ""}`,
+      detail:
+        joinDetail([
+          note,
+          account ? `loss in ${account}` : undefined,
+          cost !== undefined ? `~$${cost.toFixed(2)} deduction technically forfeited` : undefined
+        ]) ?? note,
+      fullText: serializeAuditPayload(payload)
+    };
+  }
+
   // ── Ops / housekeeping events: humanized one-liners (raw JSON only in fullText) ──
 
   if (kind === "web_source_refresh") {

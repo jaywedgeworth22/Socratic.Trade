@@ -4,6 +4,36 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — IRA wash-sale disregard setting (Claude)
+
+Branch `claude/ira-washsale-disregard` (cut from `origin/main` @ 0cdd509, after #323 + the
+round-2 fixes in 02c5532 merged). Owner-requested: the Rev. Rul. 2008-5 IRA-replacement hard
+block becomes the DEFAULT of a per-account setting. New `taxSettings.iraWashSaleHandling:
+"block" | "disregard"` (default "block" = byte-compatible hard block; /api/policy validates).
+"disregard" lets an IRA rebuy of a taxable-loss-locked symbol proceed through the normal
+authority flow (all other gates unchanged; override tokens stay irrelevant to IRA outcomes) —
+NEVER silent: decision.washSale records outcome "ira_disregarded" with the verbatim note
+"Wash Sale (Technically, but IRA purchase unreported to IRS)" + priced provenance, the run
+loop/approval path audit `wash_sale_ira_disregarded`, the approvals card renders the note, and
+Activity humanizes the event (note + account + technically-forfeited $). Guardrails Tax rules
+gains the "IRA wash-sale rebuys" select with honest audit-risk copy; block->disregard = LOOSER
+(typed CONFIRM on LIVE); settings-search entry. Taxable-buyer block/ask/auto machinery and the
+02c5532 buyerIsIra precedence untouched. Tests: disregard in all three washSaleHandling modes
++ verbatim note, other-gates-still-bind, tokens-irrelevant, row-level detection, LOOSER
+classification, API enum round-trip. Quartet green: lint 0 errors, tsc clean, 2344 tests
+pass (237 files), build ok. Codex round 1 (applied by the coordinator session after the build
+agent hit its usage-credit limit): (1) threaded the disregard mode into the LLM prompt — shared
+`isIraTaxRegime` helper (gate + prompt can't drift), `ExecutionAccount` widened with
+`taxationType`, `iraWashSaleDisregard` in taxContext + a prompt line that PERMITS locked rebuys
+for a disregard IRA; `STRATEGY_PROMPT_VERSION` → 1.2.0; (2) deferred the
+`wash_sale_ira_disregarded`/`wash_sale_auto_proceed` audit from gate-eval to the actual
+paper-fill/live-placement points (a pending propose-mode card no longer logs a forfeiture that
+never happened); (3) gated the executeProposal proceed-audit on `decision.approved`. Quartet
+re-green: 2345 tests (237 files). Docs:
+`docs/rollouts/2026-07-02-ira-washsale-disregard.md`. **Next:** PR #331 with auto-merge on green
+verify; consider porting the note rendering to the legacy dashboard approvals UI if it
+outlives the console.
+
 ## 2026-07-02 — /console/scan: Market Scan + Smart Money, Wave 2 (Claude)
 Branch `claude/console-scan` (cut from `origin/main` @ 48fbe14, after foundation PR #321).
 The Scan destination the Wave-1 nav already linked: new `app/console/scan/` (page.tsx,
