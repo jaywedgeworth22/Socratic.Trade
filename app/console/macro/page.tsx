@@ -16,11 +16,12 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Card, Chip, Empty } from "../ui/primitives";
 import {
   buildSections,
-  macroIsSourced,
+  macroSourcing,
   numFrom,
   regimeInfo,
   REGIME_USAGE,
   type Board,
+  type MacroSourcing,
   type Tile,
   type TileTone
 } from "./indicators";
@@ -41,7 +42,7 @@ export default function MacroPage() {
         >
           the market backdrop the strategist trades against
         </span>
-        {board && macroIsSourced(board) && board.macro.asOf && (
+        {board && macroSourcing(board).fred && board.macro.asOf && (
           <>
             <div className="flex-1" />
             <span
@@ -88,13 +89,13 @@ function BoardView({
   board: Board;
   snapshot: { regimeScorecard?: Array<{ regime: string; trades: number; winRate: number; avgReturnPct: number }> };
 }) {
-  const sourced = macroIsSourced(board);
-  const sections = buildSections(board, sourced);
+  const sourcing = macroSourcing(board);
+  const sections = buildSections(board, sourcing);
 
   return (
     <>
-      <RegimeCard board={board} sourced={sourced} regimeScorecard={snapshot.regimeScorecard} />
-      {!sourced && <UnsourcedNotice />}
+      <RegimeCard board={board} sourcing={sourcing} regimeScorecard={snapshot.regimeScorecard} />
+      {!sourcing.fred && <UnsourcedNotice vixLive={sourcing.vix} />}
       <TrendsCard history={board.history} />
       {sections.map((s) => (
         <Card key={s.id} title={<span title={s.desc}>{s.title}</span>}>
@@ -112,15 +113,29 @@ function BoardView({
   );
 }
 
-function UnsourcedNotice() {
+function UnsourcedNotice({ vixLive }: { vixLive: boolean }) {
   return (
     <div className="rounded-[var(--con-radius-sm)] border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-sm)]">
-      <span className="font-semibold text-[color:var(--con-warn)]">Macro feed unsourced.</span>{" "}
+      <span className="font-semibold text-[color:var(--con-warn)]">
+        {vixLive ? "FRED macro feed unsourced — live VIX only." : "Macro feed unsourced."}
+      </span>{" "}
       <span className="text-[color:var(--con-muted)]">
-        No FRED API key is configured and the key-free VIX lookup failed, so the regime reads &quot;Unknown&quot;. The
-        FRED-based tiles below show {EM_DASH} instead of the backend&apos;s placeholder constants — this board never
-        shows fabricated numbers. Signals from other free sources (Cboe, CFTC, factors, breadth, news) still show real
-        readings. Add a FRED key under{" "}
+        {vixLive ? (
+          <>
+            No FRED API key is configured. The VIX is still a live reading (fetched key-free), but every FRED-based
+            tile below shows {EM_DASH} instead of the backend&apos;s placeholder constants — this board never shows
+            fabricated numbers. The regime label is degraded too: its yield-curve input was a placeholder, so treat it
+            as VIX-informed only.{" "}
+          </>
+        ) : (
+          <>
+            No FRED API key is configured and the key-free VIX lookup failed, so the regime reads &quot;Unknown&quot;.
+            The FRED-based tiles below show {EM_DASH} instead of the backend&apos;s placeholder constants — this board
+            never shows fabricated numbers.{" "}
+          </>
+        )}
+        Signals from other free sources (Cboe, CFTC, factors, breadth, news) still show real readings. Add a FRED key
+        under{" "}
         <Link href="/console/settings" className="font-semibold text-[color:var(--con-accent)] hover:underline" title="Settings → API keys">
           Settings
         </Link>{" "}
@@ -134,18 +149,21 @@ function UnsourcedNotice() {
 
 function RegimeCard({
   board,
-  sourced,
+  sourcing,
   regimeScorecard
 }: {
   board: Board;
-  sourced: boolean;
+  sourcing: MacroSourcing;
   regimeScorecard?: Array<{ regime: string; trades: number; winRate: number; avgReturnPct: number }>;
 }) {
   const info = regimeInfo(board.regime);
-  const vix = sourced ? numFrom(board.macro.vix) : undefined;
-  const curve = sourced ? board.derived.yieldCurveSpread : undefined;
+  const vix = sourcing.vix ? numFrom(board.macro.vix) : undefined;
+  const curve = sourcing.fred ? board.derived.yieldCurveSpread : undefined;
   const inverted = typeof curve === "number" && curve < -0.1;
   const stat = regimeScorecard?.find((r) => r.regime === board.regime);
+  // VIX-only fallback: the backend still computed this label, but its yield-curve
+  // input was a placeholder constant — say so instead of presenting it as fully backed.
+  const degraded = !sourcing.fred && sourcing.vix && !board.regime.toLowerCase().includes("unknown");
 
   return (
     <Card>
@@ -158,21 +176,40 @@ function RegimeCard({
             {board.regime}
           </div>
         </div>
-        <Chip
-          tone={info.chipTone}
-          title={
-            info.chipWord === "escalation"
-              ? "Escalation regimes (Risk-Off, Crisis, Inverted) get extra brakes: entry vetoes, optional exposure caps, and flip-triggered runs."
-              : info.chipWord === "no data"
-                ? "The classifier has no macro feed to read, so it refuses to guess."
-                : "No regime-specific vetoes or caps apply right now."
-          }
-        >
-          {info.chipWord}
-        </Chip>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {degraded && (
+            <Chip
+              tone="warn"
+              title="No FRED feed: the backend computed this label from a live VIX but a PLACEHOLDER yield curve. Curve-driven effects (Cautious / Risk-Off tilts from inversion) cannot be trusted — treat the label as VIX-informed only."
+            >
+              degraded — curve input unsourced
+            </Chip>
+          )}
+          <Chip
+            tone={info.chipTone}
+            title={
+              info.chipWord === "escalation"
+                ? "Escalation regimes (Risk-Off, Crisis, Inverted) get extra brakes: entry vetoes, optional exposure caps, and flip-triggered runs."
+                : info.chipWord === "no data"
+                  ? "The classifier has no macro feed to read, so it refuses to guess."
+                  : "No regime-specific vetoes or caps apply right now."
+            }
+          >
+            {info.chipWord}
+          </Chip>
+        </div>
       </div>
 
       <p className="mt-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{info.meaning}</p>
+      {degraded && (
+        <p
+          className="mt-1 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-warn)]"
+          title="The strategist consumes the same label, so this limitation applies to its regime-conditioned behavior too — a recorded backend follow-up."
+        >
+          Caution: this label was computed without a real yield curve (no FRED key) — only the VIX input was live.
+          A curve-only regime read is not possible, so curve-driven tilts in this label are unreliable.
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="The only two inputs the classifier reads.">
@@ -186,7 +223,9 @@ function RegimeCard({
         </Chip>
         <Chip
           tone={typeof curve === "number" ? (inverted ? "neg" : "pos") : "muted"}
-          title="10Y Treasury yield minus the Fed's policy rate. More than 0.10 points below zero counts as inverted and nudges the regime toward Cautious / Risk-Off."
+          title={`10Y Treasury yield minus the Fed's policy rate. More than 0.10 points below zero counts as inverted and nudges the regime toward Cautious / Risk-Off.${
+            typeof curve === "number" ? "" : " Unsourced in this snapshot — no FRED key."
+          }`}
         >
           10Y − policy {typeof curve === "number" ? `${curve >= 0 ? "+" : ""}${curve.toFixed(2)} pp${inverted ? " · inverted" : ""}` : EM_DASH}
         </Chip>

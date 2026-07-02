@@ -23,13 +23,22 @@ backend's placeholder constants (legacy showed them). Owner UX standard througho
 native `title` tooltips on every data point/label/control, `.con-row` hover on all
 tiles/rows, light+dark tokens only, responsive grids, non-blocking refresh-error
 notice, honest empty state when the snapshot has no `macroBoard`. Hard constraints
-respected: no shared console files, no `src/lib/*` touched. Quartet green: tsc clean,
-lint 0 errors, 2241 tests / 234 files pass, build ok (+ runtime smoke: /console/macro
-200, live macroBoard payload inspected). Docs:
-`docs/rollouts/2026-07-02-console-macro.md`. **Known caveat:** the backend's
-"light macro" path (no FRED key, Yahoo VIX ok) is client-indistinguishable from
-sourced data — per-field sourcing flags need the src/lib owner. **Next:** land via
-PR; wire news/mover ticker chips to the scan drilldown once `/console/scan` lands.
+respected: no shared console files; `src/lib/macro.ts` touched ONLY via a
+coordinator-approved narrow exception for a Codex P1 on PR #326: the backend's
+"light macro" path (no FRED key, Yahoo VIX ok) returned DEFAULT_MACRO placeholder
+constants client-indistinguishable from real data — fixed with an additive
+`MacroData.fredSourced?: boolean` (set at all three fetch paths; `pruneMacro` now
+filters it so the LLM prompt payload stays byte-identical; `determineMarketRegime`
+untouched), client-side per-source blanking (live VIX tile stays, FRED tiles blank,
+regime hero gets a "degraded — curve input unsourced" warn state), and tests on all
+three fetch paths + a no-prompt-leak pruneMacro test. Quartet green post-fix and
+post-main-merge: tsc clean, lint 0 errors, 2242 tests / 234 files pass, build ok
+(+ runtime smoke: /console/macro 200, payload shows fredSourced:false with live
+VIX). Docs: `docs/rollouts/2026-07-02-console-macro.md`. **Remaining backend
+follow-up (src/lib owner):** the strategist still receives placeholder FRED
+constants in its prompt and a regime computed from a placeholder curve in the
+no-FRED setup. **Next:** land PR #326 (auto-merge armed); wire news/mover ticker
+chips to the scan drilldown once `/console/scan` lands.
 
 ## 2026-07-02 — /console/settings expansions: brokers, API keys, models, delivery, glossary (Claude)
 Branch `claude/console-settings-expansions` (cut from `origin/main` @ 78ecc98). Parallel-team

@@ -3,9 +3,10 @@
  *  well-known threshold (inverted curve, VIX bands, credit spreads, …), a
  *  dynamic one-line interpretation of the CURRENT value. Missing data renders
  *  as "—" — never an estimate. When the FRED macro feed is unsourced
- *  (macro.asOf === "unavailable"), the backend substitutes placeholder
- *  constants; this module deliberately blanks those tiles instead of showing
- *  fabricated numbers next to real ones. */
+ *  (`macro.fredSourced === false`, incl. the VIX-only Yahoo fallback where
+ *  asOf is still a real date), the backend substitutes placeholder constants
+ *  for the FRED fields; this module deliberately blanks those tiles instead
+ *  of showing fabricated numbers next to real ones. */
 
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { EM_DASH } from "../lib/format";
@@ -35,10 +36,24 @@ export interface TileSection {
   tiles: Tile[];
 }
 
-/** True when the backend actually sourced the FRED macro suite (or at least a
- *  live VIX). "unavailable" means every macro field is a placeholder constant. */
-export function macroIsSourced(board: Board): boolean {
-  return board.macro.asOf !== "unavailable";
+/** What is actually sourced in this snapshot's macro payload. The backend has
+ *  three paths (src/lib/macro.ts): full FRED fetch (everything real), the
+ *  key-free "light macro" fallback (ONLY the VIX is a live Yahoo reading —
+ *  every FRED field is a placeholder constant with asOf = today), and the
+ *  fully-unavailable fallback (asOf === "unavailable", nothing real). */
+export interface MacroSourcing {
+  /** The FRED suite was fetched with a key — FRED fields and metrics derived from them are real. */
+  fred: boolean;
+  /** The VIX value is a live reading (full FRED fetch OR the key-free Yahoo fallback). */
+  vix: boolean;
+}
+
+export function macroSourcing(board: Board): MacroSourcing {
+  const anyLive = board.macro.asOf !== "unavailable";
+  // `fredSourced` ships with the same build as this UI; tolerate its absence
+  // (older payload) by falling back to the legacy asOf heuristic instead of
+  // blanking data that may be real.
+  return { fred: board.macro.fredSourced ?? anyLive, vix: anyLive };
 }
 
 // ── Parsing / formatting ─────────────────────────────────────────────────────
@@ -60,21 +75,23 @@ const toneSign = (v?: number): TileTone => (typeof v === "number" ? (v >= 0 ? "p
 
 // ── Sections ─────────────────────────────────────────────────────────────────
 
-export function buildSections(board: Board, sourced: boolean): TileSection[] {
+export function buildSections(board: Board, sourcing: MacroSourcing): TileSection[] {
   const { macro, derived, signals } = board;
-  const mAsOf = sourced ? macro.asOf : undefined;
+  const mAsOf = sourcing.fred ? macro.asOf : undefined;
 
-  // Macro (FRED) values and metrics derived from them are blanked when the
-  // feed is unsourced — those strings would be placeholder constants.
-  const mv = (s?: string): string => (sourced && s && s.length > 0 ? s : EM_DASH);
-  const mn = (s?: string): number | undefined => (sourced ? numFrom(s) : undefined);
-  const dn = (v?: number): number | undefined => (sourced ? v : undefined);
+  // FRED values and metrics derived from them are blanked when the FRED feed is
+  // unsourced — those strings would be placeholder constants. The VIX has its
+  // own flag: the key-free Yahoo fallback makes it live even without FRED (but
+  // vix3m and the term ratio stay FRED-gated — they'd mix real with placeholder).
+  const mv = (s?: string): string => (sourcing.fred && s && s.length > 0 ? s : EM_DASH);
+  const mn = (s?: string): number | undefined => (sourcing.fred ? numFrom(s) : undefined);
+  const dn = (v?: number): number | undefined => (sourcing.fred ? v : undefined);
 
   const cpi = mn(macro.cpiInflation);
   const corePce = mn(macro.corePCE);
   const breakeven = mn(macro.inflationExpectation10y);
   const gdp = mn(macro.realGDPGrowth);
-  const vix = mn(macro.vix);
+  const vix = sourcing.vix ? numFrom(macro.vix) : undefined;
   const hy = mn(macro.hyCreditSpread);
   const sent = mn(macro.consumerSentiment);
   const m2g = mn(macro.m2GrowthYoY);
@@ -286,7 +303,9 @@ export function buildSections(board: Board, sourced: boolean): TileSection[] {
     {
       key: "vix",
       label: "VIX",
-      value: mv(macro.vix),
+      // Own sourcing flag: even without FRED, the backend fetches a live ^VIX
+      // from Yahoo (key-free), so this tile can be real while the rest is blank.
+      value: sourcing.vix && macro.vix ? macro.vix : EM_DASH,
       tone: typeof vix === "number" ? (vix > 30 ? "neg" : vix > 20 ? "warn" : vix < 13 ? "pos" : undefined) : undefined,
       what: "Expected S&P 500 volatility over the next 30 days — the market's fear gauge and the regime classifier's primary input.",
       reading:
@@ -299,7 +318,7 @@ export function buildSections(board: Board, sourced: boolean): TileSection[] {
                 ? "Below 13 — unusually calm; Risk-On territory."
                 : "In the normal 13–20 band."
           : undefined,
-      asOf: mAsOf
+      asOf: sourcing.vix ? macro.asOf : undefined
     },
     {
       key: "vix3m",

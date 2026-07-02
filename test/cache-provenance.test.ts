@@ -78,6 +78,9 @@ describe("macro.ts cache-provenance", () => {
     // make any new network calls (served from the shared cache).
     expect(resultA.asOf).not.toBe("unavailable");
     expect(resultB.asOf).not.toBe("unavailable");
+    // A real FRED fetch marks the suite as sourced (dashboard honesty flag).
+    expect(resultA.fredSourced).toBe(true);
+    expect(resultB.fredSourced).toBe(true);
     // Both should get the exact same object (same data).
     expect(resultB.fedFundsRate).toBe(resultA.fedFundsRate);
     // No additional FRED network calls after userA's fetch populated the shared cache.
@@ -155,6 +158,8 @@ describe("macro.ts cache-provenance", () => {
 
     const result = await fetchMacroData(undefined);
     expect(result.asOf).toBe("unavailable");
+    // Nothing was sourced — the flag says so explicitly.
+    expect(result.fredSourced).toBe(false);
   });
 
   it("no-key path returns a live regime when Yahoo VIX fetch succeeds", async () => {
@@ -173,6 +178,9 @@ describe("macro.ts cache-provenance", () => {
     const result = await fetchMacroData(undefined);
     expect(result.asOf).not.toBe("unavailable");
     expect(parseFloat(result.vix)).toBeCloseTo(22.5, 1);
+    // The VIX is live but every FRED field is a placeholder constant — the flag
+    // must be false so the dashboard blanks those fields instead of showing them.
+    expect(result.fredSourced).toBe(false);
   });
 });
 

@@ -43,6 +43,42 @@
     good data stays rendered), plus an honest empty state if the snapshot carries
     no `macroBoard` at all.
 
+## Update (same day) — Codex P1: light-macro placeholders rendered as live data
+
+Codex flagged (and the original Follow-ups section had recorded) that the
+default no-FRED-key setup takes the backend "light macro" path: a live Yahoo
+^VIX plus `DEFAULT_MACRO` placeholder constants for every other FRED field,
+with `asOf` = today — indistinguishable client-side, so the page rendered
+fabricated FRED numbers as real. Fixed with a coordinator-approved, narrowly
+scoped `src/lib/macro.ts` change:
+
+- `MacroData.fredSourced?: boolean` (optional, additive; documented semantics):
+  `true` on the full FRED fetch, `false` on the VIX-only fallback and the
+  fully-unavailable fallback, `undefined` on older payloads (callers fall back
+  to the asOf heuristic). Set explicitly at all three `fetchMacroData` return
+  paths and on `DEFAULT_MACRO`.
+- `pruneMacro` now filters to string entries, so the meta flag NEVER reaches
+  the LLM prompt payload — the strategy prompt stays byte-identical.
+  `determineMarketRegime` untouched.
+- Client (`app/console/macro/`): `macroSourcing(board)` returns per-source
+  flags `{ fred, vix }`. When `fred` is false every FRED tile and FRED-derived
+  metric (curve spreads, real rates, misery, ERP, VIX-term — vix3m is FRED)
+  blanks to an em dash; the genuinely live VIX tile stays. The unsourced
+  notice gains a VIX-only variant, and the regime hero shows a warn chip
+  ("degraded — curve input unsourced") plus an explicit caution line when the
+  label was computed from a placeholder curve.
+- Tests: `test/cache-provenance.test.ts` asserts the flag on all three
+  fetch paths; `test/macro.test.ts` asserts `pruneMacro` never leaks it
+  (first-run and delta).
+- Verified end-to-end on `next start`: `/api/dashboard` now ships
+  `fredSourced: false, vix: 16.82 (live), asOf: today, regime: "Cautious
+  (Inverted Curve)"` — the exact previously-invisible case.
+
+**Recorded backend follow-up (not this PR):** the BACKEND still computes and
+stamps the regime (and feeds the strategist) from placeholder curve constants
+in this setup — the strategy-side fix (skip curve effects when unsourced, or
+per-field sourcing on the prompt payload) belongs to the src/lib owner.
+
 ## Why
 
 - Parallel-agent parity port of legacy dashboard features into the ground-up
@@ -56,6 +92,10 @@
 - `app/console/macro/page.tsx` (new)
 - `app/console/macro/indicators.ts` (new)
 - `app/console/macro/trends.tsx` (new)
+- `src/lib/macro.ts` (P1 fix: additive `fredSourced` flag + pruneMacro prompt
+  exclusion — coordinator-approved exception to the no-src/lib constraint)
+- `test/cache-provenance.test.ts`, `test/macro.test.ts` (P1 fix: flag + no-leak
+  assertions)
 - `STATUS.md`, `PLAN.md`, `docs/rollouts/2026-07-02-console-macro.md` (handoff)
 
 No shared/console-foundation files were touched (hard constraint of the parallel
@@ -73,15 +113,22 @@ wave): no `console.css`, `nav.tsx`, `lib/api.ts`, no `src/lib/*`.
   `GET /console/macro` → 200; `GET /api/dashboard` inspected — live `macroBoard`
   shape confirmed (`regime: "Cautious (Inverted Curve)"`, macro/derived/signals
   keys as typed, empty `history`/`news` without a Massive key).
+- After the P1 fix + merge of origin/main: full quartet re-run green — tsc clean,
+  lint 0 errors, `npm test` 2242 tests / 234 files (one new pruneMacro test),
+  build ok; runtime smoke on :3112 confirmed `fredSourced: false` + live VIX in
+  the payload and `/console/macro` → 200. (One earlier test/build run failed on
+  ENOSPC — the shared runner disk hit 99% from parallel agent builds, unrelated
+  to the code; freed our own `.next` and re-ran clean.)
 
 ## Follow-ups
 
-- Backend "light macro" path is client-indistinguishable from fully sourced data:
-  with no FRED key but a successful Yahoo VIX fetch, `fetchMacroData` returns
-  DEFAULT_MACRO constants for every non-VIX field with `asOf` = today
-  (`src/lib/macro.ts`). The console can only blank the fully-`unavailable` case.
-  Fix belongs in src/lib (owned by another agent): per-field sourcing flags or an
-  explicit `macroSource: "fred" | "vix-only" | "none"` on the board payload.
+- ~~Backend "light macro" path is client-indistinguishable from fully sourced
+  data~~ — FIXED via `MacroData.fredSourced` (see Update above). REMAINING
+  backend follow-up for the src/lib owner: the strategist itself still receives
+  placeholder FRED constants in its prompt and a regime label computed from a
+  placeholder curve in the no-FRED setup; also, a full FRED fetch can still
+  fall back per-series to a DEFAULT_MACRO constant when one series returns
+  nothing (per-field sourcing would close that residual gap).
 - Ticker chips in Market news and breadth movers are plain text (no
   `<SymbolButton>` drilldown) — the drilldown needs scan-quote wiring owned by
   the `/console/scan` agent; wire up after both waves land.

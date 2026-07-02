@@ -27,6 +27,17 @@ export interface MacroData {
   vix: string;
   vix3m: string; // 3-month VIX (for term structure)
   asOf: string;
+  /**
+   * Sourcing flag for the FRED suite (dashboard-only; excluded from the LLM prompt by pruneMacro):
+   * true  = the full FRED fetch ran with an API key this session (fields are real, modulo
+   *         rare per-series fallbacks to DEFAULT_MACRO when one series returns nothing);
+   * false = no FRED fetch happened — every field except possibly `vix` is a DEFAULT_MACRO
+   *         placeholder constant. `vix` is a live reading iff `asOf` is a real date (the
+   *         key-free Yahoo ^VIX fallback succeeded); `asOf === "unavailable"` means even
+   *         the VIX is a placeholder.
+   * undefined = payload from an older build; callers should fall back to the asOf heuristic.
+   */
+  fredSourced?: boolean;
 }
 
 const DEFAULT_MACRO: MacroData = {
@@ -49,7 +60,8 @@ const DEFAULT_MACRO: MacroData = {
   consumerSentiment: "75.0",
   vix: "15.00",
   vix3m: "17.00",
-  asOf: new Date().toISOString().split("T")[0]
+  asOf: new Date().toISOString().split("T")[0],
+  fredSourced: false
 };
 
 // ── Cache-provenance scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -137,13 +149,14 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       const lightMacro: MacroData = {
         ...DEFAULT_MACRO,
         vix: liveVix.toFixed(2),
-        asOf: new Date().toISOString().split("T")[0]
+        asOf: new Date().toISOString().split("T")[0],
+        fredSourced: false // only the VIX is live; every FRED field is a placeholder constant
       };
       writeMacroCache("shared", userId, lightMacro, now + CACHE_TTL_MS);
       return lightMacro;
     }
     // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
-    const fallback = { ...DEFAULT_MACRO, asOf: "unavailable" };
+    const fallback = { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
     writeMacroCache("shared", userId, fallback, now + CACHE_TTL_MS);
     return fallback;
   }
@@ -197,7 +210,8 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
       consumerSentiment: umcsent ? `${Number(umcsent).toFixed(1)}` : DEFAULT_MACRO.consumerSentiment,
       vix: vix ? `${Number(vix).toFixed(2)}` : DEFAULT_MACRO.vix,
       vix3m: vix3m ? `${Number(vix3m).toFixed(2)}` : DEFAULT_MACRO.vix3m,
-      asOf: new Date().toISOString().split("T")[0]
+      asOf: new Date().toISOString().split("T")[0],
+      fredSourced: true
     };
 
     writeMacroCache(scope, userId, data, now + CACHE_TTL_MS);
@@ -246,10 +260,16 @@ export function pruneMacro(
   current: MacroData,
   previous?: MacroData | null
 ): { macro: Record<string, string>; omitted: string[] } {
-  if (!previous) return { macro: { ...current }, omitted: [] };
+  // Only the string data fields go to the LLM. Meta/sourcing flags (fredSourced) are
+  // dashboard-only — filtering here keeps the strategy prompt payload byte-identical
+  // to what it was before the flag existed.
+  const entries = (Object.entries(current) as Array<[keyof MacroData, MacroData[keyof MacroData]]>).filter(
+    (entry): entry is [keyof MacroData, string] => typeof entry[1] === "string"
+  );
+  if (!previous) return { macro: Object.fromEntries(entries), omitted: [] };
   const macro: Record<string, string> = {};
   const omitted: string[] = [];
-  for (const [key, value] of Object.entries(current) as Array<[keyof MacroData, string]>) {
+  for (const [key, value] of entries) {
     if (MACRO_ALWAYS_KEEP.has(key) || previous[key] !== value) {
       macro[key] = value;
     } else {
