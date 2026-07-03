@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — Owner decisions recorded + Manager-model options (Claude, cloud)
+Branch `claude/manager-model-eval` (off `origin/main` @ `df745aa`, post-#336). Docs-only.
+The owner answered the sovereign-design decisions, unblocking the next major build:
+(1) **drawdown breakers → hard-halt** during the live soak; (2) **stop-losses → prompt-expected**
+(LLM proposes, policy validates — NOT schema-forced); (3) **Manager model → evaluate cross-provider**
+(not a single pick — new `docs/manager-model-options.md` compares Anthropic/OpenAI/Google/DeepSeek/
+xAI/Qwen with July-2026 pricing and a per-model paper-mode A/B plan keyed to #334's `proposedByModel`);
+(4) **draft PR #315 closed** (superseded by the console port). `docs/EFFORT-LOG.md` updated: #336 →
+Completed, decisions recorded, live-execution hardening moved Blocked → Ready. **Next:** the hardening
+build (hard-halt breakers + prompt-expected stops, paper-mode-default) and the Manager-model A/B wiring.
+See `docs/rollouts/2026-07-03-owner-decisions-manager-model.md`.
+
 ## 2026-07-03 — Scan price provenance: sources.price in mergeQuoteData (Claude, cloud)
 Branch `claude/mergequote-price-provenance` (off `origin/main` @ `bea45e2`). Closes
 the last open item of the #327 scan-data follow-up (task #28): `mergeQuoteData`
