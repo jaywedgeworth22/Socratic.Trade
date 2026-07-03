@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { EquityOrder } from "@/lib/types";
 import { deriveReality } from "../lib/derive";
-import { fmtExact, fmtMoney, fmtQty, EM_DASH } from "../lib/format";
+import { fmtExact, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Dash, Empty, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -44,6 +44,29 @@ const TYPE_TITLE: Record<string, string> = {
   stop_market: "Stop — becomes a market order once the stop price trades.",
   stop_limit: "Stop-limit — becomes a limit order once the stop price trades; may sit unfilled after triggering."
 };
+
+const TIF_TITLE: Record<string, string> = {
+  gtc: "Good-til-cancelled — rests until it fills or is cancelled.",
+  gfd: "Good-for-day — expires at the end of the trading day if unfilled.",
+  day: "Day order — expires at the end of the trading day if unfilled.",
+  ioc: "Immediate-or-cancel — fills what it can immediately, cancels the rest.",
+  fok: "Fill-or-kill — fills completely and immediately, or cancels.",
+  opg: "At-the-open — executes in the opening auction only.",
+  cls: "At-the-close — executes in the closing auction only."
+};
+
+function tifLabel(timeInForce: string | undefined): string | null {
+  const tif = String(timeInForce ?? "").trim();
+  return tif ? tif.toUpperCase() : null;
+}
+
+function tifTitle(timeInForce: string | undefined): string {
+  return TIF_TITLE[String(timeInForce ?? "").trim().toLowerCase()] ?? "Time-in-force reported by the broker.";
+}
+
+function finiteNum(v: number | undefined): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
 
 const STATE_TONE: Record<string, ChipTone> = {
   filled: "pos",
@@ -193,8 +216,14 @@ export default function OrdersPage() {
                   <th className="num" title="Order size as the broker holds it: share quantity, or an approximate dollar amount for notional orders. Partial fills show how much already executed.">
                     Size
                   </th>
-                  <th className="num" title="Latest price this app has for the symbol — from the most recent market scan, so it can be minutes old. '—' when the last scan didn't cover it. (The broker order data carries no limit price, so the exact limit-vs-market gap can't be shown yet.)">
+                  <th className="num" title="Resting limit price and/or stop trigger price the broker holds for this order. '—' when the broker reported neither (e.g. a market order).">
+                    Limit / Stop
+                  </th>
+                  <th className="num" title="Latest price this app has for the symbol — from the most recent market scan, so it can be minutes old. '—' when the last scan didn't cover it. Where the order has a limit price, the gap between this price and the limit is shown underneath.">
                     Last price
+                  </th>
+                  <th title="Time-in-force: how long the order stays working. DAY/GFD expires at market close; GTC rests until cancelled.">
+                    TIF
                   </th>
                   <th
                     title={
@@ -247,6 +276,7 @@ export default function OrdersPage() {
                     <th title="Ticker — click a symbol to open its price history and details.">Symbol</th>
                     <th title="Order direction: buy, sell, short, or cover.">Side</th>
                     <th title="Order type as placed.">Type</th>
+                    <th title="Time-in-force as placed. DAY/GFD expires at market close; GTC rests until cancelled.">TIF</th>
                     <th className="num" title="Order size: share quantity or approximate dollar amount.">Size</th>
                     <th className="num" title="Average price the broker reports for the executed part; '—' when nothing executed.">
                       Avg fill
@@ -268,6 +298,7 @@ export default function OrdersPage() {
                         {SIDE_LABEL[order.side] ?? String(order.side).toUpperCase()}
                       </td>
                       <td title={TYPE_TITLE[String(order.type)] ?? "Order type."}>{orderTypeLabel(order.type)}</td>
+                      <td title={tifTitle(order.timeInForce)}>{tifLabel(order.timeInForce) ?? <Dash />}</td>
                       <td className="num con-num" title="Order size as placed.">
                         {sizeText(order)}
                       </td>
@@ -328,6 +359,12 @@ function OpenOrderTr({
 }) {
   const order = row.order;
   const scan = lastScanPrice(quotes, order.symbol);
+  const limit = finiteNum(order.limitPrice);
+  const stop = finiteNum(order.stopPrice);
+  // Gap between the latest scan price and the resting limit — how far the market
+  // sits from the order. Positive = market above the limit.
+  const limitGapPct = limit !== undefined && limit > 0 && scan ? ((scan.price - limit) / limit) * 100 : undefined;
+  const tif = tifLabel(order.timeInForce);
   const filled = order.filledQuantity ?? 0;
   const showReplace = isReplaceableType(order.type) && row.remaining > 0;
   const replaceEnabled = row.stale && !halted && !test;
@@ -369,13 +406,47 @@ function OpenOrderTr({
       <td
         className="num con-num"
         title={
+          limit !== undefined && stop !== undefined
+            ? `Stop-limit: triggers at the ${fmtMoney(stop)} stop, then rests as a ${fmtMoney(limit)} limit.`
+            : limit !== undefined
+              ? "The limit price this order rests at, as the broker holds it."
+              : stop !== undefined
+                ? "The stop trigger price, as the broker holds it."
+                : "The broker reported no limit or stop price for this order."
+        }
+      >
+        {limit === undefined && stop === undefined ? (
+          <Dash />
+        ) : (
+          <>
+            {fmtMoney(limit ?? stop)}
+            {limit !== undefined && stop !== undefined && (
+              <span className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                stop {fmtMoney(stop)}
+              </span>
+            )}
+          </>
+        )}
+      </td>
+      <td
+        className="num con-num"
+        title={
           scan
-            ? `From the latest market scan${scan.provider ? ` (${scan.provider})` : ""}${scan.asOf ? `, as of ${fmtExact(scan.asOf)}` : ""} — not a live broker quote. The broker order data carries no limit price to compare against.`
+            ? `From the latest market scan${scan.provider ? ` (${scan.provider})` : ""}${scan.asOf ? `, as of ${fmtExact(scan.asOf)}` : ""} — not a live broker quote.`
             : "The latest market scan didn't cover this symbol, so no recent price is available here."
         }
       >
         {scan ? fmtMoney(scan.price) : <Dash />}
+        {limitGapPct !== undefined && (
+          <span
+            className="block text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+            title="How far the latest scan price sits from the resting limit price. Positive = market above the limit."
+          >
+            {fmtPct(limitGapPct, 1, true)} vs limit
+          </span>
+        )}
       </td>
+      <td title={tifTitle(order.timeInForce)}>{tif ?? <Dash />}</td>
       <td className="whitespace-nowrap">
         <Ago iso={order.createdAt} />
         {row.stale && (

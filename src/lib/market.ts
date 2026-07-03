@@ -1095,6 +1095,11 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         targetLow: quote.targetLow,
         targetMedian: quote.targetMedian,
         evidenceBulletins: quote.evidenceBulletins,
+        factorBreakdown: quote.factorBreakdown,
+        headlines: quote.headlines,
+        intradayChangePct: quote.intradayChangePct,
+        volume: quote.volume > 0 ? quote.volume : undefined,
+        sectorRelStrength: quote.sectorRelStrength,
         sources: quote.sources
       }
     ])
