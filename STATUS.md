@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - Sell to Fund Buys title-case copy fix (Codex)
+Branch `codex/sell-to-fund-title-case` in `/Users/jay/apps/trading-codex`.
+The Guardrails Sell to Fund Buys selector and the legacy dashboard Key
+Parameters selector now use Title Case for the field label and all option
+labels: Off / Suggest Only / Propose Sells for Approval / Automated. The
+Guardrails save-review diff also renders the field label and enum summary in
+Title Case instead of raw lowercase enum values. Verification: focused
+`test/console-policy-diff.test.ts`, `npm run lint` (0 errors, 303 existing
+warnings), `npx tsc --noEmit`, `npm test` (243 files / 2362 tests),
+`npm run build`, `git diff --check`, `pm2 restart trading-codex --update-env`,
+and Playwright against `http://localhost:4101/console/guardrails`. See
+`docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
+
 ## 2026-07-03 - Console universe index exclusivity fix (Codex)
 Branch `codex/universe-exclusive-indexes` in `/Users/jay/apps/trading-codex`.
 The console Guardrails -> Universe base-index selector now uses the shared

@@ -54,6 +54,12 @@ filling the missing pieces.
 > S&P 100 <-> S&P 500 and Nasdaq 100 <-> Nasdaq Composite. See
 > `docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
 
+> **2026-07-03 - Sell to Fund Buys title-case copy fix (Codex).** The
+> Guardrails Sell to Fund Buys selector and legacy dashboard Key Parameters
+> selector now render the field label, option labels, and save-review summary
+> in app-style Title Case while preserving the stored lowercase enum values.
+> See `docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
+
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
 > model (`TradeProposal.proposedByModel` + `redTeamVerdict.model`; approval card reads

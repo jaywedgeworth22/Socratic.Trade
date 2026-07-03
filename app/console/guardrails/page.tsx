@@ -254,8 +254,8 @@ export default function GuardrailsPage() {
             </div>
             <div className="max-w-xs py-2">
               <Field
-                label="Sell-to-fund buys"
-                hint="How to raise cash when intended buys exceed buying power. Off = never."
+                label="Sell to Fund Buys"
+                hint="How to raise cash when intended buys exceed buying power. Off = Never."
                 htmlFor="stf"
               >
                 <Select
@@ -263,10 +263,10 @@ export default function GuardrailsPage() {
                   value={universeDraft.sellToFundBuy ?? policy.sellToFundBuy ?? "off"}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, sellToFundBuy: e.target.value }))}
                 >
-                  <option value="off">off</option>
-                  <option value="suggest">suggest</option>
-                  <option value="propose">propose (asks you)</option>
-                  <option value="automated">automated</option>
+                  <option value="off">Off — Never Sell to Fund</option>
+                  <option value="suggest">Suggest Only (No Orders)</option>
+                  <option value="propose">Propose Sells for Approval</option>
+                  <option value="automated">Automated — Sell to Fund</option>
                 </Select>
               </Field>
             </div>
