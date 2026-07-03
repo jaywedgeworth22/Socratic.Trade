@@ -151,7 +151,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Wash-sale guard",
         aliases: "wash sale lock 30 days",
         definition:
-          "Blocks rebuying a symbol that was closed at a loss within the last 30 days. A loss in any taxable account locks the symbol across ALL your accounts, including IRAs — matching how the IRS actually applies the rule."
+          "For taxable accounts, blocks or prices rebuying a symbol that was closed at a loss within the last 30 days. Same-account IRA wash sales are ignored automatically; an IRA buying after another taxable account's loss is governed by the IRA taxable-loss rebuy setting."
       },
       {
         term: "Daily spend",

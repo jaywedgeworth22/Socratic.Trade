@@ -137,6 +137,8 @@ describe("console guardrails: washSaleHandling select classification", () => {
 
   it("is a select field with the three modes ranked block < ask < auto", () => {
     expect(def.kind).toBe("select");
+    expect(def.label).toBe("Taxable-account wash-sale rebuys");
+    expect(def.hint).toContain("Taxable accounts only");
     expect(def.options?.map((o) => o.value)).toEqual(["block", "ask", "auto"]);
     expect(def.looseRank).toEqual({ block: 0, ask: 1, auto: 2 });
   });
@@ -166,6 +168,8 @@ describe("console guardrails: iraWashSaleHandling select classification", () => 
 
   it("is a select with block < disregard looseness ranking", () => {
     expect(def.kind).toBe("select");
+    expect(def.label).toBe("IRA taxable-loss rebuys");
+    expect(def.hint).toContain("Same-IRA wash sales are ignored automatically");
     expect(def.options?.map((o) => o.value)).toEqual(["block", "disregard"]);
     expect(def.looseRank).toEqual({ block: 0, disregard: 1 });
   });

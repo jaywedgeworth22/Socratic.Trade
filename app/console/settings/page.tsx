@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
-import type { NotificationEventType, TaxationType } from "@/lib/types";
+import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
@@ -296,6 +296,7 @@ function TaxSettingsCard() {
   const [draft, setDraft] = useState<Partial<{
     taxationType: TaxationType;
     washSaleGuard: boolean;
+    iraWashSaleHandling: IraWashSaleHandling;
     shortTermRatePct: number;
     longTermRatePct: number;
     subtractFromResults: boolean;
@@ -312,7 +313,9 @@ function TaxSettingsCard() {
   // instead of a select whose "saved" value would be silently overridden.
   const accountTaxationType = activeConnectedAccount(snapshot)?.taxationType;
   const taxation: TaxationType = accountTaxationType ?? draft?.taxationType ?? current?.taxationType ?? "taxable";
+  const isIra = taxation === "roth_ira" || taxation === "traditional_ira";
   const washSaleGuard: boolean = draft?.washSaleGuard ?? current?.washSaleGuard ?? true;
+  const iraWashSaleHandling: IraWashSaleHandling = draft?.iraWashSaleHandling ?? current?.iraWashSaleHandling ?? "block";
   const subtractFromResults: boolean = draft?.subtractFromResults ?? current?.subtractFromResults ?? false;
   const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
   const longTermRatePct: number = draft?.longTermRatePct ?? current?.longTermRatePct ?? 15;
@@ -391,23 +394,57 @@ function TaxSettingsCard() {
         </div>
       </div>
       <div className="mt-3 flex flex-col gap-2.5">
-        <div
-          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-          title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
-        >
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Wash-sale guard</div>
-            <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              Blocks rebuying a symbol closed at a loss within 30 days. A loss in any taxable account locks the symbol
-              across ALL your accounts, including IRAs.
-            </p>
+        {isIra ? (
+          <div className="rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
+                <p className="mt-0.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+                  Ignored automatically. This account has no taxable loss deduction inside the IRA, so Block / Ask /
+                  Auto is not the relevant control.
+                </p>
+              </div>
+              <Chip tone="pos">not applicable</Chip>
+            </div>
+            <div className="mt-3 max-w-md">
+              <Field
+                label="Taxable-loss rebuy inside this IRA"
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Block refuses the IRA replacement buy; Ignore/disregard lets it proceed with the audit note."
+                htmlFor="ira-wash-sale"
+              >
+                <Select
+                  id="ira-wash-sale"
+                  value={iraWashSaleHandling}
+                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored."
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...(d ?? {}), iraWashSaleHandling: e.target.value as IraWashSaleHandling }))
+                  }
+                >
+                  <option value="block">block cross-account IRA replacement buys</option>
+                  <option value="disregard">ignore / disregard and annotate</option>
+                </Select>
+              </Field>
+            </div>
           </div>
-          <Toggle
-            checked={washSaleGuard}
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
-            label="Wash-sale guard"
-          />
-        </div>
+        ) : (
+          <div
+            className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+            title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
+          >
+            <div>
+              <div className="text-[length:var(--con-fs-sm)] font-semibold">Taxable-account wash-sale guard</div>
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Blocks rebuying a symbol this taxable account closed at a loss within 30 days. A taxable-account loss
+                can also lock replacement buys across your other accounts, including IRAs.
+              </p>
+            </div>
+            <Toggle
+              checked={washSaleGuard}
+              onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
+              label="Wash-sale guard"
+            />
+          </div>
+        )}
         <div
           className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
           title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."

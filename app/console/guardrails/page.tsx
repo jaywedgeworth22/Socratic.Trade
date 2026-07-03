@@ -8,9 +8,9 @@
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
-import type { IndexUniverse, OrderType } from "@/lib/types";
+import type { IndexUniverse, OrderType, TaxationType } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
-import { deriveReality } from "../lib/derive";
+import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
@@ -42,6 +42,10 @@ function parseSymbols(text: string): string[] {
     .split(/[\s,]+/)
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
+}
+
+function isIraTaxation(taxationType: TaxationType | undefined): boolean {
+  return taxationType === "roth_ira" || taxationType === "traditional_ira";
 }
 
 export default function GuardrailsPage() {
@@ -79,6 +83,12 @@ export default function GuardrailsPage() {
 
   const indices = universeDraft.includedIndices ?? policy.includedIndices;
   const orderTypes = universeDraft.permittedOrderTypes ?? policy.permittedOrderTypes;
+  const taxationType = activeConnectedAccount(snapshot)?.taxationType ?? policy.taxSettings?.taxationType ?? "taxable";
+  const isIra = isIraTaxation(taxationType);
+  const taxRuleDefs = TAX_RULES.filter((def) => {
+    if (isIra) return def.path === "taxSettings.iraWashSaleHandling";
+    return def.path !== "taxSettings.iraWashSaleHandling";
+  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -148,7 +158,23 @@ export default function GuardrailsPage() {
               The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. These rules
               tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            {TAX_RULES.map((def) => (
+            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              {isIra ? (
+                <>
+                  <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a
+                  decision gate here because an IRA has no taxable loss deduction to preserve. The relevant choice is
+                  whether this IRA should block or ignore a replacement buy after a taxable account sold the same symbol
+                  at a loss.
+                </>
+              ) : (
+                <>
+                  <strong className="text-[color:var(--con-fg)]">Taxable mode:</strong> Block / Ask / Auto controls
+                  what happens when this taxable account wants to rebuy a locked symbol. IRA replacement buys use their
+                  own IRA account setting instead.
+                </>
+              )}
+            </div>
+            {taxRuleDefs.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
