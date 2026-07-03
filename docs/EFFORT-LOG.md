@@ -63,8 +63,14 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
 
-1. **Drawdown circuit-breakers → HARD-HALT.** During the live soak, a drawdown breach halts autonomous
-   trading until manually re-armed. _(Unblocks the hardening build.)_
+1. **Drawdown circuit-breakers → ADVISORY** _(CORRECTED later on 2026-07-03 — the "HARD-HALT" record
+   was wrong; the owner didn't understand the question as originally asked)._ Confirmed intent, in the
+   owner's words: **"nothing is hard except which account to work in."** A drawdown breach is an
+   advisory input the agent weighs with its own judgment; it may proceed, and every deviation surfaces
+   as a logged receipt for review and coaching. The same philosophy governs ALL guardrail lines (spend
+   caps, sizing, etc.) — the **account boundary is the only absolute**. Confirmed option: "Agent
+   decides, logs everything." See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+   ~~Was recorded as: HARD-HALT — a drawdown breach halts autonomous trading until manually re-armed.~~
 2. **Stop-losses → PROMPT-EXPECTED.** The LLM proposes stops and policy validates; NOT schema-forced.
    _(Owner chose the more flexible option over the fail-closed default.)_
 3. **Manager model tier → EVALUATE cross-provider, not a single pick.** Owner wants a list of options
@@ -80,8 +86,9 @@ to `trading.jays.services`, record the release commit + date here._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Hard-halt drawdown circuit-breakers** — default-on during soak, halt autonomous trading on a
-    drawdown-threshold breach until manually re-armed.
+  - **Advisory drawdown awareness** — surface the breach state to the agent (prompt context) and to
+    the owner (receipt/notification + coaching trail); NO halting. _(Corrected from "hard-halt" —
+    see Owner decisions above.)_
   - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
     opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
   - Build behind paper-mode defaults; do not toggle live without the existing typed-confirm ritual.
@@ -108,3 +115,7 @@ to `trading.jays.services`, record the release commit + date here._
   Blocked → Ready. Added `docs/manager-model-options.md`.
 - 2026-07-03 — #337 merged (→ Completed). In Progress now empty; next work is the Ready items
   (live-execution hardening + Manager-model A/B).
+- 2026-07-03 — **CORRECTION:** "drawdown=hard-halt" was mis-recorded (the owner didn't understand the
+  question). Owner confirmed: guardrails are ADVISORY — agent decides, logs everything; the account
+  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. See
+  `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
