@@ -57,7 +57,16 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
+- **De-paternalize: kill paper-as-default + Test mode** (coordinator, cloud) — owner directive
+  (repeated/emphatic): real trading app, owner accepts 100% risk; stop treating paper as default and
+  DELETE Test mode / the local simulator; don't protect the owner's money from agent bugs.
+  **Step 1 (done, PR pending):** `AGENTS.md` — deleted the paper-default / `paperMode:false` Don't-rule
+  + the "defaults to Test mode" framing; added a "Product philosophy — real trading, owner's risk"
+  section (an account is an account; no local-sim; harden CORRECTNESS not OBEDIENCE; guardrails are the
+  owner's overridable prefs). **Step 2 (in progress, separate PR):** remove the `test/local` /
+  `usesLocalSimulation` execution path + `paperMode`-as-default across ~35 src + 36 test files
+  (`execution-mode.ts` hub → strategy paper-fill branch, dashboard projection, defaults, tests). Land
+  in coherent green pieces.
 
 ---
 

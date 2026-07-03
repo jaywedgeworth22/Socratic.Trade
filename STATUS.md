@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — De-paternalize: kill paper-as-default + Test mode (owner directive) (Claude, cloud)
+Owner directive (repeated, emphatic): this is a REAL trading app, owner accepts 100% risk; stop
+treating paper as default and DELETE Test mode / the local simulator; do not "protect the owner's
+money from agent bugs." **Rules first (this commit):** `AGENTS.md` — deleted the "Paper mode is the
+default / don't toggle `paperMode:false`" Don't-rule and the "defaults to Test mode (local simulator)"
+framing; added a top "Product philosophy — real trading, owner's risk" section (an account is an
+account; no Test-mode/local-sim; don't protect the owner from accepted risk; harden CORRECTNESS +
+multi-user safety, NOT obedience — guardrails are the owner's overridable prefs, `iraWashSaleHandling:
+"disregard"` is the template). This is the root-cause fix that stops every agent (Claude/Codex)
+re-imposing it. **Code next (in progress, separate PR):** remove the `test/local` /
+`usesLocalSimulation` execution path (`execution-mode.ts` hub + ~13 src consumers + strategy paper-fill
+branch + dashboard portfolio projection) and `paperMode`-as-default; an account's `environment` decides
+paper vs live, and no connected account means the app can't place orders (no local-sim fallback). ~35
+src + 36 test files touch it — landing in coherent green pieces, not one reckless bang.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
 ## 2026-07-03 — Owner decisions recorded + Manager-model options (Claude, cloud)
 Branch `claude/manager-model-eval` (off `origin/main` @ `df745aa`, post-#336). Docs-only.
 The owner answered the sovereign-design decisions, unblocking the next major build:
