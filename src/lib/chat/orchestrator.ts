@@ -1,5 +1,6 @@
 // Per-turn chat flow:
-//   1. Append the user message to the transcript (redact-on-write).
+//   1. Append the user message to the transcript (redact-on-write) — skipped when the client's
+//      clientTurnId is already recorded, so a Retry never duplicates the prompt in the transcript.
 //   2. Ingest the message into salience memory (what to remember).
 //   3. Assemble context (hard constraints first) into the system prompt.
 //   4. Run the provider's tool loop — read-only / draft tools only, via an executeTool callback
@@ -7,7 +8,7 @@
 //   5. Return { text, draft?, citations, usedMemories } — never executes a trade.
 // Ported from reference/atlas-public-src/bff/orchestrator.mjs.
 
-import { audit, getPolicy, getUserSetting, listPendingProposals } from "../db";
+import { audit, findChatTurnByClientId, getPolicy, getUserSetting, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
 import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
@@ -38,15 +39,19 @@ export function makeOrchestrator(deps: ToolDeps, llm?: ChatLLM) {
     input_schema: t.input_schema
   }));
 
-  return async function handleTurn(args: { userId: string; message: string }): Promise<ChatReply> {
-    const { userId, message } = args;
+  return async function handleTurn(args: { userId: string; message: string; clientTurnId?: string }): Promise<ChatReply> {
+    const { userId, message, clientTurnId } = args;
     // Per-user model: an injected llm (already user-scoped by the route) or one resolved for THIS
     // user — so the per-user key, operator failover, and usage attribution always apply.
     const model = llm ?? getLLM(userId);
     audit("chat.turn", { userId, message_len: message.length, prompt_version: PROMPT_VERSION }, userId);
     // Prior turns (redacted) for multi-turn context — fetched BEFORE appending the current message.
     const history = listTurns(userId, 10).map((t) => ({ role: t.role, text: t.text }));
-    appendTurn(userId, { role: "user", text: message });
+    // Idempotent user-turn recording: a Retry reuses the same clientTurnId, so when that id is
+    // already in the transcript we skip the duplicate append but STILL run the provider call —
+    // the retry's whole point is getting the reply the failed attempt never produced.
+    const alreadyRecorded = clientTurnId != null && findChatTurnByClientId(userId, clientTurnId) != null;
+    if (!alreadyRecorded) appendTurn(userId, { role: "user", text: message, clientTurnId: clientTurnId ?? null });
 
     const mem = ingestMessage(userId, message);
     // Extract learned-context candidates from the message for both the write path (ingest) and

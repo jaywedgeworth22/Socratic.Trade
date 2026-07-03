@@ -262,6 +262,20 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE trade_proposals ADD COLUMN prompt_version TEXT");
       }
     }
+  },
+  {
+    // Idempotency key for POST /api/chat: the client generates a per-send clientTurnId and REUSES it
+    // on Retry, so a retried send doesn't record the user turn twice (the orchestrator appends the
+    // user turn BEFORE the provider call). Nullable — legacy rows and assistant turns stay null.
+    version: 10,
+    name: "chat_turns_client_turn_id",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(chat_turns)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "client_turn_id")) {
+        database.exec("ALTER TABLE chat_turns ADD COLUMN client_turn_id TEXT");
+      }
+      database.exec("CREATE INDEX IF NOT EXISTS idx_chat_turns_user_client ON chat_turns (user_id, client_turn_id)");
+    }
   }
 ];
 
@@ -778,9 +792,11 @@ function migrate(database: Database.Database): void {
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
       model TEXT,
+      client_turn_id TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chat_turns_user_client ON chat_turns (user_id, client_turn_id);
 
     CREATE TABLE IF NOT EXISTS llm_usage (
       id TEXT PRIMARY KEY,

@@ -1568,6 +1568,8 @@ export interface ChatTurn {
   redacted: boolean;
   /** Model that produced this turn (assistant turns only, e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). */
   model?: string | null;
+  /** Client-generated idempotency key (user turns only): reused on Retry so a retried send doesn't duplicate the turn. */
+  clientTurnId?: string | null;
   createdAt: string;
 }
 
