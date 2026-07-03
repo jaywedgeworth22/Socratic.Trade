@@ -50,6 +50,27 @@ but keep managing" brake — a different severity than this account bleeding).
 **2351 passed / 239 files** · `npm run build` green. `mergePolicy` spreads `riskRules`
 (`db.ts`/`db-profiles.ts`), so the new field persists (no allowlist stripping).
 
+## Codex review round (2026-07-03, PR #343)
+Three P2 review comments, all addressed in a follow-up commit:
+1. **`drawdownBreakerAction` broke policy validation** — `validatePolicy` (`app/api/policy/route.ts`)
+   sweeps `Object.values(policy.riskRules)` as non-negative numbers; a string enum is `NaN` under
+   `Number(...)`, so `PUT /api/policy` rejected any save with the field set — and, once stored, every
+   later save too (it merges `...current.riskRules`). Fix: validate the enum separately and exclude it
+   from the numeric sweep (`Object.entries(...).some(([key,value]) => key !== "drawdownBreakerAction" ...`).
+   New `test/drawdown-breaker-action-api.test.ts` locks it, including the "stored enum doesn't break a
+   later unrelated save" regression.
+2. **Breaker persisted to the wrong account** — the run reads `getPolicy(userId, targetAccountId)` but
+   both breakers wrote `setPolicy(policy, userId)` with no account id, which resolves the ACTIVE account.
+   A scheduler run of a non-active account could therefore halt the wrong account. Fix: both the drawdown
+   breaker and the (pre-existing, same-bug) volatility brake now `setPolicy(policy, userId, targetAccountId)`
+   — symmetric with the read. (End-to-end multi-account run regression test deferred as a fast-follow —
+   `TestBrokerGateway` account-matching setup; the fix itself is a symmetric one-liner covered by the
+   existing active-account drawdown test + the per-account-isolation suite.)
+3. **UI copy still said "close-only"/"Exit-only"** — with the new `"halt"` default, the console
+   guardrails hint (`app/console/guardrails/field-defs.ts`) and dashboard breaker copy
+   (`app/dashboard-client.tsx`) misrepresented behavior. Updated both to describe the hard-halt default
+   ("autonomous trading hard-halts until you manually re-arm").
+
 ## Follow-ups
 - **Prompt-expected stop-losses** — the second half of the live-execution hardening (strengthen the
   strategist prompt + schema to expect a stop on opening proposals, with policy validation, NOT a

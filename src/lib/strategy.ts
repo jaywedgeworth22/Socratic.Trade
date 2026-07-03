@@ -346,7 +346,10 @@ export async function runStrategyOnce(
         const breakerAction = policy.riskRules.drawdownBreakerAction ?? "halt";
         const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
         policy.systemState = revertedTo;
-        setPolicy(policy, userId);
+        // Persist to the SAME account the run targeted (read via getPolicy(userId, targetAccountId)).
+        // Omitting targetAccountId would resolve the ACTIVE account, so a scheduler run of a non-active
+        // account could halt the wrong account and leave the breached one running.
+        setPolicy(policy, userId, targetAccountId);
         audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
         await sendNotification(
           {
@@ -373,7 +376,8 @@ export async function runStrategyOnce(
       const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
       if (volBrake.brake) {
         policy.systemState = "close_only";
-        setPolicy(policy, userId);
+        // Persist to the run's TARGET account (same reason as the drawdown breaker above).
+        setPolicy(policy, userId, targetAccountId);
         audit("policy_violation_vol_panic", { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only" }, userId);
         await sendNotification(
           { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason } },
