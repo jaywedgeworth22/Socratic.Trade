@@ -326,9 +326,13 @@ export async function runStrategyOnce(
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
 
     // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
-    // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
-    // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
-    // and fire a kill-switch notification, putting a human back in the loop.
+    // any single mistake; this bounds the whole account's bleed. The response is the owner's
+    // overridable preference `riskRules.drawdownBreakerAction`, defaulting to a HARD-HALT
+    // (systemState → "halted"): autonomous trading stops entirely until the owner manually re-arms
+    // (sets systemState back to "active") — subsequent scheduled runs skip and executeProposal
+    // refuses, so open positions rely on their resting broker stops. Setting it to "close_only"
+    // instead keeps the loop running for risk-reducing exits and only blocks new entries. Either
+    // way a kill-switch notification puts a human back in the loop.
     if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
@@ -339,11 +343,20 @@ export async function runStrategyOnce(
         userId
       });
       if (breaker.breached) {
-        policy.systemState = "close_only";
+        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "halt";
+        const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
+        policy.systemState = revertedTo;
         setPolicy(policy, userId);
-        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo: "close_only" }, userId);
+        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
         await sendNotification(
-          { type: "kill_switch", title: "Circuit breaker halted new entries", payload: { runId, reason: breaker.reason, equity } },
+          {
+            type: "kill_switch",
+            title:
+              revertedTo === "halted"
+                ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
+                : "Circuit breaker halted new entries (close-only)",
+            payload: { runId, reason: breaker.reason, equity, revertedTo }
+          },
           { policy, userId }
         );
       }

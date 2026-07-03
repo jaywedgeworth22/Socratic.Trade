@@ -462,16 +462,30 @@ export interface RiskRules {
   atrStopMultiple?: number;
   /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
-   * before the system auto-halts new entries (systemState → "close_only") and fires a
-   * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
-   * this bounds the whole account's bleed, not one name's. Evaluated at the top of each run.
+   * before the breaker fires (systemState flips per `drawdownBreakerAction`) and a kill-switch
+   * notification is sent. Undefined or <=0 disables the breaker entirely. Unlike the per-position
+   * stopLossPct, this bounds the whole account's bleed, not one name's. Evaluated at the top of
+   * each run.
    */
   maxDrawdownPct?: number;
   /**
    * Account-level circuit breaker: max single-day equity loss (account currency) from the day's
-   * starting equity before auto-halting new entries. Undefined or <=0 disables.
+   * starting equity before the breaker fires (per `drawdownBreakerAction`). Undefined or <=0 disables.
    */
   maxDailyLossNotional?: number;
+  /**
+   * What the account-level breaker (maxDrawdownPct / maxDailyLossNotional) does on breach — the
+   * owner's overridable preference, defaulting to "halt":
+   * - "halt" (default): flip systemState → "halted" — a HARD stop of autonomous trading until the
+   *   owner manually re-arms (sets systemState back to "active"). Subsequent scheduled runs skip
+   *   entirely and `executeProposal` refuses, so the loop places NO further orders (including exits);
+   *   open positions rely on their resting broker protective stops. This is the stronger "put a human
+   *   back in the loop" response the owner chose for the live soak.
+   * - "close_only": flip systemState → "close_only" — block only NEW entries; the loop keeps running
+   *   and risk-reducing exits (sell/cover) still flow. Softer; auto-manages the wind-down.
+   * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
+   */
+  drawdownBreakerAction?: "halt" | "close_only";
 }
 
 export interface NotificationSettings {
