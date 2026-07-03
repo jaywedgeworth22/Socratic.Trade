@@ -8,12 +8,13 @@
  *  (brokers/api-keys/models/delivery/help) with their fetch helpers in ./lib. */
 
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
+import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
@@ -113,6 +114,19 @@ export default function SettingsPage() {
         <YouCard />
       </section>
 
+      {/* ── THIS BROWSER ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+            THIS BROWSER
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            local display preferences
+          </span>
+        </div>
+        <AppearanceCard />
+      </section>
+
       {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
       {snapshot.currentUser?.isAdmin && (
         <section id="admin" className="flex scroll-mt-28 flex-col gap-4">
@@ -148,6 +162,48 @@ export default function SettingsPage() {
         <AccountDeletionCard />
       </section>
     </div>
+  );
+}
+
+// ── This browser: local appearance preferences ──────────────────────────────
+
+function AppearanceCard() {
+  const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
+  return (
+    <Card title="Appearance">
+      <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CONSOLE_TEXT_BOX_FONT_OPTIONS.map((option) => {
+            const selected = textBoxFont === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selected}
+                title={option.description}
+                onClick={() => setTextBoxFont(option.value)}
+                className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+                  selected
+                    ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
+                    : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2 text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">
+                  {option.label}
+                  {selected && <Check size={14} className="text-[color:var(--con-accent)]" aria-hidden />}
+                </span>
+                <span
+                  className="mt-1 block max-h-[44px] overflow-hidden text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]"
+                  style={{ fontFamily: option.fontFamily }}
+                >
+                  Objective: compound returns by rotating capital toward the strongest risk-adjusted opportunities.
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+    </Card>
   );
 }
 

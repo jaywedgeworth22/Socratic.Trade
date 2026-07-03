@@ -26,6 +26,25 @@ restart, and authenticated route probes for `/console`, `/old`, and
 See `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md` and
 `docs/reviews/2026-07-03-console-parity-open-items.md`.
 
+## 2026-07-03 - AI Review inheritance, model catalog, and text-box fonts (Codex)
+Branch `codex/ai-review-model-inheritance` in `/Users/jay/apps/trading-codex`.
+The Strategy -> AI Review picker no longer presents a separate account-review
+model fallback. Blank reviewer selection now means "Same As Red Team" when a
+Red Team model is configured, otherwise "Same As Green Team"; the server uses
+the same inheritance order before calling the LLM. Empty model strings are
+trimmed away at `/api/strategy/tune`. Text boxes now default to the console site
+font instead of forced monospace, with browser-local Settings -> Appearance
+choices for Site/System/Serif/Mono. Curated non-OpenAI/non-Anthropic model
+choices were refreshed to current Gemini/Mistral/xAI/DeepSeek options, and
+DeepSeek V4 Thinking Mode now has provider-specific UI/backend normalization.
+Verification is green: focused `npx vitest run test/llm-request.test.ts
+test/strategy-tuning.test.ts`, `npm run lint` (0 errors, 307 warnings),
+`npx tsc --noEmit`, `npm test` (244 files / 2370 tests), `npm run build`,
+`git diff --check`, `pm2 restart trading-codex --update-env`, and unauthenticated
+route probes for `/console/settings` and `/console/strategy` redirecting to
+`/login` as expected. See
+`docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
+
 ## 2026-07-03 - Sell to Fund Buys title-case copy fix (Codex)
 Branch `codex/sell-to-fund-title-case` in `/Users/jay/apps/trading-codex`.
 The Guardrails Sell to Fund Buys selector and the legacy dashboard Key

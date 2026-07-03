@@ -9,8 +9,8 @@ import { useMemo, useState } from "react";
 import { Lock, Unlock } from "lucide-react";
 import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
 import {
-  DEFAULT_OPENAI_MODEL,
   reasoningCapabilityForModel,
+  normalizeReasoningEffortForModel,
   normalizeReasoningEffortForOptions,
   type LlmReasoningCapability,
   type LlmReasoningOption
@@ -61,7 +61,7 @@ function modelSelectValue(model: string | undefined): string {
 }
 
 function modelProviderLabel(model: string | undefined): string {
-  if (!model) return "Account Default";
+  if (!model) return "Not Set";
   const group = CURATED_LLM_MODEL_GROUPS.find((g) => g.options.some((option) => option.value === model));
   return group?.label ?? "Custom Provider";
 }
@@ -110,6 +110,20 @@ function reasoningSummary(control: ReturnType<typeof reasoningControlForModels>)
   return `${control.capabilities.map((capability) => capability.label).join(" + ")} active.`;
 }
 
+function normalizeReasoningValueForControl(
+  models: string[],
+  control: ReturnType<typeof reasoningControlForModels>,
+  effort: LlmReasoningEffort | undefined
+): LlmReasoningEffort | undefined {
+  if (!control) return undefined;
+  if (control.capabilities.length === 1) {
+    const provider = control.capabilities[0]!.provider;
+    const model = models.find((candidate) => reasoningCapabilityForModel(candidate)?.provider === provider);
+    return normalizeReasoningEffortForModel(model, effort) ?? normalizeReasoningEffortForOptions(control.options, effort);
+  }
+  return normalizeReasoningEffortForOptions(control.options, effort);
+}
+
 function ModelSelect({
   id,
   value,
@@ -135,7 +149,7 @@ function ModelSelect({
           onChange(next === CUSTOM_MODEL_OPTION ? (custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION) : next);
         }}
       >
-        {allowBlank && <option value="">{blankLabel ?? "Account Default"}</option>}
+        {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
         {CURATED_LLM_MODEL_GROUPS.map((group) => (
           <optgroup key={group.provider} label={group.label}>
             {group.options.map((option) => (
@@ -182,9 +196,10 @@ export default function StrategyPage() {
   const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
   const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
-  const reasoningControl = reasoningControlForModels([proposerModel, effectiveRedTeamModel]);
+  const reasoningModels = [proposerModel, effectiveRedTeamModel];
+  const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
-    ? normalizeReasoningEffortForOptions(reasoningControl.options, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
+    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
     : undefined;
 
   const save = async (label: string, body: Record<string, unknown>, after?: () => void) => {
@@ -542,10 +557,12 @@ function AiReviewPanel({
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
 
-  const reviewerModel = model || policy.llmModel || DEFAULT_OPENAI_MODEL;
+  const inheritedReviewerModel = policy.redTeamLlmModel || policy.llmModel || "";
+  const inheritedReviewerLabel = policy.redTeamLlmModel ? "Red Team" : "Green Team";
+  const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
   const reviewerReasoningValue = reviewerReasoningControl
-    ? normalizeReasoningEffortForOptions(reviewerReasoningControl.options, reviewReasoning ?? policy.llmReasoningEffort)
+    ? normalizeReasoningValueForControl([reviewerModel], reviewerReasoningControl, reviewReasoning ?? policy.llmReasoningEffort)
     : undefined;
   const changes = useMemo(() => (review ? reviewChanges(review.proposedPatch, policy) : []), [review, policy]);
   const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);
@@ -613,9 +630,13 @@ function AiReviewPanel({
       {!review ? (
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-64">
-            <Field label="Reviewer model" hint="Blank = the account's tuning default." htmlFor="ai-review-model">
+            <Field
+              label="Reviewer model"
+              hint={`Blank = same as ${inheritedReviewerLabel}. AI Review has no separate account-level model.`}
+              htmlFor="ai-review-model"
+            >
               <Select id="ai-review-model" value={model} onChange={(e) => { setModel(e.target.value); setReviewReasoning(undefined); }}>
-                <option value="">account default</option>
+                <option value="">Same As {inheritedReviewerLabel}</option>
                 {CURATED_LLM_MODEL_GROUPS.map((group) => (
                   <optgroup key={group.provider} label={group.label}>
                     {group.options.map((option) => (

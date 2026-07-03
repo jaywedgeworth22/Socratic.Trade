@@ -13,6 +13,7 @@ import type { DashboardSnapshot } from "../../dashboard-types";
 import { deriveReality } from "../lib/derive";
 import { cx } from "../lib/format";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
+import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { SymbolDrawerProvider } from "../ui/symbol-drawer";
@@ -57,10 +58,16 @@ function ThemeToggle({ theme, cycle }: { theme: ConsoleTheme; cycle: () => void 
 function ShellFrame({ children }: { children: ReactNode }) {
   const { snapshot, fetchedAt, loading, error } = useConsoleData();
   const { theme, dataTheme, cycle } = useConsoleTheme();
+  const { dataTextBoxFont } = useConsoleTextBoxFont();
 
   if (loading) {
     return (
-      <div className="console-root flex min-h-dvh items-center justify-center" data-theme={dataTheme} suppressHydrationWarning>
+      <div
+        className="console-root flex min-h-dvh items-center justify-center"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        suppressHydrationWarning
+      >
         <div className="text-center">
           <div className="con-card-title">Socratic Trade</div>
           <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
@@ -71,7 +78,12 @@ function ShellFrame({ children }: { children: ReactNode }) {
 
   if (!snapshot) {
     return (
-      <div className="console-root flex min-h-dvh items-center justify-center px-6" data-theme={dataTheme} suppressHydrationWarning>
+      <div
+        className="console-root flex min-h-dvh items-center justify-center px-6"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        suppressHydrationWarning
+      >
         <div className="con-card max-w-md p-6 text-center">
           <div className="con-card-title">Socratic Trade</div>
           <p className="mt-2 font-semibold">Couldn&apos;t load the autonomy desk</p>
@@ -89,6 +101,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
     <div
       className={cx("console-root flex min-h-dvh flex-col", reality.tone === "live" && "console-live")}
       data-theme={dataTheme}
+      data-textbox-font={dataTextBoxFont}
       suppressHydrationWarning
     >
       {/* ToastProvider must live INSIDE .console-root: it renders the .con-toasts

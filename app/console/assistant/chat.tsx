@@ -541,7 +541,7 @@ export function AssistantChat() {
             placeholder={keyMissing ? "Pick a model with a key to chat…" : "Ask a question, or describe an order to draft…"}
             disabled={keyMissing}
             className="con-textarea flex-1 leading-normal"
-            style={{ fontFamily: "inherit", resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
+            style={{ resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
             title="Your message to the assistant. Enter sends; Shift+Enter adds a line break."
             aria-label="Message the assistant"
           />

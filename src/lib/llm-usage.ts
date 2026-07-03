@@ -55,21 +55,23 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "claude-sonnet-4-6": [3, 15],
   "claude-haiku-4-5": [1, 5],
   // Gemini (lite listed first so the prefix match prefers it over the base flash key).
-  "gemini-3.1-flash-lite": [0.1, 0.4],
-  "gemini-3.5-flash": [0.3, 2.5],
+  "gemini-3.1-flash-lite": [0.25, 1.5],
+  "gemini-3.1-pro-preview": [2, 12],
+  "gemini-3.5-flash": [1.5, 9],
   "gemini-2.5-flash-lite": [0.1, 0.4],
   "gemini-2.5-flash": [0.3, 2.5],
   "gemini-2.5-pro": [1.25, 10],
   "mistral-large-2512": [2, 6],
-  "mistral-medium-3-5": [0.4, 2],
+  "mistral-medium-3-5": [1.5, 7.5],
+  "mistral-small-2603": [0.15, 0.6],
   "mistral-small-2506": [0.1, 0.3],
   "mistral-large": [2, 6],
   "mistral-medium": [0.4, 2],
   "mistral-small": [0.1, 0.3],
-  "deepseek-v4-flash": [0.28, 1.1],
-  "deepseek-v4-pro": [0.55, 2.19],
-  "deepseek-chat": [0.28, 1.1],
-  "deepseek-reasoner": [0.55, 2.19]
+  "deepseek-v4-flash": [0.14, 0.28],
+  "deepseek-v4-pro": [0.435, 0.87],
+  "deepseek-chat": [0.14, 0.28],
+  "deepseek-reasoner": [0.14, 0.28]
 };
 
 function priceForModel(model: string | undefined): [number, number] | undefined {

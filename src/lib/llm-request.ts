@@ -2,7 +2,7 @@ import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
 export type OpenAiTransport = "responses" | "chat-completions";
-export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral";
+export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
 export interface LlmReasoningOption {
   value: LlmReasoningEffort;
@@ -91,6 +91,10 @@ function isMistralModel(model: string | undefined): boolean {
   return /^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
+function isDeepSeekV4Model(model: string | undefined): boolean {
+  return /^deepseek-v4-(?:flash|pro)(?:$|[-.:_])/.test(lowerModel(model));
+}
+
 export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
   if (isReasoningModel(model)) {
     return {
@@ -139,6 +143,15 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
       options: options(["none", "minimal", "low", "medium", "high", "xhigh"])
     };
   }
+  if (isDeepSeekV4Model(model)) {
+    return {
+      provider: "deepseek",
+      label: "DeepSeek Thinking",
+      settingLabel: "Thinking Mode",
+      description: "DeepSeek V4 can disable thinking or use high/max thinking effort.",
+      options: options(["none", "high", "max"])
+    };
+  }
   return undefined;
 }
 
@@ -164,6 +177,11 @@ export function normalizeReasoningEffortForModel(
 ): LlmReasoningEffort | undefined {
   const capability = reasoningCapabilityForModel(model);
   if (!capability) return undefined;
+  if (capability.provider === "deepseek") {
+    if (effort === "none") return "none";
+    if (effort === "max" || effort === "xhigh") return "max";
+    return "high";
+  }
   return normalizeReasoningEffortForOptions(capability.options, effort);
 }
 
@@ -282,6 +300,13 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     return { ...body, max_output_tokens: bounds.maxOutputTokens, temperature };
   }
   if (capability && normalizedEffort) {
+    if (capability.provider === "deepseek") {
+      const deepSeekThinking =
+        normalizedEffort === "none"
+          ? { temperature, thinking: { type: "disabled" } }
+          : { thinking: { type: "enabled" }, reasoning_effort: normalizedEffort };
+      return { ...body, max_completion_tokens: bounds.maxOutputTokens, ...deepSeekThinking };
+    }
     const providerReasoning =
       capability.provider === "mistral" && normalizedEffort !== "none"
         ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
