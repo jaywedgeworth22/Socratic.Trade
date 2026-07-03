@@ -93,7 +93,9 @@ to `trading.jays.services`, record the release commit + date here._
     drawdown-threshold breach until manually re-armed.
   - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
     opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
-  - Build behind paper-mode defaults; do not toggle live without the existing typed-confirm ritual.
+  - Build/test against a **connected broker account** (paper or live), NOT the removed local Test mode
+    / `paperMode` default (see the In Progress removal above — that default is going away). Keep the
+    existing typed-confirm ritual before any live toggle.
 - **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
   DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
   See `docs/manager-model-options.md`.
