@@ -432,24 +432,35 @@
   font-size: var(--con-fs-xs);
 }
 
-/* The always-reachable STOP control. Deliberately heavier than everything else. */
-.con-stop-btn {
+/* The header run-state control: Start/Resume when paused, STOP when stopping. */
+.con-stop-btn,
+.con-start-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border-radius: var(--con-radius-sm);
-  border: 1.5px solid var(--con-neg-border);
-  background: var(--con-neg-soft);
-  color: var(--con-neg);
   font-weight: 700;
   font-size: var(--con-fs-sm);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   padding: 7px 14px;
   cursor: pointer;
   transition: background 120ms ease;
 }
+.con-stop-btn {
+  border: 1.5px solid var(--con-neg-border);
+  background: var(--con-neg-soft);
+  color: var(--con-neg);
+}
 .con-stop-btn:hover {
   background: color-mix(in oklab, var(--con-neg) 20%, transparent);
+}
+.con-start-btn {
+  border: 1.5px solid var(--con-pos-border);
+  background: var(--con-pos-soft);
+  color: var(--con-pos);
+}
+.con-start-btn:hover {
+  background: color-mix(in oklab, var(--con-pos) 18%, transparent);
 }
 
 /* ── Chips ── */

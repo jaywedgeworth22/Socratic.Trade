@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - Run-state UX fix: Start/Resume is not STOP (Codex)
+Branch `codex/run-state-ux-fix` in `/Users/jay/apps/trading-codex`.
+Fixed the console chrome so the header no longer forces users to click a red STOP
+control to reach start options. When the account is `halted`, the right-side
+run-state action is now a green Start button; when it is `close_only`, it is a
+green Resume button; active/liquidating states still keep the red STOP affordance.
+The run-state sheet now titles itself by intent, puts Start/Resume first when
+recovering from a paused state, and keeps Wind down/STOP visually red. Live
+Start/Resume uses the existing typed phrase ritual with a primary tone instead of
+a danger-red opener. The legacy dashboard's "Enable autonomous execution" confirm
+also now uses primary tone, because that is an authority change rather than a
+destructive stop. Verification: `npm run lint` (0 errors, 303 existing warnings),
+`npx tsc --noEmit`, `npm test` (243 files / 2361 tests), `npm run build`,
+`git diff --check`, `pm2 restart trading-codex --update-env`, and Playwright
+desktop/mobile checks against `http://localhost:4101/console` using the trusted
+local Cloudflare Access header. See `docs/rollouts/2026-07-03-run-state-ux.md`.
+
 ## 2026-07-03 - Socratic Trade autonomy UI/runtime implementation (Codex)
 Branch `codex/socratic-trade-autonomy-mockup` in `/Users/jay/apps/trading-codex`.
 Built the Socratic Trade Autonomy Desk into real app surfaces, not just a frame. `/console` now reads

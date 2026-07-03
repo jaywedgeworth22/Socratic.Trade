@@ -28,6 +28,15 @@ filling the missing pieces.
 > `socratictrade.com` in sitemap/robots metadata. See
 > `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 
+> **2026-07-03 — Run-state UX correction (Codex).** The console header no
+> longer hides Start/Resume behind a red STOP affordance. `RunStateButton`
+> renders Start when halted, Resume when close-only, and STOP only when the
+> strategy is active or winding down. The control sheet now leads with
+> Start/Resume in paused states, keeps STOP/Wind down red, and uses primary/green
+> tones for starting flows; the legacy autonomous-execution confirm was also
+> changed from danger to primary. See
+> `docs/rollouts/2026-07-03-run-state-ux.md`.
+
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
 > model (`TradeProposal.proposedByModel` + `redTeamVerdict.model`; approval card reads

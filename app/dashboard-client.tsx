@@ -2196,7 +2196,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         title="Enable autonomous execution?"
         body="Autonomous mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
         confirmLabel="Enable auto-execute"
-        tone="danger"
+        tone="primary"
       />
 
       <ConfirmationModal
