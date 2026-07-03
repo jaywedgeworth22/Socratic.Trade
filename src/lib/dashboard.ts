@@ -14,7 +14,6 @@ import {
   listStrategyRuns,
   listFillEvents,
   listConnectedAccounts,
-  ensureTestAccount,
   getActiveConnectedAccount,
   userHasAnyLlmCredential
 } from "./db";
@@ -22,7 +21,7 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPaperPortfolioProjection, getPerformanceSummary, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
+import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -102,7 +101,6 @@ export function accountReadinessForSnapshot(input: {
   const accountNumber = policy.accountNumber ?? activeAccount?.accountNumber;
   const broker = activeAccount?.broker ?? policy.activeBroker;
   const brokerName = brokerDisplayName(broker);
-  const isLocalTestMode = policy.paperMode || broker === "test";
 
   if (!accountNumber) {
     return {
@@ -125,7 +123,7 @@ export function accountReadinessForSnapshot(input: {
     };
   }
 
-  const robinhoodIssue = !isLocalTestMode && broker === "robinhood" ? robinhoodMcpHealthIssue(input.robinhoodMcpHealth) : undefined;
+  const robinhoodIssue = broker === "robinhood" ? robinhoodMcpHealthIssue(input.robinhoodMcpHealth) : undefined;
   if (robinhoodIssue) {
     return {
       ok: false,
@@ -137,47 +135,34 @@ export function accountReadinessForSnapshot(input: {
     };
   }
 
-  const requiresBrokerReadiness = !isLocalTestMode;
-  if (requiresBrokerReadiness) {
-    if (input.brokerAccountReadError) {
-      return {
-        ok: false,
-        reason: `${brokerName} account check failed. Open Accounts and reconnect or fix credentials.`,
-        detail: input.brokerAccountReadError,
-        accountNumber,
-        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
-        broker
-      };
-    }
-
-    const liveAccount = input.liveAccounts.find((account) => account.accountNumber === accountNumber);
-    if (!liveAccount) {
-      return {
-        ok: false,
-        reason: `Selected ${brokerName} account is not available from the broker.`,
-        detail: `The selected account ${accountNumber} was not returned by ${brokerName}.`,
-        accountNumber,
-        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
-        broker
-      };
-    }
-
-    if (!liveAccount.agenticAllowed) {
-      return {
-        ok: false,
-        reason: `Selected ${brokerName} account is not approved for agentic execution.`,
-        detail: `${brokerName} returned account ${accountNumber}, but marked it not agentic-allowed.`,
-        accountNumber,
-        connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
-        broker
-      };
-    }
+  if (input.brokerAccountReadError) {
+    return {
+      ok: false,
+      reason: `${brokerName} account check failed. Open Accounts and reconnect or fix credentials.`,
+      detail: input.brokerAccountReadError,
+      accountNumber,
+      connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+      broker
+    };
   }
 
-  if (isLocalTestMode) {
+  const liveAccount = input.liveAccounts.find((account) => account.accountNumber === accountNumber);
+  if (!liveAccount) {
     return {
-      ok: true,
-      detail: `Selected Test account ${accountNumber}.`,
+      ok: false,
+      reason: `Selected ${brokerName} account is not available from the broker.`,
+      detail: `The selected account ${accountNumber} was not returned by ${brokerName}.`,
+      accountNumber,
+      connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
+      broker
+    };
+  }
+
+  if (!liveAccount.agenticAllowed) {
+    return {
+      ok: false,
+      reason: `Selected ${brokerName} account is not approved for agentic execution.`,
+      detail: `${brokerName} returned account ${accountNumber}, but marked it not agentic-allowed.`,
       accountNumber,
       connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
       broker
@@ -197,9 +182,7 @@ export function accountReadinessForSnapshot(input: {
 
   return {
     ok: true,
-    detail: isLocalTestMode
-      ? `Selected Test account ${accountNumber}.`
-      : `Selected ${brokerName} account ${accountNumber} is available for execution.`,
+    detail: `Selected ${brokerName} account ${accountNumber} is available for execution.`,
     accountNumber,
     connectedAccountId: activeAccount?.id ?? policy.connectedAccountId,
     broker
@@ -216,31 +199,35 @@ export interface CurrentUserDisplay {
 export async function getDashboardSnapshot(userId: string = "local", currentUser?: string | CurrentUserDisplay) {
   const currentUserDisplay: CurrentUserDisplay =
     typeof currentUser === "string" ? { email: currentUser } : currentUser ?? {};
-  ensureTestAccount(userId);
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const connectedAccounts = listConnectedAccounts(userId);
   const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
-  const gateway = getBrokerGateway(policy, userId);
+  // An account is an account: with none connected there is no broker to call. Skip the gateway
+  // entirely rather than falling back to any local/simulated broker — the snapshot still renders,
+  // it just reports no accounts/portfolio, and accountReadinessForSnapshot reports "no account".
+  const gateway = activeAccount ? getBrokerGateway(policy, userId) : undefined;
   let accounts: BrokerageAccount[] = [];
   let brokerAccountReadError: string | undefined;
-  try {
-    accounts = await gateway.getAccounts();
-  } catch (error) {
-    const message = messageFromUnknownError(error);
-    brokerAccountReadError = message;
-    console.warn("Failed to fetch accounts:", message);
-    recordRecoverableIssue({
-      source: "broker",
-      operation: "dashboard.getAccounts",
-      severity: "error",
-      message,
-      fallback: "Using stored connected-account rows so configured accounts remain visible.",
-      userId,
-      connectedAccountId: policy.connectedAccountId,
-      broker: policy.activeBroker,
-      accountNumber: policy.accountNumber
-    });
+  if (gateway) {
+    try {
+      accounts = await gateway.getAccounts();
+    } catch (error) {
+      const message = messageFromUnknownError(error);
+      brokerAccountReadError = message;
+      console.warn("Failed to fetch accounts:", message);
+      recordRecoverableIssue({
+        source: "broker",
+        operation: "dashboard.getAccounts",
+        severity: "error",
+        message,
+        fallback: "Using stored connected-account rows so configured accounts remain visible.",
+        userId,
+        connectedAccountId: policy.connectedAccountId,
+        broker: policy.activeBroker,
+        accountNumber: policy.accountNumber
+      });
+    }
   }
   // Resilience: a live getAccounts() that fails or returns empty (a transient broker/MCP enumeration
   // miss) must not make the configured account vanish from the snapshot — which made the readiness
@@ -298,7 +285,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   let positions: EquityPosition[] = [];
   let orders: EquityOrder[] = [];
   let portfolioReadError: string | undefined;
-  if (accountNumber) {
+  if (accountNumber && gateway) {
     try {
       [portfolio, positions, orders] = await Promise.all([
         gateway.getPortfolio(accountNumber),
@@ -337,23 +324,17 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   // Fetch live + paper fills ONCE per request (each is a 500-row SELECT + JSON.parse + FIFO replay)
   // and thread the parsed arrays into every downstream consumer — performance summary, scorecards,
-  // tax, the paper projection, and the unified feed — instead of each re-issuing its own query.
+  // tax, and the unified feed — instead of each re-issuing its own query.
   const liveFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "live", 500, userId) : [];
   const paperFills: FillEvent[] = accountNumber ? listFillEvents(accountNumber, "paper", 500, userId) : [];
   const prefetchedFills: PrefetchedFills = { liveFills, paperFills };
 
-  // Build a live current-price map (broker quotes for held + paper symbols) so the paper
-  // account and all P&L are marked to the same prices Live uses.
+  // Live current-price map (broker quotes for held symbols) so P&L is marked to the same prices
+  // the broker reports. An account is an account: `portfolio`/`positions` are always the real
+  // broker-reported values for the active account — there is no locally-projected alternative.
   let currentPrices: Record<string, number> = {};
-  let paperProjection: ReturnType<typeof getPaperPortfolioProjection> | undefined;
-  if (accountNumber && portfolio) {
-    // Single projection replay (reuses the pre-fetched paper fills). We derive the price symbols
-    // from its open positions, fetch quotes, then re-mark the SAME positions to those prices in
-    // place — collapsing the old two back-to-back getPaperPortfolioProjection calls into one.
-    const projection = getPaperPortfolioProjection({ accountNumber, startingCash: policy.paperStartingCash, userId, paperFills });
-    const priceSymbols = Array.from(
-      new Set([...positions.map((p) => normalizeSymbol(p.symbol)), ...projection.positions.map((p) => normalizeSymbol(p.symbol))])
-    );
+  if (accountNumber && gateway && portfolio) {
+    const priceSymbols = Array.from(new Set(positions.map((p) => normalizeSymbol(p.symbol))));
     const quotes = priceSymbols.length > 0 ? await gateway.getEquityQuotes(accountNumber, priceSymbols) : {};
     currentPrices = Object.fromEntries(
       Object.values(quotes)
@@ -365,25 +346,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       const symbol = normalizeSymbol(position.symbol);
       if (!(symbol in currentPrices) && position.quantity > 0) currentPrices[symbol] = position.marketValue / position.quantity;
     }
-    // Re-mark the already-replayed positions to the resolved prices (fall back to averageCost when a
-    // price is missing) — identical math to a fresh getPaperPortfolioProjection({ currentPrices }),
-    // but without a second fill replay.
-    const remarkedPositions = projection.positions.map((position) => {
-      const mark = currentPrices[normalizeSymbol(position.symbol)] ?? position.averageCost;
-      return { ...position, marketValue: position.quantity * mark };
-    });
-    const equityMarketValue = remarkedPositions.reduce((sum, position) => sum + position.marketValue, 0);
-    paperProjection = {
-      positions: remarkedPositions,
-      portfolio: {
-        ...projection.portfolio,
-        equityMarketValue,
-        totalMarketValue: projection.portfolio.cash + equityMarketValue
-      }
-    };
   }
-  const displayPortfolio = policy.paperMode ? paperProjection?.portfolio ?? portfolio : portfolio;
-  const displayPositions = policy.paperMode ? paperProjection?.positions ?? positions : positions;
+  const displayPortfolio = portfolio;
+  const displayPositions = positions;
 
   const pendingProposals = accountNumber ? listPendingProposals(accountNumber, userId) : [];
   const recentProposals = accountNumber ? listRecentProposals(accountNumber, 100, userId) : [];
@@ -465,8 +430,6 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   const symbolMetaBySymbol = buildSymbolMetaBySymbol({
     positions: displayPositions,
-    livePositions: positions,
-    paperPositions: paperProjection?.positions,
     orders,
     pendingProposals,
     latestStrategyRun
@@ -563,10 +526,6 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     portfolio: displayPortfolio,
     positions: displayPositions,
     symbolMetaBySymbol,
-    livePortfolio: portfolio,
-    livePositions: positions,
-    paperPortfolio: paperProjection?.portfolio,
-    paperPositions: paperProjection?.positions,
     orders,
     audit: clientAudit,
     auditFeed,

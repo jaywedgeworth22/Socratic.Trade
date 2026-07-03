@@ -49,7 +49,6 @@ import {
   getConfidenceCalibration,
   type ConfidenceCalibrationStat,
   getFactorScorecard,
-  getPaperPortfolioProjection,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
@@ -246,6 +245,10 @@ export async function runStrategyOnce(
       : { ...savedPolicy, accountNumber };
     const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
+    // An account is an account: with none connected there is no broker to trade through, and there
+    // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+    if (!executionState.mode) throw new Error("No connected account. Connect a broker account before running the strategy.");
+    const executionMode: ExecutionMode = executionState.mode;
 
     // Market holiday / closure guard: skip the strategy run when the market is fully closed
     // (holiday or weekend). Manual runs bypass this check so the operator can always force a run.
@@ -309,19 +312,13 @@ export async function runStrategyOnce(
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
     const washSaleLocks = getUserWashSaleLockProvenance(userId, new Date());
 
-    // In Test mode, decisions run against the standalone local account
-    // (starting cash + prior simulated fills, marked to live prices).
+    // An account is an account: decisions always run against the real broker-reported portfolio and
+    // positions for the active (paper or live) account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(marketScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
-    const workingPortfolio = account.portfolio;
-    const workingPositions = account.positions;
-    const executionMode = executionState.mode;
+    const workingPortfolio = portfolio;
+    const workingPositions = positions;
     const learningSource = fillSourceForExecutionMode(executionMode);
-    if (!executionState.usesLocalSimulation) {
-      await notifyStaleLimitOrders({ userId, policy, orders });
-    }
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
     // post-mortem / reconciliation always has a pre-execution baseline even if the run
@@ -619,7 +616,7 @@ export async function runStrategyOnce(
     // Inline Bear review failed → FAIL CLOSED: every un-critiqued opening is routed to human
     // review. In "propose" mode all proposals already require approval; in "decide" mode this is
     // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
-    // trades. (test/local simulation still auto-fills, matching the existing requiresHumanReview.)
+    // trades.
     if (bearReviewUnavailable) {
       // Route only OPENING proposals (buy/short) to human review. Risk-reducing exits (sell/cover)
       // must still flow through to placement even when the Red Team is down — blocking a de-risking
@@ -820,8 +817,8 @@ export async function runStrategyOnce(
       });
 
       // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
-      // audited at the ACTUAL execution point (auditWashSaleProceed at the paper-fill and live-placed
-      // paths below), NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
+      // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
+      // NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
       // sell-to-fund-propose) an approved gate result only becomes a PENDING card — no purchase has
       // happened yet — so logging "the wash sale was disregarded / the deduction was forfeited" here
       // would be false if the owner rejects or lets it expire. When such a card is later approved,
@@ -912,42 +909,40 @@ export async function runStrategyOnce(
         continue;
       }
 
-      if (!executionState.usesLocalSimulation) {
-        const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
-        if (heldExit) {
-          const heldReason = brokerHeldExitBlockReason(heldExit);
-          const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-          const proposalId = crypto.randomUUID();
-          insertProposal({
-            userId,
-            executionMode,
-            id: proposalId,
-            runId,
-            accountNumber: policy.accountNumber,
-            proposal: normalizedProposal,
-            decision: heldDecision,
-            review,
-            estimatedNotional: review.estimatedNotional,
-            status: "blocked",
-            promptVersion: STRATEGY_PROMPT_VERSION
-          });
-          audit(
-            "proposal_blocked_broker_held_exit",
-            { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
-            userId,
-            connectedAccountId
-          );
-          await sendNotification(
-            {
-              type: "block",
-              title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
-              payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
-            },
-            { policy, userId }
-          );
-          results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
-          continue;
-        }
+      const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
+      if (heldExit) {
+        const heldReason = brokerHeldExitBlockReason(heldExit);
+        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+        const proposalId = crypto.randomUUID();
+        insertProposal({
+          userId,
+          executionMode,
+          id: proposalId,
+          runId,
+          accountNumber: policy.accountNumber,
+          proposal: normalizedProposal,
+          decision: heldDecision,
+          review,
+          estimatedNotional: review.estimatedNotional,
+          status: "blocked",
+          promptVersion: STRATEGY_PROMPT_VERSION
+        });
+        audit(
+          "proposal_blocked_broker_held_exit",
+          { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
+          userId,
+          connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "block",
+            title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
+            payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
+          },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        continue;
       }
 
       // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
@@ -975,35 +970,6 @@ export async function runStrategyOnce(
         continue;
       }
 
-      if (executionState.usesLocalSimulation) {
-        const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
-        const fill = recordFillFromProposal({
-          userId,
-          accountNumber: policy.accountNumber,
-          proposalId,
-          runId,
-          source: "paper",
-          executionMode,
-          proposal: normalizedProposal,
-          review,
-          marketScan,
-          status: "filled"
-        });
-        // Wash-sale proceed trail at the actual (simulated) fill — see auditWashSaleProceed.
-        auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
-        await sendNotification(
-          {
-            type: "fill",
-            title: `${normalizedProposal.symbol} Test ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
-            payload: { runId, proposalId, fill }
-          },
-          { policy, userId }
-        );
-        results.push({ proposal: normalizedProposal, status: "paper", reasons: [] });
-        continue;
-      }
-
       // Fail CLOSED: a high-conviction trade whose REQUIRED Red Team review could not run is
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
@@ -1018,16 +984,12 @@ export async function runStrategyOnce(
       }
 
       // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
-      // is placed. No-op in Test/paper mode (usesLocalSimulation → returns immediately, and the
-      // simulated path already `continue`d above); on the broker/live path it throws unless the run
-      // is genuinely out of paper mode AND live trading is explicitly enabled (ALLOW_LIVE_TRADING).
-      // This code path can also be reached for broker/paper (submitsBrokerOrders, real-capital-free),
-      // where mode !== "broker/live" so the guard is a no-op. It NEVER places or enables a trade.
+      // is placed. No-op on the broker/paper path (submitsBrokerOrders, real-capital-free); on the
+      // broker/live path it throws unless live trading is explicitly enabled (ALLOW_LIVE_TRADING). It
+      // NEVER places or enables a trade.
       try {
         assertLivePreflight({
-          mode: executionState.mode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
-          paperMode: policy.paperMode,
+          mode: executionMode,
           symbol: normalizedProposal.symbol,
           side: normalizedProposal.side
         });
@@ -1177,15 +1139,12 @@ export async function runStrategyOnce(
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
-    const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
-    const tradeCount = placed + paperCount + proposed;
-    const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
+    const tradeCount = placed + proposed;
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
-      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
+      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
-      paperCount > 0 ? `Test: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
@@ -1201,33 +1160,15 @@ export async function runStrategyOnce(
     // WHICH account's run this analyzed (#8).
     audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
     finishStrategyRun(runId, "completed", summary, userId);
-    if (!executionState.usesLocalSimulation) {
-      recordPortfolioSnapshot({
-        userId,
-        runId,
-        accountNumber: policy.accountNumber,
-        source: learningSource,
-        executionMode,
-        portfolio,
-        positions
-      });
-    } else {
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: policy.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices,
-        userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId,
-        accountNumber: policy.accountNumber,
-        source: "paper",
-        executionMode,
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-    }
+    recordPortfolioSnapshot({
+      userId,
+      runId,
+      accountNumber: policy.accountNumber,
+      source: learningSource,
+      executionMode,
+      portfolio,
+      positions
+    });
     result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
@@ -1913,9 +1854,12 @@ export async function executeProposal(
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
-  const executionMode = executionState.mode;
-  const executionSource = fillSourceForExecutionMode(executionMode);
   if (!policy.accountNumber) throw new Error("No account selected.");
+  // An account is an account: with none connected there is no broker to trade through, and there is
+  // no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+  if (!executionState.mode) throw new Error("No connected account. Connect a broker account before approving trades.");
+  const executionMode: ExecutionMode = executionState.mode;
+  const executionSource = fillSourceForExecutionMode(executionMode);
   if (policy.systemState === "halted") throw new Error("System is halted.");
 
   const row = getProposal(proposalId, userId);
@@ -1968,14 +1912,11 @@ export async function executeProposal(
       await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
     );
 
-    // In Test mode, evaluate the approval against the standalone local account.
+    // An account is an account: the approval is always evaluated against the real broker-reported
+    // portfolio and positions for the active account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(approvalScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
-    if (!executionState.usesLocalSimulation) {
-      await notifyStaleLimitOrders({ userId, policy, orders });
-    }
+    const account = { portfolio, positions };
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
@@ -1997,7 +1938,7 @@ export async function executeProposal(
     const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-    const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
+    const isLiveExecution = executionState.environment === "live";
     const decision = evaluateTradeProposal(proposal, {
       policy,
       portfolio: account.portfolio,
@@ -2160,86 +2101,34 @@ export async function executeProposal(
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
 
-    if (!executionState.usesLocalSimulation) {
-      const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
-      if (heldExit) {
-        const heldReason = brokerHeldExitBlockReason(heldExit);
-        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-        updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
-        audit(
-          "proposal_approved",
-          { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
-          userId
-        );
-        await sendNotification(
-          {
-            type: "block",
-            title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-            payload: { proposalId, decision: heldDecision, review, proposal }
-          },
-          { policy, userId }
-        );
-        return { status: "blocked", reasons: heldDecision.reasons };
-      }
-    }
-
-    if (executionState.usesLocalSimulation) {
-      // Atomic claim: only the caller that flips this proposal proposed -> paper records the
-      // fill, so two concurrent approvals can't double-book the same Test trade (defense in depth
-      // alongside the per-user run-lock held for this critical section).
-      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional, executionMode })) {
-        const current = getProposal(proposalId, userId)?.status ?? "removed";
-        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-      }
-      const fill = recordFillFromProposal({
-        userId,
-        accountNumber: row.accountNumber,
-        proposalId,
-        runId: row.runId,
-        source: "paper",
-        executionMode,
-        proposal,
-        review,
-        marketScan: approvalScan,
-        status: "filled"
-      });
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: row.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
+    const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
+    if (heldExit) {
+      const heldReason = brokerHeldExitBlockReason(heldExit);
+      const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
+      audit(
+        "proposal_approved",
+        { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
         userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId: row.runId,
-        accountNumber: row.accountNumber,
-        source: "paper",
-        executionMode,
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
+      );
       await sendNotification(
         {
-          type: "fill",
-          title: `${proposal.symbol} Test ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
-          payload: { proposalId, fill }
+          type: "block",
+          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+          payload: { proposalId, decision: heldDecision, review, proposal }
         },
         { policy, userId }
       );
-      return { status: "paper" };
+      return { status: "blocked", reasons: heldDecision.reasons };
     }
 
     // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
-    // loop). No-op in paper/test (that branch already returned above); on broker/live it refuses
-    // unless the run is genuinely out of paper mode AND live trading is explicitly enabled
-    // (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending proposal
-    // must clear the same live invariant as an autonomous one before reaching the broker.
+    // loop). No-op on broker/paper; on broker/live it refuses unless live trading is explicitly
+    // enabled (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending
+    // proposal must clear the same live invariant as an autonomous one before reaching the broker.
     try {
       assertLivePreflight({
-        mode: executionState.mode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        paperMode: policy.paperMode,
+        mode: executionMode,
         symbol: proposal.symbol,
         side: proposal.side
       });
@@ -2524,7 +2413,7 @@ async function proposeTrades(input: {
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
-  const executionMode = llmExecutionMode(executionState);
+  const executionMode = llmExecutionMode(executionState) ?? "no-account";
   const executionModeClarification = llmModeClarification(executionState);
   // SHORT_SELLING: expose short/cover sides to the model ONLY when shorting is enabled in policy AND
   // the connected account actually supports it (capability-gated). Otherwise the schema is long-only
@@ -2750,8 +2639,6 @@ async function proposeTrades(input: {
           transport,
           maxProposals,
           executionMode,
-          internalPaperMode: input.policy.paperMode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
           currentMarketRegime,
           promptVersion: STRATEGY_PROMPT_VERSION
         },
@@ -3065,8 +2952,6 @@ async function proposeTrades(input: {
           transport: bearTransport,
           reviewedProposalCount: bullProposals.length,
           executionMode,
-          internalPaperMode: input.policy.paperMode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
           currentMarketRegime,
           promptVersion: STRATEGY_PROMPT_VERSION
         },

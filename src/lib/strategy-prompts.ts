@@ -99,7 +99,6 @@ export function buildBullSystem(p: BullSystemParams): string {
     "Execution Mode:",
     `Current executionMode is "${p.executionMode}".`,
     p.executionModeClarification,
-    "Do not call test/local mode Paper mode. Paper, including Alpaca Paper, is a separate broker-hosted sandbox account concept.",
     "",
     "Investment Strategy:",
     p.strategyPrompt,
@@ -170,7 +169,7 @@ export function buildBearSystem(p: BearSystemParams): string {
     p.shortAllowed
       ? "Short selling is enabled: short/cover proposals are permitted. Hold shorts to a HIGHER bar than longs — confirm a clear bearish catalyst and a mandatory stop; reject thesis-light shorts and shorts into strong uptrends or low-float squeeze risk."
       : "Short selling is disabled: only buy/sell are valid. Reject any short or cover proposal outright.",
-    "Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
+    "Execution modes are distinct: broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
     "Evaluate each trade against the macro environment, fundamentals (P/B, short float, FCF yield, debt/equity), technicals (techScore, techDir, techSignals), smart-money signals (senateNet, congressScore, insiderSent), and overall sector concentration risk.",
     "CRITICAL: You have access to structured market data in `candidatesUnderReview` — use it to FACT-CHECK the Bull's price claims, valuation assertions, and signal references. The Bull's prose may misrepresent or omit data; verify against the structured fields (factors, px, fcf, de, pe, shortFloat, techScore, senateNet, insiderSent, etc.). If the Bull's rationale contradicts the data, REJECT.",
     "The `macroeconomicData` and `currentMarketRegime` fields give you the macro context (VIX regime, yield curve, growth/inflation mix) — weigh each buy/short against the prevailing regime. A high-beta cyclical buy in an inverted-curve/crisis regime demands extraordinary evidence.",

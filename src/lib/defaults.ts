@@ -42,8 +42,6 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 export const DEFAULT_POLICY: TradingPolicy = {
   systemState: "halted",
-  paperMode: false,
-  paperStartingCash: 10000,
   includedIndices: ["sp500"],
   additionalSymbols: [],
   blocklist: [],
@@ -85,10 +83,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   taxSettings: DEFAULT_TAX_SETTINGS
-  // No default broker or paper flag: a fresh policy is broker-neutral. activeBroker is set when a
-  // real broker is connected (see db-profiles.ts); until then getBrokerGateway() falls back to the
-  // local simulator. Do not seed "test"/paperMode here — it propagates the false assumption that the
-  // app is a paper/test app by default.
+  // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
+  // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
+  // no local-sim fallback.
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

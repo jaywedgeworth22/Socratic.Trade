@@ -8,6 +8,30 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — De-paternalize Step 2: remove `policy.paperMode` + Test-mode local simulator (Claude, cloud)
+Branch `claude/remove-paper-test-mode` (off `origin/main` post-#339). Completes the owner's directive
+from Step 1 (#339): this is a real trading app, not a simulator with a trading skin. **Removed:**
+`policy.paperMode`/`paperStartingCash` from `TradingPolicy` (`src/lib/types.ts`), `DEFAULT_POLICY`,
+every read/write site, `/api/policy`, `mobile-api.ts`, and the console/legacy Settings UI toggles; the
+`test/local` `ExecutionMode` value, `usesLocalSimulation`, `getPaperPortfolioProjection`, the local
+paper-fill auto-execute branch in `src/lib/strategy.ts`, and the local portfolio projection in
+`src/lib/dashboard.ts`. **`deriveExecutionState`** (`src/lib/execution-mode.ts`) is now the single hub:
+with a connected account, mode is `broker/paper` or `broker/live` purely from that account's
+`environment` (no `paperMode` input); with **no** connected account it returns an honest "No account"
+state (`mode: undefined`, `submitsBrokerOrders: false`, `label: "No account"`) instead of any fake-fill
+fallback — `runStrategyOnce`, `executeProposal`, `withLivePreflight`, and `resolveGateway` all now
+explicitly refuse to place orders in that state rather than silently defaulting to the test gateway.
+**Kept as-is (not in scope):** `DATABASE_URL`/`data/app.db` (infrastructure, not a fake mode);
+`TestBrokerGateway`/`broker: "test"` (legitimate TEST INFRASTRUCTURE for the unit suite — ~36 test
+files were migrated from `paperMode: true` to creating a connected `broker:"test"`/`environment:"paper"`
+account so execution still flows through the normal broker path). **Found + fixed in the process** (a
+real correctness bug, not scope creep): broker-paper fills were mislabeled "Test" throughout the
+Activity feed/notifications purely because they shared `FillSource: "paper"` with the removed local
+simulator (`src/lib/dashboard-feed.ts`, `src/lib/dashboard-ui.ts`) — now correctly labeled "Paper".
+Rebased on `origin/main` (now carries #340 rebrand + #341 DB hotfix). Verify: `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` **2350/2350 passing across 239 files**, `npm run build` green. See
+`docs/rollouts/2026-07-03-remove-paper-default-test-mode.md` (Step 2 section) and `docs/EFFORT-LOG.md`.
+
 ## 2026-07-03 — P0 boot-crash hotfix: baseline DDL vs versioned migration (Claude)
 Branch `claude/fix-baseddl-index-migration`. **Incident:** production (`trading-live`,
 pm2 `trading`) crash-looped from ~21:14 CDT 2026-07-02 (Sentry `socratic-trade`

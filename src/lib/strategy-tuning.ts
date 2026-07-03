@@ -374,7 +374,7 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
     accountConfigured: Boolean(accountNumber),
     policy: compactPolicy(policy, executionState),
     strategyPrompt: prompt,
-    performance: compactPerformance(performance, executionState.usesLocalSimulation, getPolicy(userId).tuning?.useEntryRunAttribution ?? false),
+    performance: compactPerformance(performance, executionState.mode !== "broker/live", getPolicy(userId).tuning?.useEntryRunAttribution ?? false),
     closedLotCount,
     minClosedLotsForWeightShift: minLotsForWeights,
     recentFills: fills.slice(0, 20).map((fill) => compactFill(fill, executionState)),
@@ -383,7 +383,6 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
       status: run.status,
       totalCount: run.totalCount,
       placedCount: run.placedCount,
-      testLocalCount: run.paperCount,
       proposedCount: run.proposedCount,
       blockedCount: run.blockedCount,
       summary: run.summary
@@ -409,7 +408,7 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
   const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
   const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
   if (!llmKey) {
-    const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard });
+    const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
     return applyOosGate(localProposal, userId);
   }
 
@@ -543,14 +542,14 @@ function compactPolicy(policy: TradingPolicy, executionState: ExecutionState) {
   };
 }
 
-export function compactPerformance(performance: PerformanceSummary | undefined, paperMode: boolean, useEntryAttribution = false) {
+export function compactPerformance(performance: PerformanceSummary | undefined, showPaperSide: boolean, useEntryAttribution = false) {
   if (!performance) return undefined;
   const recentAttribution = performance.attribution.slice(-8);
   return {
-    realizedPnl: paperMode ? performance.paperRealizedPnl : performance.liveRealizedPnl,
-    unrealizedPnl: paperMode ? performance.paperUnrealizedPnl : performance.liveUnrealizedPnl,
-    winRate: paperMode ? performance.paperWinRate : performance.liveWinRate,
-    averageReturnPct: paperMode ? performance.paperAverageReturnPct : performance.liveAverageReturnPct,
+    realizedPnl: showPaperSide ? performance.paperRealizedPnl : performance.liveRealizedPnl,
+    unrealizedPnl: showPaperSide ? performance.paperUnrealizedPnl : performance.liveUnrealizedPnl,
+    winRate: showPaperSide ? performance.paperWinRate : performance.liveWinRate,
+    averageReturnPct: showPaperSide ? performance.paperAverageReturnPct : performance.liveAverageReturnPct,
     fillCount: performance.fills.length,
     // Change A (consumer, flag OFF by default): when useEntryAttribution=false (default), strip the new
     // entry/exit credit fields from the context object so the tuner's serialized input is byte-for-byte
@@ -606,8 +605,7 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
   const schema = tuningSchema();
   const systemPrompt = [
     "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
-    "Review recent test/local vs live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
-    "test/local is the app's local simulator backed by local account state and simulated fills. It is not Alpaca Paper or any broker-hosted paper trading account.",
+    "Review recent paper vs live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
     `Sample-size guardrail: only propose scoringWeights (factor weight) changes when closedLotCount >= minClosedLotsForWeightShift (${MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT} closed lots). Below that the realized sample is too thin to attribute P&L to factors; return null for every scoringWeights JSON field, but describe that to the user as "no scoring-weight changes until there is enough closed-lot evidence" and focus on prompt clarity and risk sizing.`,
@@ -806,8 +804,9 @@ function localRulesProposal(input: {
   closedLotCount: number;
   missedOpportunities?: MissedOpportunitySummary;
   factorScorecard?: FactorScorecardStat[];
+  showPaperSide: boolean;
 }): StrategyTuningProposal {
-  const perf = compactPerformance(input.performance, input.policy.paperMode);
+  const perf = compactPerformance(input.performance, input.showPaperSide);
   const weakPerformance = typeof perf?.averageReturnPct === "number" && perf.averageReturnPct < 0;
   const lowSample = input.fills.length < 5;
   // Phase-7 §3.E guardrail: don't shift factor weights until enough lots have closed.
@@ -865,7 +864,7 @@ function localRulesProposal(input: {
 
   return {
     summary: lowSample
-      ? "Collect more test/local evidence, but add an explicit learning loop to the prompt now."
+      ? "Collect more trade evidence, but add an explicit learning loop to the prompt now."
       : weakPerformance
         ? "Recent average return is negative; tighten order size and require higher-quality signals."
         : "Recent performance is not flashing a drawdown warning; improve the prompt feedback loop and keep risk steady.",
@@ -894,7 +893,7 @@ function localRulesProposal(input: {
     cautions: [
       "Manual approval is required before changes are applied.",
       enoughLotsForWeights
-        ? "Validate with another test/local run after applying changes."
+        ? "Validate with another run after applying changes."
         : `Only ${input.closedLotCount}/${minLotsForWeights} closed lots — withholding factor-weight changes until the realized sample is large enough to trust.`,
       ...(lowSample ? ["The trade sample is still small, so avoid overfitting."] : []),
       ...(input.missedOpportunities?.recurringFactor && input.missedOpportunities.recurringFactorCount

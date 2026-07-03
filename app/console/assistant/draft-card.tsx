@@ -62,7 +62,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   // Stable key for the account/policy scope this preview is computed under.
   // Switching the active account rescopes the server-side policy evaluation,
   // so a verdict computed for the previous account must not keep presenting
-  // "Stage" under the new reality chip (worst case: a TEST verdict shown
+  // "Stage" under the new reality chip (worst case: a stale PAPER verdict shown
   // right after a switch to LIVE). Memoized on stable ids — not snapshot
   // object identity — so the 15s poll never re-triggers it; only a real
   // scope change does.
@@ -70,7 +70,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   const activeAccountId = activeAccount?.id;
   const accountNumber = snapshot?.policy.accountNumber;
   const scopeKey = useMemo(
-    () => `${activeAccountId ?? "local-sim"}:${accountNumber ?? ""}:${reality.mode}`,
+    () => `${activeAccountId ?? "no-account"}:${accountNumber ?? ""}:${reality.mode}`,
     [activeAccountId, accountNumber, reality.mode]
   );
 

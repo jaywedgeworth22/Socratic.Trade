@@ -114,7 +114,6 @@ describe("market replacement for stale limit orders", () => {
 function paperPolicy() {
   return {
     ...DEFAULT_POLICY,
-    paperMode: false,
     activeBroker: "alpaca" as const,
     connectedAccountId: "acct-paper",
     accountNumber: "APCA-PAPER",

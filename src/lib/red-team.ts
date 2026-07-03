@@ -62,7 +62,7 @@ The strategy has proposed to ${proposal.side.toUpperCase()} ${proposal.symbol} w
 Rationale provided: ${proposal.rationale}
 
 Your objective is to play the Devil's Advocate. You must actively search for reasons why this trade will FAIL.
-Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.
+Execution modes are distinct: broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.
 If the proposal is a BUY or COVER (bullish), you are the BEAR. Look for poor fundamentals, bad smart-money signals, or overbought technicals.
 If the proposal is a SELL or SHORT (bearish), you are the BULL. Look for strong fundamentals, insider buying, or oversold technicals.
 
@@ -73,7 +73,7 @@ Respond with a JSON object containing:
 - rejected: boolean (true if you found a critical flaw, false if approved)
 - reason: string (your counter-argument or approval reasoning)`;
 
-  const executionMode = llmExecutionMode(executionState);
+  const executionMode = llmExecutionMode(executionState) ?? "no-account";
   const userContent = JSON.stringify({
     proposal,
     quote,

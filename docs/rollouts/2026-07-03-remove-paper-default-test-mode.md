@@ -77,7 +77,80 @@ Two P2 review comments on #339, both addressed:
    typed-confirm ritual before a live toggle; harden correctness, not obedience). Historical
    `docs/reviews/2026-07-01-audit-work-split.md` copies are point-in-time records, left as-is.
 
-## Follow-ups
-- Step 2 code removal (tracked; the large piece).
-- After removal, re-scan `STATUS.md`/`PLAN.md`/`README`/docs for stale "Test mode"/"paper default"
-  language and purge it.
+## Step 2 (this commit set — code removal, same branch `claude/remove-paper-test-mode`)
+
+Delivers the code change Step 1's rules promised. Merged `origin/main` (bringing in #339's CI
+holiday-flake fix and the Socratic Trade rebrand) partway through so the branch builds on top of both
+rather than diverging.
+
+### What changed
+- **`policy.paperMode` deleted** from `TradingPolicy` (`src/lib/types.ts`), `DEFAULT_POLICY`
+  (`src/lib/defaults.ts` — also dropped `paperStartingCash`), every read/write site, `/api/policy`
+  (via `src/lib/mobile-api.ts`'s `normalizePolicyPatch` forbidden/numeric field lists), and the
+  console + legacy Settings/Guardrails UI toggles. Legacy stored-JSON policies still carrying
+  `paperMode`/`dryRun`/`paperStartingCash` are stripped on load by `mergePolicy` in both
+  `src/lib/db.ts` and `src/lib/db-profiles.ts` (documented as intentional legacy-shim, not new
+  functionality).
+- **`test/local` execution mode deleted.** `ExecutionMode` (`src/lib/types.ts`) is now just
+  `"broker/paper" | "broker/live"`. `usesLocalSimulation`, `getPaperPortfolioProjection`
+  (`src/lib/performance.ts`, ~85 lines), the local paper-fill auto-execute branch in
+  `runStrategyOnce`/`executeProposal` (`src/lib/strategy.ts`), and the local portfolio projection in
+  `src/lib/dashboard.ts` are gone.
+- **`deriveExecutionState` (`src/lib/execution-mode.ts`) rewritten as the sole hub.** Single signature
+  `deriveExecutionState(policy, activeAccount?)` (dropped the boolean overload). With a connected
+  account: mode is `broker/paper`/`broker/live` purely from `account.environment`. With **no**
+  connected account: returns `{ mode: undefined, label: "No account", submitsBrokerOrders: false,
+  clarification: "No connected broker account. Connect a broker account (paper or live) before the
+  app can place orders." }` — an honest terminal state, not a fake-fill fallback.
+- **Order-placement paths now explicitly refuse to run with no account**, instead of silently
+  defaulting to the test gateway: `runStrategyOnce`, `executeProposal`
+  (`src/lib/strategy.ts`), `withLivePreflight`/`resolveGateway` (`src/lib/broker.ts` — throws "No
+  connected broker account..." for an unrecognized/absent `activeBroker` instead of falling back to
+  `TestBrokerGateway`), `order-replacement.ts`, `synthetic-stops.ts`.
+  `preflight-live-guard.ts`'s `LivePreflightInput` simplified to just `{ mode, allowLive?, symbol?,
+  side? }` — the `ALLOW_LIVE_TRADING` env gate for `broker/live` is kept (legitimate correctness
+  hardening, not paternalism).
+- **Correctness bug found and fixed along the way**: broker-paper fills were mislabeled "Test"
+  throughout the Activity feed and notification titles (`src/lib/dashboard-feed.ts`,
+  `src/lib/dashboard-ui.ts`) purely because they shared `FillSource: "paper"` with the removed local
+  simulator. Now labeled "Paper", matching the real broker-paper account they came from. Also removed
+  the `isLocalTestMode` bypass in `dashboard.ts`'s `accountReadinessForSnapshot` — a `broker:"test"`
+  account now goes through the exact same readiness path as any other broker, no special-case.
+- **Console UI**: renamed the "test" reality tone to "none" throughout (`app/console/lib/derive.ts`,
+  `app/console/components/chrome.tsx`, `app/console/ui/primitives.tsx`,
+  `app/console/console.css` — `con-chip-test`→`con-chip-none`, `--con-test*`→`--con-none*`); copy
+  changed from "Local Simulation"/"TEST · practice money" to "No Account Connected"/"NO ACCOUNT · no
+  account connected". `app/console/orders/page.tsx` and `app/console/assistant/draft-card.tsx` copy
+  updated similarly. `app/dashboard-client.tsx` had dead code removed (`requestModeSwitch`, an
+  unreachable live-confirm modal) and its `executionModeLabel`/`getPortfolioAccountSubtitle`/
+  `executionBanner` updated for the "No account" state; also fixed a latent bug where the P&L side
+  shown was `usesLocalSimulation ? "paper" : "live"` (always "live" for a real broker-paper account)
+  — now correctly `executionState.mode === "broker/live" ? "live" : "paper"`.
+- **`TestBrokerGateway`/`broker: "test"` intentionally kept** as TEST INFRASTRUCTURE only (so the unit
+  suite runs without hitting real Alpaca/Robinhood) — comments in `src/lib/db-api-keys.ts` and
+  `src/lib/robinhood.ts` clarify it is not a product-facing mode. ~36 test files that relied on
+  `paperMode: true` (⇒ old local sim) were migrated to instead create a connected test-broker account
+  (`broker: "test"`, `environment: "paper"`, via `upsertConnectedAccount`) so execution flows through
+  the normal broker path via `TestBrokerGateway`, exercising the real code paths instead of a bypass.
+
+### Files
+Full list in commit `aceff17`: `src/lib/{types,defaults,execution-mode,preflight-live-guard,broker,
+broker-protective-stops,dashboard,dashboard-feed,dashboard-ui,db,db-profiles,db-api-keys,mobile-api,
+order-replacement,performance,post-mortem,red-team,strategy,strategy-prompts,strategy-tuning,
+synthetic-stops,execution-cost,observability,robinhood}.ts`; `app/{dashboard-client,ui/strategy-flow,
+console/lib/derive,console/components/chrome,console/orders/page,console/ui/primitives,
+console/assistant/draft-card,console/console.css}`; ~36 `test/*.ts` files migrated off
+`paperMode`/`test/local`. Plus two post-merge test fixes (`test/dashboard-feed.test.ts`,
+`test/dashboard-fill-batching.test.ts`) needed after merging `origin/main`'s unrelated changes, and
+the `AGENTS.md` stale in-progress warning replaced with a pointer to this note.
+
+### Verification
+`npx tsc --noEmit` clean · `npm run lint` 0 errors (303 pre-existing grandfathered warnings) ·
+`npm test` **2349/2349 passing across 238 files** · `npm run build` green (full route manifest
+generated, no new errors).
+
+### Follow-ups
+- Re-scanned `STATUS.md`/`docs/EFFORT-LOG.md`/`AGENTS.md`/`PLAN.md`/`README.md` for stale "Test
+  mode"/"paper default" language as part of this same doc pass.
+- Watch for Codex review comments on the PR; the pattern from #339 was 1-2 rounds of hardening
+  suggestions on the seam/edge cases.

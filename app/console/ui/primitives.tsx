@@ -64,7 +64,7 @@ export function Btn({
 
 // ── Chip ─────────────────────────────────────────────────────────────────────
 
-export type ChipTone = "muted" | "accent" | "pos" | "neg" | "warn" | "test" | "paper" | "live";
+export type ChipTone = "muted" | "accent" | "pos" | "neg" | "warn" | "none" | "paper" | "live";
 
 const CHIP_CLASS: Record<ChipTone, string | undefined> = {
   muted: undefined,
@@ -72,7 +72,7 @@ const CHIP_CLASS: Record<ChipTone, string | undefined> = {
   pos: "con-chip-pos",
   neg: "con-chip-neg",
   warn: "con-chip-warn",
-  test: "con-chip-test",
+  none: "con-chip-none",
   paper: "con-chip-paper",
   live: "con-chip-live"
 };

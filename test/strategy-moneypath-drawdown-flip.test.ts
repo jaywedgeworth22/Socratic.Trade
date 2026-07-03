@@ -85,7 +85,6 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      paperMode: true,
       llmModel: "gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
@@ -127,7 +126,6 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      paperMode: true,
       llmModel: "gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],

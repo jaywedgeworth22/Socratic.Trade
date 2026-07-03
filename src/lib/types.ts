@@ -26,7 +26,7 @@ export type LlmReasoningEffort = "low" | "medium" | "high";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
+export type ExecutionMode = "broker/paper" | "broker/live";
 export const NOTIFICATION_EVENT_TYPES = [
   "fill",
   "block",
@@ -602,8 +602,6 @@ export interface UniverseFloor {
 
 export interface TradingPolicy {
   systemState: SystemState;
-  paperMode: boolean;
-  paperStartingCash: number;
   accountNumber?: string;
   connectedAccountId?: string;
   includedIndices: IndexUniverse[];
