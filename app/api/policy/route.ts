@@ -190,7 +190,11 @@ async function validatePolicy(
   if (policy.staleLimitOrderMinutes !== undefined && (!Number.isFinite(policy.staleLimitOrderMinutes) || policy.staleLimitOrderMinutes < 0)) return "staleLimitOrderMinutes must be 0 (off) or a positive number of minutes.";
   if (Object.values(policy.scoringWeights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) return "scoring weights must be non-negative numbers.";
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
-  if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
+  if (policy.riskRules.drawdownBreakerAction !== undefined && !["halt", "close_only"].includes(policy.riskRules.drawdownBreakerAction)) return "riskRules.drawdownBreakerAction must be halt or close_only.";
+  // drawdownBreakerAction is a string enum (validated above), so exclude it from the numeric sweep — an
+  // enum value like "close_only" is NaN under Number(...) and would otherwise reject the whole save (and
+  // then every subsequent save, since it is merged from `...current.riskRules`).
+  if (Object.entries(policy.riskRules).some(([key, value]) => key !== "drawdownBreakerAction" && value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
   if (policy.taxSettings) {
     const { shortTermRatePct, longTermRatePct, washSaleMinLossUsd, washSaleHandling, iraWashSaleHandling } = policy.taxSettings;
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";

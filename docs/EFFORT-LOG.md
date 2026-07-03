@@ -84,27 +84,31 @@ to `trading.jays.services`, record the release commit + date here._
   rule (`.cursor/rules/handoff.mdc`). _(incl. coordinator Codex round: VITEST gate on the seam so a
   stray flag can't defeat the real market-closed guard; Cursor-rule rewrite; EFFORT-LOG stale-bullet
   supersede.)_
+- **#342** — De-paternalize Step 2: removed `policy.paperMode`/`paperStartingCash` and the `test/local`
+  local-simulator execution path entirely (`usesLocalSimulation`, `getPaperPortfolioProjection`, local
+  paper-fill/portfolio branches). `deriveExecutionState` (`execution-mode.ts`) is the sole hub — mode is
+  purely `broker/paper`/`broker/live` from the active account's `environment`; no account ⇒ honest
+  "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback. `TestBrokerGateway`/
+  `broker:"test"` kept as test infrastructure only (~36 test files migrated to a connected test-broker
+  account). Fixed a real bug: broker-paper fills were mislabeled "Test" in the Activity feed. 83 files,
+  +854/−1208.
 
 ---
 
 ## 🔨 In Progress
 
-- **De-paternalize Step 2: remove the runtime `test/local` path + `policy.paperMode`** (agent
-  `claude/remove-paper-test-mode`) — code-complete, gate green, **PR opened, awaiting merge**. Deleted
-  `policy.paperMode`/`paperStartingCash` from `TradingPolicy`/`DEFAULT_POLICY`/`/api/policy`/
-  `mobile-api.ts`/console UI (~35 src files); deleted the `test/local` `ExecutionMode`,
-  `usesLocalSimulation`, `getPaperPortfolioProjection`, and the local paper-fill branches in
-  `strategy.ts`/`dashboard.ts`. `deriveExecutionState` (`execution-mode.ts`) is now the sole hub:
-  mode is purely `broker/paper`/`broker/live` from the active account's `environment`; no connected
-  account ⇒ a real "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback.
-  `TestBrokerGateway`/`broker: "test"` kept as test infrastructure only — ~36 test files migrated to
-  create a connected `broker:"test"`/`environment:"paper"` account instead of `paperMode: true`, so
-  execution still flows through the normal broker path. Found and fixed a real correctness bug along
-  the way: broker-paper fills were mislabeled "Test" in the Activity feed/notifications purely because
-  they shared `FillSource: "paper"` with the removed local simulator. Rebased on `origin/main` (now
-  includes #340 rebrand + #341 DB hotfix). Verify: tsc clean, lint 0 errors,
-  **2350/2350 tests / 239 files green**, build green. See
-  `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+- **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
+  `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
+  The account-level drawdown/daily-loss breaker now **hard-halts** on breach (`systemState → "halted"`:
+  subsequent scheduled runs skip, manual `executeProposal` refuses, until the owner re-arms to
+  `"active"`) instead of the softer `close_only`. Built as the owner's **overridable preference**
+  `riskRules.drawdownBreakerAction: "halt" | "close_only"` (default `"halt"`), not a hardcoded cage; the
+  breaker is still opt-in via the thresholds. Vol-panic brake stays `close_only` (out of scope of the
+  drawdown decision). Verified current-run safety (in-run exec uses `placeEquityOrder`, not the
+  halted-throwing `executeProposal`; policy gate treats halted==close_only for the current run, so it
+  winds down gracefully). Gate green: tsc clean, lint 0 errors, **2351 tests / 239 files**, build green.
+  **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
+  follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
 
 ---
 
@@ -127,13 +131,13 @@ to `trading.jays.services`, record the release commit + date here._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Hard-halt drawdown circuit-breakers** — default-on during soak, halt autonomous trading on a
-    drawdown-threshold breach until manually re-armed.
-  - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
-    opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
-  - Build/test against a **connected broker account** (paper or live), NOT the removed local Test mode
-    / `paperMode` default (see the In Progress removal above — that default is going away). Keep the
-    existing typed-confirm ritual before any live toggle.
+  - **Hard-halt drawdown circuit-breakers** — ✅ built (In Progress → PR pending, branch
+    `claude/live-execution-hardening`): `riskRules.drawdownBreakerAction` default `"halt"` flips the
+    breaker to `systemState → "halted"` on breach until manually re-armed; overridable to `"close_only"`.
+  - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
+    stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
+  - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
+    `paperMode` default is gone (#342). Keep the existing typed-confirm ritual before any live toggle.
 - **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
   DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
   See `docs/manager-model-options.md`.
@@ -171,3 +175,7 @@ to `trading.jays.services`, record the release commit + date here._
   `policy.paperMode` + the `test/local` local-simulator execution path fully removed across ~35 src +
   36 test files; rebased on `origin/main` (#340 + #341); gate green (tsc/lint/2350 tests/build); PR
   opened, still In Progress until merged.
+- 2026-07-03 — **#342 merged** (→ Completed): paperMode/Test-mode runtime removal. Started
+  **live-execution hardening slice 1** (branch `claude/live-execution-hardening`): drawdown breaker →
+  hard-halt via overridable `riskRules.drawdownBreakerAction` (default `"halt"`); gate green
+  (tsc/lint/2351 tests/build); PR pending. Remaining: prompt-expected stop-losses (decision #2).

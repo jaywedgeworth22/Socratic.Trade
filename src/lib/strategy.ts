@@ -326,9 +326,13 @@ export async function runStrategyOnce(
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
 
     // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
-    // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
-    // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
-    // and fire a kill-switch notification, putting a human back in the loop.
+    // any single mistake; this bounds the whole account's bleed. The response is the owner's
+    // overridable preference `riskRules.drawdownBreakerAction`, defaulting to a HARD-HALT
+    // (systemState → "halted"): autonomous trading stops entirely until the owner manually re-arms
+    // (sets systemState back to "active") — subsequent scheduled runs skip and executeProposal
+    // refuses, so open positions rely on their resting broker stops. Setting it to "close_only"
+    // instead keeps the loop running for risk-reducing exits and only blocks new entries. Either
+    // way a kill-switch notification puts a human back in the loop.
     if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
@@ -339,11 +343,23 @@ export async function runStrategyOnce(
         userId
       });
       if (breaker.breached) {
-        policy.systemState = "close_only";
-        setPolicy(policy, userId);
-        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo: "close_only" }, userId);
+        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "halt";
+        const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
+        policy.systemState = revertedTo;
+        // Persist to the SAME account the run targeted (read via getPolicy(userId, targetAccountId)).
+        // Omitting targetAccountId would resolve the ACTIVE account, so a scheduler run of a non-active
+        // account could halt the wrong account and leave the breached one running.
+        setPolicy(policy, userId, targetAccountId);
+        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
         await sendNotification(
-          { type: "kill_switch", title: "Circuit breaker halted new entries", payload: { runId, reason: breaker.reason, equity } },
+          {
+            type: "kill_switch",
+            title:
+              revertedTo === "halted"
+                ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
+                : "Circuit breaker halted new entries (close-only)",
+            payload: { runId, reason: breaker.reason, equity, revertedTo }
+          },
           { policy, userId }
         );
       }
@@ -360,7 +376,8 @@ export async function runStrategyOnce(
       const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
       if (volBrake.brake) {
         policy.systemState = "close_only";
-        setPolicy(policy, userId);
+        // Persist to the run's TARGET account (same reason as the drawdown breaker above).
+        setPolicy(policy, userId, targetAccountId);
         audit("policy_violation_vol_panic", { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only" }, userId);
         await sendNotification(
           { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason } },
@@ -785,7 +802,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -870,7 +887,7 @@ export async function runStrategyOnce(
           );
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
-          autoRevertOnCapBreach(decision.reasons, policy, userId);
+          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
@@ -885,7 +902,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
         // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
@@ -1778,10 +1795,14 @@ function auditWashSaleProceed(
   );
 }
 
-function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
+function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
-  setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // Scope the demotion save to the run's target account. Omitting it resolves the ACTIVE account, so a
+  // scheduler run of a non-active account could demote — and, because the drawdown breaker may have
+  // already mutated this same policy object's systemState to "halted", HALT — the wrong account. The
+  // manual executeProposal path passes no id because it already operates on the active account.
+  setPolicy({ ...policy, strategyAuthority: "propose" }, userId, connectedAccountId);
   // The demotion must bind the REST of this run, not just the next one: callers keep using this
   // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
   // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a

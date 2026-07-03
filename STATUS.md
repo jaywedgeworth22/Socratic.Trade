@@ -8,7 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-03 — De-paternalize Step 2: remove `policy.paperMode` + Test-mode local simulator (Claude, cloud)
+## 2026-07-03 — Live-execution hardening: drawdown breaker → hard-halt (Claude, cloud)
+Branch `claude/live-execution-hardening` (off `origin/main` @ `eb54b94`, post-#342). First slice of the
+hardening build; implements owner decision #1 (drawdown breaker → HARD-HALT). The account-level
+drawdown/daily-loss circuit breaker now flips `systemState → "halted"` on breach (subsequent scheduled
+runs skip at `strategy.ts:242`; manual `executeProposal` refuses at `:1876`; owner re-arms by setting
+`systemState` back to `"active"`) instead of the softer `close_only`. Built as the owner's **overridable
+preference** `riskRules.drawdownBreakerAction: "halt" | "close_only"` (default `"halt"`) — not a
+hardcoded cage; the breaker is still opt-in via `maxDrawdownPct`/`maxDailyLossNotional`. Verified
+current-run safety: in-run decide-mode execution uses `gateway.placeEquityOrder` (NOT the
+halted-throwing `executeProposal`), and the policy gate treats `halted`==`close_only` for the current
+run, so the run that trips the breaker winds down gracefully (blocks entries, allows its exits) then
+subsequent runs hard-stop. Vol-panic brake left as `close_only` (out of scope of the drawdown decision).
+Gate green: tsc clean · lint 0 errors · **2351 tests / 239 files** · build green. **Remaining hardening
+half:** prompt-expected stop-losses (decision #2) — separate follow-up. Files: `src/lib/types.ts`,
+`src/lib/strategy.ts`, `test/strategy-moneypath-drawdown-flip.test.ts`. See
+`docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
+
+## 2026-07-03 — De-paternalize Step 2: remove `policy.paperMode` + Test-mode local simulator (Claude, cloud) — MERGED as #342
 Branch `claude/remove-paper-test-mode` (off `origin/main` post-#339). Completes the owner's directive
 from Step 1 (#339): this is a real trading app, not a simulator with a trading skin. **Removed:**
 `policy.paperMode`/`paperStartingCash` from `TradingPolicy` (`src/lib/types.ts`), `DEFAULT_POLICY`,

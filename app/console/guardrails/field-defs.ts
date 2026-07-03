@@ -20,8 +20,8 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "riskRules.stopLossPct", label: "Stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Sell automatically if a position drops this far. Wider = looser protection." },
   { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true },
   { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
-  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Circuit breaker: if the account loses this much in a day, new buys stop automatically (Exit-only). Protective sells keep working." },
-  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Circuit breaker on the fall from the account's high-water mark." },
+  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Circuit breaker: if the account loses this much in a day, autonomous trading hard-halts until you manually re-arm it (default). Open positions rely on their resting broker stops. Blank = off." },
+  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Circuit breaker on the fall from the account's high-water mark. On breach, autonomous trading hard-halts until you manually re-arm it (default)." },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
   { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on" },
   { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
