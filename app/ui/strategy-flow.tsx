@@ -83,6 +83,7 @@ type FlowSnapshot = {
   performance?: any;
   thesisScorecard?: any[];
   macroBoard?: any;
+  connectedAccounts?: any[];
 } | null | undefined;
 
 function relAge(iso?: string): string | undefined {
@@ -121,7 +122,11 @@ function buildSpecs(snapshot: FlowSnapshot): { specs: Spec[]; edges: Edge[] } {
 
   const running = policy.systemState === "active";
   const autonomous = policy.strategyAuthority === "decide";
-  const mode = policy.activeBroker === "test" || !policy.activeBroker ? "Test" : policy.paperMode ? "Paper" : "Brokerage";
+  // An account is an account: mode is purely the active connected account's environment.
+  // With no connected account there is no execution mode.
+  const connectedAccounts = Array.isArray(snapshot?.connectedAccounts) ? snapshot!.connectedAccounts! : [];
+  const activeAccount = connectedAccounts.find((a: any) => a?.id === policy.connectedAccountId) ?? connectedAccounts.find((a: any) => a?.isActive);
+  const mode = !activeAccount ? "No Account" : activeAccount.environment === "paper" ? "Paper" : "Brokerage";
   const model = policy.llmModel ?? "gpt-5.4-mini";
 
   const gateCount = [

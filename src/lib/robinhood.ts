@@ -672,8 +672,8 @@ class TestBrokerGateway implements BrokerGateway {
     };
   }
 
-  // Test-mode fills simulate instantly (placeEquityOrder returns "filled"), so no order
-  // ever rests here — there is deliberately no limit/stop/TIF data to surface in Test mode.
+  // The Test broker (test infrastructure) simulates fills instantly (placeEquityOrder returns
+  // "filled"), so no order ever rests here — there is deliberately no limit/stop/TIF data to surface.
   async getEquityOrders(): Promise<EquityOrder[]> {
     return [];
   }

@@ -1274,13 +1274,14 @@ function isPristineEmptyUniversePolicy(policy: Partial<TradingPolicy>): boolean 
 // rather than importing from db-profiles to avoid a module-load-order issue at migrate() time.
 // db-profiles.ts exports its own copy for runtime callers.
 function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
-  const legacy = policy as Partial<TradingPolicy> & { dryRun?: boolean };
-  const paperMode = policy.paperMode ?? legacy.dryRun ?? DEFAULT_POLICY.paperMode;
-  const { dryRun: _legacyDryRun, ...policyWithoutLegacyDryRun } = legacy;
+  // Strip legacy paperMode/dryRun/paperStartingCash keys that may still be present in old stored
+  // JSON — these fields were removed. An account's own `environment` (paper/live) is now the sole
+  // source of truth for execution mode; there is no policy-level override.
+  const legacy = policy as Partial<TradingPolicy> & { dryRun?: boolean; paperMode?: boolean; paperStartingCash?: number };
+  const { dryRun: _legacyDryRun, paperMode: _legacyPaperMode, paperStartingCash: _legacyPaperStartingCash, ...policyWithoutLegacyFields } = legacy;
   const merged: TradingPolicy = {
     ...DEFAULT_POLICY,
-    ...policyWithoutLegacyDryRun,
-    paperMode,
+    ...policyWithoutLegacyFields,
     scoringWeights: normalizeScoringWeights(policy.scoringWeights ?? DEFAULT_POLICY.scoringWeights),
     sectorCaps: policy.sectorCaps ?? DEFAULT_POLICY.sectorCaps,
     riskRules: { ...DEFAULT_POLICY.riskRules, ...(policy.riskRules ?? {}) },

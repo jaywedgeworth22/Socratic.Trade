@@ -34,7 +34,7 @@ function proposal(side: TradeProposal["side"] = "buy"): TradeProposal {
 }
 
 function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPolicy {
-  return { ...DEFAULT_POLICY, accountNumber: account, paperMode: true, maxOrderNotional: 10_000, tuning };
+  return { ...DEFAULT_POLICY, accountNumber: account, maxOrderNotional: 10_000, tuning };
 }
 
 /** Seed `count` closed THESIS@REGIME round-trips; first `wins` are winners (+winPct%), rest losers (-lossPct%). */

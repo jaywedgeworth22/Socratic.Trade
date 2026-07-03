@@ -571,9 +571,12 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-// A "Test" account (local simulator: real quotes, simulated fills) is always available
-// as the safe default. Selecting it = Test mode; selecting a real broker account = that
-// broker's mode. This replaces the old paperMode toggle.
+// Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
+// TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
+// the unit-test suite to exercise the normal broker execution path without hitting real Alpaca/
+// Robinhood — call it from test setup. The production app does NOT call this: an account is an
+// account, and with none connected the app correctly reports "no account" rather than defaulting
+// to a fake broker.
 export function ensureTestAccount(userId: string = "local"): void {
   const accounts = listConnectedAccounts(userId);
   if (accounts.some((a) => a.broker === "test")) return;

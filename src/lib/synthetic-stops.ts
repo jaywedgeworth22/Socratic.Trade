@@ -89,13 +89,12 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const accountNumber = policy.accountNumber;
   if (!accountNumber) return result;
 
-  const gateway = getBrokerGateway(policy, userId);
   const activeAccount = getActiveConnectedAccount(userId);
-  const executionMode: ExecutionMode = activeAccount
-    ? deriveExecutionState(policy, activeAccount).mode
-    : policy.paperMode
-      ? "test/local"
-      : "broker/live";
+  const executionState = deriveExecutionState(policy, activeAccount);
+  // An account is an account: with none connected there is no broker to protect against.
+  if (!executionState.mode) return result;
+  const executionMode: ExecutionMode = executionState.mode;
+  const gateway = getBrokerGateway(policy, userId);
   const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
 
   let positions: EquityPosition[];

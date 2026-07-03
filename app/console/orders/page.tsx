@@ -131,7 +131,7 @@ export default function OrdersPage() {
   if (!snapshot) return null;
 
   const reality = deriveReality(snapshot);
-  const test = reality.tone === "test";
+  const noAccount = reality.tone === "none";
   const live = reality.tone === "live";
   const halted = snapshot.policy.systemState === "halted";
   const thresholdMinutes = staleThresholdMinutes(snapshot.policy);
@@ -199,8 +199,8 @@ export default function OrdersPage() {
       <Card title={`Open orders (${rows.length})`} padded={false}>
         {rows.length === 0 ? (
           <Empty>
-            {test
-              ? "No working orders — Test-mode fills simulate instantly, so nothing rests here. Working orders appear when a broker Paper or Live account is active."
+            {noAccount
+              ? "No working orders — connect a broker Paper or Live account first. Working orders appear once an account is active."
               : "No working orders at the broker. When you or the strategy place a limit or stop order, it appears here until it fills, expires, or is cancelled."}
           </Empty>
         ) : (
@@ -248,7 +248,7 @@ export default function OrdersPage() {
                     quotes={quotes}
                     companyName={snapshot.symbolMetaBySymbol?.[row.order.symbol]?.companyName}
                     halted={halted}
-                    test={test}
+                    noAccount={noAccount}
                     live={live}
                     onReplace={() => setReplaceRow(row)}
                     onCancel={() => setCancelRow(row)}
@@ -263,8 +263,8 @@ export default function OrdersPage() {
       <Card title="Recent finished orders" padded={false}>
         {history.length === 0 ? (
           <Empty>
-            {test
-              ? "No broker order history in Test mode — simulated fills live on the Activity screen instead."
+            {noAccount
+              ? "No broker order history — connect a broker account to see finished orders."
               : "No finished orders reported by the broker yet."}
           </Empty>
         ) : (
@@ -343,7 +343,7 @@ function OpenOrderTr({
   quotes,
   companyName,
   halted,
-  test,
+  noAccount,
   live,
   onReplace,
   onCancel
@@ -352,7 +352,7 @@ function OpenOrderTr({
   quotes: Parameters<typeof lastScanPrice>[0];
   companyName?: string;
   halted: boolean;
-  test: boolean;
+  noAccount: boolean;
   live: boolean;
   onReplace: () => void;
   onCancel: () => void;
@@ -367,15 +367,15 @@ function OpenOrderTr({
   const tif = tifLabel(order.timeInForce);
   const filled = order.filledQuantity ?? 0;
   const showReplace = isReplaceableType(order.type) && row.remaining > 0;
-  const replaceEnabled = row.stale && !halted && !test;
+  const replaceEnabled = row.stale && !halted && !noAccount;
   const replaceTitle = !row.stale
     ? row.thresholdMinutes > 0
       ? `Becomes available once the order has been working ${row.thresholdMinutes} minutes without filling (your policy's stale threshold) — currently ${fmtMinutes(row.ageMinutes)}.`
       : "Stale-limit detection is disabled (policy stale threshold is 0), so the server refuses market replacements."
     : halted
       ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped. Cancelling stays available."
-      : test
-        ? "Market replacement needs a broker-backed Paper or Live account; Test mode has no resting broker orders."
+      : noAccount
+        ? "Market replacement needs a broker-backed Paper or Live account; no account is connected."
         : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — real money, typed confirmation required" : ""}.`;
 
   return (

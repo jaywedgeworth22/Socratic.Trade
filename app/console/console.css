@@ -14,7 +14,7 @@
    - Soft fills and borders are derived from the base palette with color-mix,
      so they adapt to both themes automatically.
 
-   Money-reality is WORD-FIRST. The three reality tones (test / paper / live)
+   Money-reality is WORD-FIRST. The three reality tones (none / paper / live)
    exist to reinforce words, never to replace them. Both palettes aim WCAG AA
    for text tokens on their surfaces. */
 
@@ -41,7 +41,7 @@
   --con-warn-contrast: #ffffff;
 
   /* Money-reality tones (reinforcement only — the word is load-bearing) */
-  --con-test: #0f766e;
+  --con-none: #64748b;
   --con-paper: #4f46e5;
   --con-live: #d1332e;
 
@@ -60,8 +60,8 @@
   --con-neg-border: color-mix(in oklab, var(--con-neg) 50%, transparent);
   --con-warn-soft: color-mix(in oklab, var(--con-warn) 12%, transparent);
   --con-warn-border: color-mix(in oklab, var(--con-warn) 45%, transparent);
-  --con-test-soft: color-mix(in oklab, var(--con-test) 10%, transparent);
-  --con-test-border: color-mix(in oklab, var(--con-test) 45%, transparent);
+  --con-none-soft: color-mix(in oklab, var(--con-none) 10%, transparent);
+  --con-none-border: color-mix(in oklab, var(--con-none) 45%, transparent);
   --con-paper-soft: color-mix(in oklab, var(--con-paper) 10%, transparent);
   --con-paper-border: color-mix(in oklab, var(--con-paper) 45%, transparent);
   --con-live-soft: color-mix(in oklab, var(--con-live) 11%, transparent);
@@ -111,7 +111,7 @@
   --con-warn: #e5aa4b;
   --con-warn-contrast: #201302;
 
-  --con-test: #2fd4bd;
+  --con-none: #94a3b8;
   --con-paper: #98a3ff;
   --con-live: #ff5d5d;
 
@@ -146,7 +146,7 @@
     --con-warn: #e5aa4b;
     --con-warn-contrast: #201302;
 
-    --con-test: #2fd4bd;
+    --con-none: #94a3b8;
     --con-paper: #98a3ff;
     --con-live: #ff5d5d;
 
@@ -160,7 +160,7 @@
 
 /* LIVE reality: an unmissable frame around the whole viewport. Words carry the
    meaning; this is the peripheral-vision reinforcement. Never shown for
-   test/paper so it can never be normalized away. */
+   no-account/paper so it can never be normalized away. */
 .console-root.console-live::after {
   content: "";
   position: fixed;
@@ -315,7 +315,7 @@
 .con-chip-pos { border-color: var(--con-pos-border); color: var(--con-pos); background: var(--con-pos-soft); }
 .con-chip-neg { border-color: var(--con-neg-border); color: var(--con-neg); background: var(--con-neg-soft); }
 .con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
-.con-chip-test { border-color: var(--con-test-border); color: var(--con-test); background: var(--con-test-soft); }
+.con-chip-none { border-color: var(--con-none-border); color: var(--con-none); background: var(--con-none-soft); }
 .con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
 .con-chip-live { border-color: var(--con-live-border); color: var(--con-live); background: var(--con-live-soft); }
 
@@ -349,8 +349,8 @@
   border-bottom: 1px solid var(--con-line);
   font-size: var(--con-fs-sm);
 }
-.con-reality-test {
-  background: linear-gradient(90deg, color-mix(in oklab, var(--con-test) 12%, transparent), color-mix(in oklab, var(--con-test) 3%, transparent));
+.con-reality-none {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-none) 12%, transparent), color-mix(in oklab, var(--con-none) 3%, transparent));
 }
 .con-reality-paper {
   background: linear-gradient(90deg, color-mix(in oklab, var(--con-paper) 12%, transparent), color-mix(in oklab, var(--con-paper) 3%, transparent));
@@ -360,7 +360,7 @@
   border-bottom-color: var(--con-live-border);
 }
 .con-reality-word { font-weight: 800; letter-spacing: 0.12em; }
-.con-reality-test .con-reality-word { color: var(--con-test); }
+.con-reality-none .con-reality-word { color: var(--con-none); }
 .con-reality-paper .con-reality-word { color: var(--con-paper); }
 .con-reality-live .con-reality-word { color: var(--con-live); }
 

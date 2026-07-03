@@ -30,7 +30,6 @@ const positions: EquityPosition[] = [{ symbol: "AAPL", quantity: 5, averageCost:
 const enabledPolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
@@ -139,7 +138,7 @@ describe("B. Red Team fails closed (surfaces availability) — never silently dr
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
     delete process.env.OPENAI_API_KEY;
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY", paperMode: true });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY" });
     setStrategyPrompt("BASE STRATEGY");
 
     const result = await debateProposal(buyProposal(), undefined, true);
@@ -151,7 +150,7 @@ describe("B. Red Team fails closed (surfaces availability) — never silently dr
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
     process.env.OPENAI_API_KEY = "sk-test";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_FAIL", paperMode: true });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_FAIL" });
     setStrategyPrompt("BASE STRATEGY");
     vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429 })));
 

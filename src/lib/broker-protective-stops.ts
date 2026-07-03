@@ -97,11 +97,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   // Would a live REPLACEMENT stop be blocked (broker/live without ALLOW_LIVE_TRADING)? If so, we must
   // not cancel an OPEN position's only stop with no replacement — that would leave it unprotected.
   // Cancels for CLOSED positions stay risk-reducing and are never blocked.
-  const liveReplaceBlocked = livePreflightBlocks({
-    mode: executionMode,
-    usesLocalSimulation: executionMode === "test/local",
-    paperMode: policy.paperMode
-  });
+  const liveReplaceBlocked = livePreflightBlocks({ mode: executionMode });
 
   // 1. Retry pending cancellations first — but for a STILL-OPEN position, skip the retry when a
   //    replacement can't be placed (keep its existing stop rather than orphaning the position).

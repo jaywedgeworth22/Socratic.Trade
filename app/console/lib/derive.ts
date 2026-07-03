@@ -16,15 +16,15 @@ import type {
 
 // ── Money-reality ────────────────────────────────────────────────────────────
 
-export type RealityTone = "test" | "paper" | "live";
+export type RealityTone = "none" | "paper" | "live";
 
 export interface RealityInfo {
-  mode: ExecutionMode;
+  mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "TEST" | "PAPER" | "LIVE";
+  word: "NO ACCOUNT" | "PAPER" | "LIVE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "practice money" | "real money";
+  phrase: "no account connected" | "practice money" | "real money";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -54,36 +54,27 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
       };
     default:
       return {
-        mode: "test/local",
-        tone: "test",
-        word: "TEST",
-        phrase: "practice money",
-        clarification: "Simulated by this app, marked to live prices. Not any broker's paper account."
+        mode: undefined,
+        tone: "none",
+        word: "NO ACCOUNT",
+        phrase: "no account connected",
+        clarification: "Connect a broker account (paper or live) before the app can place orders."
       };
   }
 }
 
-/** Mirror of the server's deriveExecutionState(policy, activeAccount). */
+/** Mirror of the server's deriveExecutionState(policy, activeAccount): an account is an
+ *  account, purely by its `environment`. With no connected account there is no execution
+ *  mode — the app cannot place orders. */
 export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
   const account = activeConnectedAccount(snapshot);
-  const mode: ExecutionMode =
-    snapshot.policy.paperMode || !account
-      ? "test/local"
-      : account.environment === "paper"
-        ? "broker/paper"
-        : "broker/live";
+  const mode: ExecutionMode | undefined = !account ? undefined : account.environment === "paper" ? "broker/paper" : "broker/live";
   return { ...realityForMode(mode), account };
 }
 
-/** Reality of a specific account ROW (switcher, connections list), derived
- *  from the account itself — never from the active policy. `policy.paperMode`
- *  describes only the ACTIVE account (the server derives it as
- *  `broker === "test"` on every read), so consulting it here would label every
- *  broker/live account "TEST · practice money" whenever the active account is
- *  the simulator — erasing the real-money warning exactly where a switch
- *  decision is being made. For the active account this matches deriveReality. */
+/** Reality of a specific account ROW (switcher, connections list), derived from the
+ *  account's own `environment` — an account is an account, whatever its broker. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
-  if (account.broker === "test") return realityForMode("test/local");
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
 
@@ -235,7 +226,7 @@ export interface DayPnl {
  *  no current equity — render "—", never invent. */
 export function deriveDayPnl(
   performance: PerformanceSummary | undefined,
-  mode: ExecutionMode,
+  mode: ExecutionMode | undefined,
   currentEquity: number | undefined
 ): DayPnl | null {
   if (!performance || typeof currentEquity !== "number" || !Number.isFinite(currentEquity)) return null;

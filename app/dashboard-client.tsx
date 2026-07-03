@@ -380,7 +380,7 @@ function plainAppError(raw: string, fallback = "Something went wrong."): string 
     return "Select an account before running the strategy. Use the account menu or Accounts modal.";
   }
   if (/agentic_allowed/i.test(message)) {
-    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account or use Test mode.";
+    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account.";
   }
   return message.length > 280 ? `${message.slice(0, 277)}...` : message;
 }
@@ -466,8 +466,8 @@ function executionBanner(state: ExecutionState): { className: string; title: str
       )
     };
   }
-  const title = "Test Account";
-  const detail = "local simulated fills only • no broker orders or real money at risk • broker paper account (e.g. Alpaca Paper Account) is more realistic";
+  const title = "No Account Connected";
+  const detail = "connect a broker account (paper or live) before the app can place orders";
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
     title: `${title} • ${detail}`,
@@ -1426,9 +1426,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           toast.success(
             body.status === "placed"
               ? `Order submitted${body.orderId ? `: ${body.orderId}` : ""}.`
-              : body.status === "paper"
-                ? "Proposal executed in Test mode."
-                : `Result: ${body.status}`
+              : `Result: ${body.status}`
           );
         }
       }
@@ -1648,7 +1646,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const executionState = executionStateFor(snapshot);
   const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
   const selectorAccounts = visibleConnectedAccounts(snapshot.connectedAccounts, hideTestAccount, activeAccountId);
-  const mode = executionState.usesLocalSimulation ? "paper" : "live";
+  const mode = executionState.mode === "broker/live" ? "live" : "paper";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
   const isAdmin = snapshot.currentUser?.isAdmin ?? false;
@@ -2356,8 +2354,9 @@ function PortfolioRail({
   const enriched = enrichPositionsForDisplay(positions, total).sort((a, b) => b.marketValue - a.marketValue);
 
   // Portfolio balances come from the active *broker* account (its API). Attribute Value/P&L to that
-  // broker + the account's last-synced time — but ONLY for a real broker. In Test mode (local
-  // simulation) there is no upstream provider, so we leave the plain label rather than invent one.
+  // broker + the account's last-synced time — but ONLY for a real broker. The local Test-broker
+  // account (test infrastructure) has no upstream provider, so we leave the plain label rather than
+  // invent one.
   const activeAcc = activeConnectedAccountFor(snapshot);
   const brokerSource = activeAcc && activeAcc.broker !== "test" ? activeAcc.broker : undefined;
   const brokerAsOf = brokerSource ? activeAcc?.updatedAt : undefined;
@@ -4851,19 +4850,10 @@ function SettingsContent({
     }
   }
 
-  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
   const activeAccount = activeConnectedAccountFor(snapshot);
   const executionState = deriveExecutionState(policy, activeAccount);
-  const brokerTargetLabel = activeAccount
-    ? activeAccount.environment === "paper"
-      ? "Paper"
-      : "Brokerage"
-    : "Broker Mode";
-  const liveBlockedReason = !activeAccount
-    ? "Connect or select a supported account before switching out of Test mode."
-    : undefined;
   const settingsAllowedUniverse = policyUniverseSymbolCount(policy);
   const scanCandidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
   const scanOutlierReserve = normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, scanCandidateLimit);
@@ -4907,19 +4897,6 @@ function SettingsContent({
 
   function toggleIndex(index: IndexUniverse, checked: boolean) {
     updatePolicy({ includedIndices: toggleIncludedIndex(policy.includedIndices, index, checked) });
-  }
-
-  function requestModeSwitch() {
-    if (policy.paperMode) {
-      if (liveBlockedReason) {
-        toast.warning(liveBlockedReason, { description: "Broker-routed Paper or Brokerage mode is optional and should only be enabled from a connected account." });
-        openAccounts();
-        return;
-      }
-      setLiveConfirmOpen(true);
-      return;
-    }
-    updatePolicy({ paperMode: true });
   }
 
   async function setAutoResumeOnBoot(enabled: boolean) {
@@ -5136,11 +5113,11 @@ function SettingsContent({
           <div className="grid gap-3 sm:grid-cols-2">
           <div className={cn(
             "rounded-lg border px-3 py-2.5 text-[13px] sm:col-span-2",
-            executionState.mode === "test/local"
-              ? "border-info/30 bg-info/8 text-info"
-              : executionState.mode === "broker/paper"
-                ? "border-up/30 bg-up/8 text-up"
-                : "border-down/40 bg-down/8 text-down"
+            executionState.mode === "broker/paper"
+              ? "border-up/30 bg-up/8 text-up"
+              : executionState.mode === "broker/live"
+                ? "border-down/40 bg-down/8 text-down"
+                : "border-info/30 bg-info/8 text-info"
           )}>
             <div className="mb-1 flex items-center gap-2 font-semibold">
               <Shield size={14} className="shrink-0" />
@@ -5268,7 +5245,7 @@ function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={16} /> : <Play size={16} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
             </Button>
-            {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
+            {/* Mode follows the account selected in the top-bar dropdown (Paper / Brokerage); no separate mode toggle. */}
           </div>
           {enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>
@@ -5823,20 +5800,6 @@ function SettingsContent({
       </>}
 
       </div>
-      <ConfirmModal
-        open={liveConfirmOpen}
-        onClose={() => setLiveConfirmOpen(false)}
-        onConfirm={() => {
-          setLiveConfirmOpen(false);
-          updatePolicy({ paperMode: false });
-        }}
-        title={`Switch to ${brokerTargetLabel} mode?`}
-        body={activeAccount?.environment === "paper"
-          ? "Paper uses a broker-hosted sandbox account when the user chooses to connect one. It is separate from Test (local simulation), may call broker paper endpoints, and does not put real capital at risk."
-          : "Brokerage can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."}
-        confirmLabel={`Switch to ${brokerTargetLabel}`}
-        tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
-      />
       <AccountDeletionModal
         open={accountDeletionOpen}
         onClose={() => setAccountDeletionOpen(false)}
@@ -6260,16 +6223,15 @@ function getProposalAccountLabel(accountNumber: string | undefined, connectedAcc
 }
 
 function executionModeLabel(mode: ExecutionMode | undefined): string {
-  if (mode === "test/local") return "Test";
   if (mode === "broker/paper") return "Paper";
   if (mode === "broker/live") return "Brokerage";
-  return "Unknown Mode";
+  return "No Account";
 }
 
 function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
   const activeAcc = activeConnectedAccountFor(snapshot);
-  if (!activeAcc || activeAcc.broker === "test") {
-    return "Local Simulation";
+  if (!activeAcc) {
+    return "No Account Connected";
   }
   if (activeAcc.broker === "robinhood") {
     return "Robinhood Agentic Account";

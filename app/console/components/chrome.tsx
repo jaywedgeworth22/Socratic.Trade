@@ -1,7 +1,7 @@
 "use client";
 
 /** Global chrome, rendered on every console screen:
- *  - word-first money-reality banner (TEST / PAPER / LIVE — words load-bearing)
+ *  - word-first money-reality banner (NO ACCOUNT / PAPER / LIVE — words load-bearing)
  *  - account scope selector
  *  - run-state × authority chip in plain words
  *  - one-click STOP that never sells (honest copy about synthetic stops)
@@ -118,11 +118,11 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           {snapshot.connectedAccounts.length === 0 && (
             <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
               <div className="flex items-center gap-2">
-                <span className="font-semibold">Local simulator</span>
-                <Chip tone="test">TEST · practice money</Chip>
+                <span className="font-semibold">No account connected</span>
+                <Chip tone="none">NO ACCOUNT · no account connected</Chip>
               </div>
               <p className="mt-1 text-[color:var(--con-muted)]">
-                No brokerage is connected. The app trades simulated cash marked to live prices.
+                Connect a broker account (paper or live) before the app can place orders.
               </p>
             </div>
           )}
