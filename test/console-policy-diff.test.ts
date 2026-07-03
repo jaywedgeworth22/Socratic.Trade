@@ -153,11 +153,12 @@ describe("console guardrails: washSaleHandling select classification", () => {
     expect(classify(def, "auto", "block")).toBe("tighter");
   });
 
-  it("treats a blank stored value as the shipped default ('block')", () => {
-    // Legacy policies without the field: blank -> "ask" must still cost the typed word.
-    expect(classify(def, undefined, "ask")).toBe("looser");
-    expect(classify(def, "ask", undefined)).toBe("tighter");
-    expect(classify(def, undefined, "block")).toBe("changed");
+  it("treats a blank stored value as the shipped default ('auto', owner decision 2026-07-03)", () => {
+    // Unset field: blank -> "block" or "ask" is TIGHTENING (auto is the loosest rank), one click.
+    expect(classify(def, undefined, "block")).toBe("tighter");
+    expect(classify(def, undefined, "ask")).toBe("tighter");
+    expect(classify(def, "ask", undefined)).toBe("looser"); // ask(1) -> blank/auto(2): looser, typed word
+    expect(classify(def, undefined, "auto")).toBe("changed"); // same rank as the default: no direction
   });
 });
 
@@ -173,8 +174,12 @@ describe("console guardrails: iraWashSaleHandling select classification", () => 
   it("classifies block->disregard as LOOSER (typed word on LIVE) and back as TIGHTER", () => {
     expect(classify(def, "block", "disregard")).toBe("looser");
     expect(classify(def, "disregard", "block")).toBe("tighter");
-    // Legacy blank value = the shipped default ("block").
-    expect(classify(def, undefined, "disregard")).toBe("looser");
-    expect(classify(def, "disregard", undefined)).toBe("tighter");
+  });
+
+  it("treats a blank stored value as the shipped default ('disregard', owner decision 2026-07-03)", () => {
+    // Unset field: blank -> "block" is TIGHTENING (disregard is the looser rank), one click.
+    expect(classify(def, undefined, "block")).toBe("tighter");
+    expect(classify(def, "block", undefined)).toBe("looser"); // block(0) -> blank/disregard(1): looser, typed word
+    expect(classify(def, undefined, "disregard")).toBe("changed"); // same rank as the default: no direction
   });
 });

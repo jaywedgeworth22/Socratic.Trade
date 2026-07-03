@@ -278,7 +278,10 @@ describe("chat draft policy bridge", () => {
         additionalSymbols: ["AAPL"],
         maxOrderNotional: 100000,
         maxOrderPctOfNav: undefined,
-        maxDailyNotional: 1000000
+        maxDailyNotional: 1000000,
+        // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" so
+        // this test still exercises a hard-blocked wash-sale-locked draft, not the advisory default.
+        taxSettings: { ...(getPolicy(DEFAULT_REQUEST_USER_ID).taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 }), washSaleHandling: "block" }
       },
       DEFAULT_REQUEST_USER_ID
     );

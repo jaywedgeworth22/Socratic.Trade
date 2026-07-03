@@ -93,10 +93,13 @@ export const MARGIN_MINIMUM_EQUITY = 2_000;
 export const OPENING_ORDER_HEADROOM_PCT = 5;
 
 /**
- * "auto" wash-sale handling: a locked rebuy proceeds only when its expected edge (dollars) is at
- * least this multiple of the priced tax cost (disallowed loss × shortTermRatePct). 3× is the
- * owner-approved "sane multiple" — the trade's conviction-weighted profit target must clearly
- * dominate a CERTAIN, immediate tax cost before the system spends it autonomously.
+ * RECEIPT-ONLY LABEL (no longer a gate threshold — owner decision 2026-07-03). Historically "auto"
+ * wash-sale handling required the expected edge to clear this multiple of the priced tax cost
+ * before proceeding; the owner rejected that as pseudo-math (the "expected edge" side of the
+ * comparison was itself derived from the LLM's own confidenceScore/bracketTakeProfit outputs, so
+ * the gate was re-arithmetizing the model's judgment rather than adding an independent check).
+ * "auto" now always proceeds; this constant is retained only to label
+ * decision.washSale.edgeMultiple on the receipt so historical records stay self-describing.
  */
 export const WASH_SALE_AUTO_EDGE_MULTIPLE = 3;
 
@@ -155,9 +158,12 @@ export function isIraTaxRegime(
 }
 
 /**
- * Deterministic expected edge (dollars) used by the "auto" wash-sale guard.
+ * RECEIPT TELEMETRY, not a gate (owner decision 2026-07-03 — see WASH_SALE_AUTO_EDGE_MULTIPLE).
+ * Computes the "expected edge" (dollars) for a wash-sale-locked BUY under "auto" handling, purely
+ * to record it on decision.washSale for transparency; it no longer decides whether the buy
+ * proceeds ("auto" always proceeds).
  *
- * Signal choice (documented per the owner spec — "pick the most defensible signal"):
+ * Signal choice (documented per the original owner spec — "pick the most defensible signal"):
  *
  *   expectedEdge$ = estimatedNotional × (takeProfit% / 100) × (confidenceScore / 100)
  *
@@ -168,9 +174,8 @@ export function isIraTaxRegime(
  * proposal-level bracketTakeProfit (with a known referencePrice) takes precedence over the
  * policy-level percentage because it is the more specific target for THIS trade.
  *
- * Fail-safe degradation: a missing/invalid conviction, target, or notional yields $0 edge, which
- * always FAILS the guard — when the upside can't be priced, the system never spends a certain,
- * priced tax cost on it.
+ * Degradation: a missing/invalid conviction, target, or notional yields $0 — an honest "could not
+ * price the upside" receipt value, not a failure of anything.
  */
 export function washSaleExpectedEdgeUsd(
   proposal: TradeProposal,
@@ -502,39 +507,44 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // locked set. This gate is server-side only and stays the single point of truth.
   //
   // taxSettings.washSaleHandling decides what a lockout MEANS for a TAXABLE buyer:
-  //   "block" (default) — refuse the buy outright (the original behavior, byte-compatible).
+  //   "block"           — refuse the buy outright (the original hard-stop behavior). Available as
+  //                       a stricter opt-in; no longer the default (owner decision 2026-07-03).
   //   "ask"             — refuse here, but mark the failure ESCALATABLE with the priced cost
   //                       (disallowed loss × shortTermRatePct). The strategy loop turns it into
   //                       a pending-approval card (both propose and decide authority). Approving
   //                       that card re-runs THIS gate with a server-stored override token
   //                       (context.approvedEscalations, read from the proposal row the server
   //                       itself wrote) — the ONLY way a locked buy passes in "ask" mode.
-  //   "auto"            — deterministic guard: proceed only when the proposal's expected edge
-  //                       (washSaleExpectedEdgeUsd) is >= WASH_SALE_AUTO_EDGE_MULTIPLE × the
-  //                       priced cost; otherwise refuse with the math in the reason. Both
-  //                       outcomes are recorded on decision.washSale — never silent.
+  //   "auto" (DEFAULT)  — ALWAYS proceeds (owner decision 2026-07-03: a deterministic edge-vs-cost
+  //                       veto here would just re-arithmetize the LLM's own outputs — confidence,
+  //                       bracket target — against an arbitrary multiple, not add independent
+  //                       judgment). The priced tax cost (washSaleExpectedEdgeUsd,
+  //                       estimatedTaxCostUsd) still rides decision.washSale as RECEIPT telemetry
+  //                       and is threaded into the strategist prompt (taxContext.washSaleRebuyCosts)
+  //                       so the model weighs it against conviction itself — never silent, never a
+  //                       hard block, unless an operator explicitly opts into "block" or "ask".
   //
   // IRA-REPLACEMENT RULE (Rev. Rul. 2008-5): when the BUYING account is a roth/traditional
   // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
   // (IRA losses never contribute locks — see tax.ts), and buying the replacement inside the IRA
   // PERMANENTLY destroys the disallowed loss. Governed by taxSettings.iraWashSaleHandling:
-  //   "block" (default) — hard block in EVERY washSaleHandling mode, ignoring override tokens,
-  //     and — unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is
-  //     off: resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has
-  //     no benefit INSIDE the account), so it cannot switch off the cross-account
-  //     permanent-harm rule. Byte-compatible with the pre-setting behavior.
-  //   "disregard" — owner-approved per-account opt-in: the buy PROCEEDS through the normal
-  //     authority flow (all other gates unchanged). Rationale: brokers do not report
+  //   "block" — hard block in EVERY washSaleHandling mode, ignoring override tokens, and —
+  //     unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is off:
+  //     resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has no
+  //     benefit INSIDE the account), so it cannot switch off the cross-account permanent-harm
+  //     rule. Available as a stricter per-account opt-in; no longer the default.
+  //   "disregard" (DEFAULT) — the buy PROCEEDS through the normal authority flow (all other
+  //     gates unchanged). Rationale (owner decision 2026-07-03): brokers do not report
   //     cross-account IRA wash sales to the IRS — the rule only bites under audit — so
-  //     respecting it is the account owner's call. NEVER silent: decision.washSale records
-  //     outcome "ira_disregarded" with the verbatim IRA_WASH_SALE_DISREGARD_NOTE plus the
-  //     priced provenance, the run loop / approval path audit it
-  //     (wash_sale_ira_disregarded), and the note renders wherever the purchase shows.
+  //     respecting it is the account owner's call, not a hard system stop. NEVER silent:
+  //     decision.washSale records outcome "ira_disregarded" with the verbatim
+  //     IRA_WASH_SALE_DISREGARD_NOTE plus the priced provenance, the run loop / approval path
+  //     audit it (wash_sale_ira_disregarded), and the note renders wherever the purchase shows.
   //     Override tokens stay irrelevant to IRA outcomes in both settings.
   if (proposal.side === "buy") {
     const taxSettings = context.policy.taxSettings;
     const guardOn = taxSettings?.washSaleGuard ?? true;
-    const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? "block";
+    const handling: WashSaleHandling = taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
     // IRA detection. The ConnectedAccount row (context.accountTaxationType) is the SOURCE OF
     // TRUTH: when the row states a regime it DECIDES — a stale IRA value left behind in policy
     // taxSettings must not reclassify a now-taxable account (that would apply the Rev. Rul.
@@ -571,7 +581,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
             entry.token.length > 0
         );
         if (buyerIsIra) {
-          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? "block";
+          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard";
           if (iraHandling === "disregard") {
             // Owner-approved opt-in: proceed, annotated + audited (see the gate comment above).
             // No reason is pushed, so the buy flows through the normal authority path; every
@@ -634,34 +644,21 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
           });
           washSaleAudit = { ...auditBase, outcome: "ask_escalated" };
         } else if (handling === "auto") {
+          // Owner decision (2026-07-03): "auto" ALWAYS proceeds — no deterministic threshold veto.
+          // The removed edge-vs-cost gate re-arithmetized the LLM's OWN outputs (confidenceScore,
+          // bracketTakeProfit) against an arbitrary WASH_SALE_AUTO_EDGE_MULTIPLE constant, so it
+          // wasn't an independent check — it was second-guessing the model with its own numbers.
+          // The priced tax cost is real deterministic information, so it stays: it rides the
+          // decision as RECEIPT telemetry (never a veto) and is threaded into the strategist
+          // prompt (taxContext.washSaleRebuyCosts) so the model can weigh it against conviction
+          // itself, explaining that tradeoff in the rationale.
           const expectedEdgeUsd = washSaleExpectedEdgeUsd(proposal, context.policy, estimatedNotional);
-          const requiredEdgeUsd =
-            estimatedTaxCostUsd != null ? round2(estimatedTaxCostUsd * WASH_SALE_AUTO_EDGE_MULTIPLE) : undefined;
-          if (estimatedTaxCostUsd != null && requiredEdgeUsd != null && expectedEdgeUsd >= requiredEdgeUsd) {
-            washSaleAudit = {
-              ...auditBase,
-              outcome: "auto_proceeded",
-              expectedEdgeUsd,
-              requiredEdgeUsd,
-              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
-            };
-          } else {
-            reasons.push(
-              `wash_sale_auto_skip: rebuying ${symbol} forfeits ` +
-                (estimatedTaxCostUsd != null ? `~${dollars(estimatedTaxCostUsd)}` : "an unpriceable amount") +
-                ` of tax deduction (wash sale — ${lockNote}), and the expected edge ${dollars(expectedEdgeUsd)}` +
-                (requiredEdgeUsd != null
-                  ? ` is below the required ${WASH_SALE_AUTO_EDGE_MULTIPLE}x cost = ${dollars(requiredEdgeUsd)}.`
-                  : ` cannot clear a cost that could not be priced (fail-safe skip).`)
-            );
-            washSaleAudit = {
-              ...auditBase,
-              outcome: "auto_skipped",
-              expectedEdgeUsd,
-              ...(requiredEdgeUsd != null ? { requiredEdgeUsd } : {}),
-              edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
-            };
-          }
+          washSaleAudit = {
+            ...auditBase,
+            outcome: "auto_proceeded",
+            expectedEdgeUsd,
+            edgeMultiple: WASH_SALE_AUTO_EDGE_MULTIPLE
+          };
         } else {
           reasons.push(
             `${symbol} is in a 30-day wash-sale lockout (${lockNote}); rebuying now would disallow that loss` +

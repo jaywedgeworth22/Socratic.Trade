@@ -57,7 +57,17 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
+- **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude, cloud,
+  pushed 2026-07-03, no PR yet). Owner decision: `taxSettings.washSaleHandling` default
+  `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.
+  Mid-task correction: "auto" no longer vetoes on a deterministic edge-vs-tax-cost threshold at
+  all (removed as pseudo-math — it re-arithmetized the LLM's own confidence/target outputs); it
+  now always proceeds, with the priced tax cost recorded on the receipt and threaded into the
+  strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
+  machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
+  2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
+  **Landing deferred** until the holiday-date test fix merges — branch is pushed, not PR'd. See
+  `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
 
 ---
 

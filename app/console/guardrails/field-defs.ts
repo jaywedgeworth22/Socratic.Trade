@@ -83,17 +83,17 @@ export const TAX_RULES: FieldDef[] = [
     label: "Wash-sale rebuy handling",
     kind: "select",
     options: [
-      { value: "block", label: "Block (default)" },
+      { value: "block", label: "Block (strict)" },
       { value: "ask", label: "Ask me (priced approval)" },
-      { value: "auto", label: "Auto (edge must beat cost)" }
+      { value: "auto", label: "Auto (proceeds, priced) — default" }
     ],
     // block -> ask -> auto is strictly looser: each step lets a tax-costly rebuy get closer to
     // executing. Moving down this ladder on LIVE costs the typed word.
     looseRank: { block: 0, ask: 1, auto: 2 },
     hint:
       "What happens when the strategy wants to rebuy a stock sold at a loss in the last 30 days (wash sale). " +
-      "Block: refused outright. Ask: it becomes a pending approval showing the tax deduction you'd forfeit (loss × your short-term rate) — your call. " +
-      "Auto: the system may rebuy on its own, but only when the trade's expected edge is at least 3× that forfeited deduction; otherwise it skips and logs why. " +
+      "Auto (default): the rebuy proceeds — the forfeited tax deduction (loss × your short-term rate) is priced and shown in the rationale/receipt, but it's the strategy's own call, not a hard block. " +
+      "Ask: it becomes a pending approval showing the tax deduction you'd forfeit — your call. Block: refused outright (a stricter opt-in). " +
       "Rebuying inside an IRA while a taxable-account loss is locked is governed by the separate IRA setting below."
   },
   {
@@ -101,16 +101,17 @@ export const TAX_RULES: FieldDef[] = [
     label: "IRA wash-sale rebuys",
     kind: "select",
     options: [
-      { value: "block", label: "Block (default)" },
-      { value: "disregard", label: "Disregard (accept audit risk)" }
+      { value: "block", label: "Block (strict)" },
+      { value: "disregard", label: "Disregard (accept audit risk) — default" }
     ],
     // block -> disregard is strictly looser: it lets a rebuy execute that tax law says destroys
     // the loss deduction. Changing it on LIVE costs the typed word.
     looseRank: { block: 0, disregard: 1 },
     hint:
       "What happens when this IRA wants to rebuy a stock a TAXABLE account of yours sold at a loss in the last 30 days. " +
-      "Under Rev. Rul. 2008-5 that replacement purchase permanently destroys the loss deduction — the IRA never gets a basis adjustment, so Block refuses it in every wash-sale handling mode (default). " +
-      "Disregard lets the buy proceed anyway: brokers do not report cross-account IRA wash sales to the IRS, so in practice the rule only bites under audit — choosing this is YOUR explicit acceptance of that audit risk. " +
+      "Under Rev. Rul. 2008-5 that replacement purchase permanently destroys the loss deduction — the IRA never gets a basis adjustment. " +
+      "Disregard (default) lets the buy proceed anyway: brokers do not report cross-account IRA wash sales to the IRS, so in practice the rule only bites under audit — this setting is YOUR explicit acceptance of that audit risk, made on your behalf by default. " +
+      "Block refuses the rebuy in every wash-sale handling mode instead (a stricter opt-in). " +
       "Disregarded purchases are never silent: each one is annotated \"Wash Sale (Technically, but IRA purchase unreported to IRS)\" on the card and in Activity."
   },
   {

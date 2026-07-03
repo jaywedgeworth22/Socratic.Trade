@@ -85,12 +85,25 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
   it("wash-sale prompt guidance: IRA-disregard PERMITS locked rebuys, taking precedence over washSaleHandling", async () => {
     const { buildBullSystem } = await import("../src/lib/strategy-prompts");
     const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
-    // Default block: absolute prohibition.
+    // "block" (an explicit stricter opt-in, no longer the default): absolute prohibition.
     expect(buildBullSystem({ ...taxBase, washSaleHandling: "block" })).toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
-    // IRA-disregard PERMITS the rebuy and takes precedence even when washSaleHandling is the default block.
+    // IRA-disregard PERMITS the rebuy and takes precedence even when washSaleHandling is "block".
     const iraPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "block", iraWashSaleDisregard: true });
     expect(iraPrompt).toContain("You MAY propose a BUY of a symbol in `washSaleLockedSymbols`");
     expect(iraPrompt).toContain("annotated as a technically-forfeited wash sale");
     expect(iraPrompt).not.toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
+  });
+
+  it("wash-sale prompt guidance: 'auto' (the default) tells the model the buy always proceeds and to weigh the priced tax cost itself", async () => {
+    const { buildBullSystem } = await import("../src/lib/strategy-prompts");
+    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    const autoPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "auto" });
+    // Owner decision 2026-07-03: no deterministic edge-vs-cost threshold language remains — the
+    // model is told this is its own judgment call, referencing the priced cost in taxContext.
+    expect(autoPrompt).not.toContain("ONLY when its expected edge is at least");
+    expect(autoPrompt).toContain("`taxContext.washSaleRebuyCosts`");
+    expect(autoPrompt).toContain("YOUR judgment call");
+    expect(autoPrompt).toContain("estimatedTaxCostUsd");
+    expect(autoPrompt).not.toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
   });
 });
