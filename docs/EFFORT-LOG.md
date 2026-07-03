@@ -57,7 +57,25 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
+- **De-paternalize: kill paper-as-default + Test mode** (coordinator, cloud) — owner directive
+  (repeated/emphatic): real trading app, owner accepts 100% risk; stop treating paper as default and
+  DELETE Test mode / the local simulator; don't protect the owner's money from agent bugs.
+  **Step 1 (done, PR pending):** `AGENTS.md` — deleted the paper-default / `paperMode:false` Don't-rule
+  + the "defaults to Test mode" framing; added a "Product philosophy — real trading, owner's risk"
+  section (an account is an account; no local-sim; harden CORRECTNESS not OBEDIENCE; guardrails are the
+  owner's overridable prefs). **Step 2 (in progress, separate PR):** remove the `test/local` /
+  `usesLocalSimulation` execution path + `paperMode`-as-default across ~35 src + 36 test files
+  (`execution-mode.ts` hub → strategy paper-fill branch, dashboard projection, defaults, tests). Land
+  in coherent green pieces.
+- **CI holiday-flake fix (unblocks all weekend CI)** (coordinator, cloud, branch
+  `claude/kill-paper-default-rules` / #339) — `verify` went red because 2026-07-03 is the observed US
+  July 4 market holiday: `isTradingDay()` false ⇒ `runStrategyOnce`'s market-closed guard skipped every
+  non-manual run ⇒ ~17 strategy/persistence assertions red (all `run_skipped_market_closed`). Weekends
+  would keep it red through Mon, blocking #339 + rebrand + the paperMode-removal PR. Fixed centrally
+  (`isTradingDay(date?)` returns true for the no-arg "today" call under `AGENTIC_TEST_FORCE_TRADING_DAY=1`,
+  set only by `vitest.config` `test.env`; explicit-date calendar calls untouched). **Zero test-file
+  edits** so it does NOT collide with `claude/remove-paper-test-mode`. Full suite 2365 green. **Note for
+  Step-2:** do NOT re-add per-file `isTradingDay` mocks — the calendar is already deterministic in tests.
 
 ---
 
@@ -84,7 +102,9 @@ to `trading.jays.services`, record the release commit + date here._
     drawdown-threshold breach until manually re-armed.
   - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
     opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
-  - Build behind paper-mode defaults; do not toggle live without the existing typed-confirm ritual.
+  - Build/test against a **connected broker account** (paper or live), NOT the removed local Test mode
+    / `paperMode` default (see the In Progress removal above — that default is going away). Keep the
+    existing typed-confirm ritual before any live toggle.
 - **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
   DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
   See `docs/manager-model-options.md`.
@@ -108,3 +128,6 @@ to `trading.jays.services`, record the release commit + date here._
   Blocked → Ready. Added `docs/manager-model-options.md`.
 - 2026-07-03 — #337 merged (→ Completed). In Progress now empty; next work is the Ready items
   (live-execution hardening + Manager-model A/B).
+- 2026-07-03 — Added the CI holiday-flake fix (In Progress → on #339) after `verify` went red on the
+  observed July 4 closure; fixed via a `vitest.config` `test.env` seam in `isTradingDay`, zero test-file
+  edits so it won't collide with the paperMode-removal branch.
