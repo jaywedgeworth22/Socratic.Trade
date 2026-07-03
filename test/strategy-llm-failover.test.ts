@@ -96,6 +96,12 @@ describe("cross-provider Bull failover (Chat A item 4)", () => {
     const bullStep = result.llmSteps?.find((s) => s.step === "bull");
     expect(bullStep?.provider).toBe("gemini");
     expect(bullStep?.reason ?? "").toMatch(/fallback|served|failed/i);
+    // t3: each proposal is stamped with the FAILOVER-AWARE served model — the fallback that
+    // actually generated it, not the configured primary (gpt-4.1-mini).
+    expect(result.proposals.length).toBeGreaterThan(0);
+    for (const p of result.proposals) {
+      expect(p.proposal.proposedByModel).toBe("gemini-2.5-flash");
+    }
   }, 30_000);
 
   it("flag OFF (default): a primary 429 is a hard failure — no failover, behavior unchanged", async () => {

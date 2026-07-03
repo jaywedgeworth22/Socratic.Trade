@@ -30,38 +30,43 @@ export interface MacroData {
   /**
    * Sourcing flag for the FRED suite (dashboard-only; excluded from the LLM prompt by pruneMacro):
    * true  = a keyed FRED fetch ran this session and the present fields are real. Any series that
-   *         failed is blanked to "" (NOT a DEFAULT_MACRO placeholder), so a partial fetch never
-   *         renders a fabricated value — the console shows those specific tiles as "—";
-   * false = no FRED fetch happened — every field except possibly `vix` is a DEFAULT_MACRO
-   *         placeholder constant. `vix` is a live reading iff `asOf` is a real date (the
-   *         key-free Yahoo ^VIX fallback succeeded); `asOf === "unavailable"` means even
-   *         the VIX is a placeholder.
+   *         failed is blanked to "" (never a fabricated value), so a partial fetch never renders
+   *         one — the console shows those specific tiles as "—";
+   * false = no FRED fetch happened — every FRED field is blanked to "". `vix` is a live reading
+   *         iff `asOf` is a real date (the key-free Yahoo ^VIX fallback succeeded);
+   *         `asOf === "unavailable"` means even the VIX is blank.
    * undefined = payload from an older build; callers should fall back to the asOf heuristic.
    */
   fredSourced?: boolean;
 }
 
-const DEFAULT_MACRO: MacroData = {
-  fedFundsRate: "5.25%",
-  dgs3moTreasury: "5.10%",
-  dgs2Treasury: "4.60%",
-  dgs10Treasury: "4.20%",
-  inflationExpectation10y: "2.30%",
-  cpiInflation: "3.10%",
-  corePCE: "2.80%",
-  realGDPGrowth: "2.00%",
-  unemploymentRate: "3.90%",
-  initialClaims: "220K",
-  m2MoneySupply: "20.8T",
-  m2GrowthYoY: "2.50%",
-  hyCreditSpread: "3.20%",
-  usdIndex: "121.00",
-  wtiOil: "$75.00",
-  housingStarts: "1.3M",
-  consumerSentiment: "75.0",
-  vix: "15.00",
-  vix3m: "17.00",
-  asOf: new Date().toISOString().split("T")[0],
+/**
+ * Every data field blanked to "" — the same partial-fetch convention the console renders as an em
+ * dash and pruneMacro now drops from the strategy prompt. This replaced the old DEFAULT_MACRO
+ * placeholder constants: fabricated readings (a hardcoded inverted yield curve, a fake VIX) must
+ * never reach determineMarketRegime, deriveMacroMetrics, or the strategist as if they were data.
+ */
+const BLANK_MACRO: MacroData = {
+  fedFundsRate: "",
+  dgs3moTreasury: "",
+  dgs2Treasury: "",
+  dgs10Treasury: "",
+  inflationExpectation10y: "",
+  cpiInflation: "",
+  corePCE: "",
+  realGDPGrowth: "",
+  unemploymentRate: "",
+  initialClaims: "",
+  m2MoneySupply: "",
+  m2GrowthYoY: "",
+  hyCreditSpread: "",
+  usdIndex: "",
+  wtiOil: "",
+  housingStarts: "",
+  consumerSentiment: "",
+  vix: "",
+  vix3m: "",
+  asOf: "unavailable",
   fredSourced: false
 };
 
@@ -98,7 +103,7 @@ function macroCacheScopeForKeySource(source: ApiKeySource): MacroCacheScope {
     // default result is also globally shared (it carries no licensed data).
     return shareUserKeyedMacro() ? "shared" : "private";
   }
-  // source === "none": no key at all — the DEFAULT_MACRO constant with
+  // source === "none": no key at all — the BLANK_MACRO payload with
   // asOf="unavailable" is public and safe to share globally.
   return "shared";
 }
@@ -223,16 +228,20 @@ export async function fetchMacroData(userId?: string): Promise<MacroData> {
     return data;
   } catch (error) {
     console.error("[macro] failed to fetch macroeconomic data:", error);
-    // Fetch failed — same as unsourced: flag it so the regime classifier stays Unknown.
-    return { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
+    // Fetch failed — same as unsourced: every field blank ("" / asOf "unavailable") so the regime
+    // classifier stays Unknown and no placeholder string ever reaches the prompt or a metric.
+    return { ...BLANK_MACRO };
   }
 }
 
 /**
  * Fallback for "no usable FRED data" (no key, or a configured key whose every series fetch failed).
  * Tries to at least fetch a live ^VIX from Yahoo Finance (key-free) so the regime classifier gets a
- * real volatility reading instead of staying "Unknown"; every FRED field stays a DEFAULT_MACRO
- * placeholder and `fredSourced` is false either way.
+ * real volatility reading instead of staying "Unknown"; every FRED field is blanked to "" (the
+ * partial-fetch convention — em dash on the console, dropped from the prompt by pruneMacro) and
+ * `fredSourced` is false either way. Blank, not placeholder: the old DEFAULT_MACRO constants
+ * carried a fabricated inverted curve that distorted determineMarketRegime and fed the strategist
+ * placeholder metrics via deriveMacroMetrics.
  *
  * Cached under the CALLER's scope (not hardcoded "shared"): a configured per-USER key that failed
  * must write only that user's PRIVATE entry. Hardcoding "shared" here poisoned the global cache —
@@ -244,16 +253,16 @@ async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | und
   const liveVix = await fetchVixFromYahoo();
   if (liveVix !== null) {
     const lightMacro: MacroData = {
-      ...DEFAULT_MACRO,
+      ...BLANK_MACRO,
       vix: liveVix.toFixed(2),
       asOf: new Date().toISOString().split("T")[0],
-      fredSourced: false // only the VIX is live; every FRED field is a placeholder constant
+      fredSourced: false // only the VIX is live; every FRED field is blank
     };
     writeMacroCache(scope, userId, lightMacro, now + CACHE_TTL_MS);
     return lightMacro;
   }
-  // VIX fetch also failed — fall back to "unavailable" so regime stays Unknown.
-  const fallback = { ...DEFAULT_MACRO, asOf: "unavailable", fredSourced: false };
+  // VIX fetch also failed — everything blank ("unavailable") so the regime stays Unknown.
+  const fallback = { ...BLANK_MACRO };
   writeMacroCache(scope, userId, fallback, now + CACHE_TTL_MS);
   return fallback;
 }
@@ -296,10 +305,11 @@ export function pruneMacro(
   previous?: MacroData | null
 ): { macro: Record<string, string>; omitted: string[] } {
   // Only the string data fields go to the LLM. Meta/sourcing flags (fredSourced) are
-  // dashboard-only — filtering here keeps the strategy prompt payload byte-identical
-  // to what it was before the flag existed.
+  // dashboard-only, and empty-string fields (an unsourced/failed series — the value the console
+  // renders as an em dash) are dropped entirely: the strategist must never see a blank or
+  // placeholder reading presented as data.
   const entries = (Object.entries(current) as Array<[keyof MacroData, MacroData[keyof MacroData]]>).filter(
-    (entry): entry is [keyof MacroData, string] => typeof entry[1] === "string"
+    (entry): entry is [keyof MacroData, string] => typeof entry[1] === "string" && entry[1] !== ""
   );
   if (!previous) return { macro: Object.fromEntries(entries), omitted: [] };
   const macro: Record<string, string> = {};

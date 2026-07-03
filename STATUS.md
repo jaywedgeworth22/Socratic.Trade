@@ -4,6 +4,30 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Per-proposal model attribution + macro placeholder honesty (Claude)
+Branch `claude/strategy-attribution-macro-honesty` (isolated worktree off
+`origin/main` @ `da07d4bc`), two verified-open money-path-adjacent follow-ups:
+**(t3)** proposals now persist the FAILOVER-AWARE served model —
+`TradeProposal.proposedByModel` stamped from `bullServedModel` on the Bull map
+AND re-stamped on Bear survivors (the Bear's strict schema strips unknown
+fields), plus `redTeamVerdict.model` from the debate's actually-served model
+(`RedTeamDebateResult.model`, set on both the OpenAI-compatible and Anthropic
+paths); the console approval card reads persisted-first with policy fallback
+only for legacy proposals (its stale "not yet persisted" comment is gone). The
+legacy dashboard's Bear Review block renders no model, so nothing to mirror.
+**(t6)** no-FRED setups no longer feed the strategist placeholder constants:
+`DEFAULT_MACRO` → `BLANK_MACRO` (every field `""`), all three fallback paths
+(VIX-only, VIX-failed, outer catch) blank instead of fabricate, and
+`pruneMacro` drops `""` fields from the prompt payload entirely — so the
+placeholder inverted curve can no longer distort `determineMarketRegime`
+(VIX-only 12 → Risk-On, not "Cautious (Inverted Curve)") and
+`deriveMacroMetrics` derives nothing from blanks. Console + legacy macro UIs
+already render `""` as em dash; `fredSourced` semantics unchanged. Verified:
+lint 0 errors (295 grandfathered warnings), tsc clean, 2353 tests / 237 files,
+build green. See `docs/rollouts/2026-07-02-attribution-macro-honesty.md`.
+Next: land via `scripts/land.sh` + auto-merge; follow-up idea — surface
+per-model hit rates on Results now that attribution is persisted.
+
 ## 2026-07-02 — Integration worktree sync + unfinished local changes (Cursor)
 Integration worktree (`main`) was **51 commits behind `origin/main`** with
 uncommitted local edits (Sentry SDK bump + short/cover clarity comments).

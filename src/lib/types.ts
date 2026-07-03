@@ -816,6 +816,14 @@ export interface TradeProposal {
   entryMarketRegime: string;
   confidenceScore?: number;
   /**
+   * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served
+   * model, which can differ from policy.llmModel when a fallback served the run). Persisted with
+   * the proposal JSON so approval-time model attribution stays accurate even if the owner swaps
+   * models between proposal and review. Optional: legacy persisted proposals predate it — readers
+   * fall back to the snapshot policy's configured model.
+   */
+  proposedByModel?: string;
+  /**
    * Decision-time market price captured when the proposal was generated. Serves as the entry anchor
    * for the deterministic entry-drift guard (policy.maxEntryDriftPct) at approval time. Persisted with
    * the proposal so the guard can compare it against the fresh price even when approval happens hours
@@ -849,8 +857,11 @@ export interface TradeProposal {
    *     proposal will normally have `rejected: false`; the field records the surviving verdict).
    *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
    *   - `reason`: the Bear's counter-argument or approval reasoning.
+   *   - `model`: the model that actually served the debate (per-proposal Red Team resolution,
+   *     including the cross-provider Anthropic path). Optional: legacy persisted verdicts predate
+   *     it — readers fall back to the snapshot policy's configured red-team model.
    */
-  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string };
+  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
