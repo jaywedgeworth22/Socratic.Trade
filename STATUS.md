@@ -4,6 +4,30 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+> **Board:** `docs/EFFORT-LOG.md` is now the single cross-agent effort ledger
+> (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
+> current per the `AGENTS.md` handoff protocol.
+
+## 2026-07-03 — Scan price provenance: sources.price in mergeQuoteData (Claude, cloud)
+Branch `claude/mergequote-price-provenance` (off `origin/main` @ `bea45e2`). Closes
+the last open item of the #327 scan-data follow-up (task #28): `mergeQuoteData`
+replaces `price` from a live broker/Yahoo quote but `refreshSideProvenance` only
+refreshed bid/ask/volume, so a merged broker `price` kept the SCREENER's stale
+`sources.price` and the drilldown/table price tooltip misattributed the shown
+value. Fixed by attributing `price` to the merge provider (price is a real datum
+even when the derived SPREAD is synthetic — the synthetic flags describe bid/ask
+only); the early-return guard now also honors a price-only merge. Two tests in
+`test/market.test.ts` (broker-price attribution on both tiers; real-price provider
+even with a synthetic spread). Quartet: lint 0 errors (295 grandfathered warnings),
+tsc clean, full test + build running/green. Reconciliation note: EVERYTHING else
+from the console-port + tax + backlog discussion is already merged — #321–#331
+(console + wash-sale + IRA-disregard, incl. this session's coordinator fixes) and
+#332–#335 (Sentry, chat idempotency, proposedByModel + macro honesty, orders
+limit/TIF + congress cap). Only blocked item left: the three sovereign-design
+decisions (drawdown breakers, stop-loss enforcement, Manager tier) — need owner
+input; captured in `docs/EFFORT-LOG.md`. See
+`docs/rollouts/2026-07-03-mergequote-price-provenance.md`.
+
 ## 2026-07-02 — Per-proposal model attribution + macro placeholder honesty (Claude)
 Branch `claude/strategy-attribution-macro-honesty` (isolated worktree off
 `origin/main` @ `da07d4bc`), two verified-open money-path-adjacent follow-ups:

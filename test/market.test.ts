@@ -297,6 +297,61 @@ describe("mergeQuoteData", () => {
     expect(merged.quotesBySymbol.AAPL!.sources?.bid).toBe("yahoo-finance");
     expect(merged.quotesBySymbol.AAPL!.sources?.ask).toBe("yahoo-finance-synthetic");
   });
+
+  it("attributes a merged broker price to the broker provider (both tiers)", () => {
+    const screenerPriced = () => quote({ symbol: "AAPL", sources: { price: "yahoo-finance" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [screenerPriced()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: screenerPriced() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // A live broker quote replaces `price`; sources.price must follow the value to the broker so the
+    // drilldown/table price tooltip attributes the shown number correctly (it previously kept the
+    // stale screener source).
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 101, bid: 100.9, ask: 101.1, provider: "alpaca", asOf: "2026-06-19T14:00:00.000Z" }
+    });
+
+    expect(merged.topCandidates[0]!.price).toBe(101);
+    expect(merged.topCandidates[0]!.sources?.price).toBe("alpaca");
+    expect(merged.quotesBySymbol.AAPL!.sources?.price).toBe("alpaca");
+  });
+
+  it("attributes the real price provider even when the merged SPREAD is synthetic", () => {
+    const screenerPriced = () => quote({ symbol: "AAPL", sources: { price: "nasdaq-delayed-screener" } });
+    const scan: MarketScan = {
+      source: "nasdaq-delayed-screener",
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [screenerPriced()],
+      sectorBySymbol: {},
+      quotesBySymbol: { AAPL: screenerPriced() },
+      cacheTtlMs: 300_000,
+      cached: false,
+      warnings: []
+    };
+
+    // Yahoo batch quote: a REAL last price with a price-DERIVED (synthetic) spread. The synthetic
+    // flags describe the derived bid/ask only — the price itself is real, so it takes the actual
+    // provider while bid/ask stay tagged synthetic.
+    const merged = mergeQuoteData(scan, {
+      AAPL: { price: 100, bid: 99.9, ask: 100.1, provider: "yahoo-finance", syntheticSpread: true }
+    });
+
+    expect(merged.topCandidates[0]!.sources?.price).toBe("yahoo-finance");
+    expect(merged.topCandidates[0]!.sources?.bid).toBe("yahoo-finance-synthetic");
+    expect(merged.topCandidates[0]!.sources?.ask).toBe("yahoo-finance-synthetic");
+    expect(merged.quotesBySymbol.AAPL!.sources?.price).toBe("yahoo-finance");
+  });
 });
 
 describe("mergeGroupedBarData", () => {
