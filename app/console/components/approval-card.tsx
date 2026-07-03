@@ -57,13 +57,14 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const notional = estNotional(pending);
   const expiresAt = snapshot ? expiryIso(pending, snapshot.policy) : null;
 
-  // Model attribution is policy-derived (the model configured NOW), not yet
-  // persisted per-proposal — if the owner swaps models between proposal and
-  // review this can be stale. Fast-follow: persist proposedByModel with the
-  // proposal (coordinates with src/lib/strategy.ts).
+  // Model attribution prefers the PERSISTED per-proposal values (p.proposedByModel /
+  // p.redTeamVerdict.model — stamped failover-aware by src/lib/strategy.ts), falling back
+  // to the snapshot policy's configured models only for legacy proposals that predate them
+  // (the policy-derived value can be stale if the owner swapped models since proposing).
+  const greenModelPersisted = p.proposedByModel?.trim() || null;
   const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
-  const greenModel = greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
-  const redModel = snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
+  const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
+  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -149,7 +150,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               </div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <ModelBadge modelId={greenModel} size="md" title="The model that generated this proposal" />
-                {!greenModelConfigured && (
+                {!greenModelPersisted && !greenModelConfigured && (
                   <span
                     className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
                     title="No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."

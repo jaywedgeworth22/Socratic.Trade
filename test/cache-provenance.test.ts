@@ -178,9 +178,12 @@ describe("macro.ts cache-provenance", () => {
     const result = await fetchMacroData(undefined);
     expect(result.asOf).not.toBe("unavailable");
     expect(parseFloat(result.vix)).toBeCloseTo(22.5, 1);
-    // The VIX is live but every FRED field is a placeholder constant — the flag
-    // must be false so the dashboard blanks those fields instead of showing them.
+    // The VIX is live but no FRED fetch ran — the flag is false and every FRED field is
+    // blanked to "" (em dash on the console, dropped from the prompt), never a placeholder.
     expect(result.fredSourced).toBe(false);
+    expect(result.fedFundsRate).toBe("");
+    expect(result.dgs10Treasury).toBe("");
+    expect(result.vix3m).toBe("");
   });
 
   it("configured-but-failing FRED key (every series non-OK) is NOT marked sourced; falls back to live VIX", async () => {
@@ -209,8 +212,10 @@ describe("macro.ts cache-provenance", () => {
     expect(result.fredSourced).toBe(false);
     expect(parseFloat(result.vix)).toBeCloseTo(23.0, 1); // live Yahoo reading, not the placeholder
     expect(result.asOf).not.toBe("unavailable");
-    // FRED fields fell back to placeholders — the false flag is what tells the UI to blank them.
-    expect(result.fedFundsRate).toBe("5.25%");
+    // FRED fields are blanked to "" (never placeholder constants) so nothing fabricated can
+    // reach the regime classifier, the derived metrics, or the strategy prompt.
+    expect(result.fedFundsRate).toBe("");
+    expect(result.dgs10Treasury).toBe("");
 
     // The honest flag is what got CACHED — the 24h TTL cannot resurrect a false positive.
     const cached = await fetchMacroData(undefined);
@@ -236,6 +241,9 @@ describe("macro.ts cache-provenance", () => {
     const result = await fetchMacroData(undefined);
     expect(result.asOf).toBe("unavailable");
     expect(result.fredSourced).toBe(false);
+    // Fully unavailable — even the VIX is blank, not the old "15.00" placeholder.
+    expect(result.vix).toBe("");
+    expect(result.fedFundsRate).toBe("");
   });
 
   it("PARTIAL FRED fetch blanks only the failed series (empty string) and keeps the suite sourced", async () => {

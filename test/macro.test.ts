@@ -41,12 +41,32 @@ describe("determineMarketRegime", () => {
   });
 });
 
+/** The VIX-only fallback shape: live VIX + real asOf, every FRED field blanked to "". */
+function vixOnlyMacro(vix: string): MacroData {
+  return {
+    ...Object.fromEntries(Object.keys(base).map((k) => [k, ""])) as unknown as MacroData,
+    vix,
+    asOf: "2026-06-21",
+    fredSourced: false
+  };
+}
+
 describe("determineMarketRegime — VIX fallback light-macro", () => {
   it("returns a real regime when asOf is a date (VIX light-macro path)", () => {
     // When fetchVixFromYahoo succeeds, asOf is today's date (not 'unavailable').
     // The regime should be derived from the live VIX.
     const lightMacro: MacroData = { ...base, vix: "28.50", asOf: "2026-06-21" };
     expect(determineMarketRegime(lightMacro)).toBe("Risk-Off (High Volatility)");
+  });
+
+  it("VIX-only fallback shape (blank FRED fields) is never distorted by a fabricated inverted curve", () => {
+    // The old DEFAULT_MACRO placeholders carried fedFunds 5.25% vs 10Y 4.20% — a hardcoded
+    // INVERTED curve that pushed calm markets to "Cautious" and borderline ones to "Risk-Off".
+    // Blank FRED fields parse to NaN, so the curve simply doesn't participate.
+    expect(determineMarketRegime(vixOnlyMacro("12.00"))).toBe("Risk-On (Low Volatility)");
+    expect(determineMarketRegime(vixOnlyMacro("18.00"))).toBe("Neutral (Normal Volatility)");
+    expect(determineMarketRegime(vixOnlyMacro("24.00"))).toBe("Risk-Off (High Volatility)");
+    expect(determineMarketRegime(vixOnlyMacro("35.00"))).toBe("Crisis (Extreme Volatility)");
   });
 
   it("returns Unknown when asOf is 'unavailable' (no FRED key AND VIX fetch failed)", () => {
@@ -129,5 +149,24 @@ describe("pruneMacro", () => {
     expect(Object.keys(delta.macro)).not.toContain("fredSourced");
     expect(delta.omitted).not.toContain("fredSourced");
     expect(delta.macro.cpiInflation).toBe("3.40%");
+  });
+
+  it("drops empty-string fields entirely — the strategist never sees a blank/placeholder reading", () => {
+    // The VIX-only fallback blanks every FRED field to "". Those fields must not be sent as ""
+    // (which an LLM could misread as data), and no DEFAULT_MACRO-era constant may appear.
+    const light = vixOnlyMacro("22.50");
+    const { macro, omitted } = pruneMacro(light);
+    expect(macro.vix).toBe("22.50");
+    expect(macro.asOf).toBe("2026-06-21");
+    expect(Object.keys(macro).sort()).toEqual(["asOf", "vix"]);
+    expect(Object.values(macro)).not.toContain("");
+    expect(omitted).toEqual([]);
+
+    // Delta mode: a regime-critical field that is blank stays dropped (MACRO_ALWAYS_KEEP must not
+    // resurrect an empty string), and blank fields never land in `omitted` either.
+    const delta = pruneMacro(light, base);
+    expect(Object.keys(delta.macro).sort()).toEqual(["asOf", "vix"]);
+    expect(Object.values(delta.macro)).not.toContain("");
+    expect(delta.macro.fedFundsRate).toBeUndefined();
   });
 });

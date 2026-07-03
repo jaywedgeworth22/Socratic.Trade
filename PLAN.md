@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
+> attribution + macro placeholder honesty** — proposals now persist the failover-aware served
+> model (`TradeProposal.proposedByModel` + `redTeamVerdict.model`; approval card reads
+> persisted-first), and the no-FRED macro fallbacks blank every FRED field to "" instead of
+> DEFAULT_MACRO placeholder constants (`pruneMacro` drops blanks from the prompt; the fabricated
+> inverted curve no longer distorts `determineMarketRegime`). No roadmap scope change — two
+> money-path-adjacent hardening follow-ups. See
+> `docs/rollouts/2026-07-02-attribution-macro-honesty.md`.
 > 2026-07-02 (`claude/console-data-followups`, Claude): **Console data follow-ups** —
 > four small verified-open items, no scope change: broker order mappers now carry
 > limit/stop/TIF into `EquityOrder` and `/console/orders` renders them (with a

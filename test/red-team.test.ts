@@ -105,7 +105,7 @@ describe("debateProposal LLM request bounds", () => {
       true
     );
 
-    expect(result).toEqual({ rejected: false, available: true, reason: "No fatal flaw found." });
+    expect(result).toEqual({ rejected: false, available: true, reason: "No fatal flaw found.", model: "gpt-4.1-mini" });
     expect(bodies).toHaveLength(1);
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
     expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
@@ -162,7 +162,7 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
       true
     );
 
-    expect(result).toEqual({ rejected: true, available: true, reason: "Overbought into earnings." });
+    expect(result).toEqual({ rejected: true, available: true, reason: "Overbought into earnings.", model: "claude-opus-4-8" });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("api.anthropic.com");
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");

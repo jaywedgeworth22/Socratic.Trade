@@ -640,7 +640,14 @@ export async function runStrategyOnce(
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
         // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
-        proposal.redTeamVerdict = { rejected: redTeamResult.rejected, available: redTeamResult.available, reason: redTeamResult.reason };
+        proposal.redTeamVerdict = {
+          rejected: redTeamResult.rejected,
+          available: redTeamResult.available,
+          reason: redTeamResult.reason,
+          // The model that actually served the debate (incl. the cross-provider Anthropic path) —
+          // persisted so the approval card's red-team badge doesn't drift with later policy edits.
+          ...(redTeamResult.model ? { model: redTeamResult.model } : {})
+        };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
@@ -2826,7 +2833,10 @@ async function proposeTrades(input: {
 
   const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
-    entryMarketRegime: currentMarketRegime
+    entryMarketRegime: currentMarketRegime,
+    // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
+    // policy.llmModel). Persisted with the proposal so approval-time attribution stays accurate.
+    proposedByModel: bullServedModel
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
@@ -3118,7 +3128,10 @@ async function proposeTrades(input: {
 
   const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
     ...p,
-    entryMarketRegime: currentMarketRegime
+    entryMarketRegime: currentMarketRegime,
+    // Re-stamp after the Bear pass: survivors are re-emitted through the Bear's strict schema,
+    // which strips proposedByModel — the ORIGIN model is still the Bull's served model.
+    proposedByModel: bullServedModel
   }));
   recordStep({
     ...bearStepBase,

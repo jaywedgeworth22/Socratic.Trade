@@ -15,6 +15,9 @@ export interface RedTeamDebateResult {
   /** True only when the debate actually ran and returned a verdict (vs skipped / failed-open). */
   available: boolean;
   reason: string;
+  /** The model that actually served (or attempted) the debate — persisted onto the proposal's
+   *  redTeamVerdict for accurate approval-time attribution. Absent when no endpoint was resolved. */
+  model?: string;
 }
 
 /** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
@@ -167,7 +170,7 @@ Respond with a JSON object containing:
           console.warn("Red Team LLM call failed:", why);
           return {
             text: undefined,
-            debate: { rejected: false, available: false, reason: `Red Team debate unavailable — ${why}` }
+            debate: { rejected: false, available: false, reason: `Red Team debate unavailable — ${why}`, model }
           };
         }
 
@@ -182,14 +185,15 @@ Respond with a JSON object containing:
             debate: {
               rejected: !!parsed.rejected,
               available: true,
-              reason: parsed.reason || "No reason provided."
+              reason: parsed.reason || "No reason provided.",
+              model
             }
           };
         }
 
         return {
           text: undefined,
-          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response." }
+          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response.", model }
         };
       }
     );
@@ -198,7 +202,7 @@ Respond with a JSON object containing:
     console.error("Failed to debate proposal:", error);
   }
 
-  return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
+  return { rejected: false, available: false, reason: "Red Team evaluation errored out.", model };
 }
 
 /** Run the Red Team debate on Anthropic's Messages API (cross-provider Bear). Mirrors the OpenAI
@@ -253,7 +257,7 @@ async function debateViaAnthropic(args: {
         });
         if (!response.ok) {
           console.warn("Red Team (Anthropic) call failed", await response.text());
-          return { debate: { rejected: false, available: false, reason: "Red Team debate failed to execute." } };
+          return { debate: { rejected: false, available: false, reason: "Red Team debate failed to execute.", model } };
         }
         const payload = await response.json();
         recordLlmUsage({ userId: args.userId, provider: "anthropic", model, context: "red-team", keySource: args.keySource, keyRef: args.keyRef, ...extractLlmUsage(payload) });
@@ -270,14 +274,14 @@ async function debateViaAnthropic(args: {
           }
         }
         if (parsed) {
-          return { debate: { rejected: !!parsed.rejected, available: true, reason: parsed.reason || "No reason provided." } };
+          return { debate: { rejected: !!parsed.rejected, available: true, reason: parsed.reason || "No reason provided.", model } };
         }
-        return { debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response." } };
+        return { debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response.", model } };
       }
     );
     return traced.debate;
   } catch (error) {
     console.error("Failed to debate proposal (Anthropic):", error);
-    return { rejected: false, available: false, reason: "Red Team evaluation errored out." };
+    return { rejected: false, available: false, reason: "Red Team evaluation errored out.", model };
   }
 }
