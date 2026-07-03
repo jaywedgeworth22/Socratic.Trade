@@ -100,16 +100,19 @@ to `socratictrade.com`, record the release commit + date here._
   Socratic override semantics for owner-preference gates, public `/welcome` and `/how-it-works`,
   coded `/design/socratic-trade`, and exact production-domain references changed to
   `socratictrade.com`.
+- **#345** — Run-state UX fix (`codex/run-state-ux-fix`): Start/Resume are no longer hidden behind a
+  red STOP affordance. Paused states show Start or Resume as the primary header action; STOP/Wind down
+  remain red, and start/autonomy confirm flows use primary styling.
 
 ---
 
 ## 🔨 In Progress
 
-- **Run-state UX fix — Start/Resume is not STOP** (Codex, local, branch
-  `codex/run-state-ux-fix`) — console header now renders Start when halted, Resume when close-only,
-  and red STOP only when active/liquidating. The run-state sheet leads with Start/Resume in paused
-  states, keeps STOP/Wind down red, and legacy "Enable auto-execute" uses primary tone instead of
-  danger. Verification in progress. See `docs/rollouts/2026-07-03-run-state-ux.md`.
+- **IRA wash-sale UI correction** (Codex, local, branch `codex/ira-washsale-ui-fix`) — Settings and
+  Guardrails now explain that same-account IRA wash sales are ignored/not applicable, hide the taxable
+  Block / Ask / Auto selector for Roth/traditional IRA accounts, and expose only the existing
+  cross-account `taxSettings.iraWashSaleHandling` choice (`block` default / `disregard` annotated).
+  Gate green; PR pending. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
@@ -196,3 +199,6 @@ to `socratictrade.com`, record the release commit + date here._
 - 2026-07-03 — **#344 merged** (→ Completed): Socratic Trade autonomy UI/runtime implementation.
   Started the run-state UX fix (`codex/run-state-ux-fix`) so Start/Resume is no longer hidden behind
   a red STOP control and start flows do not use danger-red styling.
+- 2026-07-03 — **#345 merged** (→ Completed): run-state UX fix. Started the IRA wash-sale UI
+  correction (`codex/ira-washsale-ui-fix`) so Roth/traditional IRA settings do not present taxable
+  Block / Ask / Auto as the relevant same-account wash-sale control.

@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - IRA wash-sale UI correction (Codex)
+Branch `codex/ira-washsale-ui-fix` in `/Users/jay/apps/trading-codex`.
+The console now stops showing the taxable-account Block / Ask / Auto wash-sale
+rebuy selector as the primary control on Roth/traditional IRA accounts. Settings
+shows same-IRA wash sales as ignored/not applicable, then exposes only the IRA
+taxable-loss rebuy choice: block cross-account IRA replacement buys by default,
+or explicitly ignore/disregard them with the existing audit note. Guardrails Tax
+rules now render the taxable selector for taxable accounts and the IRA selector
+for IRA accounts, with mode-specific explanation copy; settings search/glossary
+also route Roth/ignore phrasing to the IRA control. Verification so far:
+`npm run lint` (0 errors, 303 existing warnings), `npx tsc --noEmit`,
+focused wash-sale/settings tests, `npm test` (243 files / 2362 tests), and
+`npm run build` are green. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
+
 ## 2026-07-03 - Run-state UX fix: Start/Resume is not STOP (Codex)
 Branch `codex/run-state-ux-fix` in `/Users/jay/apps/trading-codex`.
 Fixed the console chrome so the header no longer forces users to click a red STOP

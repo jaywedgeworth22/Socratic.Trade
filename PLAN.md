@@ -37,6 +37,16 @@ filling the missing pieces.
 > changed from danger to primary. See
 > `docs/rollouts/2026-07-03-run-state-ux.md`.
 
+> **2026-07-03 - IRA wash-sale UI correction (Codex).** The settings and
+> guardrails UI now make the IRA distinction explicit: same-account IRA wash
+> sales are ignored/not applicable, so Roth/traditional IRA accounts no longer
+> surface the taxable-account Block / Ask / Auto selector as the relevant
+> control. The only IRA wash-sale choice shown is the existing cross-account
+> taxable-loss replacement-buy setting (`taxSettings.iraWashSaleHandling`):
+> block by default, or explicitly ignore/disregard with the audit annotation.
+> Search/glossary copy now routes "Roth wash sale ignore" language to that IRA
+> control. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
+
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
 > model (`TradeProposal.proposedByModel` + `redTeamVerdict.model`; approval card reads
