@@ -32,6 +32,27 @@ Verify: `npx tsc --noEmit` clean, `npm run lint` 0 errors, `npm test` **2349/234
 files**, `npm run build` green. See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`
 (Step 2 section) and `docs/EFFORT-LOG.md`.
 
+## 2026-07-03 — P0 boot-crash hotfix: baseline DDL vs versioned migration (Claude)
+Branch `claude/fix-baseddl-index-migration`. **Incident:** production (`trading-live`,
+pm2 `trading`) crash-looped from ~21:14 CDT 2026-07-02 (Sentry `socratic-trade`
+issue `a595484d…`, release `8e2b1181` = PR #333) with `SqliteError: no such column:
+client_turn_id` thrown while loading the instrumentation hook; `/api/health` was 500.
+**Root cause:** #333 added `client_turn_id` via versioned migration but ALSO added the
+column + `idx_chat_turns_user_client` to the BASELINE DDL in `migrate()`. Baseline runs
+BEFORE `applyVersionedMigrations`, so on any pre-existing DB `CREATE TABLE IF NOT
+EXISTS` no-ops and the baseline `CREATE INDEX` references a column that doesn't exist
+yet → boot crash. CI never sees it (fresh DBs get the column from CREATE TABLE) — the
+same signature was misread as a "stale artifact" in two agent worktrees earlier.
+**Ops recovery (done):** backed up prod DB (`data/app.db.bak-20260703-clientturnid`),
+applied the migration's own `ALTER TABLE chat_turns ADD COLUMN client_turn_id TEXT`,
+restarted pm2 `trading` → health 200. Same additive ALTER applied to the
+`trading-codex` (was ↺1500 crash-looping) and `trading-claude` preview DBs.
+**Code fix (this branch):** baseline DDL reverted to the frozen SCHEMA_BASELINE shape
+(column + index removed; warning comment added) — the versioned migration is the single
+source; new `test/db-migration-old-schema.test.ts` boots getDb() against a simulated
+pre-#333 DB. See `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
+**Next:** none for the incident; rule for all agents — never add migration-era
+columns/indexes to the baseline exec.
 ## 2026-07-03 — Rebrand: Agentic Trading → Socratic Trade / socratictrade.com (Claude, cloud)
 Branch `claude/rebrand-socratic-trade` (off `origin/main` post-#339). Owner stood up production infra
 under the name **Socratic Trade** at **socratictrade.com** (Sentry project, Cloudflare DNS, GitHub
