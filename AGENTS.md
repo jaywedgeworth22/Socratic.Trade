@@ -326,9 +326,14 @@ paternalism that keeps creeping back in from every agent (Claude, Codex, others)
   "are-you-sure-it's-real-money" ceremony beyond what a normal order confirmation needs.
 - **No "Test mode" / local simulator.** The local-simulation execution path (`usesLocalSimulation`,
   the `test/local` mode, `getPaperPortfolioProjection`, fake local fills) is being **removed**. Do NOT
-  add it back or reintroduce any fake-fill path. The app trades through a connected broker (paper or
-  live); with no connected account it simply can't place orders. (The app still needs a *database* —
-  `DATABASE_URL` / `data/app.db` — that's infrastructure, not a fake execution mode.)
+  add it back or reintroduce any fake-fill path. The end state: the app trades through a connected
+  broker (paper or live); with no connected account it simply can't place orders. (The app still needs
+  a *database* — `DATABASE_URL` / `data/app.db` — that's infrastructure, not a fake execution mode.)
+  > ⚠️ **In progress, not yet landed.** The runtime removal is a **separate Step-2 PR**. Until it
+  > merges, `src/lib/execution-mode.ts` STILL routes `policy.paperMode` / no-account runs to
+  > `mode: "test/local"` (`usesLocalSimulation: true`), and `defaults.ts` still carries `paperMode`.
+  > Don't assume the sim path is already gone — if you're touching execution code before Step 2 lands,
+  > it's still live; remove it (don't work around it) and update the tests that rely on it.
 - **Do NOT "protect the owner's money from your bugs."** The owner has decided only lose-it-all money
   will ever be in the account. Don't gate, delay, or refuse real actions on the theory that the owner
   needs protecting from risk they've accepted.

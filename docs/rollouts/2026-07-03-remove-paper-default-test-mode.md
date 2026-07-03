@@ -44,8 +44,15 @@ product change (the app trades through a real broker connection, paper or live, 
   `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 
 ## Verification (Step 1)
-Docs-only. `npx tsc --noEmit` clean · `npm run lint` 0 errors · `npm run build` green (test suite
-unchanged — no source touched in Step 1).
+Docs-only (no source touched). `npx tsc --noEmit` clean · `npm run lint` 0 errors · `npm run build`
+green. **`npm test`:** currently RED, but for a **pre-existing, unrelated** reason — today (2026-07-03)
+is the observed US July 4 market holiday, so `isTradingDay()` is false and `runStrategyOnce`'s
+market-closed guard (`src/lib/strategy.ts:252`) skips every non-manual run, failing the strategy tests
+that assert a run executed (llm-failover, money-path-f-g, moneypath-drawdown-flip, rationale-collapse,
+etc.). Those tests don't mock the calendar, so they're time/holiday-dependent. This Step-1 docs change
+touches no source and cannot affect it. The fix (mock `isTradingDay` → true in the affected strategy
+tests) is being handled in the **Step-2 code PR** (which owns those test files as it drops `paperMode`).
+Full suite passed earlier today (2365) before the ET date rolled to the holiday.
 
 ## Follow-ups
 - Step 2 code removal (tracked; the large piece).
