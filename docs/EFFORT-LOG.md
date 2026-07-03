@@ -57,7 +57,14 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, pushed but
+  **landing deferred** until the holiday-time-dependence test fix (owned by another agent) merges,
+  since 8 strategy/redteam/persistence test files are currently broken for unrelated reasons and
+  `land.sh`'s local verify gate would block on them. Scope: reusable `RawNumInput` component (fixes
+  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
+  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
+  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
+  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
 
 ---
 

@@ -59,12 +59,23 @@ describe("account deletion", () => {
          VALUES (?, ?, 'shared', 'fact', 'AAPL', 'private strategy signal', 'inferred', 'chat', 'fact', 0.7, ?, ?)`
       )
       .run(randomUUID(), userA, userA, new Date().toISOString());
+    db.getDb()
+      .prepare(
+        `INSERT INTO learned_context_pending (id, user_id, scope, kind, subject, value, source, origin, risk_tier, created_at, status)
+         VALUES (?, ?, 'private', 'fact', 'AAPL', 'pending strategy signal awaiting approval', 'inferred', 'chat', 'risk', ?, 'pending')`
+      )
+      .run(randomUUID(), userA, new Date().toISOString());
 
     expect(() => deletion.confirmAndDeleteAccount({ userId: userA, email: emailA, body: confirmation(emailA) })).toThrow("Prepare account deletion first.");
 
     const prepared = deletion.prepareAccountDeletion({ userId: userA, email: emailA });
     expect(prepared.prepared).toBe(true);
     expect(prepared.connectedAccounts).toHaveLength(1);
+
+    // The scope preview's per-table counts must surface pending learned-context items awaiting
+    // approval (app/console/settings/danger.tsx warns the user these are discarded on deletion).
+    const previewBeforeDelete = deletion.getAccountDeletionPreview({ userId: userA, email: emailA });
+    expect(previewBeforeDelete.counts.learned_context_pending).toBe(1);
 
     const result = deletion.confirmAndDeleteAccount({ userId: userA, email: emailA, body: confirmation(emailA) });
     expect(result.ok).toBe(true);
@@ -74,6 +85,7 @@ describe("account deletion", () => {
     expect(oauth.getStoredMcpOAuthTokens(userA)).toBeUndefined();
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM chat_turns WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
     expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM learned_context WHERE user_id = ? OR contributor_user_id = ?").get(userA, userA)).toMatchObject({ count: 0 });
+    expect(db.getDb().prepare("SELECT COUNT(*) AS count FROM learned_context_pending WHERE user_id = ?").get(userA)).toMatchObject({ count: 0 });
 
     expect(db.listConnectedAccounts(userB)).toHaveLength(1);
     expect(db.getUserApiKey(userB, "openai")?.apiKey).toBe("sk-user-b");

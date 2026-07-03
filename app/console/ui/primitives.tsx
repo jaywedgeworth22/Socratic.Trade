@@ -2,7 +2,7 @@
 
 /** Console UI primitives. Own design system — no imports from app/ui/*. */
 
-import { type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { cx, fmtExact, timeAgo, EM_DASH } from "../lib/format";
 
 // ── Card ─────────────────────────────────────────────────────────────────────
@@ -155,6 +155,53 @@ export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
 
 export function NumInput(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input type="number" inputMode="decimal" {...props} className={cx("con-input con-input-num", props.className)} />;
+}
+
+/**
+ * Controlled numeric input that fixes the "0."-collapse bug: a plain
+ * `value={Number(...)}` input re-renders `"0."` or `"12."` back to `"0"`/`"12"`
+ * on every keystroke because `Number("0.")` is a whole number, so the trailing
+ * `.` (or `-`, or a mid-typed decimal) can never be typed. This component keeps
+ * the raw typed text in local state while focused — so those transient strings
+ * survive — while still committing the PARSED number to the caller on every
+ * keystroke via `onValueChange`. On blur it drops the raw text and snaps back
+ * to whatever canonical string the caller derives from its own committed value
+ * (`value` prop), matching the commit-on-blur pattern this replaces.
+ */
+export function RawNumInput({
+  value,
+  onValueChange,
+  emptyValue,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  /** Canonical display value (e.g. `String(current)`), shown whenever not focused. */
+  value: string;
+  /** Called with the parsed number on every keystroke; NaN/empty becomes `emptyValue`. */
+  onValueChange: (parsed: number, raw: string) => void;
+  /** Value passed to `onValueChange` when the field is empty or unparsable. */
+  emptyValue: number;
+}) {
+  const [editText, setEditText] = useState<string | null>(null);
+  return (
+    <NumInput
+      {...props}
+      value={editText ?? value}
+      onFocus={(e) => {
+        setEditText(value);
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        setEditText(null);
+        props.onBlur?.(e);
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setEditText(raw);
+        const parsed = Number(raw);
+        onValueChange(raw === "" || !Number.isFinite(parsed) ? emptyValue : parsed, raw);
+      }}
+    />
+  );
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {

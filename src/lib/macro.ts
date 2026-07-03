@@ -325,28 +325,57 @@ export function pruneMacro(
 }
 
 /**
+ * Stable id -> exact label map for the market-regime classifier below.
+ *
+ * PERSISTED CONTRACT: every string value here is written verbatim into
+ * `TradeProposal.entryMarketRegime` and then joined on by exact string
+ * equality elsewhere (e.g. `src/lib/strategy.ts`'s `selectThesisStat`
+ * thesis×regime lookup, `src/lib/performance.ts`'s `getFactorScorecard`
+ * regime filter, and the regime-scorecard match in
+ * `app/console/macro/page.tsx`). Changing any label here silently breaks
+ * every one of those joins against ALREADY-STORED rows — a rename is NOT a
+ * simple find/replace, it requires either a one-time data migration that
+ * rewrites `entryMarketRegime` on existing proposals/fills, or an
+ * old-label -> new-label alias map consulted at every join site. Add new
+ * ids/labels freely; do not edit an existing label in place.
+ */
+export const MARKET_REGIME_LABELS = {
+  crisis: "Crisis (Extreme Volatility)",
+  riskOff: "Risk-Off (High Volatility)",
+  riskOn: "Risk-On (Low Volatility)",
+  neutral: "Neutral (Normal Volatility)",
+  cautious: "Cautious (Inverted Curve)",
+  unknown: "Unknown (no macro feed)"
+} as const;
+
+export type MarketRegimeLabel = (typeof MARKET_REGIME_LABELS)[keyof typeof MARKET_REGIME_LABELS];
+
+/**
  * Deterministic market-regime classifier. Primary axis is VIX (volatility), but the
  * yield curve (10y vs Fed funds) actually participates now: an inverted curve — a
  * classic recession/risk signal — nudges borderline VIX readings toward risk-off and
  * surfaces a distinct "Cautious (Inverted Curve)" regime in calm-but-inverted markets.
  * Kept to a small, repeatable label set so the thesis×regime learning buckets stay
  * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
+ *
+ * Return type is the MARKET_REGIME_LABELS union — see that const's doc comment for why
+ * the label strings themselves are a persisted contract you cannot freely rename.
  */
-export function determineMarketRegime(macro: MacroData): string {
+export function determineMarketRegime(macro: MacroData): MarketRegimeLabel {
   // Unsourced macro (no FRED key) carries asOf "unavailable". Don't assert a confident regime off
   // fabricated constants — return an explicit Unknown so downstream conditioning/caps stay neutral.
-  if (macro.asOf === "unavailable") return "Unknown (no macro feed)";
+  if (macro.asOf === "unavailable") return MARKET_REGIME_LABELS.unknown;
   const vix = parseFloat(macro.vix);
   const fedFunds = parseFloat(macro.fedFundsRate);
   const dgs10 = parseFloat(macro.dgs10Treasury);
   // Curve inversion: 10y meaningfully below the policy rate.
   const inverted = Number.isFinite(fedFunds) && Number.isFinite(dgs10) && dgs10 < fedFunds - 0.1;
   if (Number.isFinite(vix)) {
-    if (vix > 30) return "Crisis (Extreme Volatility)";
-    if (vix > 20 || (inverted && vix > 17)) return "Risk-Off (High Volatility)";
-    if (vix < 13 && !inverted) return "Risk-On (Low Volatility)";
+    if (vix > 30) return MARKET_REGIME_LABELS.crisis;
+    if (vix > 20 || (inverted && vix > 17)) return MARKET_REGIME_LABELS.riskOff;
+    if (vix < 13 && !inverted) return MARKET_REGIME_LABELS.riskOn;
   }
-  return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
+  return inverted ? MARKET_REGIME_LABELS.cautious : MARKET_REGIME_LABELS.neutral;
 }
 
 /** Tail-risk gauges the volatility panic brake reads (beyond VIX, which lives on MacroData). */

@@ -1445,6 +1445,11 @@ export function selectThesisStat(
   thesisScorecard: ThesisStat[],
   proposal: TradeProposal
 ): ThesisStat | ThesisRegimeStat | undefined {
+  // Exact-string join against `entryMarketRegime`, which is stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) at proposal-creation time. Both sides
+  // are typed as plain `string` (older rows may carry a retired label), but the values in
+  // practice are the persisted-contract labels — see that const's doc comment before
+  // touching either side of this comparison.
   const comboStat = regimeScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
   const thesisStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
   return comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;

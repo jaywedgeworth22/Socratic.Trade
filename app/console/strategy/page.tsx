@@ -26,7 +26,7 @@ import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, NumInput, Select, TextArea, TextInput } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -192,14 +192,13 @@ export default function StrategyPage() {
             const current = weightsDraft?.[key] ?? policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
             return (
               <Field key={key} label={key} hint={`default ${DEFAULT_WEIGHTS[key]}`} htmlFor={`w-${key}`}>
-                <NumInput
+                <RawNumInput
                   id={`w-${key}`}
                   step="0.1"
                   min="0"
                   value={String(current)}
-                  onChange={(e) =>
-                    setWeightsDraft((d) => ({ ...(d ?? {}), [key]: e.target.value === "" ? DEFAULT_WEIGHTS[key] : Number(e.target.value) }))
-                  }
+                  emptyValue={DEFAULT_WEIGHTS[key]}
+                  onValueChange={(parsed) => setWeightsDraft((d) => ({ ...(d ?? {}), [key]: parsed }))}
                 />
               </Field>
             );

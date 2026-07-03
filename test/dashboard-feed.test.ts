@@ -561,6 +561,23 @@ describe("dashboard feed helpers", () => {
     expect(feed[1]?.fullText).toContain('"failedPosts":30');
   });
 
+  it("humanizes notify.bridge.error ops events into a one-liner (#39)", () => {
+    const feed = buildAuditFeed({
+      audit: [
+        {
+          id: "nbe-1",
+          createdAt: "2026-07-02T04:00:00.000Z",
+          kind: "notify.bridge.error",
+          payload: { type: "pending_approval", error: "ECONNREFUSED: bridge unreachable" }
+        }
+      ]
+    });
+
+    expect(feed[0]?.title).toBe("Notification delivery failed");
+    expect(feed[0]?.detail).toBe("Could not deliver pending_approval notification · ECONNREFUSED: bridge unreachable");
+    expect(feed[0]?.fullText).toContain('"error":"ECONNREFUSED: bridge unreachable"'); // raw JSON stays available behind a toggle
+  });
+
   it("carries a notification's connectedAccountId onto its unified-feed group (#10)", () => {
     const feed = buildUnifiedFeed({
       audit: [],

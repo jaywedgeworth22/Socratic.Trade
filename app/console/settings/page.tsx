@@ -16,7 +16,7 @@ import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Btn, Card, Chip, Field, RawNumInput, Select, TextInput, Toggle } from "../ui/primitives";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
@@ -373,19 +373,21 @@ function TaxSettingsCard() {
         )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Short-term rate %" htmlFor="st-rate">
-            <NumInput
+            <RawNumInput
               id="st-rate"
               value={String(shortTermRatePct)}
+              emptyValue={0}
               title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice."
-              onChange={(e) => setDraft((d) => ({ ...(d ?? {}), shortTermRatePct: Number(e.target.value) }))}
+              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), shortTermRatePct: parsed }))}
             />
           </Field>
           <Field label="Long-term rate %" htmlFor="lt-rate">
-            <NumInput
+            <RawNumInput
               id="lt-rate"
               value={String(longTermRatePct)}
+              emptyValue={0}
               title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice."
-              onChange={(e) => setDraft((d) => ({ ...(d ?? {}), longTermRatePct: Number(e.target.value) }))}
+              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), longTermRatePct: parsed }))}
             />
           </Field>
         </div>
@@ -475,19 +477,21 @@ function ScanShapeCard() {
       </p>
       <div className="grid max-w-md grid-cols-2 gap-3">
         <Field label="Enriched candidates" hint="Ranked names that get full enrichment per run." htmlFor="scan-limit">
-          <NumInput
+          <RawNumInput
             id="scan-limit"
             value={String(draft?.marketScanCandidateLimit ?? policy.marketScanCandidateLimit ?? "")}
+            emptyValue={0}
             title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs."
-            onChange={(e) => setDraft((d) => ({ ...(d ?? {}), marketScanCandidateLimit: Number(e.target.value) }))}
+            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanCandidateLimit: parsed }))}
           />
         </Field>
         <Field label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals." htmlFor="scan-reserve">
-          <NumInput
+          <RawNumInput
             id="scan-reserve"
             value={String(draft?.marketScanOutlierReserve ?? policy.marketScanOutlierReserve ?? "")}
+            emptyValue={0}
             title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity)."
-            onChange={(e) => setDraft((d) => ({ ...(d ?? {}), marketScanOutlierReserve: Number(e.target.value) }))}
+            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanOutlierReserve: parsed }))}
           />
         </Field>
       </div>

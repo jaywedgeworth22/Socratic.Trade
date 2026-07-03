@@ -383,6 +383,16 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "notify.bridge.error") {
+    const type = stringValue(payload.type);
+    const errorMessage = stringValue(payload.error);
+    return {
+      title: "Notification delivery failed",
+      detail: joinDetail([`Could not deliver ${type ?? "a"} notification`, errorMessage]) ?? "Could not deliver a notification",
+      fullText: serializeAuditPayload(payload)
+    };
+  }
+
   const serializedPayload = serializeAuditPayload(payload);
   const detail = genericAuditDetail(payload) ?? serializedPayload ?? "Event recorded";
   return {
