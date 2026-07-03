@@ -28,9 +28,9 @@ account so execution still flows through the normal broker path). **Found + fixe
 real correctness bug, not scope creep): broker-paper fills were mislabeled "Test" throughout the
 Activity feed/notifications purely because they shared `FillSource: "paper"` with the removed local
 simulator (`src/lib/dashboard-feed.ts`, `src/lib/dashboard-ui.ts`) — now correctly labeled "Paper".
-Verify: `npx tsc --noEmit` clean, `npm run lint` 0 errors, `npm test` **2349/2349 passing across 238
-files**, `npm run build` green. See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`
-(Step 2 section) and `docs/EFFORT-LOG.md`.
+Rebased on `origin/main` (now carries #340 rebrand + #341 DB hotfix). Verify: `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` **2350/2350 passing across 239 files**, `npm run build` green. See
+`docs/rollouts/2026-07-03-remove-paper-default-test-mode.md` (Step 2 section) and `docs/EFFORT-LOG.md`.
 
 ## 2026-07-03 — P0 boot-crash hotfix: baseline DDL vs versioned migration (Claude)
 Branch `claude/fix-baseddl-index-migration`. **Incident:** production (`trading-live`,

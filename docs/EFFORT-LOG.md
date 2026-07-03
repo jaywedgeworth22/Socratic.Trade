@@ -60,11 +60,20 @@ to `trading.jays.services`, record the release commit + date here._
 - **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
 
 ### P0 hotfix (2026-07-03)
-- **`claude/fix-baseddl-index-migration`** — boot crash on every pre-existing DB: #333's baseline-DDL
+- **#341** (`claude/fix-baseddl-index-migration`) — boot crash on every pre-existing DB: #333's baseline-DDL
   `idx_chat_turns_user_client` ran before the versioned ALTER (`no such column` on old DBs; fresh-DB CI
   stayed green). Baseline reverted to frozen `SCHEMA_BASELINE`; versioned migration is the single source;
   regression test boots `getDb()` against a simulated pre-#333 DB. Prod/preview DBs already hand-patched
   (see Deployed section).
+
+### Rebrand (2026-07-03)
+- **#340** — Rebrand Agentic Trading → **Socratic Trade** / socratictrade.com (`claude/rebrand-socratic-trade`).
+  Owner set up prod infra as "Socratic Trade" (Sentry project, Cloudflare DNS, GitHub OAuth callbacks,
+  Google authorized domains — owner-side). Code aligned: display brand → "Socratic Trade" (no-space
+  "Socratic.Trade"); public host fallback `trading.jays.services` → `socratictrade.com` (env-first);
+  Sentry slug → `socratic-trade`. Deliberately NOT touched: `mail@jays.services` login email, internal
+  machine slugs (telemetry SOURCE_APP, notify UA, mcp-oauth client id, account-deletion HMAC salt), the
+  Robinhood "Agentic" account nickname, internal jays.services preview subdomains.
 
 ### De-paternalization + CI hardening (2026-07-03)
 - **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
@@ -92,17 +101,10 @@ to `trading.jays.services`, record the release commit + date here._
   create a connected `broker:"test"`/`environment:"paper"` account instead of `paperMode: true`, so
   execution still flows through the normal broker path. Found and fixed a real correctness bug along
   the way: broker-paper fills were mislabeled "Test" in the Activity feed/notifications purely because
-  they shared `FillSource: "paper"` with the removed local simulator. Verify: tsc clean, lint 0 errors,
-  **2349/2349 tests / 238 files green**, build green. See
+  they shared `FillSource: "paper"` with the removed local simulator. Rebased on `origin/main` (now
+  includes #340 rebrand + #341 DB hotfix). Verify: tsc clean, lint 0 errors,
+  **2350/2350 tests / 239 files green**, build green. See
   `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
-- **Rebrand: Agentic Trading → Socratic Trade / socratictrade.com** (coordinator, cloud, branch
-  `claude/rebrand-socratic-trade`) — owner set up prod infra as "Socratic Trade" at socratictrade.com
-  (Sentry project, Cloudflare DNS, GitHub OAuth callbacks, Google authorized domains done owner-side).
-  Code aligned: display brand → "Socratic Trade" (no-space form "Socratic.Trade"); public host fallback
-  `trading.jays.services` → `socratictrade.com` (env-first); Sentry project slug → `socratic-trade`.
-  Deliberately NOT touched: `mail@jays.services` login email, internal machine slugs (telemetry
-  SOURCE_APP, notify UA, mcp-oauth client id, account-deletion HMAC salt), the Robinhood "Agentic"
-  account nickname, and internal jays.services preview subdomains. PR pending.
 
 ---
 
@@ -164,6 +166,8 @@ to `trading.jays.services`, record the release commit + date here._
 - 2026-07-03 — Started the **Socratic Trade rebrand** (branch `claude/rebrand-socratic-trade`): brand
   "Agentic Trading" → "Socratic Trade", public host fallback → `socratictrade.com`, Sentry slug →
   `socratic-trade`; login email + internal machine slugs + Robinhood "Agentic" nickname untouched.
+- 2026-07-03 — **#340 rebrand merged** (→ Completed) and **#341 DB P0 hotfix merged** (→ Completed).
 - 2026-07-03 — De-paternalize **Step 2 code-complete** (branch `claude/remove-paper-test-mode`):
   `policy.paperMode` + the `test/local` local-simulator execution path fully removed across ~35 src +
-  36 test files; gate green (tsc/lint/2349 tests/build); PR opened, still In Progress until merged.
+  36 test files; rebased on `origin/main` (#340 + #341); gate green (tsc/lint/2350 tests/build); PR
+  opened, still In Progress until merged.
