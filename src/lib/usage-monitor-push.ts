@@ -55,7 +55,7 @@ export interface UsageMonitorEvent {
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
-const SOURCE_APP = "agentic-trading";
+const SOURCE_APP = "socratic-trade";
 const INGEST_PATH = "/api/ingest/usage";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events

@@ -28,7 +28,7 @@ export default function ResultsPage() {
   const liveSelected = reality.tone === "live";
   const practiceBucket = (
     <BucketCard
-      title="Practice money (Test + Paper)"
+      title="Practice money (Paper broker)"
       tone="paper"
       realized={perf?.paperRealizedPnl}
       unrealized={perf?.paperUnrealizedPnl}
@@ -57,7 +57,7 @@ export default function ResultsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "the local simulator"}
+          for {reality.account?.label ?? "no connected account"}
         </span>
         <div className="flex-1" />
         <Btn size="sm" variant="ghost" onClick={() => setCompare((v) => !v)}>

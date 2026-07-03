@@ -40,6 +40,15 @@
 > Strategy LLM steps are shown with label/model/provider/status, and Settings uses
 > a clearer User/Account scope header, account picker, tab shell, and denser
 > notification/model controls.
+>
+> 2026-07-03: The Socratic Trade branch (`codex/socratic-trade-autonomy-mockup`)
+> supersedes the cockpit's homepage direction with an Autonomy Desk: live thesis,
+> capital posture, delegated action log, evidence/RAG contribution, dissent, outcome
+> learning, coaching, and framework-improvement proposals. This is now backed by
+> persisted Socratic decision cases, structured retrieval attribution, framework
+> proposal review actions, coach notes, and explicit autonomous override semantics
+> for owner preference gates. `/design/socratic-trade` is now a coded public product
+> overview rather than a static mockup. See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 
 
 This phase restructures the dashboard from a long vertical page into a

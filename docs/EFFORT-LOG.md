@@ -22,7 +22,7 @@ _As of 2026-07-03. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
 ## 🚀 Deployed to production
 
 _Owner-managed release; not verifiable from cloud/agent sessions. When the owner promotes `main`
-to `trading.jays.services`, record the release commit + date here._
+to `socratictrade.com`, record the release commit + date here._
 
 - **2026-07-02 (evening)** — `trading-live` observed at `eae514be` (post-#338) on the
   deploy machine. **Incident:** the deploy boot-crashed on the pre-existing prod DB
@@ -70,10 +70,10 @@ to `trading.jays.services`, record the release commit + date here._
 - **#340** — Rebrand Agentic Trading → **Socratic Trade** / socratictrade.com (`claude/rebrand-socratic-trade`).
   Owner set up prod infra as "Socratic Trade" (Sentry project, Cloudflare DNS, GitHub OAuth callbacks,
   Google authorized domains — owner-side). Code aligned: display brand → "Socratic Trade" (no-space
-  "Socratic.Trade"); public host fallback `trading.jays.services` → `socratictrade.com` (env-first);
-  Sentry slug → `socratic-trade`. Deliberately NOT touched: `mail@jays.services` login email, internal
-  machine slugs (telemetry SOURCE_APP, notify UA, mcp-oauth client id, account-deletion HMAC salt), the
-  Robinhood "Agentic" account nickname, internal jays.services preview subdomains.
+  "Socratic.Trade"); legacy production host fallback → `socratictrade.com` (env-first);
+  Sentry slug → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion fallback identifiers
+  now use Socratic Trade naming. Deliberately NOT touched: `mail@jays.services` login email, the Robinhood
+  "Agentic" account nickname, internal jays.services preview subdomains.
 
 ### De-paternalization + CI hardening (2026-07-03)
 - **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
@@ -96,6 +96,24 @@ to `trading.jays.services`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+
+- **Socratic Trade autonomy UI/runtime implementation** (Codex, local, branch
+  `codex/socratic-trade-autonomy-mockup`) — implementation branch. `/console` now uses persisted
+  Socratic decision cases when available and exposes live thesis, delegated action log,
+  evidence/RAG contribution, dissent, outcome learning, coaching, and framework improvement
+  proposals. Added durable decision/framework tables, `/api/socratic/*` routes, coach-note writes,
+  framework proposal review actions, strategy-loop decision recording, RAG attribution capture, and
+  private institutional-memory indexing for each strategy-recorded Socratic decision, including
+  broker argument, critic counterargument, policy outcome, override state, RAG contribution, lessons,
+  and coach notes. Also added Socratic override semantics for owner preference gates while preserving
+  hard broker/account/integrity/tax refusals. Public `/welcome` and `/how-it-works` are routable by
+  default and reframed around Socratic Trade; `/design/socratic-trade` is now a public coded
+  product/site overview that links into the working app surfaces and is included in sitemap/robots
+  metadata. Exact old production-domain references were replaced with `socratictrade.com`; active
+  source identifiers and the iOS starter were aligned to Socratic Trade. Verification green locally:
+  lint 0 errors, tsc, focused Socratic tests, full tests, build, route probes, and desktop/mobile
+  browser checks. See
+  `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.

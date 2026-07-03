@@ -139,7 +139,7 @@ ALPHAVANTAGE_API_KEY=...
 FRED_API_KEY=...
 
 # Optional: public web-source and technical-signal controls.
-SEC_EDGAR_USER_AGENT=RobinhoodAgenticTrading/1.0 (contact: you@example.com)
+SEC_EDGAR_USER_AGENT=SocraticTrade/1.0 (contact: you@example.com)
 WEB_SOURCE_CONGRESS=on
 WEB_SOURCE_INSIDER=on
 WEB_SOURCE_FINRA=on

@@ -35,6 +35,8 @@ const DELETE_TABLES_BY_USER_ID = [
   "llm_usage",
   "user_memory",
   "learned_context_pending",
+  "socratic_decisions",
+  "socratic_framework_proposals",
   "synthetic_trailing_stops",
   "broker_protective_stops",
   "audit_events",
@@ -236,7 +238,7 @@ function requireBoolean(value: unknown, label: string): void {
 }
 
 function subjectHash(userId: string, email?: string): string {
-  const secret = process.env.ACCOUNT_DELETION_AUDIT_SALT || process.env.ENCRYPTION_KEY || "agentic-trading-account-deletion";
+  const secret = process.env.ACCOUNT_DELETION_AUDIT_SALT || process.env.ENCRYPTION_KEY || "socratic-trade-account-deletion";
   return crypto.createHmac("sha256", secret).update(`${userId}:${normalizeEmail(email)}`).digest("hex");
 }
 

@@ -50,6 +50,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // broadened to other indexes / the wider screener. Tunable in settings.
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
+  socraticOverrideMode: "execute",
+  socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
   llmModel: "gpt-5.4-mini",
   llmReasoningEffort: "medium",

@@ -4,10 +4,10 @@ import { ConsoleShell } from "./components/shell";
 
 export const metadata: Metadata = {
   title: {
-    default: "Console",
-    template: "%s · Console"
+    default: "Autonomy Desk",
+    template: "%s · Socratic Trade"
   },
-  description: "Ground-up trading console: word-first money-reality, one-click stop, decision receipts."
+  description: "Socratic Trade autonomy desk: live thesis, decision trace, evidence, coaching, and framework learning."
 };
 
 export const viewport: Viewport = {

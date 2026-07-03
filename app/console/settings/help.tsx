@@ -1,8 +1,8 @@
 "use client";
 
 /** Help & glossary — the console's vocabulary in one searchable place. Every
- *  definition uses the same load-bearing words the UI itself uses (TEST /
- *  PAPER / LIVE, Ask-first / Autopilot, Stopped / Exit-only, …) so reading
+*  definition uses the same load-bearing words the UI itself uses (PAPER /
+*  LIVE, Ask-first / Autopilot, Stopped / Exit-only, …) so reading
  *  this IS reading the interface. Static content by design: it describes how
  *  the app actually behaves, and it must never drift into marketing. */
 
@@ -27,12 +27,6 @@ const GLOSSARY: GlossaryGroup[] = [
     group: "Money reality",
     blurb: "Every screen states which money it is in words — the colors only reinforce.",
     entries: [
-      {
-        term: "TEST · practice money",
-        aliases: "test mode local simulator",
-        definition:
-          "This app's own simulator, marked to live market prices. No broker involved, no real dollars — not even a broker's paper account. The default, and a perfectly fine place to stay."
-      },
       {
         term: "PAPER · practice money",
         aliases: "paper trading sandbox",
@@ -175,7 +169,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Connected account",
         aliases: "broker connection robinhood alpaca",
         definition:
-          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys), plus the built-in local simulator. Disconnecting removes the connection from this app only — nothing changes at the broker."
+          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys). Disconnecting removes the connection from this app only — nothing changes at the broker."
       },
       {
         term: "Active account",

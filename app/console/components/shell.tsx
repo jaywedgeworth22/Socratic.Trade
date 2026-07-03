@@ -61,8 +61,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
     return (
       <div className="console-root flex min-h-dvh items-center justify-center" data-theme={dataTheme} suppressHydrationWarning>
         <div className="text-center">
-          <div className="con-card-title">Console</div>
-          <p className="mt-2 text-[color:var(--con-muted)]">Loading account data…</p>
+          <div className="con-card-title">Socratic Trade</div>
+          <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
         </div>
       </div>
     );
@@ -72,8 +72,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
     return (
       <div className="console-root flex min-h-dvh items-center justify-center px-6" data-theme={dataTheme} suppressHydrationWarning>
         <div className="con-card max-w-md p-6 text-center">
-          <div className="con-card-title">Console</div>
-          <p className="mt-2 font-semibold">Couldn&apos;t load account data</p>
+          <div className="con-card-title">Socratic Trade</div>
+          <p className="mt-2 font-semibold">Couldn&apos;t load the autonomy desk</p>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             {error ?? "The dashboard API did not respond."} The console retries automatically.
           </p>
@@ -127,7 +127,7 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
-        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Console</span>
+        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Socratic.Trade</span>
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />

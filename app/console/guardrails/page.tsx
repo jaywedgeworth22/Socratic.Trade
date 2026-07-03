@@ -30,6 +30,7 @@ import {
   INDICES,
   ORDER_TYPES,
   PANIC_BRAKE,
+  SOCRATIC_OVERRIDE,
   SHORTS,
   STOPS_PLUMBING,
   TAX_RULES,
@@ -87,7 +88,7 @@ export default function GuardrailsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "the local simulator"} — deterministic limits the strategist can never exceed
+          for {reality.account?.label ?? "no connected account"} — mandates, preference gates, and hard execution constraints
         </span>
       </div>
 
@@ -109,6 +110,11 @@ export default function GuardrailsPage() {
           </p>
           <AdvancedGroup title="Exposure caps">
             {EXPOSURE.map((def) => (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            ))}
+          </AdvancedGroup>
+          <AdvancedGroup title="Socratic override">
+            {SOCRATIC_OVERRIDE.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
@@ -269,7 +275,7 @@ function AutonomyCard() {
         authority === "decide" ? "warn" : "pos",
         authority === "decide" ? "Autopilot on" : "Back to Ask-first",
         authority === "decide"
-          ? "The strategy may place orders itself — still inside every guardrail on this page."
+          ? "The strategy may place orders itself; Socratic overrides can challenge owner-preference gates."
           : "Every trade now waits for your approval."
       );
     } catch (error) {
@@ -286,8 +292,8 @@ function AutonomyCard() {
           <div className="text-[length:var(--con-fs-md)] font-semibold">{decide ? "Autopilot" : "Ask-first"}</div>
           <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
             {decide
-              ? "The strategy may place orders itself, inside every limit on this page. High-conviction ideas whose adversarial review couldn't run still come to you. Breaching the hourly cap demotes it back to Ask-first automatically. A server restart stops it until a person starts it again."
-              : "The strategy only suggests. Nothing is traded until you approve each idea. Most people stay here."}
+              ? "The strategy may place orders itself. Socratic overrides can challenge owner-preference gates when the agent gives a structured thesis; broker, account, tax-hard, and integrity refusals still block. Provider failures and unavailable adversarial review still route to you."
+              : "The strategy suggests and waits. Switch to Autopilot when this account should act without per-trade approval."}
           </p>
         </div>
         {decide ? (
@@ -310,8 +316,8 @@ function AutonomyCard() {
           confirmLabel="Enable Autopilot"
           note={
             reality.tone === "live"
-              ? "This is a LIVE (real money) account. With Autopilot on, orders can spend real capital without a per-trade approval — still bounded by every guardrail. Turning autonomy ON costs typing; turning it OFF never does."
-              : "Autopilot lets the strategy place practice-money orders itself, inside your guardrails. Turning it on costs typing; turning it off never does."
+              ? "This is a LIVE (real money) account. With Autopilot on, Socratic Trade can spend real capital without per-trade approval, including approved Socratic overrides of owner-preference gates."
+              : "Autopilot lets Socratic Trade place broker-paper orders itself, including approved Socratic overrides of owner-preference gates."
           }
           onConfirm={() => void setAuthority("decide")}
         />

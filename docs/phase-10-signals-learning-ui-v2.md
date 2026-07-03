@@ -3,7 +3,14 @@
 Forward plan consolidating every still-unimplemented idea, recommendation, and
 consideration from this work stream — the Codex "Stronger Trading Signals And
 Learning Loop" plan, the Codex optimization pass, the Codex review, and Claude's
-brainstorms. Test mode remains the default; **no live-trading behavior changes**.
+brainstorms. As of 2026-07-03, the older paper/Test-mode default framing in this
+document is stale: Socratic Trade treats connected broker account environment as
+the execution source of truth, and no connected account means no order placement.
+The Socratic autonomy implementation adds first-class surfaces and persistence
+for RAG contribution, dissent, outcome learning, coaching, and agent-authored
+framework improvements; `/design/socratic-trade` is now a coded public overview of those
+surfaces rather than a standalone mockup.
+See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 
 ## Status legend
 `[done]` shipped · `[todo]` not started · `[partial]` partly done.

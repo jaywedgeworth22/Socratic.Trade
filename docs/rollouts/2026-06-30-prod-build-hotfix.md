@@ -31,7 +31,7 @@ The Antigravity strategy-review persistence work landed separately as PR #274, a
   - `pm2 restart trading --update-env && pm2 save` - pass.
   - `curl -I http://127.0.0.1:4000/` - 307 to `/login`.
   - `curl -i http://127.0.0.1:4000/api/health` - 200, `{"ok":true,...}`.
-  - `curl -I https://trading.jays.services/` - 307 to `/login`.
+  - `curl -I https://socratictrade.com/` - 307 to `/login`.
 - Branch verification after merging current `origin/main` (`0f5078d2`, PR #275):
   - `npm run lint` - pass, 0 errors, 254 existing warnings.
   - `npx tsc --noEmit` - pass after freeing disposable worktree build/cache artifacts to resolve host `ENOSPC`.

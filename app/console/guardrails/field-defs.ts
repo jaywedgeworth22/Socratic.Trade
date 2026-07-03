@@ -27,6 +27,30 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
 ];
 
+export const SOCRATIC_OVERRIDE: FieldDef[] = [
+  {
+    path: "socraticOverrideMode",
+    label: "Socratic override",
+    kind: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "propose", label: "Propose only" },
+      { value: "execute", label: "Execute in Decide mode" }
+    ],
+    looseRank: { off: 0, propose: 1, execute: 2 },
+    hint:
+      "Lets Socratic Trade challenge owner-preference gates with a structured thesis. Broker, account, tax-hard, and integrity refusals still block."
+  },
+  {
+    path: "socraticOverrideMaxPctOfNav",
+    label: "Override cap (% of portfolio)",
+    kind: "pct",
+    optional: true,
+    looserWhen: "up",
+    hint: "Maximum notional for a single Socratic override. 100% allows an all-available-cash thesis when buying power permits."
+  }
+];
+
 export const EXPOSURE: FieldDef[] = [
   { path: "maxSymbolExposurePct", label: "Max in one stock (%)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "maxSymbolExposureNotional", label: "Max in one stock ($)", kind: "money", optional: true, looserWhen: "up" },
@@ -132,6 +156,7 @@ export const UNIVERSE_FLOOR: FieldDef[] = [
 
 export const ALL_DEFS: FieldDef[] = [
   ...ESSENTIALS,
+  ...SOCRATIC_OVERRIDE,
   ...EXPOSURE,
   ...ENTRY_QUALITY,
   ...STOPS_PLUMBING,

@@ -18,6 +18,8 @@ import {
   releaseStrategyLock,
   setPolicy,
   transitionProposalIfPending,
+  upsertSocraticDecisionCase,
+  createSocraticFrameworkProposal,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -88,7 +90,17 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ScoringWeights, TradingPolicy, TradeProposal } from "./types";
+import {
+  applySocraticOverrideSizing,
+  buildSocraticDecisionCase,
+  frameworkProposalFromDecision,
+  ragAttributionsFromChunks,
+  resolveSocraticOverride,
+  socraticStatusFromProposalStatus,
+  type SocraticOverrideResolution
+} from "./socratic-runtime";
+import { indexSocraticDecisionMemory } from "./socratic-memory";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -485,6 +497,7 @@ export async function runStrategyOnce(
     }
 
     let ragContext = "";
+    let socraticRagAttributions: SocraticRagAttribution[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -494,17 +507,19 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
         const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
-        const contexts = await Promise.all(topSymbols.map(sym =>
-          // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
-          // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
-          // never wired through this call site before. Advisory context only — not a money-path gate.
-          retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
-            docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
-            minScore: defaultMinScore(),
-            connectedAccountId: policy.connectedAccountId
+        const contexts = await Promise.all(
+          topSymbols.map(async (sym) => {
+            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
+              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              minScore: defaultMinScore(),
+              connectedAccountId: policy.connectedAccountId
+            });
+            return { sym, query, chunks };
           })
-        ));
-        const validContexts = contexts.flat().filter(Boolean);
+        );
+        const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
+        socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         if (validContexts.length > 0) {
           ragContext = validContexts.map(c => c.text).join("\n\n");
         }
@@ -621,7 +636,8 @@ export async function runStrategyOnce(
       })
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
-        return enrichOpeningProposal(sized, policy, marketScan);
+        const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
+        return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -787,6 +803,46 @@ export async function runStrategyOnce(
     // full-set warning above remains here.)
 
     const results: StrategyResult["proposals"] = [];
+    const recordSocraticDecision = (input: {
+      proposalId: string;
+      proposal: TradeProposal;
+      decision: PolicyDecision;
+      status: string;
+      review?: ReviewedOrder;
+      overrideResolution?: SocraticOverrideResolution;
+    }) => {
+      try {
+        const now = new Date().toISOString();
+        const caseFile = {
+          ...buildSocraticDecisionCase({
+            userId,
+            connectedAccountId,
+            runId,
+            proposalId: input.proposalId,
+            accountNumber: policy.accountNumber,
+            proposal: input.proposal,
+            status: socraticStatusFromProposalStatus(input.status),
+            authority: policy.strategyAuthority,
+            decision: input.decision,
+            review: input.review,
+            marketScan,
+            ragAttributions: socraticRagAttributions,
+            overrideResolution: input.overrideResolution
+          }),
+          createdAt: now,
+          updatedAt: now
+        } satisfies SocraticDecisionCase;
+        upsertSocraticDecisionCase(caseFile);
+        void indexSocraticDecisionMemory(caseFile).catch((err) => {
+          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+        });
+        const framework = frameworkProposalFromDecision(caseFile);
+        if (framework) createSocraticFrameworkProposal(framework);
+      } catch (err) {
+        console.warn("[strategy] Socratic decision recording failed:", err instanceof Error ? err.message : String(err));
+      }
+    };
+
     for (const proposal of proposals) {
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
@@ -794,6 +850,7 @@ export async function runStrategyOnce(
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -811,7 +868,7 @@ export async function runStrategyOnce(
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const isLiveExecution = executionMode === "broker/live";
-      const decision = evaluateTradeProposal(normalizedProposal, {
+      let decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
         positions: workingPositions,
@@ -840,6 +897,45 @@ export async function runStrategyOnce(
       // happened yet — so logging "the wash sale was disregarded / the deduction was forfeited" here
       // would be false if the owner rejects or lets it expire. When such a card is later approved,
       // executeProposal emits the same trail (gated on decision.approved) as the order actually places.
+      const overrideResolution = resolveSocraticOverride({
+        proposal: normalizedProposal,
+        policy,
+        portfolio: workingPortfolio,
+        estimatedNotional: review.estimatedNotional,
+        decision
+      });
+      decision = overrideResolution.decision;
+      if (overrideResolution.applied) {
+        audit(
+          "socratic_override_applied",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            thesis: normalizedProposal.autonomyOverride?.thesis,
+            routeToHuman: overrideResolution.routeToHuman,
+            mode: policy.socraticOverrideMode
+          },
+          userId,
+          connectedAccountId
+        );
+        if (overrideResolution.routeToHuman) requiresHumanReview.add(proposal);
+      } else if (overrideResolution.requested) {
+        audit(
+          "socratic_override_refused",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            hardReasons: overrideResolution.hardReasons,
+            thesis: normalizedProposal.autonomyOverride?.thesis
+          },
+          userId,
+          connectedAccountId
+        );
+      }
 
       if (!decision.approved) {
         // ── Escalation framework ─────────────────────────────────────────────────────────────
@@ -859,6 +955,7 @@ export async function runStrategyOnce(
             escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
           };
           insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
           audit(
             "proposal_escalated",
             {
@@ -894,6 +991,7 @@ export async function runStrategyOnce(
 
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         await sendNotification(
           {
             type: "block",
@@ -944,6 +1042,7 @@ export async function runStrategyOnce(
           status: "blocked",
           promptVersion: STRATEGY_PROMPT_VERSION
         });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: heldDecision, status: "blocked", review, overrideResolution });
         audit(
           "proposal_blocked_broker_held_exit",
           { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
@@ -968,6 +1067,7 @@ export async function runStrategyOnce(
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -979,6 +1079,7 @@ export async function runStrategyOnce(
       if (policy.strategyAuthority === "propose") {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -992,6 +1093,7 @@ export async function runStrategyOnce(
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -1017,6 +1119,7 @@ export async function runStrategyOnce(
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
         insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
@@ -1057,6 +1160,7 @@ export async function runStrategyOnce(
         // The broker may or may not have accepted the order. Keep the durable intent row and
         // flag it loudly for reconciliation rather than aborting the whole run.
         updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
@@ -1075,6 +1179,14 @@ export async function runStrategyOnce(
       if (isRejectedOrCanceledState(execution.state)) {
         const message = `Broker declined the order (state: ${execution.state}).`;
         updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({
+          proposalId,
+          proposal: normalizedProposal,
+          decision: { ...decision, approved: false, reasons: [...decision.reasons, message] },
+          status: "rejected_by_broker",
+          review,
+          overrideResolution
+        });
         audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
@@ -1085,6 +1197,7 @@ export async function runStrategyOnce(
       }
 
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
+      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const fill = recordFillFromProposal({
@@ -2512,6 +2625,12 @@ async function proposeTrades(input: {
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
+    socraticAuthority: {
+      overrideMode: input.policy.socraticOverrideMode ?? "off",
+      overrideMaxPctOfNav: input.policy.socraticOverrideMaxPctOfNav,
+      note:
+        "Use autonomyOverride only for evidence-backed conflicts with owner preference gates. Do not use it for broker/account/integrity constraints."
+    },
     macroeconomicData,
     ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
     ...(marketInternals ? { marketInternals } : {}),
@@ -2538,6 +2657,24 @@ async function proposeTrades(input: {
     audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
   };
 
+  const autonomyOverrideSchema = {
+    anyOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["requested", "thesis", "preferenceConflicts", "invalidation", "cashDeploymentPct"],
+        properties: {
+          requested: { type: "boolean" },
+          thesis: { type: "string" },
+          preferenceConflicts: { type: "array", items: { type: "string" } },
+          invalidation: { type: ["string", "null"] },
+          cashDeploymentPct: { type: ["number", "null"] }
+        }
+      },
+      { type: "null" }
+    ]
+  };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -2561,7 +2698,8 @@ async function proposeTrades(input: {
             "marketHours",
             "rationale",
             "tradeThesisTag",
-            "confidenceScore"
+            "confidenceScore",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
@@ -2577,7 +2715,8 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" }
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
@@ -2816,7 +2955,8 @@ async function proposeTrades(input: {
             "timeInForce",
             "marketHours",
             "rationale",
-            "tradeThesisTag"
+            "tradeThesisTag",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
@@ -2831,7 +2971,8 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { enum: THESIS_PLAYBOOK }
+            tradeThesisTag: { enum: THESIS_PLAYBOOK },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
@@ -2850,6 +2991,7 @@ async function proposeTrades(input: {
     currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
+    socraticAuthority: userContent.socraticAuthority,
     portfolio: input.portfolio,
     positions: input.positions,
     ...(sectorComposition ? { sectorComposition } : {}),
@@ -3199,7 +3341,21 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours",
       tradeThesisTag: proposal.tradeThesisTag ?? undefined,
-      entryMarketRegime: proposal.entryMarketRegime ?? undefined
+      entryMarketRegime: proposal.entryMarketRegime ?? undefined,
+      autonomyOverride:
+        proposal.autonomyOverride?.requested === true
+          ? {
+              requested: true,
+              thesis: String(proposal.autonomyOverride.thesis ?? "").slice(0, 2000),
+              preferenceConflicts: Array.isArray(proposal.autonomyOverride.preferenceConflicts)
+                ? proposal.autonomyOverride.preferenceConflicts.map(String).slice(0, 8)
+                : [],
+              ...(proposal.autonomyOverride.invalidation ? { invalidation: String(proposal.autonomyOverride.invalidation).slice(0, 1000) } : {}),
+              ...(typeof proposal.autonomyOverride.cashDeploymentPct === "number" && Number.isFinite(proposal.autonomyOverride.cashDeploymentPct)
+                ? { cashDeploymentPct: Math.max(0, Math.min(100, proposal.autonomyOverride.cashDeploymentPct)) }
+                : {})
+            }
+          : undefined
     }));
 }
 

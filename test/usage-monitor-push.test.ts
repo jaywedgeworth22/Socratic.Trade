@@ -89,7 +89,7 @@ describe("usage-monitor-push", () => {
     const events = captured[0]!.body.events;
     expect(events).toHaveLength(1);
     const e = events[0]!;
-    expect(e.sourceApp).toBe("agentic-trading");
+    expect(e.sourceApp).toBe("socratic-trade");
     expect(e.environment).toBe("test");
     expect(e.provider).toBe("anthropic");
     expect(e.service).toBe("llm");

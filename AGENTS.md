@@ -100,7 +100,7 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `trading.jays.services` | **production** |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
@@ -393,7 +393,7 @@ local multi-worktree/PM2 setup and does NOT apply here.
 
 ### Production ops snapshot (remote diagnostics)
 
-Cloud agents cannot OAuth into `trading.jays.services` or read the Mac's `data/app.db`.
+Cloud agents cannot OAuth into `socratictrade.com` or read the Mac's `data/app.db`.
 When investigating **live** strategy runs, multi-account behavior, or production errors,
 **run first**:
 

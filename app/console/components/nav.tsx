@@ -76,17 +76,17 @@ interface Destination {
 }
 
 const DESTINATIONS: Destination[] = [
-  { href: "/console", label: "Home", icon: LayoutDashboard, desc: "Account overview: portfolio, positions, and what needs attention." },
-  { href: "/console/approvals", label: "Approvals", icon: Inbox, desc: "Pending trade proposals waiting for your decision." },
-  { href: "/console/activity", label: "Activity", icon: ActivityIcon, desc: "Everything that happened, newest first." },
-  { href: "/console/scan", label: "Scan", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
-  { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols you follow, with price alerts that notify you when a level is crossed." },
-  { href: "/console/macro", label: "Macro", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
+  { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
+  { href: "/console/approvals", label: "Decisions", icon: Inbox, desc: "Pending trade proposals and learned-context changes awaiting a decision." },
+  { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
+  { href: "/console/scan", label: "Evidence", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
+  { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
+  { href: "/console/macro", label: "Regime", icon: Globe, desc: "Macro and market-regime board: rates, credit, volatility, breadth." },
   { href: "/console/orders", label: "Orders", icon: ListChecks, desc: "Order history and open orders at the broker." },
-  { href: "/console/assistant", label: "Assistant", icon: MessageSquare, desc: "Chat with the assistant about your accounts and the market." },
-  { href: "/console/strategy", label: "Strategy", icon: Brain, desc: "The strategy prompt, models, and run cadence." },
-  { href: "/console/guardrails", label: "Guardrails", icon: Shield, desc: "Hard limits the policy gate enforces on every trade." },
-  { href: "/console/results", label: "Results", icon: BarChart3, desc: "Realized performance, equity curve, and thesis scorecards." },
+  { href: "/console/assistant", label: "Coach", icon: MessageSquare, desc: "Coach Socratic Trade about its reasoning, accounts, and market focus." },
+  { href: "/console/strategy", label: "Framework", icon: Brain, desc: "The agent framework: prompts, models, doctrine, and run cadence." },
+  { href: "/console/guardrails", label: "Mandates", icon: Shield, desc: "Delegated authority and hard constraints that bind every trade." },
+  { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
   { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
 ];
 

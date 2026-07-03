@@ -604,7 +604,7 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
   const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policyForResolution, userId);
   const schema = tuningSchema();
   const systemPrompt = [
-    "You are the strategy improvement reviewer for an agentic equity trading dashboard.",
+    "You are the strategy improvement reviewer for Socratic Trade, an autonomous equity-reasoning desk.",
     "Review recent paper vs live performance, latest market scan context, macro context, current risk policy, scoring weights, and the current strategy prompt.",
     "Suggest conservative improvements that can be manually reviewed before being applied.",
     "Do not propose placing trades. Do not remove explicit safety controls.",
