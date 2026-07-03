@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const model = typeof body?.model === "string" ? body.model : undefined;
+    const model = typeof body?.model === "string" && body.model.trim() ? body.model.trim() : undefined;
     const reasoningEffort: LlmReasoningEffort | undefined =
       ALL_LLM_REASONING_EFFORTS.includes(body?.reasoningEffort) ? body.reasoningEffort : undefined;
     const userId = resolveRequestUserId(request);

@@ -4572,7 +4572,7 @@ function StrategyStudio({
         <textarea
           value={snapshot.strategyPrompt}
           onChange={(e) => editStrategyPrompt(e.target.value)}
-          className={cn(inputClass, "h-72 lg:h-[480px] resize-none font-mono text-[13px] leading-relaxed")}
+          className={cn(inputClass, "h-72 lg:h-[480px] resize-none text-sm leading-relaxed")}
         />
         <p className="text-xs text-faint">Autosaves ~1s after you stop typing.</p>
       </div>

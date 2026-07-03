@@ -47,16 +47,18 @@ describe("llm-request — model resolution", () => {
     expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(reasoningCapabilityForModel("grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
-    expect(reasoningCapabilityForModel("gemini-2.5-pro")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
-    expect(reasoningCapabilityForModel("mistral-large-2512")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
-    expect(reasoningCapabilityForModel("deepseek-v4-pro")).toBeUndefined();
+    expect(reasoningCapabilityForModel("gemini-3.1-pro-preview")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("mistral-small-2603")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    expect(reasoningCapabilityForModel("deepseek-v4-pro")?.options.map((o) => o.value)).toEqual(["none", "high", "max"]);
   });
 
   it("normalizes unsupported effort values to the nearest provider-supported setting", () => {
     expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
-    expect(normalizeReasoningEffortForModel("gemini-2.5-pro", "none")).toBe("minimal");
+    expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
     expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");
-    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "high")).toBeUndefined();
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("high");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("high");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "xhigh")).toBe("max");
   });
 });
 
@@ -122,6 +124,23 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect(mistral.reasoning_effort).toBe("xhigh");
     expect(mistral.prompt_mode).toBe("reasoning");
+
+    const deepseek = withLlmRequestBounds({ model: "deepseek-v4-pro" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "deepseek-v4-pro",
+      reasoningEffort: "max"
+    });
+    expect(deepseek.reasoning_effort).toBe("max");
+    expect(deepseek.thinking).toEqual({ type: "enabled" });
+    expect("temperature" in deepseek).toBe(false);
+
+    const deepseekOff = withLlmRequestBounds({ model: "deepseek-v4-flash" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "deepseek-v4-flash",
+      reasoningEffort: "none"
+    });
+    expect(deepseekOff.thinking).toEqual({ type: "disabled" });
+    expect(deepseekOff.temperature).toBe(0);
 
     const anthropic = withLlmRequestBounds({ model: "claude-opus-4-8" }, "anthropic-messages", {
       maxOutputTokens: 1500,

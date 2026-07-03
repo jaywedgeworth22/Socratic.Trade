@@ -277,12 +277,13 @@ const CHEAPER_MODEL: Record<string, string> = {
   // xAI
   "grok-4.3": "grok-build-0.1",
   // Gemini
+  "gemini-3.1-pro-preview": "gemini-3.5-flash",
+  "gemini-3.5-flash": "gemini-3.1-flash-lite",
   "gemini-2.5-pro": "gemini-2.5-flash",
-  "gemini-3.5-flash": "gemini-2.5-flash-lite",
   "gemini-2.5-flash": "gemini-2.5-flash-lite",
   // Mistral
   "mistral-large-2512": "mistral-medium-3-5",
-  "mistral-medium-3-5": "mistral-small-2506",
+  "mistral-medium-3-5": "mistral-small-2603",
   "mistral-large": "mistral-medium",
   "mistral-medium": "mistral-small",
   // DeepSeek

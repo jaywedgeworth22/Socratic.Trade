@@ -309,6 +309,13 @@ function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", 
   return undefined;
 }
 
+function policyForTuningReviewer(policy: TradingPolicy, modelOverride?: string): TradingPolicy {
+  const explicitModel = modelOverride?.trim();
+  if (explicitModel) return { ...policy, llmModel: explicitModel };
+  const teamModel = policy.redTeamLlmModel?.trim() || policy.llmModel?.trim();
+  return teamModel ? { ...policy, llmModel: teamModel } : policy;
+}
+
 export async function proposeStrategyTuning(
   userId: string = "local",
   modelOverride?: string,
@@ -410,7 +417,7 @@ export async function proposeStrategyTuning(
     macro
   };
 
-  const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
+  const policyForResolution = policyForTuningReviewer(policy, modelOverride);
   const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
   if (!llmKey) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
@@ -610,7 +617,7 @@ async function requestLlmTuning(
   reasoningEffortOverride?: LlmReasoningEffort
 ): Promise<LlmTuningPayload> {
   const policy = getPolicy(userId);
-  const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
+  const policyForResolution = policyForTuningReviewer(policy, modelOverride);
   const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policyForResolution, userId);
   const schema = tuningSchema();
   const systemPrompt = [

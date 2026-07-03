@@ -43,6 +43,11 @@ to `socratictrade.com`, record the release commit + date here._
 - **2026-07-03** — `trading-live` published at `481e9dcc` (PR #347) on
   `socratictrade.com`. Includes the Guardrails Universe index exclusivity fix;
   production health 200 and live S&P/Nasdaq mutual-exclusion UI behavior verified.
+- **2026-07-03** — `trading-live` published at `0941b4d2` (PR #349) on
+  `socratictrade.com`. Includes Socratic admin/RAG/Pinecone/settings parity,
+  provider-specific model reasoning controls, OAuth host canonicalization,
+  `/old`, ticker drawer coverage, and user/admin LLM usage visibility. Production
+  health 200 and Google/GitHub OAuth redirect URIs verified on the Socratic domain.
 
 ---
 
@@ -121,30 +126,24 @@ to `socratictrade.com`, record the release commit + date here._
 - **#347** — Console universe index exclusivity fix (`codex/universe-exclusive-indexes`):
   `/console/guardrails` now uses the shared `toggleIncludedIndex` helper for Base indices, so
   S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite replace each other immediately in the draft.
+- **#348** — Sell to Fund Buys title-case copy fix (`codex/sell-to-fund-title-case`):
+  Guardrails and legacy dashboard Sell to Fund Buys labels/options now use Title Case, and the
+  Guardrails save-review diff shows Title Case instead of raw lowercase enum values.
+- **#349** — Socratic admin/RAG/Pinecone/settings parity implementation
+  (`codex/live-thesis-portfolio-framing`): default RAG index `socratic-trade`, Pinecone/Voyage
+  health visibility, RAG ingestion brakes, provider-specific model reasoning controls, `/old`,
+  OAuth host canonicalization, ticker drawer coverage, and user/admin LLM usage visibility.
 
 ---
 
 ## 🔨 In Progress
 
-- **Socratic admin/RAG/Pinecone/settings parity implementation** (Codex, local, branch
-  `codex/live-thesis-portfolio-framing`) — owner requested a larger cross-agent pass over new-vs-old
-  console parity, Pinecone/RAG quota guardrails, admin connection health, IRA/account-specific
-  wash-sale settings, absolute-vs-percent setting toggles, model/reasoning controls, universal
-  tooltips, and market-scan ticker detail drawers. New Pinecone index `socratic-trade` has been
-  created; current local edits are wiring the app default to it, surfacing Pinecone/Voyage failures
-  on admin pages, and adding RAG ingestion brakes before Voyage/Pinecone writes. See forthcoming
-  rollout note `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md`.
-  Provider-specific model controls are also being wired so OpenAI, Anthropic,
-  Gemini, xAI, and Mistral expose only the reasoning/thinking settings each
-  selected model can actually use. Local lint, typecheck, full test suite,
-  build, preview restart, and authenticated route probes are green; branch still
-  needs commit/PR/merge/deploy.
-
-- **Sell to Fund Buys title-case copy fix** (Codex, local, branch
-  `codex/sell-to-fund-title-case`) — Guardrails and legacy dashboard Sell to Fund Buys labels/options
-  now use Title Case, and the Guardrails save-review diff shows Title Case instead of raw lowercase
-  enum values. Full local gate and Codex preview UI verification are green; PR pending. See
-  `docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
+- **AI Review inheritance, current model catalog, and text-box font controls** (Codex, local,
+  branch `codex/ai-review-model-inheritance`) — owner correction: account review must not expose
+  or implement a separate account-level model. Blank AI Review inherits Red Team if configured,
+  otherwise Green Team. Also refreshing current non-OpenAI/non-Anthropic curated model options with
+  provider-specific reasoning controls and making text boxes use a consistent readable font with
+  user-selectable examples. Implementation and local verification are green; PR pending.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.

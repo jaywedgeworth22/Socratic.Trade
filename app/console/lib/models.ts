@@ -70,8 +70,10 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "gemini-2.5-pro": "Gemini 2.5 Pro",
   "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
   "gemini-3.5-flash": "Gemini 3.5 Flash",
+  "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
   // Mistral
   "mistral-small-2506": "Mistral Small 2506",
+  "mistral-small-2603": "Mistral Small 2603",
   "mistral-medium-3-5": "Mistral Medium 3.5",
   "mistral-large-2512": "Mistral Large 2512",
   // DeepSeek

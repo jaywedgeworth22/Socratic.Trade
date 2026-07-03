@@ -27,6 +27,16 @@ filling the missing pieces.
 > tracked at `docs/reviews/2026-07-03-console-parity-open-items.md`. See
 > `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md`.
 
+> **2026-07-03 - AI Review inheritance, model catalog, and text-box fonts (Codex).**
+> Account review does not have a separate account-level model. In Strategy -> AI Review,
+> leaving the reviewer model blank now inherits Red Team when configured, otherwise Green Team.
+> The UI no longer uses the old account-fallback label, and `/api/strategy/tune` trims empty
+> model overrides before `proposeStrategyTuning` resolves the actual team model. The console
+> now defaults editable text boxes to the site font, adds browser-local Site/System/Serif/Mono
+> text-box font choices under Settings -> Appearance, refreshes current Gemini/Mistral/xAI/
+> DeepSeek curated model choices, and wires DeepSeek V4 Thinking Mode. See
+> `docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
+
 > **2026-07-03 — Socratic Trade autonomy UI/runtime implementation (Codex).** The branch
 > `codex/socratic-trade-autonomy-mockup` reframes the product as an Autonomy Desk:
 > live thesis, delegated actions, evidence/RAG contribution, dissent, outcome learning,

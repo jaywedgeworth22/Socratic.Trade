@@ -54,28 +54,25 @@ const MODEL_GROUPS: ModelGroup[] = [
     provider: "xai",
     label: "xAI (Grok)",
     options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost Grok · $" },
-      { value: "grok-4.3", label: "grok-4.3 — stronger Grok analysis · $$" }
+      { value: "grok-build-0.1", label: "grok-build-0.1 — coding specialist · $" },
+      { value: "grok-4.3", label: "grok-4.3 — default Grok analysis · $$" }
     ]
   },
   {
     provider: "gemini",
     label: "Google Gemini",
     options: [
-      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost Gemini · $" },
-      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — fast long-context review · $" },
-      { value: "gemini-2.5-pro", label: "gemini-2.5-pro — stronger Gemini reasoning · $$" },
-      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — latest light Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — latest Flash tier · $$" }
+      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$" },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$" }
     ]
   },
   {
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-2506", label: "mistral-small-2506 — low-cost Mistral · $" },
-      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — current balanced Mistral · $$" },
-      { value: "mistral-large-2512", label: "mistral-large-2512 — strongest Mistral · $$$" }
+      { value: "mistral-small-2603", label: "mistral-small-2603 — low-cost Mistral Small 4 · $" },
+      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — frontier Mistral Medium · $$" }
     ]
   },
   {
