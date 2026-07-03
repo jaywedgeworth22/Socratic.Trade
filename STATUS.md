@@ -20,7 +20,9 @@ language, the first absolute-vs-percent setting mode switches, and a tracked
 open-items audit. Verification is green: `npm run lint` (0 errors), `npx tsc
 --noEmit`, `npm test` (244 files / 2369 tests), `npm run build`, Codex preview
 restart, and authenticated route probes for `/console`, `/old`, and
-`/console/strategy`.
+`/console/strategy`. The Playwright smoke assertion was updated from the old
+`Market Scan` label to the new `Evidence and RAG contribution` Home panel, and
+`npm run test:e2e` passes locally.
 See `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md` and
 `docs/reviews/2026-07-03-console-parity-open-items.md`.
 

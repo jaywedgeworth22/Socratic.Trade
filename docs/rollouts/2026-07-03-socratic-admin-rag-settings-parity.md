@@ -112,6 +112,10 @@ Outside this worktree:
     and `/console/usage` redirect to `/login`.
   - with `cf-access-authenticated-user-email: mail@jays.services`, `/console`,
     `/old`, and `/console/strategy` return 200.
+- GitHub PR smoke initially failed because `test/e2e/dashboard-smoke.spec.ts`
+  still asserted the old Home text `Market Scan`; the Socratic Home now labels
+  that panel `Evidence and RAG contribution`. Updated the assertion.
+- `npm run test:e2e` - passed locally after that assertion update.
 
 ## Follow-ups / remaining risk
 
