@@ -82,9 +82,12 @@ describe("console guardrails: extraPatch loosening classification (Codex finding
 
   it("classifies escalating sell-to-fund-buy as looser and de-escalating as tighter", () => {
     const [escalated] = classifyExtraPatch(policy, { sellToFundBuy: "automated" });
+    expect(escalated.label).toBe("Sell to Fund Buys");
     expect(escalated.direction).toBe("looser");
+    expect(escalated.summary).toBe("Off → Automated");
     const [deescalated] = classifyExtraPatch({ ...policy, sellToFundBuy: "automated" }, { sellToFundBuy: "off" });
     expect(deescalated.direction).toBe("tighter");
+    expect(deescalated.summary).toBe("Automated → Off");
   });
 
   it("returns nothing for an absent extraPatch", () => {

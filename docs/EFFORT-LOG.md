@@ -34,6 +34,9 @@ to `socratictrade.com`, record the release commit + date here._
 - **2026-07-03** — `trading-live` published at `7b803bff` (PR #346) on
   `socratictrade.com`. Includes #345 run-state UX and #346 IRA wash-sale UI correction;
   production health 200 and live Roth IRA Settings page verified.
+- **2026-07-03** — `trading-live` published at `481e9dcc` (PR #347) on
+  `socratictrade.com`. Includes the Guardrails Universe index exclusivity fix;
+  production health 200 and live S&P/Nasdaq mutual-exclusion UI behavior verified.
 
 ---
 
@@ -109,17 +112,19 @@ to `socratictrade.com`, record the release commit + date here._
 - **#346** — IRA wash-sale UI correction (`codex/ira-washsale-ui-fix`): Roth/traditional IRA accounts
   show same-account IRA wash sales as ignored/not applicable, hide the taxable Block / Ask / Auto
   selector, and expose only the cross-account IRA taxable-loss rebuy setting.
+- **#347** — Console universe index exclusivity fix (`codex/universe-exclusive-indexes`):
+  `/console/guardrails` now uses the shared `toggleIncludedIndex` helper for Base indices, so
+  S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite replace each other immediately in the draft.
 
 ---
 
 ## 🔨 In Progress
 
-- **Console universe index exclusivity fix** (Codex, local, branch
-  `codex/universe-exclusive-indexes`) — `/console/guardrails` now uses the shared
-  `toggleIncludedIndex` helper for Base indices, so S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite
-  replace each other immediately in the draft instead of both staying checked. Focused verification is
-  green; full local gate is green; PR pending. See
-  `docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
+- **Sell to Fund Buys title-case copy fix** (Codex, local, branch
+  `codex/sell-to-fund-title-case`) — Guardrails and legacy dashboard Sell to Fund Buys labels/options
+  now use Title Case, and the Guardrails save-review diff shows Title Case instead of raw lowercase
+  enum values. Full local gate and Codex preview UI verification are green; PR pending. See
+  `docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
@@ -213,3 +218,7 @@ to `socratictrade.com`, record the release commit + date here._
   `7b803bff`; production health and Roth IRA Settings UI verified. Started
   `codex/universe-exclusive-indexes` to restore mutually-exclusive full-overlap index selection in the
   console Guardrails universe picker.
+- 2026-07-03 — **#347 merged + deployed** (→ Completed / Deployed): console Universe index
+  exclusivity fix at `481e9dcc`; production health and live S&P/Nasdaq mutual-exclusion behavior
+  verified. Started `codex/sell-to-fund-title-case` to title-case the Sell to Fund Buys selector
+  labels/options and save-review summary.
