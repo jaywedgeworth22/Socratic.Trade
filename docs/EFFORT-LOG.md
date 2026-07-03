@@ -50,36 +50,49 @@ to `trading.jays.services`, record the release commit + date here._
 - **#333** — Chat idempotency: `clientTurnId` retry dedupe on `POST /api/chat` (migration v10).
 - **#334** — Persist failover-aware `proposedByModel` per proposal; blank (never fabricate) no-FRED macro (`DEFAULT_MACRO`→`BLANK_MACRO`, `pruneMacro` drops `""`).
 - **#335** — `EquityOrder` limit/stop/TIF through Alpaca+Robinhood mappers + `/console/orders` columns; disclosure-ordered congress cap; `MarketQuoteSummary` factor/headlines/volume fields; Turbopack dev fix.
+- **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
 
 ---
 
 ## 🔨 In Progress
 
-- **`sources.price` provenance in `mergeQuoteData`** — branch `claude/mergequote-price-provenance`
-  (coordinator, cloud). The last open item from the #327 scan-data follow-up: a merged broker/Yahoo
-  `price` kept the screener's stale `sources.price`, so the drilldown/table price tooltip
-  misattributed the shown value. `refreshSideProvenance` now attributes `price` to the merge provider
-  (price is real even when the derived spread is synthetic). **Status:** fix + 2 tests done; lint/tsc
-  green, full test+build gate running; PR to open with auto-merge armed.
+- **Manager-model options doc + decisions record** — branch `claude/manager-model-eval` (coordinator,
+  cloud). Records the four owner decisions below and adds `docs/manager-model-options.md` (cross-provider
+  model comparison for the strategist role). **Status:** doc written; gate + PR pending.
 
 ---
 
-## 📋 Planned / Blocked
+## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
 
-### Blocked — needs owner decision (sovereign-design, real-money safety)
-These gate the next major build (live-execution hardening). Each is a genuine fork where the answer
-changes what gets built; recommendations noted, but not started without owner input.
-1. **Drawdown circuit-breakers** — advisory vs hard-halt during the live soak period.
-   _Recommendation: hard-halt, default-on, during soak; relax later._
-2. **Stop-losses** — prompt-expected (LLM proposes, policy validates) vs schema-forced on every proposal.
-   _Recommendation: schema-forced (fail-closed) for opening trades._
-3. **Manager model tier + monthly LLM budget** for the strategist loop. _Needs owner's tier/$ ceiling._
+1. **Drawdown circuit-breakers → HARD-HALT.** During the live soak, a drawdown breach halts autonomous
+   trading until manually re-armed. _(Unblocks the hardening build.)_
+2. **Stop-losses → PROMPT-EXPECTED.** The LLM proposes stops and policy validates; NOT schema-forced.
+   _(Owner chose the more flexible option over the fail-closed default.)_
+3. **Manager model tier → EVALUATE cross-provider, not a single pick.** Owner wants a list of options
+   (incl. DeepSeek for cost) and to measure how each performs — see `docs/manager-model-options.md`.
+   Recommended path: A/B Sonnet 5 / DeepSeek V4 Pro / GPT-5.5-or-Gemini-3.1-Pro in paper mode and rank
+   by realized per-model P&L (now measurable via #334's `proposedByModel`). Budget: $25–200/mo covers a
+   single model at ~20 runs/day; ~$300/mo covers a 3-model A/B.
+4. **Draft #315 → CLOSED** (superseded by the console port).
+
+---
+
+## 📋 Planned
+
+### Ready to build — decisions in
+- **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
+  - **Hard-halt drawdown circuit-breakers** — default-on during soak, halt autonomous trading on a
+    drawdown-threshold breach until manually re-armed.
+  - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
+    opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
+  - Build behind paper-mode defaults; do not toggle live without the existing typed-confirm ritual.
+- **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
+  DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
+  See `docs/manager-model-options.md`.
 
 ### Planned — actionable, not yet started
-- **#315** draft (`claude/nav-v2-settings-ui-restructure`) — superseded by the console port.
-  Disposition (close vs keep as reference) is the owner's call; do not merge as-is.
 - **Per-model hit rates on Results** — now that `proposedByModel` persists (#334), surface realized
-  win/return grouped by served model.
+  win/return grouped by served model. _(Directly enables the Manager-model A/B above.)_
 - **Per-field FRED sourcing** — a partially-failing FRED fetch still placeholder-fills individual
   series while the suite is flagged sourced; close with per-series flags (#326/#334 follow-up).
 - **SSE for the learned-context inbox** — replace the 60s poll if the console gains an event stream.
@@ -91,3 +104,6 @@ changes what gets built; recommendations noted, but not started without owner in
 ## Changelog of this log
 - 2026-07-03 — Created (coordinator). Seeded from the 2026-07-02 landings (#321–#335) + the
   in-progress `sources.price` fix + blocked sovereign-design decisions.
+- 2026-07-03 — #336 merged (→ Completed). Recorded the four owner decisions (drawdown=hard-halt,
+  stops=prompt-expected, Manager=cross-provider A/B, #315 closed). Live-execution hardening moved
+  Blocked → Ready. Added `docs/manager-model-options.md`.
