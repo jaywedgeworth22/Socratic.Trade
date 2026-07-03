@@ -8,6 +8,7 @@
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
+import { toggleIncludedIndex } from "@/lib/index-universes";
 import type { IndexUniverse, OrderType, TaxationType } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
@@ -189,18 +190,25 @@ export default function GuardrailsPage() {
                       <input
                         type="checkbox"
                         checked={on}
-                        onChange={() =>
-                          setUniverseDraft((d) => ({
-                            ...d,
-                            includedIndices: on ? indices.filter((i) => i !== idx.id) : [...indices, idx.id]
-                          }))
-                        }
+                        onChange={(e) => {
+                          const checked = e.currentTarget.checked;
+                          setUniverseDraft((d) => {
+                            const current = d.includedIndices ?? policy.includedIndices;
+                            return {
+                              ...d,
+                              includedIndices: toggleIncludedIndex(current, idx.id, checked)
+                            };
+                          });
+                        }}
                       />
                       {idx.label}
                     </label>
                   );
                 })}
               </div>
+              <p className="mt-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Overlapping families replace each other: S&amp;P 100 / S&amp;P 500 and Nasdaq 100 / Nasdaq Composite.
+              </p>
             </div>
             <div className="grid gap-3 py-2 sm:grid-cols-2">
               <Field label="Always include (symbols)" hint="Comma or space separated. Exempt from the universe floor." htmlFor="add-syms">
