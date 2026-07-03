@@ -15,6 +15,18 @@ filling the missing pieces.
 > do not follow it. See `docs/EFFORT-LOG.md` +
 > `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 
+> **2026-07-03 - Socratic admin/RAG/settings parity pass (Codex).** The
+> branch `codex/live-thesis-portfolio-framing` is the current broad follow-up
+> for owner feedback after the Socratic UI launch: Pinecone index default
+> `socratic-trade`, RAG ingest brakes, admin RAG/connection-health visibility,
+> user/admin LLM usage split, `/old`, Auth.js legacy-host canonicalization for
+> Google/GitHub redirects, right-side ticker drawer coverage, market-thesis
+> framing on Home, Coach-page reframing, provider-specific model
+> reasoning/thinking controls, lock/unlock authority language, and the first
+> absolute-vs-percent mode switches. The remaining parity/open-item list is now
+> tracked at `docs/reviews/2026-07-03-console-parity-open-items.md`. See
+> `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md`.
+
 > **2026-07-03 — Socratic Trade autonomy UI/runtime implementation (Codex).** The branch
 > `codex/socratic-trade-autonomy-mockup` reframes the product as an Autonomy Desk:
 > live thesis, delegated actions, evidence/RAG contribution, dissent, outcome learning,

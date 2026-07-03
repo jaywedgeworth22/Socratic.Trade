@@ -18,6 +18,7 @@ import { Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
 import { TypedConfirm } from "../components/chrome";
 import {
   AdvancedGroup,
+  PolicyDualModeRow,
   PolicyFieldRow,
   PolicySaveBar,
   usePolicyDraft
@@ -48,6 +49,10 @@ function parseSymbols(text: string): string[] {
 function isIraTaxation(taxationType: TaxationType | undefined): boolean {
   return taxationType === "roth_ira" || taxationType === "traditional_ira";
 }
+
+const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
+const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
+const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
   const { snapshot } = useConsoleData();
@@ -107,7 +112,15 @@ export default function GuardrailsPage() {
 
       <Card title="Essentials">
         <div className="divide-y divide-[color:var(--con-line)]">
-          {ESSENTIALS.map((def) => (
+          <PolicyDualModeRow
+            label="Max Per Order"
+            moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
+            pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
+            policy={policy}
+            draft={draft}
+            hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
+          />
+          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
             <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
           ))}
         </div>
@@ -120,7 +133,15 @@ export default function GuardrailsPage() {
             demanded an exit can never block that exit.
           </p>
           <AdvancedGroup title="Exposure caps">
-            {EXPOSURE.map((def) => (
+            <PolicyDualModeRow
+              label="Max In One Stock"
+              moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
+              pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
+            />
+            {EXPOSURE.filter((def) => !EXPOSURE_FIELD_PATHS.has(def.path)).map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>

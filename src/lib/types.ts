@@ -22,7 +22,7 @@ export type StrategyAuthority = "propose" | "decide";
 // account's existing authority (auto-placed only when the account is already in "decide" mode).
 export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
 
-export type LlmReasoningEffort = "low" | "medium" | "high";
+export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
@@ -648,7 +648,7 @@ export interface TradingPolicy {
    * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
    */
   llmFallbackModels?: string[];
-  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  /** Provider-specific reasoning/thinking effort for models that support it. Ignored by models without that knob. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;

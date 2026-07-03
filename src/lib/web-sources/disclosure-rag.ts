@@ -121,13 +121,13 @@ export async function embedDisclosures(
 
   try {
     const { storeContexts } = await import("../vector-db");
-    // R10 (2026-07-01 RAG backlog): opt-in content_hash dedup, gated on the same
+    // R10 (2026-07-01 RAG backlog): content_hash dedup, gated on the same
     // VECTOR_STORECONTEXTS_DEDUP flag as the 8-K summary path — a disclosure batch commonly
     // re-embeds the same congress-trade/insider-filing text across refresh cycles.
     const result = await storeContexts(
       docs,
       userId,
-      envFlagOn("VECTOR_STORECONTEXTS_DEDUP", false) ? { dedupKeyPrefix: "disclosure" } : undefined
+      envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? { dedupKeyPrefix: "disclosure" } : undefined
     );
 
     // Best-effort audit — never let audit failures propagate

@@ -1,5 +1,11 @@
 # Effort Log — cross-agent board
 
+**Canonical live board:** `/Users/jay/apps/TRADING-EFFORT-LOG.md`
+
+This repo file is the tracked mirror for commits/PRs. Update the canonical live board first so
+agents in other worktrees can see reservations before code lands, then mirror relevant state here
+before committing.
+
 The owner's at-a-glance ledger of every effort and its state. **Every agent on every platform
 (Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions) MUST keep this current** as
 part of the Pre-Commit / Handoff Protocol in `AGENTS.md`. Move each row between the four states as
@@ -120,6 +126,20 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Socratic admin/RAG/Pinecone/settings parity implementation** (Codex, local, branch
+  `codex/live-thesis-portfolio-framing`) — owner requested a larger cross-agent pass over new-vs-old
+  console parity, Pinecone/RAG quota guardrails, admin connection health, IRA/account-specific
+  wash-sale settings, absolute-vs-percent setting toggles, model/reasoning controls, universal
+  tooltips, and market-scan ticker detail drawers. New Pinecone index `socratic-trade` has been
+  created; current local edits are wiring the app default to it, surfacing Pinecone/Voyage failures
+  on admin pages, and adding RAG ingestion brakes before Voyage/Pinecone writes. See forthcoming
+  rollout note `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md`.
+  Provider-specific model controls are also being wired so OpenAI, Anthropic,
+  Gemini, xAI, and Mistral expose only the reasoning/thinking settings each
+  selected model can actually use. Local lint, typecheck, full test suite,
+  build, preview restart, and authenticated route probes are green; branch still
+  needs commit/PR/merge/deploy.
+
 - **Sell to Fund Buys title-case copy fix** (Codex, local, branch
   `codex/sell-to-fund-title-case`) — Guardrails and legacy dashboard Sell to Fund Buys labels/options
   now use Title Case, and the Guardrails save-review diff shows Title Case instead of raw lowercase
@@ -157,6 +177,20 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 📋 Planned
+
+### Socratic console parity sub-lanes — reserved before implementation
+- **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
+  open the shared drilldown/drawer consistently across scan, home, evidence cards, proposals, orders,
+  and other console surfaces. Reserved under the broader Codex parity effort so parallel agents do not
+  start a duplicate ticker-detail lane.
+- **Settings affordance and tooltip pass** — add clearer option descriptions/tooltips, replace confusing
+  loose/tight wording with lock/unlock-style affordances, and turn absolute-vs-percent pairs into a
+  polished mode switch where the pair represents alternative ways to express one constraint.
+- **Model/provider control parity** — move strategy model controls toward curated dropdowns with
+  provider-aware settings, showing reasoning controls only for models that actually support them.
+- **Admin connection health and backend-failure notification pass** — surface every backend dependency
+  including Pinecone/Voyage, distinguish global backend failures from user-key failures, and route
+  global failures to admin email/health while user-key failures become user notifications.
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
@@ -218,6 +252,12 @@ to `socratictrade.com`, record the release commit + date here._
   `7b803bff`; production health and Roth IRA Settings UI verified. Started
   `codex/universe-exclusive-indexes` to restore mutually-exclusive full-overlap index selection in the
   console Guardrails universe picker.
+- 2026-07-03 — Made `docs/EFFORT-LOG.md` maintenance explicitly binding at start/handoff/commit/PR/
+  merge/deploy boundaries in `AGENTS.md`. Started the broader Socratic admin/RAG/Pinecone/settings
+  parity implementation in Codex branch `codex/live-thesis-portfolio-framing`.
+- 2026-07-03 — Tightened the `AGENTS.md` EFFORT-LOG rule: every non-trivial effort gets a **Planned**
+  row before substantial work starts, specifically to stop parallel agents/platforms from duplicating
+  the same lane.
 - 2026-07-03 — **#347 merged + deployed** (→ Completed / Deployed): console Universe index
   exclusivity fix at `481e9dcc`; production health and live S&P/Nasdaq mutual-exclusion behavior
   verified. Started `codex/sell-to-fund-title-case` to title-case the Sell to Fund Buys selector

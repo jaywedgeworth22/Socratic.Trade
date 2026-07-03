@@ -4,7 +4,7 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
-import type { StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
+import type { LlmReasoningEffort, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
   status: number;
@@ -132,10 +132,10 @@ export interface StrategyTuneResult extends StrategyTuningProposal {
   tuningConfigWarnings?: Array<{ message: string }>;
 }
 
-export function tuneStrategy(model?: string): Promise<StrategyTuneResult> {
+export function tuneStrategy(model?: string, reasoningEffort?: LlmReasoningEffort): Promise<StrategyTuneResult> {
   return request<StrategyTuneResult>("/api/strategy/tune", {
     method: "POST",
-    body: JSON.stringify(model ? { model } : {})
+    body: JSON.stringify({ ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) })
   });
 }
 

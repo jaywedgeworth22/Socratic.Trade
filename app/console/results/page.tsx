@@ -12,6 +12,7 @@ import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Btn, Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 export default function ResultsPage() {
   const { snapshot } = useConsoleData();
@@ -320,7 +321,9 @@ function TaxBlock() {
                   .slice(0, 12)
                   .map((lot, i) => (
                     <tr key={`${lot.symbol}-${i}`}>
-                      <td className="font-semibold">{lot.symbol}</td>
+                      <td className="font-semibold">
+                        <SymbolButton symbol={lot.symbol} showLogo={false} />
+                      </td>
                       <td className="num con-num">{fmtQty(lot.quantity)}</td>
                       <td className="num con-num">{lot.daysHeld}</td>
                       <td className="num con-num">{lot.isLongTerm ? "long-term" : `${lot.daysToLongTerm}d`}</td>
@@ -348,7 +351,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.harvestCandidates.slice(0, 8).map((h) => (
               <Chip key={h.symbol} tone="muted">
-                {h.symbol} {fmtSignedMoney(h.unrealizedLoss)}
+                <SymbolButton symbol={h.symbol} showLogo={false} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
               </Chip>
             ))}
           </div>

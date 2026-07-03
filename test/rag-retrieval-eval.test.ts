@@ -120,7 +120,7 @@ async function runFixture(options: { rerank: boolean; hybrid: boolean; limit?: n
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
-  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
   installMockRerank();
 
@@ -236,7 +236,7 @@ describe("RAG retrieval-quality eval (recall@k / MRR against a recorded fixture,
     process.env.VECTOR_ENABLE_RERANK = "off";
     process.env.HYBRID_RETRIEVAL = "off";
     mocks.resolveApiKey.mockImplementation((s: string) => (s === "pinecone" ? "pinecone-test" : "voyage-test"));
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
     mocks.query.mockResolvedValue({ matches: bigPool });
 

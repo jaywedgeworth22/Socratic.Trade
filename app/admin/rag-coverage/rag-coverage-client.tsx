@@ -12,12 +12,37 @@ interface TickerCoverage {
   latestChunkAt: string | null;
 }
 
+interface VectorStoreHealth {
+  configured: boolean;
+  indexName: string;
+  exists?: boolean;
+  totalVectorCount?: number;
+  dimension?: number;
+  error?: string;
+  lastIngest?: {
+    at?: string;
+    attempted?: number;
+    indexed?: number;
+    skipped?: boolean;
+    error?: string;
+    budgetSkipped?: number;
+    budget?: {
+      requested?: number;
+      allowed?: number;
+      skipped?: number;
+      usedLast24h?: number;
+      limitPer24h?: number;
+    };
+  };
+}
+
 interface CoverageData {
   sinceDays: number;
   perTicker: TickerCoverage[];
   totalTickers: number;
   totalChunks: number;
   totalFilings: number;
+  vectorStore: VectorStoreHealth;
   vectorStoreTotalVectors: number;
   coverageGaps: string[];
   ragUsage: {
@@ -91,6 +116,20 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
       <div className="text-2xl font-semibold text-fg">{value}</div>
       {sub && <div className="text-xs text-muted">{sub}</div>}
     </Card>
+  );
+}
+
+function StatusNotice({ tone, title, children }: { tone: "warning" | "danger" | "info"; title: string; children: React.ReactNode }) {
+  const styles = {
+    warning: "text-amber-900 bg-amber-50 border-amber-200",
+    danger: "text-down bg-down/10 border-down/20",
+    info: "text-fg bg-surface-2 border-line"
+  }[tone];
+  return (
+    <div className={`text-sm border rounded-lg p-3 mb-4 ${styles}`}>
+      <strong>{title}</strong>
+      <div className="mt-1 text-current/80">{children}</div>
+    </div>
   );
 }
 
@@ -219,6 +258,7 @@ export function RagCoverageClient() {
             <SummaryCard
               label="Pinecone vectors"
               value={String(data.vectorStoreTotalVectors)}
+              sub={data.vectorStore?.indexName ?? "No index"}
             />
             <SummaryCard
               label="RAG cost"
@@ -226,6 +266,34 @@ export function RagCoverageClient() {
               sub={`last ${data.sinceDays}d`}
             />
           </div>
+
+          {/* Vector store health */}
+          {data.vectorStore && !data.vectorStore.configured && (
+            <StatusNotice tone="warning" title="Pinecone/Voyage Not Configured">
+              Shared RAG writes and retrieval are disabled because the backend keys are missing for this scope.
+            </StatusNotice>
+          )}
+          {data.vectorStore?.exists === false && (
+            <StatusNotice tone="danger" title="Pinecone Index Missing">
+              The configured index <span className="font-mono">{data.vectorStore.indexName}</span> does not exist.
+            </StatusNotice>
+          )}
+          {data.vectorStore?.error && (
+            <StatusNotice tone="danger" title="Pinecone API Error">
+              <span className="font-mono">{data.vectorStore.indexName}</span>: {data.vectorStore.error}
+            </StatusNotice>
+          )}
+          {data.vectorStore?.lastIngest?.error && (
+            <StatusNotice tone="danger" title="Last RAG Ingest Failed">
+              {data.vectorStore.lastIngest.error}
+              {data.vectorStore.lastIngest.at ? ` (${fmtRelDate(data.vectorStore.lastIngest.at)})` : ""}
+            </StatusNotice>
+          )}
+          {(data.vectorStore?.lastIngest?.budgetSkipped ?? 0) > 0 && (
+            <StatusNotice tone="warning" title="RAG Ingest Budget Reached">
+              Skipped {data.vectorStore.lastIngest!.budgetSkipped} document{data.vectorStore.lastIngest!.budgetSkipped === 1 ? "" : "s"} before embedding. Current cap is {data.vectorStore.lastIngest!.budget?.limitPer24h ?? "configured"} texts per 24 hours.
+            </StatusNotice>
+          )}
 
           {/* Coverage gaps warning */}
           {data.coverageGaps.length > 0 && (

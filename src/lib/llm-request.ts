@@ -2,6 +2,21 @@ import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
 export type OpenAiTransport = "responses" | "chat-completions";
+export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral";
+
+export interface LlmReasoningOption {
+  value: LlmReasoningEffort;
+  label: string;
+  hint: string;
+}
+
+export interface LlmReasoningCapability {
+  provider: LlmReasoningProvider;
+  label: string;
+  settingLabel: string;
+  description: string;
+  options: LlmReasoningOption[];
+}
 
 /**
  * Every LLM wire transport the app speaks. Anthropic's Messages API ("anthropic-messages") is NOT
@@ -30,18 +45,141 @@ export function resolveOpenAiModel(policy?: { llmModel?: string | null } | null)
   return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
 }
 
+export const ALL_LLM_REASONING_EFFORTS: readonly LlmReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+const REASONING_OPTION_BY_VALUE: Record<LlmReasoningEffort, LlmReasoningOption> = {
+  none: { value: "none", label: "None", hint: "Disable provider-side thinking where that provider allows it." },
+  minimal: { value: "minimal", label: "Minimal", hint: "Smallest supported thinking budget above off." },
+  low: { value: "low", label: "Low", hint: "Lower latency and cost; less deliberate analysis." },
+  medium: { value: "medium", label: "Medium", hint: "Balanced depth, latency, and cost." },
+  high: { value: "high", label: "High", hint: "Deeper analysis with higher latency and token use." },
+  xhigh: { value: "xhigh", label: "XHigh", hint: "Extra-high provider thinking budget where supported." },
+  max: { value: "max", label: "Max", hint: "Provider maximum thinking budget where supported." }
+};
+
+function options(values: readonly LlmReasoningEffort[]): LlmReasoningOption[] {
+  return values.map((value) => REASONING_OPTION_BY_VALUE[value]);
+}
+
+function lowerModel(model: string | undefined): string {
+  return (model ?? "").trim().toLowerCase();
+}
+
+function isAnthropicAdaptiveThinkingModel(model: string | undefined): boolean {
+  const normalized = lowerModel(model);
+  return (
+    /^claude-fable-5(?:$|[-.:_])/.test(normalized) ||
+    /^claude-mythos-5(?:$|[-.:_])/.test(normalized) ||
+    /^claude-opus-4-(?:6|7|8)(?:$|[-.:_])/.test(normalized) ||
+    /^claude-sonnet-(?:5|4-6)(?:$|[-.:_])/.test(normalized)
+  );
+}
+
+function isXaiReasoningModel(model: string | undefined): boolean {
+  return /^grok-4(?:\.3)?(?:$|[-.:_])/.test(lowerModel(model));
+}
+
+function isGeminiModel(model: string | undefined): boolean {
+  return /^gemini(?:$|[-.:_])/.test(lowerModel(model));
+}
+
+function geminiAllowsThinkingOff(model: string | undefined): boolean {
+  return /^gemini-2\.5-(?:flash|flash-lite)(?:$|[-.:_])/.test(lowerModel(model));
+}
+
+function isMistralModel(model: string | undefined): boolean {
+  return /^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)(?:$|[-.:_])/.test(lowerModel(model));
+}
+
+export function reasoningCapabilityForModel(model: string | undefined): LlmReasoningCapability | undefined {
+  if (isReasoningModel(model)) {
+    return {
+      provider: "openai",
+      label: "OpenAI Reasoning",
+      settingLabel: "Reasoning Effort",
+      description: "OpenAI gpt-5/o-series models use reasoning effort and reject custom temperature.",
+      options: options(["low", "medium", "high"])
+    };
+  }
+  if (isAnthropicAdaptiveThinkingModel(model)) {
+    return {
+      provider: "anthropic",
+      label: "Claude Adaptive Thinking",
+      settingLabel: "Thinking Effort",
+      description: "Recent Claude models use adaptive thinking with provider-specific effort levels.",
+      options: options(["low", "medium", "high", "xhigh", "max"])
+    };
+  }
+  if (isXaiReasoningModel(model)) {
+    return {
+      provider: "xai",
+      label: "Grok Reasoning",
+      settingLabel: "Reasoning Effort",
+      description: "Grok reasoning models accept none/low/medium/high effort.",
+      options: options(["none", "low", "medium", "high"])
+    };
+  }
+  if (isGeminiModel(model)) {
+    return {
+      provider: "gemini",
+      label: "Gemini Thinking",
+      settingLabel: "Thinking Level",
+      description: geminiAllowsThinkingOff(model)
+        ? "Gemini thinking can be disabled or scaled on selected 2.5 Flash models."
+        : "Gemini thinking can be scaled, but this model family does not support turning it fully off.",
+      options: options(geminiAllowsThinkingOff(model) ? ["none", "minimal", "low", "medium", "high"] : ["minimal", "low", "medium", "high"])
+    };
+  }
+  if (isMistralModel(model)) {
+    return {
+      provider: "mistral",
+      label: "Mistral Reasoning",
+      settingLabel: "Reasoning Effort",
+      description: "Mistral chat completions expose provider-specific reasoning effort levels.",
+      options: options(["none", "minimal", "low", "medium", "high", "xhigh"])
+    };
+  }
+  return undefined;
+}
+
+export function normalizeReasoningEffortForOptions(
+  optionsForModel: readonly Pick<LlmReasoningOption, "value">[],
+  effort: LlmReasoningEffort | undefined
+): LlmReasoningEffort {
+  const allowed = optionsForModel.map((option) => option.value);
+  if (allowed.length === 0) return "medium";
+  if (effort === undefined) return allowed.includes("medium") ? "medium" : (allowed[0] ?? "medium");
+  const requested = effort;
+  if (allowed.includes(requested)) return requested;
+  const requestedRank = ALL_LLM_REASONING_EFFORTS.indexOf(requested);
+  const rankedAllowed = allowed
+    .map((value) => ({ value, distance: Math.abs(ALL_LLM_REASONING_EFFORTS.indexOf(value) - requestedRank) }))
+    .sort((a, b) => a.distance - b.distance || ALL_LLM_REASONING_EFFORTS.indexOf(a.value) - ALL_LLM_REASONING_EFFORTS.indexOf(b.value));
+  return rankedAllowed[0]?.value ?? allowed[0] ?? "medium";
+}
+
+export function normalizeReasoningEffortForModel(
+  model: string | undefined,
+  effort: LlmReasoningEffort | undefined
+): LlmReasoningEffort | undefined {
+  const capability = reasoningCapabilityForModel(model);
+  if (!capability) return undefined;
+  return normalizeReasoningEffortForOptions(capability.options, effort);
+}
+
 export function isDisallowedInteractiveStrategyReasoningConfig(model: string | undefined, effort: LlmReasoningEffort | undefined): boolean {
-  return /^gpt-5\.5(?:$|[-.:_])/i.test((model ?? "").trim()) && effort === "high";
+  const normalized = normalizeReasoningEffortForModel(model, effort);
+  return /^gpt-5\.5(?:$|[-.:_])/i.test((model ?? "").trim()) && normalized === "high";
 }
 
 export function interactiveStrategyReasoningEffort(model: string, effort: LlmReasoningEffort | undefined): LlmReasoningEffort | undefined {
-  if (!isReasoningModel(model)) return undefined;
-  const requested = effort ?? "medium";
-  return isDisallowedInteractiveStrategyReasoningConfig(model, requested) ? "medium" : requested;
+  const normalized = normalizeReasoningEffortForModel(model, effort);
+  if (!normalized) return undefined;
+  return isDisallowedInteractiveStrategyReasoningConfig(model, normalized) ? "medium" : normalized;
 }
 
 /** Extra output-token headroom for reasoning models (hidden reasoning tokens are billed as output). */
-const REASONING_TOKEN_BUDGET: Record<LlmReasoningEffort, number> = {
+const REASONING_TOKEN_BUDGET: Record<"low" | "medium" | "high", number> = {
   low: 2000,
   medium: 4000,
   high: 8000
@@ -94,10 +232,10 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
 
 type RequestBounds = {
   maxOutputTokens: number;
-  /** The target model — determines whether to send temperature (classic) or reasoning_effort (gpt-5/o). */
+  /** The target model — determines whether provider-specific reasoning/thinking controls apply. */
   model: string;
   temperature?: number;
-  /** Reasoning effort for reasoning models. Defaults to "medium"; ignored by classic models. */
+  /** Provider-specific reasoning/thinking effort. Defaults to "medium"; ignored by unsupported models. */
   reasoningEffort?: LlmReasoningEffort;
 };
 
@@ -114,16 +252,24 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   transport: LlmTransport,
   bounds: RequestBounds
 ): T & Record<string, unknown> {
+  const capability = reasoningCapabilityForModel(bounds.model);
+  const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
   if (transport === "anthropic-messages") {
     // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
-    // max_completion_tokens) and an optional 0–1 `temperature`; it has no `reasoning_effort` knob.
+    // max_completion_tokens). Newer Claude adaptive-thinking models reject non-default sampling knobs,
+    // so omit temperature when adaptive thinking is active.
+    const base = { ...body, max_tokens: Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS) };
+    if (capability?.provider === "anthropic" && normalizedEffort) {
+      return { ...base, thinking: { type: "adaptive" }, output_config: { effort: normalizedEffort } };
+    }
     const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
-    return { ...body, max_tokens: Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS), temperature };
+    return { ...base, temperature };
   }
-  if (isReasoningModel(bounds.model)) {
+
+  if (capability?.provider === "openai" && normalizedEffort) {
     // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
     // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
-    const effort: LlmReasoningEffort = bounds.reasoningEffort ?? "medium";
+    const effort = normalizedEffort as "low" | "medium" | "high";
     const maxOutputTokens = bounds.maxOutputTokens + REASONING_TOKEN_BUDGET[effort];
     if (transport === "responses") {
       return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
@@ -134,6 +280,13 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
   const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
   if (transport === "responses") {
     return { ...body, max_output_tokens: bounds.maxOutputTokens, temperature };
+  }
+  if (capability && normalizedEffort) {
+    const providerReasoning =
+      capability.provider === "mistral" && normalizedEffort !== "none"
+        ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
+        : { reasoning_effort: normalizedEffort };
+    return { ...body, max_completion_tokens: bounds.maxOutputTokens, temperature, ...providerReasoning };
   }
   return { ...body, max_completion_tokens: bounds.maxOutputTokens, temperature };
 }

@@ -24,7 +24,7 @@ import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
 import { ModelBadge } from "../ui/provider-logo";
 import { Sheet } from "../ui/sheet";
-import { TickerLogo } from "../ui/ticker-logo";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
 
@@ -120,8 +120,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
           {SIDE_LABEL[p.side] ?? p.side.toUpperCase()}
-          <TickerLogo symbol={p.symbol} size="sm" />
-          {p.symbol}
+          <SymbolButton symbol={p.symbol} logoSize="sm" className="text-inherit" />
         </span>
         <span className="con-num cursor-default text-[length:var(--con-fs-md)] font-semibold" title="Proposed order size (approximate notional or share count).">
           {sizeText}
