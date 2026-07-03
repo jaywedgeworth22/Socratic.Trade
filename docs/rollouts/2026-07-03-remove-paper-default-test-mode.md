@@ -63,6 +63,20 @@ which owns those ~36 test files. Files: `src/lib/market-calendar.ts`, `vitest.co
 full suite **2365 passed**, tsc clean, lint 0 errors. Step-2 should therefore NOT re-add per-file
 `isTradingDay` mocks — the calendar is already deterministic in tests.
 
+## Codex review round (2026-07-03, commit after 10140b5)
+Two P2 review comments on #339, both addressed:
+1. **Guard the test-only trading-day override** — the seam could defeat the real market-closed guard if
+   `AGENTIC_TEST_FORCE_TRADING_DAY` ever leaked into a dev/prod shell. Fixed: the override is now ALSO
+   gated on `process.env.VITEST` (a signal only the Vitest runner sets, never present in a real
+   runtime), so it is inert outside tests regardless of any stray flag. `market-calendar.ts` +
+   `vitest.config.ts` comments updated to match.
+2. **Remove the conflicting Cursor rule** — `.cursor/rules/handoff.mdc:39` still said "Never place real
+   trades or set `paperMode: false` — Paper is the default," which Cursor auto-loads and which
+   re-imposes the exact paternalism this PR deletes. Rewrote that guardrail to the new philosophy (real
+   trading, owner's risk; no Test-mode/`paperMode` default; an account is an account; keep the
+   typed-confirm ritual before a live toggle; harden correctness, not obedience). Historical
+   `docs/reviews/2026-07-01-audit-work-split.md` copies are point-in-time records, left as-is.
+
 ## Follow-ups
 - Step 2 code removal (tracked; the large piece).
 - After removal, re-scan `STATUS.md`/`PLAN.md`/`README`/docs for stale "Test mode"/"paper default"

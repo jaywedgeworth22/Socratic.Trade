@@ -72,13 +72,23 @@ function nycDateString(date: Date): string {
  * Test-determinism seam: the strategy/scheduler tests call the no-argument form and assert a run
  * executed. On a real market holiday isTradingDay() is false, so runStrategyOnce()'s market-closed
  * guard skips the run and those wall-clock-independent assertions flake (e.g. the observed July 4
- * closure turns the whole suite red). When AGENTIC_TEST_FORCE_TRADING_DAY=1 (set ONLY by
- * vitest.config's test.env, never in production) the no-argument "today" check returns true so the
- * suite never depends on the calendar. An explicit-date call ALWAYS uses the real calendar, so the
- * calendar's own tests are unaffected.
+ * closure turns the whole suite red). When AGENTIC_TEST_FORCE_TRADING_DAY=1 the no-argument "today"
+ * check returns true so the suite never depends on the calendar. An explicit-date call ALWAYS uses
+ * the real calendar, so the calendar's own tests are unaffected.
+ *
+ * Safety: the override is ALSO gated on process.env.VITEST — a signal the Vitest runner sets itself
+ * and that is never present in a dev/prod runtime. So even if AGENTIC_TEST_FORCE_TRADING_DAY leaks
+ * into a shell/.env that reaches production, the real market-closed guard is NOT defeated: the seam is
+ * inert unless the process is genuinely running under Vitest.
  */
 export function isTradingDay(date?: Date): boolean {
-  if (date === undefined && process.env.AGENTIC_TEST_FORCE_TRADING_DAY === "1") return true;
+  if (
+    date === undefined &&
+    process.env.VITEST &&
+    process.env.AGENTIC_TEST_FORCE_TRADING_DAY === "1"
+  ) {
+    return true;
+  }
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
