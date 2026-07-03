@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — CI holiday-flake fix: deterministic isTradingDay in tests (Claude, cloud)
+Branch `claude/kill-paper-default-rules` (#339). CI `verify` went red for a **pre-existing, wall-clock**
+reason: today (2026-07-03) is the observed US July 4 market holiday, so `isTradingDay()` is false and
+`runStrategyOnce`'s market-closed guard (`strategy.ts:252`) skipped every non-manual run — turning ~17
+strategy/persistence assertions red across 8 files (all showing `run_skipped_market_closed`). This would
+blank all CI through the weekend (Sat/Sun also non-trading), blocking #339, the rebrand, AND the
+paperMode-removal PR. Fixed centrally with a **test-determinism seam**: `isTradingDay(date?)` returns
+true for the no-argument "today" call when `AGENTIC_TEST_FORCE_TRADING_DAY=1` (set ONLY by
+`vitest.config`'s `test.env`, never in production); explicit-date calendar calls are untouched, so
+`market-hours.test.ts`/`token-budget-ceiling.test.ts` still assert real closures. **Zero test-file
+edits** → no conflict with the in-flight paperMode-removal branch (`claude/remove-paper-test-mode`),
+which owns those test files. Verified: full suite **2365 passed** (was 17 failed), tsc clean, lint 0
+errors. Files: `src/lib/market-calendar.ts`, `vitest.config.ts`.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
 ## 2026-07-03 — De-paternalize: kill paper-as-default + Test mode (owner directive) (Claude, cloud)
 Owner directive (repeated, emphatic): this is a REAL trading app, owner accepts 100% risk; stop
 treating paper as default and DELETE Test mode / the local simulator; do not "protect the owner's

@@ -14,6 +14,10 @@ export default defineConfig({
   test: {
     maxWorkers: 4,
     testTimeout: 20_000,
+    // Force isTradingDay()'s no-argument "today" check true so strategy/scheduler tests don't flake
+    // on real market holidays/weekends (see isTradingDay in src/lib/market-calendar.ts). Never set in
+    // production; explicit-date calendar calls ignore it.
+    env: { AGENTIC_TEST_FORCE_TRADING_DAY: "1" },
     exclude: [
       "node_modules/**",
       ".next/**",

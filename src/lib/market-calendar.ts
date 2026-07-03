@@ -65,8 +65,20 @@ function nycDateString(date: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-/** True when today is a trading day (not a weekend or full-close holiday), regardless of current time. */
-export function isTradingDay(date: Date = new Date()): boolean {
+/**
+ * True when the given day (default: today) is a trading day — not a weekend or full-close holiday,
+ * regardless of the time of day.
+ *
+ * Test-determinism seam: the strategy/scheduler tests call the no-argument form and assert a run
+ * executed. On a real market holiday isTradingDay() is false, so runStrategyOnce()'s market-closed
+ * guard skips the run and those wall-clock-independent assertions flake (e.g. the observed July 4
+ * closure turns the whole suite red). When AGENTIC_TEST_FORCE_TRADING_DAY=1 (set ONLY by
+ * vitest.config's test.env, never in production) the no-argument "today" check returns true so the
+ * suite never depends on the calendar. An explicit-date call ALWAYS uses the real calendar, so the
+ * calendar's own tests are unaffected.
+ */
+export function isTradingDay(date?: Date): boolean {
+  if (date === undefined && process.env.AGENTIC_TEST_FORCE_TRADING_DAY === "1") return true;
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
@@ -74,7 +86,7 @@ export function isTradingDay(date: Date = new Date()): boolean {
     month: "2-digit",
     day: "2-digit"
   });
-  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+  const parts = Object.fromEntries(fmt.formatToParts(date ?? new Date()).map((p) => [p.type, p.value]));
   const weekday = parts.weekday;
   if (weekday === "Sat" || weekday === "Sun") return false;
   const dateStr = `${parts.year}-${parts.month}-${parts.day}`;

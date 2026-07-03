@@ -45,14 +45,23 @@ product change (the app trades through a real broker connection, paper or live, 
 
 ## Verification (Step 1)
 Docs-only (no source touched). `npx tsc --noEmit` clean · `npm run lint` 0 errors · `npm run build`
-green. **`npm test`:** currently RED, but for a **pre-existing, unrelated** reason — today (2026-07-03)
-is the observed US July 4 market holiday, so `isTradingDay()` is false and `runStrategyOnce`'s
-market-closed guard (`src/lib/strategy.ts:252`) skips every non-manual run, failing the strategy tests
-that assert a run executed (llm-failover, money-path-f-g, moneypath-drawdown-flip, rationale-collapse,
-etc.). Those tests don't mock the calendar, so they're time/holiday-dependent. This Step-1 docs change
-touches no source and cannot affect it. The fix (mock `isTradingDay` → true in the affected strategy
-tests) is being handled in the **Step-2 code PR** (which owns those test files as it drops `paperMode`).
-Full suite passed earlier today (2365) before the ET date rolled to the holiday.
+green. **`npm test`:** initially RED for a **pre-existing, unrelated** reason — today (2026-07-03) is
+the observed US July 4 market holiday, so `isTradingDay()` was false and `runStrategyOnce`'s
+market-closed guard (`src/lib/strategy.ts:252`) skipped every non-manual run, failing the ~17 strategy /
+persistence assertions that expect a run to execute (llm-failover, money-path-f-g,
+moneypath-drawdown-flip, rationale-collapse, bear-fail-closed, bull-truncation, persistence-notification,
+redteam-observability). Those tests don't mock the calendar, so they were time/holiday-dependent — and
+weekends would keep CI red through Mon, blocking #339, the rebrand, and the Step-2 PR.
+
+**Fixed here (2026-07-03), on this same #339 branch, centrally — NOT per-test-file:** `isTradingDay`
+now takes an optional date and, for the no-argument "today" call only, returns true when
+`AGENTIC_TEST_FORCE_TRADING_DAY=1`. That flag is set ONLY by `vitest.config`'s `test.env`, never in
+production; an explicit-date call always uses the real calendar, so `market-hours.test.ts` /
+`token-budget-ceiling.test.ts` still assert real closures. This is deliberately **zero test-file
+edits** so it does NOT collide with the in-flight Step-2 branch (`claude/remove-paper-test-mode`),
+which owns those ~36 test files. Files: `src/lib/market-calendar.ts`, `vitest.config.ts`. Re-verified:
+full suite **2365 passed**, tsc clean, lint 0 errors. Step-2 should therefore NOT re-add per-file
+`isTradingDay` mocks — the calendar is already deterministic in tests.
 
 ## Follow-ups
 - Step 2 code removal (tracked; the large piece).
