@@ -802,7 +802,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -887,7 +887,7 @@ export async function runStrategyOnce(
           );
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
-          autoRevertOnCapBreach(decision.reasons, policy, userId);
+          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
@@ -902,7 +902,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
         // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
@@ -1795,10 +1795,14 @@ function auditWashSaleProceed(
   );
 }
 
-function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
+function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
-  setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // Scope the demotion save to the run's target account. Omitting it resolves the ACTIVE account, so a
+  // scheduler run of a non-active account could demote — and, because the drawdown breaker may have
+  // already mutated this same policy object's systemState to "halted", HALT — the wrong account. The
+  // manual executeProposal path passes no id because it already operates on the active account.
+  setPolicy({ ...policy, strategyAuthority: "propose" }, userId, connectedAccountId);
   // The demotion must bind the REST of this run, not just the next one: callers keep using this
   // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
   // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a

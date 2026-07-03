@@ -70,6 +70,13 @@ Three P2 review comments, all addressed in a follow-up commit:
    guardrails hint (`app/console/guardrails/field-defs.ts`) and dashboard breaker copy
    (`app/dashboard-client.tsx`) misrepresented behavior. Updated both to describe the hard-halt default
    ("autonomous trading hard-halts until you manually re-arm").
+4. **Follow-on (2nd Codex pass): cap-demotion re-saved the halt unscoped.** After the breaker mutates
+   the shared `policy` object to `halted`, a later blocked opening in the SAME run calls
+   `autoRevertOnCapBreach(...)` (strategy.ts:805/890/905), which did `setPolicy({...policy,
+   strategyAuthority:"propose"}, userId)` with no account id — re-persisting the halted policy onto the
+   ACTIVE account. Fix: threaded `targetAccountId` into `autoRevertOnCapBreach` for the three
+   `runStrategyOnce` call sites; the `executeProposal` call site (active-account path) stays unscoped.
+   Now every `setPolicy` in the run is account-scoped.
 
 ## Follow-ups
 - **Prompt-expected stop-losses** — the second half of the live-execution hardening (strengthen the
