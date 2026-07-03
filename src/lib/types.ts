@@ -624,6 +624,15 @@ export interface TradingPolicy {
   /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
   universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
+  /**
+   * Socratic Trade may explicitly override owner preference gates when it can state a structured
+   * override thesis. "execute" lets a Decide-mode account act through those preference conflicts;
+   * "propose" queues the action with the override note; "off" treats every preference gate normally.
+   * Broker/account/integrity gates remain authoritative in all modes.
+   */
+  socraticOverrideMode?: "off" | "propose" | "execute";
+  /** Optional per-decision ceiling for override actions as % of portfolio NAV. Undefined = no extra override cap. */
+  socraticOverrideMaxPctOfNav?: number;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
   /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
@@ -881,6 +890,128 @@ export interface TradeProposal {
    *     it — readers fall back to the snapshot policy's configured red-team model.
    */
   redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  /**
+   * Explicit agent-authored request to override owner preference gates for this decision.
+   * This is not a client-side bypass token and does not override broker/account/integrity gates.
+   * It exists so Socratic Trade can say, in structured form, "I know this conflicts with the
+   * configured preference, and here is why I still think acting is wiser."
+   */
+  autonomyOverride?: {
+    requested: boolean;
+    thesis: string;
+    /** Which preference gates the agent believes should be overridden. */
+    preferenceConflicts?: string[];
+    /** What would make the override wrong, for later outcome review. */
+    invalidation?: string;
+    /** Optional intended cash deployment when the override is about buying a panic discount. */
+    cashDeploymentPct?: number;
+  };
+}
+
+export type SocraticDecisionStatus =
+  | "planned"
+  | "proposed"
+  | "placed"
+  | "blocked"
+  | "rejected"
+  | "error"
+  | "observed";
+
+export interface SocraticRagAttribution {
+  symbol: string;
+  query: string;
+  chunkId?: string;
+  source?: string;
+  docType?: string;
+  title?: string;
+  url?: string;
+  publishedAt?: string;
+  score?: number;
+  relevanceScore?: number;
+  text: string;
+  contribution: string;
+}
+
+export interface SocraticEvidenceItem {
+  kind:
+    | "market_scan"
+    | "candidate"
+    | "rag"
+    | "red_team"
+    | "policy"
+    | "outcome"
+    | "learning"
+    | "coaching"
+    | "framework"
+    | "override";
+  title: string;
+  summary: string;
+  source?: string;
+  symbol?: string;
+  score?: number;
+  tone?: "positive" | "warning" | "negative" | "neutral";
+  data?: unknown;
+}
+
+export interface SocraticDecisionCase {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  runId?: string;
+  proposalId?: string;
+  accountNumber?: string;
+  createdAt: string;
+  updatedAt: string;
+  symbol?: string;
+  side?: OrderSide;
+  status: SocraticDecisionStatus;
+  authority: StrategyAuthority;
+  thesis: string;
+  rationale: string;
+  action: string;
+  thesisTag?: string;
+  regime?: string;
+  confidenceScore?: number;
+  notional?: number;
+  model?: string;
+  redTeamVerdict?: TradeProposal["redTeamVerdict"];
+  policyDecision?: PolicyDecision;
+  evidence: SocraticEvidenceItem[];
+  ragAttributions: SocraticRagAttribution[];
+  dissent: SocraticEvidenceItem[];
+  outcome?: {
+    status: "open" | "won" | "lost" | "flat" | "unknown";
+    returnPct?: number;
+    pnlUsd?: number;
+    note?: string;
+    measuredAt?: string;
+  };
+  autonomyOverride?: TradeProposal["autonomyOverride"] & {
+    applied: boolean;
+    conflicts: string[];
+  };
+  lessons: string[];
+  coachNotes: string[];
+}
+
+export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
+
+export interface SocraticFrameworkProposal {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  decisionId?: string;
+  runId?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: SocraticFrameworkProposalStatus;
+  priority: "low" | "medium" | "high";
+  subsystem: "strategy" | "risk" | "sizing" | "universe" | "evidence" | "coaching";
+  title: string;
+  rationale: string;
+  proposedChange: string;
+  evidence: SocraticEvidenceItem[];
+  ownerResponse?: string;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1215,6 +1346,14 @@ export interface WashSaleGateAudit {
 export interface PolicyDecision {
   approved: boolean;
   reasons: string[];
+  socraticOverride?: {
+    applied: boolean;
+    mode: "propose" | "execute";
+    conflicts: string[];
+    thesis: string;
+    invalidation?: string;
+    cashDeploymentPct?: number;
+  };
   /**
    * Escalatable failures among `reasons` (see GateEscalation). Present only when the gate
    * refused the proposal AND at least one failure belongs to the escalatable allowlist. The

@@ -67,7 +67,7 @@ export default function SettingsPage() {
             tone={reality.tone}
             title="Settings tagged THIS ACCOUNT are stored on the account itself — switch scope and you'll see that account's values instead."
           >
-            THIS ACCOUNT — {reality.account?.label ?? "Local simulator"} · {reality.word}
+            THIS ACCOUNT — {reality.account?.label ?? "No connected account"} · {reality.word}
           </Chip>
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             changes here follow the account, not you

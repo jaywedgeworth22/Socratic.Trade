@@ -266,6 +266,20 @@ describe("middleware — fail-closed arming (Phase-11 M6)", () => {
     expect(res.status).toBe(200);
   });
 
+  it("Socratic Trade public site overview is public even when auth is armed", async () => {
+    vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
+    vi.stubEnv("AUTH_SECRET", "test-secret-at-least-32-bytes-long!!");
+    const middleware = await loadMiddleware();
+    const req = makeRequest("/design/socratic-trade", {
+      "x-authenticated-user-email": "attacker@evil.example",
+      "x-user-id": "attacker-id"
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-middleware-request-x-authenticated-user-email")).toBeNull();
+    expect(res.headers.get("x-middleware-request-x-user-id")).toBeNull();
+  });
+
   it("Auth.js callback paths are public so provider sign-in can complete", async () => {
     vi.stubEnv("CF_ACCESS_TRUST_EMAIL_HEADER", "1");
     vi.stubEnv("AUTH_SECRET", "");

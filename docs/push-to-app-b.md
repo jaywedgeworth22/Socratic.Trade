@@ -3,7 +3,7 @@
 > **For App A's implementer.** App A's existing `app/docs/fmp-data-sharing.md` covers the
 > **pull** side (`/api/market/bundle/{T}`, `/api/transactions`, …). This file is the **push**
 > side: the webhook + SSE contract App B subscribes to. App B is a long-running Next.js server
-> (PM2; e.g. `trading.jays.services`), so **SSE is preferred**; the webhook is the equivalent
+> (PM2; e.g. `socratictrade.com`), so **SSE is preferred**; the webhook is the equivalent
 > fallback. Implement both — App B picks one per deployment.
 >
 > Field names/types below match App B's internal consumer shapes exactly (see

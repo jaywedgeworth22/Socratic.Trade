@@ -7,9 +7,13 @@ export default function robots(): MetadataRoute.Robots {
   if (process.env.NEXT_PUBLIC_ALLOW_INDEXING !== "true") {
     return { rules: { userAgent: "*", disallow: "/" } };
   }
-  // Public: only the marketing page is crawlable; the gated app + APIs are not.
+  // Public: only product/site pages are crawlable; the gated app + APIs are not.
   return {
-    rules: { userAgent: "*", allow: ["/welcome"], disallow: ["/", "/api/", "/access-denied"] },
+    rules: {
+      userAgent: "*",
+      allow: ["/welcome", "/how-it-works", "/design/socratic-trade"],
+      disallow: ["/", "/api/", "/access-denied"]
+    },
     sitemap: `${base}/sitemap.xml`
   };
 }

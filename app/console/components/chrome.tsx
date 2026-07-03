@@ -74,7 +74,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
 
   const label = active
     ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
-    : "Local simulator";
+    : "No connected account";
 
   const switchTo = async (id: string) => {
     setBusyId(id);
@@ -95,13 +95,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex min-w-0 items-center gap-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex min-w-[112px] max-w-[44vw] items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:max-w-none"
         title="Switch which account this console shows"
       >
         <span className="min-w-0">
           <span className="block truncate text-[length:var(--con-fs-sm)] font-semibold leading-tight">{label}</span>
           {!compact && (
-            <span className="block text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)]">
+            <span className="hidden truncate text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)] sm:block">
               {reality.word} · {reality.phrase}
             </span>
           )}

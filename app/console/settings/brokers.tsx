@@ -33,7 +33,7 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
     case "robinhood":
       return "Robinhood";
     case "test":
-      return "Local simulator";
+      return "Test broker";
     default:
       return broker;
   }
@@ -156,9 +156,8 @@ export function BrokerAccountsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Connections apply to your whole login. Connecting a broker is never required — without one, everything runs in
-        the local simulator (TEST · practice money). Exactly one account is active at a time; the whole console is
-        scoped to it.
+        Connections apply to your whole login. Exactly one account is active at a time; the whole console is scoped to
+        that account, including its authority, strategy, and decision history.
       </p>
 
       {accounts.length === 0 ? (
@@ -289,8 +288,8 @@ export function BrokerAccountsCard() {
             )}
             {confirmRemove.isActive && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                This is the ACTIVE account. Disconnecting it rescopes the console to whatever remains (or the local
-                simulator).
+                This is the ACTIVE account. Disconnecting it rescopes the console to the next active account, if one
+                remains.
               </p>
             )}
             <div className="flex justify-end gap-2">

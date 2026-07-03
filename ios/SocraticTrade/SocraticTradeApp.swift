@@ -1,9 +1,9 @@
 import SwiftUI
 
 @main
-struct AgenticTradingApp: App {
+struct SocraticTradeApp: App {
     @StateObject private var store = MobileStore(
-        client: MobileAPIClient(baseURL: URL(string: "https://codex.jays.services")!)
+        client: MobileAPIClient(baseURL: URL(string: "https://socratictrade.com")!)
     )
 
     var body: some Scene {

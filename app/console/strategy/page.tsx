@@ -85,7 +85,7 @@ export default function StrategyPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "the local simulator"} — each account has its own strategy
+          for {reality.account?.label ?? "no connected account"} — each account has its own strategy
         </span>
       </div>
 
@@ -253,7 +253,7 @@ export default function StrategyPage() {
                             // No connected account (fresh local install): the copy route has no
                             // target, so fall back to library activation of the base policy.
                             await activateProfile(profile.id);
-                            toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for the local simulator.");
+                            toast.push("pos", `Activated “${profile.name}”`, "Applied as the base strategy for new account scope.");
                           }
                           await refresh();
                         } catch (error) {

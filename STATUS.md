@@ -8,6 +8,32 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - Socratic Trade autonomy UI/runtime implementation (Codex)
+Branch `codex/socratic-trade-autonomy-mockup` in `/Users/jay/apps/trading-codex`.
+Built the Socratic Trade Autonomy Desk into real app surfaces, not just a frame. `/console` now reads
+persisted Socratic decision cases first, shows thesis/action/evidence/RAG/dissent/coaching/framework
+state, and falls back to live snapshot-derived copy only when there is no decision history yet. Added
+durable `socratic_decisions` and `socratic_framework_proposals` tables, `/api/socratic/*` routes, coach
+note appends, framework proposal accept/reject/apply actions, RAG attribution capture from retrieved
+chunks, and strategy-loop recording for proposed/placed/blocked/refused override decisions. Added
+institutional-memory document indexing for each strategy-recorded Socratic decision so proposed,
+blocked, and placed cases can feed future private RAG retrieval with broker argument, critic
+counterargument, policy outcome, override state, RAG contribution, outcome, lessons, and coach notes.
+Added Socratic override policy fields so the agent can override owner preference gates in propose/execute
+mode while still refusing hard broker/account/integrity/tax gates. Public `/welcome` and `/how-it-works`
+are routable by default and reframed around autonomous market reasoning; `/design/socratic-trade` is now
+a coded product/site overview that links into the working app surfaces. Exact old production-domain
+references were replaced with `socratictrade.com`;
+active runtime/source identifiers and the iOS starter were aligned to Socratic Trade. Codex preview is
+running at `http://localhost:4101`. Verification: `npm run lint` (0 errors, 303 existing warnings),
+`npx tsc --noEmit`, focused Socratic/account-deletion/memory Vitest runs, `npm test` (243 files / 2361 tests),
+`npm run build`, `git diff --check`, browser checks for desktop/mobile `/console`,
+`/console/guardrails`, `/welcome`, `/how-it-works`, and `/design/socratic-trade`, plus route probes:
+`/welcome` 200, `/how-it-works` 200, `/strategy` 307 to `/how-it-works`,
+`/design/socratic-trade` 200, authenticated `/console` 200, and authenticated
+`/api/socratic/*` 200. See
+`docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+
 ## 2026-07-03 — Live-execution hardening: drawdown breaker → hard-halt (Claude, cloud)
 Branch `claude/live-execution-hardening` (off `origin/main` @ `eb54b94`, post-#342). First slice of the
 hardening build; implements owner decision #1 (drawdown breaker → HARD-HALT). The account-level
@@ -76,12 +102,12 @@ under the name **Socratic Trade** at **socratictrade.com** (Sentry project, Clou
 OAuth callbacks, Google authorized domains — all done owner-side); this aligns the codebase.
 **Changed:** display brand "Agentic Trading" → "Socratic Trade" (manifest name + no-space `short_name`
 "Socratic.Trade", `layout.tsx` applicationName/appleWebApp/description, mobile page + `<h1>`); public
-host fallback `https://trading.jays.services` → `https://socratictrade.com` (env-first —
+host fallback old production host → `https://socratictrade.com` (env-first —
 `NEXT_PUBLIC_SITE_URL` still wins — in `public-origin.ts`, `robots.ts`, `sitemap.ts`, `layout.tsx`
 metadataBase, README, `test/mcp-oauth.test.ts` + `test/logout-route.test.ts`); Sentry project slug
-fallback `agentic-trading` → `socratic-trade`. **Deliberately NOT changed:** `mail@jays.services`
-(owner LOGIN email — would break auth), internal machine slugs (telemetry `SOURCE_APP`, notify UA,
-mcp-oauth client identity, account-deletion HMAC salt), the Robinhood **account nickname "Agentic"**
+fallback `agentic-trading` → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion
+fallback identifiers now use Socratic Trade naming. **Deliberately NOT changed:** `mail@jays.services`
+(owner LOGIN email — would break auth), the Robinhood **account nickname "Agentic"**
 (account-detection convention), and internal jays.services preview subdomains. `socratic.trade` also
 resolves but is not wired in (owner said it's optional; used only as the no-space name form). Verify:
 running tsc/test/build. See `docs/rollouts/2026-07-03-rebrand-socratic-trade.md`.
@@ -1636,7 +1662,7 @@ repair now lives on `main` via PR #275; this branch carries the remaining
 repeatability fixes by changing `npm run build` to `next build --webpack` and
 keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
 redirects to `/login`, `/api/health` returns `ok:true`, and
-`https://trading.jays.services/` returns a 307 to `/login`.
+`https://socratictrade.com/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
 ## 2026-06-30 - Strategy timeout and sizing guardrails
 Branch `codex/strategy-timeout-sizing-guardrails-20260630`. Follow-up to the
@@ -1940,8 +1966,8 @@ events. Verification: `npx vitest run test/policy-notification-events.test.ts`,
 `docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
 ## 2026-06-30 — Browser tab title correction
 Branch `codex/browser-title`. Root metadata and the welcome route now set the
-document title to exactly `Trading Dashboard`; the welcome route uses an
-absolute title so the root template cannot render `Trading Dashboard · Trading
+document title to exactly `Socratic Trade`; the welcome route uses an
+absolute title so the root template cannot render `Socratic Trade · Trading
 Dashboard`. See `docs/rollouts/2026-06-30-browser-title.md`.
 
 ## 2026-06-30 — Congress.Trade shared contract package integration
@@ -2014,7 +2040,7 @@ autonomy/LLM state, recent `strategy_runs` (with `connected_account_id` + label)
 audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Middleware treats
 `/api/ops/*` as public; handler requires `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`)
 via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
-`https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
+`https://socratictrade.com/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
 Secrets wired: `OPS_DIAGNOSTIC_TOKEN` in Cursor Cloud + Infisical prod (owner 2026-06-29). Still needed: merge PR #249, deploy to `trading-live`, `pm2 restart trading` (reload Infisical), new Cloud Agent session, then `npm run ops:snapshot`. Multi-account Alpaca broker fix still pending.
 ## 2026-06-29 — Tiered settings (Cursor / feat/tiered-settings)
 Three-phase settings architecture improvement:
@@ -2186,7 +2212,7 @@ verified email.
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
 login path with Auth.js Google as the only configured identity source.
-Cloudflare Tunnel can still route `trading.jays.services`, but
+Cloudflare Tunnel can still route `socratictrade.com`, but
 `cf-access-authenticated-user-email` is ignored by middleware,
 `AUTH_SECRET` alone arms fail-closed auth, `/logout` clears Auth.js cookies and
 returns to app `/login`, and empty `ALLOWED_EMAILS` now allows only
@@ -2197,7 +2223,7 @@ listed in `ALLOWED_EMAILS`. Verified focused auth/logout/identity tests,
 PR #219 merged and production deploy run `28319030128` passed. Cloudflare Zero
 Trust app `agentic-trading-dashboard` (`9539f646-575d-4e7c-b182-0bbe7c02083a`)
 now has bypass policy `42c4adc9-1421-416b-b744-f291afc87938` so
-`trading.jays.services` reaches Next.js instead of the Cloudflare Access login.
+`socratictrade.com` reaches Next.js instead of the Cloudflare Access login.
 Live validation: `/` returns app `307 /login`, `/login` returns the app Google
 login page, `/api/auth/providers` exposes Google, `/api/dashboard` returns app
 `401 Unauthorized`, and `/logout` redirects to app `/login`. See
@@ -2235,7 +2261,7 @@ Branch `codex/robinhood-mcp-resource-param`. Follow-up to the persisted
 `robinhood.com/oauth/error` after stale OAuth DB rows were cleared: production
 already has the public callback configured, dynamic registration enabled, and no
 static client id, and the live DB showed a freshly registered dynamic client for
-`https://trading.jays.services/api/auth/robinhood/callback`. Added
+`https://socratictrade.com/api/auth/robinhood/callback`. Added
 `ROBINHOOD_MCP_RESOURCE` support so authorization, authorization-code exchange,
 and refresh-token exchange include the protected MCP resource indicator
 (`https://agent.robinhood.com/mcp/trading` by default). This preserves the
@@ -2268,7 +2294,7 @@ MCP client names now use generic dashboard language instead of the temporary
 name. Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153
 files / 1,487 tests), `npm run build`, and in-app browser desktop/mobile Help
 checks against `http://127.0.0.1:4119/`. The Playwright smoke selector was
-updated to expect `Trading Dashboard` instead of the temporary app name; local
+updated to expect `Socratic Trade` instead of the temporary app name; local
 focused smoke passed against a started production server on port 4201. See
 `docs/rollouts/2026-06-28-help-data-sources-copy.md`.
 
@@ -2284,7 +2310,7 @@ and `npm run build` are green. See
 `docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
 
 ## 2026-06-28 — Fix: Robinhood MCP OAuth Dynamic Re-registration on Hostname Change
-Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `trading.jays.services`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
+Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `socratictrade.com`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
 Verify: tsc ✓ · 1446/1446 ✓ · build ✓. See `docs/rollouts/2026-06-28-robinhood-mcp-oauth-dynamic-reregistration.md`.
 
 ## 2026-06-27 — Fix: Alpaca key fallback + FMP premium warnings
@@ -3587,7 +3613,7 @@ Branch: claude/magical-faraday-uce1uy
   source-of-truth contract for a responsive Next.js/PWA and native SwiftUI
   iPhone app: snapshot/bootstrap reads, audited/idempotent command queue,
   server-side command execution, SSE command/status events, and a phone-first
-  `/mobile` PWA. Added SwiftUI starter files under `ios/AgenticTrading/` using
+  `/mobile` PWA. Added SwiftUI starter files under `ios/SocraticTrade/` using
   the same command/status model. Added a multi-step account deletion procedure
   that creates a short-lived request, requires exact signed-in email/user-id and
   exact phrase confirmation, deletes user-scoped app data plus server-stored
@@ -3732,7 +3758,7 @@ Branch: claude/magical-faraday-uce1uy
 - 2026-06-22 (`agent/claude-h-core` + `agent/claude-h-learn` + `agent/claude-h-trig`): **Strategy/risk/execution hardening — 3 sibling PRs** ([#94](https://github.com/jaywedgeworth22/agentic-trading/pull/94)/[#95](https://github.com/jaywedgeworth22/agentic-trading/pull/95)/[#96](https://github.com/jaywedgeworth22/agentic-trading/pull/96)) from the verified-actionable subset of Antigravity's strategy critique, re-scoped to the app's real posture (multi-user, real sizes, shorting in scope — not a $10 paper toy). **CORE**: shorting enablement (default OFF, `shortSellingEnabled` + account-capability gated via `allowedProposalSides`), `maxPortfolioBeta` cap, entry-drift guard (`maxEntryDriftPct`, default 10, on `TradeProposal.referencePrice`), model-free FCF-yield/debt-equity hard-veto in `deterministicBearFilter`, broker-held OCO brackets on Alpaca (`enrichOpeningProposal`, `brokerBracketsEnabled` default on), beta-scaled stops (`betaScaledStopPct`), removed dead `RiskRules.stopLossAtrMultiple`; Settings UI + `/api/policy` validation. **LEARN**: OOS walk-forward-gated weight patches (wires existing `runWalkForwardOOS` into `proposeStrategyTuning`), regime-segmented tuning evidence, read-only holding-period/turnover scorecard fields, execution-cost model ON by default (1 bps, env opt-out). **TRIG**: TradingView webhook submits a `technical` material event into the trigger engine (`src/lib/tradingview-trigger.ts`). All three: tsc clean, full suite green, `npm run build` green; merged `origin/main` (consent-pool #91 + email-aliases #92). Deferred: marketable-limit entries (notional-routing conflict), true ATR stops (needs OHLC feed), per-regime weight matrices. See `docs/rollouts/2026-06-22-risk-shorting-hardening.md`, `-learning-loop-hardening.md`, `-tradingview-trigger-wiring.md`.
 - 2026-06-22 (`feat/primary-email-aliases`): **Primary email aliases — one operator, many addresses.** New `PRIMARY_USER_EMAIL_ALIASES` env (comma-separated): every listed address maps to the single primary `"local"` account, so the owner can sign in with any of their emails (Gmail + custom-domain) onto the same identity/data, all auto-allowed + admin. `identity.ts` `primaryEmails()` (call-time) drives `isPrimaryEmail`/`userIdForEmail`/`isEmailAllowed`; `middleware.ts` mirrors the set at the edge; `admin.ts` `isAdminEmail` now delegates to `isPrimaryEmail`. No data migration (all map to `"local"`). tsc clean · auth tests 14/14 · `npm test` 805 pass / 1 pre-existing unrelated fail (`cache-provenance`, date-sensitive) · build green. Owner sets on prod `.env.local`: `PRIMARY_USER_EMAIL=jaywedgeworth22@gmail.com`, `PRIMARY_USER_EMAIL_ALIASES=mail@jaywedgeworth.com,mail@jays.services`, then `pm2 restart trading --update-env` (+ allow all three in the CF Access policy). See `docs/rollouts/2026-06-22-primary-email-aliases.md`.
 - 2026-06-22 (`feat/robinhood-data-consent-pool`): **Robinhood public data → consent pool.** RH-acquired bars + fundamentals (public market data, not account-private info) now flow into the reciprocal consent pool like every other user-keyed source, instead of being hard-`private`. `history.ts` RH OHLC tier scope `"private"` → `cacheScopeForKeySource("user", userId)` (pool with consent, else private); `RobinhoodEnrichmentProvider` (`data-providers.ts`) gains the same consent-aware `readEnrichmentCache`/`writeEnrichmentCache` as the other providers. RH OAuth token stays strictly per-user (PR #54) — only the public data is shared, only with consent (refuse → private + excluded). New `test/robinhood-data-pool.test.ts` (3 tests): consenting users share RH bars+fundamentals via the pool (no second broker call); non-consenters stay private. tsc clean, **807 tests** (+3), build green. Built in `~/apps/trading-rh-pool` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-robinhood-data-consent-pool.md`.
-- 2026-06-22 (`docs/deploy-handoff`): **Production auto-deploy is LIVE + backfilled handoff docs.** `.github/workflows/deploy.yml` deploys every push to `main` (and manual dispatch) to the self-hosted PM2 box via a `trading-live`-labeled runner on the owner's M-series Mac: token-auth `git fetch` → `git reset --hard FETCH_HEAD` → `npm ci` → `npm run build` → `pm2 restart trading`. Activated/debugged across PRs #79 (move into `.github/workflows/`), #81 (fetch via `GITHUB_TOKEN` — launchd runner has no git creds/TTY), #82 (`reset --hard FETCH_HEAD` not `checkout main` — `trading-live` is a linked worktree sharing the `main` checkout). Deploy run #6 green; `trading.jays.services` serves HTTP 302 (auth gate) = up. This change backfills the skipped handoff: new `docs/deployment.md` runbook, new `docs/rollouts/2026-06-22-deploy-workflow-activated.md`, and `ci-pending/README.md` deploy section corrected to the real design. Owner note: live `/access-denied` just means the visitor email isn't allowlisted (`PRIMARY_USER_EMAIL`/`ADMIN_USER_EMAILS`/CF Access) — not a deploy bug.
+- 2026-06-22 (`docs/deploy-handoff`): **Production auto-deploy is LIVE + backfilled handoff docs.** `.github/workflows/deploy.yml` deploys every push to `main` (and manual dispatch) to the self-hosted PM2 box via a `trading-live`-labeled runner on the owner's M-series Mac: token-auth `git fetch` → `git reset --hard FETCH_HEAD` → `npm ci` → `npm run build` → `pm2 restart trading`. Activated/debugged across PRs #79 (move into `.github/workflows/`), #81 (fetch via `GITHUB_TOKEN` — launchd runner has no git creds/TTY), #82 (`reset --hard FETCH_HEAD` not `checkout main` — `trading-live` is a linked worktree sharing the `main` checkout). Deploy run #6 green; `socratictrade.com` serves HTTP 302 (auth gate) = up. This change backfills the skipped handoff: new `docs/deployment.md` runbook, new `docs/rollouts/2026-06-22-deploy-workflow-activated.md`, and `ci-pending/README.md` deploy section corrected to the real design. Owner note: live `/access-denied` just means the visitor email isn't allowlisted (`PRIMARY_USER_EMAIL`/`ADMIN_USER_EMAILS`/CF Access) — not a deploy bug.
 - 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
   ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
   `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
@@ -4079,7 +4105,7 @@ Branch: claude/magical-faraday-uce1uy
   Started/active users — `systemState==="halted"` ⇒ no orders). **Deferred:** H3 native Alpaca trailing
   (needs a broad `OrderType` change — the synthetic path covers Alpaca for now). 283 tests, build green.
   See `docs/rollouts/2026-06-20-r1-r5-audit-and-safety-banner.md`.
-- 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `trading.jays.services` (`03bfc38`).**
+- 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `socratictrade.com` (`03bfc38`).**
   Robinhood now connects via its MCP (root cause of the long OAuth failure: the redirect URI must be a
   `http://localhost` loopback, NOT the public Cloudflare-fronted `.services` URL — see memory
   `robinhood-mcp-oauth-prod`). Removed the fabricated `MockRobinhoodGateway` → honest `TestBrokerGateway`

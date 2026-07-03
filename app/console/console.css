@@ -20,7 +20,7 @@
 
 .console-root {
   /* ── LIGHT (base) ── */
-  --con-bg: #eef1f6;
+  --con-bg: #f1f4f6;
   --con-surface: #ffffff;
   --con-surface-2: #f4f6fa;
   --con-surface-3: #e9edf4;
@@ -31,7 +31,7 @@
   --con-muted: #46556b;   /* ≥7:1 on surface */
   --con-faint: #566478;   /* ≥5.5:1 on surface */
 
-  --con-accent: #2563eb;
+  --con-accent: #12616f;
   --con-accent-contrast: #ffffff;
   --con-pos: #157f4e;
   --con-pos-contrast: #ffffff;
@@ -91,10 +91,10 @@
 
 /* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
 .console-root[data-theme="dark"] {
-  --con-bg: #0b0e14;
-  --con-surface: #121722;
-  --con-surface-2: #171e2c;
-  --con-surface-3: #1d2536;
+  --con-bg: #0b1114;
+  --con-surface: #11191d;
+  --con-surface-2: #162127;
+  --con-surface-3: #1c2b31;
   --con-line: rgba(148, 163, 184, 0.13);
   --con-line-strong: rgba(148, 163, 184, 0.26);
 
@@ -102,8 +102,8 @@
   --con-muted: #a5b2c4;
   --con-faint: #8492a6;
 
-  --con-accent: #5b9dff;
-  --con-accent-contrast: #0a1220;
+  --con-accent: #58c7d3;
+  --con-accent-contrast: #071316;
   --con-pos: #37c58c;
   --con-pos-contrast: #04170e;
   --con-neg: #f0635e;
@@ -126,10 +126,10 @@
       the block above ── */
 @media (prefers-color-scheme: dark) {
   .console-root:not([data-theme="light"]) {
-    --con-bg: #0b0e14;
-    --con-surface: #121722;
-    --con-surface-2: #171e2c;
-    --con-surface-3: #1d2536;
+    --con-bg: #0b1114;
+    --con-surface: #11191d;
+    --con-surface-2: #162127;
+    --con-surface-3: #1c2b31;
     --con-line: rgba(148, 163, 184, 0.13);
     --con-line-strong: rgba(148, 163, 184, 0.26);
 
@@ -137,8 +137,8 @@
     --con-muted: #a5b2c4;
     --con-faint: #8492a6;
 
-    --con-accent: #5b9dff;
-    --con-accent-contrast: #0a1220;
+    --con-accent: #58c7d3;
+    --con-accent-contrast: #071316;
     --con-pos: #37c58c;
     --con-pos-contrast: #04170e;
     --con-neg: #f0635e;
@@ -204,6 +204,161 @@
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--con-faint);
+}
+
+/* ── Autonomy desk home ── */
+.con-thesis-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius);
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--con-accent) 10%, transparent), transparent 46%),
+    var(--con-surface);
+  box-shadow: var(--con-shadow);
+  padding: 18px;
+}
+.con-thesis-hero h1 {
+  margin-top: 8px;
+  max-width: 760px;
+  font-size: var(--con-fs-xxl);
+  line-height: 1.12;
+  font-weight: 750;
+  color: var(--con-fg);
+}
+.con-thesis-hero p {
+  margin-top: 10px;
+  max-width: 820px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-md);
+  line-height: 1.55;
+}
+.con-autonomy-card {
+  min-width: 0;
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: color-mix(in oklab, var(--con-accent) 8%, var(--con-surface));
+  padding: 14px;
+}
+.con-autonomy-card p {
+  margin-top: 4px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.con-decision-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-decision-row strong {
+  color: var(--con-fg);
+}
+.con-decision-row p {
+  margin-top: 5px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.con-evidence-card {
+  min-width: 0;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-evidence-card strong {
+  color: var(--con-fg);
+  font-size: var(--con-fs-sm);
+}
+.con-evidence-card span {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--con-faint);
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+}
+.con-evidence-card p {
+  margin-top: 7px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-accent {
+  border-color: var(--con-accent-border);
+  background: var(--con-accent-soft);
+}
+.con-evidence-pos {
+  border-color: var(--con-pos-border);
+  background: var(--con-pos-soft);
+}
+.con-evidence-warn {
+  border-color: var(--con-warn-border);
+  background: var(--con-warn-soft);
+}
+.con-evidence-neg {
+  border-color: var(--con-neg-border);
+  background: var(--con-neg-soft);
+}
+.con-coach-box {
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-accent-soft);
+  padding: 12px;
+}
+.con-coach-box p {
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .con-thesis-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .con-thesis-hero {
+    padding: 14px;
+  }
+  .con-thesis-hero h1 {
+    font-size: var(--con-fs-xl);
+  }
+  .con-thesis-hero p {
+    font-size: var(--con-fs-base);
+  }
+  .con-decision-row {
+    grid-template-columns: 1fr;
+  }
+  .con-decision-row > div:last-child {
+    text-align: left;
+  }
+  .con-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+  .con-evidence-card span {
+    max-width: 44%;
+  }
 }
 
 /* ── Buttons ── */

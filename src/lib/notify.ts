@@ -85,9 +85,9 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
         url,
         {
           method: "POST",
-          headers: { "content-type": "application/json", "user-agent": "AgenticTrading-Alerts/1" },
+          headers: { "content-type": "application/json", "user-agent": "SocraticTrade-Alerts/1" },
           body: JSON.stringify({
-            source: "agentic-trading",
+            source: "socratic-trade",
             kind: msg.kind ?? "alert",
             title: msg.title,
             body: msg.body,

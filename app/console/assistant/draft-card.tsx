@@ -146,7 +146,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
           phrase: reality.phrase,
           tone: reality.tone,
           clarification: reality.clarification,
-          accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+          accountLabel: activeAccount?.label || activeAccount?.broker || "No connected account"
         });
         setPhase("staged");
         toast.push(
@@ -193,7 +193,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     phrase: reality.phrase,
     tone: reality.tone,
     clarification: reality.clarification,
-    accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+    accountLabel: activeAccount?.label || activeAccount?.broker || "No connected account"
   };
   const stagedElsewhere = stagedScope !== null && stagedScope.scopeKey !== scopeKey;
   const stagedLive = stagedScope?.tone === "live";

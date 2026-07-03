@@ -94,7 +94,7 @@ allowed users map to isolated hashed user IDs only when present in
   talking to every web endpoint directly. `/api/mobile/*` exposes a
   request-scoped snapshot, audited command queue/status model, SSE updates, and
   a multi-step account deletion flow. The phone PWA at `/mobile` and the
-  SwiftUI starter in `ios/AgenticTrading/` both treat the backend as the source
+  SwiftUI starter in `ios/SocraticTrade/` both treat the backend as the source
   of truth; broker/provider secrets, MCP calls, scraping, calculations, and
   order placement stay server-side. See `docs/mobile-api-and-clients.md`.
 
@@ -335,7 +335,7 @@ set of trading controls:
   the native app. It has clear Start/Stop/Close-only/Run-once controls, approval
   cards, watchlist and alert controls, command history, backend-source-of-truth
   messaging, and a danger-zone deletion workflow.
-- `ios/AgenticTrading/` provides a SwiftUI starter that uses the same endpoints
+- `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
   and keeps only the backend session on-device.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
   type the signed-in identity and required phrase, then confirm/sign out with

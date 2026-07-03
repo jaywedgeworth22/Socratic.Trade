@@ -880,7 +880,7 @@ function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: Dashboard
             <Zap size={16} className="fill-current" />
           </span>
           <div>
-            <div className="text-sm font-semibold">Trading Dashboard</div>
+            <div className="text-sm font-semibold">Socratic Trade</div>
             {(mode || snapshot) && (
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
                 {mode && <span>{mode}</span>}
@@ -1793,7 +1793,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <Zap size={16} className="fill-current" />
             </span>
             <div className="leading-tight">
-              <div className="whitespace-nowrap text-sm font-semibold text-fg">Trading Dashboard</div>
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Socratic Trade</div>
               <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                   <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />

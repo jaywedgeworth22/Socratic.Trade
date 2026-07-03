@@ -17,6 +17,8 @@ import type {
     PerformanceSummary,
     Portfolio,
     RecentProposal,
+    SocraticDecisionCase,
+    SocraticFrameworkProposal,
     StrategyProfile,
     StrategyRunRow,
     TradeProposal,
@@ -113,6 +115,10 @@ export interface DashboardSnapshot {
   robinhoodMcpConnected: boolean;
   /** Per-user setting: when true, accounts left in "active" state auto-resume on server boot. */
   autoResumeOnBoot: boolean;
+  socratic?: {
+    decisions: SocraticDecisionCase[];
+    frameworkProposals: SocraticFrameworkProposal[];
+  };
 }
 
 export type SortDir = "asc" | "desc";

@@ -1,4 +1,4 @@
-# Improvement Plan - Agentic Trading Dashboard
+# Improvement Plan - Socratic Trade
 
 Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
@@ -10,10 +10,23 @@ filling the missing pieces.
 > (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) have been removed** (rules in
 > `AGENTS.md`; code removal landed — see `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`
 > Step 2). An account is an account — its `environment` decides paper vs live; no connected account
-> means the app can't place orders (no local-sim fallback). **Any older "paper/Test mode unchanged" or
-> "paper is the default" language below this line is STALE** and does not describe target behavior —
+> means the app can't place orders (no local-sim fallback). **Any older paper/Test-default language
+> below this line is STALE** and does not describe target behavior —
 > do not follow it. See `docs/EFFORT-LOG.md` +
 > `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
+> **2026-07-03 — Socratic Trade autonomy UI/runtime implementation (Codex).** The branch
+> `codex/socratic-trade-autonomy-mockup` reframes the product as an Autonomy Desk:
+> live thesis, delegated actions, evidence/RAG contribution, dissent, outcome learning,
+> coaching, and agent-authored framework-improvement proposals. Backing persistence now
+> exists for Socratic decision cases and framework proposals; the strategy loop records
+> proposed/placed/blocked/refused decisions, captures RAG attribution, accepts owner
+> coaching notes, indexes each strategy-recorded decision as private institutional-memory
+> RAG, and applies explicit Socratic override semantics for owner preference gates while
+> preserving hard broker/account/integrity/tax refusals. Public `/welcome`, `/how-it-works`,
+> and the coded `/design/socratic-trade` product overview now route by default and advertise
+> `socratictrade.com` in sitemap/robots metadata. See
+> `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
@@ -565,7 +578,7 @@ filling the missing pieces.
 > Robinhood authorize URL, while stale state rows indicate the logged-in
 > Robinhood leg is not returning to the public callback. Added an explicit
 > same-machine loopback callback opt-in so reconnect can start from
-> `trading.jays.services` without requiring app login on localhost. No roadmap
+> `socratictrade.com` without requiring app login on localhost. No roadmap
 > change; see `docs/rollouts/2026-06-30-robinhood-public-oauth-loopback.md`.
 > 2026-06-30 (`codex/market-scan-source-labels`): Latest Decisions and Market
 > Scan source subtitles now share alias-aware source-list formatting, so
@@ -706,7 +719,7 @@ filling the missing pieces.
 > `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 >
 > 2026-06-30 (`codex/browser-title`): browser tab title correction —
-> root and welcome metadata now emit the document title `Trading Dashboard`
+> root and welcome metadata now emit the document title `Socratic Trade`
 > exactly. No roadmap change; see
 > `docs/rollouts/2026-06-30-browser-title.md`.
 
@@ -882,7 +895,7 @@ filling the missing pieces.
 
 ## Current Status
 
-Hosting topology: production remains `trading.jays.services` on the
+Hosting topology: production remains `socratictrade.com` on the
 `~/apps/trading-live` worktree / pm2 `trading` / port `4000`. The editable
 integration checkout uses the single pre-production beta hostname
 `trading-beta.jays.services` -> `~/Code/Agentic Trading` / pm2 `trading-main` /
@@ -1018,7 +1031,7 @@ scope, timeline, or approach changed.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.
 - The local SQLite database has a documented Litestream replicate/restore path before production reliance.
-- Production and beta hosting stay separated: production on `trading.jays.services`
+- Production and beta hosting stay separated: production on `socratictrade.com`
   / port `4000`; integration beta on `trading-beta.jays.services` / port `4001`;
   no duplicate dev/beta hostname.
 - Agent branch landing requires a clean worktree and refuses stale semantic overlap

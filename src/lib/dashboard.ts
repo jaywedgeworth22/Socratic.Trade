@@ -15,7 +15,9 @@ import {
   listFillEvents,
   listConnectedAccounts,
   getActiveConnectedAccount,
-  userHasAnyLlmCredential
+  userHasAnyLlmCredential,
+  listSocraticDecisionCases,
+  listSocraticFrameworkProposals
 } from "./db";
 import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./dashboard-feed";
 import type { StrategyDecisionLike } from "./dashboard-feed";
@@ -379,6 +381,14 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const latestStrategyRun = latestRunAudit
     ? ({ ...(latestRunAudit.payload as StrategyDecisionLike), createdAt: latestRunAudit.createdAt } satisfies StrategyDecisionLike)
     : undefined;
+  const socraticDecisions = listSocraticDecisionCases(userId, {
+    limit: 50,
+    ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
+  });
+  const socraticFrameworkProposals = listSocraticFrameworkProposals(userId, {
+    limit: 25,
+    ...(policy.connectedAccountId ? { connectedAccountId: policy.connectedAccountId } : {})
+  });
   const audit = policy.connectedAccountId
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);
@@ -551,6 +561,10 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     webSources: getWebSourcesStatus(),
     robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
     autoResumeOnBoot: getAutoResumeOnBoot(userId),
+    socratic: {
+      decisions: socraticDecisions,
+      frameworkProposals: socraticFrameworkProposals
+    },
     smartMoney: {
       congress: sliceCongressByDisclosure(getCongressDataset()?.trades ?? []),
       insider: [...(getInsiderDataset()?.filings ?? [])]
