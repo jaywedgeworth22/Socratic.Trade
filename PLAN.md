@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/console-data-followups`, Claude): **Console data follow-ups** —
+> four small verified-open items, no scope change: broker order mappers now carry
+> limit/stop/TIF into `EquityOrder` and `/console/orders` renders them (with a
+> limit-vs-scan-price gap); the snapshot's congress cap keeps the most-recently
+> DISCLOSED trades; `MarketQuoteSummary` carries the five factor fields so drilldown
+> factor bars work beyond topCandidates; and Turbopack `next dev` is unbroken via
+> `@source not "../docs";`. See `docs/rollouts/2026-07-02-console-data-followups.md`.
 > 2026-07-02 (`claude/chat-idempotency`, Claude): **Chat retry idempotency** —
 > `POST /api/chat` accepts an optional per-send `clientTurnId` (<=64 chars); the
 > orchestrator dedupes the user-turn append on it (but still answers), so a client

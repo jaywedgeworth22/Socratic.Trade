@@ -30,7 +30,7 @@ import { getRobinhoodMcpHealth, type RobinhoodMcpHealth } from "./robinhood";
 import { getStoredMcpOAuthTokens } from "./mcp-oauth";
 import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mode";
 import { getSchedulerState } from "./scheduler";
-import { getCongressDataset, getInsiderDataset, getWebSourcesStatus } from "./web-sources";
+import { getCongressDataset, getInsiderDataset, getWebSourcesStatus, type CongressTrade } from "./web-sources";
 import { readCongressScoreVerdict } from "./congress-score-gate";
 import { fetchMacroData, determineMarketRegime } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
@@ -593,9 +593,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     robinhoodMcpConnected: policy.activeBroker === "robinhood" ? Boolean(getStoredMcpOAuthTokens(userId)) : true,
     autoResumeOnBoot: getAutoResumeOnBoot(userId),
     smartMoney: {
-      congress: [...(getCongressDataset()?.trades ?? [])]
-        .sort((a, b) => (b.tradedAt ?? "").localeCompare(a.tradedAt ?? ""))
-        .slice(0, 12),
+      congress: sliceCongressByDisclosure(getCongressDataset()?.trades ?? []),
       insider: [...(getInsiderDataset()?.filings ?? [])]
         .sort((a, b) => (b.filedAt ?? "").localeCompare(a.filedAt ?? ""))
         .slice(0, 8),
@@ -607,6 +605,17 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     marketSession: currentMarketSession(),
     macroBoard
   };
+}
+
+/** The snapshot's smart-money congress cap: sort by DISCLOSURE date (fallback: trade
+ *  date) so the slice keeps the trades that most recently became PUBLIC — a freshly
+ *  disclosed older trade must not be dropped in favor of an earlier-disclosed trade
+ *  that merely executed later. The console card re-sorts by the same key defensively
+ *  (app/console/scan/smart-money.tsx). */
+export function sliceCongressByDisclosure(trades: CongressTrade[], cap = 12): CongressTrade[] {
+  return [...trades]
+    .sort((a, b) => (b.disclosedAt ?? b.tradedAt ?? "").localeCompare(a.disclosedAt ?? a.tradedAt ?? ""))
+    .slice(0, cap);
 }
 
 function fullMarketScan(scan: StrategyDecisionLike["marketScan"] | undefined): MarketScan | undefined {

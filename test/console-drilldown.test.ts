@@ -96,6 +96,25 @@ describe("console drilldown: toQuoteView", () => {
     expect(view?.peRatio).toBe(35);
   });
 
+  it("surfaces factor fields from a summary-only quote (no full-tier candidate)", () => {
+    const enrichedSummary: MarketQuoteSummary = {
+      ...summaryQuote,
+      factorBreakdown: fullQuote.factorBreakdown,
+      headlines: ["MSFT ships new Copilot"],
+      intradayChangePct: -0.4,
+      volume: 22_000_000,
+      sectorRelStrength: 0.3
+    };
+    const view = toQuoteView(undefined, enrichedSummary);
+    expect(view?.full).toBe(false);
+    expect(view?.factorBreakdown?.momentum).toBe(70);
+    expect(view?.headlines).toEqual(["MSFT ships new Copilot"]);
+    expect(view?.intradayChangePct).toBe(-0.4);
+    expect(view?.volume).toBe(22_000_000);
+    expect(view?.sectorRelStrength).toBe(0.3);
+    expect(view?.marketCap).toBeUndefined(); // still full-tier-only
+  });
+
   it("returns null when the scan didn't know the symbol", () => {
     expect(toQuoteView(undefined, undefined)).toBeNull();
   });

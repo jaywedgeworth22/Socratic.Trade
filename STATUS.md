@@ -4,6 +4,21 @@ Current snapshot for fast handoff across Codex, Claude, Cursor, Gemini, or a
 human contributor. Update this when active focus, risks, or near-term next
 steps materially change.
 
+## 2026-07-02 — Console data follow-ups: orders limit/stop/TIF + congress cap + summary factor fields + Turbopack fix (Claude)
+Branch `claude/console-data-followups` — four small verified-open backlog items in one
+lane: (1) `EquityOrder` now carries `limitPrice`/`stopPrice`/`timeInForce` from both the
+Alpaca and Robinhood order mappers, and `/console/orders` renders Limit/Stop + TIF columns
+with a limit-vs-scan-price gap (the "no limit price available" tooltip disclaimer is gone);
+(2) the snapshot's smart-money congress 12-row cap sorts by DISCLOSURE date
+(`sliceCongressByDisclosure` in `src/lib/dashboard.ts`), so freshly disclosed older trades
+survive the slice; (3) `MarketQuoteSummary` gained `factorBreakdown`/`headlines`/
+`intradayChangePct`/`volume`/`sectorRelStrength` (copied in `market.ts quotesBySymbol`) and
+`toQuoteView` reads them from either tier — drilldown factor bars now work for
+non-topCandidate symbols; (4) Turbopack `next dev` 500-on-every-route fixed with
+`@source not "../docs";` in `app/globals.css` + defusing the two live shadow-var literals
+in older rollout notes (verified: dev server Ready, `/` and `/console/orders` 200).
+Quartet green: lint 0 errors, tsc clean, 238 files / 2357 tests, build green.
+See `docs/rollouts/2026-07-02-console-data-followups.md`.
 ## 2026-07-02 — Chat idempotency: clientTurnId on POST /api/chat (Claude)
 Branch `claude/chat-idempotency`. A client Retry used to duplicate the prompt in
 the saved transcript because the chat orchestrator appends the user turn BEFORE

@@ -82,6 +82,29 @@ describe("market scan custom symbols", () => {
     expect(summary?.sources?.bid).toBe("yahoo-finance-synthetic");
   });
 
+  it("carries factor fields (factorBreakdown, volume, intraday change) on the summary tier", async () => {
+    delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+    delete process.env.ALPACA_DATA_API_KEY;
+    delete process.env.ALPACA_DATA_SECRET_KEY;
+    stubMarketFetches();
+
+    const { clearMarketCache, scanMarket } = await import("../src/lib/market");
+    clearMarketCache();
+    const scan = await scanMarket(["SPCX"], []);
+
+    const full = scan.topCandidates[0];
+    const summary = scan.quotesBySymbol.SPCX;
+    // The summary tier must mirror the full quote's factor fields so the
+    // drilldown can render factor bars for symbols outside topCandidates.
+    expect(full.factorBreakdown).toBeDefined();
+    expect(summary?.factorBreakdown).toEqual(full.factorBreakdown);
+    expect(summary?.intradayChangePct).toBe(full.intradayChangePct);
+    expect(summary?.volume).toBe(2500000);
+    expect(summary?.sectorRelStrength).toBe(full.sectorRelStrength);
+  });
+
   it("shows a concrete warning when a custom ticker cannot be priced", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);

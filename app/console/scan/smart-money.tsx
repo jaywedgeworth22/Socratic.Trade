@@ -134,12 +134,10 @@ function InsiderRow({ f }: { f: InsiderFiling }) {
 }
 
 export function SmartMoneySection({ snapshot }: { snapshot: DashboardSnapshot }) {
-  // The snapshot sorts (and caps) congress rows by TRADE date, but the useful
-  // recency for this card is when a trade became PUBLIC — re-sort the capped
-  // subset by disclosedAt (falling back to tradedAt) so a freshly disclosed
-  // older trade surfaces on top. Note: the server's cap itself is trade-date
-  // ordered (src/lib/dashboard.ts); a disclosure-date server cap is a recorded
-  // follow-up owned by the src/lib lane.
+  // The snapshot caps congress rows by DISCLOSURE date (src/lib/dashboard.ts
+  // sorts by disclosedAt, falling back to tradedAt, before its 12-row slice).
+  // Keep this defensive client re-sort with the same key so the card's order
+  // never depends on the wire order of the snapshot array.
   const congress = [...(snapshot.smartMoney?.congress ?? [])].sort((a, b) =>
     (b.disclosedAt ?? b.tradedAt ?? "").localeCompare(a.disclosedAt ?? a.tradedAt ?? "")
   );

@@ -23,7 +23,8 @@ import type {
 
 /** One shape the drilldown renders from, whichever scan tier knew the symbol.
  *  `full` is true when the symbol was a fully-enriched top candidate in the
- *  last scan (factor breakdown, volume, headlines available). */
+ *  last scan (marketCap available; both tiers carry factor breakdown, volume,
+ *  headlines, intraday change, and sector relative strength). */
 export interface QuoteView {
   symbol: string;
   full: boolean;
@@ -143,15 +144,17 @@ export function toQuoteView(full: MarketQuote | undefined, summary: MarketQuoteS
     targetLow: posNum(q.targetLow),
     targetMedian: posNum(q.targetMedian),
     evidenceBulletins: q.evidenceBulletins,
-    sources: q.sources
+    sources: q.sources,
+    // Both tiers carry these now (summary quotes gained them in market.ts
+    // quotesBySymbol); `q = full ?? summary` already prefers the full tier.
+    volume: posNum(q.volume),
+    intradayChangePct: num(q.intradayChangePct),
+    factorBreakdown: q.factorBreakdown,
+    headlines: q.headlines,
+    sectorRelStrength: num(q.sectorRelStrength)
   };
   if (full) {
-    view.volume = posNum(full.volume);
     view.marketCap = posNum(full.marketCap);
-    view.intradayChangePct = num(full.intradayChangePct);
-    view.factorBreakdown = full.factorBreakdown;
-    view.headlines = full.headlines;
-    view.sectorRelStrength = num(full.sectorRelStrength);
   }
   return view;
 }

@@ -119,6 +119,74 @@ describe("robinhood mcp transport", () => {
     expect(firstCall.params.arguments).not.toHaveProperty("account_number");
   });
 
+  it("maps equity orders including limit/stop price (Robinhood `price` = limit) and time-in-force", async () => {
+    vi.stubEnv("ROBINHOOD_MCP_URL", "https://mcp.example.test/trading");
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            structuredContent: {
+              data: {
+                orders: [
+                  {
+                    id: "ord-1",
+                    symbol: "aapl",
+                    side: "buy",
+                    type: "limit",
+                    state: "confirmed",
+                    quantity: "10",
+                    price: "199.5",
+                    stop_price: null,
+                    time_in_force: "gfd",
+                    created_at: "2026-07-01T14:00:00Z"
+                  },
+                  {
+                    id: "ord-2",
+                    symbol: "MSFT",
+                    side: "sell",
+                    type: "stop_limit",
+                    state: "queued",
+                    quantity: "3",
+                    price: "440",
+                    stop_price: "445",
+                    time_in_force: "gtc",
+                    created_at: "2026-07-01T15:00:00Z"
+                  }
+                ]
+              },
+              guide: "ok"
+            }
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const { getRobinhoodGateway } = await import("../src/lib/robinhood");
+    const { setMcpOAuthTokens } = await import("../src/lib/mcp-oauth");
+    setMcpOAuthTokens("user-a", { accessToken: "test-token", tokenType: "Bearer" });
+
+    const orders = await getRobinhoodGateway("user-a").getEquityOrders("RH-ACCOUNT");
+
+    expect(orders).toHaveLength(2);
+    expect(orders[0]).toMatchObject({
+      id: "ord-1",
+      symbol: "AAPL",
+      limitPrice: 199.5,
+      timeInForce: "gfd"
+    });
+    expect(orders[0].stopPrice).toBeUndefined();
+    expect(orders[1]).toMatchObject({
+      id: "ord-2",
+      limitPrice: 440,
+      stopPrice: 445,
+      timeInForce: "gtc"
+    });
+  });
+
   it("reports missing auth without calling the MCP server", async () => {
     vi.stubEnv("ROBINHOOD_ADAPTER", "mcp");
     const fetchMock = vi.fn();
