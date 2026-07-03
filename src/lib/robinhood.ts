@@ -261,6 +261,10 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
       dollarAmount: optionalNumber(item.dollar_based_amount ?? item.dollar_amount ?? item.dollarAmount),
       filledQuantity: optionalNumber(item.cumulative_quantity ?? item.filled_quantity ?? item.filledQuantity),
       averagePrice: optionalNumber(item.average_price ?? item.averagePrice),
+      // Robinhood reports the resting limit as `price` (no dedicated limit_price field).
+      limitPrice: optionalNumber(item.price ?? item.limit_price ?? item.limitPrice),
+      stopPrice: optionalNumber(item.stop_price ?? item.stopPrice),
+      timeInForce: optionalString(item.time_in_force ?? item.timeInForce),
       createdAt: String(item.created_at ?? item.createdAt ?? ""),
       updatedAt: optionalString(item.last_transaction_at ?? item.updated_at ?? item.updatedAt),
       clientOrderId: optionalString(item.ref_id ?? item.client_order_id ?? item.clientOrderId),
@@ -668,6 +672,8 @@ class TestBrokerGateway implements BrokerGateway {
     };
   }
 
+  // Test-mode fills simulate instantly (placeEquityOrder returns "filled"), so no order
+  // ever rests here — there is deliberately no limit/stop/TIF data to surface in Test mode.
   async getEquityOrders(): Promise<EquityOrder[]> {
     return [];
   }

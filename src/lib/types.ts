@@ -546,6 +546,13 @@ export interface EquityOrder {
   dollarAmount?: number;
   filledQuantity?: number;
   averagePrice?: number;
+  /** Resting limit price as the broker reports it (Alpaca `limit_price`, Robinhood `price`). */
+  limitPrice?: number;
+  /** Stop trigger price as the broker reports it. */
+  stopPrice?: number;
+  /** Broker-reported time-in-force, raw (Alpaca "day"/"gtc"/"ioc"/…, Robinhood "gfd"/"gtc") —
+   *  wider than our order-INPUT `TimeInForce` union, so it stays a string here. */
+  timeInForce?: string;
   createdAt: string;
   updatedAt?: string;
   placedAgent?: string;
@@ -1071,6 +1078,12 @@ export interface MarketQuoteSummary {
   targetLow?: number;
   targetMedian?: number;
   evidenceBulletins?: string[];
+  /** Factor-score digest for the drilldown's factor bars (same shape MarketQuote carries). */
+  factorBreakdown?: MarketFactorBreakdown;
+  headlines?: string[];
+  intradayChangePct?: number;
+  volume?: number;
+  sectorRelStrength?: number;
   sources?: EnrichmentSources;
 }
 
@@ -1566,6 +1579,8 @@ export interface ChatTurn {
   redacted: boolean;
   /** Model that produced this turn (assistant turns only, e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). */
   model?: string | null;
+  /** Client-generated idempotency key (user turns only): reused on Retry so a retried send doesn't duplicate the turn. */
+  clientTurnId?: string | null;
   createdAt: string;
 }
 

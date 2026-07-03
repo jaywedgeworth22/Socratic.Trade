@@ -130,5 +130,6 @@ the final verify quartet. Targeted acceptance greps confirmed:
   scale consistency; harmless.
 - The `.elev-*` utility classes are defined and documented but not yet retrofitted
   onto existing card/menu surfaces (those still use `backdrop-blur-*` +
-  `shadow-[var(--shadow*)]`); adopting them incrementally is a low-priority
-  follow-up.
+  `shadow-[var(--shadow✱)]` — ✱ stands for a real asterisk, defused so Tailwind's
+  class scanner never treats this note as a candidate); adopting them incrementally
+  is a low-priority follow-up.

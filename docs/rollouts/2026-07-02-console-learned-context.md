@@ -111,9 +111,10 @@ other console file owned by parallel agents.
   `{"status":"rejected"}` and emptied the queue; double-reject returned the 404 plain
   text `Pending learned-context item not found.` (the text the UI toasts).
 - Notable: `npm run dev` (Turbopack) 500s on ANY console page — pre-existing on main
-  (Tailwind scans a literal `shadow-[var(--shadow*)]` in
-  `docs/rollouts/2026-07-01-ux-ia-aesthetics.md`; documented in STATUS.md 2026-07-02
-  console entry). `next dev --webpack` and `npm run build` are unaffected.
+  (Tailwind scans a literal `shadow-[var(--shadow✱)]` — ✱ stands for a real asterisk,
+  defused here — in `docs/rollouts/2026-07-01-ux-ia-aesthetics.md`; documented in
+  STATUS.md 2026-07-02 console entry). `next dev --webpack` and `npm run build` are
+  unaffected. Fixed 2026-07-02 via `@source not "../docs";` in `app/globals.css`.
 
 ## Follow-ups
 
