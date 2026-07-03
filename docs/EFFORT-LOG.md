@@ -31,6 +31,9 @@ to `socratictrade.com`, record the release commit + date here._
   backing up the DB and applying the migration's own additive `ALTER`, then restart —
   health 200. Root cause + regression test in the P0 hotfix row below; full detail in
   `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
+- **2026-07-03** — `trading-live` published at `7b803bff` (PR #346) on
+  `socratictrade.com`. Includes #345 run-state UX and #346 IRA wash-sale UI correction;
+  production health 200 and live Roth IRA Settings page verified.
 
 ---
 
@@ -103,16 +106,20 @@ to `socratictrade.com`, record the release commit + date here._
 - **#345** — Run-state UX fix (`codex/run-state-ux-fix`): Start/Resume are no longer hidden behind a
   red STOP affordance. Paused states show Start or Resume as the primary header action; STOP/Wind down
   remain red, and start/autonomy confirm flows use primary styling.
+- **#346** — IRA wash-sale UI correction (`codex/ira-washsale-ui-fix`): Roth/traditional IRA accounts
+  show same-account IRA wash sales as ignored/not applicable, hide the taxable Block / Ask / Auto
+  selector, and expose only the cross-account IRA taxable-loss rebuy setting.
 
 ---
 
 ## 🔨 In Progress
 
-- **IRA wash-sale UI correction** (Codex, local, branch `codex/ira-washsale-ui-fix`) — Settings and
-  Guardrails now explain that same-account IRA wash sales are ignored/not applicable, hide the taxable
-  Block / Ask / Auto selector for Roth/traditional IRA accounts, and expose only the existing
-  cross-account `taxSettings.iraWashSaleHandling` choice (`block` default / `disregard` annotated).
-  Gate green; PR pending. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
+- **Console universe index exclusivity fix** (Codex, local, branch
+  `codex/universe-exclusive-indexes`) — `/console/guardrails` now uses the shared
+  `toggleIncludedIndex` helper for Base indices, so S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite
+  replace each other immediately in the draft instead of both staying checked. Focused verification is
+  green; full local gate is green; PR pending. See
+  `docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
@@ -202,3 +209,7 @@ to `socratictrade.com`, record the release commit + date here._
 - 2026-07-03 — **#345 merged** (→ Completed): run-state UX fix. Started the IRA wash-sale UI
   correction (`codex/ira-washsale-ui-fix`) so Roth/traditional IRA settings do not present taxable
   Block / Ask / Auto as the relevant same-account wash-sale control.
+- 2026-07-03 — **#346 merged + deployed** (→ Completed / Deployed): IRA wash-sale UI correction at
+  `7b803bff`; production health and Roth IRA Settings UI verified. Started
+  `codex/universe-exclusive-indexes` to restore mutually-exclusive full-overlap index selection in the
+  console Guardrails universe picker.

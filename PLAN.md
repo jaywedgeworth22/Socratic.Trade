@@ -47,6 +47,13 @@ filling the missing pieces.
 > Search/glossary copy now routes "Roth wash sale ignore" language to that IRA
 > control. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
 
+> **2026-07-03 - Console universe index exclusivity fix (Codex).** The
+> `/console/guardrails` Base indices checkboxes now call the same
+> `toggleIncludedIndex` helper used by the original app and API normalizer, so
+> mutually-exclusive full-overlap families replace their peer immediately:
+> S&P 100 <-> S&P 500 and Nasdaq 100 <-> Nasdaq Composite. See
+> `docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
+
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
 > model (`TradeProposal.proposedByModel` + `redTeamVerdict.model`; approval card reads
