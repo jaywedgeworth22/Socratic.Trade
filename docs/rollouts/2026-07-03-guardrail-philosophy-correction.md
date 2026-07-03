@@ -53,9 +53,15 @@ test fix is in flight on another lane): lint / tsc / test / build.
 - The live-execution hardening build must implement **advisory drawdown
   awareness** (breach state as strategist prompt context + owner
   notification/receipt + coaching trail), not halting.
-- Sweep existing gates for hard-block behavior that contradicts the philosophy
-  (e.g. wash-sale `block` default, Rev. Rul. 2008-5 IRA hard block, notional
-  caps) and bring per-gate treatment to the owner as plain-language questions —
-  do NOT silently flip defaults in code without that conversation.
+- ~~Wash-sale gating~~ **ANSWERED by the owner (2026-07-03, same day):** wash-sale must
+  not hard-block — it was settled with the modes work and needs no re-asking. The
+  proceed route is the owner's route: defaults flip to the non-blocking modes
+  (`washSaleHandling` → `auto`, `iraWashSaleHandling` → `disregard`); the block/ask
+  options are de-emphasized (kept only for persisted-policy compatibility); the
+  receipt/annotation machinery stays untouched — that is the "logs everything" half.
+  Implementation on branch `claude/washsale-advisory-defaults`.
+- Remaining sweep (notional caps and any other hard refusals): bring to the owner as
+  plain-language questions — do NOT silently flip behavior without that conversation,
+  and do NOT re-ask anything already answered above.
 - UI copy standard: "deviations, receipted," never "rules bent"; keep the
   receipt/escalation machinery as the transparency substrate.
