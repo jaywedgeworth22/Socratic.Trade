@@ -28,6 +28,7 @@ import Apple from "next-auth/providers/apple";
 import type { Account, Profile, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Provider } from "next-auth/providers";
+import { canonicalizeLegacyAuthEnv } from "../public-origin";
 import { normalizeAuthEmail, selectVerifiedGitHubEmail, type GitHubEmail } from "./github-email";
 import { decodeSessionToken, encodeSessionToken } from "./session-token";
 
@@ -39,6 +40,8 @@ type EmailProfile = Profile & {
   login?: string | null;
 };
 type SessionWithProvider = Session & { loginProvider?: string };
+
+canonicalizeLegacyAuthEnv(process.env);
 
 const providers: Provider[] = [];
 

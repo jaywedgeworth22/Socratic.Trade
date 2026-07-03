@@ -6,10 +6,18 @@
  *  copy-not-link and can never arm or disarm anything (server-enforced). */
 
 import { useMemo, useState } from "react";
-import type { ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
+import { Lock, Unlock } from "lucide-react";
+import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
+import {
+  DEFAULT_OPENAI_MODEL,
+  reasoningCapabilityForModel,
+  normalizeReasoningEffortForOptions,
+  type LlmReasoningCapability,
+  type LlmReasoningOption
+} from "@/lib/llm-request";
 // Pure curated-model DATA (no legacy UI components) — the same catalog the rest
 // of the app offers, so the console review picker stays consistent with it.
-import { CURATED_LLM_MODEL_GROUPS } from "../../ui/llm-model-catalog";
+import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED } from "../../ui/llm-model-catalog";
 import {
   activateProfile,
   copyProfileToAccount,
@@ -41,13 +49,122 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
 };
 
 const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS) as Array<keyof ScoringWeights>;
+const CUSTOM_MODEL_OPTION = CUSTOM_MODEL_ID_SEED;
+
+function isCuratedModel(model: string | undefined): boolean {
+  return !!model && CURATED_LLM_MODEL_IDS.includes(model);
+}
+
+function modelSelectValue(model: string | undefined): string {
+  if (!model) return "";
+  return isCuratedModel(model) ? model : CUSTOM_MODEL_OPTION;
+}
+
+function modelProviderLabel(model: string | undefined): string {
+  if (!model) return "Account Default";
+  const group = CURATED_LLM_MODEL_GROUPS.find((g) => g.options.some((option) => option.value === model));
+  return group?.label ?? "Custom Provider";
+}
+
+function uniq<T>(items: T[]): T[] {
+  return Array.from(new Set(items));
+}
+
+function reasoningControlForModels(models: string[]): { label: string; hint: string; options: LlmReasoningOption[]; capabilities: LlmReasoningCapability[] } | null {
+  const capabilities = uniq(models.map((model) => model.trim()).filter(Boolean))
+    .map((model) => reasoningCapabilityForModel(model))
+    .filter((capability): capability is LlmReasoningCapability => Boolean(capability));
+  const uniqueCapabilities = Array.from(new Map(capabilities.map((capability) => [capability.label, capability])).values());
+  if (uniqueCapabilities.length === 0) return null;
+
+  const sharedValues = uniqueCapabilities.reduce<LlmReasoningEffort[] | null>((shared, capability) => {
+    const values = capability.options.map((option) => option.value);
+    return shared ? shared.filter((value) => values.includes(value)) : values;
+  }, null);
+  if (!sharedValues || sharedValues.length === 0) return null;
+
+  const firstOptions = uniqueCapabilities[0]?.options ?? [];
+  const options = firstOptions
+    .filter((option) => sharedValues.includes(option.value))
+    .map((option) => {
+      const providerOption = uniqueCapabilities.flatMap((capability) => capability.options).find((candidate) => candidate.value === option.value);
+      return providerOption ?? option;
+    });
+
+  if (uniqueCapabilities.length === 1) {
+    const capability = uniqueCapabilities[0]!;
+    return { label: capability.settingLabel, hint: capability.description, options, capabilities: uniqueCapabilities };
+  }
+
+  const labels = uniqueCapabilities.map((capability) => capability.label).join(" + ");
+  return {
+    label: "Shared Reasoning / Thinking",
+    hint: `${labels} are active. Only values supported by every selected model are shown.`,
+    options,
+    capabilities: uniqueCapabilities
+  };
+}
+
+function reasoningSummary(control: ReturnType<typeof reasoningControlForModels>): string {
+  if (!control) return "These selected models do not expose a provider-specific reasoning or thinking control here.";
+  return `${control.capabilities.map((capability) => capability.label).join(" + ")} active.`;
+}
+
+function ModelSelect({
+  id,
+  value,
+  onChange,
+  allowBlank,
+  blankLabel
+}: {
+  id: string;
+  value: string | undefined;
+  onChange: (model: string) => void;
+  allowBlank?: boolean;
+  blankLabel?: string;
+}) {
+  const selectValue = modelSelectValue(value);
+  const custom = selectValue === CUSTOM_MODEL_OPTION;
+  return (
+    <div className="flex flex-col gap-2">
+      <Select
+        id={id}
+        value={selectValue}
+        onChange={(event) => {
+          const next = event.target.value;
+          onChange(next === CUSTOM_MODEL_OPTION ? (custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION) : next);
+        }}
+      >
+        {allowBlank && <option value="">{blankLabel ?? "Account Default"}</option>}
+        {CURATED_LLM_MODEL_GROUPS.map((group) => (
+          <optgroup key={group.provider} label={group.label}>
+            {group.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={CUSTOM_MODEL_OPTION}>Custom Model ID...</option>
+      </Select>
+      {custom && (
+        <TextInput
+          value={value && value !== CUSTOM_MODEL_OPTION ? value : ""}
+          placeholder="provider-model-id"
+          onChange={(event) => onChange(event.target.value)}
+          title="Type an exact provider model ID if it is not in the curated list."
+        />
+      )}
+    </div>
+  );
+}
 
 export default function StrategyPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
 
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
-  const [modelDraft, setModelDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string; llmReasoningEffort?: string } | null>(null);
+  const [modelDraft, setModelDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string; llmReasoningEffort?: LlmReasoningEffort } | null>(null);
   const [weightsDraft, setWeightsDraft] = useState<Partial<Record<keyof ScoringWeights, number>> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -62,6 +179,13 @@ export default function StrategyPage() {
   const activeAccount = activeConnectedAccount(snapshot);
   const prompt = promptDraft ?? snapshot.strategyPrompt;
   const promptDirty = promptDraft !== null && promptDraft !== snapshot.strategyPrompt;
+  const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
+  const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
+  const effectiveRedTeamModel = redTeamModel || proposerModel;
+  const reasoningControl = reasoningControlForModels([proposerModel, effectiveRedTeamModel]);
+  const reasoningValue = reasoningControl
+    ? normalizeReasoningEffortForOptions(reasoningControl.options, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
+    : undefined;
 
   const save = async (label: string, body: Record<string, unknown>, after?: () => void) => {
     setBusy(label);
@@ -121,19 +245,28 @@ export default function StrategyPage() {
               <Btn variant="ghost" size="sm" onClick={() => setModelDraft(null)}>
                 Discard
               </Btn>
-              <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => void save("Models", modelDraft, () => setModelDraft(null))}>
+              <Btn
+                variant="primary"
+                size="sm"
+                disabled={busy !== null}
+                onClick={() => {
+                  if (!modelDraft) return;
+                  const body = reasoningControl && reasoningValue ? { ...modelDraft, llmReasoningEffort: reasoningValue } : modelDraft;
+                  void save("Models", body, () => setModelDraft(null));
+                }}
+              >
                 {busy === "Models" ? "Saving…" : "Save models"}
               </Btn>
             </div>
           ) : undefined
         }
       >
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Proposer model" hint="The bull-side strategist." htmlFor="llm-model">
-            <TextInput
+            <ModelSelect
               id="llm-model"
-              value={modelDraft?.llmModel ?? policy.llmModel ?? ""}
-              onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: e.target.value }))}
+              value={proposerModel}
+              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
             />
           </Field>
           <Field
@@ -141,25 +274,41 @@ export default function StrategyPage() {
             hint="The bear-side reviewer that tries to kill high-conviction ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
-            <TextInput
+            <ModelSelect
               id="rt-model"
-              value={modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? ""}
-              placeholder="same as proposer"
-              onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: e.target.value }))}
+              value={redTeamModel}
+              allowBlank
+              blankLabel="Same As Proposer"
+              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
             />
           </Field>
-          <Field label="Reasoning effort" htmlFor="effort">
-            <Select
-              id="effort"
-              value={modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort ?? "medium"}
-              onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), llmReasoningEffort: e.target.value }))}
-            >
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </Select>
-          </Field>
         </div>
+        <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          Proposer: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(effectiveRedTeamModel)}.
+          {" "}
+          {reasoningSummary(reasoningControl)}
+        </div>
+        {reasoningControl && reasoningValue && (
+          <div className="mt-3 max-w-xs">
+            <Field
+              label={reasoningControl.label}
+              hint={reasoningControl.hint}
+              htmlFor="effort"
+            >
+              <Select
+                id="effort"
+                value={reasoningValue}
+                onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), llmReasoningEffort: e.target.value as LlmReasoningEffort }))}
+              >
+                {reasoningControl.options.map((option) => (
+                  <option key={option.value} value={option.value} title={option.hint}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        )}
       </Card>
 
       {/* Scoring weights */}
@@ -301,6 +450,26 @@ function fmtRaw(def: FieldDef | undefined, value: unknown): string {
   return String(value);
 }
 
+function ReviewDirectionTag({ direction }: { direction: ReviewChange["direction"] }) {
+  if (direction === "changed") return null;
+  const unlocks = direction === "looser";
+  const Icon = unlocks ? Unlock : Lock;
+  const label = unlocks ? "Unlocks" : "Locks Down";
+  const title = unlocks
+    ? "Raises a cap, removes a protection, broadens the universe, or otherwise expands trading authority."
+    : "Adds a protection, lowers a cap, narrows the universe, or otherwise restricts trading authority.";
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full border border-current px-1.5 py-0.5 text-[length:var(--con-fs-xs)] font-bold"
+      style={{ color: unlocks ? "var(--con-warn)" : "var(--con-pos)" }}
+      title={title}
+    >
+      <Icon size={12} aria-hidden />
+      {label}
+    </span>
+  );
+}
+
 /** Flatten the tune proposal's policy/weights patch into labeled from→to rows,
  *  classified LOOSER/TIGHTER via the same guardrail metadata the Guardrails
  *  editor uses — so LIVE loosening costs the same typed word here too. */
@@ -367,11 +536,17 @@ function AiReviewPanel({
   const { refresh } = useConsoleData();
   const toast = useToast();
   const [model, setModel] = useState<string>("");
+  const [reviewReasoning, setReviewReasoning] = useState<LlmReasoningEffort | undefined>(undefined);
   const [busy, setBusy] = useState<"review" | "apply" | null>(null);
   const [review, setReview] = useState<StrategyTuneResult | null>(null);
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
 
+  const reviewerModel = model || policy.llmModel || DEFAULT_OPENAI_MODEL;
+  const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
+  const reviewerReasoningValue = reviewerReasoningControl
+    ? normalizeReasoningEffortForOptions(reviewerReasoningControl.options, reviewReasoning ?? policy.llmReasoningEffort)
+    : undefined;
   const changes = useMemo(() => (review ? reviewChanges(review.proposedPatch, policy) : []), [review, policy]);
   const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);
   const hasAnyChange = changes.length > 0 || promptChanged;
@@ -381,7 +556,7 @@ function AiReviewPanel({
   const generate = async () => {
     setBusy("review");
     try {
-      const result = await tuneStrategy(model || undefined);
+      const result = await tuneStrategy(model || undefined, reviewerReasoningValue);
       setReview(result);
       setTyped("");
     } catch (error) {
@@ -432,14 +607,14 @@ function AiReviewPanel({
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         A reviewer model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
         market backdrop, then proposes prompt/weight/guardrail changes. Nothing is applied until you review the exact
-        diff and commit it — the same rules as editing by hand, including the typed word for LIVE loosening.
+        diff and commit it — the same rules as editing by hand, including a typed word for LIVE authority expansion.
       </p>
 
       {!review ? (
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-64">
             <Field label="Reviewer model" hint="Blank = the account's tuning default." htmlFor="ai-review-model">
-              <Select id="ai-review-model" value={model} onChange={(e) => setModel(e.target.value)}>
+              <Select id="ai-review-model" value={model} onChange={(e) => { setModel(e.target.value); setReviewReasoning(undefined); }}>
                 <option value="">account default</option>
                 {CURATED_LLM_MODEL_GROUPS.map((group) => (
                   <optgroup key={group.provider} label={group.label}>
@@ -453,6 +628,23 @@ function AiReviewPanel({
               </Select>
             </Field>
           </div>
+          {reviewerReasoningControl && reviewerReasoningValue && (
+            <div className="w-56">
+              <Field label={reviewerReasoningControl.label} hint={reviewerReasoningControl.hint} htmlFor="ai-review-effort">
+                <Select
+                  id="ai-review-effort"
+                  value={reviewerReasoningValue}
+                  onChange={(e) => setReviewReasoning(e.target.value as LlmReasoningEffort)}
+                >
+                  {reviewerReasoningControl.options.map((option) => (
+                    <option key={option.value} value={option.value} title={option.hint}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          )}
           <Btn variant="primary" disabled={busy !== null} onClick={() => void generate()}>
             {busy === "review" ? "Reviewing…" : "Generate review"}
           </Btn>
@@ -513,14 +705,7 @@ function AiReviewPanel({
                       <span className="text-[color:var(--con-faint)]">{c.from}</span>
                       <span className="text-[color:var(--con-faint)]">→</span>
                       <span>{c.to}</span>
-                      {c.direction !== "changed" && (
-                        <span
-                          className="text-[length:var(--con-fs-xs)] font-bold uppercase"
-                          style={{ color: c.direction === "looser" ? "var(--con-warn)" : "var(--con-pos)" }}
-                        >
-                          {c.direction}
-                        </span>
-                      )}
+                      <ReviewDirectionTag direction={c.direction} />
                     </span>
                   </div>
                 ))}
@@ -541,7 +726,7 @@ function AiReviewPanel({
                     Apply review changes <LiveTag />
                   </>
                 }
-                note="At least one proposed change LOOSENS a limit on a LIVE (real money) account. Loosening costs a typed word here exactly like it does in Guardrails."
+                note="At least one proposed change expands authority on a LIVE (real money) account. Unlocking authority costs a typed word here exactly like it does in Guardrails."
                 onConfirm={() => void apply()}
               />
             ) : (

@@ -82,7 +82,7 @@ beforeEach(() => {
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
-  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.describeIndex.mockResolvedValue({ metric: "cosine" });
   mocks.filterNewDocumentChunks.mockImplementation((hashes: any[]) => hashes);
 });

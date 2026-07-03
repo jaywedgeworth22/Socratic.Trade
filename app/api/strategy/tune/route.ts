@@ -1,6 +1,8 @@
 import { proposeStrategyTuning } from "@/lib/strategy-tuning";
 import { validateTuningInvariants } from "@/lib/tuning-invariants";
 import { getPolicy } from "@/lib/db";
+import { ALL_LLM_REASONING_EFFORTS } from "@/lib/llm-request";
+import type { LlmReasoningEffort } from "@/lib/types";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 
@@ -10,8 +12,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const model = typeof body?.model === "string" ? body.model : undefined;
+    const reasoningEffort: LlmReasoningEffort | undefined =
+      ALL_LLM_REASONING_EFFORTS.includes(body?.reasoningEffort) ? body.reasoningEffort : undefined;
     const userId = resolveRequestUserId(request);
-    const proposal = await proposeStrategyTuning(userId, model);
+    const proposal = await proposeStrategyTuning(userId, model, reasoningEffort);
     // P0-3: in the MANUAL path, tuning-config invariant violations are surfaced as WARNINGS (never blocks) —
     // the human reviews them alongside the proposal. (The AUTONOMOUS path fails closed on the same set.)
     // The dashboard renders `proposal.cautions`, so APPEND the warnings there (with a clear prefix) so manual

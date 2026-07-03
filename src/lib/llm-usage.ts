@@ -168,12 +168,16 @@ export interface LlmUsageRow {
  * rows where a NON-`local` tenant spent on the operator key — the figure the operator most cares
  * about while the failover is enabled.
  */
-export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean } = {}): LlmUsageRow[] {
+export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean; userId?: string } = {}): LlmUsageRow[] {
   const where: string[] = [];
   const params: unknown[] = [];
   if (opts.sinceIso) {
     where.push("created_at >= ?");
     params.push(opts.sinceIso);
+  }
+  if (opts.userId) {
+    where.push("user_id = ?");
+    params.push(opts.userId);
   }
   if (opts.operatorFundedOnly) {
     where.push("key_source = 'operator'");
@@ -234,14 +238,14 @@ export function describeUsageKey(row: { keyRef: string | null; userId: string; p
   // The user's own stored key (for `local` this is the migrated operator key).
   const own = getUserApiKey(row.userId, row.provider)?.apiKey;
   if (own && keyFingerprint(own) === row.keyRef) {
-    const label = row.userId === LOCAL_USER ? `operator (${row.provider})` : `${row.userId} (${row.provider})`;
+    const label = row.userId === LOCAL_USER ? `primary user (${row.provider})` : `${row.userId} (${row.provider})`;
     return { last4: own.slice(-4), masked: maskApiKey(own), label };
   }
   // The operator's env key (the failover that served a tenant).
   const envVar = apiKeyEnvVarForService(row.provider);
   const envKey = envVar ? process.env[envVar]?.trim() : undefined;
   if (envKey && keyFingerprint(envKey) === row.keyRef) {
-    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `operator env (${row.provider})` };
+    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `server failover (${row.provider})` };
   }
   return undefined;
 }

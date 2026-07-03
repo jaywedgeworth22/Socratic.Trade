@@ -66,7 +66,7 @@ beforeEach(() => {
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
-  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+  mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
   // filterNewDocumentChunks: dedup gate — return every hash as "new" so the chunk isn't skipped.
   mocks.filterNewDocumentChunks.mockImplementation((hashes: Array<{ content_hash: string }>) => hashes);

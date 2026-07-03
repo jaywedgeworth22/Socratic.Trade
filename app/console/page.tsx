@@ -24,6 +24,7 @@ import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, tim
 import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
+import { SymbolButton } from "./ui/symbol-drilldown";
 
 const SIDE_LABEL: Record<string, string> = { buy: "Bought", sell: "Sold", short: "Shorted", cover: "Covered" };
 
@@ -303,20 +304,35 @@ type EvidenceRow = {
 
 function deriveThesisHeadline(latest: StrategyDecision | undefined, proposal: TradeProposal | undefined, decision?: SocraticDecisionCase): string {
   if (decision?.thesis) {
-    return `${decision.thesis}: ${decision.symbol ?? "portfolio"} is Socratic Trade's current strongest argument.`;
+    return `Market thesis: ${formatMarketThesis(decision.thesis, decision.symbol)}`;
   }
   if (proposal?.tradeThesisTag) {
-    return `${proposal.tradeThesisTag}: ${proposal.symbol} is the current strongest argument.`;
+    return `Market thesis: ${formatMarketThesis(proposal.tradeThesisTag, proposal.symbol)}`;
   }
   if (latest?.summary) return "Latest run completed; Socratic Trade is holding its current posture.";
   return "Waiting for the next market thesis.";
 }
 
 function deriveThesisBody(latest: StrategyDecision | undefined, proposal: TradeProposal | undefined, decision?: SocraticDecisionCase): string {
-  if (decision?.rationale) return decision.rationale;
-  if (proposal?.rationale) return proposal.rationale;
+  if (decision?.rationale) {
+    const expression = decision.symbol ? `Current expression: ${decision.side ? `${decision.side.toUpperCase()} ` : ""}${decision.symbol}. ` : "";
+    return `${expression}${decision.rationale}`;
+  }
+  if (proposal?.rationale) {
+    return `Current expression: ${proposal.side.toUpperCase()} ${proposal.symbol}. ${proposal.rationale}`;
+  }
   if (latest?.summary) return latest.summary;
   return "Run Socratic Trade to form a thesis from the current market, portfolio, evidence, and remembered outcomes.";
+}
+
+function formatMarketThesis(raw: string, symbol?: string | null): string {
+  const trimmed = raw.trim();
+  const symbolPrefix = symbol ? new RegExp(`^${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:\\-]\\s*`, "i") : null;
+  const withoutSymbol = symbolPrefix ? trimmed.replace(symbolPrefix, "") : trimmed;
+  return withoutSymbol
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b[a-z]/g, (char) => char.toUpperCase());
 }
 
 function deriveActionRows(snapshot: DashboardSnapshot, latest: StrategyDecision | undefined): DecisionRowData[] {
@@ -509,7 +525,7 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
     <article className="con-decision-row">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <strong>{row.symbol}</strong>
+          {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} showLogo={false} />}
           <span>{row.verb}</span>
           <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>{row.status}</Chip>
         </div>

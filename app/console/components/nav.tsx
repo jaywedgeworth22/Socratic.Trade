@@ -20,6 +20,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   Radar,
+  ReceiptText,
   Settings as SettingsIcon,
   Shield
 } from "lucide-react";
@@ -87,6 +88,7 @@ const DESTINATIONS: Destination[] = [
   { href: "/console/strategy", label: "Framework", icon: Brain, desc: "The agent framework: prompts, models, doctrine, and run cadence." },
   { href: "/console/guardrails", label: "Mandates", icon: Shield, desc: "Delegated authority and hard constraints that bind every trade." },
   { href: "/console/results", label: "Outcomes", icon: BarChart3, desc: "Realized performance, equity curve, thesis scorecards, and learning evidence." },
+  { href: "/console/usage", label: "Usage", icon: ReceiptText, desc: "Your LLM usage and estimated model cost by key, model, and workflow." },
   { href: "/console/settings", label: "Settings", icon: SettingsIcon, desc: "Accounts, notifications, API keys, and console preferences." }
 ];
 

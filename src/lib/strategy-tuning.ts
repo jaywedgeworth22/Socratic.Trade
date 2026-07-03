@@ -28,6 +28,7 @@ import type {
   FillEvent,
   MarketFactor,
   MarketScan,
+  LlmReasoningEffort,
   PerformanceSummary,
   ScoringWeights,
   StrategyTuningPatch,
@@ -308,7 +309,11 @@ function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", 
   return undefined;
 }
 
-export async function proposeStrategyTuning(userId: string = "local", modelOverride?: string): Promise<StrategyTuningProposal> {
+export async function proposeStrategyTuning(
+  userId: string = "local",
+  modelOverride?: string,
+  reasoningEffortOverride?: LlmReasoningEffort
+): Promise<StrategyTuningProposal> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
@@ -412,7 +417,7 @@ export async function proposeStrategyTuning(userId: string = "local", modelOverr
     return applyOosGate(localProposal, userId);
   }
 
-  const payload = await requestLlmTuning(context, userId, modelOverride);
+  const payload = await requestLlmTuning(context, userId, modelOverride, reasoningEffortOverride);
   const proposedPatch = toPatch(payload, prompt, policy.scoringWeights);
   const cautions = Array.isArray(payload.cautions) ? [...payload.cautions] : [];
   // Hard-enforce the §3.E sample-size guardrail: the system prompt asks the model to
@@ -598,7 +603,12 @@ function compactMarketScan(scan?: MarketScan) {
   };
 }
 
-async function requestLlmTuning(context: unknown, userId: string, modelOverride?: string): Promise<LlmTuningPayload> {
+async function requestLlmTuning(
+  context: unknown,
+  userId: string,
+  modelOverride?: string,
+  reasoningEffortOverride?: LlmReasoningEffort
+): Promise<LlmTuningPayload> {
   const policy = getPolicy(userId);
   const policyForResolution = modelOverride ? { ...policy, llmModel: modelOverride } : policy;
   const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policyForResolution, userId);
@@ -621,7 +631,7 @@ async function requestLlmTuning(context: unknown, userId: string, modelOverride?
       userContent: JSON.stringify(context),
       schema: { name: "strategy_tuning", schema, description: "Conservative, reviewable strategy-tuning suggestions." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyTuning,
-      reasoningEffort: policyForResolution.llmReasoningEffort
+      reasoningEffort: reasoningEffortOverride ?? policyForResolution.llmReasoningEffort
     }
   );
 

@@ -8,6 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - Socratic admin/RAG/settings parity pass (Codex)
+Branch `codex/live-thesis-portfolio-framing` in `/Users/jay/apps/trading-codex`.
+Current local work covers the broad owner-requested follow-up: Pinecone/RAG
+quota guardrails, `socratic-trade` default index, admin RAG/connection health,
+user/admin LLM usage, `/old`, OAuth host canonicalization for stale
+`trading.jays.services` Auth.js env values, right-side ticker drawer coverage,
+Home live-thesis reframing, Coach-page reframing, provider-specific
+reasoning/thinking controls for Strategy and AI Review, lock/unlock authority
+language, the first absolute-vs-percent setting mode switches, and a tracked
+open-items audit. Verification is green: `npm run lint` (0 errors), `npx tsc
+--noEmit`, `npm test` (244 files / 2369 tests), `npm run build`, Codex preview
+restart, and authenticated route probes for `/console`, `/old`, and
+`/console/strategy`. The Playwright smoke assertion was updated from the old
+`Market Scan` label to the new `Evidence and RAG contribution` Home panel, and
+`npm run test:e2e` passes locally.
+See `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md` and
+`docs/reviews/2026-07-03-console-parity-open-items.md`.
+
 ## 2026-07-03 - Sell to Fund Buys title-case copy fix (Codex)
 Branch `codex/sell-to-fund-title-case` in `/Users/jay/apps/trading-codex`.
 The Guardrails Sell to Fund Buys selector and the legacy dashboard Key

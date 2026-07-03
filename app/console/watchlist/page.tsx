@@ -14,6 +14,7 @@ import type { PriceAlert, WatchlistItem } from "@/lib/types";
 import { fmtMoney, EM_DASH } from "../lib/format";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Dash, Empty, Field, NumInput, Select, TextInput } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 interface WatchlistQuote {
   symbol: string;
@@ -241,7 +242,9 @@ export default function WatchlistPage() {
                   const armed = armedBySymbol.get(item.symbol) ?? 0;
                   return (
                     <tr key={item.symbol}>
-                      <td className="con-mono font-semibold">{item.symbol}</td>
+                      <td className="con-mono font-semibold">
+                        <SymbolButton symbol={item.symbol} showLogo={false} />
+                      </td>
                       <td
                         className="num con-num"
                         title={
@@ -373,7 +376,9 @@ export default function WatchlistPage() {
                       : `Triggered${typeof alert.triggeredPrice === "number" ? ` at ${fmtMoney(alert.triggeredPrice)}` : ""} — it fired once and will not re-arm by itself.`
                   }
                 >
-                  <span className="con-mono font-semibold">{alert.symbol}</span>
+                  <span className="con-mono font-semibold">
+                    <SymbolButton symbol={alert.symbol} showLogo={false} />
+                  </span>
                   <span className="con-num text-[length:var(--con-fs-sm)]">
                     {alert.op === ">" ? "above" : "below"} {fmtMoney(alert.price)}
                   </span>

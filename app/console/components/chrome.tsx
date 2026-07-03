@@ -687,6 +687,14 @@ export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
             Signing out only ends this browser session. The strategy keeps its current run state on the server — it
             does not stop, start, or sell anything.
           </p>
+          <Link
+            href="/old"
+            className="con-btn con-btn-outline self-start"
+            title="Open the legacy dashboard at /old. The new Socratic console is the primary app."
+            onClick={() => setOpen(false)}
+          >
+            Old dashboard
+          </Link>
           {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
           <a
             href="/logout"

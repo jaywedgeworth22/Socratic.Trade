@@ -8,6 +8,7 @@
  *  (pure, unit-tested); this file is the React skin over it. */
 
 import { useMemo, useState, type ReactNode } from "react";
+import { Lock, Unlock } from "lucide-react";
 import { DEFAULT_POLICY } from "@/lib/defaults";
 import type { TradingPolicy } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
@@ -23,7 +24,7 @@ import {
   type ExtraDiffEntry,
   type FieldDef
 } from "../lib/policy-diff";
-import { cx, fmtNum, EM_DASH } from "../lib/format";
+import { fmtNum, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
@@ -163,16 +164,117 @@ export function PolicyFieldRow({ def, policy, draft }: { def: FieldDef; policy: 
   );
 }
 
+export function PolicyDualModeRow({
+  label,
+  moneyDef,
+  pctDef,
+  policy,
+  draft,
+  hint
+}: {
+  label: string;
+  moneyDef: FieldDef;
+  pctDef: FieldDef;
+  policy: TradingPolicy;
+  draft: PolicyDraft;
+  hint?: string;
+}) {
+  const moneyTouched = moneyDef.path in draft.values;
+  const pctTouched = pctDef.path in draft.values;
+  const moneyValue = moneyTouched ? draft.values[moneyDef.path] : getAtPath(policy, moneyDef.path);
+  const pctValue = pctTouched ? draft.values[pctDef.path] : getAtPath(policy, pctDef.path);
+  const [mode, setModeState] = useState<"money" | "pct">(() => (!isBlank(pctValue) ? "pct" : "money"));
+  const [editText, setEditText] = useState<string | null>(null);
+  const activeDef = mode === "money" ? moneyDef : pctDef;
+  const activeValue = mode === "money" ? moneyValue : pctValue;
+  const touched = moneyTouched || pctTouched;
+  const display = isBlank(activeValue) ? "" : String(activeValue);
+  const unit = mode === "money" ? "$" : "%";
+
+  const setMode = (next: "money" | "pct") => {
+    setModeState(next);
+    setEditText(null);
+    if (next === "money") {
+      draft.set(pctDef.path, null);
+      if (!(moneyDef.path in draft.values)) draft.set(moneyDef.path, isBlank(moneyValue) ? null : moneyValue);
+    } else {
+      draft.set(moneyDef.path, null);
+      if (!(pctDef.path in draft.values)) draft.set(pctDef.path, isBlank(pctValue) ? null : pctValue);
+    }
+  };
+
+  return (
+    <div className="py-2">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="text-[length:var(--con-fs-sm)] font-semibold">
+            {label}
+            {touched && <span className="ml-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">edited</span>}
+          </div>
+          {hint && <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">{hint}</p>}
+        </div>
+        <div className="flex min-w-[18rem] flex-wrap items-center justify-end gap-2">
+          <div className="inline-flex rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5" role="group" aria-label={`${label} mode`}>
+            <button
+              type="button"
+              className={mode === "money" ? "rounded px-2 py-1 text-[length:var(--con-fs-xs)] font-bold text-[color:var(--con-fg)] bg-[color:var(--con-surface)]" : "rounded px-2 py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"}
+              onClick={() => setMode("money")}
+              title={moneyDef.hint ?? `Use a dollar cap for ${label}.`}
+            >
+              Dollar
+            </button>
+            <button
+              type="button"
+              className={mode === "pct" ? "rounded px-2 py-1 text-[length:var(--con-fs-xs)] font-bold text-[color:var(--con-fg)] bg-[color:var(--con-surface)]" : "rounded px-2 py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"}
+              onClick={() => setMode("pct")}
+              title={pctDef.hint ?? `Use a portfolio percentage cap for ${label}.`}
+            >
+              Percent
+            </button>
+          </div>
+          <div className="flex w-36 items-center gap-1.5">
+            {unit === "$" && <span className="text-[color:var(--con-faint)]">$</span>}
+            <NumInput
+              id={`pf-${activeDef.path}`}
+              value={editText ?? display}
+              placeholder="off"
+              onFocus={() => setEditText(display)}
+              onBlur={() => setEditText(null)}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setEditText(raw);
+                const parsed = Number(raw);
+                draft.set(activeDef.path, raw === "" || !Number.isFinite(parsed) ? null : parsed);
+                draft.set(mode === "money" ? pctDef.path : moneyDef.path, null);
+              }}
+              title={activeDef.hint}
+            />
+            {unit === "%" && <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">%</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Save bar + review sheet ──────────────────────────────────────────────────
 
 function DirectionTag({ direction }: { direction: DiffEntry["direction"] }) {
   if (direction === "changed") return null;
+  const unlocks = direction === "looser";
+  const Icon = unlocks ? Unlock : Lock;
+  const label = unlocks ? "Unlocks" : "Locks Down";
+  const title = unlocks
+    ? "Raises a cap, removes a protection, broadens the universe, or otherwise expands trading authority."
+    : "Adds a protection, lowers a cap, narrows the universe, or otherwise restricts trading authority.";
   return (
     <span
-      className={cx("text-[length:var(--con-fs-xs)] font-bold uppercase")}
-      style={{ color: direction === "looser" ? "var(--con-warn)" : "var(--con-pos)" }}
+      className="inline-flex items-center gap-1 rounded-full border border-current px-1.5 py-0.5 text-[length:var(--con-fs-xs)] font-bold"
+      style={{ color: unlocks ? "var(--con-warn)" : "var(--con-pos)" }}
+      title={title}
     >
-      {direction}
+      <Icon size={12} aria-hidden />
+      {label}
     </span>
   );
 }
@@ -286,7 +388,7 @@ export function PolicySaveBar({
                 Commit changes <LiveTag />
               </>
             }
-            note="At least one change LOOSENS a limit on a LIVE (real money) account. Loosening costs a typed word; tightening never does."
+            note="At least one change expands authority on a LIVE (real money) account. Unlocking authority costs a typed word; locking things down never does."
             onConfirm={() => void commit()}
           />
         ) : (

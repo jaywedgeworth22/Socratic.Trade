@@ -756,6 +756,68 @@
   border-color: var(--con-live-border);
 }
 
+/* ── Symbol drawer ── */
+.con-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--con-scrim);
+  backdrop-filter: blur(2px);
+  animation: con-fade-in 140ms ease-out;
+}
+.con-drawer {
+  position: fixed;
+  z-index: 111;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(100vw, 640px);
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--con-line-strong);
+  background: var(--con-surface);
+  box-shadow: var(--con-shadow-lg);
+  animation: con-drawer-in 180ms ease-out;
+}
+.con-drawer-header {
+  display: flex;
+  min-height: 64px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--con-line);
+  padding: 14px 18px;
+}
+.con-drawer-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 22px;
+}
+@keyframes con-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes con-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@media (max-width: 640px) {
+  .con-drawer {
+    width: 100vw;
+  }
+  .con-drawer-header {
+    min-height: 58px;
+    padding: 12px 14px;
+  }
+  .con-drawer-body {
+    padding: 14px;
+  }
+}
+
 /* ── Toasts ── */
 .con-toasts {
   position: fixed;

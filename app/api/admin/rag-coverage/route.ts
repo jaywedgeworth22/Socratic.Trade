@@ -1,10 +1,30 @@
 import { NextResponse } from "next/server";
-import { getChunkCoverage, listIngestedAccessions } from "@/lib/db";
+import { getChunkCoverage, getInternalSetting, listIngestedAccessions } from "@/lib/db";
 import { getRagUsageSummary } from "@/lib/rag-metering";
-import { getVectorStoreStats } from "@/lib/vector-db";
+import { getVectorStoreStats, type VectorStoreStats } from "@/lib/vector-db";
 import { requireAdmin } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
+
+interface LastVectorIngest {
+  at?: string;
+  attempted?: number;
+  indexed?: number;
+  skipped?: boolean;
+  error?: string;
+  budgetSkipped?: number;
+  budget?: {
+    requested?: number;
+    allowed?: number;
+    skipped?: number;
+    usedLast24h?: number;
+    limitPer24h?: number;
+  };
+}
+
+type VectorStoreAdminStats = VectorStoreStats & {
+  lastIngest?: LastVectorIngest;
+};
 
 // Admin/diagnostic route: corpus coverage stats — what's in the RAG index per ticker,
 // how fresh it is, and which tickers have no filings at all.
@@ -25,6 +45,10 @@ export async function GET(request: Request) {
     getVectorStoreStats(),
     Promise.resolve(getRagUsageSummary({ sinceIso }))
   ]);
+  const vectorStore: VectorStoreAdminStats = {
+    ...vectorStats,
+    lastIngest: getInternalSetting<LastVectorIngest>("vectorStore:lastIngest")
+  };
 
   // Coverage gaps: symbols in ingested_accessions that have NO document_chunks.
   const ingestedSymbols = new Set(ingested.map((r) => r.ticker));
@@ -45,7 +69,7 @@ export async function GET(request: Request) {
     }))
     .sort((a, b) => b.chunks - a.chunks);
 
-  const vectTotal = vectorStats?.totalVectorCount ?? 0;
+  const vectTotal = vectorStore?.totalVectorCount ?? 0;
 
   return NextResponse.json({
     sinceDays,
@@ -53,6 +77,7 @@ export async function GET(request: Request) {
     totalTickers: perTicker.length,
     totalChunks: perTicker.reduce((s, t) => s + t.chunks, 0),
     totalFilings: ingested.length,
+    vectorStore,
     vectorStoreTotalVectors: vectTotal,
     coverageGaps: noChunksSymbols,
     ragUsage: {

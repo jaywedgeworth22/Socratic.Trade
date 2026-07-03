@@ -15,6 +15,7 @@ import { cx } from "../lib/format";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
+import { SymbolDrawerProvider } from "../ui/symbol-drawer";
 import { ToastProvider } from "../ui/toast";
 import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
 import { ConsentGate } from "./consent-gate";
@@ -95,22 +96,24 @@ function ShellFrame({ children }: { children: ReactNode }) {
           shadows) are scoped to .console-root — a toast mounted outside it would
           render unstyled. The provider adds no DOM around the children, so the
           flex column layout is unchanged; the toasts div is position:fixed. */}
-      <ToastProvider>
-        {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
-        <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
-          <RealityBanner snapshot={snapshot} />
-          <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
-        </div>
-        <div className="mx-auto flex w-full max-w-[1400px] flex-1">
-          <DesktopRail pendingCount={snapshot.pendingProposals.length} />
-          <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
-        </div>
-        <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
-        <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
-        {/* Blocking shared-data-pool consent gate — same semantics as the
-            legacy dashboard gate; renders nothing once answered. */}
-        <ConsentGate />
-      </ToastProvider>
+      <SymbolDrawerProvider>
+        <ToastProvider>
+          {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
+          <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
+            <RealityBanner snapshot={snapshot} />
+            <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+          </div>
+          <div className="mx-auto flex w-full max-w-[1400px] flex-1">
+            <DesktopRail pendingCount={snapshot.pendingProposals.length} />
+            <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
+          </div>
+          <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
+          <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+          {/* Blocking shared-data-pool consent gate — same semantics as the
+              legacy dashboard gate; renders nothing once answered. */}
+          <ConsentGate />
+        </ToastProvider>
+      </SymbolDrawerProvider>
     </div>
   );
 }

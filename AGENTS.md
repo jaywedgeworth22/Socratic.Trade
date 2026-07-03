@@ -18,14 +18,24 @@ the hard way.
 - Read `STATUS.md` for the current repo snapshot, then skim the most relevant
   `docs/*.md` and the latest matching note under `docs/rollouts/` before making
   a non-trivial change.
+- Read `docs/EFFORT-LOG.md` before starting non-trivial work and keep it current
+  as work changes state. This is binding for every agent/tool/session, not just
+  a pre-commit chore: add a **Planned** row as soon as an effort is identified
+  and before substantial code/design work begins, so parallel agents can avoid
+  duplicating it; move active work to In Progress before substantial edits; and
+  update the row when a PR merges or production deploys. The branch-neutral live
+  board is `/Users/jay/apps/TRADING-EFFORT-LOG.md`; `docs/EFFORT-LOG.md` is the
+  repo-tracked mirror that must be updated before commit/push.
 
 ## Pre-Commit / Handoff Protocol (Claude, Codex, Antigravity, Cursor, etc.)
 
 Before every commit/push to the GitHub repo, you MUST update the following:
 1. **`STATUS.md`** — current state, blockers, next action.
-2. **`docs/EFFORT-LOG.md`** — the single shared cross-agent effort ledger. EVERY agent on
-   EVERY platform (Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions, …) MUST
-   keep this current: move each effort between **Planned → In Progress (with a one-line status) →
+2. **`/Users/jay/apps/TRADING-EFFORT-LOG.md` + `docs/EFFORT-LOG.md`** — the shared
+   cross-agent effort ledger. The `/Users/jay/apps/` file is the branch-neutral live board;
+   `docs/EFFORT-LOG.md` is the tracked repo mirror. EVERY agent on EVERY platform (Claude Code,
+   Codex, Antigravity/Gemini, Cursor, web/cloud sessions, etc.) MUST keep this current at start,
+   handoff, commit, PR, merge, and deploy boundaries: move each effort between **Planned → In Progress (with a one-line status) →
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"

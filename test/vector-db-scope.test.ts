@@ -70,7 +70,7 @@ beforeEach(() => {
 describe("vector-db scope metadata", () => {
   describe("write path — cleanMetadata", () => {
     it("sets scope:'shared' on shared-tier (userId=local) writes", async () => {
-      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -90,7 +90,7 @@ describe("vector-db scope metadata", () => {
     });
 
     it("sets scope:'private' on user-private writes", async () => {
-      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -113,7 +113,7 @@ describe("vector-db scope metadata", () => {
     });
 
     it("does not allow caller metadata to spoof the scope field", async () => {
-      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -140,7 +140,7 @@ describe("vector-db scope metadata", () => {
 
   describe("read path — shared-tier query filter (backward-compat $or)", () => {
     it("shared-tier query (userId=local) includes BOTH scope:'shared' AND userId:'local' in filter", async () => {
-      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       mocks.query.mockResolvedValue({ matches: [] });
       const { retrieveContext } = await import("../src/lib/vector-db");
@@ -160,7 +160,7 @@ describe("vector-db scope metadata", () => {
     });
 
     it("private-tier query includes the user's own userId filter (not $or)", async () => {
-      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+      mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
       mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
       mocks.query.mockResolvedValue({ matches: [] });
       const { retrieveContext } = await import("../src/lib/vector-db");

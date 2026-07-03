@@ -7,9 +7,14 @@ an owner decision because they cost money and/or require a reindex.
 ## What's on by default (no action needed)
 - **Embeddings:** `voyage-finance-2` (1024-dim) — a finance-domain model, correct `input_type`
   (document vs query).
+- **Pinecone index:** `socratic-trade` — dense/cosine/1024. Pinecone index names must be lowercase,
+  so the resource is lowercase even though the product name is "Socratic Trade".
 - **Reranking:** ON (`VECTOR_ENABLE_RERANK=on`, `VOYAGE_RERANK_MODEL=rerank-2.5`). Pinecone
   over-fetches by cosine recall, then Voyage's cross-encoder reorders by true relevance. Fails safe
   to cosine order on any error. This is the single biggest retrieval-quality lever.
+- **Write guardrails:** RAG ingestion caps are ON by default: `SEC_FILING_RAG_MAX_PER_RUN=1`,
+  `RAG_INGEST_BUDGET_ENABLED=on`, `RAG_INGEST_MAX_TEXTS_PER_DAY=1000`, and
+  `VECTOR_STORECONTEXTS_DEDUP=on`.
 - **Point-in-time guard:** 8-K vectors now carry `acceptance_datetime`, so `retrieveContextDetailed({asOf})`
   excludes look-ahead filings (no backtest leakage).
 - **Query filters available:** `docType` / `section` / `source` metadata filters + `minScore` floor
@@ -23,7 +28,8 @@ VECTOR_EMBED_BATCH_DELAY_MS=0
 VECTOR_EMBED_BATCH_SIZE=128
 ```
 This makes full-filing (10-K/10-Q) ingestion run in seconds instead of minutes. Set a Voyage budget
-alert. No code change, no reindex.
+alert. No code change, no reindex. Paid-mode speed does **not** mean unbounded ingestion: the
+per-run filing cap and 24h text cap still apply.
 
 ## Gated upgrade 1b — corpus enablement (full-filing bodies + disclosures)
 
@@ -54,31 +60,34 @@ not just a summary line) sits mostly idle behind default-off flags/throttles.
    `isFreeTier()` reads to lift its own 1-filing-per-tick throttle (`PAID_KEY_THRESHOLD_MS = 5000`;
    anything ≤ 5000ms is treated as "you have a paid key").
 
-**Two operator traps, verified against current code (2026-07-01 expert review) — read before flipping anything:**
+**Operator traps — read before flipping anything:**
 - **Trap 1 — the batch-delay flag has a SECOND side effect.** Setting `VECTOR_EMBED_BATCH_DELAY_MS=0`
   to speed up ingestion ALSO flips `sec-filings.ts`'s `isFreeTier()` gate, which **enables 10-K/10-Q
-  full-body ingestion** (previously capped at 1 filing/tick). If you only intended to speed up
+  full-body ingestion**. It is still capped by `SEC_FILING_RAG_MAX_PER_RUN` (default `1`) and
+  `RAG_INGEST_MAX_TEXTS_PER_DAY` (default `1000`). If you only intended to speed up
   8-K/disclosure embedding and are not ready for 10-K/10-Q full-body cost, do not set this to 0 — or
   do, deliberately, understanding it turns on the highest-value (and highest-cost) lever above.
-- **Trap 2 — `RAG_EMBED_DISCLOSURES` parses differently from the other two flags.**
-  `disclosureRagEnabled()` (`disclosure-rag.ts:18-21`) requires the **exact string `'on'`**
-  (case-insensitive), NOT the `1`/`true`/`on`/`yes` set that `VECTOR_ENABLE_RERANK` and
-  `HYBRID_RETRIEVAL` accept. Setting `RAG_EMBED_DISCLOSURES=true` **silently no-ops** — no error, no
-  warning, disclosures just never embed. Use exactly `RAG_EMBED_DISCLOSURES=on`.
+- **Trap 2 — retrieval budget is not an ingest budget.** `RAG_RUN_BUDGET_ENABLED` degrades retrieval
+  extras like rerank/hybrid; it does not stop ingestion writes. Use `RAG_INGEST_BUDGET_ENABLED` and
+  `RAG_INGEST_MAX_TEXTS_PER_DAY` for Voyage/Pinecone write volume.
 
 **Env vars to flip (all currently default OFF/free-tier):**
 | Var | Default | Paid-tier value | Effect |
 |---|---|---|---|
 | `VECTOR_EMBED_BATCH_DELAY_MS` | `21000` | `0` | Removes the free-tier Voyage throttle; ALSO the paid-key signal `isFreeTier()` reads — see Trap 1. |
 | `VECTOR_EMBED_BATCH_SIZE` | `8` | up to `128` | Bigger embed batches once the paid key removes the RPM ceiling. |
+| `SEC_FILING_RAG_MAX_PER_RUN` | `1` | raise deliberately | Hard cap on 10-K/10-Q filings processed per scheduler run, including paid mode. |
+| `RAG_INGEST_BUDGET_ENABLED` | `on` | keep `on` | Enables the 24h text-count cap before any Voyage/Pinecone write. |
+| `RAG_INGEST_MAX_TEXTS_PER_DAY` | `1000` | raise deliberately | Max texts embedded/upserted per 24h by the shared RAG ingest path. |
+| `VECTOR_STORECONTEXTS_DEDUP` | `on` | keep `on` | Skips unchanged 8-K/disclosure summaries before embedding. |
 | `WEB_SOURCE_SEC8K_FULL_BODY` | `off` | `on` | Ingest the FULL 8-K filing body (not just the 6-line summary) via `storeDocument`/`chunkDocument`. |
 | `WEB_SOURCE_SEC8K_FULL_BODY_LIMIT` | `5` | raise as budget allows | Cap on how many fresh 8-Ks get full-body ingest per refresh cycle. |
-| `RAG_EMBED_DISCLOSURES` | `off` | **exactly** `on` | Embed congressional-trade + insider-filing disclosures as RAG documents (`disclosure-rag.ts`) — see Trap 2, `true`/`1`/`yes` do NOT work. |
+| `RAG_EMBED_DISCLOSURES` | `off` | `on` | Embed congressional-trade + insider-filing disclosures as RAG documents (`disclosure-rag.ts`). Accepts `on`/`true`/`1`/`yes`. |
 
 **10-K/10-Q bodies** (`src/lib/web-sources/sec-filings.ts`, `refreshFilingBodies`) don't have a
-separate on/off flag — they're gated purely by the free-tier throttle above (1 filing/tick on free
-tier via the scheduler at `src/lib/scheduler.ts:183`; up to `maxPerRun` on paid tier). Flipping
-`VECTOR_EMBED_BATCH_DELAY_MS` to `0` is what unlocks their throughput (see Trap 1).
+separate on/off flag — they're gated by the free-tier throttle above plus the explicit
+`SEC_FILING_RAG_MAX_PER_RUN` cap. Flipping `VECTOR_EMBED_BATCH_DELAY_MS` to `0` is what unlocks
+their throughput, not permission to ingest unlimited filings (see Trap 1).
 
 **Rough cost (from `docs/chat-assistant-rag-learning.md` §7, verify current pricing before committing
 spend):** embeddings ~$15-55 one-time to re-embed the existing filing set on Voyage; Pinecone
@@ -93,9 +102,11 @@ real practical gate — a paid key removes it cheaply relative to the ingestion 
 4. Check the `document_chunks` / `ingested_accessions` tables (`db-learning.ts`) for new rows —
    `listIngestedAccessions` — confirms specific filings were actually chunked+embedded, not just
    attempted.
-5. Check the `vector_store` / `sec_filing_ingest` / `disclosure_rag_embed` audit rows (`audit()` calls
-   in `vector-db.ts`, `sec-filings.ts`, `disclosure-rag.ts`) for `ok:true` and a non-zero `indexed`
-   count — a silent Voyage 429 or Pinecone error still shows up here even if nothing else does.
+5. Check `/admin/connections` for `pinecone`, `voyage`, and `voyage-rerank` health, and
+   `/admin/rag-coverage` for vector-store errors, last-ingest errors, and ingest-budget skips.
+6. Check the `vector_store` / `vector_ingest_budget` / `sec_filing_ingest` /
+   `disclosure_rag_embed` audit rows for `ok:true`, non-zero `indexed`, or explicit budget/failure
+   reasons.
 
 **Test coverage proving the enablement path itself works (fixtures only, no live calls):**
 `test/sec8k-full-body.test.ts` drives `ingestEightKBody`/`ingestEightKBodies` with

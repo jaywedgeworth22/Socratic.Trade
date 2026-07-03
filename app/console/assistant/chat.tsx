@@ -82,13 +82,13 @@ interface LiveReply {
 /** Router-matched suggested prompts (co-versioned with the chat orchestrator's
  *  intent classifier so a chip never dead-ends). */
 const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
-  { category: "Ask", prompt: "What is AAPL trading at?" },
-  { category: "Knowledge", prompt: "Any recent 8-K catalysts for TSLA?" },
-  { category: "Portfolio", prompt: "How are my positions doing?" },
-  { category: "Watchlist", prompt: "What's on my watchlist?" },
-  { category: "Alert", prompt: "Alert me if AAPL drops below 180" },
-  { category: "Track", prompt: "Add NVDA to my watchlist" },
-  { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
+  { category: "Critique", prompt: "Critique Socratic Trade's latest thesis and name what would falsify it." },
+  { category: "Refocus", prompt: "Refocus the next run toward quality balance sheets and away from crowded momentum." },
+  { category: "Memory", prompt: "What prior wins or failures should influence the next thesis?" },
+  { category: "Evidence", prompt: "Which RAG evidence most changed the latest decision?" },
+  { category: "Framework", prompt: "Suggest one framework improvement Socratic Trade should propose to itself." },
+  { category: "Portfolio", prompt: "How do my current positions fit or conflict with the live thesis?" },
+  { category: "Draft", prompt: "Draft a candidate trade that expresses the current thesis, then route it to Approvals." }
 ];
 
 /** Pull the most useful plain-language message out of an API error response. */
@@ -415,10 +415,10 @@ export function AssistantChat() {
           <div className="grid h-full place-items-center">
             <div className="max-w-xl px-2 text-center">
               <Sparkles size={20} className="mx-auto text-[color:var(--con-accent)]" aria-hidden />
-              <p className="mt-2 font-semibold">Ask the assistant</p>
+              <p className="mt-2 font-semibold">Coach the strategy</p>
               <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                Quotes, filings, your positions and watchlist — or describe an order. Orders always come back as a
-                draft that goes through Approvals.
+                Challenge the thesis, steer the next run, preserve lessons, inspect evidence, or draft an order for
+                Approvals.
               </p>
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 {SUGGESTIONS.map((s) => (
