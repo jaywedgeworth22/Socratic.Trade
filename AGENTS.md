@@ -23,13 +23,22 @@ the hard way.
 
 Before every commit/push to the GitHub repo, you MUST update the following:
 1. **`STATUS.md`** — current state, blockers, next action.
-2. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
-3. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
-4. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
-5. **Other touched docs** — README, architecture docs, API specs, etc.
-6. **Commit Messages** — every commit message should reference which docs were updated.
+2. **`docs/EFFORT-LOG.md`** — the single shared cross-agent effort ledger. EVERY agent on
+   EVERY platform (Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions, …) MUST
+   keep this current: move each effort between **Planned → In Progress (with a one-line status) →
+   Completed (merged to `main`) → Deployed to production** as its state changes, and add new
+   efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
+   and never delete another agent's row — correct it in place and note the correction. "Completed"
+   means merged to `main` (auto-deploys to beta/integration only); "Deployed to production" is the
+   separate owner-run release step (`~/apps/trading-live`) — do not mark it deployed unless that
+   release actually happened.
+3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
+4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
+5. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
+6. **Other touched docs** — README, architecture docs, API specs, etc.
+7. **Commit Messages** — every commit message should reference which docs were updated.
 
-`AGENTS.md` is for durable repo rules and cross-file traps only. Do not put turn-specific status or a running changelog here.
+`AGENTS.md` is for durable repo rules and cross-file traps only. Do not put turn-specific status or a running changelog here — that is what `STATUS.md` (snapshot), `docs/EFFORT-LOG.md` (effort board), and `docs/rollouts/` (chronological) are for.
 
 ## Rollout note minimums
 

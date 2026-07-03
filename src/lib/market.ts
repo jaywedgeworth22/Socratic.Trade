@@ -480,29 +480,34 @@ export function mergeQuoteData(
   scan: MarketScan,
   quoteData: Record<string, { bid?: number; ask?: number; price?: number; volume?: number; asOf?: string; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }>
 ): MarketScan {
-  // When a merge accepts a real broker bid/ask/volume, refresh THAT side's provenance too. Otherwise a
-  // "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote) would stick even
-  // after a real broker spread is merged in, making a genuine ask look synthetic to hasRealAsk and the
-  // marketable-limit calc (which would then wrongly fall back to refPrice).
+  // When a merge accepts a real broker bid/ask/price/volume, refresh THAT field's provenance too.
+  // Otherwise a "yahoo-finance-synthetic" tag from the quote-only fallback (toQuoteOnlyMarketQuote)
+  // would stick even after a real broker spread is merged in, making a genuine ask look synthetic to
+  // hasRealAsk and the marketable-limit calc (which would then wrongly fall back to refPrice); and a
+  // merged broker/Yahoo `price` (normalize replaces `price` below) would keep the SCREENER's stale
+  // sources.price, so the drilldown/table price tooltip would misattribute the shown value.
   const refreshSideProvenance = (
     base: EnrichmentSources | undefined,
-    extra: { bid?: number; ask?: number; volume?: number; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }
+    extra: { bid?: number; ask?: number; price?: number; volume?: number; provider?: string; syntheticSpread?: boolean; syntheticBid?: boolean; syntheticAsk?: boolean }
   ): EnrichmentSources | undefined => {
     if (!extra.provider) return base;
     const usedBid = positiveNumber(extra.bid) !== undefined;
     const usedAsk = positiveNumber(extra.ask) !== undefined;
+    const usedPrice = positiveNumber(extra.price) !== undefined;
     const usedVol = !!(extra.volume && extra.volume > 0);
-    if (!usedBid && !usedAsk && !usedVol) return base;
+    if (!usedBid && !usedAsk && !usedPrice && !usedVol) return base;
     // A synthesized (price-derived) side — e.g. a Test-mode Yahoo batch quote with no real bid/ask —
     // must KEEP synthetic provenance, not be relabeled as a real quoted spread. Tag EACH side by its
     // own synthetic flag so a one-sided quote's real side stays labeled with the actual provider
     // (falling back to the coarse syntheticSpread flag when the side-specific flags aren't set). Volume
-    // is a real datum even when the spread is synthetic, so it always takes the actual provider.
+    // and price are real data even when the SPREAD is synthetic (the synthetic flags describe the
+    // derived bid/ask, not the last/mark price), so both always take the actual provider.
     const bidSynthetic = extra.syntheticBid ?? extra.syntheticSpread ?? false;
     const askSynthetic = extra.syntheticAsk ?? extra.syntheticSpread ?? false;
     const next: EnrichmentSources = { ...(base ?? {}) };
     if (usedBid) next.bid = bidSynthetic ? "yahoo-finance-synthetic" : extra.provider;
     if (usedAsk) next.ask = askSynthetic ? "yahoo-finance-synthetic" : extra.provider;
+    if (usedPrice) next.price = extra.provider;
     if (usedVol) next.volume = extra.provider;
     return next;
   };
