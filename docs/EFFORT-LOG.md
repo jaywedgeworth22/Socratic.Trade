@@ -51,14 +51,13 @@ to `trading.jays.services`, record the release commit + date here._
 - **#334** — Persist failover-aware `proposedByModel` per proposal; blank (never fabricate) no-FRED macro (`DEFAULT_MACRO`→`BLANK_MACRO`, `pruneMacro` drops `""`).
 - **#335** — `EquityOrder` limit/stop/TIF through Alpaca+Robinhood mappers + `/console/orders` columns; disclosure-ordered congress cap; `MarketQuoteSummary` factor/headlines/volume fields; Turbopack dev fix.
 - **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
+- **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
 
 ---
 
 ## 🔨 In Progress
 
-- **Manager-model options doc + decisions record** — branch `claude/manager-model-eval` (coordinator,
-  cloud). Records the four owner decisions below and adds `docs/manager-model-options.md` (cross-provider
-  model comparison for the strategist role). **Status:** doc written; gate + PR pending.
+- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
 
 ---
 
@@ -107,3 +106,5 @@ to `trading.jays.services`, record the release commit + date here._
 - 2026-07-03 — #336 merged (→ Completed). Recorded the four owner decisions (drawdown=hard-halt,
   stops=prompt-expected, Manager=cross-provider A/B, #315 closed). Live-execution hardening moved
   Blocked → Ready. Added `docs/manager-model-options.md`.
+- 2026-07-03 — #337 merged (→ Completed). In Progress now empty; next work is the Ready items
+  (live-execution hardening + Manager-model A/B).
