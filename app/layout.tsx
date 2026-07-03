@@ -5,18 +5,18 @@ import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://trading.jays.services"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com"),
   title: {
     default: "Trading Dashboard",
     template: "%s · Trading Dashboard"
   },
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
-  applicationName: "Agentic Trading",
+    "Socratic Trade is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+  applicationName: "Socratic Trade",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Agentic Trading",
+    title: "Socratic Trade",
     statusBarStyle: "black-translucent"
   },
   icons: {
