@@ -8,7 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-03 — CI holiday-flake fix: deterministic isTradingDay in tests (Claude, cloud)
+## 2026-07-03 — Rebrand: Agentic Trading → Socratic Trade / socratictrade.com (Claude, cloud)
+Branch `claude/rebrand-socratic-trade` (off `origin/main` post-#339). Owner stood up production infra
+under the name **Socratic Trade** at **socratictrade.com** (Sentry project, Cloudflare DNS, GitHub
+OAuth callbacks, Google authorized domains — all done owner-side); this aligns the codebase.
+**Changed:** display brand "Agentic Trading" → "Socratic Trade" (manifest name + no-space `short_name`
+"Socratic.Trade", `layout.tsx` applicationName/appleWebApp/description, mobile page + `<h1>`); public
+host fallback `https://trading.jays.services` → `https://socratictrade.com` (env-first —
+`NEXT_PUBLIC_SITE_URL` still wins — in `public-origin.ts`, `robots.ts`, `sitemap.ts`, `layout.tsx`
+metadataBase, README, `test/mcp-oauth.test.ts` + `test/logout-route.test.ts`); Sentry project slug
+fallback `agentic-trading` → `socratic-trade`. **Deliberately NOT changed:** `mail@jays.services`
+(owner LOGIN email — would break auth), internal machine slugs (telemetry `SOURCE_APP`, notify UA,
+mcp-oauth client identity, account-deletion HMAC salt), the Robinhood **account nickname "Agentic"**
+(account-detection convention), and internal jays.services preview subdomains. `socratic.trade` also
+resolves but is not wired in (owner said it's optional; used only as the no-space name form). Verify:
+running tsc/test/build. See `docs/rollouts/2026-07-03-rebrand-socratic-trade.md`.
+
+## 2026-07-03 — CI holiday-flake fix: deterministic isTradingDay in tests (Claude, cloud) — MERGED as #339
 Branch `claude/kill-paper-default-rules` (#339). CI `verify` went red for a **pre-existing, wall-clock**
 reason: today (2026-07-03) is the observed US July 4 market holiday, so `isTradingDay()` is false and
 `runStrategyOnce`'s market-closed guard (`strategy.ts:252`) skipped every non-manual run — turning ~17

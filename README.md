@@ -1,4 +1,4 @@
-# Agentic Trading Dashboard
+# Socratic Trade Dashboard
 
 Local-only Next.js dashboard for managing supported agentic trading accounts,
 including Robinhood through MCP and Alpaca through API keys.
@@ -72,7 +72,7 @@ For one-off local development, open `http://127.0.0.1:3000`.
 
 On the host machine, prefer the PM2-managed previews:
 
-- Production deployed app: `https://trading.jays.services` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
+- Production deployed app: `https://socratictrade.com` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
 - Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
 - Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
 
@@ -231,7 +231,7 @@ settings table.
 
 For production behind the Cloudflare tunnel, the default is to leave
 `ROBINHOOD_MCP_REDIRECT_URI` blank; the app will use `x-forwarded-host`,
-`NEXT_PUBLIC_SITE_URL`, or `https://trading.jays.services` for
+`NEXT_PUBLIC_SITE_URL`, or `https://socratictrade.com` for
 `/api/auth/robinhood/callback`. If Robinhood rejects the public callback during
 the logged-in consent step, a same-machine operator can instead set
 `ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`

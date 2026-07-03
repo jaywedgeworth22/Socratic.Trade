@@ -1,4 +1,4 @@
-const PUBLIC_SITE_FALLBACK_ORIGIN = "https://trading.jays.services";
+const PUBLIC_SITE_FALLBACK_ORIGIN = "https://socratictrade.com";
 
 export function resolvePublicAppOrigin(request: Request): string {
   const requestOrigin = resolveRequestOrigin(request);

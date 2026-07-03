@@ -53,29 +53,36 @@ to `trading.jays.services`, record the release commit + date here._
 - **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
 - **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
 
+### De-paternalization + CI hardening (2026-07-03)
+- **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
+  "defaults to Test mode" framing from `AGENTS.md`; added the "Product philosophy — real trading,
+  owner's risk" section (an account is an account; no Test-mode/local-sim; harden CORRECTNESS +
+  multi-user safety, NOT obedience). Also fixed the July-4 CI holiday flake (`isTradingDay` VITEST-gated
+  test seam, so `verify` stops going red on market-closed days) and purged the contradicting Cursor
+  rule (`.cursor/rules/handoff.mdc`). _(incl. coordinator Codex round: VITEST gate on the seam so a
+  stray flag can't defeat the real market-closed guard; Cursor-rule rewrite; EFFORT-LOG stale-bullet
+  supersede.)_
+
 ---
 
 ## 🔨 In Progress
 
-- **De-paternalize: kill paper-as-default + Test mode** (coordinator, cloud) — owner directive
-  (repeated/emphatic): real trading app, owner accepts 100% risk; stop treating paper as default and
-  DELETE Test mode / the local simulator; don't protect the owner's money from agent bugs.
-  **Step 1 (done, PR pending):** `AGENTS.md` — deleted the paper-default / `paperMode:false` Don't-rule
-  + the "defaults to Test mode" framing; added a "Product philosophy — real trading, owner's risk"
-  section (an account is an account; no local-sim; harden CORRECTNESS not OBEDIENCE; guardrails are the
-  owner's overridable prefs). **Step 2 (in progress, separate PR):** remove the `test/local` /
-  `usesLocalSimulation` execution path + `paperMode`-as-default across ~35 src + 36 test files
-  (`execution-mode.ts` hub → strategy paper-fill branch, dashboard projection, defaults, tests). Land
-  in coherent green pieces.
-- **CI holiday-flake fix (unblocks all weekend CI)** (coordinator, cloud, branch
-  `claude/kill-paper-default-rules` / #339) — `verify` went red because 2026-07-03 is the observed US
-  July 4 market holiday: `isTradingDay()` false ⇒ `runStrategyOnce`'s market-closed guard skipped every
-  non-manual run ⇒ ~17 strategy/persistence assertions red (all `run_skipped_market_closed`). Weekends
-  would keep it red through Mon, blocking #339 + rebrand + the paperMode-removal PR. Fixed centrally
-  (`isTradingDay(date?)` returns true for the no-arg "today" call under `AGENTIC_TEST_FORCE_TRADING_DAY=1`,
-  set only by `vitest.config` `test.env`; explicit-date calendar calls untouched). **Zero test-file
-  edits** so it does NOT collide with `claude/remove-paper-test-mode`. Full suite 2365 green. **Note for
-  Step-2:** do NOT re-add per-file `isTradingDay` mocks — the calendar is already deterministic in tests.
+- **De-paternalize Step 2: remove the runtime `test/local` path + `policy.paperMode`** (agent
+  `claude/remove-paper-test-mode`) — Step 1 (the AGENTS.md rules) + the CI holiday-flake fix landed as
+  **#339** (see Completed). Step 2 removes the `test/local` / `usesLocalSimulation` execution path and
+  `paperMode`-as-default across ~35 src + 36 test files (`execution-mode.ts` hub → strategy paper-fill
+  branch, dashboard projection, defaults, tests). An account's `environment` decides paper vs live; no
+  connected account ⇒ the app can't place orders (no local-sim fallback). Land in coherent green pieces.
+  **Note:** the calendar is already deterministic in tests (#339's VITEST-gated `isTradingDay` seam) —
+  do NOT re-add per-file `isTradingDay` mocks.
+- **Rebrand: Agentic Trading → Socratic Trade / socratictrade.com** (coordinator, cloud, branch
+  `claude/rebrand-socratic-trade`) — owner set up prod infra as "Socratic Trade" at socratictrade.com
+  (Sentry project, Cloudflare DNS, GitHub OAuth callbacks, Google authorized domains done owner-side).
+  Code aligned: display brand → "Socratic Trade" (no-space form "Socratic.Trade"); public host fallback
+  `trading.jays.services` → `socratictrade.com` (env-first); Sentry project slug → `socratic-trade`.
+  Deliberately NOT touched: `mail@jays.services` login email, internal machine slugs (telemetry
+  SOURCE_APP, notify UA, mcp-oauth client id, account-deletion HMAC salt), the Robinhood "Agentic"
+  account nickname, and internal jays.services preview subdomains. PR pending.
 
 ---
 
@@ -131,3 +138,9 @@ to `trading.jays.services`, record the release commit + date here._
 - 2026-07-03 — Added the CI holiday-flake fix (In Progress → on #339) after `verify` went red on the
   observed July 4 closure; fixed via a `vitest.config` `test.env` seam in `isTradingDay`, zero test-file
   edits so it won't collide with the paperMode-removal branch.
+- 2026-07-03 — **#339 merged** (→ Completed): de-paternalize Step 1 rules + CI holiday-flake fix +
+  Cursor-rule purge (incl. Codex round: VITEST-gated seam, Cursor rewrite). In Progress now = Step 2
+  paperMode/test-mode runtime removal + the Socratic Trade rebrand.
+- 2026-07-03 — Started the **Socratic Trade rebrand** (branch `claude/rebrand-socratic-trade`): brand
+  "Agentic Trading" → "Socratic Trade", public host fallback → `socratictrade.com`, Sentry slug →
+  `socratic-trade`; login email + internal machine slugs + Robinhood "Agentic" nickname untouched.
