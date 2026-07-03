@@ -128,6 +128,9 @@ export function AssistantChat() {
   /** Bumped on every successful Clear; an in-flight send compares against it so
    *  a late reply can't repopulate a transcript the user just cleared. */
   const clearGenRef = useRef(0);
+  /** Idempotency keys by local user-message id: generated per send, REUSED on
+   *  Retry so the server records the user turn exactly once (clientTurnId). */
+  const clientTurnIdsRef = useRef<Record<string, string>>({});
 
   const reality = snapshot ? deriveReality(snapshot) : null;
 
@@ -229,6 +232,10 @@ export function AssistantChat() {
       if (override === undefined) setInput("");
       const stamp = `${Date.now()}-${seq.current++}`;
       const userId = retryId ?? `u-${stamp}`;
+      // Reuse the failed send's idempotency key on Retry — the server dedupes the
+      // user turn on it, so the saved transcript records this prompt exactly once.
+      const clientTurnId = clientTurnIdsRef.current[userId] ?? crypto.randomUUID();
+      clientTurnIdsRef.current[userId] = clientTurnId;
       localEchoRef.current = true;
       const gen = clearGenRef.current;
       setMessages((m) =>
@@ -238,34 +245,14 @@ export function AssistantChat() {
       );
       setSending(true);
       try {
-        if (retryId) {
-          // The server records the user turn BEFORE calling the provider, so a
-          // failure after the request arrived means this prompt is already in
-          // the saved transcript, and re-sending records it a second time (a
-          // repeat send is the only way to get an answer — the chat API has no
-          // idempotency key today). The screen shows it once either way; be
-          // honest about what the saved history will contain.
-          try {
-            const probe = await fetch("/api/chat-history?limit=1");
-            if (probe.ok) {
-              const tail = ((await probe.json()) as { turns: HistoryTurn[] }).turns;
-              const last = tail[tail.length - 1];
-              if (last && last.role === "user" && last.text === text) {
-                toast.push(
-                  "info",
-                  "Retrying",
-                  "The first attempt was recorded in the saved transcript before it failed, so history will show this message twice."
-                );
-              }
-            }
-          } catch {
-            /* best-effort probe — retry proceeds either way */
-          }
-        }
+        // clientTurnId is the retry-safety rail: the server records the user turn
+        // BEFORE calling the provider, and dedupes on this id — so a Retry gets a
+        // fresh answer without recording the prompt a second time in the saved
+        // transcript. (This replaced the old "history will show this twice" probe.)
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message: text, model })
+          body: JSON.stringify({ message: text, model, clientTurnId })
         });
         if (!res.ok) throw new Error(await apiErrorMessage(res, "Chat request failed"));
         const reply = (await res.json()) as LiveReply;

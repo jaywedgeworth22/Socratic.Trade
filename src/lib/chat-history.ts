@@ -37,7 +37,7 @@ export function sanitizeTranscriptText(text: string): { text: string; redacted: 
 
 export function appendTurn(
   userId: string,
-  input: { role: ChatTurnRole; text: string; citations?: string[]; intent?: string | null; model?: string | null }
+  input: { role: ChatTurnRole; text: string; citations?: string[]; intent?: string | null; model?: string | null; clientTurnId?: string | null }
 ): ChatTurn {
   if (input.role !== "user" && input.role !== "assistant") throw new Error("role must be 'user' or 'assistant'");
   const sanitized = sanitizeTranscriptText(input.text);
@@ -50,6 +50,7 @@ export function appendTurn(
     intent: input.intent ?? null,
     redacted: sanitized.redacted,
     model: input.model ?? null,
+    clientTurnId: input.clientTurnId ?? null,
     createdAt: new Date().toISOString()
   };
   insertChatTurn(turn);
