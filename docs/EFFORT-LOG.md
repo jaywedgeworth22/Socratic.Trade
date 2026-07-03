@@ -68,13 +68,20 @@ to `trading.jays.services`, record the release commit + date here._
 ## 🔨 In Progress
 
 - **De-paternalize Step 2: remove the runtime `test/local` path + `policy.paperMode`** (agent
-  `claude/remove-paper-test-mode`) — Step 1 (the AGENTS.md rules) + the CI holiday-flake fix landed as
-  **#339** (see Completed). Step 2 removes the `test/local` / `usesLocalSimulation` execution path and
-  `paperMode`-as-default across ~35 src + 36 test files (`execution-mode.ts` hub → strategy paper-fill
-  branch, dashboard projection, defaults, tests). An account's `environment` decides paper vs live; no
-  connected account ⇒ the app can't place orders (no local-sim fallback). Land in coherent green pieces.
-  **Note:** the calendar is already deterministic in tests (#339's VITEST-gated `isTradingDay` seam) —
-  do NOT re-add per-file `isTradingDay` mocks.
+  `claude/remove-paper-test-mode`) — code-complete, gate green, **PR opened, awaiting merge**. Deleted
+  `policy.paperMode`/`paperStartingCash` from `TradingPolicy`/`DEFAULT_POLICY`/`/api/policy`/
+  `mobile-api.ts`/console UI (~35 src files); deleted the `test/local` `ExecutionMode`,
+  `usesLocalSimulation`, `getPaperPortfolioProjection`, and the local paper-fill branches in
+  `strategy.ts`/`dashboard.ts`. `deriveExecutionState` (`execution-mode.ts`) is now the sole hub:
+  mode is purely `broker/paper`/`broker/live` from the active account's `environment`; no connected
+  account ⇒ a real "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback.
+  `TestBrokerGateway`/`broker: "test"` kept as test infrastructure only — ~36 test files migrated to
+  create a connected `broker:"test"`/`environment:"paper"` account instead of `paperMode: true`, so
+  execution still flows through the normal broker path. Found and fixed a real correctness bug along
+  the way: broker-paper fills were mislabeled "Test" in the Activity feed/notifications purely because
+  they shared `FillSource: "paper"` with the removed local simulator. Verify: tsc clean, lint 0 errors,
+  **2349/2349 tests / 238 files green**, build green. See
+  `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 - **Rebrand: Agentic Trading → Socratic Trade / socratictrade.com** (coordinator, cloud, branch
   `claude/rebrand-socratic-trade`) — owner set up prod infra as "Socratic Trade" at socratictrade.com
   (Sentry project, Cloudflare DNS, GitHub OAuth callbacks, Google authorized domains done owner-side).
@@ -144,3 +151,6 @@ to `trading.jays.services`, record the release commit + date here._
 - 2026-07-03 — Started the **Socratic Trade rebrand** (branch `claude/rebrand-socratic-trade`): brand
   "Agentic Trading" → "Socratic Trade", public host fallback → `socratictrade.com`, Sentry slug →
   `socratic-trade`; login email + internal machine slugs + Robinhood "Agentic" nickname untouched.
+- 2026-07-03 — De-paternalize **Step 2 code-complete** (branch `claude/remove-paper-test-mode`):
+  `policy.paperMode` + the `test/local` local-simulator execution path fully removed across ~35 src +
+  36 test files; gate green (tsc/lint/2349 tests/build); PR opened, still In Progress until merged.

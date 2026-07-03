@@ -30,8 +30,9 @@ and a dated rollout note before commit/push. Do not recreate a single
 - Reviews broker-routed orders through the active provider before placement when
   the provider supports a review step.
 - Uses idempotency keys for live order placement.
-- Defaults to Test mode, a local simulator with simulated fills. Users can
-  optionally connect one or more supported broker accounts from Accounts.
+- Trades through a connected broker account (paper or live) from Accounts. An
+  account's `environment` decides paper vs. live; there is no local-simulation
+  fallback, so the app can't place orders until an account is connected.
 
 ## Safety Defaults
 
@@ -178,19 +179,21 @@ MASSIVE_SECRET_ACCESS_KEY=...
 WEBHOOK_URL=...
 ```
 
-## Test, Paper, And Brokerage Accounts
+## Paper And Brokerage Accounts
 
-- **Test mode** is the local simulator: it starts from configurable local cash,
-  applies simulated fills, and is available even when no broker account is
-  connected.
-- **Paper** is optional and broker-hosted. Users only enter Paper mode after
-  connecting a supported provider's paper/sandbox account, such as Alpaca Paper.
-  The app does not invent balances or fills for these accounts.
-- **Brokerage** is a production broker account, such as Robinhood MCP or Alpaca
-  Brokerage. Broker-routed orders can affect real capital when policy, approval,
-  and risk gates allow them.
-- All modes use the same market-data and policy paths where possible; the account
-  connection only changes where balances, positions, fills, and orders come from.
+- An account is an account: execution mode is decided purely by the connected
+  account's `environment` — there is no local simulator and no "Test mode"
+  fallback. With no connected account, the app cannot place orders.
+- **Paper** is broker-hosted. Users enter Paper mode by connecting a supported
+  provider's paper/sandbox account, such as Alpaca Paper. The app does not
+  invent balances or fills for these accounts.
+- **Brokerage** (live) is a production broker account, such as Robinhood MCP or
+  Alpaca Brokerage. Broker-routed orders can affect real capital when policy,
+  approval, and risk gates allow them.
+- Both modes use the same market-data and policy paths; the account connection
+  only changes where balances, positions, fills, and orders come from. (A
+  `broker: "test"` gateway exists purely as test infrastructure for the unit
+  suite — it is not a user-facing mode.)
 
 To use a real MCP transport, set:
 

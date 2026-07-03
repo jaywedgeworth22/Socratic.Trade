@@ -2,7 +2,8 @@
 
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
-their own API keys**. Test mode stays the default; no live-trading behavior change.
+their own API keys**. With no connected broker account the app cannot place any
+order by default; no live-trading behavior change.
 
 **Current identity model:** middleware derives the request user from a verified
 Auth.js v5 session. The Cloudflare tunnel may still expose the app, but
@@ -28,12 +29,15 @@ allowed users map to isolated hashed user IDs only when present in
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
   they want broker-hosted sandbox execution.
-- Execution mode is now derived as `test/local`, `broker/paper`, or `broker/live`
-  from the local simulation toggle plus the active connected-account environment.
-  Active broker paper accounts no longer collapse back into local `paperMode`,
-  so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
-  labels can distinguish Test from broker-hosted paper environments such as
-  Alpaca Paper, and Brokerage from live broker production accounts.
+- Execution mode is derived purely from the active connected account's
+  `environment` — `broker/paper` or `broker/live` — with no local-simulation
+  toggle in the mix. When there is no connected account, `deriveExecutionState`
+  (`src/lib/execution-mode.ts`) returns a distinct "No account" state
+  (`mode: undefined`, `submitsBrokerOrders: false`): the app simply cannot
+  place orders rather than falling back to a fake local fill. LLM prompts,
+  post-mortems, strategy tuning, red-team review, and dashboard labels
+  distinguish broker-hosted paper environments such as Alpaca Paper from live
+  broker production accounts.
 - Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
   by `connectedAccountId`, matching the per-account run lock/state model so a
   stale failure from one account does not appear under another selected account.
@@ -352,4 +356,5 @@ commands must not overwrite an existing DB without a separate manual decision.
 Single-user behavior is byte-for-byte unchanged with the default user; adding a key
 in Settings makes that provider use it (verified via the source attribution string);
 two users with different policies produce different proposals from the same shared
-market data; secrets are never shown or logged; Test mode stays default.
+market data; secrets are never shown or logged; with no connected broker
+account the app cannot place orders by default.

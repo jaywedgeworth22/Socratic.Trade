@@ -7,11 +7,12 @@ filling the missing pieces.
 
 > **2026-07-03 — SUPERSEDING DIRECTIVE (owner): real trading, no fake modes.** This is a real
 > trading app; the owner accepts 100% risk. **`policy.paperMode` and the local "Test mode" simulator
-> (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) are being removed** (rules in
-> `AGENTS.md`; code removal in progress). An account is an account — its `environment` decides paper
-> vs live; no connected account means the app can't place orders (no local-sim fallback). **Any older
-> "paper/Test mode unchanged" or "paper is the default" language below this line is STALE** and does
-> not describe target behavior — do not follow it. See `docs/EFFORT-LOG.md` +
+> (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) have been removed** (rules in
+> `AGENTS.md`; code removal landed — see `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`
+> Step 2). An account is an account — its `environment` decides paper vs live; no connected account
+> means the app can't place orders (no local-sim fallback). **Any older "paper/Test mode unchanged" or
+> "paper is the default" language below this line is STALE** and does not describe target behavior —
+> do not follow it. See `docs/EFFORT-LOG.md` +
 > `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model

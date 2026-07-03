@@ -4,6 +4,16 @@ This document establishes a target architectural blueprint, database schemas, ty
 
 **Implementation status:** this document is not a statement that every control already exists in runtime code. Sections below describe the desired architecture and should be implemented incrementally with tests, rollout notes, and status updates as each slice lands. As of 2026-06-20, the first runtime slice is live for tri-state execution derivation/labels, LLM-facing mode language, shared OpenAI output caps, and the RAG tenant-safety controls in Sections 4.1, 4.4.1, and part of 4.4.3. Runtime labels now use **Test**, **Paper**, and **Brokerage**: Test is the app's local simulator, Paper is an optional broker-hosted sandbox account a user chooses to connect, and Brokerage is a live broker production account. Pinecone metadata/query tenant IDs are sanitized, but Pinecone/Voyage API-key lookup still uses the raw app user ID.
 
+> **Superseded note (2026-07-03):** This document's proposed design (a
+> paperMode-driven Tri-State model with a local Test simulator) was NOT the
+> design that shipped. The actual removal (see
+> `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`) deleted
+> `policy.paperMode` and the local Test/simulator state entirely — execution
+> mode is now derived purely from a connected account's `environment`
+> (`broker/paper` or `broker/live`), with no connected account meaning the
+> app simply cannot place orders. The rest of this document is left as a
+> historical design record; do not use it as a guide to current behavior.
+
 ---
 
 ## 1. Decoupled Tri-State Execution Model
