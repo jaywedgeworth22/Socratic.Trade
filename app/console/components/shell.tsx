@@ -16,7 +16,7 @@ import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { ToastProvider } from "../ui/toast";
-import { FreshnessStrip, RealityBanner, RunOnceButton, ScopeSelector, StateChip, StopButton, UserMenu } from "./chrome";
+import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
 import { ConsentGate } from "./consent-gate";
 import { DesktopRail, MobileTabBar } from "./nav";
 
@@ -136,7 +136,7 @@ function ChromeBar({
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>
-        <StopButton snapshot={snapshot} />
+        <RunStateButton snapshot={snapshot} />
       </div>
     </header>
   );

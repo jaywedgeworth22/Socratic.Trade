@@ -93,27 +93,23 @@ to `socratictrade.com`, record the release commit + date here._
   account). Fixed a real bug: broker-paper fills were mislabeled "Test" in the Activity feed. 83 files,
   +854/−1208.
 
+### Socratic autonomy UI/runtime (2026-07-03)
+- **#344** — Socratic Trade Autonomy Desk implementation (`codex/socratic-trade-autonomy-mockup`):
+  persisted Socratic decisions/framework proposals, `/api/socratic/*`, RAG attribution, coach notes,
+  framework proposal review, strategy-loop decision recording, private institutional-memory indexing,
+  Socratic override semantics for owner-preference gates, public `/welcome` and `/how-it-works`,
+  coded `/design/socratic-trade`, and exact production-domain references changed to
+  `socratictrade.com`.
+
 ---
 
 ## 🔨 In Progress
 
-- **Socratic Trade autonomy UI/runtime implementation** (Codex, local, branch
-  `codex/socratic-trade-autonomy-mockup`) — implementation branch. `/console` now uses persisted
-  Socratic decision cases when available and exposes live thesis, delegated action log,
-  evidence/RAG contribution, dissent, outcome learning, coaching, and framework improvement
-  proposals. Added durable decision/framework tables, `/api/socratic/*` routes, coach-note writes,
-  framework proposal review actions, strategy-loop decision recording, RAG attribution capture, and
-  private institutional-memory indexing for each strategy-recorded Socratic decision, including
-  broker argument, critic counterargument, policy outcome, override state, RAG contribution, lessons,
-  and coach notes. Also added Socratic override semantics for owner preference gates while preserving
-  hard broker/account/integrity/tax refusals. Public `/welcome` and `/how-it-works` are routable by
-  default and reframed around Socratic Trade; `/design/socratic-trade` is now a public coded
-  product/site overview that links into the working app surfaces and is included in sitemap/robots
-  metadata. Exact old production-domain references were replaced with `socratictrade.com`; active
-  source identifiers and the iOS starter were aligned to Socratic Trade. Verification green locally:
-  lint 0 errors, tsc, focused Socratic tests, full tests, build, route probes, and desktop/mobile
-  browser checks. See
-  `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+- **Run-state UX fix — Start/Resume is not STOP** (Codex, local, branch
+  `codex/run-state-ux-fix`) — console header now renders Start when halted, Resume when close-only,
+  and red STOP only when active/liquidating. The run-state sheet leads with Start/Resume in paused
+  states, keeps STOP/Wind down red, and legacy "Enable auto-execute" uses primary tone instead of
+  danger. Verification in progress. See `docs/rollouts/2026-07-03-run-state-ux.md`.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
@@ -197,3 +193,6 @@ to `socratictrade.com`, record the release commit + date here._
   **live-execution hardening slice 1** (branch `claude/live-execution-hardening`): drawdown breaker →
   hard-halt via overridable `riskRules.drawdownBreakerAction` (default `"halt"`); gate green
   (tsc/lint/2351 tests/build); PR pending. Remaining: prompt-expected stop-losses (decision #2).
+- 2026-07-03 — **#344 merged** (→ Completed): Socratic Trade autonomy UI/runtime implementation.
+  Started the run-state UX fix (`codex/run-state-ux-fix`) so Start/Resume is no longer hidden behind
+  a red STOP control and start flows do not use danger-red styling.
