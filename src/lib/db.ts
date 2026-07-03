@@ -792,11 +792,14 @@ function migrate(database: Database.Database): void {
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
       model TEXT,
-      client_turn_id TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_turns_user_client ON chat_turns (user_id, client_turn_id);
+    -- client_turn_id (+ its index) is added ONLY by the versioned migration
+    -- chat_turns_client_turn_id. Do NOT add migration-era columns or indexes to this
+    -- baseline exec: it runs BEFORE applyVersionedMigrations, so on a pre-existing DB
+    -- CREATE TABLE IF NOT EXISTS is a no-op and an index referencing a not-yet-ALTERed
+    -- column crashes boot ("no such column") — took production down on 2026-07-02.
 
     CREATE TABLE IF NOT EXISTS llm_usage (
       id TEXT PRIMARY KEY,

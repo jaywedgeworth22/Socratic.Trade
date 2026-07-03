@@ -24,7 +24,13 @@ _As of 2026-07-03. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
 _Owner-managed release; not verifiable from cloud/agent sessions. When the owner promotes `main`
 to `trading.jays.services`, record the release commit + date here._
 
-- _(none recorded yet — awaiting owner confirmation of a production release)_
+- **2026-07-02 (evening)** — `trading-live` observed at `eae514be` (post-#338) on the
+  deploy machine. **Incident:** the deploy boot-crashed on the pre-existing prod DB
+  (`no such column: client_turn_id`, Sentry `a595484d…`, release `8e2b1181` = #333);
+  `/api/health` 500 with pm2 crash-looping. **Recovered 2026-07-03 ~01:50 CDT** by
+  backing up the DB and applying the migration's own additive `ALTER`, then restart —
+  health 200. Root cause + regression test in the P0 hotfix row below; full detail in
+  `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
 
 ---
 
@@ -52,6 +58,13 @@ to `trading.jays.services`, record the release commit + date here._
 - **#335** — `EquityOrder` limit/stop/TIF through Alpaca+Robinhood mappers + `/console/orders` columns; disclosure-ordered congress cap; `MarketQuoteSummary` factor/headlines/volume fields; Turbopack dev fix.
 - **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
 - **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
+
+### P0 hotfix (2026-07-03)
+- **`claude/fix-baseddl-index-migration`** — boot crash on every pre-existing DB: #333's baseline-DDL
+  `idx_chat_turns_user_client` ran before the versioned ALTER (`no such column` on old DBs; fresh-DB CI
+  stayed green). Baseline reverted to frozen `SCHEMA_BASELINE`; versioned migration is the single source;
+  regression test boots `getDb()` against a simulated pre-#333 DB. Prod/preview DBs already hand-patched
+  (see Deployed section).
 
 ---
 
