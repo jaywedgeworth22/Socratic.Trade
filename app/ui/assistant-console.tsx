@@ -218,10 +218,13 @@ export function AssistantView({
     setMessages((m) => [...m, { id: `u-${stamp}`, role: "user", text: message }]);
     setSending(true);
     try {
+      // Per-send idempotency key: the server dedupes the recorded user turn on it, so a
+      // double submit (or any future retry of this exact send) can't duplicate the prompt
+      // in the saved transcript.
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message, model })
+        body: JSON.stringify({ message, model, clientTurnId: crypto.randomUUID() })
       });
       if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;

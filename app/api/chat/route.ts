@@ -69,9 +69,25 @@ export async function POST(request: Request) {
   const userId = resolveRequestUserId(request);
   const limited = enforceRateLimit(userId, "chat", RATE_LIMITS.chat);
   if (limited) return limited;
-  const body = (await request.json().catch(() => ({}))) as { message?: unknown; userId?: unknown; provider?: unknown; model?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    message?: unknown;
+    userId?: unknown;
+    provider?: unknown;
+    model?: unknown;
+    clientTurnId?: unknown;
+  };
   if (typeof body.message !== "string" || !body.message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
+  }
+  // Optional idempotency key: the client generates one per send and REUSES it on Retry, so a retried
+  // request doesn't record the user turn twice. Fail loud on a malformed value rather than silently
+  // dropping the idempotency the caller asked for.
+  let clientTurnId: string | undefined;
+  if (body.clientTurnId !== undefined) {
+    if (typeof body.clientTurnId !== "string" || !body.clientTurnId.trim() || body.clientTurnId.trim().length > 64) {
+      return NextResponse.json({ error: "clientTurnId must be a non-empty string of at most 64 characters" }, { status: 400 });
+    }
+    clientTurnId = body.clientTurnId.trim();
   }
 
   const modelHint = typeof body.model === "string" && body.model.trim() ? body.model.trim() : undefined;
@@ -105,7 +121,7 @@ export async function POST(request: Request) {
     // user. (No shared singleton — that would pin one user's key/attribution for everyone.)
     const llm = (modelHint ? llmForModel(modelHint, userId) : undefined) ?? llmFromProvider(providerHint, userId) ?? getLLM(userId);
     const orchestrate = makeOrchestrator(buildProductionDeps(), llm);
-    const reply = await orchestrate({ userId, message: body.message });
+    const reply = await orchestrate({ userId, message: body.message, clientTurnId });
     return NextResponse.json(reply);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

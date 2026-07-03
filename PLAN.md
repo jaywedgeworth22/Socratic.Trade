@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-02 (`claude/chat-idempotency`, Claude): **Chat retry idempotency** —
+> `POST /api/chat` accepts an optional per-send `clientTurnId` (<=64 chars); the
+> orchestrator dedupes the user-turn append on it (but still answers), so a client
+> Retry no longer duplicates the prompt in the saved transcript. `chat_turns` gains a
+> nullable `client_turn_id` (migration v10); both chat clients send a UUID per message
+> and `/console/assistant` reuses it on Retry (its "history will show this twice"
+> probe/toast is deleted). No roadmap scope change — hardening of the existing chat
+> rail. See `docs/rollouts/2026-07-02-chat-idempotency.md`.
 > 2026-07-02 (`claude/console-macro`, Claude): **Console parity port, Wave 2 —
 > `/console/macro`** — the macro / market-regime board destination is built (new files
 > only: `app/console/macro/{page.tsx,indicators.ts,trends.tsx}`), completing one of the
