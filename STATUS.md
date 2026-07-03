@@ -29,6 +29,52 @@ source; new `test/db-migration-old-schema.test.ts` boots getDb() against a simul
 pre-#333 DB. See `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
 **Next:** none for the incident; rule for all agents — never add migration-era
 columns/indexes to the baseline exec.
+## 2026-07-03 — Rebrand: Agentic Trading → Socratic Trade / socratictrade.com (Claude, cloud)
+Branch `claude/rebrand-socratic-trade` (off `origin/main` post-#339). Owner stood up production infra
+under the name **Socratic Trade** at **socratictrade.com** (Sentry project, Cloudflare DNS, GitHub
+OAuth callbacks, Google authorized domains — all done owner-side); this aligns the codebase.
+**Changed:** display brand "Agentic Trading" → "Socratic Trade" (manifest name + no-space `short_name`
+"Socratic.Trade", `layout.tsx` applicationName/appleWebApp/description, mobile page + `<h1>`); public
+host fallback `https://trading.jays.services` → `https://socratictrade.com` (env-first —
+`NEXT_PUBLIC_SITE_URL` still wins — in `public-origin.ts`, `robots.ts`, `sitemap.ts`, `layout.tsx`
+metadataBase, README, `test/mcp-oauth.test.ts` + `test/logout-route.test.ts`); Sentry project slug
+fallback `agentic-trading` → `socratic-trade`. **Deliberately NOT changed:** `mail@jays.services`
+(owner LOGIN email — would break auth), internal machine slugs (telemetry `SOURCE_APP`, notify UA,
+mcp-oauth client identity, account-deletion HMAC salt), the Robinhood **account nickname "Agentic"**
+(account-detection convention), and internal jays.services preview subdomains. `socratic.trade` also
+resolves but is not wired in (owner said it's optional; used only as the no-space name form). Verify:
+running tsc/test/build. See `docs/rollouts/2026-07-03-rebrand-socratic-trade.md`.
+
+## 2026-07-03 — CI holiday-flake fix: deterministic isTradingDay in tests (Claude, cloud) — MERGED as #339
+Branch `claude/kill-paper-default-rules` (#339). CI `verify` went red for a **pre-existing, wall-clock**
+reason: today (2026-07-03) is the observed US July 4 market holiday, so `isTradingDay()` is false and
+`runStrategyOnce`'s market-closed guard (`strategy.ts:252`) skipped every non-manual run — turning ~17
+strategy/persistence assertions red across 8 files (all showing `run_skipped_market_closed`). This would
+blank all CI through the weekend (Sat/Sun also non-trading), blocking #339, the rebrand, AND the
+paperMode-removal PR. Fixed centrally with a **test-determinism seam**: `isTradingDay(date?)` returns
+true for the no-argument "today" call when `AGENTIC_TEST_FORCE_TRADING_DAY=1` (set ONLY by
+`vitest.config`'s `test.env`, never in production); explicit-date calendar calls are untouched, so
+`market-hours.test.ts`/`token-budget-ceiling.test.ts` still assert real closures. **Zero test-file
+edits** → no conflict with the in-flight paperMode-removal branch (`claude/remove-paper-test-mode`),
+which owns those test files. Verified: full suite **2365 passed** (was 17 failed), tsc clean, lint 0
+errors. Files: `src/lib/market-calendar.ts`, `vitest.config.ts`.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
+## 2026-07-03 — De-paternalize: kill paper-as-default + Test mode (owner directive) (Claude, cloud)
+Owner directive (repeated, emphatic): this is a REAL trading app, owner accepts 100% risk; stop
+treating paper as default and DELETE Test mode / the local simulator; do not "protect the owner's
+money from agent bugs." **Rules first (this commit):** `AGENTS.md` — deleted the "Paper mode is the
+default / don't toggle `paperMode:false`" Don't-rule and the "defaults to Test mode (local simulator)"
+framing; added a top "Product philosophy — real trading, owner's risk" section (an account is an
+account; no Test-mode/local-sim; don't protect the owner from accepted risk; harden CORRECTNESS +
+multi-user safety, NOT obedience — guardrails are the owner's overridable prefs, `iraWashSaleHandling:
+"disregard"` is the template). This is the root-cause fix that stops every agent (Claude/Codex)
+re-imposing it. **Code next (in progress, separate PR):** remove the `test/local` /
+`usesLocalSimulation` execution path (`execution-mode.ts` hub + ~13 src consumers + strategy paper-fill
+branch + dashboard portfolio projection) and `paperMode`-as-default; an account's `environment` decides
+paper vs live, and no connected account means the app can't place orders (no local-sim fallback). ~35
+src + 36 test files touch it — landing in coherent green pieces, not one reckless bang.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 
 ## 2026-07-03 — Owner decisions recorded + Manager-model options (Claude, cloud)
 Branch `claude/manager-model-eval` (off `origin/main` @ `df745aa`, post-#336). Docs-only.

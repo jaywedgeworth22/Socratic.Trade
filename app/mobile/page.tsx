@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Mobile Control",
-  description: "Phone-first control surface for Agentic Trading.",
+  description: "Phone-first control surface for Socratic Trade.",
   alternates: { canonical: "/mobile" }
 };
 
