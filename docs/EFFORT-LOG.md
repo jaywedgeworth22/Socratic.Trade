@@ -219,7 +219,64 @@ to `socratictrade.com`, record the release commit + date here._
   rollout note). smoke/gitleaks/check-pin stay hosted. History + gate decision table +
   failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`. STATUS:
   implemented; verification (yaml-lint, bash 3.2 -n + ASCII, 8-case route test, read-only Mac
-  probes, local quartet) green; PR #372 open, auto-merge armed.
+  probes, local quartet) green; PR #372 open, auto-merge armed; merge-forwarded once more after
+  #440 landed (landing operator, docs-only conflict, keep-both-newest-first).
+
+- **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
+  worktree `~/apps/trading-wt-w2-outcome`) — **merged** (PR #440). Four §A items: (1) THE OUTCOME
+  WRITER: new scheduled job `src/lib/outcome-engine.ts` on the counterfactual cadence; placed
+  decisions join fill_events/closed lots, blocked/rejected (incl. Bear vetoes) join counterfactual
+  refPrice; writes `outcome`+`measuredAt`, per-case receipt, awaited vector-memory re-index. (2)
+  Multi-horizon outcome schema `outcomes[] {15m|1h|1d|1w, returnPct, spyExcessPct, priceBasis,
+  resolution ok|unresolvable(reason)}` on decision cases AND skipped-counterfactual rows; 1d/1w
+  from the daily cascade SPY-relative (trading-day arithmetic); 15m/1h only via an actually-sampled
+  live quote, else honest `unresolvable(no_intraday_source)`. (3) Kill-survivorship: terminal
+  `unresolvable` after a bounded 10-trading-day recheck; coverage disclosures on job receipts,
+  `getRedTeamEfficacy`, missed-opportunity summary, `certifyForwardResolution`. (4) Budget-gated,
+  batch-capped LLM post-mortem lessons at maturation (direction-tagged +
+  verdictOnBelief/whichDissentMattered), routed through `ingestLearned` origin `autonomous`; all
+  skips receipted. Landing-operator merge-forward caught a real semantic conflict `tsc` flagged
+  (git's line-merge had silently duplicated `RedTeamEfficacy`/`getRedTeamEfficacy` in
+  `performance.ts` — resolved by keeping the newer Codex-reviewed version). Gate green: lint 0
+  errors, tsc clean, 2455 tests / 252 files, build green. See
+  `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+
+- **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
+  GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
+  `.github/workflows/ci.yml`: new cheap `classify` job computes on `pull_request` events whether
+  the diff (`git diff --name-only base...head`) touches ONLY documentation-class paths (`*.md`
+  anywhere, `docs/**`); the existing `verify` job (unchanged name — confirmed via
+  `gh api repos/jaywedgeworth22/agentic-trading/rulesets/17945518` that `verify` is the ONLY
+  required status check today, not smoke/gitleaks/check-pin as the AGENTS.md fallback list
+  assumes) now step-conditionally skips checkout/install/lint/tsc/test/build when
+  `docs-only == 'true'` and reports success immediately; any non-PR event or diff ambiguity falls
+  back to the full gate.
+  **Mid-review addition:** repo hit its 10 GB Actions-cache cap because a plain `actions/cache@v4`
+  save (source-hash-keyed) wrote a new ~340 MB `.next` entry on every PR push with no cleanup on
+  close, plus unbounded growth on `main`. Fixed via restore/save split
+  (`actions/cache/restore@v4` always, `actions/cache/save@v4` gated to `main` pushes only) plus
+  new `.github/workflows/cleanup-caches.yml` (PR-close cache delete + daily prune backstop via new
+  `scripts/prune-stale-actions-caches.py`; not a required check).
+  **Escalated, then re-confirmed during review:** hybrid self-hosted/hosted runner routing for
+  `verify` onto the production `trading-live-mac` box was proposed; escalated back with
+  objections (reverses the repo's own 2026-07-01 decision to move `verify` OFF that runner; a
+  required check should not depend on which of two OS/toolchain environments executed it); the
+  owner then re-confirmed AFTER seeing the tradeoff, with a resource-aware design answering each
+  objection (availability publisher w/ load+RAM+hysteresis, instant hosted fallback on
+  busy/stale, hosted-Linux arbiter on any self failure via exactly-one automatic hosted re-run,
+  nightly hosted canary, per-run environment annotation) — to be built as its OWN PR after #370
+  lands (see Planned row below). A cross-repo `workflow_call` reusable entry point stays deferred
+  until that hybrid PR proves itself; hosted-only default when built. Neither implemented in this
+  branch. **Codex review round:** two fail-open holes fixed (`--no-renames` rename-source hole;
+  classify-failure skip hole via `!cancelled()` + explicit fail-closed step).
+  No other workflow modified besides the two above — full audit table (every push/PR-triggered
+  workflow, approx minutes, required-check status, batching candidates) in
+  `docs/rollouts/2026-07-04-ci-actions-efficiency.md`, report-only for those other workflows.
+  Verification: local quartet green (lint 0 errors, tsc clean, 2436/2436 tests, build ok) +
+  `yaml-lint` on all workflow files + live ruleset API check + dry-run of the cache-delete command
+  + synthetic-inventory test of the prune script. STATUS: implemented, PR #370 open; CI/Smoke/
+  Security observed running live on the PR during review, so Actions quota is not currently
+  blocking (contrary to the initial task assumption of exhaustion).
 
 - **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
   push-only branches; landing via the active train):
@@ -306,7 +363,7 @@ to `socratictrade.com`, record the release commit + date here._
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
 - **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
-  `claude/w1-learning-loops`, **merging now that gate is green**) — three items from the composite
+  `claude/w1-learning-loops`, **merged**) — three items from the composite
   expert review (§A, lines 37-161):
   (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
   (same pipeline as policy blocks/human rejections) in `strategy.ts`'s Bear-reject branch, stamped

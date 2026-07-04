@@ -1,7 +1,7 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
 import { getDb } from "./db";
-import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus } from "./types";
+import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus, SocraticOutcomeHorizonRow } from "./types";
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
 
@@ -225,7 +225,7 @@ export interface SkippedCounterfactualRow {
   refPrice: number;
   horizonDays: number;
   targetDate: string;
-  status: "pending" | "matured";
+  status: "pending" | "matured" | "unresolvable";
   exitDate?: string;
   exitPrice?: number;
   returnPct?: number;
@@ -234,6 +234,12 @@ export interface SkippedCounterfactualRow {
   regime?: string;
   dominantFactor?: string;
   bulletins?: string[];
+  /** Multi-horizon outcome rows (15m/1h/1d/1w) written at maturation; each row is individually
+   * 'ok' or honestly 'unresolvable'. Absent on rows matured before the multi-horizon schema. */
+  outcomes?: SocraticOutcomeHorizonRow[];
+  /** Terminal reason when status === 'unresolvable' (e.g. "no_price_series",
+   * "no_bar_at_or_after_target" — delisted/renamed symbols land here after the bounded recheck window). */
+  resolutionReason?: string;
   lastCheckedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -257,6 +263,8 @@ type RawSkippedCounterfactualRow = {
   regime: string | null;
   dominant_factor: string | null;
   bulletins: string | null;
+  outcomes: string | null;
+  resolution_reason: string | null;
   last_checked_at: string | null;
   created_at: string;
   updated_at: string;
@@ -272,7 +280,7 @@ function toSkippedCounterfactualRow(row: RawSkippedCounterfactualRow): SkippedCo
     refPrice: row.ref_price,
     horizonDays: row.horizon_days,
     targetDate: row.target_date,
-    status: row.status === "matured" ? "matured" : "pending",
+    status: row.status === "matured" ? "matured" : row.status === "unresolvable" ? "unresolvable" : "pending",
     exitDate: row.exit_date ?? undefined,
     exitPrice: row.exit_price ?? undefined,
     returnPct: row.return_pct ?? undefined,
@@ -281,6 +289,8 @@ function toSkippedCounterfactualRow(row: RawSkippedCounterfactualRow): SkippedCo
     regime: row.regime ?? undefined,
     dominantFactor: row.dominant_factor ?? undefined,
     bulletins: row.bulletins ? JSON.parse(row.bulletins) as string[] : undefined,
+    outcomes: row.outcomes ? JSON.parse(row.outcomes) as SocraticOutcomeHorizonRow[] : undefined,
+    resolutionReason: row.resolution_reason ?? undefined,
     lastCheckedAt: row.last_checked_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -395,6 +405,8 @@ export function markSkippedCounterfactualMatured(input: {
   exitDate: string;
   exitPrice: number;
   returnPct: number;
+  /** Multi-horizon outcome rows (15m/1h/1d/1w) measured alongside the headline horizon return. */
+  outcomes?: SocraticOutcomeHorizonRow[];
   checkedAt?: string;
 }): boolean {
   const userId = input.userId ?? "local";
@@ -406,12 +418,136 @@ export function markSkippedCounterfactualMatured(input: {
         exit_date = ?,
         exit_price = ?,
         return_pct = ?,
+        outcomes = ?,
         last_checked_at = ?,
         updated_at = ?
        WHERE id = ? AND user_id = ? AND status = 'pending'`
     )
-    .run(input.exitDate, input.exitPrice, input.returnPct, checkedAt, checkedAt, input.id, userId);
+    .run(
+      input.exitDate,
+      input.exitPrice,
+      input.returnPct,
+      input.outcomes ? JSON.stringify(input.outcomes) : null,
+      checkedAt,
+      checkedAt,
+      input.id,
+      userId
+    );
   return result.changes > 0;
+}
+
+/**
+ * Terminal kill-survivorship transition: a pending counterfactual whose price series never resolved
+ * within the bounded recheck window (delisted / renamed / no provider coverage) becomes
+ * status='unresolvable' WITH a reason, instead of sitting 'pending' forever and silently dropping
+ * out of every matured-outcome denominator. Unresolvable rows keep their optional multi-horizon
+ * outcome rows (each marked unresolvable with its own reason) so coverage math can count them.
+ */
+export function markSkippedCounterfactualUnresolvable(input: {
+  id: string;
+  userId?: string;
+  reason: string;
+  outcomes?: SocraticOutcomeHorizonRow[];
+  checkedAt?: string;
+}): boolean {
+  const userId = input.userId ?? "local";
+  const checkedAt = input.checkedAt ?? new Date().toISOString();
+  const result = getDb()
+    .prepare(
+      `UPDATE skipped_candidate_counterfactuals
+       SET status = 'unresolvable',
+        resolution_reason = ?,
+        outcomes = ?,
+        last_checked_at = ?,
+        updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'pending'`
+    )
+    .run(input.reason, input.outcomes ? JSON.stringify(input.outcomes) : null, checkedAt, checkedAt, input.id, userId);
+  return result.changes > 0;
+}
+
+/** Counterfactual rows by terminal/pending status — used to join unresolvable rows into scorecard
+ * denominators (getRedTeamEfficacy, coverage disclosure). */
+export function listSkippedCounterfactualsByStatus(
+  userId: string = "local",
+  status: "pending" | "matured" | "unresolvable",
+  limit = 200,
+  connectedAccountId?: string
+): SkippedCounterfactualRow[] {
+  const rows = (connectedAccountId
+    ? getDb()
+        .prepare(
+          `SELECT * FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = ? AND connected_account_id = ?
+           ORDER BY updated_at DESC LIMIT ?`
+        )
+        .all(userId, status, connectedAccountId, limit)
+    : getDb()
+        .prepare(
+          `SELECT * FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND status = ?
+           ORDER BY updated_at DESC LIMIT ?`
+        )
+        .all(userId, status, limit)) as RawSkippedCounterfactualRow[];
+  return rows.map(toSkippedCounterfactualRow);
+}
+
+/** Status counts for the skipped-counterfactual pipeline. Unresolvable rows count in the total
+ * denominator (kill-survivorship): resolvedPct = matured / (matured + unresolvable + due-pending
+ * excluded — pending rows whose target date hasn't arrived are NOT "unresolved", just immature). */
+export interface SkippedCounterfactualCoverage {
+  total: number;
+  matured: number;
+  pending: number;
+  unresolvable: number;
+  /** matured / (matured + unresolvable) as a %, 0 when nothing terminal yet. */
+  resolvedPct: number;
+  /** Human disclosure line, e.g. "12/15 resolved (80%) — 3 unresolvable; may be survivor-biased". */
+  disclosure: string;
+}
+
+export function getSkippedCounterfactualCoverage(
+  userId: string = "local",
+  connectedAccountId?: string
+): SkippedCounterfactualCoverage {
+  const rows = (connectedAccountId
+    ? getDb()
+        .prepare(
+          `SELECT status, COUNT(*) AS n FROM skipped_candidate_counterfactuals
+           WHERE user_id = ? AND connected_account_id = ? GROUP BY status`
+        )
+        .all(userId, connectedAccountId)
+    : getDb()
+        .prepare("SELECT status, COUNT(*) AS n FROM skipped_candidate_counterfactuals WHERE user_id = ? GROUP BY status")
+        .all(userId)) as Array<{ status: string; n: number }>;
+  const count = (status: string) => rows.find((r) => r.status === status)?.n ?? 0;
+  const matured = count("matured");
+  const pending = count("pending");
+  const unresolvable = count("unresolvable");
+  const terminal = matured + unresolvable;
+  const resolvedPct = terminal > 0 ? Number(((matured / terminal) * 100).toFixed(1)) : 0;
+  const disclosure =
+    terminal > 0
+      ? `${matured}/${terminal} resolved (${resolvedPct}%)${unresolvable > 0 ? ` — ${unresolvable} unresolvable; may be survivor-biased` : ""}${pending > 0 ? `; ${pending} still maturing` : ""}`
+      : `0 resolved${pending > 0 ? `; ${pending} still maturing` : ""}`;
+  return { total: matured + pending + unresolvable, matured, pending, unresolvable, resolvedPct, disclosure };
+}
+
+/** One counterfactual row by its natural join key (runId, symbol) — the outcome engine joins
+ * blocked/rejected/vetoed decision cases to their forward returns through this. */
+export function getSkippedCounterfactualByRunSymbol(
+  userId: string,
+  runId: string,
+  symbol: string
+): SkippedCounterfactualRow | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM skipped_candidate_counterfactuals
+       WHERE user_id = ? AND run_id = ? AND symbol = ?
+       ORDER BY horizon_days ASC LIMIT 1`
+    )
+    .get(userId, runId, symbol) as RawSkippedCounterfactualRow | undefined;
+  return row ? toSkippedCounterfactualRow(row) : undefined;
 }
 
 export function listMaturedSkippedCounterfactuals(

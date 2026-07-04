@@ -695,6 +695,11 @@ function migrate(database: Database.Database): void {
       dominant_factor TEXT,
       bulletins TEXT,
       last_checked_at TEXT,
+      -- Multi-horizon outcome rows (JSON SocraticOutcomeHorizonRow[]) written at maturation, and the
+      -- terminal-unresolvable reason (kill-survivorship: a delisted/renamed symbol becomes status
+      -- 'unresolvable' with a reason after a bounded recheck window instead of pending forever).
+      outcomes TEXT,
+      resolution_reason TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(user_id, run_id, symbol, horizon_days)
@@ -1072,6 +1077,16 @@ function migrate(database: Database.Database): void {
   }
   if (!fillEventColumns.some((c) => c.name === "mfe")) {
     database.exec("ALTER TABLE fill_events ADD COLUMN mfe REAL");
+  }
+
+  // Outcome engine (Wave 2): multi-horizon outcome rows + terminal-unresolvable reason on
+  // skipped-candidate counterfactuals (additive, guarded). See docs/rollouts/2026-07-04-w2-outcome-engine.md.
+  const skippedCfColumns = database.prepare("PRAGMA table_info(skipped_candidate_counterfactuals)").all() as Array<{ name: string }>;
+  if (!skippedCfColumns.some((c) => c.name === "outcomes")) {
+    database.exec("ALTER TABLE skipped_candidate_counterfactuals ADD COLUMN outcomes TEXT");
+  }
+  if (!skippedCfColumns.some((c) => c.name === "resolution_reason")) {
+    database.exec("ALTER TABLE skipped_candidate_counterfactuals ADD COLUMN resolution_reason TEXT");
   }
 
   // R3: per-account tax treatment (taxable vs Roth/Traditional IRA) on existing DBs.

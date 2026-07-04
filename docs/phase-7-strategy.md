@@ -84,6 +84,23 @@ adversarial-debate lenses before making a decision.
   trade lost money — the Bear helped), survivor-risk hit rate (the vetoed trade won — the Bear
   missed it), and a per-model breakdown. Advisory/read-only; API/db-level only — no console/Results
   UI wiring yet (see `docs/rollouts/2026-07-04-w1-learning-loops.md`).
+- **The Outcome Engine (2026-07-04, Wave 2):** loop step 5 is no longer a stub —
+  `src/lib/outcome-engine.ts` (`matureSocraticDecisionOutcomes`, fired on the counterfactual
+  cadence from `strategy.ts`) writes `SocraticDecisionCase.outcome`: placed decisions join their
+  `fill_events` entry and realized FIFO closed-lot P&L; blocked/rejected decisions (incl. Bear
+  vetoes) join their counterfactual `refPrice`. Outcomes are MULTI-HORIZON —
+  `outcomes[] {15m|1h|1d|1w, returnPct, spyExcessPct, priceBasis, resolution}` (pure math in
+  `src/lib/outcome-horizons.ts`, trading-day arithmetic) — on decision cases and on
+  skipped-counterfactual rows. 1d/1w come from daily closes via the cascade, SPY-relative;
+  15m/1h resolve only from an actually-sampled live quote, else land honestly as
+  `unresolvable(no_intraday_source)`. Kill-survivorship: a symbol whose series never resolves
+  within a bounded 10-trading-day recheck window terminates `unresolvable` (with reason) and
+  stays in every denominator — coverage disclosures ("N/M resolved (X%)") ride on job receipts,
+  `getRedTeamEfficacy`, the missed-opportunity summary, and `certifyForwardResolution`. On case
+  closure a budget-gated, batch-capped LLM post-mortem replaces the template `lessons[]` with
+  1-3 direction-tagged lessons (+`verdictOnBelief`/`whichDissentMattered`), re-indexes the case
+  vector, and routes each lesson through `ingestLearned` (origin `autonomous`); every skip is
+  receipted. See `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
 
 ---
 

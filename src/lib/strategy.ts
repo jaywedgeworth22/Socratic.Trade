@@ -1418,6 +1418,13 @@ export async function runStrategyOnce(
     }, userId, connectedAccountId);
     void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
+    // Outcome engine piggybacks the counterfactual cadence: matures decision-case outcomes
+    // (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), writes the
+    // multi-horizon outcome + receipt, re-indexes decision memory, and runs the budget-gated
+    // post-mortem lesson pass. Fire-and-forget + dynamic import: never blocks or fails the run.
+    void import("./outcome-engine")
+      .then(({ matureSocraticDecisionOutcomes }) => matureSocraticDecisionOutcomes(userId, { connectedAccountId }))
+      .catch((e) => console.error("[outcome-engine] maturation error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
