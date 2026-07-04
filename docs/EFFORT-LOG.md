@@ -214,7 +214,23 @@ to `socratictrade.com`, record the release commit + date here._
   their w1 dependency branches, push-only, landing via the train). Lanes: `outcome-engine`,
   `episodic-retrieval`, `coaching-durable`, `reflection-decompose` (full lane list on the live board
   `/Users/jay/apps/TRADING-EFFORT-LOG.md`).
-  - `claude/w2-episodic-retrieval` (this lane) — **done, pushed, awaiting the landing train** (base:
+  - `claude/w2-reflection-decompose` (this lane) — **done, pushed, awaiting the landing train**
+    (base: `origin/claude/w2-episodic-retrieval`, STACKED). Composite review A items "Decompose
+    reflection" ([Both], high/M) + regime-labeled retrieval + "Reflection keying + history"
+    ([Both], medium/M): `writeDecomposedLessons` in `post-mortem.ts` groups closed lots into
+    (thesisTag x regime) buckets (min 5 lots, regime-agnostic `@all-regimes` fallback for thin
+    regimes) → discrete `learned_context` rows tagged with new `regime`/`thesis_tag`/
+    `dominant_factor` columns carrying realized win-rate/MAE-MFE/capturePct, each ALSO embedded
+    as a `doc_type="lesson"` vector (consumed by the episodic base lane's retrieval pass);
+    free-text reflection blob DEMOTED out of the Bull system prompt once lessons exist
+    (`resolveReflectionForPrompt`, blob kept as zero-lesson fallback); `retrieveLearnedContext`
+    now boosts by current run regime + candidate theses and LABELS mismatched-regime facts
+    "(learned in <regime>)" (never filters); reflections re-keyed (userId, accountNumber) into the
+    new append-only `reflection_versions` table (monotonic version + input-stats hash — the
+    two-account clobber is fixed); `reflection_versions` covered by account deletion. Verify
+    green: lint 0 errors, tsc clean, **2404/2404 tests**, build green. See
+    `docs/rollouts/2026-07-04-w2-reflection-decompose.md`.
+  - `claude/w2-episodic-retrieval` — **done, pushed, awaiting the landing train** (base:
     `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
     `src/lib/experience-memory.ts` — closed-lot experience writer hooked fire-and-forget in
     `performance.recordFillFromProposal` (state vector: 8 factor sub-scores + entryMarketRegime +

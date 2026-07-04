@@ -44,7 +44,9 @@ const DELETE_TABLES_BY_USER_ID = [
   "api_health_log",
   "mobile_commands",
   "rag_usage",
-  "take_profit_trims"
+  "take_profit_trims",
+  // Per-account reflection version history (2026-07-04 w2-reflection-decompose lane).
+  "reflection_versions"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

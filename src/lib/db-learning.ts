@@ -1,5 +1,7 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
-// learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
+// learned-context fact-tier functions, reflection version history, and RAG ingestion
+// (ingested_accessions).
+import { randomUUID } from "crypto";
 import { getDb } from "./db";
 import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus } from "./types";
 
@@ -376,6 +378,9 @@ interface RawLearnedContextRow {
   asserted_at: string;
   superseded_by: string | null;
   expires_at: string | null;
+  regime: string | null;
+  thesis_tag: string | null;
+  dominant_factor: string | null;
 }
 
 export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow {
@@ -394,7 +399,10 @@ export function mapLearnedContext(row: RawLearnedContextRow): LearnedContextRow 
     contributorUserId: row.contributor_user_id,
     assertedAt: row.asserted_at,
     supersededBy: row.superseded_by,
-    expiresAt: row.expires_at
+    expiresAt: row.expires_at,
+    regime: row.regime ?? null,
+    thesisTag: row.thesis_tag ?? null,
+    dominantFactor: row.dominant_factor ?? null
   };
 }
 
@@ -402,8 +410,8 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
   getDb()
     .prepare(
       `INSERT INTO learned_context
-        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at, regime, thesis_tag, dominant_factor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       row.id,
@@ -420,7 +428,10 @@ export function insertLearnedContext(row: LearnedContextRow): LearnedContextRow 
       row.contributorUserId,
       row.assertedAt,
       row.supersededBy,
-      row.expiresAt
+      row.expiresAt,
+      row.regime ?? null,
+      row.thesisTag ?? null,
+      row.dominantFactor ?? null
     );
   return row;
 }
@@ -483,6 +494,109 @@ export function listLearnedContext(userId: string): LearnedContextRow[] {
 
 export function supersedeLearnedContext(oldId: string, newId: string): void {
   getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+/**
+ * Count of live decomposed lesson rows (subject `lesson:*`) for a user. Used to decide whether the
+ * free-text reflection blob may be DEMOTED out of the Bull system prompt: >0 structured lessons →
+ * the blob is superseded; 0 → the blob remains the fallback (2026-07-04 composite review A).
+ */
+export function countLiveLessonRows(userId: string): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM learned_context
+       WHERE user_id = ? AND superseded_by IS NULL AND risk_tier = 'fact' AND subject LIKE 'lesson:%'`
+    )
+    .get(userId) as { n: number };
+  return row.n;
+}
+
+// ── Reflection version history (per-account, append-only) ────────────────────
+// 2026-07-04 composite review A ("Reflection keying + history", [Both]): reflections used to be a
+// single user-level user_settings blob — two accounts clobbered each other and the overwrite left
+// no history. Rows here are keyed (user_id, account_number), versioned monotonically, append-only
+// (never UPDATEd), and carry the input-stats hash (the regeneration-gate signature) so "what inputs
+// produced this reflection" is answerable per version.
+
+export interface ReflectionVersionRow {
+  id: string;
+  userId: string;
+  accountNumber: string;
+  version: number;
+  summary: string;
+  inputStatsHash: string;
+  createdAt: string;
+}
+
+interface RawReflectionVersionRow {
+  id: string;
+  user_id: string;
+  account_number: string;
+  version: number;
+  summary: string;
+  input_stats_hash: string;
+  created_at: string;
+}
+
+function mapReflectionVersion(row: RawReflectionVersionRow): ReflectionVersionRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    accountNumber: row.account_number,
+    version: row.version,
+    summary: row.summary,
+    inputStatsHash: row.input_stats_hash,
+    createdAt: row.created_at
+  };
+}
+
+/** Append a new reflection version for (userId, accountNumber). Never overwrites prior versions. */
+export function appendReflectionVersion(
+  userId: string,
+  accountNumber: string,
+  summary: string,
+  inputStatsHash: string
+): ReflectionVersionRow {
+  const db = getDb();
+  const latest = db
+    .prepare("SELECT MAX(version) AS v FROM reflection_versions WHERE user_id = ? AND account_number = ?")
+    .get(userId, accountNumber) as { v: number | null };
+  const row: ReflectionVersionRow = {
+    id: randomUUID(),
+    userId,
+    accountNumber,
+    version: (latest.v ?? 0) + 1,
+    summary,
+    inputStatsHash,
+    createdAt: new Date().toISOString()
+  };
+  db.prepare(
+    `INSERT INTO reflection_versions (id, user_id, account_number, version, summary, input_stats_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(row.id, row.userId, row.accountNumber, row.version, row.summary, row.inputStatsHash, row.createdAt);
+  return row;
+}
+
+/** Latest reflection version for (userId, accountNumber), or null when none exists. */
+export function getLatestReflectionVersion(userId: string, accountNumber: string): ReflectionVersionRow | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM reflection_versions WHERE user_id = ? AND account_number = ?
+       ORDER BY version DESC LIMIT 1`
+    )
+    .get(userId, accountNumber) as RawReflectionVersionRow | undefined;
+  return row ? mapReflectionVersion(row) : null;
+}
+
+/** Version history (newest first) for (userId, accountNumber) — for console diff/review surfaces. */
+export function listReflectionVersions(userId: string, accountNumber: string, limit = 20): ReflectionVersionRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM reflection_versions WHERE user_id = ? AND account_number = ?
+       ORDER BY version DESC LIMIT ?`
+    )
+    .all(userId, accountNumber, limit) as RawReflectionVersionRow[];
+  return rows.map(mapReflectionVersion);
 }
 
 // ── RAG ingestion de-dup helpers ──────────────────────────────────────────────

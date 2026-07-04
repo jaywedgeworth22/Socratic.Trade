@@ -878,10 +878,24 @@ function migrate(database: Database.Database): void {
       contributor_user_id TEXT,
       asserted_at TEXT NOT NULL,
       superseded_by TEXT,
-      expires_at TEXT
+      expires_at TEXT,
+      regime TEXT,
+      thesis_tag TEXT,
+      dominant_factor TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);
     CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);
+
+    CREATE TABLE IF NOT EXISTS reflection_versions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      input_stats_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reflection_versions_key ON reflection_versions (user_id, account_number, version);
     CREATE TABLE IF NOT EXISTS learned_context_pending (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -1065,6 +1079,16 @@ function migrate(database: Database.Database): void {
   if (!columns.some((column) => column.name === "error_message")) {
     database.exec("ALTER TABLE trade_proposals ADD COLUMN error_message TEXT");
   }
+  // Decomposed reflection lessons (2026-07-04 composite review A): additive conditioning tags on
+  // learned_context so lesson rows carry the regime/thesis/dominant-factor they were learned in.
+  // Nullable — every pre-existing row and non-lesson producer keeps NULL (regime-agnostic).
+  const learnedContextColumns = database.prepare("PRAGMA table_info(learned_context)").all() as Array<{ name: string }>;
+  if (!learnedContextColumns.some((c) => c.name === "regime")) {
+    database.exec("ALTER TABLE learned_context ADD COLUMN regime TEXT");
+    database.exec("ALTER TABLE learned_context ADD COLUMN thesis_tag TEXT");
+    database.exec("ALTER TABLE learned_context ADD COLUMN dominant_factor TEXT");
+  }
+
   // MAE/MFE persistence: add excursion columns to fill_events (additive, guarded).
   const fillEventColumns = database.prepare("PRAGMA table_info(fill_events)").all() as Array<{ name: string }>;
   if (!fillEventColumns.some((c) => c.name === "mae")) {

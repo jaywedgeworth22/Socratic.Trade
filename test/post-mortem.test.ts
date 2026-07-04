@@ -21,7 +21,7 @@ describe("generateReflectionSummary", () => {
     const userId = `post-mortem-${randomUUID()}`;
     const accountNumber = "APCA-PAPER-REFLECT";
     const accountId = randomUUID();
-    const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { getLatestReflectionVersion, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
     process.env.OPENAI_API_KEY = "test-key";
@@ -70,14 +70,18 @@ describe("generateReflectionSummary", () => {
     expect(context.executionMode).toBe("broker/paper");
     expect(context.executionModeClarification).toContain("Alpaca Paper");
     expect(context.recentTrades[0]?.symbol).toBe("AAPL");
-    expect(getUserSetting(userId, "reflection_summary", "")).toContain("broker paper");
+    // Per-account append-only version row (composite review A: reflection keying + history).
+    const latest = getLatestReflectionVersion(userId, accountNumber);
+    expect(latest?.summary).toContain("broker paper");
+    expect(latest?.version).toBe(1);
+    expect(latest?.inputStatsHash).toBeTruthy();
   });
 
   it("over the daily LLM budget: skips the reflection LLM call, does not throw (non-LLM excursion path still runs)", async () => {
     const userId = `post-mortem-budget-${randomUUID()}`;
     const accountNumber = "APCA-PAPER-BUDGET";
     const accountId = randomUUID();
-    const { getUserSetting, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
+    const { getLatestReflectionVersion, insertFillEvent, setActiveConnectedAccount, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
     const { recordLlmUsage } = await import("../src/lib/llm-usage");
     const { generateReflectionSummary } = await import("../src/lib/post-mortem");
 
@@ -101,6 +105,6 @@ describe("generateReflectionSummary", () => {
     // Must complete cleanly (no LlmBudgetExceededError bubbling) — over-budget is a graceful skip, not a failure.
     await expect(generateReflectionSummary(accountNumber, userId)).resolves.toBeUndefined();
     expect(openaiCalled).toBe(false); // reflection LLM call suppressed by the budget
-    expect(getUserSetting(userId, "reflection_summary", "")).toBe(""); // no summary written
+    expect(getLatestReflectionVersion(userId, accountNumber)).toBeNull(); // no summary written
   });
 });

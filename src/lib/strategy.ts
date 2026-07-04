@@ -80,9 +80,9 @@ import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from 
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
-import { generateReflectionSummary } from "./post-mortem";
+import { generateReflectionSummary, resolveReflectionForPrompt } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { getInternalSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
@@ -547,8 +547,22 @@ export async function runStrategyOnce(
     let learnedContext = "";
     try {
       const learnedSymbols = marketScan.topCandidates.slice(0, 8).map((c) => c.symbol);
-      // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContext(userId, learnedSymbols);
+      // Regime/thesis-conditioned retrieval (2026-07-04 composite review A, [Both]): pass the
+      // current run regime (fetchMacroData is cached 6h — effectively free, same regime
+      // proposeTrades derives later) plus the account's candidate thesis tags (the theses with a
+      // realized record — exactly the buckets decomposed lessons are keyed by) so on-regime /
+      // on-thesis lessons rank first and mismatched-regime facts arrive LABELED, never filtered.
+      const macroForLearned = await fetchMacroData(userId).catch(() => undefined);
+      const regimeForLearned = macroForLearned ? determineMarketRegime(macroForLearned) : undefined;
+      const candidateThesisTags = policy.accountNumber
+        ? getThesisScorecard(policy.accountNumber, learningSource, {}, userId)
+            .map((stat) => stat.thesisTag)
+            .filter((tag) => tag && tag !== "Untagged")
+            .slice(0, 12)
+        : [];
+      const learnedFacts = retrieveLearnedContext(userId, learnedSymbols, regimeForLearned, {
+        thesisTags: candidateThesisTags
+      });
       if (learnedFacts.length > 0) {
         learnedContext = learnedFacts.join("\n");
       }
@@ -2561,7 +2575,11 @@ async function proposeTrades(input: {
       : undefined;
 
   const currentPrices = currentPricesFromScan(input.marketScan);
-  const reflection = getUserSetting(input.userId, "reflection_summary", "");
+  // Reflection demotion (composite review A, [Both]): once structured lesson rows exist, the
+  // free-text blob leaves the system prompt (a static pointer replaces it — the lessons ride in
+  // as tagged learnedContext DATA); with zero lessons the per-account versioned blob remains the
+  // fallback. Read is keyed (userId, accountNumber) — never the old user-level clobber key.
+  const reflection = resolveReflectionForPrompt(input.userId, input.policy.accountNumber);
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];

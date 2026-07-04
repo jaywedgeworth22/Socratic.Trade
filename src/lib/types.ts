@@ -1793,6 +1793,16 @@ export interface LearnedContextRow {
   assertedAt: string;
   supersededBy: string | null;
   expiresAt: string | null;
+  /**
+   * Optional conditioning tags (2026-07-04 composite review A: decomposed reflection lessons).
+   * `regime` = the market regime the fact/lesson was learned in (null = regime-agnostic);
+   * `thesisTag` / `dominantFactor` = the thesis bucket and modal entry factor a decomposed
+   * lesson row summarizes. Retrieval BOOSTS matching-regime/thesis rows and LABELS
+   * mismatched-regime rows "(learned in <regime>)" — it never hard-filters on them.
+   */
+  regime?: string | null;
+  thesisTag?: string | null;
+  dominantFactor?: string | null;
 }
 
 /** A pre-persistence learned-context candidate (origin/scope are assigned at ingest time). */

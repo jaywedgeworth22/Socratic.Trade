@@ -8,7 +8,7 @@
 //   5. Return { text, draft?, citations, usedMemories } — never executes a trade.
 // Ported from reference/atlas-public-src/bff/orchestrator.mjs.
 
-import { audit, findChatTurnByClientId, getPolicy, getUserSetting, listPendingProposals } from "../db";
+import { audit, findChatTurnByClientId, getLatestReflectionVersion, getPolicy, listPendingProposals } from "../db";
 import { getBrokerGateway } from "../broker";
 import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
@@ -316,7 +316,11 @@ export function buildProductionDeps(): ToolDeps {
       return { byThesis, byRegime };
     },
     getReflection(userId) {
-      return getUserSetting<string>(userId, "reflection_summary", "");
+      // Reflections are per-account versioned rows now (composite review A "Reflection keying +
+      // history") — read the latest version for the active account, not the old user-level blob.
+      const accountNumber = getPolicy(userId).accountNumber;
+      if (!accountNumber) return "";
+      return getLatestReflectionVersion(userId, accountNumber)?.summary ?? "";
     },
     // Robinhood MCP-backed read-only research. Each returns a clear "not connected" result (never a
     // thrown error) when the adapter is off or the user has no stored token, so chat degrades to a

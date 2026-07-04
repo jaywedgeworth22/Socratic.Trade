@@ -8,6 +8,35 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-2 reflection lane: decomposed lessons + regime-conditioned retrieval + per-account reflection keying (Claude)
+Branch `claude/w2-reflection-decompose`, off `origin/claude/w2-episodic-retrieval` (STACKED — the
+episodic lane's retrieval surface is what the lessons ride on; lands via the Wave-2 landing train).
+Implements composite review section-A items "Decompose reflection into structured,
+regime/thesis-conditioned, retrievable lessons" ([Both], high/M), the regime-labeling retrieval
+item, and "Reflection keying + history" ([Both], medium/M).
+1. **Decomposed lessons.** `writeDecomposedLessons` (`post-mortem.ts`): closed lots are grouped
+   into (thesisTag x regime) buckets (min 5 lots; regime-agnostic `@all-regimes` fallback when
+   every regime bucket is thin) and each bucket writes a discrete `learned_context` row tagged
+   with new `regime`/`thesis_tag`/`dominant_factor` columns, carrying realized
+   win-rate/avg-return/MAE-MFE/capturePct, AND is embedded as a `doc_type="lesson"` vector —
+   consumed by the base lane's episodic retrieval pass with zero changes there.
+   Reconcile-on-write (identical stats → no-op, changed → supersede-in-place).
+2. **Blob demoted.** `resolveReflectionForPrompt`: once any structured lesson rows exist the
+   free-text blob leaves the Bull system prompt (static pointer instead); with zero lessons the
+   per-account blob remains the fallback. Chat's `getReflection` reads the per-account latest.
+3. **Regime/thesis-conditioned retrieval.** `retrieveLearnedContext` now uses its `regime` arg:
+   +2 boost on current-regime match, -1 on mismatch (LABELED `(learned in <regime>)`, never
+   filtered), +1 on candidate-thesis match (`options.thesisTags`); strategy.ts threads the cached
+   run regime + the account's realized thesis tags into the call.
+4. **Per-account, versioned reflections.** New append-only `reflection_versions` table keyed
+   (user_id, account_number) with monotonic version + input-stats hash; signature gate keyed
+   `reflection_signature:<userId>:<accountNumber>` — two accounts no longer clobber each other.
+   `reflection_versions` added to account-deletion coverage.
+Verify green in `~/apps/trading-wt-w2-reflection`: lint 0 errors, tsc clean, 2404/2404 tests,
+build green. Push-only; no PR (landing train picks it up after its base lands).
+See `docs/rollouts/2026-07-04-w2-reflection-decompose.md`. Follow-ups: console version-diff UI
+with edit/veto; regime stamping by other learned-context producers.
+
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single

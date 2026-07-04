@@ -175,14 +175,18 @@ export async function ingestLearned(
  * this user — the listLearnedContextForDecision query only widens to scope='shared' rows, never
  * to another user's private rows.
  *
- * The `regime` argument is accepted for forward-compatibility (regime-conditioned facts) but is
- * not yet used as a filter in this slice.
+ * REGIME/THESIS CONDITIONING (2026-07-04 composite review A, [Both]): the `regime` argument is now
+ * a ranking BOOST, never a hard filter — rows tagged with the current run's regime rank first,
+ * regime-untagged rows keep their recency order, and MISMATCHED-regime rows rank last but are
+ * still served, labeled "(learned in <regime>)" so the model can discount them itself. Candidate
+ * theses (`options.thesisTags`) boost matching lesson rows the same way. A high-VIX-panic lesson
+ * is no longer fed verbatim into a calm trend as if it applied.
  */
 export function retrieveLearnedContext(
   userId: string,
   symbols: string[],
-  _regime?: string,
-  options: { includeShared?: boolean; limit?: number; perContributorCap?: number } = {}
+  regime?: string,
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number; thesisTags?: string[] } = {}
 ): string[] {
   const limit = options.limit ?? 12;
   const perContributorCap = options.perContributorCap ?? 6;
@@ -192,12 +196,25 @@ export function retrieveLearnedContext(
     ? options.includeShared
     : getLearnedContextSharing(userId).includeShared;
   const rows = listLearnedContextForDecision(userId, symbols, includeShared);
+  const thesisTags = new Set((options.thesisTags ?? []).filter(Boolean));
+
+  // Conditioning score: +2 regime match, -1 regime mismatch (label-not-filter: still served,
+  // just after on-regime and regime-agnostic rows), +1 candidate-thesis match. Recency breaks ties.
+  const conditioningScore = (row: LearnedContextRow): number => {
+    let score = 0;
+    if (regime && row.regime) score += row.regime === regime ? 2 : -1;
+    if (row.thesisTag && thesisTags.has(row.thesisTag)) score += 1;
+    return score;
+  };
 
   // Per-contributor cap so one prolific source can't crowd out the rest (matters once shared rows
   // are enabled; harmless for the private-only slice).
   const perContributor = new Map<string, number>();
   const selected: LearnedContextRow[] = [];
-  for (const row of rows.sort((a, b) => b.assertedAt.localeCompare(a.assertedAt))) {
+  const ranked = rows.sort(
+    (a, b) => conditioningScore(b) - conditioningScore(a) || b.assertedAt.localeCompare(a.assertedAt)
+  );
+  for (const row of ranked) {
     const key = row.contributorUserId ?? row.userId;
     const used = perContributor.get(key) ?? 0;
     if (used >= perContributorCap) continue;
@@ -208,7 +225,8 @@ export function retrieveLearnedContext(
 
   return selected.map((row) => {
     const sym = row.symbol ? `[${row.symbol}] ` : "";
-    return `- ${sym}${row.subject}: ${row.value}`;
+    const regimeLabel = regime && row.regime && row.regime !== regime ? ` (learned in ${row.regime})` : "";
+    return `- ${sym}${row.subject}: ${row.value}${regimeLabel}`;
   });
 }
 
