@@ -19,10 +19,9 @@
 // CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 // `UsageTelemetryEventSchema` and the monitor's server-side parser
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
-// `createUsageTelemetryClient` because App B's pinned shared package (1.0.0) predates the
-// `usageTelemetry` export (it landed on the shared repo's `feat/usage-telemetry-idempotency-key`
-// branch, v1.1.0). MIGRATION: once shared 1.1.0 is published to GitHub Packages and App B's pin is
-// bumped, swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
+// `createUsageTelemetryClient` because the usageTelemetry export was added after this code
+// was written. MIGRATION: the shared package is now at ^1.2.0 which includes `createUsageTelemetryClient`;
+// swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
 // — the event shape is already the shared contract, so only the transport changes.
 
 import { logApiHealth } from "./db-health";
