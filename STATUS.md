@@ -8,6 +8,32 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370)
+Branch `claude/ci-hybrid-runner-verify`, worktree `~/apps/trading-wt-ci-efficiency`, off
+`origin/main`@`370692cf` (post-#370). Owner re-confirmed hybrid AFTER the tradeoff escalation,
+verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
+available." `ci.yml` restructured 2 jobs → 4: `classify` (+ new `route` output: self only for
+fresh (<5 min) publisher state on same-repo pull_request/push; merge_group/schedule/fork/stale/
+corrupt/absent all → hosted), `verify-self` (opportunistic macOS lane — [self-hosted,
+trading-live], timeout 30, concurrency-1 group, untrusted-source guard, node fail-fast, `nice
+-n 19` on every heavy command, macOS-namespaced caches via runner.os), `verify-hosted` (Linux
+lane — routed-hosted runs PLUS exactly-one automatic re-run whenever verify-self did not
+succeed; also saves the Linux .next cache on the new nightly schedule leg), and `verify` (the
+REQUIRED check, now a pure gate job: fail-closed on classify failure, docs-only short-circuit,
+hosted result wins on disagreement — Linux is the arbiter, a Mac flake can never block or
+fake-fail a merge; per-run environment annotation to $GITHUB_STEP_SUMMARY). Nightly hosted
+full-gate canary on main via new `schedule` cron (47 7 * * * UTC). New owner-run
+`scripts/runner-availability.sh` (ASCII, Apple-bash-3.2-verified): every 60s publishes repo var
+`VERIFY_RUNNER_STATE` {"mode","ts"} from load(<0.6/cpu)+RAM(>6GB free+inactive)+runner-alive+
+pm2-trading-online with 2-check hysteresis to self / instant flip to hosted + EXIT-trap hosted
+publish. **Safe rollout: var pre-created as {"mode":"hosted","ts":0} — merging changes nothing
+until the owner runs the pm2 one-liner** (in the rollout note). smoke/gitleaks/check-pin stay
+hosted. Full history (2026-07-01 move-off, the objections, the re-confirmation), gate decision
+table, and failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+Verification: yaml-lint, /bin/bash 3.2 -n + ASCII check, 8-case route-logic test (every
+non-happy path → hosted), read-only availability probes on the real Mac (correctly said "busy"
+during an active agent build), full local quartet green.
+
 ## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
 Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
 Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner

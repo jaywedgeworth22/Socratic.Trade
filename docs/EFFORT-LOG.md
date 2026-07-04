@@ -163,6 +163,28 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **`claude/ci-hybrid-runner-verify` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) —
+  moved from Planned 2026-07-04 after PR #370 merged.** Hybrid resource-aware runner routing for
+  the required `verify` check, owner re-confirmed with design after the tradeoff escalation
+  (verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
+  available"). `ci.yml` 2 jobs → 4: `classify` (+`route` output; self only for fresh <5 min
+  publisher state on same-repo pull_request/push; everything else → hosted), `verify-self`
+  (opportunistic macOS lane: [self-hosted, trading-live], timeout 30, concurrency-1,
+  untrusted-source guard, node fail-fast, `nice -n 19`, macOS cache namespace via runner.os),
+  `verify-hosted` (Linux lane: routed-hosted runs + exactly-one automatic re-run when
+  verify-self did not succeed; saves Linux .next cache on main pushes AND the new nightly
+  schedule), `verify` (REQUIRED check, pure gate: fail-closed on classify failure; hosted
+  result wins on disagreement — Linux arbiter; per-run environment annotation). Nightly hosted
+  canary cron 47 7 * * * UTC. New owner-run `scripts/runner-availability.sh` (ASCII,
+  bash-3.2-verified) publishes `VERIFY_RUNNER_STATE` every 60s (load<0.6/cpu, RAM>6GB
+  free+inactive, runner alive, pm2 trading online; 2-check hysteresis to self, instant hosted
+  on busy, EXIT-trap hosted publish). Repo var pre-created as {"mode":"hosted","ts":0} — safe
+  rollout, no behavior change until the owner starts the publisher (pm2 one-liner in the
+  rollout note). smoke/gitleaks/check-pin stay hosted. History + gate decision table +
+  failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`. STATUS:
+  implemented; verification (yaml-lint, bash 3.2 -n + ASCII, 8-case route test, read-only Mac
+  probes, local quartet) green; PR pending.
+
 - **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
   GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
   `.github/workflows/ci.yml`: new cheap `classify` job computes on `pull_request` events whether
@@ -327,26 +349,6 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 📋 Planned
-
-- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
-  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
-  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
-  owner, answering the objections raised when this was first proposed): (1) Mac-side
-  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
-  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
-  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
-  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
-  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
-  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
-  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
-  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
-  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
-  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
-  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
-  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
-  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
-  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
-  hosted-only default stands; resource-aware routing stays opt-in per repo.
 
 ### Socratic console parity sub-lanes — reserved before implementation
 - **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
