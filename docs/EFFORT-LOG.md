@@ -163,6 +163,13 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, landing now that
+  gate is green. Scope: reusable `RawNumInput` component (fixes
+  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
+  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
+  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
+  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
+
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
   against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
@@ -181,13 +188,38 @@ to `socratictrade.com`, record the release commit + date here._
   winds down gracefully). Gate green: tsc clean, lint 0 errors, **2351 tests / 239 files**, build green.
   **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
   follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
+  NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
+  see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
+
+- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
+  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
+  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
+  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
+  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
+  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
+  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
+
+- **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
+  `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
+  quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) + synthesis produced
+  `docs/reviews/2026-07-04-expert-design-review.md`: 147 prioritized improvements across memory/learning,
+  LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems, each with a concrete
+  approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
+  roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
 
-1. **Drawdown circuit-breakers → HARD-HALT.** During the live soak, a drawdown breach halts autonomous
-   trading until manually re-armed. _(Unblocks the hardening build.)_
+1. **Drawdown circuit-breakers → ADVISORY** _(CORRECTED later on 2026-07-03 — the "HARD-HALT" record
+   was wrong; the owner didn't understand the question as originally asked)._ Confirmed intent, in the
+   owner's words: **"nothing is hard except which account to work in."** A drawdown breach is an
+   advisory input the agent weighs with its own judgment; it may proceed, and every deviation surfaces
+   as a logged receipt for review and coaching. The same philosophy governs ALL guardrail lines (spend
+   caps, sizing, etc.) — the **account boundary is the only absolute**. Confirmed option: "Agent
+   decides, logs everything." See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+   ~~Was recorded as: HARD-HALT — a drawdown breach halts autonomous trading until manually re-armed.~~
 2. **Stop-losses → PROMPT-EXPECTED.** The LLM proposes stops and policy validates; NOT schema-forced.
    _(Owner chose the more flexible option over the fail-closed default.)_
 3. **Manager model tier → EVALUATE cross-provider, not a single pick.** Owner wants a list of options
@@ -217,9 +249,13 @@ to `socratictrade.com`, record the release commit + date here._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Hard-halt drawdown circuit-breakers** — ✅ built (In Progress → PR pending, branch
+  - **Advisory drawdown awareness (corrected target)** — surface the breach state to the agent
+    (prompt context) and to the owner (receipt/notification + coaching trail); NO halting.
+    _(Corrected from "hard-halt" — see Owner decisions above.)_
+  - **Hard-halt drawdown circuit-breakers** — ✅ built (merged as #343, branch
     `claude/live-execution-hardening`): `riskRules.drawdownBreakerAction` default `"halt"` flips the
     breaker to `systemState → "halted"` on breach until manually re-armed; overridable to `"close_only"`.
+    NOTE: built before the decision-record correction landed; re-scope pending owner review.
   - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
     stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
   - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
@@ -290,3 +326,8 @@ to `socratictrade.com`, record the release commit + date here._
   covering Actions, cadence, returns, IRA wash-sale behavior, Evidence/source labels, LLM settings
   usage affordances, LIVE-warning reduction, broker-option investigation, provider/model naming
   consistency, and repo/folder rename planning.
+- 2026-07-03 — **CORRECTION:** "drawdown=hard-halt" was mis-recorded (the owner didn't understand the
+  question). Owner confirmed: guardrails are ADVISORY — agent decides, logs everything; the account
+  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
+  hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
+  owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.

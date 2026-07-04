@@ -8,6 +8,72 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — Console small fixes: numeric-input pattern, regime label contract, deletion loss preview, notify.bridge.error formatter (Claude)
+Branch `claude/console-small-fixes` (isolated worktree `~/apps/trading-wt-console-small`, off
+`origin/main` @ `eae514be`), four small verified-open tasks bundled on one branch. **Not landed
+yet** — pushed only, per instructions (no PR, land deferred). **(t7)** extracted the "0."-collapse
+raw-while-focused/commit-on-blur numeric-input pattern (previously only in `PolicyFieldRow`) into a
+reusable `RawNumInput` (`app/console/ui/primitives.tsx`), applied at the eight scoring-weight
+inputs (`app/console/strategy/page.tsx`) and the tax-rate + market-scan-shape integer inputs
+(`app/console/settings/page.tsx`). **(t18)** exported `MARKET_REGIME_LABELS` (stable id -> exact
+label) from `src/lib/macro.ts`, typed `determineMarketRegime`'s return as that union, added
+traceability comments at the three exact-equality join sites (`strategy.ts` `selectThesisStat`,
+`performance.ts` `getFactorScorecard`, `app/console/macro/page.tsx`'s regime-scorecard lookup —
+none hardcode a literal label, so no string values changed), and added a dedicated "regime label
+set is a persisted contract" test block in `test/macro.test.ts` driving all six branches with
+`toBe()` exact-string assertions. **(t22)** account-deletion scope preview
+(`app/console/settings/danger.tsx`) now shows a warning line when
+`preview.counts.learned_context_pending > 0`, linking to `/console/approvals`; added a
+preview-count assertion to `test/account-deletion.test.ts`. **(t39)** added a
+`notify.bridge.error` ops-formatter branch to `src/lib/dashboard-feed.ts` (title "Notification
+delivery failed", mirrors the `web_source_refresh` pattern) + a `test/dashboard-feed.test.ts` case.
+Verification: lint 0 errors / 295 grandfathered warnings (unchanged baseline), `tsc --noEmit`
+clean, targeted vitest (macro/dashboard-feed/account-deletion*) 54/54 + console tests 50/50, full
+`npm test` 2356 passed / 17 failed — the 17 failures are exactly the 8 pre-existing
+holiday-time-dependent files another agent owns (`strategy-llm-failover`,
+`strategy-bear-fail-closed`, `strategy-moneypath-drawdown-flip`, `strategy-money-path-f-g`,
+`strategy-rationale-collapse-gate`, `redteam-observability-g10`, `strategy-bull-truncation`,
+`persistence-notification`), `npm run build` green. See
+`docs/rollouts/2026-07-03-console-small-fixes.md`.
+## 2026-07-04 — Drawdown breaker → ADVISORY default (owner correction; Monet, cloud)
+Branch `claude/drawdown-advisory-rescope` (off `origin/main`). Owner reassigned this lane to Monet
+(swap: Fable → memory/RAG; Monet → risk engine — coordinated on Slack `#claude-monet-sync`). Reverts
+the mistaken hard-halt default from #343 to the owner's actual philosophy: guardrails are ADVISORY
+("nothing is hard except which account to work in; agent decides, logs everything"). `drawdownBreakerAction`
+is now `"advisory" | "close_only" | "halt"`, **default `"advisory"`**: on a drawdown/daily-loss breach the
+breaker writes a receipt and threads a `drawdownAdvisory` block into the strategist's `userContent` (agent
+decides how to react) — it does NOT change `systemState`. `close_only`/`halt` remain as explicit owner
+opt-ins. Files: `types.ts`, `strategy.ts`, `api/policy/route.ts` (validator), guardrails/dashboard copy,
+drawdown tests. Verified: tsc clean · lint 0 errors · **2375 tests / 245 files** · build green.
+See `docs/rollouts/2026-07-04-drawdown-advisory-rescope.md`. Follow-up: thread the advisory into the Bear
+context too; broader per-gate hard-block sweep goes to the owner as questions first (not bundled).
+
+## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
+Branch `claude/expert-design-review` (off `origin/main`, merged as #356). An 8-expert agent panel (ML/learning,
+RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
+synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
+across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,
+each with a concrete approach + `[impact/effort]`; plus a cross-cutting-gaps section, quick-wins/big-bets
+tables, and a Now/Next/Later roadmap. Docs-only; no source touched. (This cloud session is "Monet".)
+**Read section E + the risk items through the CLARIFIED philosophy that guardrails are ADVISORY
+("agent decides, logs everything") — see the correction entry directly below.** My earlier #343 drawdown
+HARD-HALT default is misaligned with that and needs re-scoping to advisory (owner review flagged on the board).
+
+## 2026-07-03 — CORRECTION: guardrails are ADVISORY, not hard-halt (Claude)
+Branch `claude/correct-drawdown-decision`. Docs-only. The #337 record "drawdown
+breakers → hard-halt" was WRONG — the owner said they didn't understand that
+question, and stated the governing philosophy verbatim: **"nothing is hard
+except which account to work in."** Confirmed same-day via structured question:
+**"Agent decides, logs everything"** — every guardrail line (drawdown, spend
+caps, sizing, …) is an advisory input to the agent's own judgment; every
+deviation is a logged, reviewable, coachable receipt; the ONLY absolute is the
+account boundary. Corrected in place: decision 1 + hardening scope in
+`docs/EFFORT-LOG.md`, correction banner in
+`docs/rollouts/2026-07-03-owner-decisions-manager-model.md`, full decision +
+follow-ups in `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+**Next:** the live-execution hardening build implements advisory drawdown
+awareness (prompt context + receipts), NO halting; per-gate hard-block sweep
+goes back to the owner as plain-language questions before flipping defaults.
 ## 2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex)
 Branch `codex/rag-filing-ingest-smoke-fix` in `/Users/jay/apps/trading-codex`.
 Production Infisical runtime was verified against the new Pinecone account: the only visible

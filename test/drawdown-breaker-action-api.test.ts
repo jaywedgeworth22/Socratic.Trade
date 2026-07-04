@@ -34,11 +34,13 @@ describe("/api/policy — riskRules.drawdownBreakerAction validation", () => {
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).riskRules.drawdownBreakerAction).toBe("close_only");
   });
 
-  it("accepts 'halt'", async () => {
+  it("accepts 'halt' and 'advisory' (the default action)", async () => {
     const { PUT } = await import("../app/api/policy/route");
-    const response = await PUT(putRiskRules({ drawdownBreakerAction: "halt" }));
-    expect(response.status).toBe(200);
-    expect((await response.json()).riskRules.drawdownBreakerAction).toBe("halt");
+    for (const ok of ["halt", "advisory"]) {
+      const response = await PUT(putRiskRules({ drawdownBreakerAction: ok }));
+      expect(response.status).toBe(200);
+      expect((await response.json()).riskRules.drawdownBreakerAction).toBe(ok);
+    }
   });
 
   it("rejects any other value with a clear 400", async () => {
@@ -46,7 +48,7 @@ describe("/api/policy — riskRules.drawdownBreakerAction validation", () => {
     for (const bad of ["close-only", "stop", "off", 1, true]) {
       const response = await PUT(putRiskRules({ drawdownBreakerAction: bad }));
       expect(response.status).toBe(400);
-      expect(await response.text()).toContain("riskRules.drawdownBreakerAction must be halt or close_only.");
+      expect(await response.text()).toContain("riskRules.drawdownBreakerAction must be advisory, close_only, or halt.");
     }
   });
 
