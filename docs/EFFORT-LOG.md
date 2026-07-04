@@ -174,6 +174,13 @@ to `socratictrade.com`, record the release commit + date here._
   2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
   See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
 
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
+  Scope: reusable `RawNumInput` component (fixes
+  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
+  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
+  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
+  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
+
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
   against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local

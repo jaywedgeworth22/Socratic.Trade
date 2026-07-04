@@ -12,6 +12,7 @@
  *  empty app account. */
 
 import { useState } from "react";
+import Link from "next/link";
 import { OctagonAlert, Trash2 } from "lucide-react";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, TextInput } from "../ui/primitives";
@@ -191,6 +192,17 @@ export function AccountDeletionCard() {
               <p className="mt-2 text-[color:var(--con-warn)]">
                 This is the local operator dataset shared by the primary email aliases — it includes legacy app data
                 and needs one extra typed phrase.
+              </p>
+            )}
+            {(preview.counts.learned_context_pending ?? 0) > 0 && (
+              <p className="mt-2 text-[color:var(--con-warn)]">
+                {preview.counts.learned_context_pending} pending learned-context item
+                {preview.counts.learned_context_pending === 1 ? "" : "s"} awaiting your approval will be discarded —
+                review them on the{" "}
+                <Link href="/console/approvals" className="text-[color:var(--con-accent)] hover:underline">
+                  Approvals
+                </Link>{" "}
+                screen before deleting.
               </p>
             )}
           </div>

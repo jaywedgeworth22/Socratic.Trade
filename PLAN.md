@@ -16,6 +16,15 @@ filling the missing pieces.
 > `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md` on branch
 > `claude/correct-drawdown-decision`). Landing deferred until the holiday-date test fix merges. See
 > `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+> 2026-07-03 (`claude/console-small-fixes`, Claude): **Console small fixes (t7/t18/t22/t39)** —
+> four small verified-open items, no roadmap scope change: extracted the "0."-collapse raw-while-
+> focused/commit-on-blur numeric-input pattern into a reusable `RawNumInput` (applied at the
+> scoring-weight, tax-rate, and market-scan-shape inputs); exported `MARKET_REGIME_LABELS` from
+> `src/lib/macro.ts` as an explicit persisted contract with dedicated exact-string test coverage;
+> the account-deletion scope preview now warns when pending learned-context items would be
+> discarded; and a `notify.bridge.error` ops-feed formatter humanizes notification-delivery
+> failures. Pushed but landing deferred until the holiday-time-dependence test fix merges. See
+> `docs/rollouts/2026-07-03-console-small-fixes.md`.
 > **2026-07-03 — SUPERSEDING DIRECTIVE (owner): real trading, no fake modes.** This is a real
 > trading app; the owner accepts 100% risk. **`policy.paperMode` and the local "Test mode" simulator
 > (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) have been removed** (rules in
