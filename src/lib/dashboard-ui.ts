@@ -21,29 +21,50 @@ const SOURCE_LABELS: Record<string, string> = {
   finnhub: "Finnhub",
   fmp: "FMP",
   "yahoo-finance": "Yahoo Finance",
-  "yahoo-finance-delayed-quotes": "Yahoo Finance",
-  "nasdaq-delayed-screener": "Nasdaq",
-  "alpaca-quotes": "Alpaca",
-  "alpaca-snapshot": "Alpaca",
-  "alpaca-news": "Alpaca",
+  "yahoo-finance-delayed": "Yahoo Finance Delayed",
+  "yahoo-finance-delayed-quotes": "Yahoo Finance Delayed Quotes",
+  "yahoo-finance-synthetic": "Yahoo Finance Synthetic",
+  "nasdaq-delayed-screener": "NASDAQ Delayed Screener",
+  "nasdaq-delayed-screener-universe": "NASDAQ Delayed Screener Universe",
+  "sp500-universe": "S&P 500 Universe",
+  "sp100-universe": "S&P 100 Universe",
+  "nasdaq100-universe": "NASDAQ 100 Universe",
+  "nasdaq-composite-universe": "NASDAQ Composite Universe",
+  "alpaca-quotes": "Alpaca Quotes",
+  "alpaca-snapshot": "Alpaca Snapshot",
+  "alpaca-news": "Alpaca News",
   "massive-vwap": "Massive",
-  "broker-quotes": "Broker quotes",
+  "broker-quotes": "Broker Quotes",
   robinhood: "Robinhood",
-  "robinhood-quotes": "Robinhood",
+  "robinhood-quotes": "Robinhood Quotes",
   congress: "Congress.Trade",
   "congress.trade": "Congress.Trade",
-  blended: "blended (multiple sources)"
+  "congress-disclosure": "Congressional Disclosures",
+  "senate-efd": "Senate EFD",
+  "house-clerk": "House Clerk",
+  "apify-congress": "Apify Congress",
+  "sec-edgar": "SEC EDGAR",
+  "sec-8k": "SEC 8-K",
+  "sec-10k": "SEC 10-K",
+  "sec-xbrl": "SEC XBRL",
+  "insider-filing": "Insider Filing",
+  "sec-form-4": "SEC Form 4",
+  "blackrock-oef-holdings": "BlackRock Holdings",
+  "tradingview": "TradingView",
+  "cboe": "Cboe",
+  "cftc": "CFTC",
+  "kenneth-french": "Kenneth French",
+  fred: "FRED",
+  computed: "Computed",
+  blended: "Blended (Multiple Sources)"
 };
 
 const SOURCE_LIST_LABELS: Record<string, string> = {
   ...SOURCE_LABELS,
-  "nasdaq-delayed-screener": "NASDAQ",
   tiingo: "Tiingo",
   "alpha-vantage": "Alpha Vantage",
   finra: "FINRA",
-  computed: "Computed",
-  "sec-edgar": "SEC EDGAR",
-  "blackrock-oef-holdings": "BlackRock holdings"
+  "finra-short-volume": "FINRA Short Volume"
 };
 
 const PROVENANCE_LABELS: Partial<Record<keyof EnrichmentSources, string>> = {
@@ -299,7 +320,7 @@ function executedActionLabel(side?: OrderSide): string {
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Test Sell" : side === "buy" ? "Test Buy" : "Test Trade";
+  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

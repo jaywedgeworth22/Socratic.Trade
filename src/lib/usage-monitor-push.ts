@@ -19,10 +19,9 @@
 // CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 // `UsageTelemetryEventSchema` and the monitor's server-side parser
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
-// `createUsageTelemetryClient` because App B's pinned shared package (1.0.0) predates the
-// `usageTelemetry` export (it landed on the shared repo's `feat/usage-telemetry-idempotency-key`
-// branch, v1.1.0). MIGRATION: once shared 1.1.0 is published to GitHub Packages and App B's pin is
-// bumped, swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
+// `createUsageTelemetryClient` because the usageTelemetry export was added after this code
+// was written. MIGRATION: the shared package is now at ^1.2.0 which includes `createUsageTelemetryClient`;
+// swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
 // — the event shape is already the shared contract, so only the transport changes.
 
 import { logApiHealth } from "./db-health";
@@ -55,7 +54,7 @@ export interface UsageMonitorEvent {
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
-const SOURCE_APP = "agentic-trading";
+const SOURCE_APP = "socratic-trade";
 const INGEST_PATH = "/api/ingest/usage";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events
@@ -189,11 +188,11 @@ export function pushRagUsage(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    const quantity = (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
-    // Voyage embed/rerank quantities are token estimates; Pinecone query/upsert quantities are
-    // record counts (tokensOut = recordCount) — reporting those as "token" would corrupt the
-    // monitor's token aggregates, so tag Pinecone volume as rows.
-    const unit: UsageUnit = entry.provider === "pinecone" ? "row" : "token";
+    const isPinecone = entry.provider === "pinecone";
+    const quantity = isPinecone ? (entry.tokensIn ?? 0) : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
+    // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
+    // Read/Write Units in tokensIn, with records kept separately in metadata.
+    const unit: UsageUnit = isPinecone ? "credit" : "token";
     enqueue({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
@@ -214,6 +213,7 @@ export function pushRagUsage(entry: {
         operation: entry.operation,
         userId: entry.userId,
         batchCount: entry.batchCount ?? null,
+        recordCount: isPinecone ? entry.tokensOut ?? null : null,
       }),
     });
   } catch {

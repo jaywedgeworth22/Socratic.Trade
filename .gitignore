@@ -30,6 +30,7 @@ did.bin
 
 # Root-level one-off local debugging artifacts from manual browser/SQL probes.
 /screenshot*.png
+/artifacts/
 /test-run.ts
 /test-ui.cjs
 /test-ui.js

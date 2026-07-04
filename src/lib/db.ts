@@ -792,11 +792,14 @@ function migrate(database: Database.Database): void {
       intent TEXT,
       redacted INTEGER NOT NULL DEFAULT 0,
       model TEXT,
-      client_turn_id TEXT,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_turns_user ON chat_turns (user_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_turns_user_client ON chat_turns (user_id, client_turn_id);
+    -- client_turn_id (+ its index) is added ONLY by the versioned migration
+    -- chat_turns_client_turn_id. Do NOT add migration-era columns or indexes to this
+    -- baseline exec: it runs BEFORE applyVersionedMigrations, so on a pre-existing DB
+    -- CREATE TABLE IF NOT EXISTS is a no-op and an index referencing a not-yet-ALTERed
+    -- column crashes boot ("no such column") — took production down on 2026-07-02.
 
     CREATE TABLE IF NOT EXISTS llm_usage (
       id TEXT PRIMARY KEY,
@@ -896,6 +899,61 @@ function migrate(database: Database.Database): void {
       resolved_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);
+
+    CREATE TABLE IF NOT EXISTS socratic_decisions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT,
+      run_id TEXT,
+      proposal_id TEXT,
+      account_number TEXT,
+      symbol TEXT,
+      side TEXT,
+      status TEXT NOT NULL,
+      authority TEXT NOT NULL,
+      thesis TEXT NOT NULL,
+      rationale TEXT NOT NULL,
+      action TEXT NOT NULL,
+      thesis_tag TEXT,
+      regime TEXT,
+      confidence_score REAL,
+      notional REAL,
+      model TEXT,
+      red_team TEXT,
+      policy_decision TEXT,
+      evidence TEXT NOT NULL DEFAULT '[]',
+      rag_attributions TEXT NOT NULL DEFAULT '[]',
+      dissent TEXT NOT NULL DEFAULT '[]',
+      outcome TEXT,
+      autonomy_override TEXT,
+      lessons TEXT NOT NULL DEFAULT '[]',
+      coach_notes TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_socratic_decisions_user_created ON socratic_decisions (user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_socratic_decisions_run ON socratic_decisions (user_id, run_id);
+    CREATE INDEX IF NOT EXISTS idx_socratic_decisions_proposal ON socratic_decisions (user_id, proposal_id);
+
+    CREATE TABLE IF NOT EXISTS socratic_framework_proposals (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      connected_account_id TEXT,
+      decision_id TEXT,
+      run_id TEXT,
+      status TEXT NOT NULL,
+      priority TEXT NOT NULL,
+      subsystem TEXT NOT NULL,
+      title TEXT NOT NULL,
+      rationale TEXT NOT NULL,
+      proposed_change TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '[]',
+      owner_response TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_socratic_framework_user_status ON socratic_framework_proposals (user_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_socratic_framework_run ON socratic_framework_proposals (user_id, run_id);
 
     CREATE TABLE IF NOT EXISTS api_health_log (
       id TEXT PRIMARY KEY,
@@ -1274,13 +1332,14 @@ function isPristineEmptyUniversePolicy(policy: Partial<TradingPolicy>): boolean 
 // rather than importing from db-profiles to avoid a module-load-order issue at migrate() time.
 // db-profiles.ts exports its own copy for runtime callers.
 function mergePolicy(policy: Partial<TradingPolicy>): TradingPolicy {
-  const legacy = policy as Partial<TradingPolicy> & { dryRun?: boolean };
-  const paperMode = policy.paperMode ?? legacy.dryRun ?? DEFAULT_POLICY.paperMode;
-  const { dryRun: _legacyDryRun, ...policyWithoutLegacyDryRun } = legacy;
+  // Strip legacy paperMode/dryRun/paperStartingCash keys that may still be present in old stored
+  // JSON — these fields were removed. An account's own `environment` (paper/live) is now the sole
+  // source of truth for execution mode; there is no policy-level override.
+  const legacy = policy as Partial<TradingPolicy> & { dryRun?: boolean; paperMode?: boolean; paperStartingCash?: number };
+  const { dryRun: _legacyDryRun, paperMode: _legacyPaperMode, paperStartingCash: _legacyPaperStartingCash, ...policyWithoutLegacyFields } = legacy;
   const merged: TradingPolicy = {
     ...DEFAULT_POLICY,
-    ...policyWithoutLegacyDryRun,
-    paperMode,
+    ...policyWithoutLegacyFields,
     scoringWeights: normalizeScoringWeights(policy.scoringWeights ?? DEFAULT_POLICY.scoringWeights),
     sectorCaps: policy.sectorCaps ?? DEFAULT_POLICY.sectorCaps,
     riskRules: { ...DEFAULT_POLICY.riskRules, ...(policy.riskRules ?? {}) },
@@ -1322,3 +1381,4 @@ export * from "./db-notifications";
 export * from "./db-api-keys";
 export * from "./db-health";
 export * from "./db-securities-import";
+export * from "./db-socratic";

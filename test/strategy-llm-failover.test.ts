@@ -58,7 +58,6 @@ async function setup(withFallback: boolean): Promise<void> {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: true,
     llmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],

@@ -5,10 +5,10 @@
 // RAG keys are app-funded (resolved via resolveApiKey), so the userId is always 'local'
 // in the system path; per-user separation happens when a user provides their own key.
 //
-// Pricing notes (approximate, as of 2026-06):
-//   - voyage-finance-2 embed: ~$0.00010/1K tokens
-//   - rerank-2.5:             ~$0.00070/1K tokens
-//   - Pinecone: serverless — metered by Read/Write Request Units (not tokenized)
+// Pricing notes (approximate, as of 2026-07; verify before committing spend):
+//   - voyage-finance-2 embed: $0.00012/1K tokens after the free tier
+//   - rerank-2.5:             $0.00005/1K processed tokens after the free tier
+//   - Pinecone: serverless — metered by Read/Write Units; rows store units, not dollars.
 
 import crypto from "crypto";
 import { audit, getDb } from "./db";
@@ -23,9 +23,9 @@ export interface RagUsageEntry {
   operation: RagOperation;
   provider?: string;
   model?: string;
-  /** Estimated input tokens (or texts count for Pinecone ops). */
+  /** Estimated input tokens; for Pinecone ops this stores estimated/reported Read or Write Units. */
   tokensIn?: number;
-  /** Estimated output tokens (or records count for Pinecone ops). */
+  /** Estimated output tokens; for Pinecone ops this stores record count. */
   tokensOut?: number;
   /** Number of items in the batch (texts / records). */
   batchCount?: number;
@@ -46,9 +46,13 @@ export interface RagUsageRow {
 // ── Cost estimation (best-effort) ────────────────────────────────────────────
 
 const VOYAGE_PRICE_PER_1K_TOKENS: Record<string, { embed: number; rerank: number }> = {
-  "voyage-finance-2": { embed: 0.0001, rerank: 0.0007 },
-  "rerank-2.5": { embed: 0, rerank: 0.0007 },
-  "rerank-2": { embed: 0, rerank: 0.0007 },
+  "voyage-finance-2": { embed: 0.00012, rerank: 0 },
+  "voyage-4": { embed: 0.00006, rerank: 0 },
+  "voyage-4-lite": { embed: 0.00002, rerank: 0 },
+  "voyage-4-large": { embed: 0.00012, rerank: 0 },
+  "rerank-2.5": { embed: 0, rerank: 0.00005 },
+  "rerank-2.5-lite": { embed: 0, rerank: 0.00002 },
+  "rerank-2": { embed: 0, rerank: 0.00005 },
 };
 
 function estimateRagCost(
@@ -69,9 +73,9 @@ function estimateRagCost(
 
 // ── Approximate token counting ───────────────────────────────────────────────
 
-/** Crude token estimate from word count (Voyage uses a subword tokenizer; this is a floor). */
+/** Crude token estimate from UTF-8 text length (Voyage uses a tokenizer; this is still approximate). */
 function approxTokens(texts: string[]): number {
-  return texts.reduce((sum, t) => sum + (t.trim().split(/\s+/).filter(Boolean).length || 1), 0);
+  return texts.reduce((sum, t) => sum + Math.max(1, Math.ceil(Buffer.byteLength(t, "utf8") / 4)), 0);
 }
 
 // ── Record ───────────────────────────────────────────────────────────────────
@@ -156,15 +160,29 @@ export function meterRerank(query: string, documents: string[], model?: string, 
  * Convenience: record a Pinecone query. Pass `userId` so retrieval query spend counts toward that
  * user's daily budget (see `meterEmbed`).
  */
-export function meterPineconeQuery(recordCount: number, userId?: string): void {
-  recordRagUsage({ userId, operation: "query", provider: "pinecone", tokensOut: recordCount });
+export function meterPineconeQuery(readUnits: number, userId?: string, recordCount?: number): void {
+  recordRagUsage({
+    userId,
+    operation: "query",
+    provider: "pinecone",
+    tokensIn: readUnits,
+    tokensOut: recordCount,
+    batchCount: recordCount ?? 1
+  });
 }
 
 /**
  * Convenience: record a Pinecone upsert.
  */
-export function meterPineconeUpsert(recordCount: number, userId?: string): void {
-  recordRagUsage({ userId, operation: "upsert", provider: "pinecone", tokensOut: recordCount });
+export function meterPineconeUpsert(recordCount: number, userId?: string, estimatedWriteUnits?: number): void {
+  recordRagUsage({
+    userId,
+    operation: "upsert",
+    provider: "pinecone",
+    tokensIn: estimatedWriteUnits,
+    tokensOut: recordCount,
+    batchCount: recordCount
+  });
 }
 
 // ── Read ─────────────────────────────────────────────────────────────────────

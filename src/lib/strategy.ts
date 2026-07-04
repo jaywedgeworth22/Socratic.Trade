@@ -18,6 +18,8 @@ import {
   releaseStrategyLock,
   setPolicy,
   transitionProposalIfPending,
+  upsertSocraticDecisionCase,
+  createSocraticFrameworkProposal,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -49,7 +51,6 @@ import {
   getConfidenceCalibration,
   type ConfidenceCalibrationStat,
   getFactorScorecard,
-  getPaperPortfolioProjection,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
@@ -89,7 +90,17 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ScoringWeights, TradingPolicy, TradeProposal } from "./types";
+import {
+  applySocraticOverrideSizing,
+  buildSocraticDecisionCase,
+  frameworkProposalFromDecision,
+  ragAttributionsFromChunks,
+  resolveSocraticOverride,
+  socraticStatusFromProposalStatus,
+  type SocraticOverrideResolution
+} from "./socratic-runtime";
+import { indexSocraticDecisionMemory } from "./socratic-memory";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -246,6 +257,10 @@ export async function runStrategyOnce(
       : { ...savedPolicy, accountNumber };
     const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
+    // An account is an account: with none connected there is no broker to trade through, and there
+    // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+    if (!executionState.mode) throw new Error("No connected account. Connect a broker account before running the strategy.");
+    const executionMode: ExecutionMode = executionState.mode;
 
     // Market holiday / closure guard: skip the strategy run when the market is fully closed
     // (holiday or weekend). Manual runs bypass this check so the operator can always force a run.
@@ -309,29 +324,29 @@ export async function runStrategyOnce(
     // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
     const washSaleLocks = getUserWashSaleLockProvenance(userId, new Date());
 
-    // In Test mode, decisions run against the standalone local account
-    // (starting cash + prior simulated fills, marked to live prices).
+    // An account is an account: decisions always run against the real broker-reported portfolio and
+    // positions for the active (paper or live) account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(marketScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
-    const workingPortfolio = account.portfolio;
-    const workingPositions = account.positions;
-    const executionMode = executionState.mode;
+    const workingPortfolio = portfolio;
+    const workingPositions = positions;
     const learningSource = fillSourceForExecutionMode(executionMode);
-    if (!executionState.usesLocalSimulation) {
-      await notifyStaleLimitOrders({ userId, policy, orders });
-    }
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
     // post-mortem / reconciliation always has a pre-execution baseline even if the run
     // crashes mid-loop. The post-run snapshot (below) remains for the final state.
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
 
-    // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
-    // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
-    // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
-    // and fire a kill-switch notification, putting a human back in the loop.
+    // Advisory drawdown context surfaced to the strategist when the breaker breaches in "advisory"
+    // mode (the default) — informs the agent, never seizes control.
+    let drawdownAdvisory: { reason: string; equity: number; highWaterMark: number; drawdownPct: number } | undefined;
+    // Account-level drawdown / daily-loss breaker. The per-trade gate bounds any single mistake; this
+    // bounds the whole account's bleed. Per the governing philosophy ("nothing is hard except which
+    // account to work in; agent decides, logs everything"), the breaker is ADVISORY by default: on a
+    // breach it writes a receipt and surfaces the drawdown to the strategist as decision context (see
+    // `drawdownAdvisory` threading below) so the agent can choose to de-risk — it does NOT seize
+    // control. Hard enforcement (flip to "close_only" or "halt") is available only when the owner
+    // explicitly opts in via `riskRules.drawdownBreakerAction`.
     if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
@@ -342,13 +357,33 @@ export async function runStrategyOnce(
         userId
       });
       if (breaker.breached) {
-        policy.systemState = "close_only";
-        setPolicy(policy, userId);
-        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo: "close_only" }, userId);
-        await sendNotification(
-          { type: "kill_switch", title: "Circuit breaker halted new entries", payload: { runId, reason: breaker.reason, equity } },
-          { policy, userId }
-        );
+        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "advisory";
+        const drawdownPct = breaker.highWaterMark > 0 ? ((breaker.highWaterMark - equity) / breaker.highWaterMark) * 100 : 0;
+        if (breakerAction === "advisory") {
+          // Advisory (default): receipt + prompt context, NO state change. The account boundary is the
+          // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
+          drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId);
+        } else {
+          // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
+          // targeted (read via getPolicy(userId, targetAccountId)); omitting it would resolve the ACTIVE
+          // account, so a scheduler run of a non-active account could halt the wrong account.
+          const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
+          policy.systemState = revertedTo;
+          setPolicy(policy, userId, targetAccountId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
+          await sendNotification(
+            {
+              type: "kill_switch",
+              title:
+                revertedTo === "halted"
+                  ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
+                  : "Circuit breaker halted new entries (close-only)",
+              payload: { runId, reason: breaker.reason, equity, revertedTo }
+            },
+            { policy, userId }
+          );
+        }
       }
     }
 
@@ -363,7 +398,8 @@ export async function runStrategyOnce(
       const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
       if (volBrake.brake) {
         policy.systemState = "close_only";
-        setPolicy(policy, userId);
+        // Persist to the run's TARGET account (same reason as the drawdown breaker above).
+        setPolicy(policy, userId, targetAccountId);
         audit("policy_violation_vol_panic", { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only" }, userId);
         await sendNotification(
           { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason } },
@@ -471,6 +507,7 @@ export async function runStrategyOnce(
     }
 
     let ragContext = "";
+    let socraticRagAttributions: SocraticRagAttribution[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -480,17 +517,19 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
         const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
-        const contexts = await Promise.all(topSymbols.map(sym =>
-          // Strategy RAG is intentionally filing-heavy; the docType filter is casing-tolerant (buildExtraFilters)
-          // and a relevance floor (env VECTOR_MIN_SCORE, default 0.30) drops weak chunks. Both were built but
-          // never wired through this call site before. Advisory context only — not a money-path gate.
-          retrieveContextDetailed(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId, {
-            docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
-            minScore: defaultMinScore(),
-            connectedAccountId: policy.connectedAccountId
+        const contexts = await Promise.all(
+          topSymbols.map(async (sym) => {
+            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
+              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              minScore: defaultMinScore(),
+              connectedAccountId: policy.connectedAccountId
+            });
+            return { sym, query, chunks };
           })
-        ));
-        const validContexts = contexts.flat().filter(Boolean);
+        );
+        const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
+        socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         if (validContexts.length > 0) {
           ragContext = validContexts.map(c => c.text).join("\n\n");
         }
@@ -578,7 +617,8 @@ export async function runStrategyOnce(
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
-        learnedContext
+        learnedContext,
+        drawdownAdvisory
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
@@ -607,7 +647,8 @@ export async function runStrategyOnce(
       })
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
-        return enrichOpeningProposal(sized, policy, marketScan);
+        const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
+        return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -619,7 +660,7 @@ export async function runStrategyOnce(
     // Inline Bear review failed → FAIL CLOSED: every un-critiqued opening is routed to human
     // review. In "propose" mode all proposals already require approval; in "decide" mode this is
     // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
-    // trades. (test/local simulation still auto-fills, matching the existing requiresHumanReview.)
+    // trades.
     if (bearReviewUnavailable) {
       // Route only OPENING proposals (buy/short) to human review. Risk-reducing exits (sell/cover)
       // must still flow through to placement even when the Red Team is down — blocking a de-risking
@@ -773,6 +814,46 @@ export async function runStrategyOnce(
     // full-set warning above remains here.)
 
     const results: StrategyResult["proposals"] = [];
+    const recordSocraticDecision = (input: {
+      proposalId: string;
+      proposal: TradeProposal;
+      decision: PolicyDecision;
+      status: string;
+      review?: ReviewedOrder;
+      overrideResolution?: SocraticOverrideResolution;
+    }) => {
+      try {
+        const now = new Date().toISOString();
+        const caseFile = {
+          ...buildSocraticDecisionCase({
+            userId,
+            connectedAccountId,
+            runId,
+            proposalId: input.proposalId,
+            accountNumber: policy.accountNumber,
+            proposal: input.proposal,
+            status: socraticStatusFromProposalStatus(input.status),
+            authority: policy.strategyAuthority,
+            decision: input.decision,
+            review: input.review,
+            marketScan,
+            ragAttributions: socraticRagAttributions,
+            overrideResolution: input.overrideResolution
+          }),
+          createdAt: now,
+          updatedAt: now
+        } satisfies SocraticDecisionCase;
+        upsertSocraticDecisionCase(caseFile);
+        void indexSocraticDecisionMemory(caseFile).catch((err) => {
+          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+        });
+        const framework = frameworkProposalFromDecision(caseFile);
+        if (framework) createSocraticFrameworkProposal(framework);
+      } catch (err) {
+        console.warn("[strategy] Socratic decision recording failed:", err instanceof Error ? err.message : String(err));
+      }
+    };
+
     for (const proposal of proposals) {
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
@@ -780,6 +861,7 @@ export async function runStrategyOnce(
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -788,7 +870,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -797,7 +879,7 @@ export async function runStrategyOnce(
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const isLiveExecution = executionMode === "broker/live";
-      const decision = evaluateTradeProposal(normalizedProposal, {
+      let decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
         positions: workingPositions,
@@ -820,12 +902,51 @@ export async function runStrategyOnce(
       });
 
       // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
-      // audited at the ACTUAL execution point (auditWashSaleProceed at the paper-fill and live-placed
-      // paths below), NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
+      // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
+      // NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
       // sell-to-fund-propose) an approved gate result only becomes a PENDING card — no purchase has
       // happened yet — so logging "the wash sale was disregarded / the deduction was forfeited" here
       // would be false if the owner rejects or lets it expire. When such a card is later approved,
       // executeProposal emits the same trail (gated on decision.approved) as the order actually places.
+      const overrideResolution = resolveSocraticOverride({
+        proposal: normalizedProposal,
+        policy,
+        portfolio: workingPortfolio,
+        estimatedNotional: review.estimatedNotional,
+        decision
+      });
+      decision = overrideResolution.decision;
+      if (overrideResolution.applied) {
+        audit(
+          "socratic_override_applied",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            thesis: normalizedProposal.autonomyOverride?.thesis,
+            routeToHuman: overrideResolution.routeToHuman,
+            mode: policy.socraticOverrideMode
+          },
+          userId,
+          connectedAccountId
+        );
+        if (overrideResolution.routeToHuman) requiresHumanReview.add(proposal);
+      } else if (overrideResolution.requested) {
+        audit(
+          "socratic_override_refused",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            hardReasons: overrideResolution.hardReasons,
+            thesis: normalizedProposal.autonomyOverride?.thesis
+          },
+          userId,
+          connectedAccountId
+        );
+      }
 
       if (!decision.approved) {
         // ── Escalation framework ─────────────────────────────────────────────────────────────
@@ -845,6 +966,7 @@ export async function runStrategyOnce(
             escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
           };
           insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
           audit(
             "proposal_escalated",
             {
@@ -873,13 +995,14 @@ export async function runStrategyOnce(
           );
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
-          autoRevertOnCapBreach(decision.reasons, policy, userId);
+          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
 
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         await sendNotification(
           {
             type: "block",
@@ -888,7 +1011,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
         // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
@@ -912,42 +1035,41 @@ export async function runStrategyOnce(
         continue;
       }
 
-      if (!executionState.usesLocalSimulation) {
-        const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
-        if (heldExit) {
-          const heldReason = brokerHeldExitBlockReason(heldExit);
-          const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-          const proposalId = crypto.randomUUID();
-          insertProposal({
-            userId,
-            executionMode,
-            id: proposalId,
-            runId,
-            accountNumber: policy.accountNumber,
-            proposal: normalizedProposal,
-            decision: heldDecision,
-            review,
-            estimatedNotional: review.estimatedNotional,
-            status: "blocked",
-            promptVersion: STRATEGY_PROMPT_VERSION
-          });
-          audit(
-            "proposal_blocked_broker_held_exit",
-            { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
-            userId,
-            connectedAccountId
-          );
-          await sendNotification(
-            {
-              type: "block",
-              title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
-              payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
-            },
-            { policy, userId }
-          );
-          results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
-          continue;
-        }
+      const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
+      if (heldExit) {
+        const heldReason = brokerHeldExitBlockReason(heldExit);
+        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+        const proposalId = crypto.randomUUID();
+        insertProposal({
+          userId,
+          executionMode,
+          id: proposalId,
+          runId,
+          accountNumber: policy.accountNumber,
+          proposal: normalizedProposal,
+          decision: heldDecision,
+          review,
+          estimatedNotional: review.estimatedNotional,
+          status: "blocked",
+          promptVersion: STRATEGY_PROMPT_VERSION
+        });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: heldDecision, status: "blocked", review, overrideResolution });
+        audit(
+          "proposal_blocked_broker_held_exit",
+          { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
+          userId,
+          connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "block",
+            title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
+            payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
+          },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        continue;
       }
 
       // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
@@ -956,6 +1078,7 @@ export async function runStrategyOnce(
       if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -967,6 +1090,7 @@ export async function runStrategyOnce(
       if (policy.strategyAuthority === "propose") {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -975,40 +1099,12 @@ export async function runStrategyOnce(
         continue;
       }
 
-      if (executionState.usesLocalSimulation) {
-        const proposalId = crypto.randomUUID();
-        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
-        const fill = recordFillFromProposal({
-          userId,
-          accountNumber: policy.accountNumber,
-          proposalId,
-          runId,
-          source: "paper",
-          executionMode,
-          proposal: normalizedProposal,
-          review,
-          marketScan,
-          status: "filled"
-        });
-        // Wash-sale proceed trail at the actual (simulated) fill — see auditWashSaleProceed.
-        auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
-        await sendNotification(
-          {
-            type: "fill",
-            title: `${normalizedProposal.symbol} Test ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
-            payload: { runId, proposalId, fill }
-          },
-          { policy, userId }
-        );
-        results.push({ proposal: normalizedProposal, status: "paper", reasons: [] });
-        continue;
-      }
-
       // Fail CLOSED: a high-conviction trade whose REQUIRED Red Team review could not run is
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -1018,16 +1114,12 @@ export async function runStrategyOnce(
       }
 
       // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
-      // is placed. No-op in Test/paper mode (usesLocalSimulation → returns immediately, and the
-      // simulated path already `continue`d above); on the broker/live path it throws unless the run
-      // is genuinely out of paper mode AND live trading is explicitly enabled (ALLOW_LIVE_TRADING).
-      // This code path can also be reached for broker/paper (submitsBrokerOrders, real-capital-free),
-      // where mode !== "broker/live" so the guard is a no-op. It NEVER places or enables a trade.
+      // is placed. No-op on the broker/paper path (submitsBrokerOrders, real-capital-free); on the
+      // broker/live path it throws unless live trading is explicitly enabled (ALLOW_LIVE_TRADING). It
+      // NEVER places or enables a trade.
       try {
         assertLivePreflight({
-          mode: executionState.mode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
-          paperMode: policy.paperMode,
+          mode: executionMode,
           symbol: normalizedProposal.symbol,
           side: normalizedProposal.side
         });
@@ -1038,6 +1130,7 @@ export async function runStrategyOnce(
         // leave an `approved: true` row in the decision/audit ledger.
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
         insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
         audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
@@ -1078,6 +1171,7 @@ export async function runStrategyOnce(
         // The broker may or may not have accepted the order. Keep the durable intent row and
         // flag it loudly for reconciliation rather than aborting the whole run.
         updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
@@ -1096,6 +1190,14 @@ export async function runStrategyOnce(
       if (isRejectedOrCanceledState(execution.state)) {
         const message = `Broker declined the order (state: ${execution.state}).`;
         updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({
+          proposalId,
+          proposal: normalizedProposal,
+          decision: { ...decision, approved: false, reasons: [...decision.reasons, message] },
+          status: "rejected_by_broker",
+          review,
+          overrideResolution
+        });
         audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
@@ -1106,6 +1208,7 @@ export async function runStrategyOnce(
       }
 
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
+      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
       // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
       auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const fill = recordFillFromProposal({
@@ -1177,15 +1280,12 @@ export async function runStrategyOnce(
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
-    const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
-    const tradeCount = placed + paperCount + proposed;
-    const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
+    const tradeCount = placed + proposed;
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
-      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
+      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
-      paperCount > 0 ? `Test: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
@@ -1201,33 +1301,15 @@ export async function runStrategyOnce(
     // WHICH account's run this analyzed (#8).
     audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
     finishStrategyRun(runId, "completed", summary, userId);
-    if (!executionState.usesLocalSimulation) {
-      recordPortfolioSnapshot({
-        userId,
-        runId,
-        accountNumber: policy.accountNumber,
-        source: learningSource,
-        executionMode,
-        portfolio,
-        positions
-      });
-    } else {
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: policy.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices,
-        userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId,
-        accountNumber: policy.accountNumber,
-        source: "paper",
-        executionMode,
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-    }
+    recordPortfolioSnapshot({
+      userId,
+      runId,
+      accountNumber: policy.accountNumber,
+      source: learningSource,
+      executionMode,
+      portfolio,
+      positions
+    });
     result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
     // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
@@ -1837,10 +1919,14 @@ function auditWashSaleProceed(
   );
 }
 
-function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
+function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
-  setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // Scope the demotion save to the run's target account. Omitting it resolves the ACTIVE account, so a
+  // scheduler run of a non-active account could demote — and, because the drawdown breaker may have
+  // already mutated this same policy object's systemState to "halted", HALT — the wrong account. The
+  // manual executeProposal path passes no id because it already operates on the active account.
+  setPolicy({ ...policy, strategyAuthority: "propose" }, userId, connectedAccountId);
   // The demotion must bind the REST of this run, not just the next one: callers keep using this
   // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
   // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a
@@ -1913,9 +1999,12 @@ export async function executeProposal(
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
-  const executionMode = executionState.mode;
-  const executionSource = fillSourceForExecutionMode(executionMode);
   if (!policy.accountNumber) throw new Error("No account selected.");
+  // An account is an account: with none connected there is no broker to trade through, and there is
+  // no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+  if (!executionState.mode) throw new Error("No connected account. Connect a broker account before approving trades.");
+  const executionMode: ExecutionMode = executionState.mode;
+  const executionSource = fillSourceForExecutionMode(executionMode);
   if (policy.systemState === "halted") throw new Error("System is halted.");
 
   const row = getProposal(proposalId, userId);
@@ -1968,14 +2057,11 @@ export async function executeProposal(
       await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
     );
 
-    // In Test mode, evaluate the approval against the standalone local account.
+    // An account is an account: the approval is always evaluated against the real broker-reported
+    // portfolio and positions for the active account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(approvalScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
-    if (!executionState.usesLocalSimulation) {
-      await notifyStaleLimitOrders({ userId, policy, orders });
-    }
+    const account = { portfolio, positions };
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
@@ -1997,7 +2083,7 @@ export async function executeProposal(
     const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-    const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
+    const isLiveExecution = executionState.environment === "live";
     const decision = evaluateTradeProposal(proposal, {
       policy,
       portfolio: account.portfolio,
@@ -2160,86 +2246,34 @@ export async function executeProposal(
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
 
-    if (!executionState.usesLocalSimulation) {
-      const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
-      if (heldExit) {
-        const heldReason = brokerHeldExitBlockReason(heldExit);
-        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
-        updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
-        audit(
-          "proposal_approved",
-          { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
-          userId
-        );
-        await sendNotification(
-          {
-            type: "block",
-            title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
-            payload: { proposalId, decision: heldDecision, review, proposal }
-          },
-          { policy, userId }
-        );
-        return { status: "blocked", reasons: heldDecision.reasons };
-      }
-    }
-
-    if (executionState.usesLocalSimulation) {
-      // Atomic claim: only the caller that flips this proposal proposed -> paper records the
-      // fill, so two concurrent approvals can't double-book the same Test trade (defense in depth
-      // alongside the per-user run-lock held for this critical section).
-      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional, executionMode })) {
-        const current = getProposal(proposalId, userId)?.status ?? "removed";
-        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-      }
-      const fill = recordFillFromProposal({
-        userId,
-        accountNumber: row.accountNumber,
-        proposalId,
-        runId: row.runId,
-        source: "paper",
-        executionMode,
-        proposal,
-        review,
-        marketScan: approvalScan,
-        status: "filled"
-      });
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: row.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
+    const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
+    if (heldExit) {
+      const heldReason = brokerHeldExitBlockReason(heldExit);
+      const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
+      audit(
+        "proposal_approved",
+        { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
         userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId: row.runId,
-        accountNumber: row.accountNumber,
-        source: "paper",
-        executionMode,
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
+      );
       await sendNotification(
         {
-          type: "fill",
-          title: `${proposal.symbol} Test ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
-          payload: { proposalId, fill }
+          type: "block",
+          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+          payload: { proposalId, decision: heldDecision, review, proposal }
         },
         { policy, userId }
       );
-      return { status: "paper" };
+      return { status: "blocked", reasons: heldDecision.reasons };
     }
 
     // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
-    // loop). No-op in paper/test (that branch already returned above); on broker/live it refuses
-    // unless the run is genuinely out of paper mode AND live trading is explicitly enabled
-    // (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending proposal
-    // must clear the same live invariant as an autonomous one before reaching the broker.
+    // loop). No-op on broker/paper; on broker/live it refuses unless live trading is explicitly
+    // enabled (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending
+    // proposal must clear the same live invariant as an autonomous one before reaching the broker.
     try {
       assertLivePreflight({
-        mode: executionState.mode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        paperMode: policy.paperMode,
+        mode: executionMode,
         symbol: proposal.symbol,
         side: proposal.side
       });
@@ -2400,6 +2434,7 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -2526,7 +2561,7 @@ async function proposeTrades(input: {
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
-  const executionMode = llmExecutionMode(executionState);
+  const executionMode = llmExecutionMode(executionState) ?? "no-account";
   const executionModeClarification = llmModeClarification(executionState);
   // SHORT_SELLING: expose short/cover sides to the model ONLY when shorting is enabled in policy AND
   // the connected account actually supports it (capability-gated). Otherwise the schema is long-only
@@ -2604,6 +2639,23 @@ async function proposeTrades(input: {
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
+    ...(input.drawdownAdvisory
+      ? {
+          drawdownAdvisory: {
+            note: "ADVISORY, not a block: this account has breached its drawdown circuit-breaker threshold. YOU decide whether to reduce risk, tighten sizing, favor exits, or proceed on conviction — every choice is logged and coachable. The only hard rule is the account boundary.",
+            drawdownPctFromHighWaterMark: Number(input.drawdownAdvisory.drawdownPct.toFixed(2)),
+            equity: input.drawdownAdvisory.equity,
+            highWaterMark: input.drawdownAdvisory.highWaterMark,
+            detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
+    socraticAuthority: {
+      overrideMode: input.policy.socraticOverrideMode ?? "off",
+      overrideMaxPctOfNav: input.policy.socraticOverrideMaxPctOfNav,
+      note:
+        "Use autonomyOverride only for evidence-backed conflicts with owner preference gates. Do not use it for broker/account/integrity constraints."
+    },
     macroeconomicData,
     ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
     ...(marketInternals ? { marketInternals } : {}),
@@ -2630,6 +2682,24 @@ async function proposeTrades(input: {
     audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
   };
 
+  const autonomyOverrideSchema = {
+    anyOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["requested", "thesis", "preferenceConflicts", "invalidation", "cashDeploymentPct"],
+        properties: {
+          requested: { type: "boolean" },
+          thesis: { type: "string" },
+          preferenceConflicts: { type: "array", items: { type: "string" } },
+          invalidation: { type: ["string", "null"] },
+          cashDeploymentPct: { type: ["number", "null"] }
+        }
+      },
+      { type: "null" }
+    ]
+  };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -2653,7 +2723,8 @@ async function proposeTrades(input: {
             "marketHours",
             "rationale",
             "tradeThesisTag",
-            "confidenceScore"
+            "confidenceScore",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
@@ -2669,7 +2740,8 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" }
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
@@ -2752,8 +2824,6 @@ async function proposeTrades(input: {
           transport,
           maxProposals,
           executionMode,
-          internalPaperMode: input.policy.paperMode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
           currentMarketRegime,
           promptVersion: STRATEGY_PROMPT_VERSION
         },
@@ -2910,7 +2980,8 @@ async function proposeTrades(input: {
             "timeInForce",
             "marketHours",
             "rationale",
-            "tradeThesisTag"
+            "tradeThesisTag",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
@@ -2925,7 +2996,8 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { enum: THESIS_PLAYBOOK }
+            tradeThesisTag: { enum: THESIS_PLAYBOOK },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
@@ -2944,6 +3016,7 @@ async function proposeTrades(input: {
     currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
+    socraticAuthority: userContent.socraticAuthority,
     portfolio: input.portfolio,
     positions: input.positions,
     ...(sectorComposition ? { sectorComposition } : {}),
@@ -3067,8 +3140,6 @@ async function proposeTrades(input: {
           transport: bearTransport,
           reviewedProposalCount: bullProposals.length,
           executionMode,
-          internalPaperMode: input.policy.paperMode,
-          usesLocalSimulation: executionState.usesLocalSimulation,
           currentMarketRegime,
           promptVersion: STRATEGY_PROMPT_VERSION
         },
@@ -3295,7 +3366,21 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours",
       tradeThesisTag: proposal.tradeThesisTag ?? undefined,
-      entryMarketRegime: proposal.entryMarketRegime ?? undefined
+      entryMarketRegime: proposal.entryMarketRegime ?? undefined,
+      autonomyOverride:
+        proposal.autonomyOverride?.requested === true
+          ? {
+              requested: true,
+              thesis: String(proposal.autonomyOverride.thesis ?? "").slice(0, 2000),
+              preferenceConflicts: Array.isArray(proposal.autonomyOverride.preferenceConflicts)
+                ? proposal.autonomyOverride.preferenceConflicts.map(String).slice(0, 8)
+                : [],
+              ...(proposal.autonomyOverride.invalidation ? { invalidation: String(proposal.autonomyOverride.invalidation).slice(0, 1000) } : {}),
+              ...(typeof proposal.autonomyOverride.cashDeploymentPct === "number" && Number.isFinite(proposal.autonomyOverride.cashDeploymentPct)
+                ? { cashDeploymentPct: Math.max(0, Math.min(100, proposal.autonomyOverride.cashDeploymentPct)) }
+                : {})
+            }
+          : undefined
     }));
 }
 

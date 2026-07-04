@@ -309,91 +309,6 @@ export function getPerformanceSummary(
   };
 }
 
-// Standalone paper account: starts from a fixed paper cash balance (independent of the
-// real brokerage account), applies all paper fills, and marks open positions to the
-// supplied live prices so unrealized P&L and equity reflect the real market.
-export function getPaperPortfolioProjection(input: {
-  accountNumber: string;
-  startingCash: number;
-  currentPrices?: Record<string, number>;
-  userId?: string;
-  /** Optional pre-fetched paper fills (unfiltered) — defaults to fetching internally when omitted. */
-  paperFills?: FillEvent[];
-}): { portfolio: Portfolio; positions: EquityPosition[] } {
-  const paperFills = (input.paperFills ?? listFillEvents(input.accountNumber, "paper", 500, input.userId ?? "local")).filter(isAccountingFill);
-  const prices = input.currentPrices ?? {};
-  const positions = new Map<string, EquityPosition>();
-  let cash = input.startingCash;
-
-  for (const fill of paperFills.sort((a, b) => a.filledAt.localeCompare(b.filledAt))) {
-    if (fill.quantity <= 0 || fill.price <= 0) continue;
-    const symbol = normalizeSymbol(fill.symbol);
-    const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
-    const q = current.quantity;
-    if (fill.side === "buy" || fill.side === "short") {
-      // Opening side: a `buy` increases quantity (+), a `short` decreases it (-). When the fill
-      // lands on an OPPOSITE-side position it closes that position first (and may flip past zero);
-      // it must NOT blend opposite-side cost into averageCost — averageCost is only re-weighted on
-      // a same-side increase, left intact on a partial opposite-side close, and re-based to the fill
-      // price on a flip. (T5: opposite-side averaging guard.)
-      const isShort = fill.side === "short";
-      const dir = isShort ? -1 : 1;
-      const fillCost = fill.quantity * fill.price;
-      const nextQuantity = q + dir * fill.quantity;
-      const nextAbsQuantity = Math.abs(nextQuantity);
-      const sameSide = q === 0 || Math.sign(q) === dir;
-      let nextAverageCost: number;
-      if (sameSide) {
-        const currentCost = current.averageCost * Math.abs(q);
-        nextAverageCost = nextAbsQuantity > 0.000001 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
-      } else if (nextAbsQuantity <= 0.000001) {
-        nextAverageCost = 0; // fully closed the opposite-side position
-      } else if (Math.sign(nextQuantity) === Math.sign(q)) {
-        nextAverageCost = current.averageCost; // partial close of the opposite side; remaining basis unchanged
-      } else {
-        nextAverageCost = fill.price; // flipped: the excess opens a fresh position at the fill price
-      }
-      if (nextAbsQuantity <= 0.000001) positions.delete(symbol);
-      else positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
-      cash += isShort ? fillCost : -fillCost;
-    } else {
-      // Closing side: a `sell` may only reduce a LONG, a `cover` only a SHORT. A wrong-sign or flat
-      // close (sell with no long / cover with no short) matches nothing and is skipped — never deepen
-      // the opposite-side position. (T5: wrong-sign/flat close guard.)
-      const isCover = fill.side === "cover";
-      const sameSide = isCover ? q < 0 : q > 0;
-      if (!sameSide) continue;
-      const matchedQuantity = Math.min(Math.abs(q), fill.quantity);
-      const nextQuantity = q + (isCover ? matchedQuantity : -matchedQuantity);
-      if (Math.abs(nextQuantity) <= 0.000001) positions.delete(symbol);
-      else positions.set(symbol, { ...current, quantity: nextQuantity });
-      cash += isCover ? -matchedQuantity * fill.price : matchedQuantity * fill.price;
-    }
-  }
-
-  // Mark open positions to live prices (fall back to average cost when a price is missing).
-  const projectedPositions = Array.from(positions.values())
-    .filter((position) => Math.abs(position.quantity) > 0.000001)
-    .map((position) => {
-      const mark = prices[normalizeSymbol(position.symbol)] ?? position.averageCost;
-      return { ...position, marketValue: position.quantity * mark };
-    });
-  const equityMarketValue = projectedPositions.reduce((sum, position) => sum + position.marketValue, 0);
-  const totalMarketValue = cash + equityMarketValue;
-
-  return {
-    positions: projectedPositions,
-    portfolio: {
-      accountNumber: input.accountNumber,
-      cash,
-      buyingPower: Math.max(0, cash),
-      equityMarketValue,
-      optionMarketValue: 0,
-      totalMarketValue
-    }
-  };
-}
-
 export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, number> = {}): PnlResult {
   const lots = new Map<
     string,
@@ -1146,9 +1061,13 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
 function isAccountingFill(fill: FillEvent): boolean {
   if (fill.status === "filled") return true;
   if (fill.source !== "paper") return false;
-  // Legacy/local Test rows used source=paper before executionMode existed. They have no broker
-  // order id and were already simulated fills. Broker-paper rows must wait for a filled broker state.
-  return !fill.brokerOrderId && (fill.executionMode === undefined || fill.executionMode === "test/local");
+  // Legacy/local Test rows used source=paper before executionMode existed, or carried the now-removed
+  // "test/local" executionMode value (the local-simulation execution path was deleted; the string can
+  // still appear on old persisted rows). They have no broker order id and were already simulated fills.
+  // Broker-paper rows must wait for a filled broker state. Cast: "test/local" predates the ExecutionMode
+  // type narrowing to "broker/paper" | "broker/live", so it's compared as a plain string here.
+  const legacyMode = fill.executionMode as string | undefined;
+  return !fill.brokerOrderId && (legacyMode === undefined || legacyMode === "test/local");
 }
 
 function syntheticPaperCurve(fills: FillEvent[]) {

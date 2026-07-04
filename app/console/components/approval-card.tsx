@@ -3,7 +3,7 @@
 /** Receipt-style approval cards. Each pending proposal renders as a decision
  *  receipt: what/how much, the thesis + confidence, the adversarial (red team)
  *  verdict, what has happened since it was proposed, the policy-gate status,
- *  and an honest three-outcomes block. Approvals on LIVE money go through the
+ *  and an honest three-outcomes block. Brokerage approvals go through the
  *  server's typed-confirmation contract (LIVE_CONFIRMATION_REQUIRED). */
 
 import { useMemo, useState } from "react";
@@ -24,7 +24,7 @@ import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
 import { ModelBadge } from "../ui/provider-logo";
 import { Sheet } from "../ui/sheet";
-import { TickerLogo } from "../ui/ticker-logo";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
 
@@ -120,8 +120,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
         <span className={cx("inline-flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold", isExit(p.side) ? "text-[color:var(--con-warn)]" : undefined)}>
           {SIDE_LABEL[p.side] ?? p.side.toUpperCase()}
-          <TickerLogo symbol={p.symbol} size="sm" />
-          {p.symbol}
+          <SymbolButton symbol={p.symbol} logoSize="sm" className="text-inherit" />
         </span>
         <span className="con-num cursor-default text-[length:var(--con-fs-md)] font-semibold" title="Proposed order size (approximate notional or share count).">
           {sizeText}
@@ -207,9 +206,11 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         {/* Since proposed + revalidation */}
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
-            <div className="con-card-title mb-1">Since proposed</div>
+            <div className="con-card-title mb-1" title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. Positive means the idea has moved in the proposed direction.">
+              Since proposed
+            </div>
             {typeof pending.performanceSinceProposalPct === "number" ? (
-              <p>
+              <p title="Raw proposal return since the decision-time reference price. It is not adjusted for SPY; benchmark-relative learning is handled separately in Results.">
                 <SignedText value={pending.performanceSinceProposalPct}>{fmtPct(pending.performanceSinceProposalPct, 2, true)}</SignedText>{" "}
                 <span className="text-[color:var(--con-faint)]">
                   in the proposed direction
@@ -275,7 +276,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {typeof p.bracketTakeProfit === "number" ? `take-profit ${fmtMoney(p.bracketTakeProfit)}` : ""}.
               </>
             ) : null}
-            {live ? " This spends real money and requires typing the approval phrase." : ""}
+            {live ? " This uses the broker-account approval phrase before anything is placed." : ""}
           </p>
           <p className="mt-1">
             <strong>If you reject:</strong> nothing is traded. The idea stays on the record and its counterfactual return
@@ -299,13 +300,12 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         <Btn variant="ghost" disabled={busy !== null} onClick={() => void reject()}>
           {busy === "reject" ? "Rejecting…" : "Reject"}
         </Btn>
-        {/* Danger is reserved for reality/STOP/destructive confirms — a LIVE approval
-            is a neutral primary action wearing the LIVE word, and the typed ritual
-            in the sheet is the real friction. */}
+        {/* Approving a broker-connected order stays visually primary; the typed
+            ritual in the sheet is the real friction. */}
         <Btn variant={live ? "primary" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
           {busy === "approve" ? "Approving…" : live ? (
             <>
-              Approve with real money… <LiveTag />
+              Approve broker order… <LiveTag />
             </>
           ) : (
             "Approve"
@@ -388,9 +388,9 @@ function LiveApproveSheet({
   };
 
   return (
-    <Sheet open={open} onClose={onClose} title="Real-money approval" tone="live">
-      <div className="mb-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3 text-[length:var(--con-fs-sm)]">
-        <div className="font-bold text-[color:var(--con-live)]">LIVE · real money</div>
+    <Sheet open={open} onClose={onClose} title="Broker order approval">
+      <div className="mb-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+        <div className="font-bold">Brokerage account</div>
         <p className="con-num mt-1">
           {SIDE_LABEL[pending.proposal.side] ?? pending.proposal.side.toUpperCase()} {pending.proposal.symbol} — estimated{" "}
           <strong>{fmtMoney(notional)}</strong>
@@ -437,7 +437,7 @@ function LiveApproveSheet({
         <Btn variant="primary" disabled={!matches || busy} onClick={() => void submit()}>
           {busy ? "Placing…" : (
             <>
-              Place real order <LiveTag />
+              Place broker order <LiveTag />
             </>
           )}
         </Btn>

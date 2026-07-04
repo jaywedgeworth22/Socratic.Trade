@@ -40,8 +40,6 @@ export interface StrategyDecisionLike {
 
 export function buildSymbolMetaBySymbol(input: {
   positions?: EquityPosition[];
-  livePositions?: EquityPosition[];
-  paperPositions?: EquityPosition[];
   orders?: EquityOrder[];
   pendingProposals?: PendingProposal[];
   latestStrategyRun?: StrategyDecisionLike;
@@ -57,8 +55,6 @@ export function buildSymbolMetaBySymbol(input: {
   };
 
   for (const position of input.positions ?? []) ensure(position.symbol);
-  for (const position of input.livePositions ?? []) ensure(position.symbol);
-  for (const position of input.paperPositions ?? []) ensure(position.symbol);
   for (const order of input.orders ?? []) ensure(order.symbol);
   for (const pending of input.pendingProposals ?? []) ensure(pending.proposal.symbol);
 
@@ -162,7 +158,9 @@ function formatAuditEvent(
           : `${titlePrefix} ${capitalize(result)}`;
     const detail =
       joinDetail([
-        result === "paper" ? "Test mode" : undefined,
+        // "paper" here is a legacy result value from before the local-simulation execution path was
+        // removed — no code path writes it anymore, but old audit rows can still carry it.
+        result === "paper" ? "Local simulation (legacy)" : undefined,
         result === "placed" && stringValue(payload.fillStatus) === "pending_reconciliation" ? "Broker accepted order; pending execution" : undefined,
         result === "placed" && stringValue(payload.fillStatus) !== "pending_reconciliation" ? "Order placed" : undefined,
         result === "placed" && stringValue(payload.brokerState) ? `Broker state ${readableBrokerState(stringValue(payload.brokerState))}` : undefined,
@@ -817,7 +815,7 @@ export function buildUnifiedFeed(input: {
       id: fill.id,
       createdAt: fill.filledAt,
       type: "fill",
-      title: `${fill.source === "paper" ? "Test " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
+      title: `${fill.source === "paper" ? "Paper " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
       detail: fill.status === "pending_reconciliation"
         ? `${formattedQty} shares reviewed @ ${trimCurrency(fill.price)} · broker order pending execution`
         : `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${fill.status}`,
@@ -967,24 +965,16 @@ export function buildUnifiedFeed(input: {
         status = "pending";
       }
 
-      const isPaper = events.some(ev => ev.title.startsWith("Test ") || ev.title.startsWith("Paper ") || ev.title.includes("Test") || ev.title.includes("Paper") || (ev.type === "fill" && (ev.title.startsWith("Test") || ev.title.startsWith("Paper"))));
-
-      if (isPaper) {
-        for (const ev of events) {
-          if (ev.title.startsWith("Paper ")) {
-            ev.title = `Test ${ev.title.slice("Paper ".length)}`;
-          }
-          const matchesAction = ev.title.match(/^(buy|sell|bought|sold|buy:|sell:)/i);
-          if (matchesAction && !ev.title.startsWith("Test ") && !ev.title.startsWith("Paper ")) {
-            ev.title = `Test ${ev.title}`;
-          }
-        }
-      }
+      // An account is an account: a fill's own `source` ("paper"/"live", stamped at the FillEvent
+      // level — see "Process Fill Events" above) is the sole signal for whether this group is a
+      // broker-paper trade. It is never rewritten to "Test" — that execution mode no longer exists,
+      // and broker-paper is not "the same as Test", it is a real broker-hosted sandbox account.
+      const isPaper = events.some(ev => ev.type === "fill" && ev.title.startsWith("Paper "));
 
       // Group title mirrors the broker-style fill/order title casing (uppercase side),
       // distinct from the title-case used by individual notification/audit sub-events.
       const displaySide = side === "buy" ? "BUY" : side === "sell" ? "SELL" : "Trade";
-      title = `${isPaper ? "Test " : ""}${displaySide} ${symbol}`;
+      title = `${isPaper ? "Paper " : ""}${displaySide} ${symbol}`;
 
       if (status === "filled") {
 

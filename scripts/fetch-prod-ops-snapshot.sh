@@ -4,7 +4,7 @@
 # The same token must be set on trading-live (see docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md).
 set -euo pipefail
 
-HOST="${OPS_SNAPSHOT_HOST:-https://trading.jays.services}"
+HOST="${OPS_SNAPSHOT_HOST:-https://socratictrade.com}"
 RUNS="${OPS_SNAPSHOT_RUNS:-20}"
 AUDIT="${OPS_SNAPSHOT_AUDIT:-40}"
 OUT="${OPS_SNAPSHOT_OUT:-}"

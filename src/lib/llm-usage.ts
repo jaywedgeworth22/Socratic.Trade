@@ -55,21 +55,23 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "claude-sonnet-4-6": [3, 15],
   "claude-haiku-4-5": [1, 5],
   // Gemini (lite listed first so the prefix match prefers it over the base flash key).
-  "gemini-3.1-flash-lite": [0.1, 0.4],
-  "gemini-3.5-flash": [0.3, 2.5],
+  "gemini-3.1-flash-lite": [0.25, 1.5],
+  "gemini-3.1-pro-preview": [2, 12],
+  "gemini-3.5-flash": [1.5, 9],
   "gemini-2.5-flash-lite": [0.1, 0.4],
   "gemini-2.5-flash": [0.3, 2.5],
   "gemini-2.5-pro": [1.25, 10],
   "mistral-large-2512": [2, 6],
-  "mistral-medium-3-5": [0.4, 2],
+  "mistral-medium-3-5": [1.5, 7.5],
+  "mistral-small-2603": [0.15, 0.6],
   "mistral-small-2506": [0.1, 0.3],
   "mistral-large": [2, 6],
   "mistral-medium": [0.4, 2],
   "mistral-small": [0.1, 0.3],
-  "deepseek-v4-flash": [0.28, 1.1],
-  "deepseek-v4-pro": [0.55, 2.19],
-  "deepseek-chat": [0.28, 1.1],
-  "deepseek-reasoner": [0.55, 2.19]
+  "deepseek-v4-flash": [0.14, 0.28],
+  "deepseek-v4-pro": [0.435, 0.87],
+  "deepseek-chat": [0.14, 0.28],
+  "deepseek-reasoner": [0.14, 0.28]
 };
 
 function priceForModel(model: string | undefined): [number, number] | undefined {
@@ -168,12 +170,16 @@ export interface LlmUsageRow {
  * rows where a NON-`local` tenant spent on the operator key — the figure the operator most cares
  * about while the failover is enabled.
  */
-export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean } = {}): LlmUsageRow[] {
+export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean; userId?: string } = {}): LlmUsageRow[] {
   const where: string[] = [];
   const params: unknown[] = [];
   if (opts.sinceIso) {
     where.push("created_at >= ?");
     params.push(opts.sinceIso);
+  }
+  if (opts.userId) {
+    where.push("user_id = ?");
+    params.push(opts.userId);
   }
   if (opts.operatorFundedOnly) {
     where.push("key_source = 'operator'");
@@ -234,14 +240,14 @@ export function describeUsageKey(row: { keyRef: string | null; userId: string; p
   // The user's own stored key (for `local` this is the migrated operator key).
   const own = getUserApiKey(row.userId, row.provider)?.apiKey;
   if (own && keyFingerprint(own) === row.keyRef) {
-    const label = row.userId === LOCAL_USER ? `operator (${row.provider})` : `${row.userId} (${row.provider})`;
+    const label = row.userId === LOCAL_USER ? `primary user (${row.provider})` : `${row.userId} (${row.provider})`;
     return { last4: own.slice(-4), masked: maskApiKey(own), label };
   }
   // The operator's env key (the failover that served a tenant).
   const envVar = apiKeyEnvVarForService(row.provider);
   const envKey = envVar ? process.env[envVar]?.trim() : undefined;
   if (envKey && keyFingerprint(envKey) === row.keyRef) {
-    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `operator env (${row.provider})` };
+    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `server failover (${row.provider})` };
   }
   return undefined;
 }

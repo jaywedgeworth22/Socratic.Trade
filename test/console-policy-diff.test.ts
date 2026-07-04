@@ -82,9 +82,12 @@ describe("console guardrails: extraPatch loosening classification (Codex finding
 
   it("classifies escalating sell-to-fund-buy as looser and de-escalating as tighter", () => {
     const [escalated] = classifyExtraPatch(policy, { sellToFundBuy: "automated" });
+    expect(escalated.label).toBe("Sell to Fund Buys");
     expect(escalated.direction).toBe("looser");
+    expect(escalated.summary).toBe("Off → Automated");
     const [deescalated] = classifyExtraPatch({ ...policy, sellToFundBuy: "automated" }, { sellToFundBuy: "off" });
     expect(deescalated.direction).toBe("tighter");
+    expect(deescalated.summary).toBe("Automated → Off");
   });
 
   it("returns nothing for an absent extraPatch", () => {
@@ -137,6 +140,8 @@ describe("console guardrails: washSaleHandling select classification", () => {
 
   it("is a select field with the three modes ranked block < ask < auto", () => {
     expect(def.kind).toBe("select");
+    expect(def.label).toBe("Taxable-account wash-sale rebuys");
+    expect(def.hint).toContain("Auto (default)");
     expect(def.options?.map((o) => o.value)).toEqual(["block", "ask", "auto"]);
     expect(def.looseRank).toEqual({ block: 0, ask: 1, auto: 2 });
   });
@@ -167,6 +172,8 @@ describe("console guardrails: iraWashSaleHandling select classification", () => 
 
   it("is a select with block < disregard looseness ranking", () => {
     expect(def.kind).toBe("select");
+    expect(def.label).toBe("IRA taxable-loss rebuys");
+    expect(def.hint).toContain("Under Rev. Rul. 2008-5");
     expect(def.options?.map((o) => o.value)).toEqual(["block", "disregard"]);
     expect(def.looseRank).toEqual({ block: 0, disregard: 1 });
   });

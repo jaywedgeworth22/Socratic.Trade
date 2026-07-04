@@ -5,7 +5,9 @@ import {
   withLlmRequestBounds,
   DEFAULT_OPENAI_MODEL,
   interactiveStrategyReasoningEffort,
-  isDisallowedInteractiveStrategyReasoningConfig
+  isDisallowedInteractiveStrategyReasoningConfig,
+  reasoningCapabilityForModel,
+  normalizeReasoningEffortForModel
 } from "../src/lib/llm-request";
 
 describe("llm-request — model resolution", () => {
@@ -31,11 +33,32 @@ describe("llm-request — model resolution", () => {
 
   it("disallows the slowest gpt-5.5 high-reasoning combo for interactive strategy runs", () => {
     expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "high")).toBe(true);
+    expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "xhigh")).toBe(true);
     expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.5", "medium")).toBe(false);
     expect(isDisallowedInteractiveStrategyReasoningConfig("gpt-5.4-mini", "high")).toBe(false);
     expect(interactiveStrategyReasoningEffort("gpt-5.5", "high")).toBe("medium");
+    expect(interactiveStrategyReasoningEffort("gpt-5.5", "xhigh")).toBe("medium");
     expect(interactiveStrategyReasoningEffort("gpt-5.5", "low")).toBe("low");
     expect(interactiveStrategyReasoningEffort("gpt-4.1-mini", "high")).toBeUndefined();
+  });
+
+  it("maps provider-specific reasoning controls by model family", () => {
+    expect(reasoningCapabilityForModel("gpt-5.4-mini")?.options.map((o) => o.value)).toEqual(["low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("claude-fable-5")?.options.map((o) => o.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(reasoningCapabilityForModel("grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("gemini-3.1-pro-preview")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
+    expect(reasoningCapabilityForModel("mistral-small-2603")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    expect(reasoningCapabilityForModel("deepseek-v4-pro")?.options.map((o) => o.value)).toEqual(["none", "high", "max"]);
+  });
+
+  it("normalizes unsupported effort values to the nearest provider-supported setting", () => {
+    expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
+    expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
+    expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("high");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("high");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "xhigh")).toBe("max");
   });
 });
 
@@ -76,6 +99,57 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect("temperature" in resp).toBe(false);
     expect(resp.reasoning).toEqual({ effort: "low" });
     expect(resp.max_output_tokens).toBe(1500 + 2000); // low headroom
+  });
+
+  it("provider reasoning models use their provider-specific wire shapes", () => {
+    const gemini = withLlmRequestBounds({ model: "gemini-2.5-flash" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "gemini-2.5-flash",
+      reasoningEffort: "none"
+    });
+    expect(gemini.reasoning_effort).toBe("none");
+    expect(gemini.max_completion_tokens).toBe(1500);
+
+    const xai = withLlmRequestBounds({ model: "grok-4.3" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "grok-4.3",
+      reasoningEffort: "high"
+    });
+    expect(xai.reasoning_effort).toBe("high");
+
+    const mistral = withLlmRequestBounds({ model: "mistral-large-2512" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "mistral-large-2512",
+      reasoningEffort: "xhigh"
+    });
+    expect(mistral.reasoning_effort).toBe("xhigh");
+    expect(mistral.prompt_mode).toBe("reasoning");
+
+    const deepseek = withLlmRequestBounds({ model: "deepseek-v4-pro" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "deepseek-v4-pro",
+      reasoningEffort: "max"
+    });
+    expect(deepseek.reasoning_effort).toBe("max");
+    expect(deepseek.thinking).toEqual({ type: "enabled" });
+    expect("temperature" in deepseek).toBe(false);
+
+    const deepseekOff = withLlmRequestBounds({ model: "deepseek-v4-flash" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "deepseek-v4-flash",
+      reasoningEffort: "none"
+    });
+    expect(deepseekOff.thinking).toEqual({ type: "disabled" });
+    expect(deepseekOff.temperature).toBe(0);
+
+    const anthropic = withLlmRequestBounds({ model: "claude-opus-4-8" }, "anthropic-messages", {
+      maxOutputTokens: 1500,
+      model: "claude-opus-4-8",
+      reasoningEffort: "max"
+    });
+    expect(anthropic.thinking).toEqual({ type: "adaptive" });
+    expect(anthropic.output_config).toEqual({ effort: "max" });
+    expect("temperature" in anthropic).toBe(false);
   });
 
   it("reasoning models default to medium effort when unspecified", () => {

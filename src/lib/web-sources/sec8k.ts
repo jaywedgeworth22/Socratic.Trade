@@ -20,14 +20,14 @@ import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
 import { extractFilingText } from "./sec-filings";
 
 /**
- * R10 (2026-07-01 RAG backlog): opt-in content_hash dedup for the always-on 8-K SUMMARY ingest
- * below. Default OFF — `refreshEightK` re-embeds the same short summary on every refresh cycle
+ * R10 (2026-07-01 RAG backlog): content_hash dedup for the always-on 8-K SUMMARY ingest
+ * below. Default ON - avoids re-embedding the same short summary on every refresh cycle
  * even when the underlying event data hasn't changed (the Pinecone upsert is idempotent by
- * contextId, but the Voyage embed call is NOT free). Set VECTOR_STORECONTEXTS_DEDUP=on to skip
- * re-embedding events whose summary text hasn't changed since last indexed.
+ * contextId, but the Voyage embed call is NOT free). Set VECTOR_STORECONTEXTS_DEDUP=off only
+ * when intentionally forcing a re-embed.
  */
 function storeContextsDedupEnabled(): boolean {
-  return envFlagOn("VECTOR_STORECONTEXTS_DEDUP", false);
+  return envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true);
 }
 
 const DATASET_KEY = "webSource:sec8k:dataset";
@@ -401,7 +401,7 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
             }
           })),
           "local",
-          // R10: opt-in dedup so an unchanged summary isn't re-embedded every refresh cycle.
+          // R10: dedup so an unchanged summary isn't re-embedded every refresh cycle.
           storeContextsDedupEnabled() ? { dedupKeyPrefix: "sec8k-summary" } : undefined
         )
       )

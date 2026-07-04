@@ -75,7 +75,7 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
     expect(typeof STRATEGY_PROMPT_VERSION).toBe("string");
     expect(STRATEGY_PROMPT_VERSION.length).toBeGreaterThan(0);
 
-    const base = { executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: false, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    const base = { executionMode: "broker/paper", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: false, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
     expect(buildBullSystem({ ...base, shortAllowed: false })).toContain("SHORT SELLING IS DISABLED");
     expect(buildBullSystem({ ...base, shortAllowed: true })).toContain("SHORT SELLING IS ENABLED");
     expect(buildBearSystem({ shortAllowed: false })).toContain("Bear Agent");

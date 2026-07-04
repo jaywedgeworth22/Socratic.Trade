@@ -1,7 +1,7 @@
 "use client";
 
 /** Reusable symbol drilldown for the console: a clickable ticker
- *  (<SymbolButton>) that opens a Sheet with the company identity, a daily
+ *  (<SymbolButton>) that opens a drawer with the company identity, a daily
  *  price chart over /api/history, and — when the last market scan knew the
  *  symbol — the full research drawer: your exposure (position, pending ideas,
  *  recent orders), a plain-language signal summary, the eleven backend-derived
@@ -15,7 +15,7 @@ import type { MarketQuote, MarketQuoteSummary } from "@/lib/types";
 import { useConsoleData } from "../lib/useConsoleData";
 import { cx, fmtMoney, fmtPct, EM_DASH } from "../lib/format";
 import { Chip } from "./primitives";
-import { Sheet } from "./sheet";
+import { useSymbolDrawer } from "./symbol-drawer";
 import { TickerLogo } from "./ticker-logo";
 import { deriveForView, preferFreshQuote, toQuoteView, withProvenance } from "./drilldown-data";
 import {
@@ -185,17 +185,13 @@ function PriceHistoryChart({ bars }: { bars: HistoryBar[] }) {
   );
 }
 
-// ── Drilldown sheet ──────────────────────────────────────────────────────────
+// ── Drilldown drawer ─────────────────────────────────────────────────────────
 
 export function SymbolDrilldownSheet({
   symbol,
-  open,
-  onClose,
   quote
 }: {
   symbol: string;
-  open: boolean;
-  onClose: () => void;
   /** Optional: the quote object the opening screen is currently rendering
    *  (e.g. a freshly fetched /api/scan row). When provided — and not older
    *  than the snapshot's run-captured quote — the sheet renders from it, so
@@ -204,7 +200,7 @@ export function SymbolDrilldownSheet({
 }) {
   const { snapshot } = useConsoleData();
   const normalized = symbol.trim().toUpperCase();
-  const history = useHistory(normalized, open);
+  const history = useHistory(normalized, true);
 
   const scan = snapshot?.latestStrategyRun?.marketScan;
   const override = quote && quote.symbol?.trim().toUpperCase() === normalized ? quote : undefined;
@@ -213,7 +209,6 @@ export function SymbolDrilldownSheet({
   const summaryQuote = resolveQuote(scan?.quotesBySymbol, normalized);
   const view = useMemo(() => toQuoteView(fullQuote, summaryQuote ?? undefined), [fullQuote, summaryQuote]);
 
-  const meta = snapshot?.symbolMetaBySymbol?.[normalized];
   const position = snapshot?.positions?.find((p) => p.symbol.trim().toUpperCase() === normalized);
   const pending = useMemo(
     () => (snapshot?.pendingProposals ?? []).filter((p) => p.proposal.symbol.trim().toUpperCase() === normalized),
@@ -227,8 +222,6 @@ export function SymbolDrilldownSheet({
         .slice(0, 4),
     [snapshot?.orders, normalized]
   );
-  const companyName = view?.companyName ?? meta?.companyName;
-
   // Current price: prefer the scan quote; otherwise the last daily close.
   const lastBars = history.status === "ready" ? history.bars : [];
   const lastBar = lastBars.length > 0 ? lastBars[lastBars.length - 1] : undefined;
@@ -251,23 +244,8 @@ export function SymbolDrilldownSheet({
   const derived = view ? deriveForView(view, lastBar?.volume) : null;
   const earningsSoon = typeof view?.daysToEarnings === "number" && view.daysToEarnings <= 7;
 
-  const title = (
-    <span className="flex min-w-0 items-center gap-2.5">
-      <TickerLogo symbol={normalized} size="md" />
-      <span className="min-w-0">
-        <span className="block leading-tight">{normalized}</span>
-        {companyName && (
-          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
-            {companyName}
-          </span>
-        )}
-      </span>
-    </span>
-  );
-
   return (
-    <Sheet open={open} onClose={onClose} title={title}>
-      <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
         {/* Price line */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span
@@ -373,15 +351,30 @@ export function SymbolDrilldownSheet({
             {new Date(view.asOf).toLocaleString()}).
           </p>
         )}
-      </div>
-    </Sheet>
+    </div>
+  );
+}
+
+function SymbolDrilldownTitle({ symbol, companyName }: { symbol: string; companyName?: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <TickerLogo symbol={symbol} size="md" />
+      <span className="min-w-0">
+        <span className="block leading-tight">{symbol}</span>
+        {companyName && (
+          <span className="block truncate text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            {companyName}
+          </span>
+        )}
+      </span>
+    </span>
   );
 }
 
 // ── SymbolButton ─────────────────────────────────────────────────────────────
 
 /** A ticker rendered as logo + text that opens the drilldown sheet. Drop this
- *  wherever a table shows a symbol. Owns its own sheet state. */
+ *  wherever a table shows a symbol. */
 export function SymbolButton({
   symbol,
   className,
@@ -403,27 +396,29 @@ export function SymbolButton({
   /** Optional custom label; defaults to the symbol text. */
   children?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const { openDrawer } = useSymbolDrawer();
   const normalized = symbol.trim().toUpperCase();
+  const companyName = quote?.companyName;
 
   return (
-    <>
-      <button
-        type="button"
-        title={title ?? `Open ${normalized} details`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        className={cx(
-          "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline decoration-[color:var(--con-line-strong)] decoration-1 underline-offset-[3px] transition-colors hover:text-[color:var(--con-accent)] hover:decoration-[color:var(--con-accent)]",
-          className
-        )}
-      >
-        {showLogo && <TickerLogo symbol={normalized} size={logoSize} />}
-        <span>{children ?? normalized}</span>
-      </button>
-      {open && <SymbolDrilldownSheet symbol={normalized} open={open} onClose={() => setOpen(false)} quote={quote} />}
-    </>
+    <button
+      type="button"
+      title={title ?? `Open ${normalized} details`}
+      onClick={(e) => {
+        e.stopPropagation();
+        openDrawer({
+          title: <SymbolDrilldownTitle symbol={normalized} companyName={companyName} />,
+          ariaLabel: `${normalized} details`,
+          body: <SymbolDrilldownSheet key={normalized} symbol={normalized} quote={quote} />
+        });
+      }}
+      className={cx(
+        "inline-flex cursor-pointer items-center gap-1.5 font-semibold underline decoration-[color:var(--con-line-strong)] decoration-1 underline-offset-[3px] transition-colors hover:text-[color:var(--con-accent)] hover:decoration-[color:var(--con-accent)]",
+        className
+      )}
+    >
+      {showLogo && <TickerLogo symbol={normalized} size={logoSize} />}
+      <span>{children ?? normalized}</span>
+    </button>
   );
 }

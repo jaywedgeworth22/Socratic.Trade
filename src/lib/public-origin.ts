@@ -1,4 +1,5 @@
-const PUBLIC_SITE_FALLBACK_ORIGIN = "https://trading.jays.services";
+export const PUBLIC_SITE_FALLBACK_ORIGIN = "https://socratictrade.com";
+const LEGACY_PUBLIC_HOSTS = new Set(["trading.jays.services"]);
 
 export function resolvePublicAppOrigin(request: Request): string {
   const requestOrigin = resolveRequestOrigin(request);
@@ -58,4 +59,25 @@ function isLoopbackHost(host: string): boolean {
     normalized = normalized.split(":")[0];
   }
   return normalized === "localhost" || normalized === "0.0.0.0" || normalized === "::1" || normalized.startsWith("127.");
+}
+
+export function isLegacyTradingOrigin(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    return LEGACY_PUBLIC_HOSTS.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+export function canonicalizeLegacyTradingOrigin(value: string | undefined): string | undefined {
+  if (!value) return value;
+  return isLegacyTradingOrigin(value) ? PUBLIC_SITE_FALLBACK_ORIGIN : value;
+}
+
+export function canonicalizeLegacyAuthEnv(env: Record<string, string | undefined>): void {
+  const canonicalOrigin = canonicalizeLegacyTradingOrigin(env.NEXT_PUBLIC_SITE_URL) ?? PUBLIC_SITE_FALLBACK_ORIGIN;
+  for (const key of ["AUTH_URL", "NEXTAUTH_URL"] as const) {
+    if (isLegacyTradingOrigin(env[key])) env[key] = canonicalOrigin;
+  }
 }

@@ -58,4 +58,4 @@ direction and the no-fabricated-data rule.
 ## Follow-ups
 
 - Open a ready PR, arm auto-merge, wait for required CI, and verify production
-  after the deploy workflow updates `trading.jays.services`.
+  after the deploy workflow updates `socratictrade.com`.

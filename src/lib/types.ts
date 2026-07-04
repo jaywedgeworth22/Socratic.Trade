@@ -22,11 +22,11 @@ export type StrategyAuthority = "propose" | "decide";
 // account's existing authority (auto-placed only when the account is already in "decide" mode).
 export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
 
-export type LlmReasoningEffort = "low" | "medium" | "high";
+export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
+export type ExecutionMode = "broker/paper" | "broker/live";
 export const NOTIFICATION_EVENT_TYPES = [
   "fill",
   "block",
@@ -469,16 +469,33 @@ export interface RiskRules {
   atrStopMultiple?: number;
   /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
-   * before the system auto-halts new entries (systemState → "close_only") and fires a
-   * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
-   * this bounds the whole account's bleed, not one name's. Evaluated at the top of each run.
+   * before the breaker fires (systemState flips per `drawdownBreakerAction`) and a kill-switch
+   * notification is sent. Undefined or <=0 disables the breaker entirely. Unlike the per-position
+   * stopLossPct, this bounds the whole account's bleed, not one name's. Evaluated at the top of
+   * each run.
    */
   maxDrawdownPct?: number;
   /**
    * Account-level circuit breaker: max single-day equity loss (account currency) from the day's
-   * starting equity before auto-halting new entries. Undefined or <=0 disables.
+   * starting equity before the breaker fires (per `drawdownBreakerAction`). Undefined or <=0 disables.
    */
   maxDailyLossNotional?: number;
+  /**
+   * What the account-level breaker (maxDrawdownPct / maxDailyLossNotional) does on breach — the
+   * owner's overridable preference. Per the governing philosophy ("nothing is hard except which
+   * account to work in; agent decides, logs everything"), the DEFAULT is "advisory": guardrails
+   * inform the agent, they never seize control.
+   * - "advisory" (DEFAULT): does NOT change systemState. It writes a `policy_violation_drawdown`
+   *   receipt and surfaces the drawdown as decision context to the strategist (see `drawdownAdvisory`
+   *   threading in strategy.ts) so the agent can choose to de-risk — advisory awareness, no halting.
+   *   The account boundary remains the only absolute.
+   * - "close_only": OPT-IN hard enforcement — flip systemState → "close_only": block only NEW entries;
+   *   risk-reducing exits (sell/cover) still flow.
+   * - "halt": OPT-IN hard enforcement — flip systemState → "halted": a full stop until the owner
+   *   manually re-arms. The strongest response; the owner must explicitly choose it.
+   * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
+   */
+  drawdownBreakerAction?: "advisory" | "close_only" | "halt";
 }
 
 export interface NotificationSettings {
@@ -609,8 +626,6 @@ export interface UniverseFloor {
 
 export interface TradingPolicy {
   systemState: SystemState;
-  paperMode: boolean;
-  paperStartingCash: number;
   accountNumber?: string;
   connectedAccountId?: string;
   includedIndices: IndexUniverse[];
@@ -619,6 +634,15 @@ export interface TradingPolicy {
   /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
   universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
+  /**
+   * Socratic Trade may explicitly override owner preference gates when it can state a structured
+   * override thesis. "execute" lets a Decide-mode account act through those preference conflicts;
+   * "propose" queues the action with the override note; "off" treats every preference gate normally.
+   * Broker/account/integrity gates remain authoritative in all modes.
+   */
+  socraticOverrideMode?: "off" | "propose" | "execute";
+  /** Optional per-decision ceiling for override actions as % of portfolio NAV. Undefined = no extra override cap. */
+  socraticOverrideMaxPctOfNav?: number;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
   /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
@@ -634,7 +658,7 @@ export interface TradingPolicy {
    * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
    */
   llmFallbackModels?: string[];
-  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  /** Provider-specific reasoning/thinking effort for models that support it. Ignored by models without that knob. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
@@ -876,6 +900,128 @@ export interface TradeProposal {
    *     it — readers fall back to the snapshot policy's configured red-team model.
    */
   redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  /**
+   * Explicit agent-authored request to override owner preference gates for this decision.
+   * This is not a client-side bypass token and does not override broker/account/integrity gates.
+   * It exists so Socratic Trade can say, in structured form, "I know this conflicts with the
+   * configured preference, and here is why I still think acting is wiser."
+   */
+  autonomyOverride?: {
+    requested: boolean;
+    thesis: string;
+    /** Which preference gates the agent believes should be overridden. */
+    preferenceConflicts?: string[];
+    /** What would make the override wrong, for later outcome review. */
+    invalidation?: string;
+    /** Optional intended cash deployment when the override is about buying a panic discount. */
+    cashDeploymentPct?: number;
+  };
+}
+
+export type SocraticDecisionStatus =
+  | "planned"
+  | "proposed"
+  | "placed"
+  | "blocked"
+  | "rejected"
+  | "error"
+  | "observed";
+
+export interface SocraticRagAttribution {
+  symbol: string;
+  query: string;
+  chunkId?: string;
+  source?: string;
+  docType?: string;
+  title?: string;
+  url?: string;
+  publishedAt?: string;
+  score?: number;
+  relevanceScore?: number;
+  text: string;
+  contribution: string;
+}
+
+export interface SocraticEvidenceItem {
+  kind:
+    | "market_scan"
+    | "candidate"
+    | "rag"
+    | "red_team"
+    | "policy"
+    | "outcome"
+    | "learning"
+    | "coaching"
+    | "framework"
+    | "override";
+  title: string;
+  summary: string;
+  source?: string;
+  symbol?: string;
+  score?: number;
+  tone?: "positive" | "warning" | "negative" | "neutral";
+  data?: unknown;
+}
+
+export interface SocraticDecisionCase {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  runId?: string;
+  proposalId?: string;
+  accountNumber?: string;
+  createdAt: string;
+  updatedAt: string;
+  symbol?: string;
+  side?: OrderSide;
+  status: SocraticDecisionStatus;
+  authority: StrategyAuthority;
+  thesis: string;
+  rationale: string;
+  action: string;
+  thesisTag?: string;
+  regime?: string;
+  confidenceScore?: number;
+  notional?: number;
+  model?: string;
+  redTeamVerdict?: TradeProposal["redTeamVerdict"];
+  policyDecision?: PolicyDecision;
+  evidence: SocraticEvidenceItem[];
+  ragAttributions: SocraticRagAttribution[];
+  dissent: SocraticEvidenceItem[];
+  outcome?: {
+    status: "open" | "won" | "lost" | "flat" | "unknown";
+    returnPct?: number;
+    pnlUsd?: number;
+    note?: string;
+    measuredAt?: string;
+  };
+  autonomyOverride?: TradeProposal["autonomyOverride"] & {
+    applied: boolean;
+    conflicts: string[];
+  };
+  lessons: string[];
+  coachNotes: string[];
+}
+
+export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
+
+export interface SocraticFrameworkProposal {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  decisionId?: string;
+  runId?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: SocraticFrameworkProposalStatus;
+  priority: "low" | "medium" | "high";
+  subsystem: "strategy" | "risk" | "sizing" | "universe" | "evidence" | "coaching";
+  title: string;
+  rationale: string;
+  proposedChange: string;
+  evidence: SocraticEvidenceItem[];
+  ownerResponse?: string;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1214,6 +1360,14 @@ export interface WashSaleGateAudit {
 export interface PolicyDecision {
   approved: boolean;
   reasons: string[];
+  socraticOverride?: {
+    applied: boolean;
+    mode: "propose" | "execute";
+    conflicts: string[];
+    thesis: string;
+    invalidation?: string;
+    cashDeploymentPct?: number;
+  };
   /**
    * Escalatable failures among `reasons` (see GateEscalation). Present only when the gate
    * refused the proposal AND at least one failure belongs to the escalatable allowlist. The

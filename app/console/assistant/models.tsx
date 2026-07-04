@@ -26,6 +26,7 @@ export interface ModelGroup {
 }
 
 export const DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
+export const CHAT_MODEL_STORAGE_KEY = "console.assistant.model";
 
 /** Sentinel select value meaning "type a model id yourself". */
 export const CUSTOM_MODEL_VALUE = "custom";
@@ -63,28 +64,25 @@ export const MODEL_GROUPS: ModelGroup[] = [
     provider: "xai",
     label: "xAI (Grok)",
     options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost Grok", tier: "$" },
-      { value: "grok-4.3", label: "grok-4.3 — stronger Grok analysis", tier: "$$" }
+      { value: "grok-build-0.1", label: "grok-build-0.1 — coding specialist", tier: "$" },
+      { value: "grok-4.3", label: "grok-4.3 — default Grok analysis", tier: "$$" }
     ]
   },
   {
     provider: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     options: [
-      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost Gemini", tier: "$" },
-      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — fast long-context review", tier: "$" },
-      { value: "gemini-2.5-pro", label: "gemini-2.5-pro — stronger Gemini reasoning", tier: "$$" },
-      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — latest light Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — latest Flash tier", tier: "$$" }
+      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini", tier: "$" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash", tier: "$$" },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning", tier: "$$$" }
     ]
   },
   {
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-2506", label: "mistral-small-2506 — low-cost Mistral", tier: "$" },
-      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — current balanced Mistral", tier: "$$" },
-      { value: "mistral-large-2512", label: "mistral-large-2512 — strongest Mistral", tier: "$$$" }
+      { value: "mistral-small-2603", label: "mistral-small-2603 — low-cost Mistral Small 4", tier: "$" },
+      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — frontier Mistral Medium", tier: "$$" }
     ]
   },
   {

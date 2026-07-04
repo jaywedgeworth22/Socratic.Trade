@@ -261,7 +261,7 @@ function normalizeNotificationEvents(value: unknown): NotificationEventType[] | 
 
 function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   const input = asRecord(raw);
-  for (const forbidden of ["userId", "accountNumber", "connectedAccountId", "activeBroker", "paperMode", "apiKey", "apiSecret", "providerSecret"]) {
+  for (const forbidden of ["userId", "accountNumber", "connectedAccountId", "activeBroker", "apiKey", "apiSecret", "providerSecret"]) {
     if (forbidden in input) {
       throw new MobileCommandValidationError(`${forbidden} cannot be changed through policy.patch.`);
     }
@@ -288,7 +288,6 @@ function normalizePolicyPatch(raw: unknown): Partial<TradingPolicy> {
   if (input.blocklist !== undefined) patch.blocklist = normalizeSymbols(input.blocklist, "blocklist");
 
   const numericFields: Array<[keyof TradingPolicy, number | undefined, number | undefined]> = [
-    ["paperStartingCash", 0, undefined],
     ["maxOrderNotional", 1, 100_000],
     ["maxOrderPctOfNav", 0.01, 100],
     ["maxDailyNotional", 1, undefined],

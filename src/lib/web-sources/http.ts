@@ -18,7 +18,7 @@ export const BROWSER_UA =
 export function secUserAgent(): string {
   return (
     resolveApiKey("sec_edgar_user_agent", "local") ??
-    "Trading Dashboard (personal research; set SEC_EDGAR_USER_AGENT for real contact)"
+    "Socratic Trade (personal research; set SEC_EDGAR_USER_AGENT for real contact)"
   );
 }
 

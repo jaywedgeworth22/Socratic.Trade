@@ -28,6 +28,10 @@ describe("settings search index (PR #3)", () => {
     expect(searchSettings("maxOrderNotional").map((f) => f.id)).toContain("guardrails.maxOrderSize");
   });
 
+  it("routes Roth IRA wash-sale ignore wording to the IRA-specific control", () => {
+    expect(searchSettings("roth wash sale ignore").map((f) => f.id)).toContain("guardrails.iraWashSaleHandling");
+  });
+
   it("ranks label-prefix hits ahead of synonym-only hits", () => {
     const results = searchSettings("stop-loss");
     expect(results[0]?.id).toBe("guardrails.stopLoss");

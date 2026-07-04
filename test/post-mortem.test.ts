@@ -38,7 +38,7 @@ describe("generateReflectionSummary", () => {
     });
     setActiveConnectedAccount(accountId, userId);
     // Classic model so this asserts temperature + exact caps (reasoning bounds: test/llm-request.test.ts).
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, paperMode: false, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca", llmModel: "gpt-4.1-mini" }, userId);
     insertFillEvent({
       userId,
       accountNumber,
@@ -87,7 +87,7 @@ describe("generateReflectionSummary", () => {
 
     upsertConnectedAccount({ id: accountId, userId, broker: "alpaca", environment: "paper", accountNumber, label: "Alpaca Paper", isActive: true });
     setActiveConnectedAccount(accountId, userId);
-    setPolicy({ ...DEFAULT_POLICY, accountNumber, paperMode: false, activeBroker: "alpaca" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber, activeBroker: "alpaca" }, userId);
     insertFillEvent({ userId, accountNumber, source: "paper", executionMode: "broker/paper", symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100, status: "filled" });
     // Seed usage above the 1-token ceiling for THIS user so the budget is exceeded.
     recordLlmUsage({ userId, provider: "openai", model: "gpt-4o", context: "strategy", keySource: "user", promptTokens: 10, completionTokens: 0 });

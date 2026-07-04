@@ -14,13 +14,13 @@
    - Soft fills and borders are derived from the base palette with color-mix,
      so they adapt to both themes automatically.
 
-   Money-reality is WORD-FIRST. The three reality tones (test / paper / live)
+   Money-reality is WORD-FIRST. The three reality tones (none / paper / live)
    exist to reinforce words, never to replace them. Both palettes aim WCAG AA
    for text tokens on their surfaces. */
 
 .console-root {
   /* ── LIGHT (base) ── */
-  --con-bg: #eef1f6;
+  --con-bg: #f1f4f6;
   --con-surface: #ffffff;
   --con-surface-2: #f4f6fa;
   --con-surface-3: #e9edf4;
@@ -31,7 +31,7 @@
   --con-muted: #46556b;   /* ≥7:1 on surface */
   --con-faint: #566478;   /* ≥5.5:1 on surface */
 
-  --con-accent: #2563eb;
+  --con-accent: #12616f;
   --con-accent-contrast: #ffffff;
   --con-pos: #157f4e;
   --con-pos-contrast: #ffffff;
@@ -41,7 +41,7 @@
   --con-warn-contrast: #ffffff;
 
   /* Money-reality tones (reinforcement only — the word is load-bearing) */
-  --con-test: #0f766e;
+  --con-none: #64748b;
   --con-paper: #4f46e5;
   --con-live: #d1332e;
 
@@ -60,8 +60,8 @@
   --con-neg-border: color-mix(in oklab, var(--con-neg) 50%, transparent);
   --con-warn-soft: color-mix(in oklab, var(--con-warn) 12%, transparent);
   --con-warn-border: color-mix(in oklab, var(--con-warn) 45%, transparent);
-  --con-test-soft: color-mix(in oklab, var(--con-test) 10%, transparent);
-  --con-test-border: color-mix(in oklab, var(--con-test) 45%, transparent);
+  --con-none-soft: color-mix(in oklab, var(--con-none) 10%, transparent);
+  --con-none-border: color-mix(in oklab, var(--con-none) 45%, transparent);
   --con-paper-soft: color-mix(in oklab, var(--con-paper) 10%, transparent);
   --con-paper-border: color-mix(in oklab, var(--con-paper) 45%, transparent);
   --con-live-soft: color-mix(in oklab, var(--con-live) 11%, transparent);
@@ -80,21 +80,38 @@
   --con-fs-xl: 23px;
   --con-fs-xxl: 30px;
 
+  /* Font stacks */
+  --con-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --con-font-system: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --con-font-serif: Georgia, "Times New Roman", serif;
+  --con-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --con-control-font: var(--con-font-ui);
+
   background: var(--con-bg);
   color: var(--con-fg);
   font-size: var(--con-fs-base);
   line-height: 1.5;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--con-font-ui);
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
 
+.console-root[data-textbox-font="system"] {
+  --con-control-font: var(--con-font-system);
+}
+.console-root[data-textbox-font="serif"] {
+  --con-control-font: var(--con-font-serif);
+}
+.console-root[data-textbox-font="mono"] {
+  --con-control-font: var(--con-font-mono);
+}
+
 /* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
 .console-root[data-theme="dark"] {
-  --con-bg: #0b0e14;
-  --con-surface: #121722;
-  --con-surface-2: #171e2c;
-  --con-surface-3: #1d2536;
+  --con-bg: #0b1114;
+  --con-surface: #11191d;
+  --con-surface-2: #162127;
+  --con-surface-3: #1c2b31;
   --con-line: rgba(148, 163, 184, 0.13);
   --con-line-strong: rgba(148, 163, 184, 0.26);
 
@@ -102,8 +119,8 @@
   --con-muted: #a5b2c4;
   --con-faint: #8492a6;
 
-  --con-accent: #5b9dff;
-  --con-accent-contrast: #0a1220;
+  --con-accent: #58c7d3;
+  --con-accent-contrast: #071316;
   --con-pos: #37c58c;
   --con-pos-contrast: #04170e;
   --con-neg: #f0635e;
@@ -111,7 +128,7 @@
   --con-warn: #e5aa4b;
   --con-warn-contrast: #201302;
 
-  --con-test: #2fd4bd;
+  --con-none: #94a3b8;
   --con-paper: #98a3ff;
   --con-live: #ff5d5d;
 
@@ -126,10 +143,10 @@
       the block above ── */
 @media (prefers-color-scheme: dark) {
   .console-root:not([data-theme="light"]) {
-    --con-bg: #0b0e14;
-    --con-surface: #121722;
-    --con-surface-2: #171e2c;
-    --con-surface-3: #1d2536;
+    --con-bg: #0b1114;
+    --con-surface: #11191d;
+    --con-surface-2: #162127;
+    --con-surface-3: #1c2b31;
     --con-line: rgba(148, 163, 184, 0.13);
     --con-line-strong: rgba(148, 163, 184, 0.26);
 
@@ -137,8 +154,8 @@
     --con-muted: #a5b2c4;
     --con-faint: #8492a6;
 
-    --con-accent: #5b9dff;
-    --con-accent-contrast: #0a1220;
+    --con-accent: #58c7d3;
+    --con-accent-contrast: #071316;
     --con-pos: #37c58c;
     --con-pos-contrast: #04170e;
     --con-neg: #f0635e;
@@ -146,7 +163,7 @@
     --con-warn: #e5aa4b;
     --con-warn-contrast: #201302;
 
-    --con-test: #2fd4bd;
+    --con-none: #94a3b8;
     --con-paper: #98a3ff;
     --con-live: #ff5d5d;
 
@@ -156,18 +173,6 @@
 
     color-scheme: dark;
   }
-}
-
-/* LIVE reality: an unmissable frame around the whole viewport. Words carry the
-   meaning; this is the peripheral-vision reinforcement. Never shown for
-   test/paper so it can never be normalized away. */
-.console-root.console-live::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  border: 3px solid var(--con-live);
-  pointer-events: none;
-  z-index: 90;
 }
 
 .console-root ::selection {
@@ -204,6 +209,161 @@
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--con-faint);
+}
+
+/* ── Autonomy desk home ── */
+.con-thesis-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius);
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--con-accent) 10%, transparent), transparent 46%),
+    var(--con-surface);
+  box-shadow: var(--con-shadow);
+  padding: 18px;
+}
+.con-thesis-hero h1 {
+  margin-top: 8px;
+  max-width: 760px;
+  font-size: var(--con-fs-xxl);
+  line-height: 1.12;
+  font-weight: 750;
+  color: var(--con-fg);
+}
+.con-thesis-hero p {
+  margin-top: 10px;
+  max-width: 820px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-md);
+  line-height: 1.55;
+}
+.con-autonomy-card {
+  min-width: 0;
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: color-mix(in oklab, var(--con-accent) 8%, var(--con-surface));
+  padding: 14px;
+}
+.con-autonomy-card p {
+  margin-top: 4px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.con-decision-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-decision-row strong {
+  color: var(--con-fg);
+}
+.con-decision-row p {
+  margin-top: 5px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.con-evidence-card {
+  min-width: 0;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-evidence-card strong {
+  color: var(--con-fg);
+  font-size: var(--con-fs-sm);
+}
+.con-evidence-card span {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--con-faint);
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+}
+.con-evidence-card p {
+  margin-top: 7px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-accent {
+  border-color: var(--con-accent-border);
+  background: var(--con-accent-soft);
+}
+.con-evidence-pos {
+  border-color: var(--con-pos-border);
+  background: var(--con-pos-soft);
+}
+.con-evidence-warn {
+  border-color: var(--con-warn-border);
+  background: var(--con-warn-soft);
+}
+.con-evidence-neg {
+  border-color: var(--con-neg-border);
+  background: var(--con-neg-soft);
+}
+.con-coach-box {
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-accent-soft);
+  padding: 12px;
+}
+.con-coach-box p {
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .con-thesis-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .con-thesis-hero {
+    padding: 14px;
+  }
+  .con-thesis-hero h1 {
+    font-size: var(--con-fs-xl);
+  }
+  .con-thesis-hero p {
+    font-size: var(--con-fs-base);
+  }
+  .con-decision-row {
+    grid-template-columns: 1fr;
+  }
+  .con-decision-row > div:last-child {
+    text-align: left;
+  }
+  .con-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+  .con-evidence-card span {
+    max-width: 44%;
+  }
 }
 
 /* ── Buttons ── */
@@ -277,24 +437,35 @@
   font-size: var(--con-fs-xs);
 }
 
-/* The always-reachable STOP control. Deliberately heavier than everything else. */
-.con-stop-btn {
+/* The header run-state control: Start/Resume when paused, STOP when stopping. */
+.con-stop-btn,
+.con-start-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   border-radius: var(--con-radius-sm);
-  border: 1.5px solid var(--con-neg-border);
-  background: var(--con-neg-soft);
-  color: var(--con-neg);
   font-weight: 700;
   font-size: var(--con-fs-sm);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   padding: 7px 14px;
   cursor: pointer;
   transition: background 120ms ease;
 }
+.con-stop-btn {
+  border: 1.5px solid var(--con-neg-border);
+  background: var(--con-neg-soft);
+  color: var(--con-neg);
+}
 .con-stop-btn:hover {
   background: color-mix(in oklab, var(--con-neg) 20%, transparent);
+}
+.con-start-btn {
+  border: 1.5px solid var(--con-pos-border);
+  background: var(--con-pos-soft);
+  color: var(--con-pos);
+}
+.con-start-btn:hover {
+  background: color-mix(in oklab, var(--con-pos) 18%, transparent);
 }
 
 /* ── Chips ── */
@@ -315,21 +486,20 @@
 .con-chip-pos { border-color: var(--con-pos-border); color: var(--con-pos); background: var(--con-pos-soft); }
 .con-chip-neg { border-color: var(--con-neg-border); color: var(--con-neg); background: var(--con-neg-soft); }
 .con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
-.con-chip-test { border-color: var(--con-test-border); color: var(--con-test); background: var(--con-test-soft); }
+.con-chip-none { border-color: var(--con-none-border); color: var(--con-none); background: var(--con-none-soft); }
 .con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
-.con-chip-live { border-color: var(--con-live-border); color: var(--con-live); background: var(--con-live-soft); }
+.con-chip-live { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
 
-/* Small LIVE word tag inside neutral primary actions (danger is reserved for
-   the reality banner/frame, STOP, and destructive confirms). On soft surfaces
-   it uses the live tint; inside filled buttons it inverts to the button's
+/* Small brokerage-confirmation tag inside neutral primary actions. On soft surfaces
+   it uses the accent tint; inside filled buttons it inverts to the button's
    contrast color so it stays WCAG-readable in both themes. */
 .con-live-tag {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid var(--con-live-border);
-  background: var(--con-live-soft);
-  color: var(--con-live);
+  border: 1px solid var(--con-accent-border);
+  background: var(--con-accent-soft);
+  color: var(--con-accent);
   padding: 1px 6px;
   font-size: 9.5px;
   font-weight: 800;
@@ -341,7 +511,7 @@
 .con-btn-danger .con-live-tag {
   border-color: transparent;
   background: var(--con-accent-contrast);
-  color: var(--con-live);
+  color: var(--con-accent);
 }
 
 /* ── Reality banner ── */
@@ -349,20 +519,20 @@
   border-bottom: 1px solid var(--con-line);
   font-size: var(--con-fs-sm);
 }
-.con-reality-test {
-  background: linear-gradient(90deg, color-mix(in oklab, var(--con-test) 12%, transparent), color-mix(in oklab, var(--con-test) 3%, transparent));
+.con-reality-none {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-none) 12%, transparent), color-mix(in oklab, var(--con-none) 3%, transparent));
 }
 .con-reality-paper {
   background: linear-gradient(90deg, color-mix(in oklab, var(--con-paper) 12%, transparent), color-mix(in oklab, var(--con-paper) 3%, transparent));
 }
 .con-reality-live {
-  background: linear-gradient(90deg, color-mix(in oklab, var(--con-live) 18%, transparent), color-mix(in oklab, var(--con-live) 5%, transparent));
-  border-bottom-color: var(--con-live-border);
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-accent) 12%, transparent), color-mix(in oklab, var(--con-accent) 3%, transparent));
+  border-bottom-color: var(--con-accent-border);
 }
 .con-reality-word { font-weight: 800; letter-spacing: 0.12em; }
-.con-reality-test .con-reality-word { color: var(--con-test); }
+.con-reality-none .con-reality-word { color: var(--con-none); }
 .con-reality-paper .con-reality-word { color: var(--con-paper); }
-.con-reality-live .con-reality-word { color: var(--con-live); }
+.con-reality-live .con-reality-word { color: var(--con-accent); }
 
 /* ── Inputs ── */
 .con-input,
@@ -372,6 +542,7 @@
   border: 1px solid var(--con-line-strong);
   border-radius: var(--con-radius-sm);
   color: var(--con-fg);
+  font-family: var(--con-control-font);
   font-size: var(--con-fs-sm);
   padding: 7px 10px;
   width: 100%;
@@ -388,13 +559,20 @@
   color: var(--con-faint);
 }
 .con-textarea {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
   line-height: 1.55;
   resize: vertical;
 }
 .con-input-num {
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+@media (max-width: 640px) {
+  .con-input,
+  .con-select,
+  .con-textarea {
+    font-size: 16px;
+  }
 }
 
 .con-label {
@@ -587,7 +765,69 @@
   }
 }
 .con-sheet-live {
-  border-color: var(--con-live-border);
+  border-color: var(--con-accent-border);
+}
+
+/* ── Symbol drawer ── */
+.con-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--con-scrim);
+  backdrop-filter: blur(2px);
+  animation: con-fade-in 140ms ease-out;
+}
+.con-drawer {
+  position: fixed;
+  z-index: 111;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(100vw, 640px);
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--con-line-strong);
+  background: var(--con-surface);
+  box-shadow: var(--con-shadow-lg);
+  animation: con-drawer-in 180ms ease-out;
+}
+.con-drawer-header {
+  display: flex;
+  min-height: 64px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--con-line);
+  padding: 14px 18px;
+}
+.con-drawer-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 22px;
+}
+@keyframes con-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes con-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@media (max-width: 640px) {
+  .con-drawer {
+    width: 100vw;
+  }
+  .con-drawer-header {
+    min-height: 58px;
+    padding: 12px 14px;
+  }
+  .con-drawer-body {
+    padding: 14px;
+  }
 }
 
 /* ── Toasts ── */

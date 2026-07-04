@@ -20,7 +20,7 @@ function resolveRoleModel(policy: { llmModel?: string | null; redTeamLlmModel?: 
 
 /**
  * Provider is derived from the model name (no separate provider flag): claude-* → Anthropic
- * (Messages API), grok-* → xAI, gemini-* → Google Gemini, mistral/ministral/codestral/… → Mistral,
+ * (Messages API), grok-* → xAI (Grok), gemini-* → Google (Gemini), mistral/ministral/codestral/… → Mistral,
  * else OpenAI. xAI/Gemini/Mistral/DeepSeek are all OpenAI-compatible (chat/completions), so those
  * call sites treat them like OpenAI but with a per-provider base URL + key. Anthropic returns its
  * own `anthropic-messages` transport so the shared request builder (`llm-call.ts`) shapes the

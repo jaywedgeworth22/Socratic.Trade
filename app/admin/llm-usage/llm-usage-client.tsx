@@ -60,8 +60,27 @@ function contextLabel(ctx: string | null): string {
 }
 
 function providerLabel(provider: string): string {
-  const map: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", xai: "xAI" };
+  const map: Record<string, string> = {
+    openai: "OpenAI",
+    anthropic: "Anthropic (Claude)",
+    xai: "xAI (Grok)",
+    gemini: "Google (Gemini)",
+    mistral: "Mistral",
+    deepseek: "DeepSeek"
+  };
   return map[provider] ?? provider;
+}
+
+function userLabel(userId: string): string {
+  return userId === "local" ? "Primary User" : userId;
+}
+
+function keySourceLabel(source: string): string {
+  const map: Record<string, string> = {
+    user: "User Key",
+    operator: "Server Failover"
+  };
+  return map[source] ?? source;
 }
 
 // Group rows by (userId, provider, keyRef) → list of (model, context, ...) sub-rows.
@@ -90,7 +109,7 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
 
 function KeyBadge({ row }: { row: UsageRow }) {
   const display = row.keyMasked ?? (row.keyLast4 ? `...${row.keyLast4}` : null);
-  const label = row.keyLabel ?? `${row.keySource} key`;
+  const label = row.keyLabel ?? keySourceLabel(row.keySource);
   if (!display) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-muted bg-surface-2 border border-line rounded px-2 py-0.5">
@@ -121,7 +140,7 @@ function UsageGroupCard({ groupRows: rows }: { groupRows: UsageRow[] }) {
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-fg">{first.userId}</span>
+            <span className="text-sm font-semibold text-fg">{userLabel(first.userId)}</span>
             <span className="text-xs text-muted bg-surface-2 border border-line rounded px-1.5 py-0.5">
               {providerLabel(first.provider)}
             </span>
@@ -175,7 +194,13 @@ const WINDOW_OPTIONS = [
   { label: "90d", days: 90 },
 ];
 
-export function LlmUsageClient() {
+export function LlmUsageClient({
+  endpoint = "/api/admin/llm-usage",
+  scope = "admin"
+}: {
+  endpoint?: string;
+  scope?: "admin" | "user";
+}) {
   const [days, setDays] = useState(30);
   const [operatorOnly, setOperatorOnly] = useState(false);
   const [data, setData] = useState<UsageData | null>(null);
@@ -187,8 +212,8 @@ export function LlmUsageClient() {
     setError(null);
     try {
       const params = new URLSearchParams({ sinceDays: String(days) });
-      if (operatorOnly) params.set("operatorFundedOnly", "true");
-      const res = await fetch(`/api/admin/llm-usage?${params}`);
+      if (scope === "admin" && operatorOnly) params.set("operatorFundedOnly", "true");
+      const res = await fetch(`${endpoint}?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch (e) {
@@ -196,7 +221,7 @@ export function LlmUsageClient() {
     } finally {
       setLoading(false);
     }
-  }, [days, operatorOnly]);
+  }, [days, endpoint, operatorOnly, scope]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -212,7 +237,9 @@ export function LlmUsageClient() {
     <div className="min-h-screen bg-base text-fg p-6 max-w-5xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-fg">LLM Usage &amp; Cost</h1>
-        <p className="text-sm text-muted mt-1">Per-key, per-model, per-context breakdown across all LLM calls.</p>
+        <p className="text-sm text-muted mt-1">
+          {scope === "admin" ? "Per-key, per-model, per-context breakdown across all LLM calls." : "Your per-key, per-model, per-context LLM usage."}
+        </p>
       </div>
 
       {/* Controls */}
@@ -232,15 +259,17 @@ export function LlmUsageClient() {
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={operatorOnly}
-            onChange={(e) => setOperatorOnly(e.target.checked)}
-            className="rounded border-line"
-          />
-          Operator-funded only
-        </label>
+        {scope === "admin" && (
+          <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={operatorOnly}
+              onChange={(e) => setOperatorOnly(e.target.checked)}
+              className="rounded border-line"
+            />
+            Server-failover only
+          </label>
+        )}
         <button
           onClick={fetchData}
           disabled={loading}
@@ -266,14 +295,14 @@ export function LlmUsageClient() {
               sub={`last ${days}d`}
             />
             <SummaryCard
-              label="Operator-funded"
+              label="Server failover"
               value={fmtCost(data.operatorFundedCostUsd)}
               sub={data.operatorFallbackEnabled ? "failover on" : "failover off"}
             />
             <SummaryCard
               label="Unique keys"
               value={String(groups.size)}
-              sub="user + operator"
+              sub={scope === "admin" ? "all visible keys" : "your keys"}
             />
             <SummaryCard
               label="Total calls"
@@ -295,7 +324,7 @@ export function LlmUsageClient() {
 
           {data.operatorFundedTenants.length > 0 && (
             <div className="mt-4 text-xs text-muted bg-surface-2 border border-line rounded-lg p-3">
-              Operator-funded tenants: {data.operatorFundedTenants.join(", ")}
+              Server-failover usage: {data.operatorFundedTenants.map(userLabel).join(", ")}
             </div>
           )}
         </>

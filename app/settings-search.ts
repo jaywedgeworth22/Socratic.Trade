@@ -150,18 +150,18 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   },
   {
     id: "guardrails.washSaleGuard",
-    label: "Wash-sale guard (affects all accounts)",
+    label: "Taxable-account wash-sale guard",
     synonyms: ["wash sale", "tax lock", "30 day", "cross account"],
     scope: "account",
     destination: "guardrails",
     legacySection: "tax",
     backingField: "taxSettings.washSaleGuard",
     disclosure: "advanced",
-    help: "Blocks rebuying a stock within 30 days of selling it at a loss — in any of your accounts."
+    help: "For taxable accounts, blocks rebuying a stock within 30 days of selling it at a loss. IRA replacement buys use their own account setting."
   },
   {
     id: "guardrails.washSaleHandling",
-    label: "Wash-sale rebuy handling",
+    label: "Taxable-account wash-sale rebuys",
     synonyms: ["wash sale mode", "wash sale ask", "wash sale auto", "rebuy handling", "tax cost approval"],
     scope: "account",
     destination: "guardrails",
@@ -172,8 +172,18 @@ const OTHER_FIELD_DEFS: SettingsFieldDef[] = [
   },
   {
     id: "guardrails.iraWashSaleHandling",
-    label: "IRA wash-sale rebuys",
-    synonyms: ["ira wash sale", "disregard wash sale", "roth rebuy", "rev rul 2008-5", "audit risk"],
+    label: "IRA taxable-loss rebuys",
+    synonyms: [
+      "ira wash sale",
+      "ignore wash sale",
+      "disregard wash sale",
+      "roth rebuy",
+      "roth wash sale",
+      "roth wash sale ignore",
+      "roth ira wash sale ignore",
+      "rev rul 2008-5",
+      "audit risk"
+    ],
     scope: "account",
     destination: "guardrails",
     legacySection: "tax",

@@ -27,7 +27,7 @@ afterAll(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Dynamic imports so the module cache sees the overridden DATABASE_URL.
-const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank, meterPineconeQuery } = await import("../src/lib/rag-metering");
+const { recordRagUsage, getRagUsageSummary, meterEmbed, meterRerank, meterPineconeQuery, meterPineconeUpsert } = await import("../src/lib/rag-metering");
 const { getChunkCoverage, filterNewDocumentChunks, insertDocumentChunks } = await import("../src/lib/db");
 
 function sha16(text: string): string {
@@ -76,6 +76,16 @@ describe("rag-metering", () => {
   it("recordRagUsage never throws", () => {
     // Force a bad call that would break if we didn't catch
     expect(() => recordRagUsage({ operation: "embed" as any, tokensIn: -1 })).not.toThrow();
+  });
+
+  it("meters Pinecone upsert estimated write units separately from record count", () => {
+    meterPineconeUpsert(7, "alice", 42);
+
+    const row = getRagUsageSummary().find((r) => r.userId === "alice" && r.provider === "pinecone" && r.operation === "upsert");
+    expect(row).toBeDefined();
+    expect(row!.tokensIn).toBeGreaterThanOrEqual(42);
+    expect(row!.tokensOut).toBeGreaterThanOrEqual(7);
+    expect(row!.batchCount).toBeGreaterThanOrEqual(7);
   });
 
   it("getRagUsageSummary respects sinceIso window", () => {

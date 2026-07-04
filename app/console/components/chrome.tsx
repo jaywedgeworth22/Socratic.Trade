@@ -1,10 +1,10 @@
 "use client";
 
 /** Global chrome, rendered on every console screen:
- *  - word-first money-reality banner (TEST / PAPER / LIVE — words load-bearing)
+ *  - word-first account-state banner for NO ACCOUNT / PAPER only
  *  - account scope selector
  *  - run-state × authority chip in plain words
- *  - one-click STOP that never sells (honest copy about synthetic stops)
+ *  - run-state action: Start/Resume when paused, STOP when running
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
@@ -30,13 +30,14 @@ import {
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, Dot, LiveTag, Meter, TextInput } from "../ui/primitives";
+import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
 // ── Reality banner ───────────────────────────────────────────────────────────
 
 export function RealityBanner({ snapshot }: { snapshot: DashboardSnapshot }) {
   const reality = deriveReality(snapshot);
+  if (reality.tone === "live") return null;
   return (
     <div className={cx("con-reality", `con-reality-${reality.tone}`)}>
       <div className="mx-auto flex max-w-[1400px] items-baseline gap-2 px-4 py-1.5">
@@ -58,7 +59,7 @@ function brokerName(broker: string | undefined): string {
     case "robinhood":
       return "Robinhood";
     case "test":
-      return "Simulator";
+      return "Test Account";
     default:
       return broker ?? "";
   }
@@ -74,7 +75,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
 
   const label = active
     ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
-    : "Local simulator";
+    : "No connected account";
 
   const switchTo = async (id: string) => {
     setBusyId(id);
@@ -95,14 +96,14 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex min-w-0 items-center gap-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex min-w-[112px] max-w-[44vw] items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:max-w-none"
         title="Switch which account this console shows"
       >
         <span className="min-w-0">
           <span className="block truncate text-[length:var(--con-fs-sm)] font-semibold leading-tight">{label}</span>
           {!compact && (
-            <span className="block text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)]">
-              {reality.word} · {reality.phrase}
+            <span className="hidden truncate text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)] sm:block">
+              {reality.tone === "live" ? "Brokerage account" : `${reality.word} · ${reality.phrase}`}
             </span>
           )}
         </span>
@@ -112,17 +113,17 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       <Sheet open={open} onClose={() => setOpen(false)} title="Account scope">
         <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           Exactly one account is active at a time. Switching rescopes everything — balances, guardrails, approvals,
-          the run state. Every row states its money-reality in words.
+          the run state, and decision history.
         </p>
         <div className="flex flex-col gap-2">
           {snapshot.connectedAccounts.length === 0 && (
             <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
               <div className="flex items-center gap-2">
-                <span className="font-semibold">Local simulator</span>
-                <Chip tone="test">TEST · practice money</Chip>
+                <span className="font-semibold">No account connected</span>
+                <Chip tone="none">NO ACCOUNT · no account connected</Chip>
               </div>
               <p className="mt-1 text-[color:var(--con-muted)]">
-                No brokerage is connected. The app trades simulated cash marked to live prices.
+                Connect a broker account before the app can place orders.
               </p>
             </div>
           )}
@@ -139,26 +140,26 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
-                    <Chip tone={r.tone}>
-                      {r.word} · {r.phrase}
-                    </Chip>
+                    {account.broker === "test" && <Chip tone="paper">local mock</Chip>}
+                    {r.tone !== "live" && (
+                      <Chip tone={r.tone}>
+                        {r.word} · {r.phrase}
+                      </Chip>
+                    )}
                     {account.isActive && <Chip tone="accent">active</Chip>}
                   </div>
                   {!account.isActive && (
                     <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
-                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
-                        <>
-                          Switch — real money <LiveTag />
-                        </>
-                      ) : (
-                        "Switch"
-                      )}
+                      {busyId === account.id ? "Switching…" : "Switch"}
                     </Btn>
                   )}
                 </div>
                 <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  {brokerName(account.broker)} · {account.environment}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""} — {r.clarification}
+                  {account.broker === "test"
+                    ? "Local Mock Paper Account - simulated fills, not real money"
+                    : `${brokerName(account.broker)} · ${r.tone === "paper" ? "paper account, not real money" : "brokerage account"}`}
+                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
+                  {r.tone !== "live" ? ` — ${r.clarification}` : ""}
                 </p>
               </div>
             );
@@ -197,26 +198,36 @@ export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
-export function StopButton({ snapshot }: { snapshot: DashboardSnapshot }) {
+export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
   const [open, setOpen] = useState(false);
+  const state = snapshot.policy.systemState;
+  const isStartDirection = state === "halted" || state === "close_only";
+  const label = state === "halted" ? "Start" : state === "close_only" ? "Resume" : "STOP";
+  const title =
+    state === "halted"
+      ? "Open start options. Scheduled/autonomous runs stay off until you confirm Start."
+      : state === "close_only"
+        ? "Open resume options. You can resume full operation or change run state."
+        : "Stop the strategy. Stopping never sells anything.";
   return (
     <>
       <button
         type="button"
-        className="con-stop-btn"
+        className={isStartDirection ? "con-start-btn" : "con-stop-btn"}
         onClick={() => setOpen(true)}
-        title="Stop the strategy. Stopping never sells anything."
+        title={title}
+        aria-label={label === "STOP" ? "Stop strategy" : `${label} strategy`}
       >
-        <OctagonMinus size={15} />
-        STOP
+        {isStartDirection ? <Play size={15} /> : <OctagonMinus size={15} />}
+        {label}
       </button>
-      <ControlSheet snapshot={snapshot} open={open} onClose={() => setOpen(false)} emergency />
+      <ControlSheet snapshot={snapshot} open={open} onClose={() => setOpen(false)} emergency={!isStartDirection} />
     </>
   );
 }
 
 /** One control surface for run-state changes. Asymmetric friction:
- *  stopping = one tap + one confirm, no typing; starting on real money =
+ *  stopping = one tap + one confirm, no typing; starting a broker-connected account =
  *  typed ritual; winding down (the one stop verb that SELLS) = typed ritual. */
 function ControlSheet({
   snapshot,
@@ -238,8 +249,18 @@ function ControlSheet({
   const info = deriveStateInfo(snapshot.policy);
   const state = snapshot.policy.systemState;
 
-  const startPhrase = reality.tone === "live" ? "START LIVE" : null;
+  const startLabel = state === "close_only" ? "Resume" : "Start";
+  const startGerund = state === "close_only" ? "Resuming" : "Starting";
+  const startProgressLabel = `${startGerund}…`;
+  const startPhrase = reality.tone === "live" ? (state === "close_only" ? "RESUME LIVE" : "START LIVE") : null;
   const liquidatePhrase = "WIND DOWN";
+  const sheetTitle = emergency
+    ? "Stop the strategy"
+    : state === "halted"
+      ? "Start the strategy"
+      : state === "close_only"
+        ? "Resume or change run state"
+        : "Run state";
 
   const act = async (verb: string, fn: () => Promise<unknown>, successTitle: string, successDetail?: string) => {
     setBusy(verb);
@@ -257,57 +278,66 @@ function ControlSheet({
     }
   };
 
-  const options = useMemo(
-    () => [
-      {
+  const options = useMemo(() => {
+    const startOption = {
+      id: "start",
+      title: state === "halted" ? "Start scheduled runs" : "Resume full operation",
+      body:
+        snapshot.policy.strategyAuthority === "decide"
+          ? "Runs resume on schedule and the strategy may place orders itself, inside your guardrails."
+          : "Runs resume on schedule. Every trade still waits for your approval.",
+      available: state !== "active",
+      danger: false
+    };
+    const stopOption = {
         id: "stop",
         title: "STOP everything",
         body:
           "Nothing buys, nothing sells — not even this app's automatic stop-losses, which pause too. Broker-held brackets keep resting at your broker. Your positions stay exactly as they are. Nothing is sold.",
         available: state !== "halted",
         danger: true
-      },
-      {
+    };
+    const closeOnlyOption = {
         id: "close_only",
         title: "Close-only",
         body:
           "No new buys. Protective sells and the app's stop monitor keep working. This is what the automatic circuit breakers choose.",
         available: state !== "close_only",
         danger: false
-      },
-      {
+    };
+    const liquidatingOption = {
         id: "liquidating",
         title: "Wind down",
         body:
           "The strategy sells positions until the account is in cash. This SELLS things — it may realize losses and taxes.",
         available: state !== "liquidating",
         danger: true
-      },
-      {
-        id: "start",
-        title: state === "halted" ? "Start scheduled runs" : "Resume full operation",
-        body:
-          snapshot.policy.strategyAuthority === "decide"
-            ? "Runs resume on schedule and the strategy may place orders itself, inside your guardrails."
-            : "Runs resume on schedule. Every trade still waits for your approval.",
-        available: state !== "active",
-        danger: false
-      }
-    ],
-    [state, snapshot.policy.strategyAuthority]
-  );
+    };
+
+    if (state === "halted") {
+      return [startOption, closeOnlyOption, liquidatingOption];
+    }
+    if (state === "close_only") {
+      return [startOption, stopOption, liquidatingOption];
+    }
+    if (state === "liquidating") {
+      return [stopOption, startOption, closeOnlyOption];
+    }
+    return [stopOption, closeOnlyOption, liquidatingOption];
+  }, [state, snapshot.policy.strategyAuthority]);
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={emergency ? "Stop the strategy" : "Run state"}
-      tone={reality.tone === "live" ? "live" : undefined}
+      title={sheetTitle}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
-        <Chip tone={reality.tone}>
-          {reality.word} · {reality.phrase}
-        </Chip>
+        {reality.tone !== "live" && (
+          <Chip tone={reality.tone}>
+            {reality.word} · {reality.phrase}
+          </Chip>
+        )}
         <span className="text-[color:var(--con-muted)]">
           Now: <strong className="text-[color:var(--con-fg)]">{info.label}</strong>
         </span>
@@ -338,12 +368,12 @@ function ControlSheet({
                 )}
                 {o.id === "start" &&
                   (startPhrase ? (
-                    <Btn variant="outline" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
-                      Start… <LiveTag />
+                    <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
+                      {startLabel}…
                     </Btn>
                   ) : (
                     <Btn variant="pos" size="sm" disabled={busy !== null} onClick={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}>
-                      {busy === "start" ? "Starting…" : "Start"}
+                      {busy === "start" ? startProgressLabel : startLabel}
                     </Btn>
                   ))}
               </div>
@@ -370,12 +400,12 @@ function ControlSheet({
                   busy={busy === "start"}
                   confirmLabel={
                     <>
-                      Start on real money <LiveTag />
+                      {startLabel} scheduled runs
                     </>
                   }
                   variant="primary"
-                  note="This is a LIVE account. Starting is the risk-increasing direction, so it costs a typed phrase — stopping never does."
-                  onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on — on real money.")}
+                  note={`${startGerund} a broker-connected account changes automation state, so it costs the typed confirmation phrase — stopping never does.`}
+                  onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}
                 />
               )}
             </div>
@@ -659,6 +689,14 @@ export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
             Signing out only ends this browser session. The strategy keeps its current run state on the server — it
             does not stop, start, or sell anything.
           </p>
+          <Link
+            href="/old"
+            className="con-btn con-btn-outline self-start"
+            title="Open the legacy dashboard at /old. The new Socratic console is the primary app."
+            onClick={() => setOpen(false)}
+          >
+            Old dashboard
+          </Link>
           {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
           <a
             href="/logout"

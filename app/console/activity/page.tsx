@@ -13,6 +13,7 @@ import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Card, Chip, Empty, SignedText, type ChipTone } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 type Tab = "all" | "runs" | "fills" | "alerts";
 
@@ -329,7 +330,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                       <li key={p.id} className="rounded-lg border border-[color:var(--con-line)] p-2.5 text-[length:var(--con-fs-xs)]">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[length:var(--con-fs-sm)] font-bold">
-                            {SIDE_LABEL[p.proposal.side] ?? p.proposal.side} {p.proposal.symbol}
+                            {SIDE_LABEL[p.proposal.side] ?? p.proposal.side} <SymbolButton symbol={p.proposal.symbol} showLogo={false} />
                           </span>
                           <span className="con-num text-[color:var(--con-muted)]">
                             {typeof p.estimatedNotional === "number"
@@ -343,7 +344,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                           <Chip tone={statusTone(p.status)}>{p.status}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <span title="Side-adjusted move since the proposal's reference price. For a rejected idea this is the counterfactual.">
+                            <span title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
                               <SignedText value={p.performanceSinceProposalPct}>
                                 since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
                               </SignedText>
@@ -393,7 +394,7 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
         return (
           <div key={f.id} className="con-card flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-[length:var(--con-fs-sm)]">
             <span className="font-bold">
-              {SIDE_LABEL[f.side] ?? f.side} {f.symbol}
+              {SIDE_LABEL[f.side] ?? f.side} <SymbolButton symbol={f.symbol} showLogo={false} />
             </span>
             <span className="con-num text-[color:var(--con-muted)]">
               {fmtQty(f.quantity)} @ {fmtMoney(f.price)} = {fmtMoney(f.notional)}

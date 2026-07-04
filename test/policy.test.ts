@@ -36,7 +36,6 @@ const positions: EquityPosition[] = [{ symbol: "AAPL", quantity: 5, averageCost:
 const enabledPolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
