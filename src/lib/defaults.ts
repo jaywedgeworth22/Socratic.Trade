@@ -8,10 +8,10 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
   // edge-vs-tax-cost guard decide (see policy.ts).
   washSaleHandling: "block",
-  // IRA-replacement rebuys (Rev. Rul. 2008-5) hard-block by default in every mode above;
-  // "disregard" is an explicit per-account opt-in that proceeds annotated + audited instead
-  // (owner rationale: brokers don't report cross-account IRA wash sales to the IRS).
-  iraWashSaleHandling: "block",
+  // IRA-replacement rebuys proceed annotated by default for IRA accounts. Owner rationale:
+  // brokers don't report cross-account IRA wash sales to the IRS, so blocking those buys by
+  // default is not appropriate for this app; the stricter "block" choice remains available.
+  iraWashSaleHandling: "disregard",
   shortTermRatePct: 24,
   longTermRatePct: 15
 };
@@ -42,8 +42,6 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 export const DEFAULT_POLICY: TradingPolicy = {
   systemState: "halted",
-  paperMode: false,
-  paperStartingCash: 10000,
   includedIndices: ["sp500"],
   additionalSymbols: [],
   blocklist: [],
@@ -52,6 +50,8 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // broadened to other indexes / the wider screener. Tunable in settings.
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
+  socraticOverrideMode: "execute",
+  socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
   llmModel: "gpt-5.4-mini",
   llmReasoningEffort: "medium",
@@ -85,10 +85,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   riskRules: DEFAULT_RISK_RULES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   taxSettings: DEFAULT_TAX_SETTINGS
-  // No default broker or paper flag: a fresh policy is broker-neutral. activeBroker is set when a
-  // real broker is connected (see db-profiles.ts); until then getBrokerGateway() falls back to the
-  // local simulator. Do not seed "test"/paperMode here — it propagates the false assumption that the
-  // app is a paper/test app by default.
+  // No default broker: a fresh policy is broker-neutral. activeBroker is set when a real broker is
+  // connected (see db-profiles.ts). With no connected account the app cannot place orders — there is
+  // no local-sim fallback.
 };
 
 export const DEFAULT_STRATEGY_PROMPT = `OBJECTIVE

@@ -11,7 +11,8 @@ another platform (Codex/Antigravity) or a fresh session can pick up any item fro
 - **File-overlap is the constraint.** The RAG-retrieval items all rewrite the same regions of
   `vector-db.ts`; `strategy.ts` and `types.ts` are touched by several items; `db.ts migrate()` is the
   documented merge-conflict trap. Do NOT parallelize items that share a hot file — follow the order below.
-- Keep changes **additive + flag-gated** where they alter money-path behavior; never flip `paperMode`.
+- Keep changes **additive + flag-gated** where they alter money-path behavior. **STALE 2026-07-03:**
+  this program predated removal of the legacy paper-mode policy; use current AGENTS.md execution rules.
 
 ## Sequenced order (from the opus sequencer)
 1. **risk-tests** (tests-only, parallel-safe) — Batch 1

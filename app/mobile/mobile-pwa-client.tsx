@@ -235,7 +235,7 @@ export function MobilePwaClient() {
               <Smartphone className="h-3.5 w-3.5" />
               Mobile control
             </div>
-            <h1 className="truncate text-lg font-semibold">Agentic Trading</h1>
+            <h1 className="truncate text-lg font-semibold">Socratic Trade</h1>
           </div>
           <button
             className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95"

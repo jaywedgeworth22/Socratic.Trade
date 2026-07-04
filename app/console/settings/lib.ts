@@ -90,6 +90,15 @@ export function connectAlpacaAccount(body: AlpacaConnectBody): Promise<{ ok: boo
   });
 }
 
+/** POST /api/connected-accounts {broker:"test"} — creates the explicit local
+ *  mock paper account. The server keeps it inactive until the user switches to it. */
+export function connectTestAccount(): Promise<{ ok: boolean; accountNumber?: string; label?: string }> {
+  return request<{ ok: boolean; accountNumber?: string; label?: string }>("/api/connected-accounts", {
+    method: "POST",
+    body: JSON.stringify({ broker: "test" })
+  });
+}
+
 /** DELETE /api/connected-accounts/[id] — removes the connection (and its
  *  stored credentials) from this app. Nothing at the broker is touched. */
 export function disconnectAccount(id: string): Promise<{ ok: boolean }> {

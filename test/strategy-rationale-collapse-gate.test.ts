@@ -90,7 +90,6 @@ async function runCollapse(gateOn: boolean) {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: false,
     activeBroker: "alpaca",
     accountNumber: "TEST",
     llmModel: "gpt-4.1-mini",

@@ -97,7 +97,6 @@ describe("Bull truncation is not a silent no-op (Chat A item 5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      paperMode: true,
       llmModel: "gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],

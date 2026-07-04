@@ -161,11 +161,10 @@ export function ReplaceMarketSheet({
 
       {live ? (
         <>
-          <div className="mt-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-3 text-[length:var(--con-fs-sm)]">
-            <div className="font-bold text-[color:var(--con-live)]">LIVE · real money</div>
+          <div className="mt-3 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+            <div className="font-bold">Brokerage account</div>
             <p className="con-num mt-1">
-              The replacement {sideWord} of {remaining} {order.symbol} executes with your actual cash at the current
-              market price
+              The replacement {sideWord} of {remaining} {order.symbol} goes to the broker at the current market price
               {snapshot?.policy.accountNumber ? ` from account ·· ${snapshot.policy.accountNumber.slice(-4)}` : ""}.
             </p>
             <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">

@@ -4,13 +4,13 @@
  * helpers that route escalations (shouldEscalateDecision / approvedEscalationsFromDecision).
  *
  * Safety contract under test (owner-locked spec):
- *   - default ("block") behavior byte-compatible with the pre-existing hard block;
+ *   - taxable-account default ("block") behavior byte-compatible with the pre-existing hard block;
  *   - "ask" refuses at the gate but marks the failure escalatable with the PRICED tax cost
  *     (disallowed loss × shortTermRatePct) — approvable later only via a server-stored token;
  *   - "auto" proceeds ONLY when expected edge >= WASH_SALE_AUTO_EDGE_MULTIPLE × cost, and both
  *     outcomes are recorded on decision.washSale (never silent);
- *   - IRA replacement purchases are hard-blocked in EVERY mode (Rev. Rul. 2008-5), ignoring
- *     override tokens and even the per-account washSaleGuard flag;
+ *   - IRA replacement purchases proceed annotated by default, ignoring override tokens and even
+ *     the per-account washSaleGuard flag; explicit iraWashSaleHandling="block" hard-blocks them;
  *   - the override token never weakens the default block (ignored when handling is "block")
  *     and never bypasses OTHER gates at approval time;
  *   - only the closed escalation allowlist (ask-mode wash sale + time-context gates) can ever
@@ -352,18 +352,17 @@ describe("washSaleExpectedEdgeUsd — documented guard math", () => {
   });
 });
 
-describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
+describe("IRA-replacement default disregard — every taxable wash-sale mode", () => {
   for (const handling of ["block", "ask", "auto"] as const) {
-    it(`blocks an IRA rebuy of a taxable-loss-locked symbol in mode '${handling}'`, () => {
+    it(`allows and annotates an IRA rebuy of a taxable-loss-locked symbol in mode '${handling}'`, () => {
       const decision = evaluateTradeProposal(
         { ...buy, confidenceScore: 100 },
         ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: handling, taxationType: "roth_ira" }) }))
       );
-      expect(decision.approved).toBe(false);
-      const reason = decision.reasons.join(" ");
-      expect(reason).toContain("PERMANENTLY");
-      expect(reason).toContain("Rev. Rul. 2008-5");
-      expect(decision.washSale?.outcome).toBe("blocked_ira");
+      expect(decision.approved).toBe(true);
+      expect(decision.reasons).toHaveLength(0);
+      expect(decision.washSale?.outcome).toBe("ira_disregarded");
+      expect(decision.washSale?.note).toBe(IRA_WASH_SALE_DISREGARD_NOTE);
       // Never escalatable.
       expect(decision.escalations ?? []).toHaveLength(0);
     });
@@ -374,14 +373,15 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
       buy,
       ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask" }) }), { accountCapabilities: iraCapable })
     );
-    expect(decision.washSale?.outcome).toBe("blocked_ira");
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
   });
 
   // Codex review finding 1: the ConnectedAccount row's taxationType is the SOURCE OF TRUTH.
   // A legacy/manual IRA can have capabilities absent (or reporting "brokerage") AND a policy
-  // taxSettings without taxationType — the hard block must still fire in ask AND auto modes.
+  // taxSettings without taxationType — the IRA disregard path must still fire in ask AND auto modes.
   for (const handling of ["ask", "auto"] as const) {
-    it(`hard-blocks in mode '${handling}' when ONLY ConnectedAccount.taxationType marks the buyer as an IRA (no capabilities)`, () => {
+    it(`disregards in mode '${handling}' when ONLY ConnectedAccount.taxationType marks the buyer as an IRA (no capabilities)`, () => {
       const decision = evaluateTradeProposal(
         { ...buy, confidenceScore: 100 },
         ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: handling }) }), {
@@ -389,12 +389,12 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
           // capabilities intentionally absent; taxSettings carries no taxationType
         })
       );
-      expect(decision.approved).toBe(false);
-      expect(decision.washSale?.outcome).toBe("blocked_ira");
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("ira_disregarded");
       expect(decision.escalations ?? []).toHaveLength(0);
     });
 
-    it(`hard-blocks in mode '${handling}' when capabilities say "brokerage" but the ConnectedAccount is a traditional IRA`, () => {
+    it(`disregards in mode '${handling}' when capabilities say "brokerage" but the ConnectedAccount is a traditional IRA`, () => {
       const brokerageCaps: AccountCapabilities = { ...iraCapable, accountType: "brokerage" };
       const decision = evaluateTradeProposal(
         { ...buy, confidenceScore: 100 },
@@ -403,8 +403,8 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
           accountCapabilities: brokerageCaps
         })
       );
-      expect(decision.approved).toBe(false);
-      expect(decision.washSale?.outcome).toBe("blocked_ira");
+      expect(decision.approved).toBe(true);
+      expect(decision.washSale?.outcome).toBe("ira_disregarded");
     });
   }
 
@@ -434,24 +434,25 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
     expect(decision.washSale).toBeUndefined();
   });
 
-  it("ignores override tokens — user approval can never authorize the permanent harm", () => {
+  it("override tokens are irrelevant — default IRA disregard proceeds as annotation, not approval override", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "ask", taxationType: "traditional_ira" }) }), {
         approvedEscalations: [{ kind: "wash_sale_ask", symbol: "TSLA", token: "tok-abc" }]
       })
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.washSale?.outcome).toBe("blocked_ira");
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
+    expect(decision.washSale?.overrideToken).toBeUndefined();
   });
 
-  it("applies even when the per-account washSaleGuard flag is off (resolveTaxSettings disables it for IRAs)", () => {
+  it("default disregard applies even when the per-account washSaleGuard flag is off (resolveTaxSettings disables it for IRAs)", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(policyWith({ taxSettings: taxSettings({ washSaleGuard: false, taxationType: "roth_ira" }) }))
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.washSale?.outcome).toBe("blocked_ira");
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("ira_disregarded");
   });
 
   it("taxable buyer with washSaleGuard off is still allowed (pre-existing behavior unchanged)", () => {
@@ -463,7 +464,7 @@ describe("IRA-replacement hard block (Rev. Rul. 2008-5) — every mode", () => {
     expect(decision.washSale).toBeUndefined();
   });
 
-  it("explicit iraWashSaleHandling 'block' behaves exactly like the default", () => {
+  it("explicit iraWashSaleHandling 'block' is the stricter opt-in and hard-blocks", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(policyWith({ taxSettings: taxSettings({ taxationType: "roth_ira", iraWashSaleHandling: "block" }) }))

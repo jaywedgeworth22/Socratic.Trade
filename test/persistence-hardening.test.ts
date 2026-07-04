@@ -126,7 +126,6 @@ describe("evaluateTradeProposal — universe gate skips exits", () => {
   const policy: TradingPolicy = {
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: false,
     strategyAuthority: "decide",
     accountNumber: "A1",
     includedIndices: [],

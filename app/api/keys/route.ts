@@ -32,7 +32,7 @@ const API_KEY_CATALOG = [
     label: "Anthropic (Claude)",
     category: "LLM",
     required: false,
-    unlocks: "Claude models for the Assistant chat and for the Green/Red Team (trade proposals, strategy review, red-team debate). Select a claude-* model in Strategy Studio or the Assistant to use.",
+    unlocks: "Claude models for the Assistant chat and for the Green/Red Team (trade proposals, strategy review, red-team debate). Select a claude-* model in Strategy or the Assistant to use.",
     docsUrl: "https://console.anthropic.com/settings/keys"
   },
   {
@@ -45,10 +45,10 @@ const API_KEY_CATALOG = [
   },
   {
     service: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     category: "LLM",
     required: false,
-    unlocks: "Gemini models for the Assistant and strategy review. Select a gemini-* model in the Assistant or Strategy Studio to use.",
+    unlocks: "Gemini models for the Assistant and strategy review. Select a gemini-* model in the Assistant or Strategy screen to use.",
     docsUrl: "https://aistudio.google.com/app/apikey"
   },
   {
@@ -56,7 +56,7 @@ const API_KEY_CATALOG = [
     label: "Mistral AI",
     category: "LLM",
     required: false,
-    unlocks: "Mistral models for the Assistant and strategy review. Select a mistral-* model in the Assistant or Strategy Studio to use.",
+    unlocks: "Mistral models for the Assistant and strategy review. Select a mistral-* model in the Assistant or Strategy screen to use.",
     docsUrl: "https://console.mistral.ai/api-keys/"
   },
   {

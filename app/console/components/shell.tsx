@@ -1,22 +1,22 @@
 "use client";
 
 /** The console shell: providers + global chrome + navigation. Every screen
- *  renders inside this frame, so money-reality, run state, STOP, Run once,
- *  and freshness are visible everywhere. LIVE reality adds a viewport frame
- *  (console-live) — words first, color as reinforcement. Theme: system
+ *  renders inside this frame, so account scope, run state, STOP, Run once,
+ *  and freshness are visible everywhere. Paper/no-account states get explicit
+ *  banners; ordinary brokerage accounts do not get a red global frame. Theme: system
  *  preference by default, explicit light/dark via the chrome toggle
  *  (persisted, applied as data-theme on this root). */
 
 import type { ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
-import { deriveReality } from "../lib/derive";
-import { cx } from "../lib/format";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
+import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
+import { SymbolDrawerProvider } from "../ui/symbol-drawer";
 import { ToastProvider } from "../ui/toast";
-import { FreshnessStrip, RealityBanner, RunOnceButton, ScopeSelector, StateChip, StopButton, UserMenu } from "./chrome";
+import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
 import { ConsentGate } from "./consent-gate";
 import { DesktopRail, MobileTabBar } from "./nav";
 
@@ -56,13 +56,19 @@ function ThemeToggle({ theme, cycle }: { theme: ConsoleTheme; cycle: () => void 
 function ShellFrame({ children }: { children: ReactNode }) {
   const { snapshot, fetchedAt, loading, error } = useConsoleData();
   const { theme, dataTheme, cycle } = useConsoleTheme();
+  const { dataTextBoxFont } = useConsoleTextBoxFont();
 
   if (loading) {
     return (
-      <div className="console-root flex min-h-dvh items-center justify-center" data-theme={dataTheme} suppressHydrationWarning>
+      <div
+        className="console-root flex min-h-dvh items-center justify-center"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        suppressHydrationWarning
+      >
         <div className="text-center">
-          <div className="con-card-title">Console</div>
-          <p className="mt-2 text-[color:var(--con-muted)]">Loading account data…</p>
+          <div className="con-card-title">Socratic Trade</div>
+          <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
         </div>
       </div>
     );
@@ -70,10 +76,15 @@ function ShellFrame({ children }: { children: ReactNode }) {
 
   if (!snapshot) {
     return (
-      <div className="console-root flex min-h-dvh items-center justify-center px-6" data-theme={dataTheme} suppressHydrationWarning>
+      <div
+        className="console-root flex min-h-dvh items-center justify-center px-6"
+        data-theme={dataTheme}
+        data-textbox-font={dataTextBoxFont}
+        suppressHydrationWarning
+      >
         <div className="con-card max-w-md p-6 text-center">
-          <div className="con-card-title">Console</div>
-          <p className="mt-2 font-semibold">Couldn&apos;t load account data</p>
+          <div className="con-card-title">Socratic Trade</div>
+          <p className="mt-2 font-semibold">Couldn&apos;t load the autonomy desk</p>
           <p className="mt-1 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
             {error ?? "The dashboard API did not respond."} The console retries automatically.
           </p>
@@ -82,12 +93,11 @@ function ShellFrame({ children }: { children: ReactNode }) {
     );
   }
 
-  const reality = deriveReality(snapshot);
-
   return (
     <div
-      className={cx("console-root flex min-h-dvh flex-col", reality.tone === "live" && "console-live")}
+      className="console-root flex min-h-dvh flex-col"
       data-theme={dataTheme}
+      data-textbox-font={dataTextBoxFont}
       suppressHydrationWarning
     >
       {/* ToastProvider must live INSIDE .console-root: it renders the .con-toasts
@@ -95,22 +105,24 @@ function ShellFrame({ children }: { children: ReactNode }) {
           shadows) are scoped to .console-root — a toast mounted outside it would
           render unstyled. The provider adds no DOM around the children, so the
           flex column layout is unchanged; the toasts div is position:fixed. */}
-      <ToastProvider>
-        {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
-        <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
-          <RealityBanner snapshot={snapshot} />
-          <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
-        </div>
-        <div className="mx-auto flex w-full max-w-[1400px] flex-1">
-          <DesktopRail pendingCount={snapshot.pendingProposals.length} />
-          <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
-        </div>
-        <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
-        <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
-        {/* Blocking shared-data-pool consent gate — same semantics as the
-            legacy dashboard gate; renders nothing once answered. */}
-        <ConsentGate />
-      </ToastProvider>
+      <SymbolDrawerProvider>
+        <ToastProvider>
+          {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
+          <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
+            <RealityBanner snapshot={snapshot} />
+            <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+          </div>
+          <div className="mx-auto flex w-full max-w-[1400px] flex-1">
+            <DesktopRail pendingCount={snapshot.pendingProposals.length} />
+            <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
+          </div>
+          <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
+          <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
+          {/* Blocking shared-data-pool consent gate — same semantics as the
+              legacy dashboard gate; renders nothing once answered. */}
+          <ConsentGate />
+        </ToastProvider>
+      </SymbolDrawerProvider>
     </div>
   );
 }
@@ -127,7 +139,7 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
-        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Console</span>
+        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Socratic.Trade</span>
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />
@@ -136,7 +148,7 @@ function ChromeBar({
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>
-        <StopButton snapshot={snapshot} />
+        <RunStateButton snapshot={snapshot} />
       </div>
     </header>
   );

@@ -27,6 +27,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 const POLL_MS = 60_000;
 
@@ -135,11 +136,8 @@ function LearnedItemCard({
           {item.subject}
         </span>
         {item.symbol && (
-          <span
-            className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
-            title="The ticker this item is about."
-          >
-            {item.symbol}
+          <span className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]" title="The ticker this item is about.">
+            <SymbolButton symbol={item.symbol} showLogo={false} />
           </span>
         )}
         <div className="flex-1" />
@@ -363,7 +361,7 @@ export function LearnedContextInbox() {
               {confirming.symbol ? (
                 <span className="con-mono text-[color:var(--con-muted)]" title="The ticker this item is about.">
                   {" "}
-                  · {confirming.symbol}
+                  · <SymbolButton symbol={confirming.symbol} showLogo={false} />
                 </span>
               ) : null}
             </p>

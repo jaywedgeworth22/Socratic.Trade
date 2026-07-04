@@ -3,7 +3,7 @@
 // provider error (status code + response body) into a short, user-actionable sentence, and falls back
 // to the trimmed raw text when it does not recognize the shape, so nothing is ever hidden.
 
-export type LlmProviderName = "OpenAI" | "Anthropic" | "xAI (Grok)" | "Google Gemini" | "Mistral" | "DeepSeek" | "the LLM";
+export type LlmProviderName = "OpenAI" | "Anthropic (Claude)" | "xAI (Grok)" | "Google (Gemini)" | "Mistral" | "DeepSeek" | "the LLM";
 
 /** Map an internal provider id (openai/xai/gemini/mistral/deepseek/anthropic) to a display name. */
 export function providerLabel(provider?: string | null): LlmProviderName {
@@ -11,13 +11,13 @@ export function providerLabel(provider?: string | null): LlmProviderName {
     case "xai":
       return "xAI (Grok)";
     case "gemini":
-      return "Google Gemini";
+      return "Google (Gemini)";
     case "mistral":
       return "Mistral";
     case "deepseek":
       return "DeepSeek";
     case "anthropic":
-      return "Anthropic";
+      return "Anthropic (Claude)";
     case "openai":
       return "OpenAI";
     default:
@@ -29,8 +29,8 @@ export function providerLabel(provider?: string | null): LlmProviderName {
 export function providerFromText(raw: string): LlmProviderName {
   const s = raw.toLowerCase();
   if (/x\.ai|\bxai\b|grok/.test(s)) return "xAI (Grok)";
-  if (/anthropic|claude/.test(s)) return "Anthropic";
-  if (/generativelanguage|gemini/.test(s)) return "Google Gemini";
+  if (/anthropic|claude/.test(s)) return "Anthropic (Claude)";
+  if (/generativelanguage|gemini/.test(s)) return "Google (Gemini)";
   if (/mistral|mixtral|codestral|ministral/.test(s)) return "Mistral";
   if (/deepseek/.test(s)) return "DeepSeek";
   if (/openai|platform\.openai|^sk-/.test(s)) return "OpenAI";

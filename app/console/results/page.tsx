@@ -12,6 +12,7 @@ import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Btn, Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+import { SymbolButton } from "../ui/symbol-drilldown";
 
 export default function ResultsPage() {
   const { snapshot } = useConsoleData();
@@ -28,7 +29,7 @@ export default function ResultsPage() {
   const liveSelected = reality.tone === "live";
   const practiceBucket = (
     <BucketCard
-      title="Practice money (Test + Paper)"
+      title="Practice money (Paper broker)"
       tone="paper"
       realized={perf?.paperRealizedPnl}
       unrealized={perf?.paperUnrealizedPnl}
@@ -39,7 +40,7 @@ export default function ResultsPage() {
   );
   const liveBucket = (
     <BucketCard
-      title="Real money (Live)"
+      title="Brokerage Account"
       tone="live"
       realized={perf?.liveRealizedPnl}
       unrealized={perf?.liveUnrealizedPnl}
@@ -57,15 +58,15 @@ export default function ResultsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "the local simulator"}
+          for {reality.account?.label ?? "no connected account"}
         </span>
         <div className="flex-1" />
         <Btn size="sm" variant="ghost" onClick={() => setCompare((v) => !v)}>
           {compare
             ? "Hide comparison"
             : liveSelected
-              ? "Compare with practice money"
-              : "Compare with real money"}
+              ? "Compare with paper account"
+              : "Compare with brokerage account"}
         </Btn>
       </div>
 
@@ -76,7 +77,7 @@ export default function ResultsPage() {
       </div>
       {compare && (
         <p className="-mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Comparison only — the two buckets are different money-realities and never share an axis or a total.
+          Comparison only — broker-paper and brokerage-account results never share an axis or a total.
         </p>
       )}
 
@@ -89,12 +90,17 @@ export default function ResultsPage() {
                 label="Your account"
                 value={fmtPct(perf.benchmark.accountReturnPct, 2, true)}
                 sub={`${perf.benchmark.startDate} → ${perf.benchmark.endDate}`}
+                title="Time-weighted account return over this window when cash flows can be detected; otherwise raw account equity growth. This is the account return before subtracting SPY."
               />
-              <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" />
+              <Stat label={perf.benchmark.benchmarkSymbol} value={fmtPct(perf.benchmark.benchmarkReturnPct, 2, true)} sub="same window, buy and hold" title="Benchmark buy-and-hold return over the same window." />
               <div>
                 <div className="con-card-title">Excess return</div>
                 <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold">
-                  <SignedText value={perf.benchmark.excessReturnPct}>{fmtPct(perf.benchmark.excessReturnPct, 2, true)}</SignedText>
+                  <SignedText value={perf.benchmark.excessReturnPct}>
+                    <span title="Benchmark-relative return: your account return minus SPY over the same window. This is the alpha-style comparison; other Results percentages are raw account/proposal outcomes unless they explicitly say benchmark or excess.">
+                      {fmtPct(perf.benchmark.excessReturnPct, 2, true)}
+                    </span>
+                  </SignedText>
                 </div>
                 <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
                   positive = beating the market
@@ -196,8 +202,10 @@ function BucketCard({
           <div className="con-num mt-0.5">{hasAny && typeof winRate === "number" ? fmtPct(winRate, 0) : EM_DASH}</div>
         </div>
         <div>
-          <div className="con-card-title">Avg return / closed trade</div>
-          <div className="con-num mt-0.5">{hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}</div>
+          <div className="con-card-title" title="Raw realized return per closed trade in this bucket, not benchmark-relative. The separate SPY panel below handles benchmark/excess return.">Avg return / closed trade</div>
+          <div className="con-num mt-0.5" title="Raw realized return per closed trade, based on entry and exit prices. It is not adjusted for SPY or market beta.">
+            {hasAny && typeof avgReturn === "number" ? fmtPct(avgReturn, 2, true) : EM_DASH}
+          </div>
         </div>
       </div>
       <div className="mt-3 border-t border-[color:var(--con-line)] pt-3">
@@ -235,7 +243,7 @@ function ScorecardCard({
                 <th>{nameLabel}</th>
                 <th className="num">n</th>
                 <th className="num">Win</th>
-                <th className="num">Avg</th>
+                <th className="num" title="Raw average realized return per closed lot in this group, not benchmark-relative. Use the SPY panel for excess return.">Avg</th>
                 <th className="num">P&amp;L</th>
               </tr>
             </thead>
@@ -247,7 +255,7 @@ function ScorecardCard({
                     <td className="font-semibold">{row.name}</td>
                     <td className="num con-num">{row.trades}</td>
                     <td className="num con-num">{fmtPct(row.winRate, 0)}</td>
-                    <td className="num">
+                    <td className="num" title="Raw average realized return for this thesis/regime group. Positive means the closed lots made money in their own direction; it is not SPY-relative.">
                       <SignedText value={row.avgReturnPct}>{fmtPct(row.avgReturnPct, 2, true)}</SignedText>
                     </td>
                     <td className="num">
@@ -320,7 +328,9 @@ function TaxBlock() {
                   .slice(0, 12)
                   .map((lot, i) => (
                     <tr key={`${lot.symbol}-${i}`}>
-                      <td className="font-semibold">{lot.symbol}</td>
+                      <td className="font-semibold">
+                        <SymbolButton symbol={lot.symbol} showLogo={false} />
+                      </td>
                       <td className="num con-num">{fmtQty(lot.quantity)}</td>
                       <td className="num con-num">{lot.daysHeld}</td>
                       <td className="num con-num">{lot.isLongTerm ? "long-term" : `${lot.daysToLongTerm}d`}</td>
@@ -348,7 +358,7 @@ function TaxBlock() {
           <div className="flex flex-wrap gap-1.5">
             {tax.harvestCandidates.slice(0, 8).map((h) => (
               <Chip key={h.symbol} tone="muted">
-                {h.symbol} {fmtSignedMoney(h.unrealizedLoss)}
+                <SymbolButton symbol={h.symbol} showLogo={false} className="text-inherit" /> {fmtSignedMoney(h.unrealizedLoss)}
               </Chip>
             ))}
           </div>

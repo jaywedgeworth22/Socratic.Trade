@@ -102,7 +102,7 @@ describe("trigger entry (fire) wired to the budget ceiling (G8a — end to end)"
   async function activateUser(userId: string): Promise<void> {
     const { getPolicy, setPolicy } = await import("../src/lib/db");
     const policy = getPolicy(userId);
-    setPolicy({ ...policy, systemState: "active", accountNumber: "ACC-1", paperMode: true }, userId);
+    setPolicy({ ...policy, systemState: "active", accountNumber: "ACC-1" }, userId);
   }
 
   it("does NOT skip by default (limits unset) — runStrategyOnce still fires", async () => {

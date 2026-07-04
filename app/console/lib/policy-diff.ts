@@ -161,6 +161,17 @@ export interface ExtraDiffEntry {
 }
 
 const SELL_TO_FUND_RANK: Record<string, number> = { off: 0, suggest: 1, propose: 2, automated: 3 };
+const SELL_TO_FUND_LABELS: Record<string, string> = {
+  off: "Off",
+  suggest: "Suggest Only",
+  propose: "Propose",
+  automated: "Automated"
+};
+
+function sellToFundLabel(value: unknown): string {
+  const key = String(value ?? "off");
+  return SELL_TO_FUND_LABELS[key] ?? key;
+}
 
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
@@ -232,9 +243,9 @@ export function classifyExtraPatch(policy: TradingPolicy, extraPatch: PolicyPatc
         const to = SELL_TO_FUND_RANK[String(value)] ?? 0;
         entries.push({
           key,
-          label: "Sell-to-fund buys",
+          label: "Sell to Fund Buys",
           direction: to > from ? "looser" : to < from ? "tighter" : "changed",
-          summary: `${policy.sellToFundBuy ?? "off"} → ${String(value)}`
+          summary: `${sellToFundLabel(policy.sellToFundBuy)} → ${sellToFundLabel(value)}`
         });
         break;
       }

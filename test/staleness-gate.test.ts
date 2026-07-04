@@ -33,7 +33,6 @@ const positions: EquityPosition[] = [];
 const basePolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],

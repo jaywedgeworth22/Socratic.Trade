@@ -18,14 +18,24 @@ the hard way.
 - Read `STATUS.md` for the current repo snapshot, then skim the most relevant
   `docs/*.md` and the latest matching note under `docs/rollouts/` before making
   a non-trivial change.
+- Read `docs/EFFORT-LOG.md` before starting non-trivial work and keep it current
+  as work changes state. This is binding for every agent/tool/session, not just
+  a pre-commit chore: add a **Planned** row as soon as an effort is identified
+  and before substantial code/design work begins, so parallel agents can avoid
+  duplicating it; move active work to In Progress before substantial edits; and
+  update the row when a PR merges or production deploys. The branch-neutral live
+  board is `/Users/jay/apps/TRADING-EFFORT-LOG.md`; `docs/EFFORT-LOG.md` is the
+  repo-tracked mirror that must be updated before commit/push.
 
 ## Pre-Commit / Handoff Protocol (Claude, Codex, Antigravity, Cursor, etc.)
 
 Before every commit/push to the GitHub repo, you MUST update the following:
 1. **`STATUS.md`** — current state, blockers, next action.
-2. **`docs/EFFORT-LOG.md`** — the single shared cross-agent effort ledger. EVERY agent on
-   EVERY platform (Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions, …) MUST
-   keep this current: move each effort between **Planned → In Progress (with a one-line status) →
+2. **`/Users/jay/apps/TRADING-EFFORT-LOG.md` + `docs/EFFORT-LOG.md`** — the shared
+   cross-agent effort ledger. The `/Users/jay/apps/` file is the branch-neutral live board;
+   `docs/EFFORT-LOG.md` is the tracked repo mirror. EVERY agent on EVERY platform (Claude Code,
+   Codex, Antigravity/Gemini, Cursor, web/cloud sessions, etc.) MUST keep this current at start,
+   handoff, commit, PR, merge, and deploy boundaries: move each effort between **Planned → In Progress (with a one-line status) →
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
@@ -100,7 +110,7 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `trading.jays.services` | **production** |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
@@ -314,13 +324,44 @@ address:
   - Because `verify` runs `npm run build`, a PR that breaks the build cannot merge —
     always run the full tsc/test/build trio locally before pushing.
 
+## Product philosophy — real trading, owner's risk (READ FIRST; do not re-paternalize)
+
+This is a **real trading application**, not a simulator with a trading skin. The owner runs it with
+money they are fully prepared to lose (100%) and has said so repeatedly. Do NOT re-impose the
+paternalism that keeps creeping back in from every agent (Claude, Codex, others):
+
+- **An account is an account.** A broker *paper* account (e.g. Alpaca paper) is just another connected
+  account, distinguished only by its `environment`; a live account is just one whose environment is
+  live. Don't default to paper, don't treat paper as a "safe home base," and don't add
+  "are-you-sure-it's-real-money" ceremony beyond what a normal order confirmation needs.
+- **No "Test mode" / local simulator.** The local-simulation execution path (`usesLocalSimulation`,
+  the `test/local` mode, `getPaperPortfolioProjection`, fake local fills) has been **removed**
+  (`policy.paperMode` no longer exists on `TradingPolicy` either — see
+  `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`). Do NOT add it back or reintroduce any
+  fake-fill path. The app trades through a connected broker (paper or live) purely by that account's
+  `environment`; with no connected account it simply can't place orders — `deriveExecutionState`
+  (`src/lib/execution-mode.ts`) returns a "No account" state (`mode: undefined`,
+  `submitsBrokerOrders: false`) rather than a fake fallback. (The app still needs a *database* —
+  `DATABASE_URL` / `data/app.db` — that's infrastructure, not a fake execution mode.) The
+  `TestBrokerGateway` / `broker: "test"` adapter remains as TEST INFRASTRUCTURE only (so the unit
+  suite can run without hitting real Alpaca/Robinhood) — it is not a product-facing mode.
+- **Do NOT "protect the owner's money from your bugs."** The owner has decided only lose-it-all money
+  will ever be in the account. Don't gate, delay, or refuse real actions on the theory that the owner
+  needs protecting from risk they've accepted.
+- **Harden CORRECTNESS, not OBEDIENCE.** Hardening that makes the *logic* right is welcome: a bug must
+  not place an order the user didn't intend; one user's settings must never affect another user's
+  account; persisted state must stay consistent. Hardening that makes the app *rigidly enforce its own
+  guardrails as a cage the owner can't override* is NOT wanted. Guardrails are the owner's **adjustable
+  preferences** with an easy override — the `iraWashSaleHandling: "disregard"` setting is the template:
+  any rule the app enforces gets a user-controlled off-switch with honest annotation, never a scolding
+  ritual or an immovable block. If the owner set it, follow their intent and let them change or
+  override it.
+
 ## Don't
 
 - Don't run destructive git operations (`reset --hard`, force-push, branch
  deletion) without explicit user confirmation in the current conversation,
  even if a previous session was authorized to push.
-- Don't place real trades or toggle `paperMode: false` while testing — Paper
- mode is the default for a reason.
 
 ## Cursor Cloud specific instructions
 
@@ -350,20 +391,19 @@ local multi-worktree/PM2 setup and does NOT apply here.
  pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
  bundled react plugin — see the "Verify before claiming done" section). It fails
  only on errors; an existing backlog is grandfathered to "warn".
-- No secrets or API keys are required to run the app. It defaults to **Test
- mode** (a local SQLite simulator at `data/app.db`) and the Market Scan pulls
- live Yahoo Finance quotes with no key. `DATABASE_URL` defaults to
- `file:./data/app.db` (`src/lib/db.ts`), so the app runs even without a
- `.env.local`. Copy `.env.example` → `.env.local` only when you need to set
- optional provider keys.
-- The LLM agentic loop ("Run once" / `decide` autonomy) needs `OPENAI_API_KEY`.
- Without it, the dashboard, market scan, watchlist/policy/account configuration,
- and Test-mode simulation all still work — only LLM-driven proposal generation
- is unavailable.
+- No secrets or API keys are required to boot the app or browse it. `DATABASE_URL` defaults to
+ `file:./data/app.db` (`src/lib/db.ts`) — that database is app infrastructure (settings, proposals,
+ users), **not** a fake execution mode — so the UI, Market Scan (live Yahoo Finance quotes, no key),
+ and watchlist/policy/account configuration all run without a `.env.local`. To actually place orders
+ you connect a broker account (Alpaca paper or live); there is no local-simulation fallback. Copy
+ `.env.example` → `.env.local` to set optional provider keys.
+- The LLM agentic loop ("Run once" / `decide` autonomy) needs `OPENAI_API_KEY`. Without it, the
+ dashboard, market scan, and watchlist/policy/account configuration still work — only LLM-driven
+ proposal generation is unavailable.
 
 ### Production ops snapshot (remote diagnostics)
 
-Cloud agents cannot OAuth into `trading.jays.services` or read the Mac's `data/app.db`.
+Cloud agents cannot OAuth into `socratictrade.com` or read the Mac's `data/app.db`.
 When investigating **live** strategy runs, multi-account behavior, or production errors,
 **run first**:
 

@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Agentic Trading",
-    short_name: "Trading",
-    description: "Phone control surface for Agentic Trading.",
+    name: "Socratic Trade",
+    short_name: "Socratic.Trade",
+    description: "Phone control surface for Socratic Trade.",
     start_url: "/mobile",
     scope: "/",
     display: "standalone",

@@ -19,14 +19,14 @@ The shell is the persistent chrome rendered on every authenticated destination. 
 
 **Out of scope (owned by sibling specs):** destination content bodies (Dashboard/Approvals/Strategy/Guardrails/Results); the Settings tree internals; the Assistant slide-over content; the Approvals card. This spec defines the shell's *edges* with each (route targets, event contracts, where a control hands off).
 
-**Non-goals:** this spec does not move any panel ownership (that is P4..N). It defines the container that the strangler-fig migration renders into (P0), plus the switcher/STOP/badges that P2/P3 make real.
+**Non-goals:** this spec does not move any panel ownership (that is P4..N). It defines the container that the strangler-fig migration renders into (P0), plus the switcher/run-state action/badges that P2/P3 make real.
 
 **Governing file targets (new):**
 
 | Concern | New file | Notes |
 |---|---|---|
 | Route-group shell | `app/(shell)/layout.tsx` | P0. Renders the three zones; children = current tabs unchanged behind flag. |
-| Shell chrome components | `app/ui/shell/*` (`AccountSwitcher.tsx`, `MoneyRealityBadge.tsx`, `AmbientRiskStrip.tsx`, `RunOnceButton.tsx`, `StopButton.tsx`, `AlertsDropdown.tsx`, `CommandPalette.tsx`, `HelpPanel.tsx`, `AvatarMenu.tsx`) | Extracted from `app/dashboard-client.tsx`. |
+| Shell chrome components | `app/ui/shell/*` (`AccountSwitcher.tsx`, `MoneyRealityBadge.tsx`, `AmbientRiskStrip.tsx`, `RunOnceButton.tsx`, `RunStateButton.tsx`, `AlertsDropdown.tsx`, `CommandPalette.tsx`, `HelpPanel.tsx`, `AvatarMenu.tsx`) | Extracted from `app/dashboard-client.tsx`. |
 | Shell client state | `src/lib/shell/view-scope.ts` | Ephemeral view-scope store (P2). Distinct from persisted execution-scope. |
 | Autonomy-reset | `src/lib/autonomy-reset.ts` + schema in `src/lib/db.ts` `migrate()` | Net-new, §9. |
 | Catch-all account route | `app/(shell)/a/[accountId]/...` | Thin seeder, §2.6. |
@@ -64,7 +64,7 @@ Grid template: `grid-template-columns: minmax(240px, 320px) minmax(0, 1fr) auto`
 | CENTER | `Scan / more ›` overflow | static | this spec |
 | RIGHT | `AmbientRiskStrip` | `GET /api/shell/scope` → `risk` block | this spec |
 | RIGHT | `RunOnceButton` (target-stamped) | active account + money-reality | this spec |
-| RIGHT | `StopButton` (■ STOP) | active account system state | this spec |
+| RIGHT | `RunStateButton` (Start / Resume / STOP) | active account system state | this spec |
 | RIGHT | `AlertsDropdown` (🔔) | `GET /api/alerts?scope=active` + SSE `alert` events | this spec |
 | RIGHT | `CommandPalette` trigger (⌘K) | destination map + settings index | this spec |
 | RIGHT | `HelpPanel` trigger (?) | static content, context param | this spec |
@@ -327,9 +327,11 @@ The Live rung is **armed separately, never inherited** from a Paper run. First R
 
 ---
 
-## 6 → renumbered. STOP kill switch (RIGHT zone)
+## 6 → renumbered. Run-state action + STOP kill switch (RIGHT zone)
 
-Component: `app/ui/shell/StopButton.tsx`. The always-visible, always-safe kill switch. **STOP ≠ Flatten** (novice #5, LOCKED).
+Component: `app/console/components/chrome.tsx` (`RunStateButton`). The header action is intent-specific:
+Start when halted, Resume when close-only, and red STOP only when the visible action is stopping
+active/winding-down behavior. **STOP ≠ Flatten** (novice #5, LOCKED).
 
 ### 6.1 Semantics (non-negotiable)
 
@@ -342,7 +344,9 @@ Component: `app/ui/shell/StopButton.tsx`. The always-visible, always-safe kill s
 | State | Rendering | Action |
 |---|---|---|
 | armed (running) | solid `■ STOP`, red outline, enabled | one click → halt active account; optimistic → chip shows `‖ HALTED` immediately, reconcile on response |
-| already halted | `■ STOPPED` greyed / muted, with a small "Resume ›" affordance (routes to Guardrails→Autonomy to un-halt — resuming is deliberately NOT one-click) | — |
+| already halted | green `Start` with play icon | opens the run-state sheet titled "Start the strategy"; Start is first, Wind down remains secondary/red; Live start keeps the typed phrase ritual |
+| close-only | green `Resume` with play icon | opens the run-state sheet titled "Resume or change run state"; Resume full operation is first, STOP/Wind down remain available but visually separate |
+| liquidating | solid `■ STOP`, red outline, enabled | halts the wind-down without selling more; resume remains in the run-state sheet |
 | in-flight | spinner on the button, label `Stopping…`; button disabled to prevent double-fire | — |
 | unscoped | disabled + tooltip "Pick an account first" | — |
 | error | button returns to `■ STOP` with a toast "Halt failed — retry"; **fail loud** (a silently-failed STOP is the worst outcome) | retry |

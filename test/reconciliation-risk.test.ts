@@ -189,7 +189,7 @@ describe("reconcilePendingFills", () => {
       insertFillEvent({
         accountNumber,
         source: "paper",
-        executionMode: "test/local",
+        executionMode: "broker/paper",
         symbol: "AAPL",
         side: "buy",
         quantity: 1,

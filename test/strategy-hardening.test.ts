@@ -36,7 +36,7 @@ const portfolio: Portfolio = {
 
 function policy(extra: Partial<TradingPolicy> = {}): TradingPolicy {
   return {
-    ...DEFAULT_POLICY, systemState: "active", paperMode: false, accountNumber: "A1",
+    ...DEFAULT_POLICY, systemState: "active", accountNumber: "A1",
     includedIndices: [], additionalSymbols: ["AAPL", "TSLA", "NVDA"], ...extra
   };
 }

@@ -1,24 +1,23 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { Card, buttonClass } from "../ui/primitives";
+import { Card } from "../ui/primitives";
 
 export const metadata: Metadata = {
-  title: { absolute: "Trading Dashboard" },
+  title: { absolute: "Socratic Trade" },
   description:
-    "AI-assisted dashboard for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
+    "Socratic Trade is an autonomous market-reasoning desk for inspecting live theses, delegated actions, RAG evidence, dissent, and outcome learning. Not investment advice.",
   alternates: { canonical: "/welcome" },
   openGraph: {
     type: "website",
-    siteName: "Trading Dashboard",
+    siteName: "Socratic Trade",
     url: "/welcome",
-    title: "Trading Dashboard",
+    title: "Socratic Trade",
     description:
-      "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
+      "Autonomous market reasoning with visible theses, evidence, dissent, actions, coaching, and outcome learning. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "Trading Dashboard",
-    description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
+    title: "Socratic Trade",
+    description: "Autonomous market reasoning with visible decisions and outcome learning. Not investment advice."
   },
   robots:
     process.env.NEXT_PUBLIC_ALLOW_INDEXING === "true"
@@ -27,59 +26,65 @@ export const metadata: Metadata = {
 };
 
 const ACCESS_HREF =
-  "mailto:mail@jays.services?subject=Trading%20dashboard%20access";
+  "mailto:mail@jays.services?subject=Socratic%20Trade%20access";
+const PRIMARY_LINK =
+  "inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 max-sm:min-h-11";
+const GHOST_LINK =
+  "inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 max-sm:min-h-11";
+const PRIMARY_LINK_SM =
+  "inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-fg shadow-sm transition-colors hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 max-sm:min-h-11";
+const GHOST_LINK_SM =
+  "inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 max-sm:min-h-11";
 
 const FEATURES: Array<{ title: string; body: string }> = [
   {
-    title: "Market scanning & enrichment",
-    body: "Screen hundreds of tickers and pull in fundamentals, technicals, news, and alternative data from multiple sources in a single pass."
+    title: "Autonomous thesis formation",
+    body: "Builds a market thesis from current regime, portfolio state, scan results, and remembered outcomes before it chooses action or restraint."
   },
   {
-    title: "Multi-lens evaluation",
-    body: "Each candidate is scored across independent research lenses — valuation, momentum, sentiment, risk — so you see a rounded picture, not a single signal."
+    title: "Decision trace",
+    body: "Every action is framed as a trace: belief, catalyst, size, status, supporting evidence, dissent, and what would make the agent change its mind."
   },
   {
-    title: "Paper trading via a connected broker",
-    body: "Connect a third-party paper account — e.g. Alpaca Paper Trading — and run every strategy against it before risking real capital. No money at risk."
+    title: "Evidence attribution",
+    body: "Surfaces which data providers, retrieval memories, prior lessons, and market facts influenced the decision instead of hiding behind a single score."
   },
   {
-    title: "Transparent strategy & learning loop",
-    body: "The system records its reasoning for every decision and surfaces what worked and what did not, building an auditable track record you can inspect."
+    title: "Dissent by design",
+    body: "Bull case, bear case, gate output, and objections stay visible. Disagreement is a first-class part of the interface, not a buried log line."
   },
   {
-    title: "Risk controls & approval gates",
-    body: "Configurable position limits, concentration caps, and daily-loss guards. High-confidence proposals can be queued for your explicit approval before any order is placed."
+    title: "Outcome learning",
+    body: "Scores thesis types, regimes, and model choices against actual outcomes so future runs can learn from both successes and failures."
   },
   {
-    title: "You stay in control",
-    body: "The dashboard surfaces research and proposals. You decide. No autonomous real-money trading without your say-so."
+    title: "Coaching and self-improvement",
+    body: "You can suggest refocuses or critiques, and Socratic Trade can propose framework improvements for you to accept, reject, or rewrite."
   }
 ];
 
 const STEPS: Array<{ n: number; title: string; detail: string }> = [
   {
     n: 1,
-    title: "Scan & enrich the market",
+    title: "Observe the market",
     detail:
-      "The system scans your watchlist and a broader universe, enriching each symbol with fundamentals, technicals, recent news, and alternative signals."
+      "Socratic Trade watches the market, active account, regime signals, candidates, and prior lessons to decide what kind of opportunity or danger it is seeing."
   },
   {
     n: 2,
-    title: "Evaluate candidates across lenses",
+    title: "Form a thesis and act under mandate",
     detail:
-      "An AI-assisted research panel scores each candidate across multiple independent lenses and surfaces the strongest ideas with supporting evidence."
+      "It turns evidence into a thesis, chooses whether to buy, sell, hold, exit, or stand aside within the authority you have delegated, then records why."
   },
   {
     n: 3,
-    title: "Test in a connected paper account and decide — you approve",
+    title: "Explain, learn, and improve",
     detail:
-      "Promising ideas can be routed to a connected third-party paper account (e.g. Alpaca Paper Trading). If you choose to act on one in your real account, you review and approve each order before it is sent."
+      "It shows the evidence path, dissent, outcome, coaching notes, and proposed framework changes so the next run has a better memory."
   }
 ];
 
 export default function WelcomePage() {
-  if (process.env.LANDING_PAGE_ENABLED !== "true") notFound();
-
   return (
     <>
       {/* JSON-LD structured data */}
@@ -89,11 +94,11 @@ export default function WelcomePage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            name: "Trading Dashboard",
+            name: "Socratic Trade",
             applicationCategory: "FinanceApplication",
             operatingSystem: "Web",
             description:
-              "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow.",
+              "Autonomous market-reasoning desk with visible theses, delegated actions, evidence attribution, dissent, and outcome learning.",
             offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }
           })
         }}
@@ -103,8 +108,8 @@ export default function WelcomePage() {
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <header className="border-b border-line bg-surface/80 backdrop-blur-sm">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-            <span className="text-base font-semibold text-fg">Trading Dashboard</span>
-            <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "sm" })}>
+            <span className="text-base font-semibold text-fg">Socratic Trade</span>
+            <a href={ACCESS_HREF} className={PRIMARY_LINK_SM}>
               Request access
             </a>
           </div>
@@ -114,22 +119,22 @@ export default function WelcomePage() {
           {/* ── Hero ───────────────────────────────────────────────────────── */}
           <section className="text-center space-y-6">
             <h1 className="text-4xl font-bold tracking-tight text-fg sm:text-5xl">
-              AI market research &amp; strategy dashboard
+              Socratic.Trade is an autonomy desk for market decisions
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted leading-relaxed">
-              Scan and enrich markets, evaluate ideas across multiple research lenses, test
-              strategies in a connected paper account (e.g. Alpaca Paper Trading), and — when you
-              are ready — run a transparent, risk-controlled workflow where you approve every order.
+              It watches markets, forms a thesis, can act under delegated authority, and leaves a
+              decision trail you can inspect: evidence, memory, dissent, action, outcome, and what it
+              thinks should change next.
             </p>
             <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <a href={ACCESS_HREF} className={buttonClass({ variant: "primary", size: "md" })}>
+              <a href={ACCESS_HREF} className={PRIMARY_LINK}>
                 Request access
               </a>
-              <a href="/how-it-works" className={buttonClass({ variant: "ghost", size: "md" })}>
-                How the strategy works
+              <a href="/how-it-works" className={GHOST_LINK}>
+                Decision framework
               </a>
             </div>
-            <p className="text-sm text-faint">Currently in private beta.</p>
+            <p className="text-sm text-faint">Private operator build at socratictrade.com.</p>
           </section>
 
           {/* ── Features grid ──────────────────────────────────────────────── */}
@@ -144,9 +149,8 @@ export default function WelcomePage() {
               ))}
             </div>
             <p className="text-xs text-faint leading-relaxed">
-              Try the workflow instantly with the built-in local simulator (&ldquo;Test &mdash; Local Sim&rdquo;,
-              no broker required), or connect a third-party paper account such as Alpaca Paper Trading &mdash;
-              which is likely more realistic than the local simulation.
+              The core question is visible by design: what did Socratic Trade believe, what changed
+              its mind, what did it do, and what should it learn from the result?
             </p>
           </section>
 
@@ -170,14 +174,14 @@ export default function WelcomePage() {
 
           {/* ── Strategy overview link ─────────────────────────────────────── */}
           <section className="space-y-3 text-center">
-            <h2 className="text-xl font-semibold text-fg">How the strategy works</h2>
+            <h2 className="text-xl font-semibold text-fg">How the decision framework works</h2>
             <p className="mx-auto max-w-2xl text-sm text-muted leading-relaxed">
-              An AI reads market data and argues with itself about whether a trade is a good idea; only if the
-              idea survives that argument do hard-coded safety rules let a small order through &mdash; and the
-              system keeps score so it can improve. We are upfront about where it is weak or unproven.
+              The interface is organized around a Socratic loop: observe, argue, decide, explain,
+              measure, and improve. The agent&apos;s notes should make its judgment inspectable rather
+              than asking you to trust a black box.
             </p>
-            <a href="/how-it-works" className={buttonClass({ variant: "ghost", size: "sm" })}>
-              Read the full strategy overview
+            <a href="/how-it-works" className={GHOST_LINK_SM}>
+              Read the full framework overview
             </a>
           </section>
 
@@ -186,8 +190,9 @@ export default function WelcomePage() {
             <Card className="p-6 space-y-4 border-line-strong">
               <h2 className="text-base font-semibold text-fg">Important disclosures</h2>
               <p className="text-sm text-muted leading-relaxed">
-                This dashboard is software for market research and strategy simulation. It is not
-                investment advice, and it is not a broker-dealer or a registered investment adviser.
+                Socratic Trade is software for market research, autonomous reasoning, and trade
+                execution when connected to accounts you configure. It is not investment advice, a
+                broker-dealer, or a registered investment adviser.
               </p>
               <p className="text-sm text-muted leading-relaxed">
                 Trading and investing involve substantial risk of loss. Simulated or hypothetical
@@ -209,7 +214,7 @@ export default function WelcomePage() {
               Not investment advice. Trading involves risk of loss.
             </p>
             <p className="text-xs text-faint">
-              &copy; 2026 Trading Dashboard &middot;{" "}
+              &copy; 2026 Socratic Trade &middot;{" "}
               <a
                 href="mailto:mail@jays.services"
                 className="underline underline-offset-2 hover:text-muted"

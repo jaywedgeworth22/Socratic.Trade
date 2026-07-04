@@ -23,6 +23,286 @@ follow-ups in `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
 **Next:** the live-execution hardening build implements advisory drawdown
 awareness (prompt context + receipts), NO halting; per-gate hard-block sweep
 goes back to the owner as plain-language questions before flipping defaults.
+## 2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex)
+Branch `codex/rag-filing-ingest-smoke-fix` in `/Users/jay/apps/trading-codex`.
+Production Infisical runtime was verified against the new Pinecone account: the only visible
+index is `socratic-trade`, dimension 1024. A controlled MSFT SEC 10-Q ingest wrote 95 vectors
+to the new index, recorded 95 `document_chunks`, recorded accession `0001193125-26-191507`,
+and retrieval returned MSFT MD&A chunks from `sec-edgar`. The first manual run timed out after
+writing 56 vectors but before local bookkeeping; those orphan vectors were deleted, returning the
+index to 95 vectors. Code fix in this branch passes a deterministic SEC filing `doc_id`
+(`ticker:accession:docType`) into `storeDocument` so retries overwrite the same vector ids instead
+of generating duplicate UUID-based ids. Focused verification: `npx vitest run
+test/sec-filings.test.ts`.
+
+## 2026-07-04 - RAG Sentry visibility + Pinecone hosted-model review (Codex)
+Branch `codex/rag-sentry-visibility` in `/Users/jay/apps/trading-codex`.
+Follow-up after PR #351 merged. RAG provider failures, missing keys, Pinecone metric checks,
+ingest-budget trips, Pinecone Write Unit budget trips, malformed embeddings, retrieval budget
+degradations, and unexpected RAG catch-block failures now emit Sentry warning/error events when
+`SENTRY_DSN` is configured. Provider-health failures are marked so Sentry gets the precise
+Pinecone/Voyage connection event without also duplicating generic catch-block incident noise. Docs
+now explain the role split between app admin pages, API Usage Monitor, Sentry, and provider consoles,
+and document Pinecone-hosted `llama-text-embed-v2` / `multilingual-e5-large` as benchmark candidates
+rather than a hot production swap. The Infisical runbooks now use project display name
+`Socratic.Trade` and slug `socratic-trade`. Verification is green: `npm run lint` (0 errors,
+existing warning backlog), `npx tsc --noEmit`, `npm test` (244 files / 2373 tests),
+`npm run build`, `git diff --check`, `bash -n scripts/infisical-prod-cutover.sh`, and
+`pm2 restart trading-codex --update-env`.
+
+## 2026-07-04 - Test account restore + usage cap email alerts (Codex)
+Branch `codex/restore-test-account-option` in `/Users/jay/apps/trading-codex`.
+Restores an explicit addable `Test Account - Local Mock Paper Account` through the
+connected-account flow while keeping it inactive unless the user explicitly selects it.
+Also adds a shared usage-limit alert helper: Pinecone WU daily-fuse trips, Voyage/RAG
+ingest daily-cap trips, provider rate/quota/billing failures, and API Usage Monitor budget
+warnings now record `budget_alert` events and attempt email-capable notification delivery
+with an operator-email fallback (`USAGE_LIMIT_ALERT_EMAIL`, then `ADMIN_ALERT_EMAIL`, then
+`PRIMARY_USER_EMAIL`) when Resend is configured. Verification is green: `npm run lint`
+(0 errors, existing warning backlog), `npx tsc --noEmit`, `npm test` (245 files /
+2375 tests), `npm run build`, `git diff --check`, and `pm2 restart trading-codex
+--update-env`.
+
+## 2026-07-03 - Console polish + RAG quota/usage safeguards (Codex)
+Branch `codex/console-actions-evidence-live` in `/Users/jay/apps/trading-codex`; merged as PR #351.
+This combined the owner-requested console polish with RAG safeguards:
+Autonomous Actions blocked reasons/history, stopped cadence display, raw-vs-benchmark
+return tooltips, IRA wash-sale disregard defaults, Evidence/source wording, LLM settings
+usage/coach model affordances, reduced live-account warning copy, broker roadmap cards,
+provider/model naming consistency, Pinecone index inventory visibility, app-recorded RAG
+usage labeling, Pinecone estimated Write Unit budget enforcement before Voyage embedding, and docs
+for the recommended Voyage/Pinecone stack plus earnings-report RAG ingestion.
+Verification is green: `npm run lint` (0 errors, existing warning backlog), `npx tsc --noEmit`,
+`npm test` (244 files / 2372 tests), `npm run build`, `git diff --check`, and Codex preview restart
+(`pm2 restart trading-codex --update-env`).
+
+## 2026-07-03 - Socratic admin/RAG/settings parity pass (Codex)
+Branch `codex/live-thesis-portfolio-framing` in `/Users/jay/apps/trading-codex`.
+Current local work covers the broad owner-requested follow-up: Pinecone/RAG
+quota guardrails, `socratic-trade` default index, admin RAG/connection health,
+user/admin LLM usage, `/old`, OAuth host canonicalization for stale
+`trading.jays.services` Auth.js env values, right-side ticker drawer coverage,
+Home live-thesis reframing, Coach-page reframing, provider-specific
+reasoning/thinking controls for Strategy and AI Review, lock/unlock authority
+language, the first absolute-vs-percent setting mode switches, and a tracked
+open-items audit. Verification is green: `npm run lint` (0 errors), `npx tsc
+--noEmit`, `npm test` (244 files / 2369 tests), `npm run build`, Codex preview
+restart, and authenticated route probes for `/console`, `/old`, and
+`/console/strategy`. The Playwright smoke assertion was updated from the old
+`Market Scan` label to the new `Evidence and RAG contribution` Home panel, and
+`npm run test:e2e` passes locally.
+See `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md` and
+`docs/reviews/2026-07-03-console-parity-open-items.md`.
+
+## 2026-07-03 - AI Review inheritance, model catalog, and text-box fonts (Codex)
+Branch `codex/ai-review-model-inheritance` in `/Users/jay/apps/trading-codex`.
+The Strategy -> AI Review picker no longer presents a separate account-review
+model fallback. Blank reviewer selection now means "Same As Red Team" when a
+Red Team model is configured, otherwise "Same As Green Team"; the server uses
+the same inheritance order before calling the LLM. Empty model strings are
+trimmed away at `/api/strategy/tune`. Text boxes now default to the console site
+font instead of forced monospace, with browser-local Settings -> Appearance
+choices for Site/System/Serif/Mono. Curated non-OpenAI/non-Anthropic model
+choices were refreshed to current Gemini/Mistral/xAI/DeepSeek options, and
+DeepSeek V4 Thinking Mode now has provider-specific UI/backend normalization.
+Verification is green: focused `npx vitest run test/llm-request.test.ts
+test/strategy-tuning.test.ts`, `npm run lint` (0 errors, 307 warnings),
+`npx tsc --noEmit`, `npm test` (244 files / 2370 tests), `npm run build`,
+`git diff --check`, `pm2 restart trading-codex --update-env`, and unauthenticated
+route probes for `/console/settings` and `/console/strategy` redirecting to
+`/login` as expected. See
+`docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
+
+## 2026-07-03 - Sell to Fund Buys title-case copy fix (Codex)
+Branch `codex/sell-to-fund-title-case` in `/Users/jay/apps/trading-codex`.
+The Guardrails Sell to Fund Buys selector and the legacy dashboard Key
+Parameters selector now use Title Case for the field label and all option
+labels: Off / Suggest Only / Propose Sells for Approval / Automated. The
+Guardrails save-review diff also renders the field label and enum summary in
+Title Case instead of raw lowercase enum values. Verification: focused
+`test/console-policy-diff.test.ts`, `npm run lint` (0 errors, 303 existing
+warnings), `npx tsc --noEmit`, `npm test` (243 files / 2362 tests),
+`npm run build`, `git diff --check`, `pm2 restart trading-codex --update-env`,
+and Playwright against `http://localhost:4101/console/guardrails`. See
+`docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
+
+## 2026-07-03 - Console universe index exclusivity fix (Codex)
+Branch `codex/universe-exclusive-indexes` in `/Users/jay/apps/trading-codex`.
+The console Guardrails -> Universe base-index selector now uses the shared
+`toggleIncludedIndex` normalizer, so fully overlapping index families replace
+each other immediately in the draft: selecting S&P 500 deselects S&P 100, and
+selecting Nasdaq Composite deselects Nasdaq 100 (and vice versa). Added inline
+hint copy under the checkboxes so the replacement behavior is visible before
+save. Verification: `npm run lint` (0 errors, 303 existing warnings),
+`npx tsc --noEmit`, focused index/guardrails tests, `npm test` (243 files /
+2362 tests), `npm run build`, and Playwright against the Codex preview. See
+`docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
+
+## 2026-07-03 - IRA wash-sale UI correction (Codex)
+Branch `codex/ira-washsale-ui-fix` in `/Users/jay/apps/trading-codex`.
+The console now stops showing the taxable-account Block / Ask / Auto wash-sale
+rebuy selector as the primary control on Roth/traditional IRA accounts. Settings
+shows same-IRA wash sales as ignored/not applicable, then exposes only the IRA
+taxable-loss rebuy choice: block cross-account IRA replacement buys by default,
+or explicitly ignore/disregard them with the existing audit note. Guardrails Tax
+rules now render the taxable selector for taxable accounts and the IRA selector
+for IRA accounts, with mode-specific explanation copy; settings search/glossary
+also route Roth/ignore phrasing to the IRA control. Verification so far:
+`npm run lint` (0 errors, 303 existing warnings), `npx tsc --noEmit`,
+focused wash-sale/settings tests, `npm test` (243 files / 2362 tests), and
+`npm run build` are green. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
+
+## 2026-07-03 - Run-state UX fix: Start/Resume is not STOP (Codex)
+Branch `codex/run-state-ux-fix` in `/Users/jay/apps/trading-codex`.
+Fixed the console chrome so the header no longer forces users to click a red STOP
+control to reach start options. When the account is `halted`, the right-side
+run-state action is now a green Start button; when it is `close_only`, it is a
+green Resume button; active/liquidating states still keep the red STOP affordance.
+The run-state sheet now titles itself by intent, puts Start/Resume first when
+recovering from a paused state, and keeps Wind down/STOP visually red. Live
+Start/Resume uses the existing typed phrase ritual with a primary tone instead of
+a danger-red opener. The legacy dashboard's "Enable autonomous execution" confirm
+also now uses primary tone, because that is an authority change rather than a
+destructive stop. Verification: `npm run lint` (0 errors, 303 existing warnings),
+`npx tsc --noEmit`, `npm test` (243 files / 2361 tests), `npm run build`,
+`git diff --check`, `pm2 restart trading-codex --update-env`, and Playwright
+desktop/mobile checks against `http://localhost:4101/console` using the trusted
+local Cloudflare Access header. See `docs/rollouts/2026-07-03-run-state-ux.md`.
+
+## 2026-07-03 - Socratic Trade autonomy UI/runtime implementation (Codex)
+Branch `codex/socratic-trade-autonomy-mockup` in `/Users/jay/apps/trading-codex`.
+Built the Socratic Trade Autonomy Desk into real app surfaces, not just a frame. `/console` now reads
+persisted Socratic decision cases first, shows thesis/action/evidence/RAG/dissent/coaching/framework
+state, and falls back to live snapshot-derived copy only when there is no decision history yet. Added
+durable `socratic_decisions` and `socratic_framework_proposals` tables, `/api/socratic/*` routes, coach
+note appends, framework proposal accept/reject/apply actions, RAG attribution capture from retrieved
+chunks, and strategy-loop recording for proposed/placed/blocked/refused override decisions. Added
+institutional-memory document indexing for each strategy-recorded Socratic decision so proposed,
+blocked, and placed cases can feed future private RAG retrieval with broker argument, critic
+counterargument, policy outcome, override state, RAG contribution, outcome, lessons, and coach notes.
+Added Socratic override policy fields so the agent can override owner preference gates in propose/execute
+mode while still refusing hard broker/account/integrity/tax gates. Public `/welcome` and `/how-it-works`
+are routable by default and reframed around autonomous market reasoning; `/design/socratic-trade` is now
+a coded product/site overview that links into the working app surfaces. Exact old production-domain
+references were replaced with `socratictrade.com`;
+active runtime/source identifiers and the iOS starter were aligned to Socratic Trade. Codex preview is
+running at `http://localhost:4101`. Verification: `npm run lint` (0 errors, 303 existing warnings),
+`npx tsc --noEmit`, focused Socratic/account-deletion/memory Vitest runs, `npm test` (243 files / 2361 tests),
+`npm run build`, `git diff --check`, browser checks for desktop/mobile `/console`,
+`/console/guardrails`, `/welcome`, `/how-it-works`, and `/design/socratic-trade`, plus route probes:
+`/welcome` 200, `/how-it-works` 200, `/strategy` 307 to `/how-it-works`,
+`/design/socratic-trade` 200, authenticated `/console` 200, and authenticated
+`/api/socratic/*` 200. See
+`docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+
+## 2026-07-03 — Live-execution hardening: drawdown breaker → hard-halt (Claude, cloud)
+Branch `claude/live-execution-hardening` (off `origin/main` @ `eb54b94`, post-#342). First slice of the
+hardening build; implements owner decision #1 (drawdown breaker → HARD-HALT). The account-level
+drawdown/daily-loss circuit breaker now flips `systemState → "halted"` on breach (subsequent scheduled
+runs skip at `strategy.ts:242`; manual `executeProposal` refuses at `:1876`; owner re-arms by setting
+`systemState` back to `"active"`) instead of the softer `close_only`. Built as the owner's **overridable
+preference** `riskRules.drawdownBreakerAction: "halt" | "close_only"` (default `"halt"`) — not a
+hardcoded cage; the breaker is still opt-in via `maxDrawdownPct`/`maxDailyLossNotional`. Verified
+current-run safety: in-run decide-mode execution uses `gateway.placeEquityOrder` (NOT the
+halted-throwing `executeProposal`), and the policy gate treats `halted`==`close_only` for the current
+run, so the run that trips the breaker winds down gracefully (blocks entries, allows its exits) then
+subsequent runs hard-stop. Vol-panic brake left as `close_only` (out of scope of the drawdown decision).
+Gate green: tsc clean · lint 0 errors · **2351 tests / 239 files** · build green. **Remaining hardening
+half:** prompt-expected stop-losses (decision #2) — separate follow-up. Files: `src/lib/types.ts`,
+`src/lib/strategy.ts`, `test/strategy-moneypath-drawdown-flip.test.ts`. See
+`docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
+
+## 2026-07-03 — De-paternalize Step 2: remove `policy.paperMode` + Test-mode local simulator (Claude, cloud) — MERGED as #342
+Branch `claude/remove-paper-test-mode` (off `origin/main` post-#339). Completes the owner's directive
+from Step 1 (#339): this is a real trading app, not a simulator with a trading skin. **Removed:**
+`policy.paperMode`/`paperStartingCash` from `TradingPolicy` (`src/lib/types.ts`), `DEFAULT_POLICY`,
+every read/write site, `/api/policy`, `mobile-api.ts`, and the console/legacy Settings UI toggles; the
+`test/local` `ExecutionMode` value, `usesLocalSimulation`, `getPaperPortfolioProjection`, the local
+paper-fill auto-execute branch in `src/lib/strategy.ts`, and the local portfolio projection in
+`src/lib/dashboard.ts`. **`deriveExecutionState`** (`src/lib/execution-mode.ts`) is now the single hub:
+with a connected account, mode is `broker/paper` or `broker/live` purely from that account's
+`environment` (no `paperMode` input); with **no** connected account it returns an honest "No account"
+state (`mode: undefined`, `submitsBrokerOrders: false`, `label: "No account"`) instead of any fake-fill
+fallback — `runStrategyOnce`, `executeProposal`, `withLivePreflight`, and `resolveGateway` all now
+explicitly refuse to place orders in that state rather than silently defaulting to the test gateway.
+**Kept as-is (not in scope):** `DATABASE_URL`/`data/app.db` (infrastructure, not a fake mode);
+`TestBrokerGateway`/`broker: "test"` (legitimate TEST INFRASTRUCTURE for the unit suite — ~36 test
+files were migrated from `paperMode: true` to creating a connected `broker:"test"`/`environment:"paper"`
+account so execution still flows through the normal broker path). **Found + fixed in the process** (a
+real correctness bug, not scope creep): broker-paper fills were mislabeled "Test" throughout the
+Activity feed/notifications purely because they shared `FillSource: "paper"` with the removed local
+simulator (`src/lib/dashboard-feed.ts`, `src/lib/dashboard-ui.ts`) — now correctly labeled "Paper".
+Rebased on `origin/main` (now carries #340 rebrand + #341 DB hotfix). Verify: `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` **2350/2350 passing across 239 files**, `npm run build` green. See
+`docs/rollouts/2026-07-03-remove-paper-default-test-mode.md` (Step 2 section) and `docs/EFFORT-LOG.md`.
+
+## 2026-07-03 — P0 boot-crash hotfix: baseline DDL vs versioned migration (Claude)
+Branch `claude/fix-baseddl-index-migration`. **Incident:** production (`trading-live`,
+pm2 `trading`) crash-looped from ~21:14 CDT 2026-07-02 (Sentry `socratic-trade`
+issue `a595484d…`, release `8e2b1181` = PR #333) with `SqliteError: no such column:
+client_turn_id` thrown while loading the instrumentation hook; `/api/health` was 500.
+**Root cause:** #333 added `client_turn_id` via versioned migration but ALSO added the
+column + `idx_chat_turns_user_client` to the BASELINE DDL in `migrate()`. Baseline runs
+BEFORE `applyVersionedMigrations`, so on any pre-existing DB `CREATE TABLE IF NOT
+EXISTS` no-ops and the baseline `CREATE INDEX` references a column that doesn't exist
+yet → boot crash. CI never sees it (fresh DBs get the column from CREATE TABLE) — the
+same signature was misread as a "stale artifact" in two agent worktrees earlier.
+**Ops recovery (done):** backed up prod DB (`data/app.db.bak-20260703-clientturnid`),
+applied the migration's own `ALTER TABLE chat_turns ADD COLUMN client_turn_id TEXT`,
+restarted pm2 `trading` → health 200. Same additive ALTER applied to the
+`trading-codex` (was ↺1500 crash-looping) and `trading-claude` preview DBs.
+**Code fix (this branch):** baseline DDL reverted to the frozen SCHEMA_BASELINE shape
+(column + index removed; warning comment added) — the versioned migration is the single
+source; new `test/db-migration-old-schema.test.ts` boots getDb() against a simulated
+pre-#333 DB. See `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
+**Next:** none for the incident; rule for all agents — never add migration-era
+columns/indexes to the baseline exec.
+## 2026-07-03 — Rebrand: Agentic Trading → Socratic Trade / socratictrade.com (Claude, cloud)
+Branch `claude/rebrand-socratic-trade` (off `origin/main` post-#339). Owner stood up production infra
+under the name **Socratic Trade** at **socratictrade.com** (Sentry project, Cloudflare DNS, GitHub
+OAuth callbacks, Google authorized domains — all done owner-side); this aligns the codebase.
+**Changed:** display brand "Agentic Trading" → "Socratic Trade" (manifest name + no-space `short_name`
+"Socratic.Trade", `layout.tsx` applicationName/appleWebApp/description, mobile page + `<h1>`); public
+host fallback old production host → `https://socratictrade.com` (env-first —
+`NEXT_PUBLIC_SITE_URL` still wins — in `public-origin.ts`, `robots.ts`, `sitemap.ts`, `layout.tsx`
+metadataBase, README, `test/mcp-oauth.test.ts` + `test/logout-route.test.ts`); Sentry project slug
+fallback `agentic-trading` → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion
+fallback identifiers now use Socratic Trade naming. **Deliberately NOT changed:** `mail@jays.services`
+(owner LOGIN email — would break auth), the Robinhood **account nickname "Agentic"**
+(account-detection convention), and internal jays.services preview subdomains. `socratic.trade` also
+resolves but is not wired in (owner said it's optional; used only as the no-space name form). Verify:
+running tsc/test/build. See `docs/rollouts/2026-07-03-rebrand-socratic-trade.md`.
+
+## 2026-07-03 — CI holiday-flake fix: deterministic isTradingDay in tests (Claude, cloud) — MERGED as #339
+Branch `claude/kill-paper-default-rules` (#339). CI `verify` went red for a **pre-existing, wall-clock**
+reason: today (2026-07-03) is the observed US July 4 market holiday, so `isTradingDay()` is false and
+`runStrategyOnce`'s market-closed guard (`strategy.ts:252`) skipped every non-manual run — turning ~17
+strategy/persistence assertions red across 8 files (all showing `run_skipped_market_closed`). This would
+blank all CI through the weekend (Sat/Sun also non-trading), blocking #339, the rebrand, AND the
+paperMode-removal PR. Fixed centrally with a **test-determinism seam**: `isTradingDay(date?)` returns
+true for the no-argument "today" call when `AGENTIC_TEST_FORCE_TRADING_DAY=1` (set ONLY by
+`vitest.config`'s `test.env`, never in production); explicit-date calendar calls are untouched, so
+`market-hours.test.ts`/`token-budget-ceiling.test.ts` still assert real closures. **Zero test-file
+edits** → no conflict with the in-flight paperMode-removal branch (`claude/remove-paper-test-mode`),
+which owns those test files. Verified: full suite **2365 passed** (was 17 failed), tsc clean, lint 0
+errors. Files: `src/lib/market-calendar.ts`, `vitest.config.ts`.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
+## 2026-07-03 — De-paternalize: kill paper-as-default + Test mode (owner directive) (Claude, cloud)
+Owner directive (repeated, emphatic): this is a REAL trading app, owner accepts 100% risk; stop
+treating paper as default and DELETE Test mode / the local simulator; do not "protect the owner's
+money from agent bugs." **Rules first (this commit):** `AGENTS.md` — deleted the "Paper mode is the
+default / don't toggle `paperMode:false`" Don't-rule and the "defaults to Test mode (local simulator)"
+framing; added a top "Product philosophy — real trading, owner's risk" section (an account is an
+account; no Test-mode/local-sim; don't protect the owner from accepted risk; harden CORRECTNESS +
+multi-user safety, NOT obedience — guardrails are the owner's overridable prefs, `iraWashSaleHandling:
+"disregard"` is the template). This is the root-cause fix that stops every agent (Claude/Codex)
+re-imposing it. **Code next (in progress, separate PR):** remove the `test/local` /
+`usesLocalSimulation` execution path (`execution-mode.ts` hub + ~13 src consumers + strategy paper-fill
+branch + dashboard portfolio projection) and `paperMode`-as-default; an account's `environment` decides
+paper vs live, and no connected account means the app can't place orders (no local-sim fallback). ~35
+src + 36 test files touch it — landing in coherent green pieces, not one reckless bang.
+See `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
 
 ## 2026-07-03 — Owner decisions recorded + Manager-model options (Claude, cloud)
 Branch `claude/manager-model-eval` (off `origin/main` @ `df745aa`, post-#336). Docs-only.
@@ -1543,7 +1823,7 @@ repair now lives on `main` via PR #275; this branch carries the remaining
 repeatability fixes by changing `npm run build` to `next build --webpack` and
 keeping the crypto imports webpack-compatible. Local smoke now passes: `/`
 redirects to `/login`, `/api/health` returns `ok:true`, and
-`https://trading.jays.services/` returns a 307 to `/login`.
+`https://socratictrade.com/` returns a 307 to `/login`.
 See `docs/rollouts/2026-06-30-prod-build-hotfix.md`.
 ## 2026-06-30 - Strategy timeout and sizing guardrails
 Branch `codex/strategy-timeout-sizing-guardrails-20260630`. Follow-up to the
@@ -1847,8 +2127,8 @@ events. Verification: `npx vitest run test/policy-notification-events.test.ts`,
 `docs/rollouts/2026-06-30-provider-degraded-notification-setting.md`.
 ## 2026-06-30 — Browser tab title correction
 Branch `codex/browser-title`. Root metadata and the welcome route now set the
-document title to exactly `Trading Dashboard`; the welcome route uses an
-absolute title so the root template cannot render `Trading Dashboard · Trading
+document title to exactly `Socratic Trade`; the welcome route uses an
+absolute title so the root template cannot render `Socratic Trade · Trading
 Dashboard`. See `docs/rollouts/2026-06-30-browser-title.md`.
 
 ## 2026-06-30 — Congress.Trade shared contract package integration
@@ -1921,7 +2201,7 @@ autonomy/LLM state, recent `strategy_runs` (with `connected_account_id` + label)
 audit rows (`strategy_run`, `recoverable_issue`, skips, policy violations). Middleware treats
 `/api/ops/*` as public; handler requires `OPS_DIAGNOSTIC_TOKEN` (or legacy `ADMIN_REINDEX_TOKEN`)
 via `x-ops-token` / `Authorization: Bearer`. Set the token on prod, then agents can curl
-`https://trading.jays.services/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
+`https://socratictrade.com/api/ops/snapshot`. See `docs/rollouts/2026-06-29-ops-diagnostic-snapshot.md`.
 Secrets wired: `OPS_DIAGNOSTIC_TOKEN` in Cursor Cloud + Infisical prod (owner 2026-06-29). Still needed: merge PR #249, deploy to `trading-live`, `pm2 restart trading` (reload Infisical), new Cloud Agent session, then `npm run ops:snapshot`. Multi-account Alpaca broker fix still pending.
 ## 2026-06-29 — Tiered settings (Cursor / feat/tiered-settings)
 Three-phase settings architecture improvement:
@@ -2093,7 +2373,7 @@ verified email.
 ## 2026-06-28 — Google auth primary, Cloudflare tunnel only
 Branch `codex/google-auth-primary`. Replaced the app's Cloudflare Access-header
 login path with Auth.js Google as the only configured identity source.
-Cloudflare Tunnel can still route `trading.jays.services`, but
+Cloudflare Tunnel can still route `socratictrade.com`, but
 `cf-access-authenticated-user-email` is ignored by middleware,
 `AUTH_SECRET` alone arms fail-closed auth, `/logout` clears Auth.js cookies and
 returns to app `/login`, and empty `ALLOWED_EMAILS` now allows only
@@ -2104,7 +2384,7 @@ listed in `ALLOWED_EMAILS`. Verified focused auth/logout/identity tests,
 PR #219 merged and production deploy run `28319030128` passed. Cloudflare Zero
 Trust app `agentic-trading-dashboard` (`9539f646-575d-4e7c-b182-0bbe7c02083a`)
 now has bypass policy `42c4adc9-1421-416b-b744-f291afc87938` so
-`trading.jays.services` reaches Next.js instead of the Cloudflare Access login.
+`socratictrade.com` reaches Next.js instead of the Cloudflare Access login.
 Live validation: `/` returns app `307 /login`, `/login` returns the app Google
 login page, `/api/auth/providers` exposes Google, `/api/dashboard` returns app
 `401 Unauthorized`, and `/logout` redirects to app `/login`. See
@@ -2142,7 +2422,7 @@ Branch `codex/robinhood-mcp-resource-param`. Follow-up to the persisted
 `robinhood.com/oauth/error` after stale OAuth DB rows were cleared: production
 already has the public callback configured, dynamic registration enabled, and no
 static client id, and the live DB showed a freshly registered dynamic client for
-`https://trading.jays.services/api/auth/robinhood/callback`. Added
+`https://socratictrade.com/api/auth/robinhood/callback`. Added
 `ROBINHOOD_MCP_RESOURCE` support so authorization, authorization-code exchange,
 and refresh-token exchange include the protected MCP resource indicator
 (`https://agent.robinhood.com/mcp/trading` by default). This preserves the
@@ -2175,7 +2455,7 @@ MCP client names now use generic dashboard language instead of the temporary
 name. Verified after merging `origin/main`: `npx tsc --noEmit`, `npm test` (153
 files / 1,487 tests), `npm run build`, and in-app browser desktop/mobile Help
 checks against `http://127.0.0.1:4119/`. The Playwright smoke selector was
-updated to expect `Trading Dashboard` instead of the temporary app name; local
+updated to expect `Socratic Trade` instead of the temporary app name; local
 focused smoke passed against a started production server on port 4201. See
 `docs/rollouts/2026-06-28-help-data-sources-copy.md`.
 
@@ -2191,7 +2471,7 @@ and `npm run build` are green. See
 `docs/rollouts/2026-06-28-quiet-tiles-loading.md`.
 
 ## 2026-06-28 — Fix: Robinhood MCP OAuth Dynamic Re-registration on Hostname Change
-Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `trading.jays.services`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
+Branch `agent/antigravity` (worktree `~/apps/trading-antigravity`). (1) **Robinhood OAuth Dynamic Registration:** fixed a redirection error page on `robinhood.com/oauth/error` ("Uh oh! Something's gone wrong") when reconnecting a Robinhood account in a different workspace preview environment (e.g. `antigravity.jays.services`) than where the client was originally registered (e.g. `socratictrade.com`). Dynamically registered OAuth client configurations now store and enforce the `redirectUri` they were created with. If the requested `redirectUri` differs from the cached registration, `getOrRegisterClient` dynamically registers a new client for the current environment.
 Verify: tsc ✓ · 1446/1446 ✓ · build ✓. See `docs/rollouts/2026-06-28-robinhood-mcp-oauth-dynamic-reregistration.md`.
 
 ## 2026-06-27 — Fix: Alpaca key fallback + FMP premium warnings
@@ -3494,7 +3774,7 @@ Branch: claude/magical-faraday-uce1uy
   source-of-truth contract for a responsive Next.js/PWA and native SwiftUI
   iPhone app: snapshot/bootstrap reads, audited/idempotent command queue,
   server-side command execution, SSE command/status events, and a phone-first
-  `/mobile` PWA. Added SwiftUI starter files under `ios/AgenticTrading/` using
+  `/mobile` PWA. Added SwiftUI starter files under `ios/SocraticTrade/` using
   the same command/status model. Added a multi-step account deletion procedure
   that creates a short-lived request, requires exact signed-in email/user-id and
   exact phrase confirmation, deletes user-scoped app data plus server-stored
@@ -3639,7 +3919,7 @@ Branch: claude/magical-faraday-uce1uy
 - 2026-06-22 (`agent/claude-h-core` + `agent/claude-h-learn` + `agent/claude-h-trig`): **Strategy/risk/execution hardening — 3 sibling PRs** ([#94](https://github.com/jaywedgeworth22/agentic-trading/pull/94)/[#95](https://github.com/jaywedgeworth22/agentic-trading/pull/95)/[#96](https://github.com/jaywedgeworth22/agentic-trading/pull/96)) from the verified-actionable subset of Antigravity's strategy critique, re-scoped to the app's real posture (multi-user, real sizes, shorting in scope — not a $10 paper toy). **CORE**: shorting enablement (default OFF, `shortSellingEnabled` + account-capability gated via `allowedProposalSides`), `maxPortfolioBeta` cap, entry-drift guard (`maxEntryDriftPct`, default 10, on `TradeProposal.referencePrice`), model-free FCF-yield/debt-equity hard-veto in `deterministicBearFilter`, broker-held OCO brackets on Alpaca (`enrichOpeningProposal`, `brokerBracketsEnabled` default on), beta-scaled stops (`betaScaledStopPct`), removed dead `RiskRules.stopLossAtrMultiple`; Settings UI + `/api/policy` validation. **LEARN**: OOS walk-forward-gated weight patches (wires existing `runWalkForwardOOS` into `proposeStrategyTuning`), regime-segmented tuning evidence, read-only holding-period/turnover scorecard fields, execution-cost model ON by default (1 bps, env opt-out). **TRIG**: TradingView webhook submits a `technical` material event into the trigger engine (`src/lib/tradingview-trigger.ts`). All three: tsc clean, full suite green, `npm run build` green; merged `origin/main` (consent-pool #91 + email-aliases #92). Deferred: marketable-limit entries (notional-routing conflict), true ATR stops (needs OHLC feed), per-regime weight matrices. See `docs/rollouts/2026-06-22-risk-shorting-hardening.md`, `-learning-loop-hardening.md`, `-tradingview-trigger-wiring.md`.
 - 2026-06-22 (`feat/primary-email-aliases`): **Primary email aliases — one operator, many addresses.** New `PRIMARY_USER_EMAIL_ALIASES` env (comma-separated): every listed address maps to the single primary `"local"` account, so the owner can sign in with any of their emails (Gmail + custom-domain) onto the same identity/data, all auto-allowed + admin. `identity.ts` `primaryEmails()` (call-time) drives `isPrimaryEmail`/`userIdForEmail`/`isEmailAllowed`; `middleware.ts` mirrors the set at the edge; `admin.ts` `isAdminEmail` now delegates to `isPrimaryEmail`. No data migration (all map to `"local"`). tsc clean · auth tests 14/14 · `npm test` 805 pass / 1 pre-existing unrelated fail (`cache-provenance`, date-sensitive) · build green. Owner sets on prod `.env.local`: `PRIMARY_USER_EMAIL=jaywedgeworth22@gmail.com`, `PRIMARY_USER_EMAIL_ALIASES=mail@jaywedgeworth.com,mail@jays.services`, then `pm2 restart trading --update-env` (+ allow all three in the CF Access policy). See `docs/rollouts/2026-06-22-primary-email-aliases.md`.
 - 2026-06-22 (`feat/robinhood-data-consent-pool`): **Robinhood public data → consent pool.** RH-acquired bars + fundamentals (public market data, not account-private info) now flow into the reciprocal consent pool like every other user-keyed source, instead of being hard-`private`. `history.ts` RH OHLC tier scope `"private"` → `cacheScopeForKeySource("user", userId)` (pool with consent, else private); `RobinhoodEnrichmentProvider` (`data-providers.ts`) gains the same consent-aware `readEnrichmentCache`/`writeEnrichmentCache` as the other providers. RH OAuth token stays strictly per-user (PR #54) — only the public data is shared, only with consent (refuse → private + excluded). New `test/robinhood-data-pool.test.ts` (3 tests): consenting users share RH bars+fundamentals via the pool (no second broker call); non-consenters stay private. tsc clean, **807 tests** (+3), build green. Built in `~/apps/trading-rh-pool` off `origin/main`; landing via PR. See `docs/rollouts/2026-06-22-robinhood-data-consent-pool.md`.
-- 2026-06-22 (`docs/deploy-handoff`): **Production auto-deploy is LIVE + backfilled handoff docs.** `.github/workflows/deploy.yml` deploys every push to `main` (and manual dispatch) to the self-hosted PM2 box via a `trading-live`-labeled runner on the owner's M-series Mac: token-auth `git fetch` → `git reset --hard FETCH_HEAD` → `npm ci` → `npm run build` → `pm2 restart trading`. Activated/debugged across PRs #79 (move into `.github/workflows/`), #81 (fetch via `GITHUB_TOKEN` — launchd runner has no git creds/TTY), #82 (`reset --hard FETCH_HEAD` not `checkout main` — `trading-live` is a linked worktree sharing the `main` checkout). Deploy run #6 green; `trading.jays.services` serves HTTP 302 (auth gate) = up. This change backfills the skipped handoff: new `docs/deployment.md` runbook, new `docs/rollouts/2026-06-22-deploy-workflow-activated.md`, and `ci-pending/README.md` deploy section corrected to the real design. Owner note: live `/access-denied` just means the visitor email isn't allowlisted (`PRIMARY_USER_EMAIL`/`ADMIN_USER_EMAILS`/CF Access) — not a deploy bug.
+- 2026-06-22 (`docs/deploy-handoff`): **Production auto-deploy is LIVE + backfilled handoff docs.** `.github/workflows/deploy.yml` deploys every push to `main` (and manual dispatch) to the self-hosted PM2 box via a `trading-live`-labeled runner on the owner's M-series Mac: token-auth `git fetch` → `git reset --hard FETCH_HEAD` → `npm ci` → `npm run build` → `pm2 restart trading`. Activated/debugged across PRs #79 (move into `.github/workflows/`), #81 (fetch via `GITHUB_TOKEN` — launchd runner has no git creds/TTY), #82 (`reset --hard FETCH_HEAD` not `checkout main` — `trading-live` is a linked worktree sharing the `main` checkout). Deploy run #6 green; `socratictrade.com` serves HTTP 302 (auth gate) = up. This change backfills the skipped handoff: new `docs/deployment.md` runbook, new `docs/rollouts/2026-06-22-deploy-workflow-activated.md`, and `ci-pending/README.md` deploy section corrected to the real design. Owner note: live `/access-denied` just means the visitor email isn't allowlisted (`PRIMARY_USER_EMAIL`/`ADMIN_USER_EMAILS`/CF Access) — not a deploy bug.
 - 2026-06-22 (`ci/activate-e2e`): **Activated the Playwright smoke workflow.** `git mv
   ci-pending/e2e.yml .github/workflows/e2e.yml` — the smoke (`npm run test:e2e`, now passing after
   `e2e/smoke-fix`) runs on every PR/push. Reframed `ci-pending/README.md` from "staged" to reference
@@ -3986,7 +4266,7 @@ Branch: claude/magical-faraday-uce1uy
   Started/active users — `systemState==="halted"` ⇒ no orders). **Deferred:** H3 native Alpaca trailing
   (needs a broad `OrderType` change — the synthetic path covers Alpaca for now). 283 tests, build green.
   See `docs/rollouts/2026-06-20-r1-r5-audit-and-safety-banner.md`.
-- 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `trading.jays.services` (`03bfc38`).**
+- 2026-06-20 (`agent/claude`): **Broker honesty + account-drives-mode — shipped to `socratictrade.com` (`03bfc38`).**
   Robinhood now connects via its MCP (root cause of the long OAuth failure: the redirect URI must be a
   `http://localhost` loopback, NOT the public Cloudflare-fronted `.services` URL — see memory
   `robinhood-mcp-oauth-prod`). Removed the fabricated `MockRobinhoodGateway` → honest `TestBrokerGateway`

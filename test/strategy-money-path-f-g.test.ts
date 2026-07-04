@@ -6,8 +6,9 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 
 // End-to-end "money-path" + red-team wiring tests (audit work-split Chat F/G).
 //
-// Drives runStrategyOnce in Test/paper mode (usesLocalSimulation → simulated fills, NEVER a real
-// trade) with a stubbed LLM so the full proposal → evaluate → execute path is exercised. Asserts:
+// Drives runStrategyOnce against a connected TEST-BROKER account (broker: "test", environment:
+// "paper" — test infrastructure, TestBrokerGateway) with a stubbed LLM so the full proposal →
+// evaluate → execute path is exercised through the normal broker placement flow. Asserts:
 //   - G7: a paper fill is booked and a proposal + fill_event are persisted.
 //   - F1: the persisted proposal carries the new `redTeamVerdict` field.
 //   - F2: a Bear rejection writes an audit("proposal_rejected_by_red_team") row.
@@ -121,7 +122,6 @@ async function seedTestAccountAndPolicy() {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: true,
     llmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
@@ -129,8 +129,8 @@ async function seedTestAccountAndPolicy() {
   });
 }
 
-describe("strategy money-path (Test/paper mode) — G7 + F1", () => {
-  it("books a paper fill and persists a proposal + fill_event with the redTeamVerdict field (survived)", async () => {
+describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 + F1", () => {
+  it("books a broker-paper fill and persists a proposal + fill_event with the redTeamVerdict field (survived)", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", makeFetchStub({ redTeamVerdict: { rejected: false, reason: "No fatal flaw found." } }));
 
@@ -141,18 +141,18 @@ describe("strategy money-path (Test/paper mode) — G7 + F1", () => {
     const result = await runStrategyOnce();
     expect(result.status).toBe("completed");
 
-    // G7: the full path booked a simulated (paper) fill.
+    // G7: the full path placed a real order through TestBrokerGateway and booked the fill.
     const fills = listFillEvents("TEST", undefined, 100, "local");
     const aaplFill = fills.find((f) => f.symbol === "AAPL");
     expect(aaplFill).toBeDefined();
     expect(aaplFill?.status).toBe("filled");
     expect(aaplFill?.source).toBe("paper");
 
-    // A proposal was persisted for AAPL, in a terminal paper status.
+    // A proposal was persisted for AAPL, placed through the normal broker path.
     const proposals = listRecentProposals("TEST", 100, "local");
     const aaplProposal = proposals.find((p) => p.proposal.symbol === "AAPL");
     expect(aaplProposal).toBeDefined();
-    expect(aaplProposal?.status).toBe("paper");
+    expect(aaplProposal?.status).toBe("placed");
 
     // F1: the redTeamVerdict field round-trips through the persisted JSON payload (no migration),
     // including the served red-team model attribution (t3).

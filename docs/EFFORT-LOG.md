@@ -1,5 +1,11 @@
 # Effort Log — cross-agent board
 
+**Canonical live board:** `/Users/jay/apps/TRADING-EFFORT-LOG.md`
+
+This repo file is the tracked mirror for commits/PRs. Update the canonical live board first so
+agents in other worktrees can see reservations before code lands, then mirror relevant state here
+before committing.
+
 The owner's at-a-glance ledger of every effort and its state. **Every agent on every platform
 (Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions) MUST keep this current** as
 part of the Pre-Commit / Handoff Protocol in `AGENTS.md`. Move each row between the four states as
@@ -15,16 +21,41 @@ in place and note the correction.
   pm2 `trading`, release branch). Cloud/agent sessions cannot perform or verify this — only move a
   row here when the owner (or a release runner) confirms the production deploy actually happened.
 
-_As of 2026-07-03. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
+_As of 2026-07-04. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
 
 ---
 
 ## 🚀 Deployed to production
 
 _Owner-managed release; not verifiable from cloud/agent sessions. When the owner promotes `main`
-to `trading.jays.services`, record the release commit + date here._
+to `socratictrade.com`, record the release commit + date here._
 
-- _(none recorded yet — awaiting owner confirmation of a production release)_
+- **2026-07-02 (evening)** — `trading-live` observed at `eae514be` (post-#338) on the
+  deploy machine. **Incident:** the deploy boot-crashed on the pre-existing prod DB
+  (`no such column: client_turn_id`, Sentry `a595484d…`, release `8e2b1181` = #333);
+  `/api/health` 500 with pm2 crash-looping. **Recovered 2026-07-03 ~01:50 CDT** by
+  backing up the DB and applying the migration's own additive `ALTER`, then restart —
+  health 200. Root cause + regression test in the P0 hotfix row below; full detail in
+  `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
+- **2026-07-03** — `trading-live` published at `7b803bff` (PR #346) on
+  `socratictrade.com`. Includes #345 run-state UX and #346 IRA wash-sale UI correction;
+  production health 200 and live Roth IRA Settings page verified.
+- **2026-07-03** — `trading-live` published at `481e9dcc` (PR #347) on
+  `socratictrade.com`. Includes the Guardrails Universe index exclusivity fix;
+  production health 200 and live S&P/Nasdaq mutual-exclusion UI behavior verified.
+- **2026-07-03** — `trading-live` published at `0941b4d2` (PR #349) on
+  `socratictrade.com`. Includes Socratic admin/RAG/Pinecone/settings parity,
+  provider-specific model reasoning controls, OAuth host canonicalization,
+  `/old`, ticker drawer coverage, and user/admin LLM usage visibility. Production
+  health 200 and Google/GitHub OAuth redirect URIs verified on the Socratic domain.
+- **2026-07-03** — `trading-live` published at `afbe1c87` (PR #352) on
+  `socratictrade.com`. Includes RAG provider/quota Sentry visibility, Pinecone-hosted
+  embedding-model documentation, Infisical Socratic.Trade slug documentation, and
+  production health 200 after deployment.
+- **2026-07-04** — `trading-live` published at `d39e1193` (PR #353) on
+  `socratictrade.com`. Includes explicit `Test Account - Local Mock Paper Account`
+  restore and Pinecone/Voyage/provider cap email alerts; production health 200 after
+  deployment.
 
 ---
 
@@ -53,11 +84,105 @@ to `trading.jays.services`, record the release commit + date here._
 - **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
 - **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
 
+### P0 hotfix (2026-07-03)
+- **#341** (`claude/fix-baseddl-index-migration`) — boot crash on every pre-existing DB: #333's baseline-DDL
+  `idx_chat_turns_user_client` ran before the versioned ALTER (`no such column` on old DBs; fresh-DB CI
+  stayed green). Baseline reverted to frozen `SCHEMA_BASELINE`; versioned migration is the single source;
+  regression test boots `getDb()` against a simulated pre-#333 DB. Prod/preview DBs already hand-patched
+  (see Deployed section).
+
+### Rebrand (2026-07-03)
+- **#340** — Rebrand Agentic Trading → **Socratic Trade** / socratictrade.com (`claude/rebrand-socratic-trade`).
+  Owner set up prod infra as "Socratic Trade" (Sentry project, Cloudflare DNS, GitHub OAuth callbacks,
+  Google authorized domains — owner-side). Code aligned: display brand → "Socratic Trade" (no-space
+  "Socratic.Trade"); legacy production host fallback → `socratictrade.com` (env-first);
+  Sentry slug → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion fallback identifiers
+  now use Socratic Trade naming. Deliberately NOT touched: `mail@jays.services` login email, the Robinhood
+  "Agentic" account nickname, internal jays.services preview subdomains.
+
+### De-paternalization + CI hardening (2026-07-03)
+- **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
+  "defaults to Test mode" framing from `AGENTS.md`; added the "Product philosophy — real trading,
+  owner's risk" section (an account is an account; no Test-mode/local-sim; harden CORRECTNESS +
+  multi-user safety, NOT obedience). Also fixed the July-4 CI holiday flake (`isTradingDay` VITEST-gated
+  test seam, so `verify` stops going red on market-closed days) and purged the contradicting Cursor
+  rule (`.cursor/rules/handoff.mdc`). _(incl. coordinator Codex round: VITEST gate on the seam so a
+  stray flag can't defeat the real market-closed guard; Cursor-rule rewrite; EFFORT-LOG stale-bullet
+  supersede.)_
+- **#342** — De-paternalize Step 2: removed `policy.paperMode`/`paperStartingCash` and the `test/local`
+  local-simulator execution path entirely (`usesLocalSimulation`, `getPaperPortfolioProjection`, local
+  paper-fill/portfolio branches). `deriveExecutionState` (`execution-mode.ts`) is the sole hub — mode is
+  purely `broker/paper`/`broker/live` from the active account's `environment`; no account ⇒ honest
+  "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback. `TestBrokerGateway`/
+  `broker:"test"` kept as test infrastructure only (~36 test files migrated to a connected test-broker
+  account). Fixed a real bug: broker-paper fills were mislabeled "Test" in the Activity feed. 83 files,
+  +854/−1208.
+
+### Socratic autonomy UI/runtime (2026-07-03)
+- **#344** — Socratic Trade Autonomy Desk implementation (`codex/socratic-trade-autonomy-mockup`):
+  persisted Socratic decisions/framework proposals, `/api/socratic/*`, RAG attribution, coach notes,
+  framework proposal review, strategy-loop decision recording, private institutional-memory indexing,
+  Socratic override semantics for owner-preference gates, public `/welcome` and `/how-it-works`,
+  coded `/design/socratic-trade`, and exact production-domain references changed to
+  `socratictrade.com`.
+- **#345** — Run-state UX fix (`codex/run-state-ux-fix`): Start/Resume are no longer hidden behind a
+  red STOP affordance. Paused states show Start or Resume as the primary header action; STOP/Wind down
+  remain red, and start/autonomy confirm flows use primary styling.
+- **#346** — IRA wash-sale UI correction (`codex/ira-washsale-ui-fix`): Roth/traditional IRA accounts
+  show same-account IRA wash sales as ignored/not applicable, hide the taxable Block / Ask / Auto
+  selector, and expose only the cross-account IRA taxable-loss rebuy setting.
+- **#347** — Console universe index exclusivity fix (`codex/universe-exclusive-indexes`):
+  `/console/guardrails` now uses the shared `toggleIncludedIndex` helper for Base indices, so
+  S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite replace each other immediately in the draft.
+- **#348** — Sell to Fund Buys title-case copy fix (`codex/sell-to-fund-title-case`):
+  Guardrails and legacy dashboard Sell to Fund Buys labels/options now use Title Case, and the
+  Guardrails save-review diff shows Title Case instead of raw lowercase enum values.
+- **#349** — Socratic admin/RAG/Pinecone/settings parity implementation
+  (`codex/live-thesis-portfolio-framing`): default RAG index `socratic-trade`, Pinecone/Voyage
+  health visibility, RAG ingestion brakes, provider-specific model reasoning controls, `/old`,
+  OAuth host canonicalization, ticker drawer coverage, and user/admin LLM usage visibility.
+- **#350** — AI Review inheritance, model catalog, and text-box font controls
+  (`codex/ai-review-model-inheritance`): removed the misleading account-review model fallback,
+  made blank AI Review inherit Red Team then Green Team, refreshed current curated provider model
+  options, added DeepSeek V4 thinking controls, and made console text boxes use consistent readable
+  fonts with user-selectable examples.
+- **#351** — Console actions/evidence/live-account polish + RAG quota safeguards
+  (`codex/console-actions-evidence-live`): action history/blocker copy, stopped cadence display,
+  raw-vs-benchmark return tooltips, reduced live-account warning copy, broker roadmap, RAG usage
+  labeling, Pinecone estimated Write Unit fuse, and earnings/RAG design docs.
+- **#352** — RAG Sentry visibility + Pinecone hosted-model review
+  (`codex/rag-sentry-visibility`): Sentry warning/error events for RAG provider failures and
+  budget trips, Pinecone-hosted NVIDIA/MSFT embedding options documented as benchmark candidates,
+  and Infisical project naming recorded as `Socratic.Trade` / `socratic-trade`.
+- **#353** — Test Account restore + usage cap email alerts
+  (`codex/restore-test-account-option`): explicit addable local mock Test Account that is not
+  default-selected, plus Pinecone/Voyage/provider cap trips routed through `budget_alert` with
+  email-capable fallback.
+
 ---
 
 ## 🔨 In Progress
 
-- _(none — the live-execution hardening build and Manager-model A/B are Ready; see below.)_
+- **Controlled RAG filing ingest smoke test** (Codex,
+  `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
+  against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
+  `document_chunks`; the timed-out first-run 56 duplicate vectors were removed. Code fix for
+  deterministic SEC filing vector ids is implemented and awaiting PR.
+
+- **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
+  `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
+  The account-level drawdown/daily-loss breaker now **hard-halts** on breach (`systemState → "halted"`:
+  subsequent scheduled runs skip, manual `executeProposal` refuses, until the owner re-arms to
+  `"active"`) instead of the softer `close_only`. Built as the owner's **overridable preference**
+  `riskRules.drawdownBreakerAction: "halt" | "close_only"` (default `"halt"`), not a hardcoded cage; the
+  breaker is still opt-in via the thresholds. Vol-panic brake stays `close_only` (out of scope of the
+  drawdown decision). Verified current-run safety (in-run exec uses `placeEquityOrder`, not the
+  halted-throwing `executeProposal`; policy gate treats halted==close_only for the current run, so it
+  winds down gracefully). Gate green: tsc clean, lint 0 errors, **2351 tests / 239 files**, build green.
+  **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
+  follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
+  NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
+  see Owner decisions below); re-scope pending owner review.
 
 ---
 
@@ -84,14 +209,33 @@ to `trading.jays.services`, record the release commit + date here._
 
 ## 📋 Planned
 
+### Socratic console parity sub-lanes — reserved before implementation
+- **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
+  open the shared drilldown/drawer consistently across scan, home, evidence cards, proposals, orders,
+  and other console surfaces. Reserved under the broader Codex parity effort so parallel agents do not
+  start a duplicate ticker-detail lane.
+- **Settings affordance and tooltip pass** — add clearer option descriptions/tooltips, replace confusing
+  loose/tight wording with lock/unlock-style affordances, and turn absolute-vs-percent pairs into a
+  polished mode switch where the pair represents alternative ways to express one constraint.
+- **Model/provider control parity** — move strategy model controls toward curated dropdowns with
+  provider-aware settings, showing reasoning controls only for models that actually support them.
+- **Admin connection health and backend-failure notification pass** — surface every backend dependency
+  including Pinecone/Voyage, distinguish global backend failures from user-key failures, and route
+  global failures to admin email/health while user-key failures become user notifications.
+
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Advisory drawdown awareness** — surface the breach state to the agent (prompt context) and to
-    the owner (receipt/notification + coaching trail); NO halting. _(Corrected from "hard-halt" —
-    see Owner decisions above.)_
-  - **Prompt-expected stop-losses** — strengthen the strategist prompt + schema to expect a stop on
-    opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
-  - Build behind paper-mode defaults; do not toggle live without the existing typed-confirm ritual.
+  - **Advisory drawdown awareness (corrected target)** — surface the breach state to the agent
+    (prompt context) and to the owner (receipt/notification + coaching trail); NO halting.
+    _(Corrected from "hard-halt" — see Owner decisions above.)_
+  - **Hard-halt drawdown circuit-breakers** — ✅ built (merged as #343, branch
+    `claude/live-execution-hardening`): `riskRules.drawdownBreakerAction` default `"halt"` flips the
+    breaker to `systemState → "halted"` on breach until manually re-armed; overridable to `"close_only"`.
+    NOTE: built before the decision-record correction landed; re-scope pending owner review.
+  - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
+    stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
+  - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
+    `paperMode` default is gone (#342). Keep the existing typed-confirm ritual before any live toggle.
 - **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
   DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
   See `docs/manager-model-options.md`.
@@ -115,7 +259,51 @@ to `trading.jays.services`, record the release commit + date here._
   Blocked → Ready. Added `docs/manager-model-options.md`.
 - 2026-07-03 — #337 merged (→ Completed). In Progress now empty; next work is the Ready items
   (live-execution hardening + Manager-model A/B).
+- 2026-07-03 — Added the CI holiday-flake fix (In Progress → on #339) after `verify` went red on the
+  observed July 4 closure; fixed via a `vitest.config` `test.env` seam in `isTradingDay`, zero test-file
+  edits so it won't collide with the paperMode-removal branch.
+- 2026-07-03 — **#339 merged** (→ Completed): de-paternalize Step 1 rules + CI holiday-flake fix +
+  Cursor-rule purge (incl. Codex round: VITEST-gated seam, Cursor rewrite). In Progress now = Step 2
+  paperMode/test-mode runtime removal + the Socratic Trade rebrand.
+- 2026-07-03 — Started the **Socratic Trade rebrand** (branch `claude/rebrand-socratic-trade`): brand
+  "Agentic Trading" → "Socratic Trade", public host fallback → `socratictrade.com`, Sentry slug →
+  `socratic-trade`; login email + internal machine slugs + Robinhood "Agentic" nickname untouched.
+- 2026-07-03 — **#340 rebrand merged** (→ Completed) and **#341 DB P0 hotfix merged** (→ Completed).
+- 2026-07-03 — De-paternalize **Step 2 code-complete** (branch `claude/remove-paper-test-mode`):
+  `policy.paperMode` + the `test/local` local-simulator execution path fully removed across ~35 src +
+  36 test files; rebased on `origin/main` (#340 + #341); gate green (tsc/lint/2350 tests/build); PR
+  opened, still In Progress until merged.
+- 2026-07-03 — **#342 merged** (→ Completed): paperMode/Test-mode runtime removal. Started
+  **live-execution hardening slice 1** (branch `claude/live-execution-hardening`): drawdown breaker →
+  hard-halt via overridable `riskRules.drawdownBreakerAction` (default `"halt"`); gate green
+  (tsc/lint/2351 tests/build); PR pending. Remaining: prompt-expected stop-losses (decision #2).
+- 2026-07-03 — **#344 merged** (→ Completed): Socratic Trade autonomy UI/runtime implementation.
+  Started the run-state UX fix (`codex/run-state-ux-fix`) so Start/Resume is no longer hidden behind
+  a red STOP control and start flows do not use danger-red styling.
+- 2026-07-03 — **#345 merged** (→ Completed): run-state UX fix. Started the IRA wash-sale UI
+  correction (`codex/ira-washsale-ui-fix`) so Roth/traditional IRA settings do not present taxable
+  Block / Ask / Auto as the relevant same-account wash-sale control.
+- 2026-07-03 — **#346 merged + deployed** (→ Completed / Deployed): IRA wash-sale UI correction at
+  `7b803bff`; production health and Roth IRA Settings UI verified. Started
+  `codex/universe-exclusive-indexes` to restore mutually-exclusive full-overlap index selection in the
+  console Guardrails universe picker.
+- 2026-07-03 — Made `docs/EFFORT-LOG.md` maintenance explicitly binding at start/handoff/commit/PR/
+  merge/deploy boundaries in `AGENTS.md`. Started the broader Socratic admin/RAG/Pinecone/settings
+  parity implementation in Codex branch `codex/live-thesis-portfolio-framing`.
+- 2026-07-03 — Tightened the `AGENTS.md` EFFORT-LOG rule: every non-trivial effort gets a **Planned**
+  row before substantial work starts, specifically to stop parallel agents/platforms from duplicating
+  the same lane.
+- 2026-07-03 — **#347 merged + deployed** (→ Completed / Deployed): console Universe index
+  exclusivity fix at `481e9dcc`; production health and live S&P/Nasdaq mutual-exclusion behavior
+  verified. Started `codex/sell-to-fund-title-case` to title-case the Sell to Fund Buys selector
+  labels/options and save-review summary.
+- 2026-07-03 — **#350 merged** (→ Completed): AI Review inheritance/model catalog/text-box font
+  controls. Started `codex/console-actions-evidence-live` for the owner-requested console polish
+  covering Actions, cadence, returns, IRA wash-sale behavior, Evidence/source labels, LLM settings
+  usage affordances, LIVE-warning reduction, broker-option investigation, provider/model naming
+  consistency, and repo/folder rename planning.
 - 2026-07-03 — **CORRECTION:** "drawdown=hard-halt" was mis-recorded (the owner didn't understand the
   question). Owner confirmed: guardrails are ADVISORY — agent decides, logs everything; the account
-  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. See
-  `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
+  hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
+  owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.

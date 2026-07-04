@@ -51,7 +51,7 @@ export default withSentryConfig(nextConfig, {
 
   org: process.env.SENTRY_ORG || "jays-services",
 
-  project: process.env.SENTRY_PROJECT || "agentic-trading",
+  project: process.env.SENTRY_PROJECT || "socratic-trade",
 
   authToken: process.env.SENTRY_AUTH_TOKEN,
 

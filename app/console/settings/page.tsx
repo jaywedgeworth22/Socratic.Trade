@@ -8,12 +8,13 @@
  *  (brokers/api-keys/models/delivery/help) with their fetch helpers in ./lib. */
 
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink } from "lucide-react";
-import type { NotificationEventType, TaxationType } from "@/lib/types";
+import { Check, ExternalLink } from "lucide-react";
+import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@/lib/types";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
+import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, NumInput, Select, TextInput, Toggle } from "../ui/primitives";
@@ -67,7 +68,7 @@ export default function SettingsPage() {
             tone={reality.tone}
             title="Settings tagged THIS ACCOUNT are stored on the account itself — switch scope and you'll see that account's values instead."
           >
-            THIS ACCOUNT — {reality.account?.label ?? "Local simulator"} · {reality.word}
+            THIS ACCOUNT — {reality.account?.label ?? "No connected account"} · {reality.word}
           </Chip>
           <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
             changes here follow the account, not you
@@ -113,6 +114,19 @@ export default function SettingsPage() {
         <YouCard />
       </section>
 
+      {/* ── THIS BROWSER ── */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <Chip tone="muted" title="Settings tagged THIS BROWSER are stored in this browser only. They change how the console looks here, not how the strategy trades.">
+            THIS BROWSER
+          </Chip>
+          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            local display preferences
+          </span>
+        </div>
+        <AppearanceCard />
+      </section>
+
       {/* ── OPERATOR (admin only: links, no new admin UI) ── */}
       {snapshot.currentUser?.isAdmin && (
         <section id="admin" className="flex scroll-mt-28 flex-col gap-4">
@@ -148,6 +162,48 @@ export default function SettingsPage() {
         <AccountDeletionCard />
       </section>
     </div>
+  );
+}
+
+// ── This browser: local appearance preferences ──────────────────────────────
+
+function AppearanceCard() {
+  const { textBoxFont, setTextBoxFont } = useConsoleTextBoxFont();
+  return (
+    <Card title="Appearance">
+      <Field label="Text Box Font" hint="Editable text boxes use this font in this browser.">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CONSOLE_TEXT_BOX_FONT_OPTIONS.map((option) => {
+            const selected = textBoxFont === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selected}
+                title={option.description}
+                onClick={() => setTextBoxFont(option.value)}
+                className={`min-h-[88px] rounded-lg border px-3 py-2 text-left transition-colors ${
+                  selected
+                    ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
+                    : "border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-accent-border)]"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2 text-[length:var(--con-fs-sm)] font-semibold text-[color:var(--con-fg)]">
+                  {option.label}
+                  {selected && <Check size={14} className="text-[color:var(--con-accent)]" aria-hidden />}
+                </span>
+                <span
+                  className="mt-1 block max-h-[44px] overflow-hidden text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]"
+                  style={{ fontFamily: option.fontFamily }}
+                >
+                  Objective: compound returns by rotating capital toward the strongest risk-adjusted opportunities.
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+    </Card>
   );
 }
 
@@ -296,6 +352,7 @@ function TaxSettingsCard() {
   const [draft, setDraft] = useState<Partial<{
     taxationType: TaxationType;
     washSaleGuard: boolean;
+    iraWashSaleHandling: IraWashSaleHandling;
     shortTermRatePct: number;
     longTermRatePct: number;
     subtractFromResults: boolean;
@@ -312,7 +369,9 @@ function TaxSettingsCard() {
   // instead of a select whose "saved" value would be silently overridden.
   const accountTaxationType = activeConnectedAccount(snapshot)?.taxationType;
   const taxation: TaxationType = accountTaxationType ?? draft?.taxationType ?? current?.taxationType ?? "taxable";
+  const isIra = taxation === "roth_ira" || taxation === "traditional_ira";
   const washSaleGuard: boolean = draft?.washSaleGuard ?? current?.washSaleGuard ?? true;
+  const iraWashSaleHandling: IraWashSaleHandling = draft?.iraWashSaleHandling ?? current?.iraWashSaleHandling ?? "disregard";
   const subtractFromResults: boolean = draft?.subtractFromResults ?? current?.subtractFromResults ?? false;
   const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
   const longTermRatePct: number = draft?.longTermRatePct ?? current?.longTermRatePct ?? 15;
@@ -391,23 +450,57 @@ function TaxSettingsCard() {
         </div>
       </div>
       <div className="mt-3 flex flex-col gap-2.5">
-        <div
-          className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
-          title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
-        >
-          <div>
-            <div className="text-[length:var(--con-fs-sm)] font-semibold">Wash-sale guard</div>
-            <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              Blocks rebuying a symbol closed at a loss within 30 days. A loss in any taxable account locks the symbol
-              across ALL your accounts, including IRAs.
-            </p>
+        {isIra ? (
+          <div className="rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[length:var(--con-fs-sm)] font-semibold">Same-IRA wash sales</div>
+                <p className="mt-0.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+                  Ignored automatically. This account has no taxable loss deduction inside the IRA, so Block / Ask /
+                  Auto is not the relevant control.
+                </p>
+              </div>
+              <Chip tone="pos">not applicable</Chip>
+            </div>
+            <div className="mt-3 max-w-md">
+              <Field
+                label="Taxable-loss rebuy inside this IRA"
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore/disregard is the default for IRA accounts and lets the buy proceed with the audit note; Block is the stricter optional setting."
+                htmlFor="ira-wash-sale"
+              >
+                <Select
+                  id="ira-wash-sale"
+                  value={iraWashSaleHandling}
+                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored. Default: ignore/disregard and annotate."
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...(d ?? {}), iraWashSaleHandling: e.target.value as IraWashSaleHandling }))
+                  }
+                >
+                  <option value="disregard">Ignore / disregard and annotate (default)</option>
+                  <option value="block">Block cross-account IRA replacement buys</option>
+                </Select>
+              </Field>
+            </div>
           </div>
-          <Toggle
-            checked={washSaleGuard}
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
-            label="Wash-sale guard"
-          />
-        </div>
+        ) : (
+          <div
+            className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
+            title="On: buying back a symbol you sold at a loss in the last 30 days is blocked, so the loss stays deductible."
+          >
+            <div>
+              <div className="text-[length:var(--con-fs-sm)] font-semibold">Taxable-account wash-sale guard</div>
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Blocks rebuying a symbol this taxable account closed at a loss within 30 days. A taxable-account loss
+                can also lock replacement buys across your other accounts, including IRAs.
+              </p>
+            </div>
+            <Toggle
+              checked={washSaleGuard}
+              onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
+              label="Wash-sale guard"
+            />
+          </div>
+        )}
         <div
           className="flex items-center justify-between gap-4 rounded-md px-1.5 py-1 transition-colors hover:bg-[color:var(--con-surface-2)]"
           title="On: P&L on the Results screen is shown after subtracting estimated taxes at the rates above."

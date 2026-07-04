@@ -518,12 +518,12 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
   // IRA and the symbol is locked, the binding loss is by construction from a TAXABLE account
   // (IRA losses never contribute locks — see tax.ts), and buying the replacement inside the IRA
   // PERMANENTLY destroys the disallowed loss. Governed by taxSettings.iraWashSaleHandling:
-  //   "block" (default) — hard block in EVERY washSaleHandling mode, ignoring override tokens,
+  //   "block" — optional strict mode: hard block in EVERY washSaleHandling mode, ignoring override tokens,
   //     and — unlike the taxable-buyer lockout — even when the per-account washSaleGuard flag is
   //     off: resolveTaxSettings deliberately force-disables that flag for IRAs (a wash sale has
   //     no benefit INSIDE the account), so it cannot switch off the cross-account
-  //     permanent-harm rule. Byte-compatible with the pre-setting behavior.
-  //   "disregard" — owner-approved per-account opt-in: the buy PROCEEDS through the normal
+  //     permanent-harm rule.
+  //   "disregard" (default) — the buy PROCEEDS through the normal
   //     authority flow (all other gates unchanged). Rationale: brokers do not report
   //     cross-account IRA wash sales to the IRS — the rule only bites under audit — so
   //     respecting it is the account owner's call. NEVER silent: decision.washSale records
@@ -571,7 +571,7 @@ export function evaluateTradeProposal(proposal: TradeProposal, context: PolicyCo
             entry.token.length > 0
         );
         if (buyerIsIra) {
-          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? "block";
+          const iraHandling: IraWashSaleHandling = taxSettings?.iraWashSaleHandling ?? "disregard";
           if (iraHandling === "disregard") {
             // Owner-approved opt-in: proceed, annotated + audited (see the gate comment above).
             // No reason is pushed, so the buy flows through the normal authority path; every

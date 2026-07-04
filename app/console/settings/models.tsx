@@ -8,6 +8,8 @@
  *  run time. */
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models";
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
@@ -54,28 +56,25 @@ const MODEL_GROUPS: ModelGroup[] = [
     provider: "xai",
     label: "xAI (Grok)",
     options: [
-      { value: "grok-build-0.1", label: "grok-build-0.1 — lowest cost Grok · $" },
-      { value: "grok-4.3", label: "grok-4.3 — stronger Grok analysis · $$" }
+      { value: "grok-build-0.1", label: "grok-build-0.1 — coding specialist · $" },
+      { value: "grok-4.3", label: "grok-4.3 — default Grok analysis · $$" }
     ]
   },
   {
     provider: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     options: [
-      { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite — lowest cost Gemini · $" },
-      { value: "gemini-2.5-flash", label: "gemini-2.5-flash — fast long-context review · $" },
-      { value: "gemini-2.5-pro", label: "gemini-2.5-pro — stronger Gemini reasoning · $$" },
-      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — latest light Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — latest Flash tier · $$" }
+      { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$" },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$" }
     ]
   },
   {
     provider: "mistral",
     label: "Mistral",
     options: [
-      { value: "mistral-small-2506", label: "mistral-small-2506 — low-cost Mistral · $" },
-      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — current balanced Mistral · $$" },
-      { value: "mistral-large-2512", label: "mistral-large-2512 — strongest Mistral · $$$" }
+      { value: "mistral-small-2603", label: "mistral-small-2603 — low-cost Mistral Small 4 · $" },
+      { value: "mistral-medium-3-5", label: "mistral-medium-3-5 — frontier Mistral Medium · $$" }
     ]
   },
   {
@@ -141,6 +140,7 @@ export function ModelsCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
   const [draft, setDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string } | null>(null);
+  const [coachModel, setCoachModel] = useState("");
   const [providers, setProviders] = useState<Record<string, boolean> | null>(null);
   const [busy, setBusy] = useState(false);
   useUnsavedChanges(draft !== null);
@@ -161,6 +161,18 @@ export function ModelsCard() {
     };
   }, []);
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+    setCoachModel(saved || DEFAULT_CHAT_MODEL);
+  }, []);
+
+  const pickCoachModel = (next: string) => {
+    const model = next || DEFAULT_CHAT_MODEL;
+    setCoachModel(model);
+    window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, model);
+    toast.push("info", "Coach model saved", "This browser will use it on the Coach page.");
+  };
+
   const policy = snapshot?.policy;
   const green = draft?.llmModel ?? policy?.llmModel ?? "";
   const red = draft?.redTeamLlmModel ?? policy?.redTeamLlmModel ?? "";
@@ -168,13 +180,13 @@ export function ModelsCard() {
   const selectedNoKey = useMemo(() => {
     if (!providers) return [];
     const out: string[] = [];
-    for (const model of [green, red]) {
+    for (const model of [green, red, coachModel]) {
       if (!model) continue;
       const group = MODEL_GROUPS.find((g) => g.options.some((o) => o.value === model));
       if (group && !providers[group.provider] && !out.includes(group.label)) out.push(group.label);
     }
     return out;
-  }, [providers, green, red]);
+  }, [providers, green, red, coachModel]);
 
   if (!snapshot || !policy) return null;
 
@@ -202,24 +214,33 @@ export function ModelsCard() {
     <Card
       title="LLM models"
       action={
-        draft ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" onClick={() => setDraft(null)} title="Throw away the unsaved model choices.">
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()} title="Write both model choices to this account's policy.">
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Link
+            href="/console/usage"
+            className="con-btn con-btn-outline con-btn-sm"
+            title="Open the LLM usage and estimated cost page for your user keys, grouped by model and workflow."
+          >
+            Usage &amp; Cost
+          </Link>
+          {draft && (
+            <>
+              <Btn variant="ghost" size="sm" onClick={() => setDraft(null)} title="Throw away the unsaved model choices.">
+                Discard
+              </Btn>
+              <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()} title="Write both model choices to this account's policy.">
+                {busy ? "Saving…" : "Save"}
+              </Btn>
+            </>
+          )}
+        </div>
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The strategist (green team) proposes trades; the reviewer (red team) tries
-        to kill its high-conviction ideas before they reach you. Set per account, saved to this account&apos;s policy.
-        Providers without a resolvable key are marked — add one under API keys below.
+        Which models argue about your money. The strategist (green team) proposes trades; the reviewer / strategy-review
+        model (red team) tries to kill high-conviction ideas before they reach you. Coach is browser-local and also
+        adjustable on the Coach page. Providers without a resolvable key are marked — add one under API keys below.
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         <Field
           label="Strategist (green team)"
           hint="Writes the trade proposals each run."
@@ -236,7 +257,7 @@ export function ModelsCard() {
           />
         </Field>
         <Field
-          label="Reviewer (red team)"
+          label="Reviewer / Strategy Review (red team)"
           hint="Argues against high-conviction ideas. Blank = same model as the strategist."
           htmlFor="models-red"
         >
@@ -248,6 +269,21 @@ export function ModelsCard() {
             providers={providers}
             title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
             onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+          />
+        </Field>
+        <Field
+          label="Coach"
+          hint="Answers the Coach page. Saved in this browser; transcript remains server-side."
+          htmlFor="models-coach"
+        >
+          <ModelSelect
+            id="models-coach"
+            value={coachModel}
+            emptyLabel={`app default (${DEFAULT_CHAT_MODEL})`}
+            emptyTitle="No browser override — the Coach uses the app default chat model."
+            providers={providers}
+            title="The model that answers on the Coach page. Use the Usage & Cost link to see spend history by model and workflow."
+            onChange={pickCoachModel}
           />
         </Field>
       </div>

@@ -66,9 +66,10 @@ export async function replaceStaleLimitOrderWithMarket(input: {
 }): Promise<MarketReplaceResult> {
   const userId = input.userId ?? "local";
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
-  if (!executionState.submitsBrokerOrders) {
+  if (!executionState.submitsBrokerOrders || !executionState.mode) {
     throw new MarketReplacePreconditionError("Market replacement is only available for broker-backed Paper or Brokerage accounts.", 400);
   }
+  const executionMode: ExecutionMode = executionState.mode;
 
   const orders = await input.gateway.getEquityOrders(input.policy.accountNumber);
   const stale = listStaleLimitOrders(orders, input.policy).find((item) => item.order.id === input.orderId);
@@ -82,7 +83,7 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   }
 
   assertMarketReplaceConfirmation({
-    executionMode: executionState.mode,
+    executionMode,
     confirmation: input.liveConfirmation,
     order: original,
     accountNumber: input.policy.accountNumber,
@@ -93,9 +94,7 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   // replacement would be blocked (broker/live without ALLOW_LIVE_TRADING), fail HERE — before the
   // live cancel — so we never leave the stale order cancelled with no replacement.
   assertLivePreflight({
-    mode: executionState.mode,
-    usesLocalSimulation: executionState.usesLocalSimulation,
-    paperMode: input.policy.paperMode,
+    mode: executionMode,
     symbol: original.symbol,
     side: original.side
   });
@@ -159,7 +158,7 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   const source = fillSourceForExecutionMode(executionState);
   const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
   const rawPrice = execution.averagePrice ?? (remainingQuantity > 0 ? review.estimatedNotional / remainingQuantity : 0);
-  // B8: a paper/test EXIT (sell/cover) booked here at the simulated mid pays no execution cost otherwise,
+  // B8: a paper EXIT (sell/cover) booked here at the simulated mid pays no execution cost otherwise,
   // overstating realized edge on the losing tail that feeds the tuner/sizer. Debit the exit-side cost for
   // paper exits only; entries and live fills are unchanged. applyPaperExitCost no-ops on non-paper sources.
   const isExit = original.side === "sell" || original.side === "cover";
@@ -168,7 +167,7 @@ export async function replaceStaleLimitOrderWithMarket(input: {
     userId,
     accountNumber: input.policy.accountNumber,
     source,
-    executionMode: executionState.mode,
+    executionMode,
     symbol: normalizeSymbol(original.symbol),
     side: original.side,
     quantity: remainingQuantity,

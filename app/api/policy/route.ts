@@ -20,7 +20,7 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
-import { isDisallowedInteractiveStrategyReasoningConfig } from "@/lib/llm-request";
+import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig } from "@/lib/llm-request";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -122,10 +122,14 @@ async function validatePolicy(
   // quote-checked before save so the user gets an explicit reason when a ticker cannot be tracked.
 
   if (!["propose", "decide"].includes(policy.strategyAuthority)) return "strategyAuthority must be propose or decide.";
+  if (policy.socraticOverrideMode !== undefined && !["off", "propose", "execute"].includes(policy.socraticOverrideMode)) return "socraticOverrideMode must be off, propose, or execute.";
+  if (policy.socraticOverrideMaxPctOfNav !== undefined && (!Number.isFinite(policy.socraticOverrideMaxPctOfNav) || policy.socraticOverrideMaxPctOfNav <= 0 || policy.socraticOverrideMaxPctOfNav > 100)) return "socraticOverrideMaxPctOfNav must be between 0 and 100.";
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
-  if (policy.llmReasoningEffort !== undefined && !["low", "medium", "high"].includes(policy.llmReasoningEffort)) return "llmReasoningEffort must be low, medium, or high.";
+  if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
+    return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
   if (
     (options.enforceInteractiveReasoningRule ?? true) &&
     (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
@@ -190,7 +194,11 @@ async function validatePolicy(
   if (policy.staleLimitOrderMinutes !== undefined && (!Number.isFinite(policy.staleLimitOrderMinutes) || policy.staleLimitOrderMinutes < 0)) return "staleLimitOrderMinutes must be 0 (off) or a positive number of minutes.";
   if (Object.values(policy.scoringWeights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0)) return "scoring weights must be non-negative numbers.";
   if (Object.values(policy.sectorCaps).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "sector caps must be between 0 and 100.";
-  if (Object.values(policy.riskRules).some((value) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
+  if (policy.riskRules.drawdownBreakerAction !== undefined && !["halt", "close_only"].includes(policy.riskRules.drawdownBreakerAction)) return "riskRules.drawdownBreakerAction must be halt or close_only.";
+  // drawdownBreakerAction is a string enum (validated above), so exclude it from the numeric sweep — an
+  // enum value like "close_only" is NaN under Number(...) and would otherwise reject the whole save (and
+  // then every subsequent save, since it is merged from `...current.riskRules`).
+  if (Object.entries(policy.riskRules).some(([key, value]) => key !== "drawdownBreakerAction" && value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))) return "risk rules must be non-negative numbers.";
   if (policy.taxSettings) {
     const { shortTermRatePct, longTermRatePct, washSaleMinLossUsd, washSaleHandling, iraWashSaleHandling } = policy.taxSettings;
     if (!Number.isFinite(shortTermRatePct) || shortTermRatePct < 0 || shortTermRatePct > 100) return "shortTermRatePct must be between 0 and 100.";

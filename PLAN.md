@@ -1,9 +1,121 @@
-# Improvement Plan - Agentic Trading Dashboard
+# Improvement Plan - Socratic Trade
 
 Eight-phase roadmap to make the dashboard genuinely autonomous, more accurate,
 measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
+
+> **2026-07-03 — SUPERSEDING DIRECTIVE (owner): real trading, no fake modes.** This is a real
+> trading app; the owner accepts 100% risk. **`policy.paperMode` and the local "Test mode" simulator
+> (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) have been removed** (rules in
+> `AGENTS.md`; code removal landed — see `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`
+> Step 2). An account is an account — its `environment` decides paper vs live; no connected account
+> means the app can't place orders (no local-sim fallback). **Any older paper/Test-default language
+> below this line is STALE** and does not describe target behavior —
+> do not follow it. See `docs/EFFORT-LOG.md` +
+> `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
+> **2026-07-03 - Socratic admin/RAG/settings parity pass (Codex).** The
+> branch `codex/live-thesis-portfolio-framing` is the current broad follow-up
+> for owner feedback after the Socratic UI launch: Pinecone index default
+> `socratic-trade`, RAG ingest brakes, admin RAG/connection-health visibility,
+> user/admin LLM usage split, `/old`, Auth.js legacy-host canonicalization for
+> Google/GitHub redirects, right-side ticker drawer coverage, market-thesis
+> framing on Home, Coach-page reframing, provider-specific model
+> reasoning/thinking controls, lock/unlock authority language, and the first
+> absolute-vs-percent mode switches. The remaining parity/open-item list is now
+> tracked at `docs/reviews/2026-07-03-console-parity-open-items.md`. See
+> `docs/rollouts/2026-07-03-socratic-admin-rag-settings-parity.md`.
+
+> **2026-07-03 - AI Review inheritance, model catalog, and text-box fonts (Codex).**
+> Account review does not have a separate account-level model. In Strategy -> AI Review,
+> leaving the reviewer model blank now inherits Red Team when configured, otherwise Green Team.
+> The UI no longer uses the old account-fallback label, and `/api/strategy/tune` trims empty
+> model overrides before `proposeStrategyTuning` resolves the actual team model. The console
+> now defaults editable text boxes to the site font, adds browser-local Site/System/Serif/Mono
+> text-box font choices under Settings -> Appearance, refreshes current Gemini/Mistral/xAI/
+> DeepSeek curated model choices, and wires DeepSeek V4 Thinking Mode. See
+> `docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
+
+> **2026-07-04 - RAG Sentry visibility + Pinecone hosted-model review (Codex).**
+> The active branch `codex/rag-sentry-visibility` follows PR #351 and adds Sentry incident visibility
+> for RAG provider failures, missing keys, Pinecone metric checks, ingest/WU budget trips, malformed
+> embeddings, retrieval degradations, and unexpected RAG catch-block failures. It also documents why
+> Pinecone-hosted `llama-text-embed-v2` / `multilingual-e5-large` should be benchmarked before any
+> production migration.
+
+> **2026-07-04 - Test Account + usage-limit email alerts (Codex).**
+> Branch `codex/restore-test-account-option` restores an explicit local mock paper account option
+> labeled `Test Account - Local Mock Paper Account`. It is addable for simulation/learning trades but
+> is never default-created or default-selected. The same branch adds a shared usage-limit alert path:
+> Pinecone daily Write Unit fuse trips, RAG ingest text caps, provider rate/quota/billing failures,
+> and API Usage Monitor provider budget warnings now produce `budget_alert` notifications and try
+> email-capable delivery. Treat the 50k/day Pinecone WU fuse as a runaway-write guard: normal
+> incremental single-trader use should not hit it; if it does, inspect deduping/chunking/cadence
+> before raising the cap.
+
+> **2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex).**
+> Branch `codex/rag-filing-ingest-smoke-fix` verified production writes/searches the new
+> `socratic-trade` Pinecone index by ingesting one MSFT 10-Q. The successful state is 95 vectors,
+> 95 local `document_chunks`, and accession `0001193125-26-191507` recorded in
+> `ingested_accessions`. The smoke surfaced a retry-safety bug: SEC filings without deterministic
+> `doc_id` values generated UUID-based vector ids, so a timed-out partial ingest could leave duplicate
+> vectors on retry. SEC filing ingestion now passes `ticker:accession:docType` as `doc_id`; preserve
+> that invariant before any larger RAG backfill.
+
+> **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
+> Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
+> adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled
+> separately from provider totals, Pinecone query rows record Read Units when available, upsert rows
+> record estimated Write Units, `storeContexts` enforces a daily Pinecone WU fuse before Voyage
+> embedding, and docs now capture the recommended Voyage/Pinecone stack plus the earnings-report
+> ingestion/summarization design. See `docs/reviews/2026-07-03-rag-stack-options.md` and
+> `docs/design/earnings-rag.md`.
+
+> **2026-07-03 — Socratic Trade autonomy UI/runtime implementation (Codex).** The branch
+> `codex/socratic-trade-autonomy-mockup` reframes the product as an Autonomy Desk:
+> live thesis, delegated actions, evidence/RAG contribution, dissent, outcome learning,
+> coaching, and agent-authored framework-improvement proposals. Backing persistence now
+> exists for Socratic decision cases and framework proposals; the strategy loop records
+> proposed/placed/blocked/refused decisions, captures RAG attribution, accepts owner
+> coaching notes, indexes each strategy-recorded decision as private institutional-memory
+> RAG, and applies explicit Socratic override semantics for owner preference gates while
+> preserving hard broker/account/integrity/tax refusals. Public `/welcome`, `/how-it-works`,
+> and the coded `/design/socratic-trade` product overview now route by default and advertise
+> `socratictrade.com` in sitemap/robots metadata. See
+> `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+
+> **2026-07-03 — Run-state UX correction (Codex).** The console header no
+> longer hides Start/Resume behind a red STOP affordance. `RunStateButton`
+> renders Start when halted, Resume when close-only, and STOP only when the
+> strategy is active or winding down. The control sheet now leads with
+> Start/Resume in paused states, keeps STOP/Wind down red, and uses primary/green
+> tones for starting flows; the legacy autonomous-execution confirm was also
+> changed from danger to primary. See
+> `docs/rollouts/2026-07-03-run-state-ux.md`.
+
+> **2026-07-03 - IRA wash-sale UI correction (Codex).** The settings and
+> guardrails UI now make the IRA distinction explicit: same-account IRA wash
+> sales are ignored/not applicable, so Roth/traditional IRA accounts no longer
+> surface the taxable-account Block / Ask / Auto selector as the relevant
+> control. The only IRA wash-sale choice shown is the existing cross-account
+> taxable-loss replacement-buy setting (`taxSettings.iraWashSaleHandling`):
+> block by default, or explicitly ignore/disregard with the audit annotation.
+> Search/glossary copy now routes "Roth wash sale ignore" language to that IRA
+> control. See `docs/rollouts/2026-07-03-ira-washsale-ui.md`.
+
+> **2026-07-03 - Console universe index exclusivity fix (Codex).** The
+> `/console/guardrails` Base indices checkboxes now call the same
+> `toggleIncludedIndex` helper used by the original app and API normalizer, so
+> mutually-exclusive full-overlap families replace their peer immediately:
+> S&P 100 <-> S&P 500 and Nasdaq 100 <-> Nasdaq Composite. See
+> `docs/rollouts/2026-07-03-universe-index-exclusivity.md`.
+
+> **2026-07-03 - Sell to Fund Buys title-case copy fix (Codex).** The
+> Guardrails Sell to Fund Buys selector and legacy dashboard Key Parameters
+> selector now render the field label, option labels, and save-review summary
+> in app-style Title Case while preserving the stored lowercase enum values.
+> See `docs/rollouts/2026-07-03-sell-to-fund-title-case.md`.
 
 > 2026-07-02 (`claude/strategy-attribution-macro-honesty`, Claude): **Per-proposal model
 > attribution + macro placeholder honesty** — proposals now persist the failover-aware served
@@ -555,7 +667,7 @@ filling the missing pieces.
 > Robinhood authorize URL, while stale state rows indicate the logged-in
 > Robinhood leg is not returning to the public callback. Added an explicit
 > same-machine loopback callback opt-in so reconnect can start from
-> `trading.jays.services` without requiring app login on localhost. No roadmap
+> `socratictrade.com` without requiring app login on localhost. No roadmap
 > change; see `docs/rollouts/2026-06-30-robinhood-public-oauth-loopback.md`.
 > 2026-06-30 (`codex/market-scan-source-labels`): Latest Decisions and Market
 > Scan source subtitles now share alias-aware source-list formatting, so
@@ -696,7 +808,7 @@ filling the missing pieces.
 > `docs/rollouts/2026-06-30-shared-dep-github-packages.md`.
 >
 > 2026-06-30 (`codex/browser-title`): browser tab title correction —
-> root and welcome metadata now emit the document title `Trading Dashboard`
+> root and welcome metadata now emit the document title `Socratic Trade`
 > exactly. No roadmap change; see
 > `docs/rollouts/2026-06-30-browser-title.md`.
 
@@ -872,7 +984,7 @@ filling the missing pieces.
 
 ## Current Status
 
-Hosting topology: production remains `trading.jays.services` on the
+Hosting topology: production remains `socratictrade.com` on the
 `~/apps/trading-live` worktree / pm2 `trading` / port `4000`. The editable
 integration checkout uses the single pre-production beta hostname
 `trading-beta.jays.services` -> `~/Code/Agentic Trading` / pm2 `trading-main` /
@@ -1008,7 +1120,7 @@ scope, timeline, or approach changed.
 - Webhook notifications are attempted only when configured and every attempt is audited.
 - Error/LLM observability stays opt-in and redacted by default for account, prompt, and credential data.
 - The local SQLite database has a documented Litestream replicate/restore path before production reliance.
-- Production and beta hosting stay separated: production on `trading.jays.services`
+- Production and beta hosting stay separated: production on `socratictrade.com`
   / port `4000`; integration beta on `trading-beta.jays.services` / port `4001`;
   no duplicate dev/beta hostname.
 - Agent branch landing requires a clean worktree and refuses stale semantic overlap

@@ -165,17 +165,17 @@ describe("LLM usage ledger", () => {
       masked: "tenant-o...WXYZ",
       label: "u_tenant (openai)"
     });
-    // The `local` primary user → "operator" label.
+    // The `local` primary user's own key is not an operator failover key.
     expect(describeUsageKey({ keyRef: keyFingerprint("local-key-7788")!, userId: "local", provider: "openai" })).toEqual({
       last4: "7788",
       masked: "local-ke...7788",
-      label: "operator (openai)"
+      label: "primary user (openai)"
     });
-    // A tenant served by the operator's env failover → "operator env" label, env key's last-4.
+    // A tenant served by server failover gets the env key's last-4.
     expect(describeUsageKey({ keyRef: keyFingerprint("env-operator-key-ABCD")!, userId: "u_other", provider: "openai" })).toEqual({
       last4: "ABCD",
       masked: "env-oper...ABCD",
-      label: "operator env (openai)"
+      label: "server failover (openai)"
     });
     // A detached/unknown key (no longer in the store) → no label, fingerprint still in the ledger.
     expect(describeUsageKey({ keyRef: keyFingerprint("deleted-key")!, userId: "u_tenant", provider: "openai" })).toBeUndefined();

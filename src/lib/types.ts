@@ -22,11 +22,11 @@ export type StrategyAuthority = "propose" | "decide";
 // account's existing authority (auto-placed only when the account is already in "decide" mode).
 export type SellToFundBuyMode = "off" | "suggest" | "propose" | "automated";
 
-export type LlmReasoningEffort = "low" | "medium" | "high";
+export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 /** Intended holding horizon — shapes the agent's setup selection, exit timing, and tax awareness. */
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
-export type ExecutionMode = "test/local" | "broker/paper" | "broker/live";
+export type ExecutionMode = "broker/paper" | "broker/live";
 export const NOTIFICATION_EVENT_TYPES = [
   "fill",
   "block",
@@ -147,18 +147,18 @@ export interface AccountCapabilities {
  *              otherwise it is skipped with the math logged. Never silent.
  * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
  * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss is
- * hard-blocked by default in every mode above, because the replacement purchase inside the IRA
- * permanently destroys the disallowed loss — but the owner may opt an account into
- * "disregard" (see IraWashSaleHandling).
+ * allowed with an explicit annotation by default in this app, because brokers do not report
+ * cross-account IRA wash sales to the IRS. The owner may opt an account into the stricter
+ * "block" setting (see IraWashSaleHandling).
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
 
 /**
  * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
- *   - "block" (default): the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
+ *   - "block": the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
  *     2008-5: buying the replacement inside the IRA permanently destroys the disallowed loss,
- *     with no basis adjustment ever recoverable. This is today's behavior, byte-compatible.
- *   - "disregard": the buy proceeds through the normal authority flow (all other gates
+ *     with no basis adjustment ever recoverable.
+ *   - "disregard" (default): the buy proceeds through the normal authority flow (all other gates
  *     unchanged). Rationale (owner decision): brokers do not report cross-account IRA wash
  *     sales to the IRS — the rule only bites under audit — so respecting it is the account
  *     owner's call. NEVER silent: the decision carries outcome "ira_disregarded" with the
@@ -175,7 +175,7 @@ export interface TaxSettings {
   washSaleGuard: boolean;
   /** How a wash-sale lockout is handled for BUYs. Default "block" (see WashSaleHandling). */
   washSaleHandling?: WashSaleHandling;
-  /** How an IRA-replacement wash sale is handled. Default "block" (see IraWashSaleHandling). */
+  /** How an IRA-replacement wash sale is handled. Default "disregard" (see IraWashSaleHandling). */
   iraWashSaleHandling?: IraWashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
@@ -462,16 +462,30 @@ export interface RiskRules {
   atrStopMultiple?: number;
   /**
    * Account-level circuit breaker: max trailing drawdown (%) from the equity high-water mark
-   * before the system auto-halts new entries (systemState → "close_only") and fires a
-   * kill-switch notification. Undefined or <=0 disables. Unlike the per-position stopLossPct,
-   * this bounds the whole account's bleed, not one name's. Evaluated at the top of each run.
+   * before the breaker fires (systemState flips per `drawdownBreakerAction`) and a kill-switch
+   * notification is sent. Undefined or <=0 disables the breaker entirely. Unlike the per-position
+   * stopLossPct, this bounds the whole account's bleed, not one name's. Evaluated at the top of
+   * each run.
    */
   maxDrawdownPct?: number;
   /**
    * Account-level circuit breaker: max single-day equity loss (account currency) from the day's
-   * starting equity before auto-halting new entries. Undefined or <=0 disables.
+   * starting equity before the breaker fires (per `drawdownBreakerAction`). Undefined or <=0 disables.
    */
   maxDailyLossNotional?: number;
+  /**
+   * What the account-level breaker (maxDrawdownPct / maxDailyLossNotional) does on breach — the
+   * owner's overridable preference, defaulting to "halt":
+   * - "halt" (default): flip systemState → "halted" — a HARD stop of autonomous trading until the
+   *   owner manually re-arms (sets systemState back to "active"). Subsequent scheduled runs skip
+   *   entirely and `executeProposal` refuses, so the loop places NO further orders (including exits);
+   *   open positions rely on their resting broker protective stops. This is the stronger "put a human
+   *   back in the loop" response the owner chose for the live soak.
+   * - "close_only": flip systemState → "close_only" — block only NEW entries; the loop keeps running
+   *   and risk-reducing exits (sell/cover) still flow. Softer; auto-manages the wind-down.
+   * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
+   */
+  drawdownBreakerAction?: "halt" | "close_only";
 }
 
 export interface NotificationSettings {
@@ -602,8 +616,6 @@ export interface UniverseFloor {
 
 export interface TradingPolicy {
   systemState: SystemState;
-  paperMode: boolean;
-  paperStartingCash: number;
   accountNumber?: string;
   connectedAccountId?: string;
   includedIndices: IndexUniverse[];
@@ -612,6 +624,15 @@ export interface TradingPolicy {
   /** Penny/illiquid exclusion for the scanned candidate universe (explicit symbols + positions exempt). */
   universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
+  /**
+   * Socratic Trade may explicitly override owner preference gates when it can state a structured
+   * override thesis. "execute" lets a Decide-mode account act through those preference conflicts;
+   * "propose" queues the action with the override note; "off" treats every preference gate normally.
+   * Broker/account/integrity gates remain authoritative in all modes.
+   */
+  socraticOverrideMode?: "off" | "propose" | "execute";
+  /** Optional per-decision ceiling for override actions as % of portfolio NAV. Undefined = no extra override cap. */
+  socraticOverrideMaxPctOfNav?: number;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
   /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
@@ -627,7 +648,7 @@ export interface TradingPolicy {
    * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
    */
   llmFallbackModels?: string[];
-  /** Reasoning effort for OpenAI reasoning models (gpt-5 / o-series). Ignored by non-reasoning models. */
+  /** Provider-specific reasoning/thinking effort for models that support it. Ignored by models without that knob. */
   llmReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
@@ -869,6 +890,128 @@ export interface TradeProposal {
    *     it — readers fall back to the snapshot policy's configured red-team model.
    */
   redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  /**
+   * Explicit agent-authored request to override owner preference gates for this decision.
+   * This is not a client-side bypass token and does not override broker/account/integrity gates.
+   * It exists so Socratic Trade can say, in structured form, "I know this conflicts with the
+   * configured preference, and here is why I still think acting is wiser."
+   */
+  autonomyOverride?: {
+    requested: boolean;
+    thesis: string;
+    /** Which preference gates the agent believes should be overridden. */
+    preferenceConflicts?: string[];
+    /** What would make the override wrong, for later outcome review. */
+    invalidation?: string;
+    /** Optional intended cash deployment when the override is about buying a panic discount. */
+    cashDeploymentPct?: number;
+  };
+}
+
+export type SocraticDecisionStatus =
+  | "planned"
+  | "proposed"
+  | "placed"
+  | "blocked"
+  | "rejected"
+  | "error"
+  | "observed";
+
+export interface SocraticRagAttribution {
+  symbol: string;
+  query: string;
+  chunkId?: string;
+  source?: string;
+  docType?: string;
+  title?: string;
+  url?: string;
+  publishedAt?: string;
+  score?: number;
+  relevanceScore?: number;
+  text: string;
+  contribution: string;
+}
+
+export interface SocraticEvidenceItem {
+  kind:
+    | "market_scan"
+    | "candidate"
+    | "rag"
+    | "red_team"
+    | "policy"
+    | "outcome"
+    | "learning"
+    | "coaching"
+    | "framework"
+    | "override";
+  title: string;
+  summary: string;
+  source?: string;
+  symbol?: string;
+  score?: number;
+  tone?: "positive" | "warning" | "negative" | "neutral";
+  data?: unknown;
+}
+
+export interface SocraticDecisionCase {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  runId?: string;
+  proposalId?: string;
+  accountNumber?: string;
+  createdAt: string;
+  updatedAt: string;
+  symbol?: string;
+  side?: OrderSide;
+  status: SocraticDecisionStatus;
+  authority: StrategyAuthority;
+  thesis: string;
+  rationale: string;
+  action: string;
+  thesisTag?: string;
+  regime?: string;
+  confidenceScore?: number;
+  notional?: number;
+  model?: string;
+  redTeamVerdict?: TradeProposal["redTeamVerdict"];
+  policyDecision?: PolicyDecision;
+  evidence: SocraticEvidenceItem[];
+  ragAttributions: SocraticRagAttribution[];
+  dissent: SocraticEvidenceItem[];
+  outcome?: {
+    status: "open" | "won" | "lost" | "flat" | "unknown";
+    returnPct?: number;
+    pnlUsd?: number;
+    note?: string;
+    measuredAt?: string;
+  };
+  autonomyOverride?: TradeProposal["autonomyOverride"] & {
+    applied: boolean;
+    conflicts: string[];
+  };
+  lessons: string[];
+  coachNotes: string[];
+}
+
+export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
+
+export interface SocraticFrameworkProposal {
+  id: string;
+  userId: string;
+  connectedAccountId?: string;
+  decisionId?: string;
+  runId?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: SocraticFrameworkProposalStatus;
+  priority: "low" | "medium" | "high";
+  subsystem: "strategy" | "risk" | "sizing" | "universe" | "evidence" | "coaching";
+  title: string;
+  rationale: string;
+  proposedChange: string;
+  evidence: SocraticEvidenceItem[];
+  ownerResponse?: string;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1191,7 +1334,7 @@ export interface WashSaleGateAudit {
   note?: string;
   outcome:
     | "blocked" // handling "block" (default): refused outright
-    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; iraWashSaleHandling "block", the default)
+    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; explicit iraWashSaleHandling "block")
     | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" — annotated + audited, never silent
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
     | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed
@@ -1203,6 +1346,14 @@ export interface WashSaleGateAudit {
 export interface PolicyDecision {
   approved: boolean;
   reasons: string[];
+  socraticOverride?: {
+    applied: boolean;
+    mode: "propose" | "execute";
+    conflicts: string[];
+    thesis: string;
+    invalidation?: string;
+    cashDeploymentPct?: number;
+  };
   /**
    * Escalatable failures among `reasons` (see GateEscalation). Present only when the gate
    * refused the proposal AND at least one failure belongs to the escalatable allowlist. The
