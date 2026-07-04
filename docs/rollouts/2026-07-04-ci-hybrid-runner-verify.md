@@ -176,3 +176,23 @@ stands when it is eventually built, with resource-aware routing as explicit per-
 - After a week of hybrid operation, compare hosted-minutes burn (Actions usage API) against the
   #370 baseline and record the measured split (self-routed vs hosted-routed run counts).
 - The cross-repo reusable `workflow_call` gate (deferred): hosted-only default, routing opt-in.
+
+## 2026-07-04 addendum — landing operator merge-forward + re-verify
+
+PR #372 had drifted behind `main` (GitHub reported `mergeStateStatus: DIRTY` /
+`mergeable: CONFLICTING`) after several other cars (#433, #436, #437, #365, and the W1/W2
+learning-loop and effort-issues-mirror work) landed on top of the #370 base this branch forked
+from. Re-fetched `origin` and ran `git merge origin/main --no-edit` in this worktree
+(`~/apps/trading-wt-ci-efficiency`) — merged clean via the `ort` strategy with **zero textual
+conflicts** (`STATUS.md` and `docs/EFFORT-LOG.md` both auto-merged; no `db.ts`/`strategy.ts`
+overlap since this branch only touches CI/workflow files). Merge commit `1047c337` on top of
+main tip `57a575f7` (#437).
+
+Re-ran the full local quartet post-merge in this worktree:
+- `npm run lint` — 0 errors (308 pre-existing warnings, unrelated backlog).
+- `npx tsc --noEmit` — clean.
+- `npm test` — 251 files / 2449 tests passed (test count grew from 2436 due to merged-in W1/W2
+  learning-loop and episodic-retrieval test files; deleted stale gitignored `data/app.db` first).
+- `npm run build` — green.
+
+No follow-up beyond the items above; landing via `scripts/land.sh` next.
