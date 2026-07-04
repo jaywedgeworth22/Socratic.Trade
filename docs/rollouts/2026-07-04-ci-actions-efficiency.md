@@ -51,6 +51,24 @@ build`'s Next.js compile instead of a cold build every run. `node_modules` itsel
 directly — `setup-node`'s built-in npm cache (the documented pattern) is relied on instead,
 consistent with the existing e2e/verify setup.
 
+## Codex review fixes (same day, PR #370 review round)
+
+The Codex reviewer flagged two genuine fail-open holes in the classifier design; both confirmed
+by local reproduction and fixed:
+
+1. **Rename source hole.** `git diff --name-only` with rename detection active reports ONLY the
+   destination path of a rename — reproduced locally: `git mv src/a.ts docs/a.md` listed just
+   `docs/a.md`, which would have classified docs-only while deleting code. Fixed by adding
+   `--no-renames`, which splits every rename into delete(old)+add(new) so both paths are
+   classified (re-tested: the same rename now yields `docs_only=false` with `src/a.ts` caught).
+2. **Classify-failure skip hole.** `verify` had `needs: classify` with no status-check function,
+   so a classify failure (checkout/network error) would SKIP `verify` — and a skipped required
+   check can fail open. Fixed with `if: ${{ !cancelled() }}` on `verify` (deliberately NOT
+   `always()`, which would also resurrect verify on cancelled/superseded runs and defeat the
+   concurrency `cancel-in-progress`) plus a first step that fails the job explicitly when
+   `needs.classify.result != 'success'` — the fast path now fails closed in every non-success
+   classify state.
+
 ## Cache hygiene (added same day, mid-review)
 
 While this branch was in review the repo hit its **10 GB total Actions-cache cap**
@@ -106,31 +124,35 @@ Fix, in this same branch (still `verify`/`ci.yml`-scoped, no new required-check 
 | Steady-state `main` cache count | Unbounded growth (one entry per push, ever) | Bounded to 1 (daily prune backstop keeps only the newest) |
 | Cache inventory at time of fix | 4 entries, 606.8 MiB total (`gh cache list`) — small at the moment of measurement because caches had only just started accumulating post-2026-07-01 self-hosted-runner migration; the reported 10 GB cap event was observed by the owner separately during heavier concurrent PR activity | Same 4 entries immediately after (fix is forward-looking — it changes what gets written from here, not a retroactive purge); the `prune-stale-caches` and `delete-pr-caches` jobs will keep future growth bounded |
 
-## Deferred / rejected scope (recorded for the record)
+## Deferred / follow-up scope (recorded for the record; decision state as of end of day)
 
-Two further additions were proposed mid-task and explicitly resolved by the owner before this
-branch was finalized:
+Two further additions were proposed mid-task; their decision state EVOLVED during the day and is
+recorded here in order:
 
-- **Hybrid self-hosted+hosted runner routing for `verify`** (route the required check to the
-  `trading-live-mac` self-hosted runner when available, hosted otherwise) — **rejected,
-  indefinitely, everywhere**, unless the owner explicitly re-confirms after seeing the tradeoff,
-  and even then only as its own separately-labeled PR, never bundled into a general efficiency
-  change. Reason: `trading-live-mac` is the production box; `verify` was deliberately moved off
-  it on 2026-07-01 per this same repo's `ci.yml` comment and `AGENTS.md` because it "was the main
-  source of the runner queue bottleneck" — routing the required check back onto it (even
-  conditionally) risks reintroducing that exact bottleneck (the proposed design's own
-  `max-in-flight 1` concurrency group **is** that serialization) plus new resource contention
-  with live trading traffic, and makes the required check's pass/fail meaning depend on which of
-  two different OS/toolchain environments happened to execute it — a correctness/auditability
-  regression, not just a cost tradeoff, for a change whose explicit mandate was zero weakening of
-  the merge gate. Not implemented in this branch or anywhere else.
+- **Hybrid self-hosted+hosted runner routing for `verify`.** Initially escalated back with an
+  objection rather than built: `trading-live-mac` is the production box; `verify` was
+  deliberately moved off it on 2026-07-01 per this same repo's `ci.yml` comment and `AGENTS.md`
+  because it "was the main source of the runner queue bottleneck," and a required check whose
+  pass/fail depends on which of two OS/toolchain environments executed it is an auditability
+  concern for a change mandated as zero-weakening. **The owner then re-confirmed hybrid AFTER
+  seeing that tradeoff, with a resource-aware design that answers each objection** (verbatim
+  intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM available"):
+  (1) contention — a Mac-side availability publisher (pm2-run, owner-started) computes
+  load/RAM/runner/pm2-health every 60s with hysteresis and publishes a
+  `VERIFY_RUNNER_STATE` repo variable; gate commands on the self path run under `nice -n 19`;
+  (2) bottleneck — the router reads the variable natively and any busy/stale (>5 min)/absent
+  state routes hosted instantly, so a busy or asleep Mac never queues anything (the
+  self-hosted concurrency-1 group becomes a load-shed detail, not the throughput path);
+  (3) determinism — a self-hosted FAILURE triggers exactly one automatic hosted re-run and the
+  required gate takes the hosted result on disagreement (Linux stays the arbiter; a Mac-env
+  flake can neither block nor fake-fail a merge), plus a nightly hosted full-gate canary on
+  `main` and a per-run environment annotation in the gate summary. **To be built as its own
+  clearly-labeled PR after this one lands — deliberately NOT in this branch.**
 - **Cross-repo reusable `workflow_call` entry point** exposing this gate for all present/future
-  repos — **deferred** to a follow-up PR, contingent on the hybrid-runner question above being
-  resolved first (bundling an unresolved self-hosted-routing design into a shared template other
-  repos inherit would propagate the same risk rather than isolate it). When built, the reusable
-  gate is to be **hosted-only by default with zero self-hosted references**; any runner routing
-  would be a separately-approved, explicit opt-in input, never silently inherited. Not implemented
-  in this branch.
+  repos — **still deferred**, now until the hybrid PR above lands and proves itself. When built,
+  the reusable gate defaults to **hosted-only with zero self-hosted references baked in**;
+  resource-aware routing stays an explicit per-repo opt-in, never silently inherited. Not
+  implemented in this branch.
 
 ## Required-check verification
 
@@ -274,11 +296,14 @@ test file since the logic lives entirely in workflow YAML `run:` steps, not appl
   repo's heavy per-commit doc-update discipline), not measured from GitHub's Actions usage API.
   Once minutes reporting is available again, `gh api /repos/.../actions/runs` timing data could
   replace the estimate with a measured before/after number.
-- **Hybrid self-hosted+hosted runner routing** — rejected indefinitely per the owner's explicit
-  decision (see "Deferred / rejected scope" above); revisit only on a fresh, explicit owner
-  request, and even then as its own PR.
-- **Cross-repo reusable `workflow_call` gate** — deferred pending the item above; when picked up,
-  must default to hosted-only execution with no self-hosted references baked in.
+- **Hybrid self-hosted+hosted runner routing** — owner re-confirmed with a resource-aware design
+  after the initial objection (see "Deferred / follow-up scope" above for the full design);
+  to be implemented as its own clearly-labeled PR after this one lands. The follow-up PR's
+  rollout note must carry the 2026-07-01 history, the objections, the owner's re-confirmation,
+  and a failure-mode table.
+- **Cross-repo reusable `workflow_call` gate** — deferred until the hybrid PR lands and proves
+  itself; when picked up, defaults to hosted-only execution with no self-hosted references baked
+  in (resource-aware routing = explicit per-repo opt-in only).
 - **Cache-hygiene follow-up worth considering separately:** the daily `prune-stale-caches` cron
   in `cleanup-caches.yml` currently targets only same-key-prefix lineages; if `setup-node`'s
   built-in npm cache (keyed only on lockfile hash, no source hash) ever starts accumulating

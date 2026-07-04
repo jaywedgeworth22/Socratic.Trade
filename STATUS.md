@@ -35,16 +35,26 @@ Fixed by splitting to `actions/cache/restore@v4` (any event) + `actions/cache/sa
 `scripts/prune-stale-actions-caches.py` to keep only the newest cache entry per (key-prefix, ref)
 lineage.
 
-**Scope guardrails held during review:** two further additions were proposed mid-task —(a) hybrid
-self-hosted/hosted runner routing for `verify` onto the production `trading-live-mac` box, and
-(b) a cross-repo `workflow_call` reusable entry point bundling that routing. Both were escalated
-back rather than built silently: (a) reverses the repo's own documented 2026-07-01 decision to
-move `verify` OFF that exact runner because it was the runner-queue bottleneck, and makes a
-required check's pass/fail depend on which of two different OS/toolchain environments executed
-it — the owner confirmed **no-go, indefinitely, everywhere**, unless explicitly re-confirmed later
-and even then only as its own separate PR; (b) is **deferred** pending (a), and must default
-hosted-only with zero self-hosted references when eventually built. Full detail, before/after
-cache table, and the resolution transcript in `docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+**Scope guardrails + evolved decisions during review:** two further additions were proposed
+mid-task — (a) hybrid self-hosted/hosted runner routing for `verify` onto the production
+`trading-live-mac` box, and (b) a cross-repo `workflow_call` reusable entry point. Both were
+escalated back rather than built silently, since (a) reverses the repo's own documented
+2026-07-01 decision to move `verify` OFF that runner (queue bottleneck) and makes the required
+check's result depend on which OS/toolchain executed it. **The owner then re-confirmed (a) after
+seeing the tradeoff, with a resource-aware design answering each objection** (Mac-side
+availability publisher w/ load+RAM+hysteresis gating, instant hosted fallback on busy/stale
+state, hosted-Linux as arbiter on any self failure via exactly-one automatic hosted re-run,
+nightly hosted canary, per-run environment annotation) — to be built as its OWN clearly-labeled
+PR after PR #370 lands, never bundled. (b) stays deferred until that hybrid PR proves itself;
+hosted-only default when built. Full evolution recorded in
+`docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+
+**Codex review round (PR #370):** two genuine fail-open holes flagged and fixed — (1)
+`git diff --name-only` hides rename sources (a `git mv src/foo.ts docs/foo.md` would classify
+docs-only while deleting code); fixed with `--no-renames`, locally reproduced + re-verified. (2)
+a classify-job failure would SKIP the required `verify` job (skipped required checks can fail
+open); fixed with `if: ${{ !cancelled() }}` + an explicit fail-closed first step when
+`needs.classify.result != 'success'`.
 
 Verification: full local quartet green (lint 0 errors/308 pre-existing warnings, tsc clean,
 2436/2436 tests, build succeeded) plus `yaml-lint` on all workflow files, live ruleset API

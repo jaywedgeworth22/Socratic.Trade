@@ -71,7 +71,12 @@ jobs:
             exit 0
           fi
 
-          changed_files="$(git diff --name-only "$base...$head" 2>/dev/null || true)"
+          # --no-renames is load-bearing (Codex review, PR #370): with rename detection
+          # active, `git diff --name-only` reports ONLY the destination path of a rename,
+          # so `git mv src/foo.ts docs/foo.md` would list just docs/foo.md and classify as
+          # docs-only while code was removed. --no-renames splits every rename into
+          # delete(old)+add(new) so BOTH paths get classified.
+          changed_files="$(git diff --name-only --no-renames "$base...$head" 2>/dev/null || true)"
           if [ -z "$changed_files" ]; then
             echo "Could not compute a changed-files list — running full gate to be safe."
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -93,6 +98,12 @@ jobs:
 
   verify:
     needs: classify
+    # `!cancelled()` (not `always()`, which would also run on cancelled/superseded runs and
+    # defeat the concurrency cancel-in-progress above) so verify still RUNS when classify
+    # fails — a skipped required check can fail open (Codex review, PR #370: GitHub treats a
+    # job skipped via a failed dependency as not blocking in some required-check paths).
+    # The first step below then fails verify closed explicitly.
+    if: ${{ !cancelled() }}
     # Moved off the self-hosted runner (2026-07-01): this job is a generic
     # lint/typecheck/test/build with no dependency on the production box, and
     # was the main source of the runner queue bottleneck. Requires the repo's
@@ -106,6 +117,11 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Fail closed if classify did not succeed
+        if: needs.classify.result != 'success'
+        run: |
+          echo "::error::classify job did not succeed (result: ${{ needs.classify.result }}) — failing verify closed; the docs-only fast path never fails open."
+          exit 1
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
         shell: bash

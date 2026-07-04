@@ -179,12 +179,18 @@ to `socratictrade.com`, record the release commit + date here._
   (`actions/cache/restore@v4` always, `actions/cache/save@v4` gated to `main` pushes only) plus
   new `.github/workflows/cleanup-caches.yml` (PR-close cache delete + daily prune backstop via new
   `scripts/prune-stale-actions-caches.py`; not a required check).
-  **Escalated and resolved during review:** hybrid self-hosted/hosted runner routing for `verify`
-  onto the production `trading-live-mac` box was proposed, then rejected by the owner
-  indefinitely (reverses the repo's own 2026-07-01 decision to move `verify` OFF that runner; a
-  required check should not depend on which of two OS/toolchain environments executed it); a
-  cross-repo `workflow_call` reusable entry point was deferred pending that question, to default
-  hosted-only when eventually built. Neither implemented in this branch.
+  **Escalated, then re-confirmed during review:** hybrid self-hosted/hosted runner routing for
+  `verify` onto the production `trading-live-mac` box was proposed; escalated back with
+  objections (reverses the repo's own 2026-07-01 decision to move `verify` OFF that runner; a
+  required check should not depend on which of two OS/toolchain environments executed it); the
+  owner then re-confirmed AFTER seeing the tradeoff, with a resource-aware design answering each
+  objection (availability publisher w/ load+RAM+hysteresis, instant hosted fallback on
+  busy/stale, hosted-Linux arbiter on any self failure via exactly-one automatic hosted re-run,
+  nightly hosted canary, per-run environment annotation) — to be built as its OWN PR after #370
+  lands (see Planned row below). A cross-repo `workflow_call` reusable entry point stays deferred
+  until that hybrid PR proves itself; hosted-only default when built. Neither implemented in this
+  branch. **Codex review round:** two fail-open holes fixed (`--no-renames` rename-source hole;
+  classify-failure skip hole via `!cancelled()` + explicit fail-closed step).
   No other workflow modified besides the two above — full audit table (every push/PR-triggered
   workflow, approx minutes, required-check status, batching candidates) in
   `docs/rollouts/2026-07-04-ci-actions-efficiency.md`, report-only for those other workflows.
@@ -321,6 +327,26 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 📋 Planned
+
+- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
+  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
+  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
+  owner, answering the objections raised when this was first proposed): (1) Mac-side
+  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
+  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
+  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
+  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
+  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
+  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
+  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
+  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
+  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
+  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
+  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
+  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
+  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
+  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
+  hosted-only default stands; resource-aware routing stays opt-in per repo.
 
 ### Socratic console parity sub-lanes — reserved before implementation
 - **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
