@@ -25,5 +25,11 @@ if [ ! -f .env.local ] && [ -f .env.example ]; then
   cp .env.example .env.local
 fi
 
+# Install the Slack coordination sync globally (SessionStart hook). No-op at
+# runtime unless SLACK_BOT_TOKEN is set as an environment secret. Non-fatal:
+# a hiccup here must never fail the whole environment setup.
+echo "==> Installing Slack coordination sync (global SessionStart hook)"
+bash scripts/setup-slack-sync.sh || echo "    (slack-sync install skipped; see docs/slack-coordination.md)"
+
 echo "==> Setup complete. Start the app with: npm run dev   (Next.js on :3000)"
 echo "    Verify a change with: npx tsc --noEmit && npm test && npm run build"

@@ -163,6 +163,18 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Slack coordination sync — on by default for all sessions/repos** (Monet, cloud, branch
+  `claude/slack-sync-default-setup`) — replaces the flaky Slack MCP with a curl-based engine
+  (`scripts/slack-sync.sh`: read/thread/post/reply/test/hook; token via `curl --config` 0600 temp
+  file, never on argv; untrusted-data envelope; hook-safe silent no-op without `SLACK_BOT_TOKEN`;
+  per-session dedup so a global + repo hook can't double-inject) + an idempotent global installer
+  (`scripts/setup-slack-sync.sh`: merges a `SessionStart` hook into `~/.claude/settings.json`
+  without clobbering existing keys/hooks) + `cloud-setup.sh` wiring + `docs/slack-coordination.md`.
+  Scripts verified (bash -n, pure ASCII, stubbed-curl functional test, sandbox-HOME idempotent
+  merge); no TS changed, tsc clean. **PR pending.** Owner actions: add `SLACK_BOT_TOKEN` as a
+  cloud Runtime Secret + Mac export, `/invite` the bot with channels:history/read + chat:write,
+  run the installer once per machine. See `docs/rollouts/2026-07-04-slack-sync-default-setup.md`.
+
 - **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude,
   landing now that gate is green). Owner decision: `taxSettings.washSaleHandling` default
   `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.

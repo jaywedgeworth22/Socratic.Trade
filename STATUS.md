@@ -8,6 +8,30 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
+Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
+Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
+without the flaky Slack MCP. Three committed scripts + a doc:
+- `scripts/slack-sync.sh` — curl engine: `read`/`thread`/`post`/`reply`/`test`/`hook`. Token via
+  `curl --config` 0600 temp file (never on argv/`ps`, never logged); fetched content in an
+  UNTRUSTED-EXTERNAL-DATA envelope; **silent no-op + exit 0 without `SLACK_BOT_TOKEN`** (safe in
+  any repo); `hook` self-dedupes per session so global + repo hooks can't double-inject.
+- `scripts/setup-slack-sync.sh` — idempotent global installer: copies the engine to
+  `~/.claude/slack-sync.sh` and merges a `SessionStart` hook into `~/.claude/settings.json`
+  (python3 JSON merge; preserves existing keys/hooks; upgrades in place on re-run).
+- `scripts/cloud-setup.sh` — now runs the installer (non-fatal) so any cloud env pointed at it
+  gets the hook. `docs/slack-coordination.md` — full owner/Fable guide + FAQ.
+
+Verified: bash -n + pure-ASCII on all three; stubbed-curl functional test (dedup, envelope, post);
+sandbox-HOME idempotent-merge test (preserves unrelated model/hooks; one slack entry on re-run);
+tsc clean (no TS changed).
+
+**Blocker / owner actions:** this cloud container has **no `SLACK_BOT_TOKEN`**, so Monet cannot
+post to Slack from here yet. Add it as a cloud **Runtime Secret**; `export` it on the Mac; `/invite`
+the bot (scopes `channels:history` + `channels:read` + `chat:write`); run
+`bash scripts/setup-slack-sync.sh` once per machine. Rotate any raw token pasted earlier.
+**Next:** open PR + squash auto-merge; once the token secret exists, post the setup how-to to Fable.
+
 ## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
 Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
 Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed
