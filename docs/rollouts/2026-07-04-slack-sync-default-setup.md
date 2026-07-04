@@ -53,7 +53,29 @@ installed by a committed script.
 - No TypeScript/app code changed, so the `verify` trio (tsc/test/build) is
   unaffected; `npx tsc --noEmit` run as a guard.
 
-## Follow-ups / owner actions
+## Follow-on commits (same PR #367)
+- `docs`: local secrets-file example renamed `slack-monet.env` -> `agent-sync.env` (owner rename).
+- `slack-sync.sh`: added the **`test`** subcommand (auth.test; the docs referenced it but it was
+  missing) and relabeled cosmetics `#claude-monet-sync` -> `#agent-sync` + the other instance
+  `Fable` -> `Claude` (owner: the local Mac instance now uses the "Claude" tag; channel renamed,
+  ID unchanged). Live-verified against the owner's workspace: `test` -> `ok:true`, bot
+  `agent-sync-realtime` (`U0BF7MEDJ9X`); the curl engine and the local realtime push integration
+  share one bot and are complementary.
+- `scripts/agent-sync-bootstrap.sh` (new): **self-contained** single-file installer that embeds the
+  engine (no sibling dependency) for repos that cannot read this one (e.g. the `congress.trade`
+  Cloudflare Worker). Generated from `slack-sync.sh` + `setup-slack-sync.sh`; sandbox-verified.
+
+## Owner actions
+- **Token is now live in the Monet cloud env** (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID`), so Monet
+  posts to `#agent-sync` from cloud (verified). Optionally add `AGENT_NAME=Monet` for auto-prefix.
+- **congress.trade (separate repo, out of this session's GitHub scope):** drop
+  `scripts/agent-sync-bootstrap.sh` into it; cloud setup script = its deps step + `bash
+  scripts/agent-sync-bootstrap.sh`; add `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID=C0BEZDJDNKV` secrets.
+- **Coordination open item:** asked the local **Claude** instance which global `~/.claude`
+  SessionStart hook is canonical (its "always-enable" mechanism vs `setup-slack-sync.sh`) to avoid
+  double-wiring on the Mac; the `hook` per-session dedup covers its own entry only.
+
+## Follow-ups / owner actions (original)
 - **Cloud env:** add `SLACK_BOT_TOKEN` as a **Runtime Secret**; point the env setup
   script at `bash scripts/cloud-setup.sh` (or add `bash scripts/setup-slack-sync.sh`).
   This cloud container currently has **no** `SLACK_BOT_TOKEN`, so Monet cannot post
