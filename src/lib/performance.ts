@@ -1,4 +1,4 @@
-import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
+import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -877,8 +877,13 @@ export interface RedTeamEfficacy {
   totalVetoes: number;
   /** Vetoes whose post-veto counterfactual return has matured (resolvable — never fabricated). */
   maturedVetoes: number;
+  /** Vetoes whose counterfactual terminally failed to resolve (delisted/renamed — kill-survivorship:
+   *  counted in the denominator instead of silently dropping out of the scorecard). */
+  unresolvableVetoes: number;
   /** maturedVetoes / totalVetoes (0 when no vetoes observed). Coverage, not a rejection rate. */
   maturedCoveragePct: number;
+  /** Human coverage disclosure, e.g. "4/6 vetoes resolved (66.7%) — 1 unresolvable; may be survivor-biased". */
+  coverage: string;
   /** Share of MATURED vetoes where the counterfactual return was negative (the veto avoided a loser). */
   vetoValueAddRate: number;
   /** Share of MATURED vetoes where the counterfactual return was positive (the veto missed a winner —
@@ -955,6 +960,16 @@ export function getRedTeamEfficacy(
   maturedPairs.sort((a, b) => b.maturedAt.localeCompare(a.maturedAt));
   const records: RedTeamVetoRecord[] = maturedPairs.map((pair) => pair.record);
 
+  // Kill-survivorship (Wave-2 outcome engine): terminally-unresolvable counterfactuals
+  // (delisted/renamed vetoed names) stay in the denominator and in the disclosure instead
+  // of vanishing from the scorecard.
+  let unresolvableVetoes = 0;
+  if (totalVetoes > 0) {
+    for (const row of listSkippedCounterfactualsByStatus(userId, "unresolvable", Math.max(auditLimit, totalVetoes * 2))) {
+      if (vetoesByKey.has(`${row.runId}:${normalizeSymbol(row.symbol)}`)) unresolvableVetoes += 1;
+    }
+  }
+
   const maturedVetoes = records.length;
   const valueAdds = records.filter((r) => r.returnPct < 0).length;
   const survivorHits = records.filter((r) => r.returnPct > 0).length;
@@ -968,10 +983,20 @@ export function getRedTeamEfficacy(
     else byModelMap.set(record.model, [record]);
   }
 
+  const resolvedDenominator = maturedVetoes + unresolvableVetoes;
+  const coverage =
+    totalVetoes > 0
+      ? `${maturedVetoes}/${totalVetoes} vetoes resolved (${Number(((maturedVetoes / totalVetoes) * 100).toFixed(1))}%)${
+          unresolvableVetoes > 0 ? ` — ${unresolvableVetoes} unresolvable; may be survivor-biased` : ""
+        }${totalVetoes - resolvedDenominator > 0 ? `; ${totalVetoes - resolvedDenominator} still maturing` : ""}`
+      : "no vetoes observed";
+
   return {
     totalVetoes,
     maturedVetoes,
+    unresolvableVetoes,
     maturedCoveragePct: totalVetoes > 0 ? Number(((maturedVetoes / totalVetoes) * 100).toFixed(1)) : 0,
+    coverage,
     vetoValueAddRate: maturedVetoes > 0 ? Number(((valueAdds / maturedVetoes) * 100).toFixed(1)) : 0,
     survivorRiskHitRate: maturedVetoes > 0 ? Number(((survivorHits / maturedVetoes) * 100).toFixed(1)) : 0,
     avgReturnPct: Number(avgReturnPct.toFixed(2)),
@@ -989,6 +1014,30 @@ export function getRedTeamEfficacy(
     }),
     records: records.slice(0, limit)
   };
+}
+
+/**
+ * Coverage disclosure for the missed-opportunity readouts built on `getSkippedCandidateReturns` /
+ * `summarizeMissedOpportunities`: how many skipped-candidate counterfactuals actually resolved vs
+ * terminally failed ('unresolvable' — delisted/renamed names that would otherwise silently drop out
+ * of the matured set, i.e. survivorship bias in the "what we missed" evidence). Render as
+ * "N/M resolved (X%)" next to any missed-opportunity number.
+ */
+export function getMissedOpportunityCoverage(userId: string = "local", connectedAccountId?: string): SkippedCounterfactualCoverage {
+  return getSkippedCounterfactualCoverage(userId, connectedAccountId);
+}
+
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
 }
 
 /**

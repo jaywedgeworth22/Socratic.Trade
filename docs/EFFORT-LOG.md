@@ -155,6 +155,14 @@ As of 2026-07-04.
 
 ## In Progress
 
+- **Wave-3 memory/RAG (CLAUDE swimlane, 3-lane team) — IN PROGRESS 2026-07-04 (gated on cars 11-14 reaching main):**
+  w3-schema-dissent (frontier tier: belief/iMayBeWrongIf/reversalTriggers/evidenceRefs schema fields
+  w/ Bear round-trip, structured Red Team verdict + removed[], non-action case files, debate
+  transcript persistence); w3-permodel-loop (mid tier: per-model scoreboard/calibration/deterministic
+  assignment + structured-output conformance recording); w3-retrieval-usefulness (mid tier:
+  ragAttribution+analog-id joins to matured outcomes, per-source usefulness data, learned-fact
+  injection efficacy w/ per-run fact-id stamping).
+
 - **CODEX console/UI swimlane (Codex, worktree `/Users/jay/apps/trading-codex-ui-swimlane`,
   branch `codex/console-ui-swimlane`) — claimed 2026-07-04 from sync-21.** Priority:
   approvals surface pack first (approval-card provenance, red-team trigger chip, R:R geometry,

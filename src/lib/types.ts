@@ -948,6 +948,41 @@ export type SocraticDecisionStatus =
   | "error"
   | "observed";
 
+/** Forward-return measurement horizons for decision outcomes. 15m/1h resolve only when a live-quote
+ * sampling window was actually hit (no intraday history source exists); 1d/1w resolve from daily
+ * closes via the provider cascade. Horizon arithmetic is TRADING days (market-calendar), never
+ * calendar-ms. */
+export type SocraticOutcomeHorizon = "15m" | "1h" | "1d" | "1w";
+
+/** Terminal resolution of one outcome horizon. 'unresolvable' is a first-class, HONEST terminal
+ * state (delisted symbol, no intraday source, series ends before target) — never fabricated data,
+ * and it stays in every denominator so coverage disclosure can say "N/M resolved". */
+export type SocraticOutcomeResolution = "ok" | "unresolvable";
+
+/** One measured (or terminally unmeasurable) forward-return row for a single horizon. */
+export interface SocraticOutcomeHorizonRow {
+  horizon: SocraticOutcomeHorizon;
+  /** Side-adjusted % return over this horizon (positive = the decided/considered direction worked;
+   * mirrors returnSinceProposalPct's sign convention). Present only when resolution === 'ok'. */
+  returnPct?: number;
+  /** returnPct minus the same-window SPY return under the same side convention (long: vs holding
+   * SPY; short: vs shorting SPY). Undefined when no SPY series covered the window (15m/1h have no
+   * intraday SPY basis). */
+  spyExcessPct?: number;
+  /** Optional % return of the alternative actually taken instead (reserved; populated when an
+   * alternative join exists — never fabricated). */
+  altReturnPct?: number;
+  /** When this horizon's outcome was measured (or declared unresolvable). */
+  maturedAt?: string;
+  /** Honest provenance of the entry->exit prices, e.g. "fill->daily_close",
+   * "ref_price->daily_close", "fill->live_quote(+22m)". */
+  priceBasis?: string;
+  resolution: SocraticOutcomeResolution;
+  /** Why the horizon could not be resolved, e.g. "no_intraday_source", "no_price_series",
+   * "no_bar_at_or_after_target". Present only when resolution === 'unresolvable'. */
+  reason?: string;
+}
+
 export interface SocraticRagAttribution {
   symbol: string;
   query: string;
@@ -1010,12 +1045,18 @@ export interface SocraticDecisionCase {
   evidence: SocraticEvidenceItem[];
   ragAttributions: SocraticRagAttribution[];
   dissent: SocraticEvidenceItem[];
+  /** Matured outcome written by the outcome engine (src/lib/outcome-engine.ts) — the closure of
+   * loop step 5. `outcomes[]` is the multi-horizon truth (15m/1h/1d/1w, each individually ok or
+   * honestly 'unresolvable'); the top-level fields are the headline: realized P&L for placed
+   * decisions whose lot closed, otherwise the longest resolved counterfactual horizon. status
+   * 'open' = still maturing (job revisits); 'unresolvable' = terminal, no horizon could resolve. */
   outcome?: {
-    status: "open" | "won" | "lost" | "flat" | "unknown";
+    status: "open" | "won" | "lost" | "flat" | "unknown" | "unresolvable";
     returnPct?: number;
     pnlUsd?: number;
     note?: string;
     measuredAt?: string;
+    outcomes: SocraticOutcomeHorizonRow[];
   };
   autonomyOverride?: TradeProposal["autonomyOverride"] & {
     applied: boolean;
