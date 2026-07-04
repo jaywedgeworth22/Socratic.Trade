@@ -76,14 +76,18 @@ describe("persistence and notifications", () => {
     releaseStrategyLock(userB);
   });
 
-  it("maps legacy dryRun policy storage to paperMode without leaking dryRun", async () => {
+  it("strips legacy dryRun/paperMode keys from old stored policy JSON instead of leaking them", async () => {
     const { getPolicy, setSetting } = await import("../src/lib/db");
-    setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: undefined });
+    setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: false, paperStartingCash: 5000 });
 
-    const policy = getPolicy() as typeof DEFAULT_POLICY & { dryRun?: boolean };
+    const policy = getPolicy() as typeof DEFAULT_POLICY & { dryRun?: boolean; paperMode?: boolean; paperStartingCash?: number };
 
-    expect(policy.paperMode).toBe(true);
+    // These fields were removed entirely — an account's own `environment` (paper/live) is the sole
+    // source of truth for execution mode now, not a policy-level override. Old rows that still carry
+    // them must not leak the stale values back out.
     expect(policy.dryRun).toBeUndefined();
+    expect(policy.paperMode).toBeUndefined();
+    expect(policy.paperStartingCash).toBeUndefined();
   });
 
   it("activates strategy profiles without corrupting user-scoped settings", async () => {
@@ -139,7 +143,7 @@ describe("persistence and notifications", () => {
 
   });
 
-  it("keeps active broker paper account separate from the Test policy toggle", async () => {
+  it("derives broker/paper execution state purely from the connected account's own environment", async () => {
     const userId = `execution-mode-user-${randomUUID()}`;
     const accountId = randomUUID();
     const { getActiveConnectedAccount, getPolicy, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
@@ -154,13 +158,12 @@ describe("persistence and notifications", () => {
       label: "Alpaca Paper",
       isActive: true
     });
-    setPolicy({ ...DEFAULT_POLICY, paperMode: false, accountNumber: "APCA-PAPER-TEST", activeBroker: "alpaca" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "APCA-PAPER-TEST", activeBroker: "alpaca" }, userId);
 
     const policy = getPolicy(userId);
     const activeAccount = getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
 
-    expect(policy.paperMode).toBe(false);
     expect(policy.activeBroker).toBe("alpaca");
     expect(policy.connectedAccountId).toBe(accountId);
     expect(executionState.mode).toBe("broker/paper");
@@ -248,7 +251,6 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
         llmModel: "gpt-4.1-mini",
@@ -322,7 +324,6 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
         llmModel: "gpt-5.5",
         llmReasoningEffort: "high",
         includedIndices: [],
@@ -425,7 +426,6 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
         llmModel: "gpt-4.1-mini",
@@ -509,7 +509,6 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
         // Classic model so request-body assertions check temperature + exact caps
         // (reasoning-model bounds are covered by test/llm-request.test.ts).
         llmModel: "gpt-4.1-mini",
@@ -531,16 +530,15 @@ describe("persistence and notifications", () => {
       const bullBody = openAiBodies[0];
       const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";
       const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
-      expect(systemContent).toContain('Current executionMode is "test/local"');
-      expect(systemContent).toContain("not Alpaca Paper");
-      expect(userContent.executionMode).toBe("test/local");
-      expect(userContent.executionModeClarification).toContain("not Alpaca Paper");
+      expect(systemContent).toContain('Current executionMode is "broker/paper"');
+      expect(userContent.executionMode).toBe("broker/paper");
+      expect(userContent.executionModeClarification).toContain("local simulated fills");
       expect(systemContent).toContain("`retrievedFinancialContext`");
       expect(systemContent).not.toContain("Item 2.02 Results of Operations");
       expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");
       for (const body of openAiBodies) {
         const content = body.input.find((item: any) => item.role === "user")?.content ?? "{}";
-        expect(JSON.parse(content).executionMode).toBe("test/local");
+        expect(JSON.parse(content).executionMode).toBe("broker/paper");
       }
     } finally {
       cleanupOpenAiKey?.();

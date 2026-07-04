@@ -70,6 +70,20 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
 
     const userId = `dash-batch-${randomUUID()}`;
 
+    // An account is an account: getDashboardSnapshot only fetches fills/portfolio for an account it
+    // can resolve, and only calls getBrokerGateway when a real connected account is active — so this
+    // test needs one (test infrastructure: broker "test", environment "paper") wired up, matching the
+    // accountNumber "TEST" the proposal/fill rows below are seeded under.
+    db.upsertConnectedAccount({
+      id: `acct-${userId}`,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Batching Test Account",
+      isActive: true
+    });
+
     // Seed a proposal + a fill referencing it so both the batched proposal lookup and the fill
     // replay have real rows to walk (and so the audit/unified feed builders exercise getProposalById).
     const proposalId = `prop-${randomUUID()}`;

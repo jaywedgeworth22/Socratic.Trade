@@ -34,7 +34,6 @@ function policyFor(account: string, tuning?: TradingPolicy["tuning"]): TradingPo
   return {
     ...DEFAULT_POLICY,
     accountNumber: account,
-    paperMode: true,
     maxOrderNotional: 10_000,
     maxOrderPctOfNav: undefined,
     scoringWeights: { ...DEFAULT_POLICY.scoringWeights },

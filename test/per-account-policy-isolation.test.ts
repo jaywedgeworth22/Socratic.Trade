@@ -51,13 +51,17 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getPolicy(userId, a2).systemState).toBe("halted");
   });
 
-  it("paperMode is derived from each account's broker", async () => {
+  it("activeBroker is derived from each account's own broker — an account is an account", async () => {
     const db = await import("../src/lib/db");
     const testAcct = `acct-test-${randomUUID()}`;
     db.upsertConnectedAccount({ id: testAcct, userId, broker: "test", environment: "paper", label: "Sim", isActive: false });
 
-    expect(db.getPolicy(userId, testAcct).paperMode).toBe(true);   // Test broker = local sim
-    expect(db.getPolicy(userId, a1).paperMode).toBe(false);        // Alpaca paper = real broker path
+    expect(db.getPolicy(userId, testAcct).activeBroker).toBe("test");
+    expect(db.getPolicy(userId, a1).activeBroker).toBe("alpaca");
+    // No policy-level paperMode override exists anymore: paper vs live is purely the connected
+    // account's own `environment`, never a policy flag.
+    expect((db.getPolicy(userId, testAcct) as unknown as Record<string, unknown>).paperMode).toBeUndefined();
+    expect((db.getPolicy(userId, a1) as unknown as Record<string, unknown>).paperMode).toBeUndefined();
   });
 
   it("run-lock is per account — one account's lock doesn't block another", async () => {

@@ -17,6 +17,7 @@ import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
 import {
   connectAlpacaAccount,
+  connectTestAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
   syncRobinhoodAccount,
@@ -33,7 +34,7 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
     case "robinhood":
       return "Robinhood";
     case "test":
-      return "Local simulator";
+      return "Test Account";
     default:
       return broker;
   }
@@ -44,6 +45,27 @@ const TAXATION_WORD: Record<TaxationType, string> = {
   roth_ira: "Roth IRA",
   traditional_ira: "traditional IRA"
 };
+
+const BROKER_ROADMAP = [
+  {
+    name: "Public.com",
+    status: "Needs API approval",
+    detail:
+      "Public.com is listed here so the intended broker set is visible, but this app does not have a Public.com trading gateway yet."
+  },
+  {
+    name: "eToro",
+    status: "Partner/API gated",
+    detail:
+      "eToro support needs an approved API path before account sync or order placement can be implemented safely."
+  },
+  {
+    name: "IBKR",
+    status: "Gateway required",
+    detail:
+      "Interactive Brokers needs an IB Gateway or TWS session plus a dedicated broker adapter before it can be connected here."
+  }
+] as const;
 
 export function BrokerAccountsCard() {
   const { snapshot, refresh } = useConsoleData();
@@ -100,6 +122,7 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
+  const hasTestAccount = accounts.some((account) => account.broker === "test");
 
   const connectRobinhood = () => {
     if (rhAuthed) {
@@ -120,6 +143,23 @@ export function BrokerAccountsCard() {
       toast.push("pos", "Connection removed", `${account.label || brokerName(account.broker)} was disconnected from this app. Nothing changed at the broker.`);
     } catch (error) {
       toast.push("neg", "Could not disconnect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const connectTest = async () => {
+    setBusy("test");
+    try {
+      const result = await connectTestAccount();
+      await refresh();
+      toast.push(
+        "pos",
+        result.label ?? "Test Account - Local Mock Paper Account added",
+        "It stays inactive until you make it active. It uses local simulated fills and cannot reach real money."
+      );
+    } catch (error) {
+      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
@@ -152,13 +192,25 @@ export function BrokerAccountsCard() {
           >
             Connect Alpaca
           </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null || hasTestAccount}
+            onClick={() => void connectTest()}
+            title={
+              hasTestAccount
+                ? "A Test Account - Local Mock Paper Account already exists. It is only used if you make it active."
+                : "Add a local mock paper account for simulated learning trades. It is not selected automatically and cannot reach real money."
+            }
+          >
+            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
+          </Btn>
         </div>
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Connections apply to your whole login. Connecting a broker is never required — without one, everything runs in
-        the local simulator (TEST · practice money). Exactly one account is active at a time; the whole console is
-        scoped to it.
+        Connections apply to your whole login. Exactly one account is active at a time; the whole console is scoped to
+        that account, including its authority, strategy, and decision history.
       </p>
 
       {accounts.length === 0 ? (
@@ -183,6 +235,11 @@ export function BrokerAccountsCard() {
                     <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
                       {account.label || brokerName(account.broker)}
                     </span>
+                    {account.broker === "test" && (
+                      <Chip tone="paper" title="Local mock paper account: simulated fills only, no broker login, no real money.">
+                        local mock
+                      </Chip>
+                    )}
                     <Chip tone={r.tone} title={r.clarification}>
                       {r.word} · {r.phrase}
                     </Chip>
@@ -216,7 +273,7 @@ export function BrokerAccountsCard() {
                         size="sm"
                         variant="outline"
                         disabled={busy !== null}
-                        title={`Make this the active account. Everything in the console rescopes to it${r.tone === "live" ? " — this one trades REAL money" : ""}.`}
+                        title="Make this the active account. Everything in the console rescopes to it."
                         onClick={async () => {
                           setBusy(account.id);
                           try {
@@ -254,10 +311,12 @@ export function BrokerAccountsCard() {
                   className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
                   title="Broker, environment, account tail, tax treatment, and what the broker last said this account may trade."
                 >
-                  {brokerName(account.broker)} · {account.environment}
+                  {account.broker === "test" ? "Local Mock Paper Account" : `${brokerName(account.broker)} · ${account.environment}`}
                   {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
                   {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-                  {caps
+                  {account.broker === "test"
+                    ? " — simulated fills for learning; excluded from real-account wash-sale contribution"
+                    : caps
                     ? ` — broker allows: stocks ${caps.equityTrading ? "yes" : "no"} · shorting ${caps.shortSelling ? "yes" : "no"} · options ${caps.optionsTrading ? `level ${caps.optionsLevel ?? "?"}` : "no"} · margin ${caps.marginEnabled ? "yes" : "no"}`
                     : " — capabilities not confirmed by the broker yet: everything reads as off"}
                 </p>
@@ -266,6 +325,41 @@ export function BrokerAccountsCard() {
           })}
         </div>
       )}
+
+      <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Broker roadmap</h3>
+          <Chip tone="muted" title="Visible planning list only. These buttons stay disabled until real broker gateways exist.">
+            not wired yet
+          </Chip>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-3">
+          {BROKER_ROADMAP.map((broker) => (
+            <div
+              key={broker.name}
+              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              title={broker.detail}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-semibold">{broker.name}</span>
+                <Chip tone="warn">{broker.status}</Chip>
+              </div>
+              <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                {broker.detail}
+              </p>
+              <Btn
+                size="sm"
+                variant="ghost"
+                disabled
+                className="mt-2"
+                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
+              >
+                Connect unavailable
+              </Btn>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Disconnect confirm — explicit about what is and is not affected. */}
       <Sheet
@@ -282,15 +376,15 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
-                This is a LIVE (real money) connection. After disconnecting, any app-managed stop rules for its
+              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+                This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
             )}
             {confirmRemove.isActive && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                This is the ACTIVE account. Disconnecting it rescopes the console to whatever remains (or the local
-                simulator).
+                This is the ACTIVE account. Disconnecting it rescopes the console to the next active account, if one
+                remains.
               </p>
             )}
             <div className="flex justify-end gap-2">
@@ -361,7 +455,7 @@ function AlpacaConnectSheet({
         apiSecret: apiSecret.trim() || undefined,
         taxationType: taxationType || undefined
       });
-      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as PAPER (practice money)." : "Connected as LIVE (real money).");
+      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as Alpaca PAPER Account (NOT Real Money)." : "Connected as a brokerage account.");
       setLabel("");
       setAccountNumber("");
       setApiKey("");
@@ -379,10 +473,10 @@ function AlpacaConnectSheet({
     <Sheet open={open} onClose={onClose} title="Connect Alpaca">
       <div className="flex flex-col gap-3">
         <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Paste the API key pair from your Alpaca dashboard. Paper vs live is inferred from the credentials
+          Paste the API key pair from your Alpaca dashboard. Paper accounts are inferred from the credentials
           (&quot;PA…&quot; account numbers and &quot;PK…&quot; keys are paper) — currently reading as{" "}
-          <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-live)]"}>
-            {inferredPaper ? "PAPER · practice money" : "LIVE · real money"}
+          <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-accent)]"}>
+            {inferredPaper ? "Alpaca PAPER Account (NOT Real Money)" : "Brokerage Account"}
           </span>
           . Credentials are stored server-side and never shown again.
         </p>
@@ -454,7 +548,7 @@ function AlpacaConnectSheet({
             onClick={() => void submit()}
             title="Validate and store this connection server-side."
           >
-            {busy ? "Connecting…" : inferredPaper ? "Connect (paper)" : (
+            {busy ? "Connecting…" : inferredPaper ? "Connect Paper" : (
               <>
                 Connect <LiveTag />
               </>

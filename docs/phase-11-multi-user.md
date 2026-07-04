@@ -2,7 +2,8 @@
 
 Goal: let multiple users use the app — logging in at the same or different times —
 each getting analysis and trade proposals tailored to **their own preferences and
-their own API keys**. Test mode stays the default; no live-trading behavior change.
+their own API keys**. With no connected broker account the app cannot place any
+order by default; no live-trading behavior change.
 
 **Current identity model:** middleware derives the request user from a verified
 Auth.js v5 session. The Cloudflare tunnel may still expose the app, but
@@ -28,12 +29,15 @@ allowed users map to isolated hashed user IDs only when present in
   key fields, and users may connect one or more supported account types from
   Accounts. Paper accounts are optional; users do not need to connect one unless
   they want broker-hosted sandbox execution.
-- Execution mode is now derived as `test/local`, `broker/paper`, or `broker/live`
-  from the local simulation toggle plus the active connected-account environment.
-  Active broker paper accounts no longer collapse back into local `paperMode`,
-  so LLM prompts, post-mortems, strategy tuning, red-team review, and dashboard
-  labels can distinguish Test from broker-hosted paper environments such as
-  Alpaca Paper, and Brokerage from live broker production accounts.
+- Execution mode is derived purely from the active connected account's
+  `environment` — `broker/paper` or `broker/live` — with no local-simulation
+  toggle in the mix. When there is no connected account, `deriveExecutionState`
+  (`src/lib/execution-mode.ts`) returns a distinct "No account" state
+  (`mode: undefined`, `submitsBrokerOrders: false`): the app simply cannot
+  place orders rather than falling back to a fake local fill. LLM prompts,
+  post-mortems, strategy tuning, red-team review, and dashboard labels
+  distinguish broker-hosted paper environments such as Alpaca Paper from live
+  broker production accounts.
 - Strategy-run audit lookups for Latest Decisions and Strategy Tuning are scoped
   by `connectedAccountId`, matching the per-account run lock/state model so a
   stale failure from one account does not appear under another selected account.
@@ -90,7 +94,7 @@ allowed users map to isolated hashed user IDs only when present in
   talking to every web endpoint directly. `/api/mobile/*` exposes a
   request-scoped snapshot, audited command queue/status model, SSE updates, and
   a multi-step account deletion flow. The phone PWA at `/mobile` and the
-  SwiftUI starter in `ios/AgenticTrading/` both treat the backend as the source
+  SwiftUI starter in `ios/SocraticTrade/` both treat the backend as the source
   of truth; broker/provider secrets, MCP calls, scraping, calculations, and
   order placement stay server-side. See `docs/mobile-api-and-clients.md`.
 
@@ -117,15 +121,19 @@ xAI/Grok, Google Gemini, Mistral, DeepSeek, Finnhub, FMP, Alpha Vantage,
 Marketstack, Tradier, FRED, SEC EDGAR User-Agent, and Massive with Set / Using
 env / Not set badges, docs links, masked write-only inputs, Save, and Clear.
 Backend `GET/POST/DELETE /api/keys` serves the same catalog and never returns
-secret values. Strategy Studio lets the selected account strategy choose a Green
+secret values. Strategy lets the selected account strategy choose a Green
 Team model for proposal generation and an optional separate Red Team model for
 Bear review; if no Red Team override is set, Red reuses Green. Connections owns
-provider API keys only, while Account Settings -> Strategy links to Strategy
-Studio so model behavior stays account-scoped and credentials stay user-scoped.
+provider API keys only, while Account Settings -> Strategy keeps model behavior
+account-scoped and credentials user-scoped.
 The visible model list omits legacy OpenAI `gpt-4o`/`o1`/`o3` options from curated selectors,
 keeps `gpt-5.4-nano` as the cheapest listed OpenAI option, offers Claude alongside
-OpenAI for Green/Red Team and review work, and uses current DeepSeek V4 selections
-(`deepseek-v4-flash` / `deepseek-v4-pro`) instead of the older DeepSeek aliases.
+OpenAI for Green/Red Team and review work, uses current Gemini 3 selections
+(`gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemini-3.1-pro-preview`), current
+Mistral Small/Medium selections (`mistral-small-2603`, `mistral-medium-3-5`), and
+current DeepSeek V4 selections (`deepseek-v4-flash` / `deepseek-v4-pro`) instead
+of the older DeepSeek aliases. Provider-specific reasoning/thinking controls are
+shown only for selected models that expose them.
 Settings -> Operate stays focused
 on universe, authority, horizon, and system Start/Stop controls. Settings ->
 Accounts continues to own brokerage-account credentials. Settings -> Accounts
@@ -331,7 +339,7 @@ set of trading controls:
   the native app. It has clear Start/Stop/Close-only/Run-once controls, approval
   cards, watchlist and alert controls, command history, backend-source-of-truth
   messaging, and a danger-zone deletion workflow.
-- `ios/AgenticTrading/` provides a SwiftUI starter that uses the same endpoints
+- `ios/SocraticTrade/` provides a SwiftUI starter that uses the same endpoints
   and keeps only the backend session on-device.
 - Account deletion routes reuse the audited M7 deletion lifecycle: prepare first,
   type the signed-in identity and required phrase, then confirm/sign out with
@@ -352,4 +360,5 @@ commands must not overwrite an existing DB without a separate manual decision.
 Single-user behavior is byte-for-byte unchanged with the default user; adding a key
 in Settings makes that provider use it (verified via the source attribution string);
 two users with different policies produce different proposals from the same shared
-market data; secrets are never shown or logged; Test mode stays default.
+market data; secrets are never shown or logged; with no connected broker
+account the app cannot place orders by default.

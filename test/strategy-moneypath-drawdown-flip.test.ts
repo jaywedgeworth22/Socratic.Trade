@@ -8,8 +8,9 @@ import { DEFAULT_POLICY } from "../src/lib/defaults";
 //
 // The pure/stateful breaker math is covered by test/risk-breaker.test.ts. This test covers the
 // missing piece: that an autonomous, `active` run which observes an equity drop below the persisted
-// high-water mark actually (a) flips systemState → "close_only" via setPolicy, and (b) writes an
-// audit("policy_violation_drawdown") row — i.e. strategy.ts:~253-262 is correctly wired and durable
+// high-water mark actually (a) flips systemState via setPolicy per riskRules.drawdownBreakerAction
+// (default "halt" → "halted"; overridable to "close_only"), and (b) writes an
+// audit("policy_violation_drawdown") row — i.e. the breaker wiring is correct and durable
 // (the HWM is read from the settings KV persisted across "restarts"). NEVER places a real trade.
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
@@ -57,7 +58,7 @@ function zeroProposalFetchStub() {
 }
 
 describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
-  it("flips an active autonomous run to close_only and audits policy_violation_drawdown on a breach", async () => {
+  it("is ADVISORY by default: on a breach it audits a receipt and does NOT change systemState", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", zeroProposalFetchStub());
 
@@ -85,11 +86,11 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      paperMode: true,
       llmModel: "gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
+      // No drawdownBreakerAction set → default "advisory" (receipt + agent context, no state change).
       riskRules: { ...DEFAULT_POLICY.riskRules, maxDrawdownPct: 20 }
     });
 
@@ -97,16 +98,54 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     const result = await runStrategyOnce();
     expect(result.status).toBe("completed");
 
-    // (a) systemState was flipped to close_only and persisted via setPolicy.
-    expect(getPolicy("local").systemState).toBe("close_only");
+    // (a) ADVISORY default: systemState is UNCHANGED (stays "active"). The breaker informs the agent,
+    // it never seizes control — "nothing is hard except which account to work in; agent decides, logs
+    // everything." Hard enforcement is opt-in only (see the close_only/halt tests below).
+    expect(getPolicy("local").systemState).toBe("active");
 
-    // (b) the breach was audited.
+    // (b) the breach was still logged as a receipt, tagged action "advisory", with NO state transition.
     const drawdownAudits = listAudit(500).filter((e) => e.kind === "policy_violation_drawdown");
     expect(drawdownAudits.length).toBeGreaterThanOrEqual(1);
-    const payload = drawdownAudits[0].payload as { from?: string; revertedTo?: string; highWaterMark?: number };
+    const payload = drawdownAudits[0].payload as { from?: string; revertedTo?: string; action?: string; highWaterMark?: number };
     expect(payload.from).toBe("active");
-    expect(payload.revertedTo).toBe("close_only");
+    expect(payload.action).toBe("advisory");
+    expect(payload.revertedTo).toBeUndefined();
     expect(payload.highWaterMark).toBe(250_000);
+  }, 30_000);
+
+  it("honors the overridable drawdownBreakerAction: 'close_only' (softer — only blocks new entries)", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", zeroProposalFetchStub());
+
+    const { upsertConnectedAccount, setActiveConnectedAccount, setPolicy, upsertUserApiKey, getPolicy, listAudit } = await import("../src/lib/db");
+    const { recordAndEvaluateDrawdownBreaker } = await import("../src/lib/risk-breaker");
+
+    upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+    const accountId = randomUUID();
+    upsertConnectedAccount({ id: accountId, userId: "local", broker: "test", environment: "paper", accountNumber: "TEST", label: "Test Account", isActive: true });
+    setActiveConnectedAccount(accountId);
+
+    const seeded = recordAndEvaluateDrawdownBreaker({ accountNumber: "TEST", source: "paper", equity: 250_000, riskRules: { maxDrawdownPct: 20 }, userId: "local" });
+    expect(seeded.breached).toBe(false);
+
+    setPolicy({
+      ...DEFAULT_POLICY,
+      systemState: "active",
+      llmModel: "gpt-4.1-mini",
+      includedIndices: [],
+      additionalSymbols: ["AAPL"],
+      strategyAuthority: "decide",
+      riskRules: { ...DEFAULT_POLICY.riskRules, maxDrawdownPct: 20, drawdownBreakerAction: "close_only" }
+    });
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    await runStrategyOnce();
+
+    // Overridden to the softer response → "close_only", not "halted".
+    expect(getPolicy("local").systemState).toBe("close_only");
+    const payload = listAudit(500).filter((e) => e.kind === "policy_violation_drawdown")[0]?.payload as { revertedTo?: string; action?: string };
+    expect(payload.revertedTo).toBe("close_only");
+    expect(payload.action).toBe("close_only");
   }, 30_000);
 
   it("does NOT flip when no drawdown limit is configured (default-safe)", async () => {
@@ -127,7 +166,6 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     setPolicy({
       ...DEFAULT_POLICY,
       systemState: "active",
-      paperMode: true,
       llmModel: "gpt-4.1-mini",
       includedIndices: [],
       additionalSymbols: ["AAPL"],

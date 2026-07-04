@@ -1,8 +1,8 @@
 "use client";
 
 /** Help & glossary — the console's vocabulary in one searchable place. Every
- *  definition uses the same load-bearing words the UI itself uses (TEST /
- *  PAPER / LIVE, Ask-first / Autopilot, Stopped / Exit-only, …) so reading
+ *  definition uses the same load-bearing words the UI itself uses (Paper,
+ *  Brokerage Account, Ask-first / Autopilot, Stopped / Exit-only, …) so reading
  *  this IS reading the interface. Static content by design: it describes how
  *  the app actually behaves, and it must never drift into marketing. */
 
@@ -28,22 +28,16 @@ const GLOSSARY: GlossaryGroup[] = [
     blurb: "Every screen states which money it is in words — the colors only reinforce.",
     entries: [
       {
-        term: "TEST · practice money",
-        aliases: "test mode local simulator",
-        definition:
-          "This app's own simulator, marked to live market prices. No broker involved, no real dollars — not even a broker's paper account. The default, and a perfectly fine place to stay."
-      },
-      {
-        term: "PAPER · practice money",
+        term: "Alpaca PAPER Account (NOT Real Money)",
         aliases: "paper trading sandbox",
         definition:
-          "Your broker's practice sandbox: real broker endpoints and order flow, zero real dollars. Good for verifying broker plumbing before going live."
+          "Your broker's practice sandbox: real broker endpoints and order flow, zero real dollars. Good for verifying broker plumbing before using a brokerage account."
       },
       {
-        term: "LIVE · real money",
-        aliases: "live trading real account",
+        term: "Brokerage Account",
+        aliases: "broker connected live trading real account",
         definition:
-          "A real brokerage account. Orders here can spend your actual cash. The console frames the whole screen in red and every risky action names the word LIVE."
+          "A connected brokerage account. The app treats this as the normal trading state and does not wrap the whole console in red; broker-paper accounts are the exceptional state called out as not real money."
       }
     ]
   },
@@ -139,7 +133,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Guardrails",
         aliases: "risk rules caps limits",
         definition:
-          "The per-account hard limits the policy gate enforces: per-order and daily notional, symbol/sector exposure, order counts, drift, and the rest. Editable on the Guardrails screen; loosening one on a LIVE account costs a typed word."
+          "The per-account hard limits the policy gate enforces: per-order and daily notional, symbol/sector exposure, order counts, drift, and the rest. Editable on the Guardrails screen; loosening one on a brokerage account costs a typed word."
       },
       {
         term: "Circuit breaker (kill switch)",
@@ -157,7 +151,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Wash-sale guard",
         aliases: "wash sale lock 30 days",
         definition:
-          "Blocks rebuying a symbol that was closed at a loss within the last 30 days. A loss in any taxable account locks the symbol across ALL your accounts, including IRAs — matching how the IRS actually applies the rule."
+          "For taxable accounts, blocks or prices rebuying a symbol that was closed at a loss within the last 30 days. Same-account IRA wash sales are ignored automatically; an IRA buying after another taxable account's loss is governed by the IRA taxable-loss rebuy setting."
       },
       {
         term: "Daily spend",
@@ -175,7 +169,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Connected account",
         aliases: "broker connection robinhood alpaca",
         definition:
-          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys), plus the built-in local simulator. Disconnecting removes the connection from this app only — nothing changes at the broker."
+          "A brokerage login this app can read and trade through (Robinhood via OAuth, Alpaca via API keys). Disconnecting removes the connection from this app only — nothing changes at the broker."
       },
       {
         term: "Active account",

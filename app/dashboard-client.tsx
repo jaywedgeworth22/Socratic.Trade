@@ -380,7 +380,7 @@ function plainAppError(raw: string, fallback = "Something went wrong."): string 
     return "Select an account before running the strategy. Use the account menu or Accounts modal.";
   }
   if (/agentic_allowed/i.test(message)) {
-    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account or use Test mode.";
+    return "The selected broker account is not approved for agentic execution. Choose an agentic-enabled account.";
   }
   return message.length > 280 ? `${message.slice(0, 277)}...` : message;
 }
@@ -438,7 +438,7 @@ function executionBanner(state: ExecutionState): { className: string; title: str
   if (state.mode === "broker/live") {
     const brokerName = brokerNameForBanner(state);
     const title = `${brokerName} Brokerage Account`;
-    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`} • real money may be at risk`;
+    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`}`;
     return {
       className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
       title: `${title} • ${detail}`,
@@ -454,7 +454,7 @@ function executionBanner(state: ExecutionState): { className: string; title: str
     const brokerName = brokerNameForBanner(state);
     const title = `${brokerName} Paper Account`;
     const routeLabel = state.broker === "alpaca" || state.broker === "alpaca-mcp" ? "Alpaca Paper" : `${brokerName} Paper`;
-    const detail = `orders route to ${routeLabel} • no real money is at risk`;
+    const detail = `orders route to ${routeLabel} • not real money`;
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
       title: `${title} • ${detail}`,
@@ -466,8 +466,8 @@ function executionBanner(state: ExecutionState): { className: string; title: str
       )
     };
   }
-  const title = "Test Account";
-  const detail = "local simulated fills only • no broker orders or real money at risk • broker paper account (e.g. Alpaca Paper Account) is more realistic";
+  const title = "No Account Connected";
+  const detail = "connect a broker account (paper or live) before the app can place orders";
   return {
     className: "border-slate-800 bg-slate-900/70 text-slate-300",
     title: `${title} • ${detail}`,
@@ -880,7 +880,7 @@ function DashboardSsrShell({ snapshot, message, detail }: { snapshot?: Dashboard
             <Zap size={16} className="fill-current" />
           </span>
           <div>
-            <div className="text-sm font-semibold">Trading Dashboard</div>
+            <div className="text-sm font-semibold">Socratic Trade</div>
             {(mode || snapshot) && (
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
                 {mode && <span>{mode}</span>}
@@ -1426,9 +1426,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
           toast.success(
             body.status === "placed"
               ? `Order submitted${body.orderId ? `: ${body.orderId}` : ""}.`
-              : body.status === "paper"
-                ? "Proposal executed in Test mode."
-                : `Result: ${body.status}`
+              : `Result: ${body.status}`
           );
         }
       }
@@ -1648,7 +1646,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
   const executionState = executionStateFor(snapshot);
   const activeAccountId = executionState.accountId ?? policy.connectedAccountId ?? "";
   const selectorAccounts = visibleConnectedAccounts(snapshot.connectedAccounts, hideTestAccount, activeAccountId);
-  const mode = executionState.usesLocalSimulation ? "paper" : "live";
+  const mode = executionState.mode === "broker/live" ? "live" : "paper";
   const accountModeLabel = executionState.label;
   const signedInEmail = snapshot.currentUser?.email;
   const isAdmin = snapshot.currentUser?.isAdmin ?? false;
@@ -1795,7 +1793,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
               <Zap size={16} className="fill-current" />
             </span>
             <div className="leading-tight">
-              <div className="whitespace-nowrap text-sm font-semibold text-fg">Trading Dashboard</div>
+              <div className="whitespace-nowrap text-sm font-semibold text-fg">Socratic Trade</div>
               <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
                 <div className="flex items-center gap-1.5 whitespace-nowrap">
                   <Dot tone={autonomyStatus.tone} pulse={policy.systemState === "active"} />
@@ -2198,7 +2196,7 @@ function DashboardApp({ initialSnapshot }: { initialSnapshot: DashboardSnapshot 
         title="Enable autonomous execution?"
         body="Autonomous mode allows the agent to execute approved orders automatically without requiring per-order confirmation. Only enable this if you have reviewed your risk limits, universe, and daily caps — the agent will trade on your behalf while the system is running."
         confirmLabel="Enable auto-execute"
-        tone="danger"
+        tone="primary"
       />
 
       <ConfirmationModal
@@ -2356,8 +2354,9 @@ function PortfolioRail({
   const enriched = enrichPositionsForDisplay(positions, total).sort((a, b) => b.marketValue - a.marketValue);
 
   // Portfolio balances come from the active *broker* account (its API). Attribute Value/P&L to that
-  // broker + the account's last-synced time — but ONLY for a real broker. In Test mode (local
-  // simulation) there is no upstream provider, so we leave the plain label rather than invent one.
+  // broker + the account's last-synced time — but ONLY for a real broker. The local Test-broker
+  // account (test infrastructure) has no upstream provider, so we leave the plain label rather than
+  // invent one.
   const activeAcc = activeConnectedAccountFor(snapshot);
   const brokerSource = activeAcc && activeAcc.broker !== "test" ? activeAcc.broker : undefined;
   const brokerAsOf = brokerSource ? activeAcc?.updatedAt : undefined;
@@ -3866,16 +3865,16 @@ function StrategyView({
                <OptionalNumberField label="Max fundamentals age (sec)" value={policy.maxFundamentalsAgeSec} placeholder="blank disables" step={60} onCommit={(v) => updatePolicy({ maxFundamentalsAgeSec: v })} />
              </div>
              <div title="When a run's intended buys exceed buying power, optionally raise cash by trimming holdings (largest losers first, never the buy targets).">
-               <span className="mb-1.5 block text-xs font-medium text-muted">Sell to fund buys</span>
+               <span className="mb-1.5 block text-xs font-medium text-muted">Sell to Fund Buys</span>
                <select
                  className={inputClass}
                  value={policy.sellToFundBuy ?? "off"}
                  onChange={(e) => updatePolicy({ sellToFundBuy: e.target.value as TradingPolicy["sellToFundBuy"] })}
                >
-                 <option value="off">Off — never sell to fund</option>
-                 <option value="suggest">Suggest only (no orders)</option>
-                 <option value="propose">Propose sells for approval</option>
-                 <option value="automated">Automated — sell to fund</option>
+                 <option value="off">Off — Never Sell to Fund</option>
+                 <option value="suggest">Suggest Only (No Orders)</option>
+                 <option value="propose">Propose Sells for Approval</option>
+                 <option value="automated">Automated — Sell to Fund</option>
                </select>
              </div>
              <Field label="Sector Caps" hint="e.g. Technology:25, Financials:20" className="sm:col-span-2">
@@ -4573,7 +4572,7 @@ function StrategyStudio({
         <textarea
           value={snapshot.strategyPrompt}
           onChange={(e) => editStrategyPrompt(e.target.value)}
-          className={cn(inputClass, "h-72 lg:h-[480px] resize-none font-mono text-[13px] leading-relaxed")}
+          className={cn(inputClass, "h-72 lg:h-[480px] resize-none text-sm leading-relaxed")}
         />
         <p className="text-xs text-faint">Autosaves ~1s after you stop typing.</p>
       </div>
@@ -4851,19 +4850,10 @@ function SettingsContent({
     }
   }
 
-  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const taxSettings = snapshot.tax?.settings ?? policy.taxSettings ?? { washSaleGuard: true, shortTermRatePct: 24, longTermRatePct: 15 };
   const tuning = policy.tuning ?? {};
   const activeAccount = activeConnectedAccountFor(snapshot);
   const executionState = deriveExecutionState(policy, activeAccount);
-  const brokerTargetLabel = activeAccount
-    ? activeAccount.environment === "paper"
-      ? "Paper"
-      : "Brokerage"
-    : "Broker Mode";
-  const liveBlockedReason = !activeAccount
-    ? "Connect or select a supported account before switching out of Test mode."
-    : undefined;
   const settingsAllowedUniverse = policyUniverseSymbolCount(policy);
   const scanCandidateLimit = normalizeMarketScanCandidateLimit(policy.marketScanCandidateLimit);
   const scanOutlierReserve = normalizeMarketScanOutlierReserve(policy.marketScanOutlierReserve, scanCandidateLimit);
@@ -4907,19 +4897,6 @@ function SettingsContent({
 
   function toggleIndex(index: IndexUniverse, checked: boolean) {
     updatePolicy({ includedIndices: toggleIncludedIndex(policy.includedIndices, index, checked) });
-  }
-
-  function requestModeSwitch() {
-    if (policy.paperMode) {
-      if (liveBlockedReason) {
-        toast.warning(liveBlockedReason, { description: "Broker-routed Paper or Brokerage mode is optional and should only be enabled from a connected account." });
-        openAccounts();
-        return;
-      }
-      setLiveConfirmOpen(true);
-      return;
-    }
-    updatePolicy({ paperMode: true });
   }
 
   async function setAutoResumeOnBoot(enabled: boolean) {
@@ -5136,11 +5113,11 @@ function SettingsContent({
           <div className="grid gap-3 sm:grid-cols-2">
           <div className={cn(
             "rounded-lg border px-3 py-2.5 text-[13px] sm:col-span-2",
-            executionState.mode === "test/local"
-              ? "border-info/30 bg-info/8 text-info"
-              : executionState.mode === "broker/paper"
-                ? "border-up/30 bg-up/8 text-up"
-                : "border-down/40 bg-down/8 text-down"
+            executionState.mode === "broker/paper"
+              ? "border-up/30 bg-up/8 text-up"
+              : executionState.mode === "broker/live"
+                ? "border-down/40 bg-down/8 text-down"
+                : "border-info/30 bg-info/8 text-info"
           )}>
             <div className="mb-1 flex items-center gap-2 font-semibold">
               <Shield size={14} className="shrink-0" />
@@ -5268,7 +5245,7 @@ function SettingsContent({
             >
               {policy.systemState === "active" ? <Pause size={16} /> : <Play size={16} />} {policy.systemState === "active" ? "Stop System" : "Start System"}
             </Button>
-            {/* Mode follows the account selected in the top-bar dropdown (Test / Paper / Brokerage); no separate paperMode toggle. */}
+            {/* Mode follows the account selected in the top-bar dropdown (Paper / Brokerage); no separate mode toggle. */}
           </div>
           {enableBlockedReason && (
             <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn sm:col-span-2"><AlertTriangle size={14} className="mr-1 inline" />Setup required: {enableBlockedReason}</p>
@@ -5288,11 +5265,11 @@ function SettingsContent({
             <div className="rounded-lg border border-line bg-surface-2/45 p-3 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-fg">Account circuit breakers</div>
-                <p className="mt-0.5 text-xs text-faint">Auto-switch to close-only when breached. Blank = off.</p>
+                <p className="mt-0.5 text-xs text-faint">Hard-halt autonomous trading when breached, until you re-arm (default). Blank = off.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} hint="If the account falls this far from its equity high-water mark, the engine switches to close-only and fires a kill-switch alert. Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
-                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} hint="If realized plus open daily loss reaches this dollar amount, the engine switches to close-only for the account. Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
+                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} hint="If the account falls this far from its equity high-water mark, the engine logs a receipt and surfaces the drawdown to the agent, which decides how to react (default: advisory, no auto-halt). Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
+                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} hint="If realized plus open daily loss reaches this dollar amount, the engine logs a receipt and tells the agent, which decides (default: advisory, no auto-halt). Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
               </div>
             </div>
 
@@ -5823,20 +5800,6 @@ function SettingsContent({
       </>}
 
       </div>
-      <ConfirmModal
-        open={liveConfirmOpen}
-        onClose={() => setLiveConfirmOpen(false)}
-        onConfirm={() => {
-          setLiveConfirmOpen(false);
-          updatePolicy({ paperMode: false });
-        }}
-        title={`Switch to ${brokerTargetLabel} mode?`}
-        body={activeAccount?.environment === "paper"
-          ? "Paper uses a broker-hosted sandbox account when the user chooses to connect one. It is separate from Test (local simulation), may call broker paper endpoints, and does not put real capital at risk."
-          : "Brokerage can submit real broker orders when approved proposals or autonomous runs execute. Use Test mode for local simulation and confirm your account, universe, and risk limits first."}
-        confirmLabel={`Switch to ${brokerTargetLabel}`}
-        tone={activeAccount?.environment === "paper" ? "primary" : "danger"}
-      />
       <AccountDeletionModal
         open={accountDeletionOpen}
         onClose={() => setAccountDeletionOpen(false)}
@@ -6260,16 +6223,15 @@ function getProposalAccountLabel(accountNumber: string | undefined, connectedAcc
 }
 
 function executionModeLabel(mode: ExecutionMode | undefined): string {
-  if (mode === "test/local") return "Test";
   if (mode === "broker/paper") return "Paper";
   if (mode === "broker/live") return "Brokerage";
-  return "Unknown Mode";
+  return "No Account";
 }
 
 function getPortfolioAccountSubtitle(snapshot: DashboardSnapshot): string {
   const activeAcc = activeConnectedAccountFor(snapshot);
-  if (!activeAcc || activeAcc.broker === "test") {
-    return "Local Simulation";
+  if (!activeAcc) {
+    return "No Account Connected";
   }
   if (activeAcc.broker === "robinhood") {
     return "Robinhood Agentic Account";
@@ -6466,9 +6428,9 @@ type LlmApiService = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "de
 
 const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
   openai: "OpenAI",
-  anthropic: "Anthropic",
-  xai: "xAI",
-  gemini: "Gemini",
+  anthropic: "Anthropic (Claude)",
+  xai: "xAI (Grok)",
+  gemini: "Google (Gemini)",
   mistral: "Mistral",
   deepseek: "DeepSeek"
 };

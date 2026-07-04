@@ -76,8 +76,7 @@ async function seedLiveProposal(userId: string): Promise<string> {
       accountNumber: ACCOUNT,
       connectedAccountId: "acc-confirm-test",
       activeBroker: "alpaca",
-      systemState: "active",
-      paperMode: false
+      systemState: "active"
     },
     userId
   );

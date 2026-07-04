@@ -96,7 +96,7 @@ describe("resolveLlmEndpoint", () => {
     }
   });
 
-  it("routes gemini-* to Google Gemini (OpenAI-compatible chat-completions)", () => {
+  it("routes gemini-* to Google (Gemini) via OpenAI-compatible chat-completions", () => {
     const savedUrl = process.env.GEMINI_API_URL;
     delete process.env.GEMINI_API_URL;
     try {

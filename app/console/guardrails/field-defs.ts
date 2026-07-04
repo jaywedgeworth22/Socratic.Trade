@@ -20,11 +20,35 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "riskRules.stopLossPct", label: "Stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Sell automatically if a position drops this far. Wider = looser protection." },
   { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true },
   { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
-  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Circuit breaker: if the account loses this much in a day, new buys stop automatically (Exit-only). Protective sells keep working." },
-  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Circuit breaker on the fall from the account's high-water mark." },
+  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off." },
+  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt)." },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
   { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on" },
   { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
+];
+
+export const SOCRATIC_OVERRIDE: FieldDef[] = [
+  {
+    path: "socraticOverrideMode",
+    label: "Socratic override",
+    kind: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "propose", label: "Propose only" },
+      { value: "execute", label: "Execute in Decide mode" }
+    ],
+    looseRank: { off: 0, propose: 1, execute: 2 },
+    hint:
+      "Lets Socratic Trade challenge owner-preference gates with a structured thesis. Broker, account, tax-hard, and integrity refusals still block."
+  },
+  {
+    path: "socraticOverrideMaxPctOfNav",
+    label: "Override cap (% of portfolio)",
+    kind: "pct",
+    optional: true,
+    looserWhen: "up",
+    hint: "Maximum notional for a single Socratic override. 100% allows an all-available-cash thesis when buying power permits."
+  }
 ];
 
 export const EXPOSURE: FieldDef[] = [
@@ -80,7 +104,7 @@ export const HYGIENE: FieldDef[] = [
 export const TAX_RULES: FieldDef[] = [
   {
     path: "taxSettings.washSaleHandling",
-    label: "Wash-sale rebuy handling",
+    label: "Taxable-account wash-sale rebuys",
     kind: "select",
     options: [
       { value: "block", label: "Block (default)" },
@@ -88,29 +112,30 @@ export const TAX_RULES: FieldDef[] = [
       { value: "auto", label: "Auto (edge must beat cost)" }
     ],
     // block -> ask -> auto is strictly looser: each step lets a tax-costly rebuy get closer to
-    // executing. Moving down this ladder on LIVE costs the typed word.
+    // executing. Moving down this ladder on a brokerage account costs the typed word.
     looseRank: { block: 0, ask: 1, auto: 2 },
     hint:
-      "What happens when the strategy wants to rebuy a stock sold at a loss in the last 30 days (wash sale). " +
+      "Taxable accounts only: what happens when the strategy wants to rebuy a stock sold at a taxable loss in the last 30 days (wash sale). " +
       "Block: refused outright. Ask: it becomes a pending approval showing the tax deduction you'd forfeit (loss × your short-term rate) — your call. " +
       "Auto: the system may rebuy on its own, but only when the trade's expected edge is at least 3× that forfeited deduction; otherwise it skips and logs why. " +
-      "Rebuying inside an IRA while a taxable-account loss is locked is governed by the separate IRA setting below."
+      "Rebuying inside an IRA while a taxable-account loss is locked is governed by the separate IRA account setting."
   },
   {
     path: "taxSettings.iraWashSaleHandling",
-    label: "IRA wash-sale rebuys",
+    label: "IRA taxable-loss rebuys",
     kind: "select",
     options: [
-      { value: "block", label: "Block (default)" },
-      { value: "disregard", label: "Disregard (accept audit risk)" }
+      { value: "disregard", label: "Ignore / Disregard (Default)" },
+      { value: "block", label: "Block IRA Replacement" }
     ],
     // block -> disregard is strictly looser: it lets a rebuy execute that tax law says destroys
-    // the loss deduction. Changing it on LIVE costs the typed word.
+    // the loss deduction. Changing it on a brokerage account costs the typed word.
     looseRank: { block: 0, disregard: 1 },
     hint:
-      "What happens when this IRA wants to rebuy a stock a TAXABLE account of yours sold at a loss in the last 30 days. " +
-      "Under Rev. Rul. 2008-5 that replacement purchase permanently destroys the loss deduction — the IRA never gets a basis adjustment, so Block refuses it in every wash-sale handling mode (default). " +
-      "Disregard lets the buy proceed anyway: brokers do not report cross-account IRA wash sales to the IRS, so in practice the rule only bites under audit — choosing this is YOUR explicit acceptance of that audit risk. " +
+      "IRA accounts only. Same-IRA wash sales are ignored automatically because there is no taxable loss deduction inside the IRA. " +
+      "This setting is only for the cross-account case: this IRA wants to rebuy a stock a TAXABLE account of yours sold at a loss in the last 30 days. " +
+      "Disregard is the default: brokers do not report cross-account IRA wash sales to the IRS, so in practice the rule only bites under audit — each buy is annotated and audited. " +
+      "Block is the stricter optional setting: under Rev. Rul. 2008-5 that replacement purchase permanently destroys the loss deduction, so Block refuses it in every wash-sale handling mode. " +
       "Disregarded purchases are never silent: each one is annotated \"Wash Sale (Technically, but IRA purchase unreported to IRS)\" on the card and in Activity."
   },
   {
@@ -132,6 +157,7 @@ export const UNIVERSE_FLOOR: FieldDef[] = [
 
 export const ALL_DEFS: FieldDef[] = [
   ...ESSENTIALS,
+  ...SOCRATIC_OVERRIDE,
   ...EXPOSURE,
   ...ENTRY_QUALITY,
   ...STOPS_PLUMBING,

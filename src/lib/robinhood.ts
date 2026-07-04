@@ -52,8 +52,8 @@ export function getRobinhoodGateway(userId: string): BrokerGateway {
   return new HttpMcpRobinhoodGateway(userId);
 }
 
-// Local "Test" broker: real market quotes (Yahoo) + simulated fills, no real broker.
-// Honestly labeled "Test — Local Sim" — it never impersonates Robinhood or any real account.
+// Test broker: real market quotes (Yahoo) + deterministic simulated fills for tests/dev.
+// It never impersonates Robinhood or any real brokerage account.
 export function getTestGateway(userId: string = "local"): BrokerGateway {
   return new TestBrokerGateway(userId);
 }
@@ -419,7 +419,7 @@ export async function getRobinhoodMcpHealth(userId: string): Promise<RobinhoodMc
     await callRobinhoodMcpMethod(userId, "initialize", {
       protocolVersion,
       capabilities: {},
-      clientInfo: { name: "Trading Dashboard", version: "0.1.0" }
+      clientInfo: { name: "Socratic Trade", version: "0.1.0" }
     });
   } catch (error) {
     // Some HTTP MCP proxies accept direct tools/list calls. Keep this diagnostic
@@ -620,7 +620,7 @@ class TestBrokerGateway implements BrokerGateway {
   async getAccounts(): Promise<BrokerageAccount[]> {
     return [{
       accountNumber: "TEST",
-      label: "Test — Local Sim",
+      label: "Test broker",
       agenticAllowed: true,
       capabilities: {
         equityTrading: true,
@@ -672,8 +672,8 @@ class TestBrokerGateway implements BrokerGateway {
     };
   }
 
-  // Test-mode fills simulate instantly (placeEquityOrder returns "filled"), so no order
-  // ever rests here — there is deliberately no limit/stop/TIF data to surface in Test mode.
+  // The Test broker (test infrastructure) simulates fills instantly (placeEquityOrder returns
+  // "filled"), so no order ever rests here — there is deliberately no limit/stop/TIF data to surface.
   async getEquityOrders(): Promise<EquityOrder[]> {
     return [];
   }

@@ -62,7 +62,7 @@ interface DraftState {
 }
 
 function destination(state: ExecutionState): { text: string; tone: "info" | "up" | "down"; live: boolean } {
-  if (state.mode === "broker/live") return { text: `Brokerage live${state.accountLabel ? " · " + state.accountLabel : ""} · real money`, tone: "down", live: true };
+  if (state.mode === "broker/live") return { text: `Brokerage${state.accountLabel ? " · " + state.accountLabel : ""}`, tone: "down", live: true };
   if (state.mode === "broker/paper") return { text: `Paper${state.accountLabel ? " · " + state.accountLabel : ""} · broker sandbox`, tone: "up", live: false };
   return { text: "Test · local simulation", tone: "info", live: false };
 }

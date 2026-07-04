@@ -38,7 +38,6 @@ describe("Y — getBrokerGateway guards every real-order path", () => {
     const { DEFAULT_POLICY } = await import("../src/lib/defaults");
     const policy = {
       ...DEFAULT_POLICY,
-      paperMode: false,
       activeBroker: "robinhood" as const,
       connectedAccountId: acctId,
       accountNumber: "LIVE-1"
@@ -63,7 +62,7 @@ describe("Y — getBrokerGateway guards every real-order path", () => {
     upsertConnectedAccount({ id: acctId, userId: "local", broker: "robinhood", environment: "live", accountNumber: "LIVE-2", label: "Live", isActive: true });
     const { getBrokerGateway } = await import("../src/lib/broker");
     const { DEFAULT_POLICY } = await import("../src/lib/defaults");
-    const policy = { ...DEFAULT_POLICY, paperMode: false, activeBroker: "robinhood" as const, connectedAccountId: acctId, accountNumber: "LIVE-2" };
+    const policy = { ...DEFAULT_POLICY, activeBroker: "robinhood" as const, connectedAccountId: acctId, accountNumber: "LIVE-2" };
     const gateway = getBrokerGateway(policy, "local");
     await gateway.cancelEquityOrder("LIVE-2", "order-xyz").catch((e: unknown) => {
       expect(String((e as Error)?.message ?? "")).not.toMatch(/pre-flight BLOCKED/i);

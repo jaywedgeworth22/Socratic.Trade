@@ -116,7 +116,6 @@ async function seed() {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: true,
     llmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL", "MSFT"],

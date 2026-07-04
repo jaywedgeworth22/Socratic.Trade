@@ -4,19 +4,21 @@
  *  caps, stop-loss, daily-loss breaker, autonomy, extended hours), then the
  *  advanced rulebook grouped the way the domain groups it. Editing uses a
  *  review-and-commit model with asymmetric friction: tightening is one click,
- *  loosening on LIVE money requires typing CONFIRM. Autonomy has its own
+ *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
-import type { IndexUniverse, OrderType } from "@/lib/types";
+import { toggleIncludedIndex } from "@/lib/index-universes";
+import type { IndexUniverse, OrderType, TaxationType } from "@/lib/types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
-import { deriveReality } from "../lib/derive";
+import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
 import { TypedConfirm } from "../components/chrome";
 import {
   AdvancedGroup,
+  PolicyDualModeRow,
   PolicyFieldRow,
   PolicySaveBar,
   usePolicyDraft
@@ -30,6 +32,7 @@ import {
   INDICES,
   ORDER_TYPES,
   PANIC_BRAKE,
+  SOCRATIC_OVERRIDE,
   SHORTS,
   STOPS_PLUMBING,
   TAX_RULES,
@@ -42,6 +45,14 @@ function parseSymbols(text: string): string[] {
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
 }
+
+function isIraTaxation(taxationType: TaxationType | undefined): boolean {
+  return taxationType === "roth_ira" || taxationType === "traditional_ira";
+}
+
+const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
+const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
+const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
 
 export default function GuardrailsPage() {
   const { snapshot } = useConsoleData();
@@ -78,6 +89,12 @@ export default function GuardrailsPage() {
 
   const indices = universeDraft.includedIndices ?? policy.includedIndices;
   const orderTypes = universeDraft.permittedOrderTypes ?? policy.permittedOrderTypes;
+  const taxationType = activeConnectedAccount(snapshot)?.taxationType ?? policy.taxSettings?.taxationType ?? "taxable";
+  const isIra = isIraTaxation(taxationType);
+  const taxRuleDefs = TAX_RULES.filter((def) => {
+    if (isIra) return def.path === "taxSettings.iraWashSaleHandling";
+    return def.path !== "taxSettings.iraWashSaleHandling";
+  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -87,7 +104,7 @@ export default function GuardrailsPage() {
           {reality.word} · {reality.phrase}
         </Chip>
         <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          for {reality.account?.label ?? "the local simulator"} — deterministic limits the strategist can never exceed
+          for {reality.account?.label ?? "no connected account"} — mandates, preference gates, and hard execution constraints
         </span>
       </div>
 
@@ -95,7 +112,15 @@ export default function GuardrailsPage() {
 
       <Card title="Essentials">
         <div className="divide-y divide-[color:var(--con-line)]">
-          {ESSENTIALS.map((def) => (
+          <PolicyDualModeRow
+            label="Max Per Order"
+            moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
+            pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
+            policy={policy}
+            draft={draft}
+            hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
+          />
+          {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
             <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
           ))}
         </div>
@@ -108,7 +133,20 @@ export default function GuardrailsPage() {
             demanded an exit can never block that exit.
           </p>
           <AdvancedGroup title="Exposure caps">
-            {EXPOSURE.map((def) => (
+            <PolicyDualModeRow
+              label="Max In One Stock"
+              moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
+              pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
+            />
+            {EXPOSURE.filter((def) => !EXPOSURE_FIELD_PATHS.has(def.path)).map((def) => (
+              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            ))}
+          </AdvancedGroup>
+          <AdvancedGroup title="Socratic override">
+            {SOCRATIC_OVERRIDE.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
@@ -142,7 +180,23 @@ export default function GuardrailsPage() {
               The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. These rules
               tune what a rebuy lockout means for this account and how strict it is.
             </p>
-            {TAX_RULES.map((def) => (
+            <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              {isIra ? (
+                <>
+                  <strong className="text-[color:var(--con-fg)]">IRA mode:</strong> same-account wash sales are not a
+                  decision gate here because an IRA has no taxable loss deduction to preserve. The relevant choice is
+                  whether this IRA should block or ignore a replacement buy after a taxable account sold the same symbol
+                  at a loss.
+                </>
+              ) : (
+                <>
+                  <strong className="text-[color:var(--con-fg)]">Taxable mode:</strong> Block / Ask / Auto controls
+                  what happens when this taxable account wants to rebuy a locked symbol. IRA replacement buys use their
+                  own IRA account setting instead.
+                </>
+              )}
+            </div>
+            {taxRuleDefs.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>
@@ -157,18 +211,25 @@ export default function GuardrailsPage() {
                       <input
                         type="checkbox"
                         checked={on}
-                        onChange={() =>
-                          setUniverseDraft((d) => ({
-                            ...d,
-                            includedIndices: on ? indices.filter((i) => i !== idx.id) : [...indices, idx.id]
-                          }))
-                        }
+                        onChange={(e) => {
+                          const checked = e.currentTarget.checked;
+                          setUniverseDraft((d) => {
+                            const current = d.includedIndices ?? policy.includedIndices;
+                            return {
+                              ...d,
+                              includedIndices: toggleIncludedIndex(current, idx.id, checked)
+                            };
+                          });
+                        }}
                       />
                       {idx.label}
                     </label>
                   );
                 })}
               </div>
+              <p className="mt-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Overlapping families replace each other: S&amp;P 100 / S&amp;P 500 and Nasdaq 100 / Nasdaq Composite.
+              </p>
             </div>
             <div className="grid gap-3 py-2 sm:grid-cols-2">
               <Field label="Always include (symbols)" hint="Comma or space separated. Exempt from the universe floor." htmlFor="add-syms">
@@ -214,8 +275,8 @@ export default function GuardrailsPage() {
             </div>
             <div className="max-w-xs py-2">
               <Field
-                label="Sell-to-fund buys"
-                hint="How to raise cash when intended buys exceed buying power. Off = never."
+                label="Sell to Fund Buys"
+                hint="How to raise cash when intended buys exceed buying power. Off = Never."
                 htmlFor="stf"
               >
                 <Select
@@ -223,10 +284,10 @@ export default function GuardrailsPage() {
                   value={universeDraft.sellToFundBuy ?? policy.sellToFundBuy ?? "off"}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, sellToFundBuy: e.target.value }))}
                 >
-                  <option value="off">off</option>
-                  <option value="suggest">suggest</option>
-                  <option value="propose">propose (asks you)</option>
-                  <option value="automated">automated</option>
+                  <option value="off">Off — Never Sell to Fund</option>
+                  <option value="suggest">Suggest Only (No Orders)</option>
+                  <option value="propose">Propose Sells for Approval</option>
+                  <option value="automated">Automated — Sell to Fund</option>
                 </Select>
               </Field>
             </div>
@@ -269,7 +330,7 @@ function AutonomyCard() {
         authority === "decide" ? "warn" : "pos",
         authority === "decide" ? "Autopilot on" : "Back to Ask-first",
         authority === "decide"
-          ? "The strategy may place orders itself — still inside every guardrail on this page."
+          ? "The strategy may place orders itself; Socratic overrides can challenge owner-preference gates."
           : "Every trade now waits for your approval."
       );
     } catch (error) {
@@ -286,8 +347,8 @@ function AutonomyCard() {
           <div className="text-[length:var(--con-fs-md)] font-semibold">{decide ? "Autopilot" : "Ask-first"}</div>
           <p className="mt-0.5 max-w-xl text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
             {decide
-              ? "The strategy may place orders itself, inside every limit on this page. High-conviction ideas whose adversarial review couldn't run still come to you. Breaching the hourly cap demotes it back to Ask-first automatically. A server restart stops it until a person starts it again."
-              : "The strategy only suggests. Nothing is traded until you approve each idea. Most people stay here."}
+              ? "The strategy may place orders itself. Socratic overrides can challenge owner-preference gates when the agent gives a structured thesis; broker, account, tax-hard, and integrity refusals still block. Provider failures and unavailable adversarial review still route to you."
+              : "The strategy suggests and waits. Switch to Autopilot when this account should act without per-trade approval."}
           </p>
         </div>
         {decide ? (
@@ -310,8 +371,8 @@ function AutonomyCard() {
           confirmLabel="Enable Autopilot"
           note={
             reality.tone === "live"
-              ? "This is a LIVE (real money) account. With Autopilot on, orders can spend real capital without a per-trade approval — still bounded by every guardrail. Turning autonomy ON costs typing; turning it OFF never does."
-              : "Autopilot lets the strategy place practice-money orders itself, inside your guardrails. Turning it on costs typing; turning it off never does."
+              ? "Autopilot lets Socratic Trade place orders in this brokerage account without per-trade approval, including approved Socratic overrides of owner-preference gates."
+              : "Autopilot lets Socratic Trade place broker-paper orders itself, including approved Socratic overrides of owner-preference gates."
           }
           onConfirm={() => void setAuthority("decide")}
         />

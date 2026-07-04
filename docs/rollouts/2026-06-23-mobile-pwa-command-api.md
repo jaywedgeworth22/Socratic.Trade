@@ -9,7 +9,7 @@
 - Added `/mobile` as a phone-first PWA control surface for Run once, Start,
   Close only, Stop, approvals, watchlist, price alerts, positions, command log,
   and account deletion.
-- Added SwiftUI starter files under `ios/AgenticTrading/` that use the same
+- Added SwiftUI starter files under `ios/SocraticTrade/` that use the same
   backend snapshot, command, SSE, and deletion endpoints.
 - Added a multi-step account deletion/reset procedure for Google/Apple-authenticated
   users. The backend deletes user-scoped app data and server-stored broker/provider
@@ -52,11 +52,11 @@
 - `docs/mobile-api-and-clients.md`
 - `docs/phase-11-multi-user.md`
 - `docs/rollouts/2026-06-23-mobile-pwa-command-api.md`
-- `ios/AgenticTrading/MobileAPIClient.swift`
-- `ios/AgenticTrading/MobileControlView.swift`
-- `ios/AgenticTrading/MobileModels.swift`
-- `ios/AgenticTrading/MobileStore.swift`
-- `ios/AgenticTrading/README.md`
+- `ios/SocraticTrade/MobileAPIClient.swift`
+- `ios/SocraticTrade/MobileControlView.swift`
+- `ios/SocraticTrade/MobileModels.swift`
+- `ios/SocraticTrade/MobileStore.swift`
+- `ios/SocraticTrade/README.md`
 - `PLAN.md`
 - `public/icon.svg`
 - `src/lib/account-deletion.ts`

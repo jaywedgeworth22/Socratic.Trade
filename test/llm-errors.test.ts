@@ -8,26 +8,26 @@ import { humanizeLlmError, humanizeLlmTransportError, providerFromText, provider
 describe("providerLabel / providerFromText", () => {
   it("maps internal provider ids to display names", () => {
     expect(providerLabel("xai")).toBe("xAI (Grok)");
-    expect(providerLabel("gemini")).toBe("Google Gemini");
+    expect(providerLabel("gemini")).toBe("Google (Gemini)");
     expect(providerLabel("mistral")).toBe("Mistral");
-    expect(providerLabel("anthropic")).toBe("Anthropic");
+    expect(providerLabel("anthropic")).toBe("Anthropic (Claude)");
     expect(providerLabel("openai")).toBe("OpenAI");
     expect(providerLabel(undefined)).toBe("the LLM");
   });
 
   it("detects the provider from raw error text (host/family hints)", () => {
     expect(providerFromText("openai 401: Incorrect API key provided")).toBe("OpenAI");
-    expect(providerFromText("gemini 400: generativelanguage.googleapis.com error")).toBe("Google Gemini");
+    expect(providerFromText("gemini 400: generativelanguage.googleapis.com error")).toBe("Google (Gemini)");
     expect(providerFromText("mistral 401: unauthorized")).toBe("Mistral");
     expect(providerFromText("xai 403: x.ai forbidden")).toBe("xAI (Grok)");
-    expect(providerFromText("anthropic 401")).toBe("Anthropic");
+    expect(providerFromText("anthropic 401")).toBe("Anthropic (Claude)");
   });
 });
 
 describe("humanizeLlmError", () => {
   it("explains a rejected key (401 / incorrect key) with the right provider", () => {
     const msg = humanizeLlmError("gemini 401: API key not valid. Please pass a valid API key.");
-    expect(msg).toContain("Google Gemini");
+    expect(msg).toContain("Google (Gemini)");
     expect(msg.toLowerCase()).toContain("rejected the api key");
     expect(msg).toContain("Settings → Connections");
   });

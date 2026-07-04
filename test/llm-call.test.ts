@@ -63,6 +63,45 @@ describe("buildLlmRequestBody", () => {
     expect(body.max_output_tokens).toBeUndefined();
   });
 
+  it("Anthropic adaptive-thinking models get adaptive thinking config, not temperature", () => {
+    const body = buildLlmRequestBody(
+      { provider: "anthropic", transport: "anthropic-messages" },
+      {
+        model: "claude-opus-4-8",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: SCHEMA,
+        maxOutputTokens: 1500,
+        reasoningEffort: "xhigh"
+      }
+    ) as Record<string, any>;
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.output_config).toEqual({ effort: "xhigh" });
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it("OpenAI-compatible providers get their own reasoning_effort values", () => {
+    const gemini = buildLlmRequestBody(
+      { provider: "gemini", transport: "chat-completions" },
+      { model: "gemini-2.5-flash", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "none" }
+    ) as Record<string, any>;
+    expect(gemini.reasoning_effort).toBe("none");
+    expect(gemini.reasoning).toBeUndefined();
+
+    const xai = buildLlmRequestBody(
+      { provider: "xai", transport: "chat-completions" },
+      { model: "grok-4.3", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "high" }
+    ) as Record<string, any>;
+    expect(xai.reasoning_effort).toBe("high");
+
+    const mistral = buildLlmRequestBody(
+      { provider: "mistral", transport: "chat-completions" },
+      { model: "mistral-large-2512", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+    ) as Record<string, any>;
+    expect(mistral.reasoning_effort).toBe("xhigh");
+    expect(mistral.prompt_mode).toBe("reasoning");
+  });
+
   it("Anthropic auth headers include the prompt-caching beta; OpenAI-compatible unchanged (item 3)", () => {
     const anthropic = llmAuthHeaders({ provider: "anthropic", key: "sk-ant" });
     expect(anthropic["anthropic-beta"]).toBe("prompt-caching-2024-07-31");

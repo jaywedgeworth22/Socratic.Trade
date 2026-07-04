@@ -18,7 +18,7 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 // Use the canned local test gateway (no HTTP) even for an "alpaca" paper account, so the run reaches
-// broker/paper mode (usesLocalSimulation:false) without needing real Alpaca credentials or network.
+// broker/paper mode without needing real Alpaca credentials or network.
 vi.mock("../src/lib/broker", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/broker")>();
   const { getTestGateway } = await import("../src/lib/robinhood");
@@ -119,9 +119,9 @@ async function setupBrokerPaperDecide(label: string): Promise<void> {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
   upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
   const accountId = randomUUID();
-  // Broker "alpaca" (not "test") so db-profiles does NOT force paperMode:true; the gateway is mocked
-  // to the canned local sim above, so no real Alpaca credentials/network are used. accountNumber
-  // "TEST" matches what the test gateway's getAccounts() reports.
+  // Broker "alpaca" with environment "paper" so this resolves broker/paper (not broker/live); the
+  // gateway is mocked to the canned local sim above, so no real Alpaca credentials/network are used.
+  // accountNumber "TEST" matches what the test gateway's getAccounts() reports.
   upsertConnectedAccount({
     id: accountId,
     userId: "local",
@@ -137,9 +137,8 @@ async function setupBrokerPaperDecide(label: string): Promise<void> {
   setPolicy({
     ...DEFAULT_POLICY,
     systemState: "active",
-    // paperMode:false + an active alpaca paper account => broker/paper (NOT test/local), so the
-    // requiresHumanReview branch actually routes to "proposed" instead of auto-filling.
-    paperMode: false,
+    // An active alpaca paper account => broker/paper, so the requiresHumanReview branch actually
+    // routes to "proposed" instead of auto-placing through the broker.
     activeBroker: "alpaca",
     accountNumber: "TEST",
     llmModel: "gpt-4.1-mini",

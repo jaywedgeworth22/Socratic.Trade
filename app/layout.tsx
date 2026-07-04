@@ -5,18 +5,18 @@ import { Toaster } from "sonner";
 import { GlobalErrorToasts } from "./ui/global-error-toasts";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://trading.jays.services"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://socratictrade.com"),
   title: {
-    default: "Trading Dashboard",
-    template: "%s · Trading Dashboard"
+    default: "Socratic Trade",
+    template: "%s · Socratic Trade"
   },
   description:
-    "Agentic Trading is an AI-assisted cockpit for researching markets, testing strategies in a connected paper account (e.g. Alpaca Paper Trading), and running a transparent, risk-controlled trading workflow you stay in control of. Not investment advice.",
-  applicationName: "Agentic Trading",
+    "Socratic Trade is an autonomous market-reasoning system that forms theses, acts within delegated authority, shows its evidence and dissent, and learns from outcomes. Not investment advice.",
+  applicationName: "Socratic Trade",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Agentic Trading",
+    title: "Socratic Trade",
     statusBarStyle: "black-translucent"
   },
   icons: {
@@ -24,25 +24,25 @@ export const metadata: Metadata = {
     apple: "/icon.svg"
   },
   keywords: [
-    "AI trading research",
-    "automated trading software",
-    "paper trading software",
-    "algorithmic trading dashboard",
-    "stock market analysis tool"
+    "AI trading agent",
+    "autonomous trading software",
+    "algorithmic trading system",
+    "market reasoning tool",
+    "trading decision journal"
   ],
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
-    siteName: "Trading Dashboard",
+    siteName: "Socratic Trade",
     url: "/",
-    title: "Trading Dashboard",
+    title: "Socratic Trade",
     description:
-      "AI-assisted dashboard for market research, paper trading via a connected broker (e.g. Alpaca Paper Trading), and a transparent, risk-controlled trading workflow. Not investment advice."
+      "Autonomous market reasoning with visible theses, evidence, dissent, actions, and outcome learning. Not investment advice."
   },
   twitter: {
     card: "summary_large_image",
-    title: "Trading Dashboard",
-    description: "AI-assisted market research + paper trading via a connected broker. Not investment advice."
+    title: "Socratic Trade",
+    description: "Autonomous market reasoning with visible decisions and outcome learning. Not investment advice."
   },
   // Default = NOINDEX. Only allow indexing when explicitly opted in (the app is private by default).
   robots:

@@ -85,7 +85,7 @@ export function getMcpOAuthConfig(options: McpOAuthConfigOptions = {}): McpOAuth
     redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     resource: process.env.ROBINHOOD_MCP_RESOURCE || process.env.ROBINHOOD_MCP_URL || DEFAULT_ROBINHOOD_MCP_RESOURCE,
     scope: process.env.ROBINHOOD_MCP_SCOPES || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Socratic Trade"
   };
 }
 
@@ -435,7 +435,7 @@ async function discoverMcpOAuthConfig(options: McpOAuthConfigOptions = {}): Prom
     redirectUri: options.redirectUri || process.env.ROBINHOOD_MCP_REDIRECT_URI || LOCAL_DEFAULT_REDIRECT_URI,
     resource: process.env.ROBINHOOD_MCP_RESOURCE || resource,
     scope: process.env.ROBINHOOD_MCP_SCOPES || firstString(authorizationServerMetadata.scopes_supported) || "tools:call",
-    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Trading Dashboard"
+    clientName: process.env.ROBINHOOD_MCP_CLIENT_NAME || "Socratic Trade"
   };
 }
 
@@ -454,7 +454,7 @@ async function discoverProtectedResourceMetadataUrl(mcpUrl: string): Promise<str
       params: {
         protocolVersion: process.env.ROBINHOOD_MCP_PROTOCOL_VERSION || DEFAULT_MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "agentic-trading", version: "0.0.0" }
+        clientInfo: { name: "socratic-trade", version: "0.0.0" }
       }
     })
   });

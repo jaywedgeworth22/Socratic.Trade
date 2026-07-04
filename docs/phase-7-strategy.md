@@ -231,9 +231,9 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
   system-prompt prefix stable so provider prompt-caching can hit.
 - **Bounded LLM requests (2026-06-20)** — Bull, Bear, Red Team, strategy-tuning,
   and post-mortem calls now use shared OpenAI request bounds with deterministic
-  temperature and explicit output caps. Their prompts and payloads also use
-  `test/local`, `broker/paper`, and `broker/live` wording so broker-hosted paper
-  fills are not confused with local simulated fills.
+  temperature and explicit output caps. Their prompts and payloads use
+  `broker/paper` and `broker/live` wording so broker-hosted paper fills are
+  never confused with real-capital fills.
 - **LLM step timeout diagnostics (2026-06-30)** — strategy runs now audit
   `llm_step` start/failure rows and preserve failed Green Team context in the
   final `strategy_run` audit. Raw abort strings are translated into
@@ -272,16 +272,18 @@ Feeding dozens of raw rationales, P&L lines, and redundant daily news into the t
     an `audit("proposal_skipped_correlation")` row while exits (sell/cover) always pass. Built +
     wired + opt-in; covered by `test/correlation-cluster-gate.test.ts`.
   - **Money-path e2e test (G7)** — `test/strategy-money-path-f-g.test.ts` drives `runStrategyOnce`
-    in Test/paper mode (simulated fills, never a real trade) with a stubbed LLM + Test broker and
-    asserts the full proposal→evaluate→execute path books a paper fill and persists a proposal +
-    `fill_event`.
+    in broker/paper mode (simulated fills via the `TestBrokerGateway` test-infrastructure adapter,
+    never a real trade) with a stubbed LLM and asserts the full proposal→evaluate→execute path
+    books a paper fill and persists a proposal + `fill_event`.
   - **Live-order pre-flight guard (G7)** — `src/lib/preflight-live-guard.ts` (`assertLivePreflight`)
     is a default-SAFE assertion wired in just before a real (`broker/live`) order is placed
-    (`src/lib/strategy.ts`, before `gateway.placeEquityOrder`). It is a hard no-op in Test/paper
-    mode; on the real-capital path it throws (blocking the order + auditing
-    `order_blocked_live_preflight`) unless `policy.paperMode === false` **and** live trading is
-    explicitly enabled via `ALLOW_LIVE_TRADING=true`. It never places or enables a trade.
-    Unit-tested in `test/preflight-live-guard.test.ts`.
+    (`src/lib/strategy.ts`, before `gateway.placeEquityOrder`). `LivePreflightInput.mode` is one of
+    `"broker/paper" | "broker/live"`; the guard is a hard no-op whenever `mode !== "broker/live"`
+    (i.e. any broker/paper run — there is no separate local Test mode). On the real-capital path
+    it throws (blocking the order + auditing `order_blocked_live_preflight`) unless live trading
+    is explicitly enabled via the `ALLOW_LIVE_TRADING=true` env flag (or the caller passes
+    `allowLive: true`). It never places or enables a trade. Unit-tested in
+    `test/preflight-live-guard.test.ts`.
 - **Observability prompt-version + decision stamps (2026-07-01, G10):** every traced strategy
   generation (bull `trading.strategy.bull`, bear `trading.strategy.bear`, red-team
   `trading.red-team.debate`) now carries `metadata.promptVersion`, sourced from the single

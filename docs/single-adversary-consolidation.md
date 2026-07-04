@@ -31,6 +31,19 @@
 > Treat the cited **symbol names** (function/constant/prompt identifiers) as the
 > authoritative anchors and re-grep before editing.
 
+> **Stale premise note (2026-07-03):** This document's `test/local` mode no
+> longer exists — `policy.paperMode` and the local simulator were removed
+> entirely (see `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`).
+> There are now only two execution modes, `broker/paper` and `broker/live`,
+> both derived purely from a connected account's `environment`; per this
+> doc's own table both already fail closed under `decide` authority via
+> `requiresHumanReview`, so the "silent test/local bypass" problem this doc
+> analyzes no longer exists. Any unresolved decision here that was
+> specifically about `test/local` behavior is moot; treat the rest of this
+> document as a historical design record for the parts that still apply (the
+> general single-adversary-independence work), not as a description of
+> current execution modes.
+
 ---
 
 ## 1. Problem / motivation

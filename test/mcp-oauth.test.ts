@@ -34,7 +34,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_AUTHORIZATION_URL", "https://wrong.example.test/oauth");
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://wrong.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://wrong.example.test/register");
-    vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "https://trading.jays.services/api/auth/robinhood/callback");
+    vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "https://socratictrade.com/api/auth/robinhood/callback");
     const requestedUrls: string[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       const href = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
@@ -71,7 +71,7 @@ describe("mcp oauth", () => {
       }
       if (href === "https://auth.discovered.test/register") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { redirect_uris?: string[] };
-        expect(body.redirect_uris).toEqual(["https://trading.jays.services/api/auth/robinhood/callback"]);
+        expect(body.redirect_uris).toEqual(["https://socratictrade.com/api/auth/robinhood/callback"]);
         return new Response(JSON.stringify({ client_id: "discovered-client" }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -95,7 +95,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "client-123");
     vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "http://localhost:4000/api/auth/robinhood/callback");
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://trading.jays.services");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://socratictrade.com");
     const { buildMcpAuthorizationUrl, findMcpOAuthStateByRandom, resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
     const request = new Request("http://localhost:4000/api/auth/robinhood/start", { headers: { host: "localhost:4000" } });
@@ -104,17 +104,17 @@ describe("mcp oauth", () => {
     const randomPart = authorizationUrl.searchParams.get("state")!;
     const found = findMcpOAuthStateByRandom(randomPart);
 
-    expect(redirectUri).toBe("https://trading.jays.services/api/auth/robinhood/callback");
-    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("https://trading.jays.services/api/auth/robinhood/callback");
-    expect(found!.value.redirectUri).toBe("https://trading.jays.services/api/auth/robinhood/callback");
+    expect(redirectUri).toBe("https://socratictrade.com/api/auth/robinhood/callback");
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("https://socratictrade.com/api/auth/robinhood/callback");
+    expect(found!.value.redirectUri).toBe("https://socratictrade.com/api/auth/robinhood/callback");
   });
 
   it("preserves a configured public callback URL", async () => {
     vi.stubEnv("ROBINHOOD_MCP_REDIRECT_URI", "https://broker.example.test/api/auth/robinhood/callback");
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://trading.jays.services");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://socratictrade.com");
     const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
-    const request = new Request("https://trading.jays.services/api/auth/robinhood/start");
+    const request = new Request("https://socratictrade.com/api/auth/robinhood/start");
 
     expect(resolveMcpOAuthRedirectUri(request)).toBe("https://broker.example.test/api/auth/robinhood/callback");
   });
@@ -124,10 +124,10 @@ describe("mcp oauth", () => {
     const { resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
     const request = new Request("http://localhost:4000/api/auth/robinhood/start", {
-      headers: { "x-forwarded-host": "trading.jays.services" }
+      headers: { "x-forwarded-host": "socratictrade.com" }
     });
 
-    expect(resolveMcpOAuthRedirectUri(request)).toBe("https://trading.jays.services/api/auth/robinhood/callback");
+    expect(resolveMcpOAuthRedirectUri(request)).toBe("https://socratictrade.com/api/auth/robinhood/callback");
   });
 
   it("honors the configured loopback callback when explicitly enabled for Robinhood OAuth", async () => {
@@ -138,7 +138,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT", "on");
     const { buildMcpAuthorizationUrl, findMcpOAuthStateByRandom, resolveMcpOAuthRedirectUri } = await import("../src/lib/mcp-oauth");
 
-    const request = new Request("https://trading.jays.services/api/auth/robinhood/start");
+    const request = new Request("https://socratictrade.com/api/auth/robinhood/start");
     const redirectUri = resolveMcpOAuthRedirectUri(request);
     const authorizationUrl = new URL(await buildMcpAuthorizationUrl("user-a", { redirectUri }));
     const randomPart = authorizationUrl.searchParams.get("state")!;
@@ -170,14 +170,14 @@ describe("mcp oauth", () => {
       await buildMcpAuthorizationUrl("user-a", { redirectUri: "http://localhost:4000/api/auth/robinhood/callback" })
     );
     const secondUrl = new URL(
-      await buildMcpAuthorizationUrl("user-a", { redirectUri: "https://trading.jays.services/api/auth/robinhood/callback" })
+      await buildMcpAuthorizationUrl("user-a", { redirectUri: "https://socratictrade.com/api/auth/robinhood/callback" })
     );
 
     expect(firstUrl.searchParams.get("client_id")).toBe("client-1");
     expect(secondUrl.searchParams.get("client_id")).toBe("client-2");
     expect(registrationRedirects).toEqual([
       "http://localhost:4000/api/auth/robinhood/callback",
-      "https://trading.jays.services/api/auth/robinhood/callback"
+      "https://socratictrade.com/api/auth/robinhood/callback"
     ]);
   });
 
@@ -188,7 +188,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_ID", "stale-static-client");
     vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { redirect_uris?: string[] };
-      expect(body.redirect_uris?.[0]).toBe("https://trading.jays.services/api/auth/robinhood/callback");
+      expect(body.redirect_uris?.[0]).toBe("https://socratictrade.com/api/auth/robinhood/callback");
       return new Response(JSON.stringify({ client_id: "dynamic-client" }), {
         status: 200,
         headers: { "content-type": "application/json" }
@@ -197,7 +197,7 @@ describe("mcp oauth", () => {
     const { buildMcpAuthorizationUrl } = await import("../src/lib/mcp-oauth");
 
     const authorizationUrl = new URL(
-      await buildMcpAuthorizationUrl("user-a", { redirectUri: "https://trading.jays.services/api/auth/robinhood/callback" })
+      await buildMcpAuthorizationUrl("user-a", { redirectUri: "https://socratictrade.com/api/auth/robinhood/callback" })
     );
 
     expect(authorizationUrl.searchParams.get("client_id")).toBe("dynamic-client");
@@ -208,7 +208,7 @@ describe("mcp oauth", () => {
     vi.stubEnv("ROBINHOOD_MCP_TOKEN_URL", "https://auth.example.test/token");
     vi.stubEnv("ROBINHOOD_MCP_CLIENT_REGISTRATION_URL", "https://auth.example.test/register");
     vi.stubEnv("ROBINHOOD_MCP_RESOURCE", "https://agent.robinhood.com/mcp/trading");
-    const publicRedirect = "https://trading.jays.services/api/auth/robinhood/callback";
+    const publicRedirect = "https://socratictrade.com/api/auth/robinhood/callback";
     const registrationRedirects: string[] = [];
     let tokenRequest: URLSearchParams | undefined;
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {

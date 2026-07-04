@@ -46,6 +46,8 @@ describe("dashboard feed helpers", () => {
   });
 
   it("formats historical proposal approval audits into short buy/sell titles", () => {
+    // result: "paper" is a legacy value from before the local-simulation execution path was removed
+    // — no code path writes it anymore, but old audit rows can still carry it (see dashboard-feed.ts).
     const audit: AuditEvent[] = [
       {
         id: "a1",
@@ -62,7 +64,7 @@ describe("dashboard feed helpers", () => {
     });
 
     expect(feed[0]?.title).toBe("Buy PLTR Approved");
-    expect(feed[0]?.detail).toContain("Test mode");
+    expect(feed[0]?.detail).toContain("Local simulation (legacy)");
     expect(feed[0]?.companyName).toBe("Palantir Technologies Inc.");
   });
 
@@ -231,7 +233,7 @@ describe("dashboard feed helpers", () => {
     expect(formatShareQuantity(12345.6, "NVDA")).toBe("12,346");
   });
 
-  it("applies Test prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
+  it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
     const feed = buildUnifiedFeed({
       audit: [
         {
@@ -289,13 +291,18 @@ describe("dashboard feed helpers", () => {
 
     const tradeGroup = feed.find(g => g.proposalId === "p1");
     expect(tradeGroup).toBeDefined();
-    expect(tradeGroup!.title).toBe("Test BUY PLTR");
+    // fill.source "paper" is always a genuine broker-paper fill now (no local-simulation execution
+    // path exists anymore), so the group title reads "Paper", not "Test".
+    expect(tradeGroup!.title).toBe("Paper BUY PLTR");
     expect(tradeGroup!.tags).toContain("notification failed");
     expect(tradeGroup!.tags).not.toContain("notification disabled");
 
     const pendingApprovalEvent = tradeGroup!.events.find(ev => ev.id === "n1");
     expect(pendingApprovalEvent).toBeDefined();
-    expect(pendingApprovalEvent!.title).toBe("Test Buy PLTR Awaiting Approval");
+    // Sub-events keep their own formatted title — only the group title (asserted above) carries the
+    // Paper/live-derived prefix. There is no more group-wide "Test "-prefix rewrite of every sub-event
+    // (that rewrite used to mislabel real broker-paper sub-events as "Test").
+    expect(pendingApprovalEvent!.title).toBe("Buy PLTR Awaiting Approval");
   });
 
   it("shows an accepted broker order as pending until it fills or terminates", () => {

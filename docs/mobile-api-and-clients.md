@@ -93,7 +93,7 @@ standalone display and app icons.
 
 ## SwiftUI iPhone App
 
-The starter files in `ios/AgenticTrading/` model the same backend contract:
+The starter files in `ios/SocraticTrade/` model the same backend contract:
 
 - `MobileAPIClient` reads snapshots, queues commands, listens to SSE events, and
   calls account deletion endpoints.
@@ -113,4 +113,3 @@ Before landing mobile API/client changes, run:
 - `npm run build`
 - Browser visual pass for `/mobile` at small phone, standard phone, tablet, and
   desktop widths.
-

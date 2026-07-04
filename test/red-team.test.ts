@@ -35,7 +35,7 @@ describe("debateProposal — T11 fail-open contract", () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
     delete process.env.OPENAI_API_KEY;
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY", paperMode: true });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY" });
     setStrategyPrompt("BASE STRATEGY");
 
     const result = await debateProposal(buyProposal(), undefined, true);
@@ -48,7 +48,7 @@ describe("debateProposal — T11 fail-open contract", () => {
     const { debateProposal } = await import("../src/lib/red-team");
     process.env.OPENAI_API_KEY = "test-key";
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_THROW", paperMode: true });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_THROW" });
     setStrategyPrompt("BASE STRATEGY");
     vi.stubGlobal("fetch", async () => {
       throw new Error("network down");
@@ -68,7 +68,7 @@ describe("debateProposal LLM request bounds", () => {
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
     // Pin a classic (non-reasoning) model so this test verifies temperature + exact output caps.
     // Reasoning-model bounds (reasoning_effort, raised caps) are covered by test/llm-request.test.ts.
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RED-TEAM", paperMode: true, llmModel: "gpt-4.1-mini" });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RED-TEAM", llmModel: "gpt-4.1-mini" });
     setStrategyPrompt("BASE STRATEGY");
 
     const bodies: any[] = [];
@@ -125,7 +125,7 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
     const { debateProposal } = await import("../src/lib/red-team");
 
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", paperMode: true, llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" });
     setStrategyPrompt("BASE STRATEGY");
 
     const calls: Array<{ url: string; headers: Record<string, string>; body: any }> = [];

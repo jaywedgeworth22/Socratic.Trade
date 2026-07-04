@@ -2,7 +2,7 @@
 
 /** Confirm sheet for cancelling a working order (POST /api/orders/cancel).
  *  Cancelling is risk-reducing: the server requires no typed confirmation even
- *  on LIVE money (mirroring the broker gateway's unguarded cancelEquityOrder),
+ *  on brokerage accounts (mirroring the broker gateway's unguarded cancelEquityOrder),
  *  and it stays available while the system is Stopped. The sheet still states
  *  plainly what happens — fills that already happened stand. */
 
@@ -76,7 +76,7 @@ export function CancelOrderSheet({
         {filled > 0
           ? ` The ${fmtQty(filled)} shares that already filled stand; cancelling never undoes a fill.`
           : ""}
-        {live ? " This is a real-money order; cancelling it is risk-reducing — it prevents an execution rather than causing one." : ""}
+        {live ? " Cancelling is risk-reducing — it prevents an execution rather than causing one." : ""}
       </p>
       <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Cancellation is not instant: the broker may report Pending Cancel briefly, and an order can still fill in the

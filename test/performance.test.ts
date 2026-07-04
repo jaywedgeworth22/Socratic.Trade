@@ -8,7 +8,6 @@ import {
   getClosedLotCount,
   getConfidenceCalibration,
   getFactorScorecard,
-  getPaperPortfolioProjection,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
@@ -58,77 +57,8 @@ describe("calculatePnl", () => {
     expect(pnl.unrealized).toBe(0);
 
     insertFillEvent(pending);
-    const projection = getPaperPortfolioProjection({
-      accountNumber: "BROKER_PAPER_PENDING",
-      startingCash: 1000,
-      currentPrices: { AAPL: 110 }
-    });
-    expect(projection.portfolio.cash).toBeCloseTo(1000);
-    expect(projection.positions).toHaveLength(0);
-  });
-
-  it("projects Paper fills from a standalone starting balance and marks to live prices", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    // Standalone paper account: only paper fills count, starting from startingCash.
-    insertFillEvent(fill({ id: "pb1", side: "buy", quantity: 1, price: 200, notional: 200, accountNumber: "PAPER1" }));
-
-    const projection = getPaperPortfolioProjection({
-      accountNumber: "PAPER1",
-      startingCash: 10000,
-      currentPrices: { AAPL: 250 }
-    });
-
-    // Cash reduced by the buy notional; no dependence on any real brokerage positions.
-    expect(projection.portfolio.cash).toBeCloseTo(9800);
-    const aapl = projection.positions.find((position) => position.symbol === "AAPL");
-    expect(aapl?.quantity).toBeCloseTo(1);
-    // Marked to the supplied live price (250), not entry price (200).
-    expect(aapl?.marketValue).toBeCloseTo(250);
-    expect(projection.portfolio.totalMarketValue).toBeCloseTo(10050);
-  });
-
-  it("keeps Paper projections isolated by user for the same account number", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "PAPER_USERS";
-    const userA = `paper-a-${randomUUID()}`;
-    const userB = `paper-b-${randomUUID()}`;
-
-    insertFillEvent(fill({ id: "pu-a", userId: userA, accountNumber: account, symbol: "AAPL", side: "buy", quantity: 1, price: 100, notional: 100 }));
-    insertFillEvent(fill({ id: "pu-b", userId: userB, accountNumber: account, symbol: "MSFT", side: "buy", quantity: 1, price: 200, notional: 200 }));
-
-    const projection = getPaperPortfolioProjection({
-      accountNumber: account,
-      startingCash: 1000,
-      currentPrices: { AAPL: 110, MSFT: 220 },
-      userId: userA
-    });
-
-    expect(projection.positions.map((position) => position.symbol)).toEqual(["AAPL"]);
-    expect(projection.portfolio.cash).toBeCloseTo(900);
-  });
-
-  it("returns the full starting balance and no positions before any Paper fills", () => {
-    const projection = getPaperPortfolioProjection({ accountNumber: "EMPTY1", startingCash: 5000 });
-    expect(projection.portfolio.cash).toBeCloseTo(5000);
-    expect(projection.portfolio.totalMarketValue).toBeCloseTo(5000);
-    expect(projection.positions).toHaveLength(0);
-  });
-
-  it("uses share-weighted average cost for fractional Paper buys", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    insertFillEvent(fill({ id: "pb2", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: "PAPER2", symbol: "PLTR" }));
-    insertFillEvent(fill({ id: "pb3", side: "buy", quantity: 0.5, price: 200, notional: 100, accountNumber: "PAPER2", symbol: "PLTR" }));
-
-    const projection = getPaperPortfolioProjection({
-      accountNumber: "PAPER2",
-      startingCash: 1000,
-      currentPrices: { PLTR: 220 }
-    });
-
-    const pltr = projection.positions.find((position) => position.symbol === "PLTR");
-    expect(pltr?.quantity).toBeCloseTo(1.5);
-    expect(pltr?.averageCost).toBeCloseTo(133.3333333, 5);
-    expect(projection.portfolio.cash).toBeCloseTo(800);
+    // A pending broker-paper fill contributes no realized/unrealized P&L until the broker reports
+    // execution (status flips to "filled") — verified above via calculatePnl directly.
   });
 
   it("turns approved dollar Paper orders into quantity fills when a market quote is present", () => {
@@ -155,10 +85,6 @@ describe("calculatePnl", () => {
     // price = 420 * (1 + 0.0001) = 420.042; quantity = 10 / 420.042.
     expect(fill.price).toBeCloseTo(420.042, 1); // 1 bps cost applied to buy
     expect(fill.quantity).toBeCloseTo(10 / 420.042, 4);
-
-    const projection = getPaperPortfolioProjection({ accountNumber: "APPROVAL1", startingCash: 100, currentPrices: { MSFT: 420 } });
-    expect(projection.portfolio.cash).toBeCloseTo(90);
-    expect(projection.positions.find((position) => position.symbol === "MSFT")?.quantity).toBeCloseTo(10 / 420);
   });
 
   it("keeps broker-only approval quotes in the market scan price map", () => {
@@ -168,82 +94,6 @@ describe("calculatePnl", () => {
 
     expect(scan.quotesBySymbol.MSFT?.price).toBeCloseTo(420);
     expect(scan.quotesBySymbol.MSFT?.ask).toBeCloseTo(420.5);
-  });
-});
-
-describe("getPaperPortfolioProjection — T5 side-aware guards", () => {
-  it("does not let a wrong-sign sell deepen a short position", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_SELL_VS_SHORT";
-    insertFillEvent(fill({ id: "t5a1", accountNumber: account, symbol: "NVDA", side: "short", quantity: 2, price: 100, notional: 200, filledAt: "2026-06-15T01:00:01.000Z" }));
-    insertFillEvent(fill({ id: "t5a2", accountNumber: account, symbol: "NVDA", side: "sell", quantity: 1, price: 90, notional: 90, filledAt: "2026-06-15T01:00:02.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 1000, currentPrices: { NVDA: 95 } });
-    const nvda = projection.positions.find((p) => p.symbol === "NVDA");
-    expect(nvda?.quantity).toBeCloseTo(-2); // sell did NOT deepen the short to -3
-    expect(nvda?.averageCost).toBeCloseTo(100);
-    expect(projection.portfolio.cash).toBeCloseTo(1200); // only the short proceeds; the sell was skipped
-  });
-
-  it("does not let a wrong-sign cover deepen a long position", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_COVER_VS_LONG";
-    insertFillEvent(fill({ id: "t5b1", accountNumber: account, symbol: "AMD", side: "buy", quantity: 2, price: 100, notional: 200, filledAt: "2026-06-15T01:00:01.000Z" }));
-    insertFillEvent(fill({ id: "t5b2", accountNumber: account, symbol: "AMD", side: "cover", quantity: 1, price: 110, notional: 110, filledAt: "2026-06-15T01:00:02.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 1000, currentPrices: { AMD: 105 } });
-    const amd = projection.positions.find((p) => p.symbol === "AMD");
-    expect(amd?.quantity).toBeCloseTo(2); // cover did NOT deepen the long to 3
-    expect(projection.portfolio.cash).toBeCloseTo(800); // only the buy spent cash; the cover was skipped
-  });
-
-  it("treats a flat-account close as a no-op", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_FLAT_CLOSE";
-    insertFillEvent(fill({ id: "t5c1", accountNumber: account, symbol: "TSLA", side: "sell", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T01:00:01.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 500 });
-    expect(projection.positions).toHaveLength(0);
-    expect(projection.portfolio.cash).toBeCloseTo(500);
-  });
-
-  it("covers a short with an opposite-side buy without averaging the cost basis", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_BUY_COVERS_SHORT";
-    insertFillEvent(fill({ id: "t5d1", accountNumber: account, symbol: "META", side: "short", quantity: 2, price: 100, notional: 200, filledAt: "2026-06-15T01:00:01.000Z" }));
-    insertFillEvent(fill({ id: "t5d2", accountNumber: account, symbol: "META", side: "buy", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T01:00:02.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 1000, currentPrices: { META: 115 } });
-    const meta = projection.positions.find((p) => p.symbol === "META");
-    expect(meta?.quantity).toBeCloseTo(-1);
-    expect(meta?.averageCost).toBeCloseTo(100); // remaining short keeps its 100 basis (NOT blended to 320)
-    expect(projection.portfolio.cash).toBeCloseTo(1080); // +200 short proceeds, -120 buy
-  });
-
-  it("flips a short to a long at the fill price when an opposite-side buy exceeds it", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_FLIP";
-    insertFillEvent(fill({ id: "t5e1", accountNumber: account, symbol: "GOOG", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T01:00:01.000Z" }));
-    insertFillEvent(fill({ id: "t5e2", accountNumber: account, symbol: "GOOG", side: "buy", quantity: 3, price: 120, notional: 360, filledAt: "2026-06-15T01:00:02.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 1000, currentPrices: { GOOG: 125 } });
-    const goog = projection.positions.find((p) => p.symbol === "GOOG");
-    expect(goog?.quantity).toBeCloseTo(2); // -1 + 3 = +2 long
-    expect(goog?.averageCost).toBeCloseTo(120); // re-based to the fill price on the flip
-    expect(projection.portfolio.cash).toBeCloseTo(740); // +100 short, -360 buy
-  });
-
-  it("share-weight-averages same-side short adds (regression)", async () => {
-    const { insertFillEvent } = await import("../src/lib/db");
-    const account = "T5_SHORT_AVG";
-    insertFillEvent(fill({ id: "t5f1", accountNumber: account, symbol: "COIN", side: "short", quantity: 1, price: 100, notional: 100, filledAt: "2026-06-15T01:00:01.000Z" }));
-    insertFillEvent(fill({ id: "t5f2", accountNumber: account, symbol: "COIN", side: "short", quantity: 1, price: 120, notional: 120, filledAt: "2026-06-15T01:00:02.000Z" }));
-
-    const projection = getPaperPortfolioProjection({ accountNumber: account, startingCash: 1000, currentPrices: { COIN: 110 } });
-    const coin = projection.positions.find((p) => p.symbol === "COIN");
-    expect(coin?.quantity).toBeCloseTo(-2);
-    expect(coin?.averageCost).toBeCloseTo(110); // (100 + 120) / 2
-    expect(projection.portfolio.cash).toBeCloseTo(1220); // +100 +120 short proceeds
   });
 });
 
@@ -713,7 +563,8 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
     expect(f.notional).toBeCloseTo(199.98, 1); // notional is always recorded as a positive magnitude
   });
 
-  it("books a cover fill as a partial short close in the projection", () => {
+  it("books a cover fill as a partial short close", async () => {
+    const { listFillEvents } = await import("../src/lib/db");
     recordFillFromProposal({
       accountNumber: "T9_COVER",
       source: "paper",
@@ -729,8 +580,9 @@ describe("recordFillFromProposal — T9 short/cover boundaries", () => {
     expect(cover.side).toBe("cover");
     expect(cover.quantity).toBeCloseTo(1);
 
-    const projection = getPaperPortfolioProjection({ accountNumber: "T9_COVER", startingCash: 1000, currentPrices: { TSLA: 95 } });
-    expect(projection.positions.find((p) => p.symbol === "TSLA")?.quantity).toBeCloseTo(-2); // short 3, covered 1
+    const fills = listFillEvents("T9_COVER", "paper", 100, "local");
+    const pnl = calculatePnl(fills, { TSLA: 95 });
+    expect(pnl.openLots.find((lot) => lot.symbol === "TSLA")?.quantity).toBeCloseTo(-2); // short 3, covered 1
   });
 });
 

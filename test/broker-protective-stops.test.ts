@@ -39,7 +39,6 @@ function rhPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPo
     accountNumber: account,
     activeBroker: "robinhood",
     robinhoodBrokerStops: true,
-    paperMode: false,
     riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8 },
     ...over
   };
@@ -104,7 +103,7 @@ describe("reconcileBrokerProtectiveStops", () => {
   });
 
   it("no-ops entirely when disabled (paper mode / flag off / wrong broker)", async () => {
-    const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5", { paperMode: true }), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
+    const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5"), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
     expect(r).toEqual({ placed: 0, cancelled: 0 });
     expect(gw.placed).toHaveLength(0);
   });

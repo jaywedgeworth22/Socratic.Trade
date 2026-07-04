@@ -62,7 +62,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   // Stable key for the account/policy scope this preview is computed under.
   // Switching the active account rescopes the server-side policy evaluation,
   // so a verdict computed for the previous account must not keep presenting
-  // "Stage" under the new reality chip (worst case: a TEST verdict shown
+  // "Stage" under the new reality chip (worst case: a stale PAPER verdict shown
   // right after a switch to LIVE). Memoized on stable ids — not snapshot
   // object identity — so the 15s poll never re-triggers it; only a real
   // scope change does.
@@ -70,7 +70,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   const activeAccountId = activeAccount?.id;
   const accountNumber = snapshot?.policy.accountNumber;
   const scopeKey = useMemo(
-    () => `${activeAccountId ?? "local-sim"}:${accountNumber ?? ""}:${reality.mode}`,
+    () => `${activeAccountId ?? "no-account"}:${accountNumber ?? ""}:${reality.mode}`,
     [activeAccountId, accountNumber, reality.mode]
   );
 
@@ -146,7 +146,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
           phrase: reality.phrase,
           tone: reality.tone,
           clarification: reality.clarification,
-          accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+          accountLabel: activeAccount?.label || activeAccount?.broker || "No connected account"
         });
         setPhase("staged");
         toast.push(
@@ -193,7 +193,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
     phrase: reality.phrase,
     tone: reality.tone,
     clarification: reality.clarification,
-    accountLabel: activeAccount?.label || activeAccount?.broker || "Local simulator"
+    accountLabel: activeAccount?.label || activeAccount?.broker || "No connected account"
   };
   const stagedElsewhere = stagedScope !== null && stagedScope.scopeKey !== scopeKey;
   const stagedLive = stagedScope?.tone === "live";
@@ -325,7 +325,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
               className="con-btn con-btn-outline con-btn-sm"
               title={
                 stagedLive
-                  ? "Open the Approvals screen. Approving there places a REAL order with real money."
+                  ? "Open the Approvals screen. Approving there places a broker order."
                   : "Open the Approvals screen to approve or reject this proposal."
               }
             >
