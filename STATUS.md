@@ -8,6 +8,43 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
+Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
+2026-07-04 composite expert review (section C, lines 233-310). S-effort wiring of already-built RAG
+stages — no new ingestion sources. Five items:
+1. **Wired the dormant relevance-floor + near-dup dedupe.** `retrieveContextDetailed`'s
+   `minRelevanceScore`/`dedupeSimilarity` (built 2026-07-01, never called) are now passed at both
+   real call sites (`src/lib/strategy.ts`'s advisory RAG context, `src/lib/chat/orchestrator.ts`'s
+   `searchKnowledge`) via two new tunables: `defaultRelevanceFloor()` (`VECTOR_MIN_RELEVANCE_SCORE`,
+   default 0.3) and `defaultDedupeSimilarity()` (`VECTOR_DEDUPE_SIMILARITY`, default 0.6, returns
+   `undefined` — not `0` — when tuned to 0, since a literal 0 Jaccard threshold would flag every
+   chunk as a duplicate rather than disabling the pass).
+2. **Provenance headers + stable chunk ids.** New `formatChunkWithProvenance()` in `vector-db.ts`
+   prefixes each retrieved chunk with `[DOC_TYPE · section · SYMBOL · date · rel N.NN]` before
+   `strategy.ts` joins chunks into the prompt's `ragContext`. Chunk ids were already stable/real
+   (`RetrievedChunk.id` = the Pinecone vector id, already flowing into
+   `SocraticRagAttribution.chunkId`) — left unchanged, ready for a future `evidenceRefs` citation
+   mechanism. `orchestrator.ts`'s `searchKnowledge` tool result already exposes `doc_type`/
+   `section`/`as_of`/`score` as discrete JSON fields, so it was NOT given a text header (would be
+   redundant / risk conflicting with `chunk_id`).
+3. **Content-hash dedup default-on + widen to 128-bit.** `VECTOR_STORECONTEXTS_DEDUP` was already
+   default-on (flipped in an earlier pass, PR #3392b13/e2ea389 — the composite review's "default
+   OFF" description was stale by the time this branch started). Widened `hashContent()`
+   (`src/lib/rag/chunk.ts`) from 16 to 32 hex chars (64-bit → 128-bit) to remove the collision risk;
+   `document_chunks.content_hash` is a plain `TEXT` primary key, no schema change needed.
+4. **Embedding-model version tag on vectors.** `cleanMetadata()` now stamps every new vector with
+   `embed_model: "voyage-finance-2"` + `embed_rev: 1` (bump `EMBED_REV` on any future
+   model/representation change); a caller-supplied `embed_model`/`embed_rev` metadata key can't
+   override the stamped values. Did NOT add a `rag-coverage` per-model-count surface — no such route
+   exists yet (that's the separate, bigger "persist chunk text" item); flagged as a follow-up.
+5. **Raised the rerank candidate-pool cap.** New `rerankOverFetchK()` (env-tunable via
+   `VECTOR_RERANK_OVERFETCH_K`, default 150) widens the pool actually handed to the Voyage
+   cross-encoder when reranking will run; the original modest `overFetchK` (≤50) is unchanged for
+   non-rerank over-fetch paths (as-of-only, hybrid-without-rerank).
+
+Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
+(clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
+(green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
 ## 2026-07-04 — Inter-agent coordination protocol (short pointer in AGENTS.md, canonical at /Users/jay/apps/AGENT-SYNC.md)
 Branch `claude/agent-sync-protocol-docs` (docs-only). Added short `## Inter-agent coordination` pointer
 section to AGENTS.md (3-4 lines) linking to the canonical `/Users/jay/apps/AGENT-SYNC.md` protocol reference

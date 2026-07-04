@@ -522,7 +522,8 @@ export async function runStrategyOnce(
     // for the (now-skipped) proposal step anyway, so there is nothing to retrieve for.
     if (!skipLlmDueToBudget) {
       try {
-        const { retrieveContextDetailed, defaultMinScore } = await import("./vector-db");
+        const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
+          await import("./vector-db");
         const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
         const contexts = await Promise.all(
           topSymbols.map(async (sym) => {
@@ -530,6 +531,12 @@ export async function runStrategyOnce(
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
               docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
               minScore: defaultMinScore(),
+              // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
+              // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
+              // them, so neither ever ran). dedupeSimilarity is ON by default for this
+              // socratic-decision retrieval path per the composite review's guidance.
+              minRelevanceScore: defaultRelevanceFloor(),
+              dedupeSimilarity: defaultDedupeSimilarity(),
               connectedAccountId: policy.connectedAccountId
             });
             return { sym, query, chunks };
@@ -538,7 +545,12 @@ export async function runStrategyOnce(
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
         if (validContexts.length > 0) {
-          ragContext = validContexts.map(c => c.text).join("\n\n");
+          // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
+          // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
+          // stale 10-K and reference which chunk it drew from — see formatChunkWithProvenance.
+          ragContext = contexts
+            .flatMap((context) => context.chunks.map((chunk) => formatChunkWithProvenance(chunk, context.sym)))
+            .join("\n\n");
         }
       } catch (e) {
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");

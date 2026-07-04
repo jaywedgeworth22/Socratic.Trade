@@ -118,6 +118,32 @@ describe("vector-db", () => {
     });
   });
 
+  // 2026-07-04 RAG quick-wins: embedding-model / representation version tag on vectors. A mixed
+  // population (pre-tag legacy vectors vs post-tag) can now be detected/filtered/migrated, and the
+  // stamped fields are NOT spoofable via a caller-supplied metadata key of the same name.
+  it("stamps every new vector with embed_model + embed_rev, and a caller cannot override them", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      {
+        text: "AAPL context",
+        metadata: {
+          symbol: "AAPL",
+          source: "sec-8k",
+          timestamp: "2026-06-18",
+          embed_model: "spoofed-model",
+          embed_rev: 999
+        }
+      }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.embed_model).toBe("voyage-finance-2");
+    expect(records[0].metadata.embed_rev).toBe(1);
+  });
+
   // Item 6 (2026-07-01 RAG workstream): doc_type is now normalized to lowercase AT WRITE TIME
   // (cleanMetadata) regardless of what casing the caller passes in — some ingesters historically
   // passed "10-K"/"10-Q" (upper), others "8-k" (lower). buildExtraFilters still expands both
@@ -215,9 +241,10 @@ describe("vector-db", () => {
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
-      // Reranking is on by default, so Pinecone over-fetches (overFetchK(2)=10) and Voyage reranks
-      // back down to the requested limit. The filter is the tenant-isolation contract under test.
-      topK: 10,
+      // Reranking is on by default, so Pinecone over-fetches on the rerank-path cap
+      // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
+      // to the requested limit. The filter is the tenant-isolation contract under test.
+      topK: 150,
       filter: {
         symbol: { $eq: "AAPL" },
         userId: { $eq: "user-1" }

@@ -59,7 +59,7 @@ describe("rag chunkDocument", () => {
     const h1 = hashContent("hello world");
     const h2 = hashContent("hello world");
     expect(h1).toBe(h2);
-    expect(h1.length).toBe(16);
+    expect(h1.length).toBe(32); // 128-bit (first 32 hex chars of SHA-256)
   });
 
   it("hashContent produces different hashes for different texts", () => {
@@ -72,7 +72,7 @@ describe("rag chunkDocument", () => {
     const chunks = chunkDocument({ text: "Test content for hashing.", ticker: "TSLA", doc_type: "10-K", source: "sec" });
     expect(chunks.length).toBe(1);
     expect(chunks[0]!.content_hash).toBeDefined();
-    expect(chunks[0]!.content_hash.length).toBe(16);
+    expect(chunks[0]!.content_hash.length).toBe(32); // 128-bit (first 32 hex chars of SHA-256)
     // Same content → same hash
     const chunks2 = chunkDocument({ text: "Test content for hashing.", ticker: "TSLA", doc_type: "10-K", source: "sec" });
     expect(chunks2[0]!.content_hash).toBe(chunks[0]!.content_hash);
