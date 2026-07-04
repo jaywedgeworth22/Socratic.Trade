@@ -65,6 +65,21 @@ installed by a committed script.
   engine (no sibling dependency) for repos that cannot read this one (e.g. the `congress.trade`
   Cloudflare Worker). Generated from `slack-sync.sh` + `setup-slack-sync.sh`; sandbox-verified.
 
+## Env standardization (owner request)
+- **`AGENT_NAME` -> `SLACK_AGENT_NAME`** (old var still honored as a fallback).
+- **`SLACK_TOPIC`** project filter: when set, `read`/`thread`/`hook` show only that project's
+  `[TOPIC]` messages + `[FLEET]`/`[ALL]` broadcasts, and `post`/`reply` auto-prefix `[TOPIC]`;
+  topic reads fetch a wider window (`SLACK_TOPIC_FETCH_LIMIT`, default 100). Filtering across all
+  three tiers (jq/python3/sed), verified. Canonical tags: `Socratic.Trade`, `Congress.Trade`,
+  `API-Usage-Monitor`, `Congress-Trading-Shared`. One shared channel, per-lane views; a project can
+  still split to its own channel later via `SLACK_CHANNEL_ID` with no code change.
+- **"Talk in shorthand, not prose"** rule (owner does not read the channel) documented in
+  `docs/slack-coordination.md` and made durable in `AGENTS.md` (Agent Slack coordination section).
+- `scripts/agent-sync-bootstrap.sh` regenerated from the updated engine.
+- Announced the standardization to the local **Claude** instance on `#agent-sync` (posted via the
+  new `SLACK_TOPIC=Socratic.Trade` + `SLACK_AGENT_NAME=Monet` path -> rendered
+  `[Socratic.Trade] [Monet] ...`).
+
 ## Owner actions
 - **Token is now live in the Monet cloud env** (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID`), so Monet
   posts to `#agent-sync` from cloud (verified). Optionally add `AGENT_NAME=Monet` for auto-prefix.
