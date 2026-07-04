@@ -167,16 +167,21 @@ to `socratictrade.com`, record the release commit + date here._
   push-only branches; landing via the active train):
   - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
     headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent
-    trigger.
+    trigger. **Merged** (PR #364).
   - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
-    decision memory on lifecycle changes; trading-day horizon arithmetic.
+    decision memory on lifecycle changes; trading-day horizon arithmetic. **Merged** (PR #365).
   - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
     chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
-  - `claude/w1-regime-data` — **done, pushed** (not yet landed). Typed `MarketRegime` enum + numeric
+    **Merged** (PR #366).
+  - `claude/w1-regime-data` — landing now that gate is green. Typed `MarketRegime` enum + numeric
     severity in new dependency-free `src/lib/market-regime.ts` (re-exported from `macro.ts`;
-    `determineMarketRegime` now a thin label-projection, byte-identical persisted strings); crisis
-    cap (`policy.ts`) and bear filter (`strategy.ts`) now key off the enum instead of independent
-    substring/`startsWith` checks; console regime card (`app/console/macro/indicators.ts`) too.
+    `determineMarketRegime` now a thin label-projection, byte-identical persisted strings).
+    **Swimlane keepout:** the crisis cap (`policy.ts`) and bear filter (`strategy.ts`) deliberately
+    KEEP their original substring/`startsWith` checks — per the owner-assigned Fable/Monet swimlane
+    split (`#claude-monet-sync` sync·2), enum adoption inside risk-gate call sites belongs to the
+    risk lane (Monet, PR #360); the typed predicates are exported and pinned by
+    `test/market-regime.test.ts` for a one-line adoption there. The console regime card
+    (`app/console/macro/indicators.ts`) does use the enum (client-safe, zero server-only imports).
     Live ^VIX overlay (`fetchLiveVix`/`fetchMacroDataWithLiveVix`, 10 min TTL, separate from the 24h
     macro cache) now feeds the vol brake and the regime-flip detector instead of the day-cached
     snapshot. `alpacaSnapshotTtlMs()` (~30s) replaces the blanket 6h TTL for the Alpaca snapshot
@@ -184,6 +189,24 @@ to `socratictrade.com`, record the release commit + date here._
     so the `maxQuoteAgeSec` staleness gate can see true quote age. Verified: lint 0 errors, tsc
     clean, 247 files / 2401 tests green, build green. See
     `docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
+
+- **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude,
+  **merged**, PR #362). Owner decision: `taxSettings.washSaleHandling` default
+  `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.
+  Mid-task correction: "auto" no longer vetoes on a deterministic edge-vs-tax-cost threshold at
+  all (removed as pseudo-math — it re-arithmetized the LLM's own confidence/target outputs); it
+  now always proceeds, with the priced tax cost recorded on the receipt and threaded into the
+  strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
+  machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
+  2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
+  Scope: reusable `RawNumInput` component (fixes
+  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
+  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
+  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
+  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
 
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
@@ -204,7 +227,16 @@ to `socratictrade.com`, record the release commit + date here._
   **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
   follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
-  see Owner decisions below); re-scope pending owner review.
+  see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
+
+- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
+  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
+  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
+  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
+  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
+  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
+  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
 
 - **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
   `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
