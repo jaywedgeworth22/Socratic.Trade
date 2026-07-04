@@ -573,6 +573,81 @@ export async function runStrategyOnce(
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
     }
 
+    // ── Episodic decision memory: closest historical analogs + owner coaching ──
+    // (2026-07-04 composite review A1, [Both] — the highest-leverage item.) A SECOND retrieval
+    // pass, distinct from the filings pass above: doc types ['socratic-decision','coach-note',
+    // 'lesson'], queried with a SITUATION SKETCH (regime + candidate factor/evidence summary),
+    // cross-symbol, same-run neighbors excluded, as-of stamped. The resulting labeled blocks are
+    // injected into BOTH the Bull and Bear userContent below (evidence parity). Advisory only —
+    // never threaded into sizing or policy. Same budget gate as the filings pass (retrieval
+    // spends Voyage/Pinecone budget).
+    let experienceAnalogs = "";
+    let ownerCoaching = "";
+    if (!skipLlmDueToBudget) {
+      try {
+        const { retrieveDecisionExperiences } = await import("./experience-memory");
+        // Regime for the sketch: fetchMacroData is cached (6h TTL), so this is effectively free —
+        // the same regime proposeTrades derives later for entryMarketRegime stamping.
+        const macroForSketch = await fetchMacroData(userId).catch(() => undefined);
+        const regimeForSketch = macroForSketch ? determineMarketRegime(macroForSketch) : "Unknown";
+        const situationCandidates = marketScan.topCandidates.slice(0, 3).map((candidate) => {
+          const sym = normalizeSymbol(candidate.symbol);
+          const breakdown = candidate.factorBreakdown;
+          let topFactor: string | undefined;
+          if (breakdown) {
+            let best = -Infinity;
+            for (const [key, value] of Object.entries(breakdown)) {
+              if (key === "weightedTotal" || typeof value !== "number") continue;
+              if (value > best) {
+                best = value;
+                topFactor = key;
+              }
+            }
+          }
+          return {
+            symbol: sym,
+            sector: marketScan.sectorBySymbol[sym] ?? candidate.sector,
+            dominantFactor: topFactor,
+            evidence: candidate.evidenceBulletins
+          };
+        });
+        const episodic = await retrieveDecisionExperiences({
+          userId,
+          runId,
+          regime: regimeForSketch,
+          candidates: situationCandidates,
+          connectedAccountId: policy.connectedAccountId
+        });
+        experienceAnalogs = episodic.analogsBlock ?? "";
+        ownerCoaching = episodic.coachingBlock ?? "";
+        if (episodic.injected.length > 0) {
+          // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
+          // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
+          // later join injected ids to this run's realized outcomes. The ids also ride along on
+          // every decision case via socraticRagAttributions (persisted + re-indexed).
+          audit(
+            "experience_retrieval",
+            {
+              runId,
+              asOf: episodic.asOf,
+              query: episodic.query,
+              analogIds: episodic.injected.filter((ref) => ref.kind === "analog").map((ref) => ref.id),
+              coachingIds: episodic.injected.filter((ref) => ref.kind === "coaching").map((ref) => ref.id),
+              counterexampleIds: episodic.injected.filter((ref) => ref.counterexample).map((ref) => ref.id),
+              ...(typeof episodic.topAnalogSimilarity === "number" ? { topAnalogSimilarity: episodic.topAnalogSimilarity } : {})
+            },
+            userId,
+            connectedAccountId
+          );
+          socraticRagAttributions.push(
+            ...ragAttributionsFromChunks("PORTFOLIO", episodic.query, [...episodic.analogChunks, ...episodic.coachingChunks])
+          );
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping episodic decision memory, retrieval unavailable:", e instanceof Error ? e.message : String(e));
+      }
+    }
+
     // ── "Do nothing" threshold (minProposalScoreThreshold) ─────────────────
     // Filter candidates below the threshold BEFORE they reach the LLM. If none survive,
     // skip the LLM call entirely — the system sits on its hands rather than proposing
@@ -637,6 +712,8 @@ export async function runStrategyOnce(
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
         learnedContext,
+        ...(experienceAnalogs ? { experienceAnalogs } : {}),
+        ...(ownerCoaching ? { ownerCoaching } : {}),
         drawdownAdvisory
       });
       llmProposals = proposed.proposals;
@@ -727,7 +804,36 @@ export async function runStrategyOnce(
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
           // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
-          audit("proposal_rejected_by_red_team", { symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason }, userId);
+          // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+          // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
+          // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
+          // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
+          // account's vetoes bleed into another account's efficacy scorecard.
+          audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
+          // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
+          // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
+          // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
+          // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
+          // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
+          // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
+          // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
+          // score/sector/factor/bulletin evidence onto this early row — see
+          // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
+          if (proposal.side === "buy" || proposal.side === "short") {
+            try {
+              recordRejectedProposalCounterfactual({
+                userId,
+                connectedAccountId,
+                runId,
+                symbol: proposal.symbol,
+                refPrice: proposal.referencePrice,
+                createdAt: new Date().toISOString(),
+                regime: proposal.entryMarketRegime
+              });
+            } catch (err) {
+              console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+            }
+          }
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
         } else if (!redTeamResult.available) {
@@ -2531,6 +2637,15 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  /**
+   * Episodic decision memory blocks (2026-07-04 composite review A1). Pre-formatted, labeled,
+   * ADVISORY-ONLY strings injected into BOTH the Bull and Bear userContent (evidence parity):
+   * `experienceAnalogs` = "Closest historical analogs" (k-NN priors incl. labeled
+   * counterexamples with opposite realized sign); `ownerCoaching` = "Owner coaching"
+   * (doc_type coach-note). Never threaded into deterministic sizing or policy.
+   */
+  experienceAnalogs?: string;
+  ownerCoaching?: string;
   drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
@@ -2768,7 +2883,11 @@ async function proposeTrades(input: {
     ...(skippedCounterfactuals.length > 0 ? { skippedCounterfactuals } : {}),
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
-    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {})
+    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
+    // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
+    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
+    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
 
   const model = resolvedModel;
@@ -3129,6 +3248,10 @@ async function proposeTrades(input: {
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
+    // Evidence parity (composite review A1): the Bear critiques with the SAME episodic analogs +
+    // owner coaching the Bull saw — a counterexample the Bull rationalized away is Bear ammunition.
+    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
+    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {}),
     candidatesUnderReview,
     bullAgentProposals: bullProposals
   };

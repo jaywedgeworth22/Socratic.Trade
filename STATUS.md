@@ -34,6 +34,147 @@ Verification: yaml-lint, /bin/bash 3.2 -n + ASCII check, 8-case route-logic test
 non-happy path → hosted), read-only availability probes on the real Mac (correctly said "busy"
 during an active agent build), full local quartet green.
 
+## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
+Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
+provenance headers + stable chunk ids). Implements the composite expert review's single
+highest-leverage item (section A item 1, [Both]): close the write-only episodic memory loop so the
+agent retrieves its own past decisions + owner coaching AT DECISION TIME.
+1. **New `src/lib/experience-memory.ts`.** WRITE half: `recordClosedLotExperience` — hooked
+   fire-and-forget from `performance.recordFillFromProposal` on every sell/cover fill — replays the
+   account's fills through the same FIFO accounting the scorecards use (`calculatePnl`), finds the
+   lots THAT fill closed, and embeds one experience document per closed lot: entry state (8 factor
+   sub-scores, `entryMarketRegime`, breadth snapshot, thesisTag, sector, entry rationale) +
+   realized outcome metadata `{return_pct, holding_days, risk_exit, mae?, mfe?}`, into the
+   `source="experience-memory"` namespace keyed by the ENTRY proposalId (`doc_type=
+   "socratic-decision"` so it shares the episodic retrieval surface). Entry fills now also stamp
+   the FULL `factorBreakdown` + `scanBreadthPct` into `raw` (additive) so the state vector is the
+   entry-time state, not a lookahead reconstruction.
+2. **Decision-time retrieval (READ half).** `retrieveDecisionExperiences`: a SECOND retrieval pass
+   per run in `strategy.ts` over doc types `['socratic-decision','coach-note','lesson']`
+   (coach-note/lesson writers land via parallel lanes; consumed here), queried with a SITUATION
+   SKETCH (regime + candidate dominant-factor/sector/evidence bulletins — NOT the generic filings
+   query), cross-symbol (`RetrieveOptions.matchAllSymbols`, additive), k-NN 5-10 (default 8),
+   same-run neighbors excluded (entry OR exit run id), as-of stamped (no lookahead).
+3. **Injection with evidence parity.** Labeled `closestHistoricalAnalogs` ("CLOSEST HISTORICAL
+   ANALOGS", top-analog similarity shown, opposite-realized-sign priors labeled
+   `[COUNTEREXAMPLE — opposite realized sign]`) + `ownerCoaching` blocks injected into BOTH Bull
+   and Bear userContent. Advisory only — never threaded into sizing/policy.
+4. **Per-run injected-id persistence.** Audit kind `experience_retrieval` records
+   `{runId, asOf, query, analogIds, coachingIds, counterexampleIds, topAnalogSimilarity}`; the
+   chunks also ride onto `socraticRagAttributions` (persisted + re-indexed per decision case) —
+   the run-input side of retrieval-usefulness scoring (full scoring is a later item).
+   Additive `RetrievedChunk.metadata` passthrough (text omitted) supports the exclusion/labeling.
+   Opt-out: `EXPERIENCE_MEMORY=off`. Known v1 gap: live (broker) closing fills are
+   `pending_reconciliation` at hook time, so their experience write no-ops until a later hook on
+   the reconciliation path (documented in the rollout note).
+   Verification: lint 0 errors; tsc clean; 2395 tests / 249 files green (7 new across
+   `test/experience-memory.test.ts` + `test/strategy-episodic-injection.test.ts`); build green.
+   See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`. Pushed, no PR — lands via the
+   landing train after its base branch lands.
+## 2026-07-04 — Add the `agent/monet` preview lane (Monet, cloud)
+Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
+lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` gains `monet` +
+port `4103` (appended, no renumbering of 4100-4102); `AGENTS.md` worktree table + launch-dir list
+gain the Monet row (`~/apps/trading-monet`, `agent/monet`, pm2 `trading-monet`,
+`monet.jays.services`). The `agent/monet` branch was created on the remote from `main` (via the
+GitHub API — git-over-HTTP push was 503-ing). Running `setup-agent-previews.sh` on the Mac
+materializes the worktree + PM2 preview; the `monet.jays.services` Cloudflare tunnel is host-local
+and left to the owner. See `docs/rollouts/2026-07-04-agent-monet-preview-lane.md`.
+
+## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
+Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
+expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same
+`recordRejectedProposalCounterfactual` pipeline as policy blocks/human rejections, stamped with
+`runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` scores rejection rate / veto
+value-add / survivor-risk hit rate / per-model — API/db-level only, no console/Results UI wiring
+(left for the console lane). (2) `appendSocraticDecisionCoachNote` now re-calls
+`indexSocraticDecisionMemory` after the append (dynamic import avoids a `db-socratic ->
+socratic-memory -> vector-db -> ./db` cycle) so a coach note is actually retrievable, not frozen
+at "coach_notes: none"; outcome/lesson writers don't exist yet in this codebase (separate,
+unassigned effort) so only the coach-note path was wired. (3) New `addTradingDays()` in
+`market-calendar.ts` (honors `isTradingDay`) replaces calendar-ms arithmetic in
+`counterfactual-learning.ts`/`backtest.ts`'s `targetBusinessDate` — fixes weekday-dependent
+horizon noise; historical target dates shift for Thu/Fri snapshots (one-time discontinuity,
+documented, not backfilled). Verification green: lint 0 errors, tsc clean, 2377 tests / 245 files,
+build green. PR pending (push-only; lands via the active landing train). See
+`docs/rollouts/2026-07-04-w1-learning-loops.md`.
+## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
+ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
+source of truth; agents never write issues, only a workflow does.
+`scripts/sync-effort-issues.py` (python3 stdlib, no third-party deps) parses `docs/EFFORT-LOG.md`
+at HEAD: top-level `##` section headings are classified by keyword (tolerating wording/emoji
+variation across repos — "Planned / Reserved Before Implementation" vs "Planned / Reserved" both
+map to `planned`), top-level `- `/`* ` bullets become items with indented continuation lines
+folded into the body, and `(none)`/`(seeded empty ...)`-style placeholders are skipped. Each item's
+identity is a SHA1 of its normalized first line, embedded in the issue body as
+`<!-- effort-key: <hash> -->` so re-runs are idempotent and state transitions (Planned -> In
+Progress -> Completed) update the same issue in place rather than creating a new one, as long as
+the first line's wording doesn't change. Planned/In Progress -> issue open (labels `effort-board` +
+`state:planned`/`state:in-progress`, assigned to `jaywedgeworth22` so GitHub pushes mobile
+notifications); Completed/Deployed -> issue closed (`state:completed`/`state:deployed`). Never
+deletes issues; a board row that disappears leaves its mirrored issue untouched. Hand-made issues
+without the marker are ignored entirely. Missing labels are created on first run. Duplicate board
+rows (same normalized first line appearing twice — found for real in this repo's own board, "Wave-1
+quick wins..." logged twice under In Progress) are deduped within a run so they don't multiply
+issues.
+Workflow `.github/workflows/effort-issues-sync.yml` (new, additive): triggers on push to `main`
+touching `docs/EFFORT-LOG.md`, a daily off-minute cron (`12 6 * * *`, drift catch), and
+`workflow_dispatch`. Uses the Actions-provided `GITHUB_TOKEN` (`issues: write`) via plain REST +
+stdlib `urllib`, no GraphQL.
+Rolled out to `Socratic.Trade` (this repo), `congress-trading-shared`, and `API-usage-monitor` —
+identical script/workflow in all three; the script reads `GITHUB_REPOSITORY` from the Actions
+environment so no repo-specific edits were needed. Canonical pattern documented as a new "Issues
+mirror (standard)" subsection in `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`, and the new-app bootstrap
+checklist there now includes copying the two files.
+Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not the machine-local
+live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
+operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
+every live-board edit; documented in the script's own docstring and in the protocol doc.
+**Merged and verified live:** Socratic.Trade PR #374, congress-trading-shared PR #4,
+API-usage-monitor PR #9 — all squash-merged. First sync (auto-fired by the `main` push trigger in
+Socratic.Trade; manually triggered once via `gh workflow run` in the other two) produced:
+Socratic.Trade 58 issues (32 `state:completed` + 6 `state:deployed`, closed; 9 `state:in-progress`
++ 11 `state:planned`, open), congress-trading-shared 2 open `state:in-progress` issues,
+API-usage-monitor 3 open `state:in-progress` issues — all confirmed via the Issues API with correct
+labels, assignee, and body content.
+See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
+
+## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
+New Sentry project `fleet-infra` (org jays-services), DSN in
+`/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).
+**Part A — host monitor (machine-side, no repo dependency):**
+`/Users/jay/apps/fleet-sentry-monitor/monitor.py`, a single-pass Python script whose ~120s cadence
+comes from pm2 restarting it after each pass sleeps and exits (registered as pm2 app
+`fleet-sentry-monitor`, `pm2 save`d — confirmed running, `status: online`). Each pass: `pm2 jlist`
+crash-loop detection (restart delta >= 5 within one interval -> error, fingerprinted per
+app+condition with hourly dedup via a local `state.json`), down detection (`trading`/`trading-main`
+non-online -> error, any other app -> warning); Claude desktop presence/RSS as breadcrumb only
+(not-running is not an error); disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+files >512MB warning; `gh api rate_limit` core/graphql <300 remaining -> warning with reset time;
+self-hosted Actions runner status as context only (offline is expected/normal); and a Sentry Crons
+self check-in (monitor slug `fleet-host-monitor`, upsert config: interval 2min, margin 5,
+max_runtime 2, America/Chicago) so a dead monitor alerts by absence. Verified live, not just
+locally: two real pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta mutation
+correctly fired the "pm2 crash loop: trading-codex" error at delta=7, and the `gh` rate-limit
+warning fired for real mid-session (fleet-wide testing burned graphql to 0 remaining).
+**Part B — CI failure reporter (repo-side, additive only):** new worktree
+`~/apps/trading-wt-sentry-ci` on branch `claude/sentry-ci-observability`, cut from `origin/main`
+(81c707c2). Two brand-new files, zero edits to any existing workflow:
+`.github/workflows/sentry-ci-report.yml` (listens on `workflow_run: types:[completed]` for all 7
+existing workflows — CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw Sentry envelope HTTP via
+`urllib`, no `sentry-sdk`/action-marketplace dependency). On failure conclusion: a Sentry error
+event tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`. On a
+schedule-triggered run: an additional Sentry Crons check-in (`ci-<workflow-slug>`, e.g.
+`ci-security`) whose `monitor_config.schedule` mirrors that workflow's own cron (Security
+`41 10 * * 1`, Playwright Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`) — so a
+nightly/weekly job that silently stops running (not "fails" but "never fires again") raises a
+missed-check-in alert. Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value
+mechanically from the `.env` file (never echoed to any log/transcript). Locally dry-ran the
+reporter script against the real DSN: both the failure-event and check-in envelope POSTs returned
+HTTP 200 before this went live in CI. See
+`docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail, verification commands,
+and follow-ups.
 ## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
 Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
 Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner

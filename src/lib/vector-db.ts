@@ -1496,6 +1496,14 @@ export interface RetrievedChunk {
    * chunk — undefined when rerank is off, failed, or the reranker didn't return `relevanceScore`.
    */
   relevanceScore?: number;
+  /**
+   * Raw Pinecone metadata for this chunk, with the (large, already-surfaced-as-`text`) `text`
+   * field omitted (2026-07-04 episodic-retrieval lane, additive). Lets memory-aware callers read
+   * fields the typed surface doesn't lift (e.g. `run_id` for same-run exclusion, `return_pct` for
+   * counterexample labeling) without vector-db needing to know every memory schema. Undefined only
+   * when the match carried no metadata at all.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** Map a raw Pinecone match to a chunk carrying REAL provenance (id, score, acceptance date, url). */
@@ -1506,6 +1514,12 @@ export function matchToChunk(match: any): RetrievedChunk {
   const scope: VectorScope | undefined =
     rawScope === SHARED_SCOPE || rawScope === PRIVATE_SCOPE ? rawScope : undefined;
   const rerankScore = (match as { _rerankScore?: unknown } | undefined)?._rerankScore;
+  // Metadata passthrough (episodic-retrieval lane): everything except the large `text` field,
+  // which is already surfaced as `chunk.text`. Only attached when the match had metadata.
+  const metadataRest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(md)) {
+    if (key !== "text") metadataRest[key] = value;
+  }
   return {
     id: String(match?.id ?? ""),
     text: typeof md.text === "string" ? md.text : "",
@@ -1516,7 +1530,8 @@ export function matchToChunk(match: any): RetrievedChunk {
     section: typeof md.section === "string" ? md.section : undefined,
     url: typeof md.url === "string" ? md.url : typeof md.filingUrl === "string" ? md.filingUrl : undefined,
     scope,
-    ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {})
+    ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {}),
+    ...(match?.metadata != null ? { metadata: metadataRest } : {})
   };
 }
 
@@ -1566,6 +1581,13 @@ export interface RetrieveOptions {
   connectedAccountId?: string;
   /** Restrict to these document types (metadata.doc_type), e.g. ["10-k","10-q"]. */
   docType?: string[];
+  /**
+   * When true, drop the `symbol == <symbol arg>` metadata clause so retrieval spans ALL symbols
+   * (2026-07-04 episodic-retrieval lane, additive). Episodic decision analogs are cross-symbol by
+   * design — the same setup on a different ticker is exactly the prior worth surfacing. Default
+   * false/omitted = existing per-symbol behavior, byte-for-byte unchanged for every current caller.
+   */
+  matchAllSymbols?: boolean;
   /** Restrict to a specific filing section (metadata.section). */
   section?: string;
   /** Restrict to a specific source (metadata.source), e.g. "sec-8k". */
@@ -1717,11 +1739,15 @@ export async function retrieveContextDetailed(
 
     let matches: any[] = [];
 
+    // Episodic cross-symbol mode (matchAllSymbols): omit the symbol clause entirely so decision
+    // analogs on OTHER tickers stay retrievable. Default (unset) keeps the per-symbol restriction.
+    const symbolFilter: Record<string, unknown> = options?.matchAllSymbols ? {} : { symbol: { $eq: symbol } };
+
     // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
     // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
     // scope is authoritative for new vectors; userId is the fallback for old ones.
     const sharedTierFilter = {
-      symbol: { $eq: symbol },
+      ...symbolFilter,
       ...extraFilter,
       $or: [
         { scope: { $eq: SHARED_SCOPE } },
@@ -1747,7 +1773,7 @@ export async function retrieveContextDetailed(
             vector: embedding,
             topK: fetchK,
             filter: {
-              symbol: { $eq: symbol },
+              ...symbolFilter,
               userId: { $eq: vectorUserId },
               ...extraFilter
             },
