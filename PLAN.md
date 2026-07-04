@@ -37,8 +37,15 @@ filling the missing pieces.
 > DeepSeek curated model choices, and wires DeepSeek V4 Thinking Mode. See
 > `docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
 
+> **2026-07-04 - RAG Sentry visibility + Pinecone hosted-model review (Codex).**
+> The active branch `codex/rag-sentry-visibility` follows PR #351 and adds Sentry incident visibility
+> for RAG provider failures, missing keys, Pinecone metric checks, ingest/WU budget trips, malformed
+> embeddings, retrieval degradations, and unexpected RAG catch-block failures. It also documents why
+> Pinecone-hosted `llama-text-embed-v2` / `multilingual-e5-large` should be benchmarked before any
+> production migration.
+
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
-> The active branch `codex/console-actions-evidence-live` extends the Socratic console polish pass and
+> Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
 > adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled
 > separately from provider totals, Pinecone query rows record Read Units when available, upsert rows
 > record estimated Write Units, `storeContexts` enforces a daily Pinecone WU fuse before Voyage

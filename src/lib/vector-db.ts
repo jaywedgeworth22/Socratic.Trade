@@ -337,6 +337,26 @@ function ragErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function markRagSentryCaptured(error: unknown): void {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) return;
+  try {
+    Object.defineProperty(error, "__ragSentryCaptured", {
+      value: true,
+      configurable: true
+    });
+  } catch {
+    try {
+      (error as { __ragSentryCaptured?: boolean }).__ragSentryCaptured = true;
+    } catch {
+      // best-effort marker only
+    }
+  }
+}
+
+function wasRagSentryCaptured(error: unknown): boolean {
+  return Boolean((error as { __ragSentryCaptured?: boolean } | undefined)?.__ragSentryCaptured);
+}
+
 function recordMissingRagKey(service: "pinecone" | "voyage", source: ApiKeySource, userId: string, envVar?: string): void {
   const message = envVar ? `${envVar} is not configured` : `${service} API key is not configured`;
   const targetUserId = ragHealthUserId(source, userId);
@@ -372,10 +392,44 @@ async function alertRagConnectionFailure(
       reason: message,
       userSpecific: source === "user"
     };
+    await captureRagSentryMessage("warning", title, {
+      provider: service,
+      source,
+      operation,
+      userSpecific: source === "user",
+      reason: message
+    });
     await sendNotification({ type: "provider_degraded", title, payload }, { userId: targetUserId }).catch(() => {});
     await notify(targetUserId, { title, body, kind: "provider_degraded", data: payload }).catch(() => {});
   } catch {
     // Alerts must not affect trading/RAG control flow.
+  }
+}
+
+async function captureRagSentryMessage(
+  level: "warning" | "error",
+  message: string,
+  context: Record<string, string | number | boolean | null | undefined>
+): Promise<void> {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
+      default?: typeof import("@sentry/nextjs");
+    };
+    const captureMessage = mod.captureMessage ?? mod.default?.captureMessage;
+    const withScope = mod.withScope ?? mod.default?.withScope;
+    if (typeof captureMessage !== "function" || typeof withScope !== "function") return;
+    withScope((scope) => {
+      scope.setLevel(level);
+      scope.setTag("component", "rag");
+      if (context.provider) scope.setTag("rag.provider", String(context.provider));
+      if (context.operation) scope.setTag("rag.operation", String(context.operation));
+      if (context.source) scope.setTag("rag.key_source", String(context.source));
+      scope.setContext("rag", context);
+      captureMessage(message);
+    });
+  } catch {
+    // Observability must not affect trading/RAG control flow.
   }
 }
 
@@ -408,6 +462,7 @@ async function withRagApiHealth<T>(
       keySource: source,
       userId: targetUserId
     });
+    markRagSentryCaptured(error);
     void alertRagConnectionFailure(service, source, targetUserId, operation, ragErrorMessage(error));
     throw error;
   }
@@ -434,6 +489,14 @@ async function assertIndexMetric(pc: Pinecone, initCacheKey: string, source: Api
     const metric = (model as { metric?: unknown })?.metric;
     if (metric != null && metric !== "cosine") {
       console.warn(`[vector-db] Pinecone index "${indexName()}" metric is "${String(metric)}", expected "cosine" — cosine-scale floors (VECTOR_MIN_SCORE, rerank relevance floor) may be meaningless against this index.`);
+      void captureRagSentryMessage("warning", "Pinecone index metric mismatch", {
+        provider: "pinecone",
+        operation: "describeIndex",
+        source,
+        indexName: indexName(),
+        metric: String(metric),
+        expectedMetric: "cosine"
+      });
       try {
         audit("vector_index_metric_mismatch", { indexName: indexName(), metric: String(metric) }, "local");
       } catch {
@@ -444,6 +507,13 @@ async function assertIndexMetric(pc: Pinecone, initCacheKey: string, source: Api
     // describeIndex itself failing (network, permissions, index not found yet) is NOT the
     // condition this guard checks for — swallow silently, this is a best-effort sanity check.
     console.warn(`[vector-db] Could not verify index metric for "${indexName()}":`, err instanceof Error ? err.message : String(err));
+    void captureRagSentryMessage("warning", "Pinecone index metric check failed", {
+      provider: "pinecone",
+      operation: "describeIndex",
+      source,
+      indexName: indexName(),
+      reason: err instanceof Error ? err.message : String(err)
+    });
   }
 }
 
@@ -855,6 +925,16 @@ export async function storeContexts(
       limitPer24h: budget.limit
     };
     audit("vector_ingest_budget", budgetPayload, userId);
+    void captureRagSentryMessage("warning", "RAG ingest text budget reached", {
+      provider: "voyage",
+      operation: "embed-budget",
+      source: userId === "local" ? "operator" : "user",
+      requested: documentsToStore.length,
+      allowed: budget.allowed,
+      skipped: budgetSkipped,
+      usedLast24h: budget.used,
+      limitPer24h: budget.limit
+    });
     if (budget.allowed === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
@@ -883,6 +963,16 @@ export async function storeContexts(
       limitPer24h: writeBudget.limit
     };
     audit("vector_write_unit_budget", budgetPayload, userId);
+    void captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
+      provider: "pinecone",
+      operation: "upsert-budget",
+      source: userId === "local" ? "operator" : "user",
+      requestedEstimatedWriteUnits: writeBudget.requested,
+      allowedEstimatedWriteUnits: writeBudget.allowed,
+      skipped: writeUnitBudgetSkipped,
+      usedLast24h: writeBudget.used,
+      limitPer24h: writeBudget.limit
+    });
     if (writeBudget.documents.length === 0) {
       const lastIngest = {
         at: new Date().toISOString(),
@@ -902,6 +992,12 @@ export async function storeContexts(
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
+    void captureRagSentryMessage("warning", "RAG store skipped: missing Pinecone or Voyage key", {
+      provider: !pc ? "pinecone" : "voyage",
+      operation: "storeContexts",
+      source: userId === "local" ? "operator" : "user",
+      attempted: validDocuments.length
+    });
     audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
     return { attempted: validDocuments.length, indexed: 0, skipped: true };
   }
@@ -968,6 +1064,13 @@ export async function storeContexts(
 
     if (rejectedInvalidEmbeddings > 0) {
       audit("vector_embedding_integrity", { rejected: rejectedInvalidEmbeddings, attempted: validDocuments.length }, userId);
+      void captureRagSentryMessage("warning", "Voyage document embedding integrity rejection", {
+        provider: "voyage",
+        operation: "embed documents",
+        source: voyageSource,
+        attempted: validDocuments.length,
+        rejected: rejectedInvalidEmbeddings
+      });
     }
     console.log(`[vector-db] Indexed ${indexed}/${validDocuments.length} context document(s).${rejectedInvalidEmbeddings > 0 ? ` (${rejectedInvalidEmbeddings} rejected: malformed embedding)` : ""}`);
 
@@ -1002,6 +1105,16 @@ export async function storeContexts(
     console.error("[vector-db] Error storing contexts:", err);
     setInternalSetting(LAST_INGEST_KEY, { at: new Date().toISOString(), attempted: validDocuments.length, indexed, error });
     audit("vector_store", { ok: false, attempted: validDocuments.length, indexed, error }, userId);
+    if (!wasRagSentryCaptured(err)) {
+      await captureRagSentryMessage("error", "RAG vector store failed", {
+        provider: "pinecone",
+        operation: "storeContexts",
+        source: userId === "local" ? "operator" : "user",
+        attempted: validDocuments.length,
+        indexed,
+        reason: error
+      });
+    }
     return { attempted: validDocuments.length, indexed, error };
   }
 }
@@ -1365,14 +1478,36 @@ export async function retrieveContextDetailed(
   // Budget guard (durable spend primitive): when the user is over their daily LLM/RAG budget, skip
   // retrieval entirely — no Voyage embed, no Pinecone query, no metered spend. Returns empty like the
   // no-client case, so every caller degrades gracefully. Default OFF (no ceiling) → no-op.
-  if (isOverLlmBudget(userId, options?.connectedAccountId)) return [];
+  if (isOverLlmBudget(userId, options?.connectedAccountId)) {
+    void captureRagSentryMessage("warning", "RAG retrieval skipped: daily LLM/RAG budget exceeded", {
+      provider: "voyage",
+      operation: "retrieveContext",
+      source: userId === "local" ? "operator" : "user",
+      connectedAccountId: options?.connectedAccountId ?? null
+    });
+    return [];
+  }
   const vectorUserId = vectorUserIdFor(userId);
   const { pc, voyage, pineconeSource, voyageSource } = getClients(userId);
-  if (!pc || !voyage) return [];
+  if (!pc || !voyage) {
+    void captureRagSentryMessage("warning", "RAG retrieval skipped: missing Pinecone or Voyage key", {
+      provider: !pc ? "pinecone" : "voyage",
+      operation: "retrieveContext",
+      source: userId === "local" ? "operator" : "user"
+    });
+    return [];
+  }
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
   // tripped, DEGRADE by skipping rerank/hybrid only — never core dense-cosine recall. A no-op
   // (always false) when RAG_RUN_BUDGET_ENABLED is off, so default behavior is unaffected.
   const budgetDegraded = shouldDegradeForBudget();
+  if (budgetDegraded) {
+    void captureRagSentryMessage("warning", "RAG retrieval degraded: per-run budget reached", {
+      provider: "voyage",
+      operation: "retrieveContext",
+      source: userId === "local" ? "operator" : "user"
+    });
+  }
   const wantRerank = rerankEnabled() && !budgetDegraded;
   const wantHybrid = hybridRetrievalEnabled() && !budgetDegraded;
   // Over-fetch when we'll post-filter (as-of), rerank, OR hybrid-fuse — so the final top-`limit` is
@@ -1406,6 +1541,13 @@ export async function retrieveContextDetailed(
         const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
         audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
         console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
+        void captureRagSentryMessage("warning", "Voyage query embedding integrity rejection", {
+          provider: "voyage",
+          operation: "embed query",
+          source: voyageSource,
+          rejected: 1,
+          dimension: String(dim)
+        });
       }
       return [];
     }
@@ -1516,6 +1658,15 @@ export async function retrieveContextDetailed(
       .filter((c) => c.text);
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
+    if (!wasRagSentryCaptured(err)) {
+      await captureRagSentryMessage("error", "RAG retrieval failed", {
+        provider: "pinecone",
+        operation: "retrieveContext",
+        source: userId === "local" ? "operator" : "user",
+        symbol,
+        reason: err instanceof Error ? err.message : String(err)
+      });
+    }
     return [];
   }
 }

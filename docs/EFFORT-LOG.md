@@ -143,17 +143,13 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- **Console actions/evidence/live-account polish** (Codex, local,
-  branch `codex/console-actions-evidence-live`) — owner-requested polish covering Autonomous Actions
-  blocked reasons/history, stopped cadence display, raw-vs-benchmark return tooltips, IRA wash-sale
-  buy blocking, Evidence/source wording, LLM settings usage links/coach model affordances, reduced
-  LIVE warnings, Public.com/eToro/IBKR account options investigation, app-wide provider/model naming
-  consistency, and the repo/folder rename handoff plan. Full local gate green; PR pending.
-- **RAG architecture review and Pinecone/Voyage write-safety** (Codex, local,
-  branch `codex/console-actions-evidence-live`) — evaluating Gemini's RAG stack suggestions against
-  Socratic Trade's current finance-specific retrieval path and adding hard write controls before any
-  fresh Pinecone account is connected; also correcting app-recorded RAG usage labeling and documenting
-  earnings-report ingestion/summarization design. Full local gate green; PR pending.
+- **RAG Sentry visibility + Pinecone hosted-model review** (Codex, local,
+  branch `codex/rag-sentry-visibility`) — follow-up after PR #351 merged. Adds Sentry warning/error
+  events for RAG provider failures, missing keys, Pinecone metric checks, ingest/WU budget trips,
+  malformed embeddings, retrieval degradations, and unexpected RAG catch-block failures. Also documents
+  Pinecone-hosted NVIDIA/MSFT embedding options as benchmark candidates, not a hot production swap.
+  Owner has provided a fresh Pinecone account key; do not commit/log it, and only connect it after this
+  fuse/visibility work is landed. Full local gate green; PR pending.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.

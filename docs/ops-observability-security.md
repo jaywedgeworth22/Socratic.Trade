@@ -14,11 +14,15 @@ This app now has opt-in scaffolding for the seven selected tools:
   (`sentry.server.config.ts` / `sentry.edge.config.ts`, loaded via the instrumentation
   hook) and `NEXT_PUBLIC_SENTRY_DSN` for the browser (`instrumentation-client.ts`).
   `next.config.mjs` is wrapped with `withSentryConfig` (org `jays-services`, project
-  `agentic-trading`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
+  `socratic-trade`); set the build-time secret `SENTRY_AUTH_TOKEN` to upload source maps
   for de-minified production stack traces. `app/global-error.tsx` reports root-layout
   render errors. The previous build-wrapper instability did not reproduce on
   `@sentry/nextjs@10` + Next 16. Browser Session Replay is opt-in
   (`NEXT_PUBLIC_SENTRY_REPLAY_ENABLED=true`) and masks all text + blocks all media when on.
+  RAG provider failures, Pinecone index/metric checks, ingest budget trips, Pinecone Write
+  Unit budget trips, malformed embedding rejections, and retrieval degradations are captured
+  as warning/error events tagged `component=rag`, `rag.provider`, `rag.operation`, and
+  `rag.key_source`; they stay no-op unless `SENTRY_DSN` is set.
 - **Sentry Crons scheduler heartbeat**: a dead/hung scheduler still returns 200 from
   `/api/health`, so the scheduler tick can additionally report an "ok" check-in to the
   Sentry Crons monitor `scheduler-tick` every 60s tick (`sendSentrySchedulerCheckIn` in

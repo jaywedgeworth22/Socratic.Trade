@@ -133,6 +133,84 @@ The app's RAG Usage table is an **app-recorded ledger**, not the provider invoic
   another process/worktree/index, failed local ledger writes, or provider-side indexing not represented
   by the local `document_chunks` ledger.
 
+## Spend posture
+
+The owner is not opposed to paying for Pinecone/Voyage when the system is intentionally using the
+capacity for useful corpus growth, retrieval, and learning. The objection is to paying to cover a
+coding/control issue: repeated writes, missing dedup, hidden schedulers, or dashboards that fail to
+show quota burn clearly. A fresh Pinecone account/key can be connected after the write fuses and
+visibility in this doc are active:
+
+- `RAG_PINECONE_WRITE_BUDGET_ENABLED=on`.
+- `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` set conservatively (start at `50000` or lower).
+- `VECTOR_STORECONTEXTS_DEDUP=on`.
+- `/admin/rag-coverage` shows app-recorded Pinecone units, all visible indexes, and any budget skips.
+- `/admin/connections` shows Pinecone, Voyage, and Voyage Rerank health.
+- API Usage Monitor push is configured if central cost telemetry is desired.
+- Sentry is configured if warning-level RAG failures/budget trips should page into the incident stream.
+
+## Monitoring split: app, API Usage Monitor, Sentry, provider consoles
+
+- **App admin pages are authoritative for runtime behavior.** `/admin/rag-coverage` shows local
+  ingestion coverage, app-recorded Voyage tokens, app-recorded Pinecone Read/Write Units, all visible
+  Pinecone indexes, and last-ingest budget skips. `/admin/connections` shows backend connection
+  failures and whether they are global or user-key specific.
+- **API Usage Monitor is the cross-app cost ledger.** When `USAGE_MONITOR_BASE_URL` and
+  `USAGE_INGEST_TOKEN` are set, the app pushes LLM/RAG/provider telemetry. Pinecone RAG events are
+  sent as `credit` units for Read/Write Units, with record counts kept as metadata. This is useful for
+  trend/alerting across Socratic Trade and other apps, but it cannot reconstruct provider usage from
+  before telemetry existed.
+- **Sentry is for incident visibility, not billing truth.** With `SENTRY_DSN` configured, RAG provider
+  failures and Pinecone WU budget trips are captured as warning events with provider/operation/source
+  tags and sanitized context. Use this for "something broke or hit a fuse" monitoring, not for usage
+  accounting.
+- **Provider consoles remain the source of billing/quota truth.** Pinecone exposes org usage in the
+  console/CSV on supported plans and per-request usage for read/inference operations; Voyage usage is
+  monitored in its dashboard/Atlas UI.
+
+## Pinecone Inference models in the screenshot
+
+The screenshot shows Pinecone-hosted embedding models such as `llama-text-embed-v2` and
+`multilingual-e5-large` with Starter inference token allowances. Those are real options, but they are
+not a drop-in fix for the WU incident or for the current RAG stack:
+
+- The 5M Starter limit is an **embedding inference token** allowance, not extra Pinecone Write Units.
+  It can reduce or replace Voyage embedding spend, but it does not remove the need to control upserts,
+  updates, deletes, and index storage/write usage.
+- Integrated embedding indexes are created differently (`create_index_for_model`) with a `field_map`;
+  Pinecone embeds source text automatically during upsert/search. Our current code stores vectors
+  produced by Voyage, records model-specific metadata, and validates query/document input types before
+  Pinecone sees the request.
+- Switching embedding providers means a new index and re-embedding. The current `socratic-trade`
+  index is 1024-dimensional `voyage-finance-2` output. `llama-text-embed-v2` can also be 1024-dim,
+  but vector spaces are not interchangeable even when dimensions match; old and new vectors cannot be
+  mixed as if they came from the same model.
+- `voyage-finance-2` is finance-domain specific and already paired with Voyage rerank. `llama-text-embed-v2`
+  and `multilingual-e5-large` are credible general/multilingual candidates, but they should win through
+  a retrieval benchmark on our SEC filings, earnings reports, proposals, and strategy questions.
+- `multilingual-e5-large` has a much shorter max input window than our current chunking target, so it
+  would likely require different chunk sizing. That may be acceptable, but it is not free.
+
+Reasonable next step: add an offline A/B benchmark that embeds a small gold corpus with
+`voyage-finance-2`, Pinecone `llama-text-embed-v2`, Pinecone `multilingual-e5-large`, and possibly
+OpenAI `text-embedding-3-small`; compare recall@k/MRR and downstream answer quality before any
+production migration.
+
+## Cheaper alternatives worth considering
+
+- **Pinecone Inference + Pinecone storage:** could be cheaper operationally because embedding and
+  index usage are consolidated and Starter includes hosted embedding tokens. Best candidate to test
+  first, but requires an integrated-index migration or a separate embedding call path.
+- **OpenAI `text-embedding-3-small`:** very cheap general-purpose embedding baseline. Worth testing
+  as a fallback or A/B baseline, but it is not finance-specialized and still requires a new index.
+- **Self-hosted Qdrant or local Chroma:** cheapest in direct vendor fees, especially for experiments
+  and offline evals. Tradeoff is operations, backups, monitoring, and reliability. Good for dev/test,
+  not the first production move unless Pinecone cost remains disproportionate after fuses.
+- **Postgres/pgvector:** attractive if we want one database bill and simpler local backups. Tradeoff is
+  more application-level tuning for ANN indexes, hybrid search, and scaling.
+- **Weaviate:** credible if its hybrid search and schema features matter more than Pinecone simplicity.
+  Treat as a platform migration, not a billing toggle.
+
 **Test coverage proving the enablement path itself works (fixtures only, no live calls):**
 `test/sec8k-full-body.test.ts` drives `ingestEightKBody`/`ingestEightKBodies` with
 `WEB_SOURCE_SEC8K_FULL_BODY` toggled and a mocked EDGAR fetch + mocked `storeDocument`, asserting the

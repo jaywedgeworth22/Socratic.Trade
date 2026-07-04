@@ -8,18 +8,33 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 - RAG Sentry visibility + Pinecone hosted-model review (Codex)
+Branch `codex/rag-sentry-visibility` in `/Users/jay/apps/trading-codex`.
+Follow-up after PR #351 merged. RAG provider failures, missing keys, Pinecone metric checks,
+ingest-budget trips, Pinecone Write Unit budget trips, malformed embeddings, retrieval budget
+degradations, and unexpected RAG catch-block failures now emit Sentry warning/error events when
+`SENTRY_DSN` is configured. Provider-health failures are marked so Sentry gets the precise
+Pinecone/Voyage connection event without also duplicating generic catch-block incident noise. Docs
+now explain the role split between app admin pages, API Usage Monitor, Sentry, and provider consoles,
+and document Pinecone-hosted `llama-text-embed-v2` / `multilingual-e5-large` as benchmark candidates
+rather than a hot production swap. The Infisical runbooks now use project display name
+`Socratic.Trade` and slug `socratic-trade`. Verification is green: `npm run lint` (0 errors,
+existing warning backlog), `npx tsc --noEmit`, `npm test` (244 files / 2373 tests),
+`npm run build`, `git diff --check`, `bash -n scripts/infisical-prod-cutover.sh`, and
+`pm2 restart trading-codex --update-env`.
+
 ## 2026-07-03 - Console polish + RAG quota/usage safeguards (Codex)
-Branch `codex/console-actions-evidence-live` in `/Users/jay/apps/trading-codex`.
-Current local work now combines the owner-requested console polish with RAG safeguards:
+Branch `codex/console-actions-evidence-live` in `/Users/jay/apps/trading-codex`; merged as PR #351.
+This combined the owner-requested console polish with RAG safeguards:
 Autonomous Actions blocked reasons/history, stopped cadence display, raw-vs-benchmark
 return tooltips, IRA wash-sale disregard defaults, Evidence/source wording, LLM settings
 usage/coach model affordances, reduced live-account warning copy, broker roadmap cards,
 provider/model naming consistency, Pinecone index inventory visibility, app-recorded RAG
-usage labeling, Pinecone estimated Write Unit budget enforcement before Voyage embedding,
-and docs for the recommended Voyage/Pinecone stack plus earnings-report RAG ingestion.
+usage labeling, Pinecone estimated Write Unit budget enforcement before Voyage embedding, and docs
+for the recommended Voyage/Pinecone stack plus earnings-report RAG ingestion.
 Verification is green: `npm run lint` (0 errors, existing warning backlog), `npx tsc --noEmit`,
 `npm test` (244 files / 2372 tests), `npm run build`, `git diff --check`, and Codex preview restart
-(`pm2 restart trading-codex --update-env`). Ready to commit/PR.
+(`pm2 restart trading-codex --update-env`).
 
 ## 2026-07-03 - Socratic admin/RAG/settings parity pass (Codex)
 Branch `codex/live-thesis-portfolio-framing` in `/Users/jay/apps/trading-codex`.

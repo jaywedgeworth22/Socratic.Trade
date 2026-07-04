@@ -6,7 +6,9 @@ Expanded the active Codex console-polish branch to cover RAG architecture and qu
 Pinecone/Voyage remain the recommended default stack, app-recorded RAG usage is labeled honestly,
 Pinecone queries/upserts now record unit-style usage, usage-monitor export sends Pinecone volume as
 credits rather than token/row counts, and `storeContexts` has a daily Pinecone Write Unit fuse before
-Voyage embedding.
+Voyage embedding. A 2026-07-04 follow-up branch (`codex/rag-sentry-visibility`) adds Sentry warning
+capture and documents why Pinecone Inference starter token limits are not the same as Pinecone Write
+Units.
 
 ## Why
 
@@ -25,6 +27,11 @@ views.
   dedup, and quota fuses.
 - Treat LLM earnings summaries as derived event briefs only. Raw earnings sources and structured facts
   stay the source of truth.
+- The owner is willing to pay for Pinecone/Voyage once usage is deliberate; the line is paying to
+  paper over a coding issue.
+- Pinecone-hosted embedding models are a benchmark candidate, not a hot swap, because their Starter
+  allowances are inference tokens and integrated indexes are a different write/search path
+  (documented in the 2026-07-04 follow-up).
 
 ## Files
 
