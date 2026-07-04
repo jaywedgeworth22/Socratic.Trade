@@ -163,6 +163,24 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude,
+  landing now that gate is green). Owner decision: `taxSettings.washSaleHandling` default
+  `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.
+  Mid-task correction: "auto" no longer vetoes on a deterministic edge-vs-tax-cost threshold at
+  all (removed as pseudo-math — it re-arithmetized the LLM's own confidence/target outputs); it
+  now always proceeds, with the priced tax cost recorded on the receipt and threaded into the
+  strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
+  machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
+  2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
+  Scope: reusable `RawNumInput` component (fixes
+  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
+  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
+  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
+  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
+
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
   against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
@@ -182,7 +200,16 @@ to `socratictrade.com`, record the release commit + date here._
   **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
   follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
-  see Owner decisions below); re-scope pending owner review.
+  see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
+
+- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
+  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
+  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
+  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
+  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
+  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
+  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
 
 - **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
   `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,

@@ -45,9 +45,93 @@ stages — no new ingestion sources. Five items:
 Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
 (clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
 (green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
+Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
+Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed
+together:
+
+1. **Defaults flip** (`DEFAULT_TAX_SETTINGS` in `src/lib/defaults.ts`):
+   `taxSettings.washSaleHandling` default `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling`
+   default `"block"` → `"disregard"`. `block`/`ask` remain valid enum values (persisted policies
+   may still reference them; the console Guardrails selects still offer all options) — just no
+   longer the shipped default. Every `?? "block"` fallback that mattered was updated to derive from
+   `DEFAULT_TAX_SETTINGS` (`src/lib/policy.ts`, `src/lib/strategy.ts`) so an unset field behaves
+   consistently everywhere, not just through the DB merge path.
+2. **Mid-task owner course-correction — "auto" no longer vetoes at all**: the owner rejected the
+   pre-existing edge-vs-tax-cost threshold (`WASH_SALE_AUTO_EDGE_MULTIPLE`, 3x) as pseudo-math — the
+   "expected edge" side of that comparison was itself derived from the LLM's own
+   `confidenceScore`/`bracketTakeProfit` outputs, so the gate was re-arithmetizing the model's
+   judgment rather than adding an independent check. `"auto"` now ALWAYS proceeds; the priced tax
+   cost (`estimatedTaxCostUsd`, `expectedEdgeUsd`) still rides `decision.washSale` as receipt
+   telemetry (never silent) and is now explained to the strategist LLM in the system prompt
+   (`taxContext.washSaleRebuyCosts` was already threaded per #323/#331 — only the prompt's
+   "ONLY when edge clears Nx" framing changed to "this is your judgment call, weigh the priced
+   cost"). `STRATEGY_PROMPT_VERSION` bumped `1.2.0` → `1.3.0`. The `auto_skipped` outcome is now
+   unreachable and removed from the `WashSaleGateAudit.outcome` union; `WASH_SALE_AUTO_EDGE_MULTIPLE`
+   is retained only to label the receipt field, not as a threshold.
+
+All receipt/annotation/audit machinery is untouched: the IRA-disregard verbatim note ("Wash Sale
+(Technically, but IRA purchase unreported to IRS)"), the `wash_sale_*` audit events, the
+approvals-card rendering, and the ask-mode escalation/override-token framework (shared with
+time-context gates) all behave exactly as before — only which mode is the *default*, and whether
+"auto" gates at all, changed. Explicit `"block"`/`"ask"` opt-ins are fully preserved and tested.
+Per a second owner note mid-task: no backward-compat shims for hypothetical other users (owner is
+the sole user today) — kept the diff to flipping defaults + the auto-veto removal, no migration
+machinery.
+Updated: `src/lib/defaults.ts`, `src/lib/types.ts`, `src/lib/policy.ts`, `src/lib/strategy.ts`,
+`src/lib/strategy-prompts.ts`, `app/console/guardrails/field-defs.ts`, `app/settings-search.ts`,
+`test/washsale-modes.test.ts`, `test/ira-washsale-api.test.ts`, `test/console-policy-diff.test.ts`,
+`test/chat-draft-policy.test.ts`, `test/policy.test.ts`, `test/run-strategy-offline.test.ts`.
+Verified: lint 0 errors (295 grandfathered warnings), tsc clean, targeted wash-sale/tax/policy
+suite 218/218 across 12 files, full suite 2352 passed / 17 failed (all 17 in the 8 pre-existing
+holiday-broken files — `persistence-notification`, `redteam-observability-g10`,
+`strategy-bear-fail-closed`, `strategy-bull-truncation`, `strategy-llm-failover`,
+`strategy-money-path-f-g`, `strategy-moneypath-drawdown-flip`, `strategy-rationale-collapse-gate`
+— unrelated `run_skipped_market_closed`/date issues), build green. **Landing deferred** until the
+holiday-date test fix (tracked separately) merges, per instruction — this branch is pushed but has
+no PR yet. See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+## 2026-07-03 — Console small fixes: numeric-input pattern, regime label contract, deletion loss preview, notify.bridge.error formatter (Claude)
+Branch `claude/console-small-fixes` (isolated worktree `~/apps/trading-wt-console-small`, off
+`origin/main` @ `eae514be`), four small verified-open tasks bundled on one branch. **Not landed
+yet** — pushed only, per instructions (no PR, land deferred). **(t7)** extracted the "0."-collapse
+raw-while-focused/commit-on-blur numeric-input pattern (previously only in `PolicyFieldRow`) into a
+reusable `RawNumInput` (`app/console/ui/primitives.tsx`), applied at the eight scoring-weight
+inputs (`app/console/strategy/page.tsx`) and the tax-rate + market-scan-shape integer inputs
+(`app/console/settings/page.tsx`). **(t18)** exported `MARKET_REGIME_LABELS` (stable id -> exact
+label) from `src/lib/macro.ts`, typed `determineMarketRegime`'s return as that union, added
+traceability comments at the three exact-equality join sites (`strategy.ts` `selectThesisStat`,
+`performance.ts` `getFactorScorecard`, `app/console/macro/page.tsx`'s regime-scorecard lookup —
+none hardcode a literal label, so no string values changed), and added a dedicated "regime label
+set is a persisted contract" test block in `test/macro.test.ts` driving all six branches with
+`toBe()` exact-string assertions. **(t22)** account-deletion scope preview
+(`app/console/settings/danger.tsx`) now shows a warning line when
+`preview.counts.learned_context_pending > 0`, linking to `/console/approvals`; added a
+preview-count assertion to `test/account-deletion.test.ts`. **(t39)** added a
+`notify.bridge.error` ops-formatter branch to `src/lib/dashboard-feed.ts` (title "Notification
+delivery failed", mirrors the `web_source_refresh` pattern) + a `test/dashboard-feed.test.ts` case.
+Verification: lint 0 errors / 295 grandfathered warnings (unchanged baseline), `tsc --noEmit`
+clean, targeted vitest (macro/dashboard-feed/account-deletion*) 54/54 + console tests 50/50, full
+`npm test` 2356 passed / 17 failed — the 17 failures are exactly the 8 pre-existing
+holiday-time-dependent files another agent owns (`strategy-llm-failover`,
+`strategy-bear-fail-closed`, `strategy-moneypath-drawdown-flip`, `strategy-money-path-f-g`,
+`strategy-rationale-collapse-gate`, `redteam-observability-g10`, `strategy-bull-truncation`,
+`persistence-notification`), `npm run build` green. See
+`docs/rollouts/2026-07-03-console-small-fixes.md`.
+## 2026-07-04 — Drawdown breaker → ADVISORY default (owner correction; Monet, cloud)
+Branch `claude/drawdown-advisory-rescope` (off `origin/main`). Owner reassigned this lane to Monet
+(swap: Fable → memory/RAG; Monet → risk engine — coordinated on Slack `#claude-monet-sync`). Reverts
+the mistaken hard-halt default from #343 to the owner's actual philosophy: guardrails are ADVISORY
+("nothing is hard except which account to work in; agent decides, logs everything"). `drawdownBreakerAction`
+is now `"advisory" | "close_only" | "halt"`, **default `"advisory"`**: on a drawdown/daily-loss breach the
+breaker writes a receipt and threads a `drawdownAdvisory` block into the strategist's `userContent` (agent
+decides how to react) — it does NOT change `systemState`. `close_only`/`halt` remain as explicit owner
+opt-ins. Files: `types.ts`, `strategy.ts`, `api/policy/route.ts` (validator), guardrails/dashboard copy,
+drawdown tests. Verified: tsc clean · lint 0 errors · **2375 tests / 245 files** · build green.
+See `docs/rollouts/2026-07-04-drawdown-advisory-rescope.md`. Follow-up: thread the advisory into the Bear
+context too; broader per-gate hard-block sweep goes to the owner as questions first (not bundled).
 
 ## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
-Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
+Branch `claude/expert-design-review` (off `origin/main`, merged as #356). An 8-expert agent panel (ML/learning,
 RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
 synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
 across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,

@@ -337,14 +337,16 @@ export async function runStrategyOnce(
     // crashes mid-loop. The post-run snapshot (below) remains for the final state.
     recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
 
-    // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
-    // any single mistake; this bounds the whole account's bleed. The response is the owner's
-    // overridable preference `riskRules.drawdownBreakerAction`, defaulting to a HARD-HALT
-    // (systemState → "halted"): autonomous trading stops entirely until the owner manually re-arms
-    // (sets systemState back to "active") — subsequent scheduled runs skip and executeProposal
-    // refuses, so open positions rely on their resting broker stops. Setting it to "close_only"
-    // instead keeps the loop running for risk-reducing exits and only blocks new entries. Either
-    // way a kill-switch notification puts a human back in the loop.
+    // Advisory drawdown context surfaced to the strategist when the breaker breaches in "advisory"
+    // mode (the default) — informs the agent, never seizes control.
+    let drawdownAdvisory: { reason: string; equity: number; highWaterMark: number; drawdownPct: number } | undefined;
+    // Account-level drawdown / daily-loss breaker. The per-trade gate bounds any single mistake; this
+    // bounds the whole account's bleed. Per the governing philosophy ("nothing is hard except which
+    // account to work in; agent decides, logs everything"), the breaker is ADVISORY by default: on a
+    // breach it writes a receipt and surfaces the drawdown to the strategist as decision context (see
+    // `drawdownAdvisory` threading below) so the agent can choose to de-risk — it does NOT seize
+    // control. Hard enforcement (flip to "close_only" or "halt") is available only when the owner
+    // explicitly opts in via `riskRules.drawdownBreakerAction`.
     if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
@@ -355,25 +357,33 @@ export async function runStrategyOnce(
         userId
       });
       if (breaker.breached) {
-        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "halt";
-        const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
-        policy.systemState = revertedTo;
-        // Persist to the SAME account the run targeted (read via getPolicy(userId, targetAccountId)).
-        // Omitting targetAccountId would resolve the ACTIVE account, so a scheduler run of a non-active
-        // account could halt the wrong account and leave the breached one running.
-        setPolicy(policy, userId, targetAccountId);
-        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
-        await sendNotification(
-          {
-            type: "kill_switch",
-            title:
-              revertedTo === "halted"
-                ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
-                : "Circuit breaker halted new entries (close-only)",
-            payload: { runId, reason: breaker.reason, equity, revertedTo }
-          },
-          { policy, userId }
-        );
+        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "advisory";
+        const drawdownPct = breaker.highWaterMark > 0 ? ((breaker.highWaterMark - equity) / breaker.highWaterMark) * 100 : 0;
+        if (breakerAction === "advisory") {
+          // Advisory (default): receipt + prompt context, NO state change. The account boundary is the
+          // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
+          drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId);
+        } else {
+          // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
+          // targeted (read via getPolicy(userId, targetAccountId)); omitting it would resolve the ACTIVE
+          // account, so a scheduler run of a non-active account could halt the wrong account.
+          const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
+          policy.systemState = revertedTo;
+          setPolicy(policy, userId, targetAccountId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
+          await sendNotification(
+            {
+              type: "kill_switch",
+              title:
+                revertedTo === "halted"
+                  ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
+                  : "Circuit breaker halted new entries (close-only)",
+              payload: { runId, reason: breaker.reason, equity, revertedTo }
+            },
+            { policy, userId }
+          );
+        }
       }
     }
 
@@ -619,7 +629,8 @@ export async function runStrategyOnce(
         dailyNotionalUsed: daily.notional,
         dailyOrderCount: daily.openingOrderCount,
         ragContext,
-        learnedContext
+        learnedContext,
+        drawdownAdvisory
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
@@ -1528,6 +1539,11 @@ export function selectThesisStat(
   thesisScorecard: ThesisStat[],
   proposal: TradeProposal
 ): ThesisStat | ThesisRegimeStat | undefined {
+  // Exact-string join against `entryMarketRegime`, which is stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) at proposal-creation time. Both sides
+  // are typed as plain `string` (older rows may carry a retired label), but the values in
+  // practice are the persisted-contract labels — see that const's doc comment before
+  // touching either side of this comparison.
   const comboStat = regimeScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
   const thesisStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
   return comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
@@ -2435,6 +2451,7 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
+  drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -2510,16 +2527,17 @@ async function proposeTrades(input: {
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
-  // locked rebuy honestly instead of just seeing a forbidden list. In the default "block" mode the
-  // context stays byte-identical (locked names remain a hard no).
-  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? "block";
-  // IRA-disregard: when the buyer is an IRA whose policy uses iraWashSaleHandling "disregard"
-  // (the shipped default),
-  // the gate PERMITS locked rebuys (annotated + audited). The prompt must know this or the model,
-  // still told "NEVER propose a locked buy", would never surface the very rebuys the setting exists
-  // to allow. IRA detection uses the SAME source-of-truth precedence as the gate (isIraTaxRegime).
+  // locked rebuy honestly instead of just seeing a forbidden list. Only in "block" mode (a
+  // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
+  // remain a hard no).
+  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
+  // IRA-disregard: when the buyer is an IRA whose owner is on iraWashSaleHandling "disregard"
+  // (the default), the gate PERMITS locked rebuys (annotated + audited). The prompt must know this
+  // or the model, still told "NEVER propose a locked buy", would never surface the very rebuys the
+  // setting exists to allow. IRA detection uses the SAME source-of-truth precedence as the gate
+  // (isIraTaxRegime).
   const iraWashSaleDisregard =
-    (input.policy.taxSettings?.iraWashSaleHandling ?? "disregard") === "disregard" &&
+    (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
     isIraTaxRegime(
       input.activeAccount?.taxationType,
       input.policy.taxSettings?.taxationType,
@@ -2638,6 +2656,17 @@ async function proposeTrades(input: {
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
     },
+    ...(input.drawdownAdvisory
+      ? {
+          drawdownAdvisory: {
+            note: "ADVISORY, not a block: this account has breached its drawdown circuit-breaker threshold. YOU decide whether to reduce risk, tighten sizing, favor exits, or proceed on conviction — every choice is logged and coachable. The only hard rule is the account boundary.",
+            drawdownPctFromHighWaterMark: Number(input.drawdownAdvisory.drawdownPct.toFixed(2)),
+            equity: input.drawdownAdvisory.equity,
+            highWaterMark: input.drawdownAdvisory.highWaterMark,
+            detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
     socraticAuthority: {
       overrideMode: input.policy.socraticOverrideMode ?? "off",
       overrideMaxPctOfNav: input.policy.socraticOverrideMaxPctOfNav,
