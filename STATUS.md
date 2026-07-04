@@ -40,6 +40,13 @@ Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not
 live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
 operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
 every live-board edit; documented in the script's own docstring and in the protocol doc.
+**Merged and verified live:** Socratic.Trade PR #374, congress-trading-shared PR #4,
+API-usage-monitor PR #9 — all squash-merged. First sync (auto-fired by the `main` push trigger in
+Socratic.Trade; manually triggered once via `gh workflow run` in the other two) produced:
+Socratic.Trade 58 issues (32 `state:completed` + 6 `state:deployed`, closed; 9 `state:in-progress`
++ 11 `state:planned`, open), congress-trading-shared 2 open `state:in-progress` issues,
+API-usage-monitor 3 open `state:in-progress` issues — all confirmed via the Issues API with correct
+labels, assignee, and body content.
 See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
 
 ## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
