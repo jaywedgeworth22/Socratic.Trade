@@ -17,6 +17,7 @@ import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
 import {
   connectAlpacaAccount,
+  connectTestAccount,
   disconnectAccount,
   fetchRobinhoodHealth,
   syncRobinhoodAccount,
@@ -33,7 +34,7 @@ function brokerName(broker: ConnectedAccount["broker"]): string {
     case "robinhood":
       return "Robinhood";
     case "test":
-      return "Test broker";
+      return "Test Account";
     default:
       return broker;
   }
@@ -121,6 +122,7 @@ export function BrokerAccountsCard() {
   const rhAuthed = Boolean(rhHealth?.configured && rhHealth?.authenticated && rhHealth?.ok);
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
+  const hasTestAccount = accounts.some((account) => account.broker === "test");
 
   const connectRobinhood = () => {
     if (rhAuthed) {
@@ -141,6 +143,23 @@ export function BrokerAccountsCard() {
       toast.push("pos", "Connection removed", `${account.label || brokerName(account.broker)} was disconnected from this app. Nothing changed at the broker.`);
     } catch (error) {
       toast.push("neg", "Could not disconnect", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const connectTest = async () => {
+    setBusy("test");
+    try {
+      const result = await connectTestAccount();
+      await refresh();
+      toast.push(
+        "pos",
+        result.label ?? "Test Account - Local Mock Paper Account added",
+        "It stays inactive until you make it active. It uses local simulated fills and cannot reach real money."
+      );
+    } catch (error) {
+      toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
@@ -173,6 +192,19 @@ export function BrokerAccountsCard() {
           >
             Connect Alpaca
           </Btn>
+          <Btn
+            size="sm"
+            variant="outline"
+            disabled={busy !== null || hasTestAccount}
+            onClick={() => void connectTest()}
+            title={
+              hasTestAccount
+                ? "A Test Account - Local Mock Paper Account already exists. It is only used if you make it active."
+                : "Add a local mock paper account for simulated learning trades. It is not selected automatically and cannot reach real money."
+            }
+          >
+            {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
+          </Btn>
         </div>
       }
     >
@@ -203,6 +235,11 @@ export function BrokerAccountsCard() {
                     <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
                       {account.label || brokerName(account.broker)}
                     </span>
+                    {account.broker === "test" && (
+                      <Chip tone="paper" title="Local mock paper account: simulated fills only, no broker login, no real money.">
+                        local mock
+                      </Chip>
+                    )}
                     <Chip tone={r.tone} title={r.clarification}>
                       {r.word} · {r.phrase}
                     </Chip>
@@ -274,10 +311,12 @@ export function BrokerAccountsCard() {
                   className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
                   title="Broker, environment, account tail, tax treatment, and what the broker last said this account may trade."
                 >
-                  {brokerName(account.broker)} · {account.environment}
+                  {account.broker === "test" ? "Local Mock Paper Account" : `${brokerName(account.broker)} · ${account.environment}`}
                   {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
                   {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-                  {caps
+                  {account.broker === "test"
+                    ? " — simulated fills for learning; excluded from real-account wash-sale contribution"
+                    : caps
                     ? ` — broker allows: stocks ${caps.equityTrading ? "yes" : "no"} · shorting ${caps.shortSelling ? "yes" : "no"} · options ${caps.optionsTrading ? `level ${caps.optionsLevel ?? "?"}` : "no"} · margin ${caps.marginEnabled ? "yes" : "no"}`
                     : " — capabilities not confirmed by the broker yet: everything reads as off"}
                 </p>

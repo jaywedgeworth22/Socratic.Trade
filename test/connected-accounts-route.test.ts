@@ -57,4 +57,32 @@ describe("connected accounts route", () => {
       baseUrl: "https://api.alpaca.markets"
     });
   });
+
+  it("creates an explicit inactive local mock Test Account", async () => {
+    const { POST } = await import("../app/api/connected-accounts/route");
+    const { getActiveConnectedAccount, listConnectedAccounts } = await import("../src/lib/db");
+
+    const response = await POST(new Request("http://localhost/api/connected-accounts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ broker: "test" })
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      accountNumber: "TEST",
+      label: "Test Account - Local Mock Paper Account"
+    });
+    expect(getActiveConnectedAccount()).toBeUndefined();
+    expect(listConnectedAccounts()).toEqual([
+      expect.objectContaining({
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Test Account - Local Mock Paper Account",
+        isActive: false
+      })
+    ]);
+  });
 });

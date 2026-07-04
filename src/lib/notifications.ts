@@ -130,6 +130,17 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
       return String(payload.reason ?? input.title);
+    case "budget_alert": {
+      const provider = payload.provider ? String(payload.provider) : "provider";
+      const operation = payload.operation ? String(payload.operation) : "usage check";
+      const limitName = payload.limitName ? String(payload.limitName) : "usage limit";
+      const unit = payload.unit ? ` ${String(payload.unit)}` : "";
+      const used = Number.isFinite(Number(payload.used)) ? Number(payload.used).toLocaleString("en-US") : undefined;
+      const limit = Number.isFinite(Number(payload.limit)) ? Number(payload.limit).toLocaleString("en-US") : undefined;
+      const recommendation = payload.recommendation ? `\nAction: ${String(payload.recommendation)}` : "";
+      const usage = used || limit ? `\nUsage: ${used ?? "unknown"}${unit}${limit ? ` of ${limit}${unit}` : ""}` : "";
+      return `${provider} hit ${limitName} during ${operation}.${usage}${recommendation}`;
+    }
     default:
       return input.title;
   }
@@ -275,6 +286,27 @@ function formatDiscordPayload(input: {
         if (payload?.ageMinutes !== undefined) {
           fields.push({ name: "Age", value: `${payload.ageMinutes} min`, inline: true });
         }
+      }
+      break;
+    }
+    case "budget_alert": {
+      color = 15105570; // Orange
+      description = payload?.recommendation ?? "A provider usage cap, quota, or budget threshold was reached.";
+      fields.push(
+        { name: "Provider", value: String(payload?.provider ?? "Unknown"), inline: true },
+        { name: "Limit", value: String(payload?.limitName ?? "Usage limit"), inline: true },
+        { name: "Operation", value: String(payload?.operation ?? "Unknown"), inline: true }
+      );
+      if (payload?.used !== undefined || payload?.limit !== undefined) {
+        const unit = payload?.unit ? ` ${String(payload.unit)}` : "";
+        fields.push({
+          name: "Usage",
+          value: `${payload?.used ?? "unknown"}${unit}${payload?.limit !== undefined ? ` / ${payload.limit}${unit}` : ""}`,
+          inline: true
+        });
+      }
+      if (payload?.skipped !== undefined) {
+        fields.push({ name: "Skipped", value: String(payload.skipped), inline: true });
       }
       break;
     }

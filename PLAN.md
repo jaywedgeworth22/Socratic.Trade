@@ -44,6 +44,16 @@ filling the missing pieces.
 > Pinecone-hosted `llama-text-embed-v2` / `multilingual-e5-large` should be benchmarked before any
 > production migration.
 
+> **2026-07-04 - Test Account + usage-limit email alerts (Codex).**
+> Branch `codex/restore-test-account-option` restores an explicit local mock paper account option
+> labeled `Test Account - Local Mock Paper Account`. It is addable for simulation/learning trades but
+> is never default-created or default-selected. The same branch adds a shared usage-limit alert path:
+> Pinecone daily Write Unit fuse trips, RAG ingest text caps, provider rate/quota/billing failures,
+> and API Usage Monitor provider budget warnings now produce `budget_alert` notifications and try
+> email-capable delivery. Treat the 50k/day Pinecone WU fuse as a runaway-write guard: normal
+> incremental single-trader use should not hit it; if it does, inspect deduping/chunking/cadence
+> before raising the cap.
+
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
 > Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
 > adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled

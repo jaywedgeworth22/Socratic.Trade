@@ -1,0 +1,146 @@
+import { audit, getInternalSetting, getNotifyPrefs, getPolicy, setInternalSetting } from "./db";
+import { sendNotification } from "./notifications";
+import { loadNotifyConfig, notify } from "./notify";
+import type { NotifyPrefs, TradingPolicy } from "./types";
+
+export interface UsageLimitAlertInput {
+  userId?: string;
+  provider: string;
+  operation: string;
+  limitName: string;
+  status?: "warning" | "exceeded" | "rate_limited" | "billing" | "quota";
+  used?: number;
+  limit?: number | null;
+  attempted?: number;
+  skipped?: number;
+  unit?: string;
+  recommendation?: string;
+  payload?: Record<string, unknown>;
+}
+
+const ALERT_KEY_PREFIX = "usageLimitAlert:lastSent";
+const DEFAULT_ALERT_COOLDOWN_MS = 6 * 60 * 60_000;
+
+function numericEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cooldownMs(): number {
+  return numericEnv("USAGE_LIMIT_ALERT_COOLDOWN_MS", DEFAULT_ALERT_COOLDOWN_MS);
+}
+
+function normalizedProvider(provider: string): string {
+  return provider.trim().toLowerCase().replace(/\s+/g, "-") || "unknown";
+}
+
+function shouldSend(input: Required<Pick<UsageLimitAlertInput, "userId" | "provider" | "operation" | "limitName">>): boolean {
+  const key = `${ALERT_KEY_PREFIX}:${input.userId}:${normalizedProvider(input.provider)}:${input.operation}:${input.limitName}`;
+  const last = getInternalSetting<string>(key);
+  if (last && Date.now() - Date.parse(last) < cooldownMs()) return false;
+  setInternalSetting(key, new Date().toISOString());
+  return true;
+}
+
+function forcedBudgetAlertPolicy(policy: TradingPolicy): TradingPolicy {
+  return {
+    ...policy,
+    notificationSettings: {
+      ...policy.notificationSettings,
+      enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "budget_alert"]))
+    }
+  };
+}
+
+function operatorAlertEmail(): string | undefined {
+  return (
+    process.env.USAGE_LIMIT_ALERT_EMAIL?.trim() ||
+    process.env.ADMIN_ALERT_EMAIL?.trim() ||
+    process.env.PRIMARY_USER_EMAIL?.trim() ||
+    undefined
+  );
+}
+
+function formatNumber(value: number | undefined | null): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  return Math.abs(value) >= 1000 ? value.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(value);
+}
+
+function bodyFor(input: UsageLimitAlertInput): string {
+  const parts = [
+    `${input.provider} limit hit during ${input.operation}.`,
+    `Limit: ${input.limitName}.`
+  ];
+  const used = formatNumber(input.used);
+  const limit = formatNumber(input.limit);
+  const unit = input.unit ? ` ${input.unit}` : "";
+  if (used || limit) parts.push(`Usage: ${used ?? "unknown"}${unit}${limit ? ` of ${limit}${unit}` : ""}.`);
+  if (input.attempted !== undefined) parts.push(`Attempted: ${formatNumber(input.attempted)}${unit}.`);
+  if (input.skipped !== undefined) parts.push(`Skipped: ${formatNumber(input.skipped)} item${input.skipped === 1 ? "" : "s"}.`);
+  if (input.recommendation) parts.push(`Action: ${input.recommendation}`);
+  return parts.join("\n");
+}
+
+async function notifyOperatorEmailFallback(userId: string, title: string, body: string, data: unknown): Promise<void> {
+  const prefs = getNotifyPrefs(userId);
+  if (prefs.channels.includes("email") && prefs.email.trim()) return;
+
+  const fallbackEmail = operatorAlertEmail();
+  if (!fallbackEmail) return;
+  const config = loadNotifyConfig();
+  if (!config.email.resendKey || !config.email.from) return;
+
+  const forcedPrefs: NotifyPrefs = {
+    ...prefs,
+    channels: ["email"],
+    email: fallbackEmail,
+    updatedAt: prefs.updatedAt
+  };
+  await notify(userId, { title, body, kind: "budget_alert", data }, { config, prefs: forcedPrefs });
+}
+
+/**
+ * One path for usage/quota/cap notifications. It records an in-app budget_alert,
+ * attempts the user's configured channels, and falls back to an operator email
+ * target when email delivery is configured but the user has not opted into email.
+ */
+export async function alertUsageLimitHit(input: UsageLimitAlertInput): Promise<void> {
+  const userId = input.userId ?? "local";
+  try {
+    const sendKey = {
+      userId,
+      provider: input.provider,
+      operation: input.operation,
+      limitName: input.limitName
+    };
+    if (!shouldSend(sendKey)) return;
+
+    const status = input.status ?? "exceeded";
+    const title =
+      status === "warning"
+        ? `Usage warning: ${input.provider} ${input.limitName}`
+        : `Usage limit hit: ${input.provider} ${input.limitName}`;
+    const payload = {
+      provider: input.provider,
+      operation: input.operation,
+      limitName: input.limitName,
+      status,
+      used: input.used,
+      limit: input.limit,
+      attempted: input.attempted,
+      skipped: input.skipped,
+      unit: input.unit,
+      recommendation: input.recommendation,
+      ...(input.payload ?? {})
+    };
+    const body = bodyFor(input);
+    audit("usage_limit_alert", payload, userId);
+    await sendNotification(
+      { type: "budget_alert", title, payload },
+      { userId, policy: forcedBudgetAlertPolicy(getPolicy(userId)) }
+    );
+    await notifyOperatorEmailFallback(userId, title, body, payload);
+  } catch {
+    // Usage alerts must never block trading, ingestion, or provider fallback.
+  }
+}

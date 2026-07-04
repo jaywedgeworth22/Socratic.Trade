@@ -23,6 +23,7 @@ import { audit } from "./db";
 import type { TradingPolicy } from "./types";
 import { resolveOpenAiModel } from "./llm-request";
 import { usageMonitorBaseUrl, usageMonitorToken, usageMonitorEnabled } from "./usage-monitor-push";
+import { alertUsageLimitHit } from "./usage-limit-alerts";
 
 // ── Contract (subset of the monitor's GET /api/budget-status response) ──────────
 
@@ -222,24 +223,28 @@ export async function checkBudgetAndAlert(
     for (const p of status.providers) {
       if (p.status !== "exceeded" && p.status !== "warning") continue;
       if (!shouldAlert(userId, p.name, p.status)) continue;
-      const title =
-        p.status === "exceeded" ? `Budget exceeded: ${p.name}` : `Budget warning: ${p.name}`;
-      await sendNotification(
-        {
-          type: "budget_alert",
-          title,
-          payload: {
-            provider: p.name,
-            status: p.status,
-            spentUsd: p.spentUsd,
-            monthlyBudgetUsd: p.monthlyBudgetUsd,
-            remainingUsd: p.remainingUsd,
-            percentUsed: p.percentUsed,
-            month: status.month,
-          },
-        },
-        { policy, userId }
-      );
+      await alertUsageLimitHit({
+        userId,
+        provider: p.name,
+        operation: "usage-monitor.budget-status",
+        limitName: "monthly usage budget",
+        status: p.status === "exceeded" ? "exceeded" : "warning",
+        used: p.spentUsd,
+        limit: p.monthlyBudgetUsd,
+        unit: "USD",
+        recommendation:
+          p.status === "exceeded"
+            ? "If usage is intentional and useful, raise the provider budget. If not, inspect repeated calls, retries, model selection, and batching."
+            : "Watch trend and decide whether to raise the budget or reduce usage before the provider blocks useful work.",
+        payload: {
+          spentUsd: p.spentUsd,
+          monthlyBudgetUsd: p.monthlyBudgetUsd,
+          remainingUsd: p.remainingUsd,
+          percentUsed: p.percentUsed,
+          month: status.month,
+          policyConnectedAccountId: policy.connectedAccountId
+        }
+      });
     }
   } catch {
     /* alerts are best-effort — never break the caller */

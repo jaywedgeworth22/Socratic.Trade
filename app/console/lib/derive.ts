@@ -22,9 +22,9 @@ export interface RealityInfo {
   mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
+  word: "NO ACCOUNT" | "TEST ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "no account connected" | "NOT real money" | "connected account";
+  phrase: "no account connected" | "Local Mock Paper Account" | "NOT real money" | "connected account";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -75,6 +75,15 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
 /** Reality of a specific account ROW (switcher, connections list), derived from the
  *  account's own `environment` — an account is an account, whatever its broker. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
+  if (account.broker === "test") {
+    return {
+      mode: "broker/paper",
+      tone: "paper",
+      word: "TEST ACCOUNT",
+      phrase: "Local Mock Paper Account",
+      clarification: "Local simulated fills for learning and testing. It is not a broker account and cannot reach real money."
+    };
+  }
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
 

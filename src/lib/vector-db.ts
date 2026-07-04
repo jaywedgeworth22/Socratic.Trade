@@ -14,6 +14,7 @@ import { getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPin
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
+import { alertUsageLimitHit } from "./usage-limit-alerts";
 
 const LAST_INGEST_KEY = "vectorStore:lastIngest";
 const RAG_CONNECTION_ALERT_PREFIX = "vectorStore:connectionAlert";
@@ -337,6 +338,13 @@ function ragErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function ragLimitStatus(message: string): "rate_limited" | "billing" | "quota" | undefined {
+  if (/\b429\b|rate limit|too many requests|RPM|TPM/i.test(message)) return "rate_limited";
+  if (/billing|payment|invoice|past due|upgrade|plan/i.test(message)) return "billing";
+  if (/quota|write units?|read units?|usage limit|capacity|exceeded|paused/i.test(message)) return "quota";
+  return undefined;
+}
+
 function markRagSentryCaptured(error: unknown): void {
   if (!error || (typeof error !== "object" && typeof error !== "function")) return;
   try {
@@ -401,6 +409,20 @@ async function alertRagConnectionFailure(
     });
     await sendNotification({ type: "provider_degraded", title, payload }, { userId: targetUserId }).catch(() => {});
     await notify(targetUserId, { title, body, kind: "provider_degraded", data: payload }).catch(() => {});
+    const limitStatus = ragLimitStatus(message);
+    if (limitStatus) {
+      await alertUsageLimitHit({
+        userId: targetUserId,
+        provider: title.replace(" connection failed", ""),
+        operation,
+        limitName: limitStatus === "rate_limited" ? "provider rate limit" : limitStatus === "billing" ? "provider billing limit" : "provider quota",
+        status: limitStatus,
+        recommendation:
+          limitStatus === "rate_limited"
+            ? "Either slow the caller, batch requests more efficiently, or raise the provider rate limit if the traffic is intentional."
+            : "Check whether this is expected growth. If usage is useful, raise the cap; if not, inspect batching, deduping, and retry behavior before paying for more."
+      });
+    }
   } catch {
     // Alerts must not affect trading/RAG control flow.
   }
@@ -925,6 +947,20 @@ export async function storeContexts(
       limitPer24h: budget.limit
     };
     audit("vector_ingest_budget", budgetPayload, userId);
+    void alertUsageLimitHit({
+      userId,
+      provider: "Voyage",
+      operation: "embed-budget",
+      limitName: "RAG ingest text daily cap",
+      status: budget.allowed === 0 ? "exceeded" : "warning",
+      used: budget.used,
+      limit: budget.limit,
+      attempted: documentsToStore.length,
+      skipped: budgetSkipped,
+      unit: "texts",
+      recommendation:
+        "If this happened during a deliberate backfill, raise RAG_INGEST_MAX_TEXTS_PER_DAY temporarily. If it happened during normal use, inspect deduping and ingestion cadence first."
+    });
     void captureRagSentryMessage("warning", "RAG ingest text budget reached", {
       provider: "voyage",
       operation: "embed-budget",
@@ -963,6 +999,20 @@ export async function storeContexts(
       limitPer24h: writeBudget.limit
     };
     audit("vector_write_unit_budget", budgetPayload, userId);
+    void alertUsageLimitHit({
+      userId,
+      provider: "Pinecone",
+      operation: "upsert-budget",
+      limitName: "Write Unit daily fuse",
+      status: writeBudget.documents.length === 0 ? "exceeded" : "warning",
+      used: writeBudget.used,
+      limit: writeBudget.limit,
+      attempted: writeBudget.requested,
+      skipped: writeUnitBudgetSkipped,
+      unit: "estimated WUs",
+      recommendation:
+        "50k/day should be enough for normal incremental single-trader use. If this fires outside a planned backfill, inspect chunking, deduping, and repeated agent writes before raising the cap."
+    });
     void captureRagSentryMessage("warning", "Pinecone write unit budget reached", {
       provider: "pinecone",
       operation: "upsert-budget",
