@@ -5268,8 +5268,8 @@ function SettingsContent({
                 <p className="mt-0.5 text-xs text-faint">Hard-halt autonomous trading when breached, until you re-arm (default). Blank = off.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} hint="If the account falls this far from its equity high-water mark, the engine hard-halts autonomous trading (until you manually re-arm) and fires a kill-switch alert. Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
-                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} hint="If realized plus open daily loss reaches this dollar amount, the engine hard-halts autonomous trading for the account (until you manually re-arm). Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
+                <OptionalNumberField label="Max drawdown %" value={policy.riskRules.maxDrawdownPct} placeholder="off" step={0.5} hint="If the account falls this far from its equity high-water mark, the engine logs a receipt and surfaces the drawdown to the agent, which decides how to react (default: advisory, no auto-halt). Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDrawdownPct: v } })} />
+                <OptionalNumberField label="Max daily loss ($)" value={policy.riskRules.maxDailyLossNotional} placeholder="off" step={50} hint="If realized plus open daily loss reaches this dollar amount, the engine logs a receipt and tells the agent, which decides (default: advisory, no auto-halt). Blank disables this breaker." onCommit={(v) => updatePolicy({ riskRules: { ...policy.riskRules, maxDailyLossNotional: v } })} />
               </div>
             </div>
 

@@ -8,8 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Drawdown breaker → ADVISORY default (owner correction; Monet, cloud)
+Branch `claude/drawdown-advisory-rescope` (off `origin/main`). Owner reassigned this lane to Monet
+(swap: Fable → memory/RAG; Monet → risk engine — coordinated on Slack `#claude-monet-sync`). Reverts
+the mistaken hard-halt default from #343 to the owner's actual philosophy: guardrails are ADVISORY
+("nothing is hard except which account to work in; agent decides, logs everything"). `drawdownBreakerAction`
+is now `"advisory" | "close_only" | "halt"`, **default `"advisory"`**: on a drawdown/daily-loss breach the
+breaker writes a receipt and threads a `drawdownAdvisory` block into the strategist's `userContent` (agent
+decides how to react) — it does NOT change `systemState`. `close_only`/`halt` remain as explicit owner
+opt-ins. Files: `types.ts`, `strategy.ts`, `api/policy/route.ts` (validator), guardrails/dashboard copy,
+drawdown tests. Verified: tsc clean · lint 0 errors · **2375 tests / 245 files** · build green.
+See `docs/rollouts/2026-07-04-drawdown-advisory-rescope.md`. Follow-up: thread the advisory into the Bear
+context too; broader per-gate hard-block sweep goes to the owner as questions first (not bundled).
+
 ## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
-Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
+Branch `claude/expert-design-review` (off `origin/main`, merged as #356). An 8-expert agent panel (ML/learning,
 RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
 synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
 across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,
