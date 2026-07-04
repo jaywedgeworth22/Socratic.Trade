@@ -21,7 +21,7 @@ in place and note the correction.
   pm2 `trading`, release branch). Cloud/agent sessions cannot perform or verify this — only move a
   row here when the owner (or a release runner) confirms the production deploy actually happened.
 
-_As of 2026-07-03. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
+_As of 2026-07-04. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
 
 ---
 
@@ -48,6 +48,10 @@ to `socratictrade.com`, record the release commit + date here._
   provider-specific model reasoning controls, OAuth host canonicalization,
   `/old`, ticker drawer coverage, and user/admin LLM usage visibility. Production
   health 200 and Google/GitHub OAuth redirect URIs verified on the Socratic domain.
+- **2026-07-03** — `trading-live` published at `afbe1c87` (PR #352) on
+  `socratictrade.com`. Includes RAG provider/quota Sentry visibility, Pinecone-hosted
+  embedding-model documentation, Infisical Socratic.Trade slug documentation, and
+  production health 200 after deployment.
 
 ---
 
@@ -138,18 +142,28 @@ to `socratictrade.com`, record the release commit + date here._
   made blank AI Review inherit Red Team then Green Team, refreshed current curated provider model
   options, added DeepSeek V4 thinking controls, and made console text boxes use consistent readable
   fonts with user-selectable examples.
+- **#351** — Console actions/evidence/live-account polish + RAG quota safeguards
+  (`codex/console-actions-evidence-live`): action history/blocker copy, stopped cadence display,
+  raw-vs-benchmark return tooltips, reduced live-account warning copy, broker roadmap, RAG usage
+  labeling, Pinecone estimated Write Unit fuse, and earnings/RAG design docs.
+- **#352** — RAG Sentry visibility + Pinecone hosted-model review
+  (`codex/rag-sentry-visibility`): Sentry warning/error events for RAG provider failures and
+  budget trips, Pinecone-hosted NVIDIA/MSFT embedding options documented as benchmark candidates,
+  and Infisical project naming recorded as `Socratic.Trade` / `socratic-trade`.
 
 ---
 
 ## 🔨 In Progress
 
-- **RAG Sentry visibility + Pinecone hosted-model review** (Codex, local,
-  branch `codex/rag-sentry-visibility`) — follow-up after PR #351 merged. Adds Sentry warning/error
-  events for RAG provider failures, missing keys, Pinecone metric checks, ingest/WU budget trips,
-  malformed embeddings, retrieval degradations, and unexpected RAG catch-block failures. Also documents
-  Pinecone-hosted NVIDIA/MSFT embedding options as benchmark candidates, not a hot production swap.
-  Owner has provided a fresh Pinecone account key; do not commit/log it, and only connect it after this
-  fuse/visibility work is landed. Full local gate green; PR pending.
+- **Test Account local mock paper option restore** (Codex,
+  `/Users/jay/apps/trading-codex`, branch `codex/restore-test-account-option`) — restores an
+  explicit addable `Test Account - Local Mock Paper Account` for learning/simulation trades. It is
+  never created or selected by default; the user must add it and make it active explicitly.
+- **Usage/quota cap email alerts** (Codex,
+  `/Users/jay/apps/trading-codex`, branch `codex/restore-test-account-option`) — routes Pinecone
+  Write Unit daily-fuse trips, RAG ingest daily-cap trips, provider rate/quota/billing failures, and
+  API Usage Monitor budget warnings through `budget_alert` notifications with email-capable operator
+  fallback.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.

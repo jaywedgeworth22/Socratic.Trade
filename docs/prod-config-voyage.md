@@ -17,6 +17,15 @@ an owner decision because they cost money and/or require a reindex.
   `VECTOR_STORECONTEXTS_DEDUP=on`, `RAG_PINECONE_WRITE_BUDGET_ENABLED=on`, and
   `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY=50000`. The Pinecone WU budget is checked before Voyage
   embedding, so an exhausted vector-store budget does not also burn embedding tokens.
+  The 50k/day WU value is a fuse, not a throughput target: normal incremental use for one trader
+  with a few accounts should not hit it when deduping and per-run caps are working. If it fires
+  outside a deliberate backfill, inspect repeated writes, chunking, dedup, and agent-ingest cadence
+  before paying for a higher cap.
+- **Limit alerts:** Pinecone WU fuse trips, RAG ingest daily caps, provider rate/quota/billing
+  failures, and API Usage Monitor budget warnings produce `budget_alert` notifications. Email is
+  attempted through the user's notification preferences; if no user email channel is set and Resend
+  is configured, the app falls back to `USAGE_LIMIT_ALERT_EMAIL`, then `ADMIN_ALERT_EMAIL`, then
+  `PRIMARY_USER_EMAIL`.
 - **Point-in-time guard:** 8-K vectors now carry `acceptance_datetime`, so `retrieveContextDetailed({asOf})`
   excludes look-ahead filings (no backtest leakage).
 - **Query filters available:** `docType` / `section` / `source` metadata filters + `minScore` floor

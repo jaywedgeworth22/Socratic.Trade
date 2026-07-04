@@ -571,6 +571,8 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
+const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+
 // Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
 // TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
 // the unit-test suite to exercise the normal broker execution path without hitting real Alpaca/
@@ -586,8 +588,8 @@ export function ensureTestAccount(userId: string = "local"): void {
     broker: "test",
     environment: "paper",
     accountNumber: "TEST",
-    label: "Test",
-    isActive: accounts.every((a) => !a.isActive)
+    label: TEST_ACCOUNT_LABEL,
+    isActive: false
   });
 }
 

@@ -49,6 +49,7 @@ export function deriveExecutionState(policy: ExecutionPolicy, activeAccount?: Ex
   }
 
   if (activeAccount.environment === "paper") {
+    const isTestAccount = activeAccount.broker === "test";
     return {
       mode: "broker/paper",
       label: "Paper",
@@ -59,7 +60,9 @@ export function deriveExecutionState(policy: ExecutionPolicy, activeAccount?: Ex
       accountLabel: activeAccount.label,
       submitsBrokerOrders: true,
       clarification:
-        `${brokerLabel(activeAccount.broker)} Paper is a broker-hosted sandbox account; real capital is not at risk.`
+        isTestAccount
+          ? "Test Account - Local Mock Paper Account uses local simulated fills. It is not a broker account and cannot reach real money."
+          : `${brokerLabel(activeAccount.broker)} Paper is a broker-hosted sandbox account; real capital is not at risk.`
     };
   }
 

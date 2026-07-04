@@ -59,7 +59,7 @@ function brokerName(broker: string | undefined): string {
     case "robinhood":
       return "Robinhood";
     case "test":
-      return "Simulator";
+      return "Test Account";
     default:
       return broker ?? "";
   }
@@ -140,6 +140,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
+                    {account.broker === "test" && <Chip tone="paper">local mock</Chip>}
                     {r.tone !== "live" && (
                       <Chip tone={r.tone}>
                         {r.word} · {r.phrase}
@@ -154,7 +155,9 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                   )}
                 </div>
                 <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  {brokerName(account.broker)} · {r.tone === "paper" ? "paper account, not real money" : "brokerage account"}
+                  {account.broker === "test"
+                    ? "Local Mock Paper Account - simulated fills, not real money"
+                    : `${brokerName(account.broker)} · ${r.tone === "paper" ? "paper account, not real money" : "brokerage account"}`}
                   {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
                   {r.tone !== "live" ? ` — ${r.clarification}` : ""}
                 </p>

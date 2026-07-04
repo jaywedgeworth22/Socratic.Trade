@@ -23,6 +23,19 @@ existing warning backlog), `npx tsc --noEmit`, `npm test` (244 files / 2373 test
 `npm run build`, `git diff --check`, `bash -n scripts/infisical-prod-cutover.sh`, and
 `pm2 restart trading-codex --update-env`.
 
+## 2026-07-04 - Test account restore + usage cap email alerts (Codex)
+Branch `codex/restore-test-account-option` in `/Users/jay/apps/trading-codex`.
+Restores an explicit addable `Test Account - Local Mock Paper Account` through the
+connected-account flow while keeping it inactive unless the user explicitly selects it.
+Also adds a shared usage-limit alert helper: Pinecone WU daily-fuse trips, Voyage/RAG
+ingest daily-cap trips, provider rate/quota/billing failures, and API Usage Monitor budget
+warnings now record `budget_alert` events and attempt email-capable notification delivery
+with an operator-email fallback (`USAGE_LIMIT_ALERT_EMAIL`, then `ADMIN_ALERT_EMAIL`, then
+`PRIMARY_USER_EMAIL`) when Resend is configured. Verification is green: `npm run lint`
+(0 errors, existing warning backlog), `npx tsc --noEmit`, `npm test` (245 files /
+2375 tests), `npm run build`, `git diff --check`, and `pm2 restart trading-codex
+--update-env`.
+
 ## 2026-07-03 - Console polish + RAG quota/usage safeguards (Codex)
 Branch `codex/console-actions-evidence-live` in `/Users/jay/apps/trading-codex`; merged as PR #351.
 This combined the owner-requested console polish with RAG safeguards:

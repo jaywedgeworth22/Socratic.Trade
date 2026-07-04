@@ -6,6 +6,9 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
+const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+const TEST_ACCOUNT_NUMBER = "TEST";
+
 function isAlpacaPaperCredential(input: { accountNumber?: unknown; apiKey?: unknown }): boolean {
   const accountNumber = typeof input.accountNumber === "string" ? input.accountNumber.trim().toUpperCase() : "";
   const apiKey = typeof input.apiKey === "string" ? input.apiKey.trim().toUpperCase() : "";
@@ -100,18 +103,25 @@ export async function POST(req: Request) {
 
     const defaultLabel =
       broker === "test"
-        ? "Test"
+        ? TEST_ACCOUNT_LABEL
         : broker === "alpaca-mcp"
           ? `Alpaca MCP ${environment === "paper" ? "Paper" : "Brokerage"}`
           : `Alpaca ${environment === "paper" ? "Paper" : "Brokerage"}`;
+    const existingTestAccount = broker === "test" ? listConnectedAccounts(userId).find((a) => a.broker === "test") : undefined;
+    const accountNumber =
+      broker === "test"
+        ? TEST_ACCOUNT_NUMBER
+        : typeof body.accountNumber === "string"
+          ? body.accountNumber.trim() || undefined
+          : undefined;
 
     upsertConnectedAccount({
-      id: body.id || crypto.randomUUID(),
+      id: existingTestAccount?.id ?? body.id ?? crypto.randomUUID(),
       userId,
       broker,
       environment,
-      accountNumber: typeof body.accountNumber === "string" ? body.accountNumber.trim() || undefined : undefined,
-      label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel,
+      accountNumber,
+      label: typeof body.label === "string" ? body.label.trim() || existingTestAccount?.label || defaultLabel : existingTestAccount?.label || defaultLabel,
       apiKey: apiKey || undefined,
       apiSecret: typeof body.apiSecret === "string" ? body.apiSecret.trim() || undefined : undefined,
       baseUrl: typeof body.baseUrl === "string" && body.baseUrl.trim()
@@ -121,11 +131,11 @@ export async function POST(req: Request) {
             ? "https://paper-api.alpaca.markets/v2"
             : "https://api.alpaca.markets"
           : undefined,
-      taxationType,
-      isActive: body.isActive ?? false
+      taxationType: taxationType ?? existingTestAccount?.taxationType,
+      isActive: body.isActive ?? existingTestAccount?.isActive ?? false
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, accountNumber, label: typeof body.label === "string" ? body.label.trim() || defaultLabel : defaultLabel });
   } catch (err) {
     return new NextResponse(err instanceof Error ? err.message : "Error", { status: 400 });
   }
