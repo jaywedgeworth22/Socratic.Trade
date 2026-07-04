@@ -7,7 +7,7 @@
 #   Claude      → ~/apps/trading-claude       (branch agent/claude)      http://localhost:4100
 #   Codex       → ~/apps/trading-codex        (branch agent/codex)       http://localhost:4101
 #   Antigravity → ~/apps/trading-antigravity  (branch agent/antigravity) http://localhost:4102
-#   Monet       → ~/apps/trading-monet        (branch agent/monet)       http://localhost:4103
+#   Monet       → ~/apps/trading-monet        (branch agent/monet)       http://localhost:4104
 #
 # This worktree (~/Code/Agentic Trading, branch `main`) is the INTEGRATION
 # checkout — merge agent branches here and review them at http://localhost:4001
@@ -22,7 +22,8 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 APPS="${TRADING_APPS_DIR:-$HOME/apps}"
 NAMES=(claude codex antigravity monet)
-PORTS=(4100 4101 4102 4103)
+# 4103 is taken by the cursor.jays.services tunnel ingress, so Monet uses 4104.
+PORTS=(4100 4101 4102 4104)
 
 git -C "$REPO" fetch origin --quiet || true
 

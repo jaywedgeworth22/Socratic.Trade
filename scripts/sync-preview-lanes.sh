@@ -175,6 +175,7 @@ sync_lane "integration beta" "$INTEGRATION_DIR" "main" "trading-main" "4001" "ff
 sync_lane "Claude preview" "$APPS_DIR/trading-claude" "agent/claude,agent/claude-*,claude/*" "trading-claude" "4100" "merge" || failures=$((failures + 1))
 sync_lane "Codex preview" "$APPS_DIR/trading-codex" "agent/codex,agent/codex-*,codex/*" "trading-codex" "4101" "merge" || failures=$((failures + 1))
 sync_lane "Antigravity preview" "$APPS_DIR/trading-antigravity" "agent/antigravity,agent/antigravity-*,antigravity/*" "trading-antigravity" "4102" "merge" || failures=$((failures + 1))
+sync_lane "Monet preview" "$APPS_DIR/trading-monet" "agent/monet,agent/monet-*,monet/*" "trading-monet" "4104" "merge" || failures=$((failures + 1))
 
 if [[ "$failures" -gt 0 ]]; then
   warn "$failures lane(s) failed verification or rollback"

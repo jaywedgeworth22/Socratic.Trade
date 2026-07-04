@@ -8,15 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-04 — Add the `agent/monet` preview lane (Monet, cloud)
+## 2026-07-04 — Add the `agent/monet` preview lane + Cloudflare (Monet, cloud)
 Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
-lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` gains `monet` +
-port `4103` (appended, no renumbering of 4100-4102); `AGENTS.md` worktree table + launch-dir list
-gain the Monet row (`~/apps/trading-monet`, `agent/monet`, pm2 `trading-monet`,
-`monet.jays.services`). The `agent/monet` branch was created on the remote from `main` (via the
-GitHub API — git-over-HTTP push was 503-ing). Running `setup-agent-previews.sh` on the Mac
-materializes the worktree + PM2 preview; the `monet.jays.services` Cloudflare tunnel is host-local
-and left to the owner. See `docs/rollouts/2026-07-04-agent-monet-preview-lane.md`.
+lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` (+`monet`, port
+**4104**), `scripts/sync-preview-lanes.sh` (Monet lane), `AGENTS.md` worktree table + launch-dir +
+freshness lists, `docs/deployment.md` preview list. **Port 4104, not 4103** — the live tunnel
+already maps `cursor.jays.services -> :4103`, so 4103 was taken. `agent/monet` branch created on the
+remote from `main` (GitHub API; git push was 503-ing).
+**Cloudflare configured live** (tunnel `6b807051…` "Jay's Home", zone `jays.services`): added the
+proxied CNAME `monet.jays.services -> 6b807051….cfargotunnel.com` and the remote-managed tunnel
+ingress rule `monet.jays.services -> http://localhost:4104`, mirroring the other agent lanes. The
+owner handles the one Cloudflare redirect rule (dashboard-only). Running `setup-agent-previews.sh`
+on the Mac materializes the worktree + PM2 preview on 4104.
+See `docs/rollouts/2026-07-04-agent-monet-preview-lane.md`.
 
 ## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
 Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite

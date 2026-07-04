@@ -107,6 +107,7 @@ The sync updates only local preview lanes:
 - `claude.jays.services` / PM2 `trading-claude` / port `4100`
 - `codex.jays.services` / PM2 `trading-codex` / port `4101`
 - `antigravity.jays.services` / PM2 `trading-antigravity` / port `4102`
+- `monet.jays.services` / PM2 `trading-monet` / port `4104` (4103 is the cursor lane)
 
 Production remains owned by the Deploy workflow. Preview sync skips dirty
 worktrees, unexpected branches, and merge conflicts. If a lane advances but
