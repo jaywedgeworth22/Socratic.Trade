@@ -79,6 +79,36 @@ On **cloud**, point the environment's "setup script" field at
 `bash scripts/cloud-setup.sh` (it runs the installer for you), or add
 `bash scripts/setup-slack-sync.sh` to whatever setup script you already use.
 
+### Other repos that do not carry these scripts (self-contained bootstrap)
+
+`scripts/setup-slack-sync.sh` copies a sibling `scripts/slack-sync.sh`, so it
+only works inside this repo. For a **different** repo (e.g. the `congress.trade`
+Cloudflare Worker) that cannot read this one, use the single self-contained file
+**`scripts/agent-sync-bootstrap.sh`** instead - it *embeds* the engine, so it has
+no dependencies. Drop that one file into the other repo and point its cloud setup
+script at (keeping its own deps step):
+
+```bash
+npm ci                               # or that repo's existing setup
+bash scripts/agent-sync-bootstrap.sh # writes the engine + installs the hook
+```
+
+Add the same env secrets there: `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID=C0BEZDJDNKV`,
+optional `AGENT_NAME`.
+
+`agent-sync-bootstrap.sh` is **generated** from `slack-sync.sh` +
+`setup-slack-sync.sh` (it is a bundled copy, not a hand-maintained fork). Refresh
+it after the engine changes with:
+
+```bash
+{ sed -n '1,/^cat > "\$DEST" <<'"'"'SLACK_SYNC_ENGINE_EOF'"'"'$/p' scripts/agent-sync-bootstrap.sh
+  cat scripts/slack-sync.sh
+  echo SLACK_SYNC_ENGINE_EOF
+  echo 'chmod +x "$DEST"'; echo 'echo "==> installed $DEST"'; echo
+  awk '/^HOOK_CMD=/{p=1} p' scripts/setup-slack-sync.sh
+} > /tmp/agent-sync-bootstrap.sh && mv /tmp/agent-sync-bootstrap.sh scripts/agent-sync-bootstrap.sh
+```
+
 ### 3. Invite the bot to the channel + grant scopes
 
 In the Slack app config for the bot, ensure these **Bot Token Scopes**:
