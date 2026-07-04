@@ -7,8 +7,8 @@
  *    scan captured at the last strategy run). Freshness is labeled, never
  *    implied.
  *  - `MarketScan.source` is a `+`-joined list of the providers that actually
- *    contributed this run — displayed as derived from that string (raw string
- *    verbatim in the tooltip), never hardcoded.
+ *    contributed this run — displayed through the shared plain-English source
+ *    formatter, never as backend ids.
  *  - A failed refresh is a non-blocking notice; the last good scan stays up.
  *  - Missing data renders as "—"; P/E's "n/a" means negative/zero earnings. */
 
@@ -228,7 +228,7 @@ function MarketScanTab({
           sources ? (
             <span
               className="max-w-[55%] cursor-default truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-              title={`Every provider that actually contributed data this run (raw attribution string: ${scan.source}).`}
+              title={`Every provider that actually contributed data this run: ${sources}.`}
             >
               Sources: {sources}
             </span>
@@ -238,7 +238,7 @@ function MarketScanTab({
       >
         <p
           className="cursor-default px-4 pb-2 pt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
+          title={`Scanned ${typeof scan.scannedSymbols === "number" ? scan.scannedSymbols : "an unrecorded number of"} symbols; ${typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : "an unrecorded number of"} returned quotes${sources ? ` from ${sources}` : ""}; the top ${scan.topCandidates.length} (cap ${limit}) were enriched and scored${outliers > 0 ? `, including ${outliers} below-cutoff outlier${outliers === 1 ? "" : "s"} kept for notability` : ""}.`}
         >
           {typeof scan.returnedQuotes === "number" ? scan.returnedQuotes : EM_DASH} quotes · {scan.topCandidates.length}/{limit} candidates
           {outliers > 0 ? ` · ${outliers} outlier${outliers === 1 ? "" : "s"}` : ""}

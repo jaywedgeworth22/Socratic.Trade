@@ -13,8 +13,10 @@ an owner decision because they cost money and/or require a reindex.
   over-fetches by cosine recall, then Voyage's cross-encoder reorders by true relevance. Fails safe
   to cosine order on any error. This is the single biggest retrieval-quality lever.
 - **Write guardrails:** RAG ingestion caps are ON by default: `SEC_FILING_RAG_MAX_PER_RUN=1`,
-  `RAG_INGEST_BUDGET_ENABLED=on`, `RAG_INGEST_MAX_TEXTS_PER_DAY=1000`, and
-  `VECTOR_STORECONTEXTS_DEDUP=on`.
+  `RAG_INGEST_BUDGET_ENABLED=on`, `RAG_INGEST_MAX_TEXTS_PER_DAY=1000`,
+  `VECTOR_STORECONTEXTS_DEDUP=on`, `RAG_PINECONE_WRITE_BUDGET_ENABLED=on`, and
+  `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY=50000`. The Pinecone WU budget is checked before Voyage
+  embedding, so an exhausted vector-store budget does not also burn embedding tokens.
 - **Point-in-time guard:** 8-K vectors now carry `acceptance_datetime`, so `retrieveContextDetailed({asOf})`
   excludes look-ahead filings (no backtest leakage).
 - **Query filters available:** `docType` / `section` / `source` metadata filters + `minScore` floor
@@ -69,7 +71,13 @@ not just a summary line) sits mostly idle behind default-off flags/throttles.
   do, deliberately, understanding it turns on the highest-value (and highest-cost) lever above.
 - **Trap 2 — retrieval budget is not an ingest budget.** `RAG_RUN_BUDGET_ENABLED` degrades retrieval
   extras like rerank/hybrid; it does not stop ingestion writes. Use `RAG_INGEST_BUDGET_ENABLED` and
-  `RAG_INGEST_MAX_TEXTS_PER_DAY` for Voyage/Pinecone write volume.
+  `RAG_INGEST_MAX_TEXTS_PER_DAY` for text volume, and `RAG_PINECONE_WRITE_BUDGET_ENABLED` /
+  `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` for Pinecone write-unit volume.
+- **Trap 3 — agents can write filings/memory directly.** Pinecone writes are not limited to the
+  admin RAG pages. The scheduler calls `refreshFilingBodies` for 10-K/10-Q body chunks; `refreshEightK`
+  stores 8-K summaries and, if enabled, full 8-K bodies; `embedDisclosures` can write congress/insider
+  disclosure documents; and Socratic decisions are indexed as private memory. Keep the shared write
+  budgets on before connecting a fresh Pinecone account.
 
 **Env vars to flip (all currently default OFF/free-tier):**
 | Var | Default | Paid-tier value | Effect |
@@ -79,6 +87,8 @@ not just a summary line) sits mostly idle behind default-off flags/throttles.
 | `SEC_FILING_RAG_MAX_PER_RUN` | `1` | raise deliberately | Hard cap on 10-K/10-Q filings processed per scheduler run, including paid mode. |
 | `RAG_INGEST_BUDGET_ENABLED` | `on` | keep `on` | Enables the 24h text-count cap before any Voyage/Pinecone write. |
 | `RAG_INGEST_MAX_TEXTS_PER_DAY` | `1000` | raise deliberately | Max texts embedded/upserted per 24h by the shared RAG ingest path. |
+| `RAG_PINECONE_WRITE_BUDGET_ENABLED` | `on` | keep `on` | Enables the 24h estimated Pinecone Write Unit cap before any Voyage embed call. |
+| `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY` | `50000` | raise deliberately | Default allows normal single-user operation while keeping a 2M-WU Starter account from being exhausted by a write loop. |
 | `VECTOR_STORECONTEXTS_DEDUP` | `on` | keep `on` | Skips unchanged 8-K/disclosure summaries before embedding. |
 | `WEB_SOURCE_SEC8K_FULL_BODY` | `off` | `on` | Ingest the FULL 8-K filing body (not just the 6-line summary) via `storeDocument`/`chunkDocument`. |
 | `WEB_SOURCE_SEC8K_FULL_BODY_LIMIT` | `5` | raise as budget allows | Cap on how many fresh 8-Ks get full-body ingest per refresh cycle. |
@@ -107,6 +117,21 @@ real practical gate — a paid key removes it cheaply relative to the ingestion 
 6. Check the `vector_store` / `vector_ingest_budget` / `sec_filing_ingest` /
    `disclosure_rag_embed` audit rows for `ok:true`, non-zero `indexed`, or explicit budget/failure
    reasons.
+
+## Usage reporting reality
+
+The app's RAG Usage table is an **app-recorded ledger**, not the provider invoice:
+
+- Voyage usage docs point operators to the Voyage/Atlas dashboard for provider-account usage. The app
+  estimates tokens/cost only for calls it made after local metering existed.
+- Pinecone query responses can expose per-request Read Units, and the app records those when available.
+  Pinecone upsert responses do not give a monthly org Write Unit total through the normal app SDK path,
+  so the app records estimated WUs and shows live index inventory as a cross-check.
+- Pinecone org-month quota usage still must be verified in the Pinecone console unless/until a provider
+  billing/usage API becomes available for this plan/key.
+- If provider usage is high and app-recorded usage is low, assume one of: older calls before metering,
+  another process/worktree/index, failed local ledger writes, or provider-side indexing not represented
+  by the local `document_chunks` ledger.
 
 **Test coverage proving the enablement path itself works (fixtures only, no live calls):**
 `test/sec8k-full-body.test.ts` drives `ingestEightKBody`/`ingestEightKBodies` with

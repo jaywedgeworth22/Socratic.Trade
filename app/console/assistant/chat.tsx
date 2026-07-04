@@ -31,14 +31,13 @@ import { DraftTicket } from "./draft-card";
 import { AssistantMarkdown } from "./markdown";
 import {
   CATALOG_MODEL_IDS,
+  CHAT_MODEL_STORAGE_KEY,
   CUSTOM_MODEL_VALUE,
   DEFAULT_CHAT_MODEL,
   MODEL_GROUPS,
   providerDisplayName,
   providerForModel
 } from "./models";
-
-const MODEL_STORAGE_KEY = "console.assistant.model";
 
 interface MsgCitation {
   label: string;
@@ -136,12 +135,12 @@ export function AssistantChat() {
 
   // ── Sticky model choice ────────────────────────────────────────────────────
   useEffect(() => {
-    const saved = window.localStorage.getItem(MODEL_STORAGE_KEY);
+    const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
     if (saved) setModel(saved);
   }, []);
   const pickModel = (m: string) => {
     setModel(m);
-    window.localStorage.setItem(MODEL_STORAGE_KEY, m);
+    window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, m);
   };
 
   // ── Server-persisted transcript ────────────────────────────────────────────

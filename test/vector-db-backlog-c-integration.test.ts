@@ -67,6 +67,8 @@ function resetEnv() {
   delete process.env.RAG_QUERY_EMBED_CACHE;
   delete process.env.RAG_RUN_BUDGET_ENABLED;
   delete process.env.RAG_RUN_BUDGET_CEILING;
+  delete process.env.RAG_PINECONE_WRITE_BUDGET_ENABLED;
+  delete process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY;
   delete process.env.RAG_APPLY_DEFAULT_FLOORS;
   delete process.env.VECTOR_MIN_SCORE;
   delete process.env.VECTOR_ENABLE_RERANK;
@@ -429,6 +431,29 @@ describe("R14: near-duplicate suppression (dedupeSimilarity) wired into retrieve
     expect(ids).toContain("a");
     expect(ids).not.toContain("a-dup"); // suppressed as a near-duplicate of "a"
     expect(ids).toContain("b"); // back-filled to still reach limit=2
+  });
+});
+
+// ── WU budget: prevent Pinecone write-unit runaway before embedding ─────────
+
+describe("Pinecone write-unit budget", () => {
+  it("skips before Voyage embed when the estimated Pinecone WU budget is exhausted", async () => {
+    process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "1";
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    const result = await storeContexts([
+      { text: "AAPL 8-K details", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-18" } }
+    ]);
+
+    expect(mocks.embed).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(true);
+    expect(result.writeUnitBudgetSkipped).toBe(1);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      "vector_write_unit_budget",
+      expect.objectContaining({ skipped: 1, limitPer24h: 1 }),
+      "local"
+    );
   });
 });
 

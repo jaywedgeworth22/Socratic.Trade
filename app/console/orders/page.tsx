@@ -376,7 +376,7 @@ function OpenOrderTr({
       ? "Start the system first — replacing places a NEW order, which the server refuses while everything is stopped. Cancelling stays available."
       : noAccount
         ? "Market replacement needs a broker-backed Paper or Live account; no account is connected."
-        : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — real money, typed confirmation required" : ""}.`;
+        : `Cancel this stale ${orderTypeLabel(order.type)} order and submit the remaining ${fmtQty(row.remaining)} shares as a market order${live ? " — typed broker confirmation required" : ""}.`;
 
   return (
     <tr className={row.stale ? "bg-[color:var(--con-warn-soft)]" : undefined}>

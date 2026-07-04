@@ -22,9 +22,9 @@ export interface RealityInfo {
   mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "NO ACCOUNT" | "PAPER" | "LIVE";
+  word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "no account connected" | "practice money" | "real money";
+  phrase: "no account connected" | "NOT real money" | "connected account";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -41,16 +41,16 @@ export function realityForMode(mode: ExecutionMode | undefined): Pick<RealityInf
         mode,
         tone: "paper",
         word: "PAPER",
-        phrase: "practice money",
+        phrase: "NOT real money",
         clarification: "Your broker's practice sandbox — real broker endpoints, zero real dollars."
       };
     case "broker/live":
       return {
         mode,
         tone: "live",
-        word: "LIVE",
-        phrase: "real money",
-        clarification: "Orders here can spend your actual cash."
+        word: "BROKERAGE",
+        phrase: "connected account",
+        clarification: "Orders route through this connected broker account when approved or permitted by Autopilot."
       };
     default:
       return {

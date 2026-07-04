@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 - Console polish + RAG quota/usage safeguards (Codex)
+Branch `codex/console-actions-evidence-live` in `/Users/jay/apps/trading-codex`.
+Current local work now combines the owner-requested console polish with RAG safeguards:
+Autonomous Actions blocked reasons/history, stopped cadence display, raw-vs-benchmark
+return tooltips, IRA wash-sale disregard defaults, Evidence/source wording, LLM settings
+usage/coach model affordances, reduced live-account warning copy, broker roadmap cards,
+provider/model naming consistency, Pinecone index inventory visibility, app-recorded RAG
+usage labeling, Pinecone estimated Write Unit budget enforcement before Voyage embedding,
+and docs for the recommended Voyage/Pinecone stack plus earnings-report RAG ingestion.
+Verification is green: `npm run lint` (0 errors, existing warning backlog), `npx tsc --noEmit`,
+`npm test` (244 files / 2372 tests), `npm run build`, `git diff --check`, and Codex preview restart
+(`pm2 restart trading-codex --update-env`). Ready to commit/PR.
+
 ## 2026-07-03 - Socratic admin/RAG/settings parity pass (Codex)
 Branch `codex/live-thesis-portfolio-framing` in `/Users/jay/apps/trading-codex`.
 Current local work covers the broad owner-requested follow-up: Pinecone/RAG

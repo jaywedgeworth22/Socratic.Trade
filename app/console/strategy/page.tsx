@@ -487,7 +487,7 @@ function ReviewDirectionTag({ direction }: { direction: ReviewChange["direction"
 
 /** Flatten the tune proposal's policy/weights patch into labeled from→to rows,
  *  classified LOOSER/TIGHTER via the same guardrail metadata the Guardrails
- *  editor uses — so LIVE loosening costs the same typed word here too. */
+ *  editor uses — so brokerage loosening costs the same typed word here too. */
 function reviewChanges(patch: StrategyTuningPatch, policy: TradingPolicy): ReviewChange[] {
   const rows: ReviewChange[] = [];
 
@@ -747,7 +747,7 @@ function AiReviewPanel({
                     Apply review changes <LiveTag />
                   </>
                 }
-                note="At least one proposed change expands authority on a LIVE (real money) account. Unlocking authority costs a typed word here exactly like it does in Guardrails."
+                note="At least one proposed change expands authority on a brokerage account. Unlocking authority costs a typed word here exactly like it does in Guardrails."
                 onConfirm={() => void apply()}
               />
             ) : (

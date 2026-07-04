@@ -43,7 +43,7 @@
 >
 > 2026-07-03: The Socratic Trade branch (`codex/socratic-trade-autonomy-mockup`)
 > supersedes the cockpit's homepage direction with an Autonomy Desk: live thesis,
-> capital posture, delegated action log, evidence/RAG contribution, dissent, outcome
+> capital posture, delegated action log, evidence contribution, dissent, outcome
 > learning, coaching, and framework-improvement proposals. This is now backed by
 > persisted Socratic decision cases, structured retrieval attribution, framework
 > proposal review actions, coach notes, and explicit autonomous override semantics

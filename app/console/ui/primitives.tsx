@@ -85,12 +85,12 @@ export function Chip({ tone = "muted", className, title, children }: { tone?: Ch
   );
 }
 
-/** Small "LIVE" word tag for approve/commit primary actions on real-money
- *  accounts. The console reserves the full danger (red) treatment for the
- *  reality banner/frame, STOP, and destructive confirms — a primary action on
- *  LIVE carries this word chip instead of turning the whole button red. */
+/** Small brokerage-confirmation tag for actions that still use the server's
+ *  typed confirmation contract. Function name stays stable for existing call
+ *  sites, but the visible label avoids treating normal brokerage accounts as an
+ *  emergency state. */
 export function LiveTag() {
-  return <span className="con-live-tag">LIVE</span>;
+  return <span className="con-live-tag">BROKER</span>;
 }
 
 // ── Status dot ───────────────────────────────────────────────────────────────
@@ -122,10 +122,22 @@ export function Meter({ value, max, className }: { value: number; max?: number; 
 
 // ── Stat (label + big number) ────────────────────────────────────────────────
 
-export function Stat({ label, value, sub, tone }: { label: ReactNode; value: ReactNode; sub?: ReactNode; tone?: "pos" | "neg" | "muted" }) {
+export function Stat({
+  label,
+  value,
+  sub,
+  tone,
+  title
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: "pos" | "neg" | "muted";
+  title?: string;
+}) {
   const color = tone === "pos" ? "var(--con-pos)" : tone === "neg" ? "var(--con-neg)" : undefined;
   return (
-    <div>
+    <div title={title}>
       <div className="con-card-title">{label}</div>
       <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight" style={color ? { color } : undefined}>
         {value}

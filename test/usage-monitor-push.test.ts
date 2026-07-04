@@ -127,17 +127,19 @@ describe("usage-monitor-push", () => {
     expect((vol!.metadata as Record<string, unknown>).failures).toBe(1);
   });
 
-  it("tags Pinecone RAG volume as rows (not tokens) and scopes call-volume by key lane", async () => {
+  it("tags Pinecone RAG volume as credits and scopes call-volume by key lane", async () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
-    push.pushRagUsage({ provider: "pinecone", operation: "query", userId: "local", tokensOut: 5 });
+    push.pushRagUsage({ provider: "pinecone", operation: "query", userId: "local", tokensIn: 7, tokensOut: 5 });
     push.recordProviderCall("finnhub", { ok: true, keySource: "user", userId: "u_abc" });
     push.recordProviderCall("finnhub", { ok: true, keySource: "operator" });
     await push.flushUsageMonitor();
 
     const events = captured[0]!.body.events;
     const pine = events.find((e) => e.provider === "pinecone");
-    expect(pine!.unit).toBe("row");
+    expect(pine!.unit).toBe("credit");
+    expect(pine!.quantity).toBe(7);
+    expect((pine!.metadata as Record<string, unknown>).recordCount).toBe(5);
 
     // Two different credential lanes → two separate finnhub events, not one merged count.
     const finnhub = events.filter((e) => e.provider === "finnhub");

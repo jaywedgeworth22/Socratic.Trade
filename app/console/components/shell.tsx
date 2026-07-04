@@ -1,17 +1,15 @@
 "use client";
 
 /** The console shell: providers + global chrome + navigation. Every screen
- *  renders inside this frame, so money-reality, run state, STOP, Run once,
- *  and freshness are visible everywhere. LIVE reality adds a viewport frame
- *  (console-live) — words first, color as reinforcement. Theme: system
+ *  renders inside this frame, so account scope, run state, STOP, Run once,
+ *  and freshness are visible everywhere. Paper/no-account states get explicit
+ *  banners; ordinary brokerage accounts do not get a red global frame. Theme: system
  *  preference by default, explicit light/dark via the chrome toggle
  *  (persisted, applied as data-theme on this root). */
 
 import type { ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
-import { deriveReality } from "../lib/derive";
-import { cx } from "../lib/format";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
@@ -95,11 +93,9 @@ function ShellFrame({ children }: { children: ReactNode }) {
     );
   }
 
-  const reality = deriveReality(snapshot);
-
   return (
     <div
-      className={cx("console-root flex min-h-dvh flex-col", reality.tone === "live" && "console-live")}
+      className="console-root flex min-h-dvh flex-col"
       data-theme={dataTheme}
       data-textbox-font={dataTextBoxFont}
       suppressHydrationWarning

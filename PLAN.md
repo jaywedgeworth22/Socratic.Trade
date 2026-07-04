@@ -37,6 +37,15 @@ filling the missing pieces.
 > DeepSeek curated model choices, and wires DeepSeek V4 Thinking Mode. See
 > `docs/rollouts/2026-07-03-ai-review-model-inheritance.md`.
 
+> **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
+> The active branch `codex/console-actions-evidence-live` extends the Socratic console polish pass and
+> adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled
+> separately from provider totals, Pinecone query rows record Read Units when available, upsert rows
+> record estimated Write Units, `storeContexts` enforces a daily Pinecone WU fuse before Voyage
+> embedding, and docs now capture the recommended Voyage/Pinecone stack plus the earnings-report
+> ingestion/summarization design. See `docs/reviews/2026-07-03-rag-stack-options.md` and
+> `docs/design/earnings-rag.md`.
+
 > **2026-07-03 — Socratic Trade autonomy UI/runtime implementation (Codex).** The branch
 > `codex/socratic-trade-autonomy-mockup` reframes the product as an Autonomy Desk:
 > live thesis, delegated actions, evidence/RAG contribution, dissent, outcome learning,

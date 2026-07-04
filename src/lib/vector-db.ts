@@ -41,12 +41,21 @@ export interface StoreContextsResult {
   rejectedInvalidEmbeddings?: number;
   /** Count skipped by RAG_INGEST_MAX_TEXTS_PER_DAY before any Voyage/Pinecone write. */
   budgetSkipped?: number;
+  /** Count skipped by RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY before any Voyage/Pinecone write. */
+  writeUnitBudgetSkipped?: number;
 }
 
 export interface VectorStoreStats {
   configured: boolean;
   indexName: string;
   exists?: boolean;
+  totalVectorCount?: number;
+  dimension?: number;
+  error?: string;
+}
+
+export interface VectorIndexStats {
+  indexName: string;
   totalVectorCount?: number;
   dimension?: number;
   error?: string;
@@ -62,6 +71,7 @@ const DEFAULT_CONTEXT_MAX_CHARS = 2400;
 const DEFAULT_EMBED_RETRY_ATTEMPTS = 2;
 const DEFAULT_EMBED_RETRY_DELAY_MS = 20_000;
 const DEFAULT_INGEST_MAX_TEXTS_PER_DAY = 1_000;
+const DEFAULT_PINECONE_WRITE_UNITS_PER_DAY = 50_000;
 
 /**
  * Embedding integrity guard (R2, 2026-07-01 expert review): a Voyage model/config drift (partial
@@ -145,6 +155,39 @@ function remainingIngestTexts(userId: string, requested: number): { allowed: num
     // Tests mock db.ts without the usage table; fail open there instead of breaking vector mocks.
     return { allowed: requested, used: 0, limit };
   }
+}
+
+function pineconeWriteBudgetEnabled(): boolean {
+  return envFlagOn("RAG_PINECONE_WRITE_BUDGET_ENABLED", true);
+}
+
+function pineconeMaxWriteUnitsPerDay(): number {
+  return Math.floor(numericEnv("RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY", DEFAULT_PINECONE_WRITE_UNITS_PER_DAY, 1));
+}
+
+function usedPineconeWriteUnitsLast24h(userId: string): number {
+  if (!pineconeWriteBudgetEnabled()) return 0;
+  try {
+    const sinceIso = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    return getRagUsageSummary({ sinceIso })
+      .filter((row) => row.userId === userId && row.provider === "pinecone" && row.operation === "upsert")
+      .reduce((sum, row) => {
+        // New rows store estimated WUs in tokensIn. Older rows only stored record count in
+        // tokensOut; charge them at 5 WUs/record so legacy history still throttles runaway writes.
+        return sum + (row.tokensIn > 0 ? row.tokensIn : row.tokensOut * 5);
+      }, 0);
+  } catch {
+    // Tests mock db.ts without the usage table; fail open there instead of breaking vector mocks.
+    return 0;
+  }
+}
+
+function estimatePineconeRecordWriteUnits(bytes: number): number {
+  return Math.max(1, Math.ceil(bytes / 1024));
+}
+
+function pineconeMetadataBytes(metadata: RecordMetadata): number {
+  return Buffer.byteLength(JSON.stringify(metadata), "utf8");
 }
 
 function embedRetryAttempts(): number {
@@ -482,6 +525,74 @@ function contextId(document: ContextDocument, fallbackIndex: number): string {
   return raw.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 512);
 }
 
+function estimatePineconeWriteUnitsForDocument(document: ContextDocument, vectorUserId: string): number {
+  const metadata = cleanMetadata(document.metadata, document.text, vectorUserId);
+  const idBytes = Buffer.byteLength(contextId(document, 0), "utf8");
+  // Pinecone bills by request size. This pre-embed estimate uses float32 vector bytes plus
+  // metadata/id overhead so the budget can stop before paying Voyage to embed doomed writes.
+  return estimatePineconeRecordWriteUnits(idBytes + pineconeMetadataBytes(metadata) + EMBEDDING_DIMENSION * 4 + 512);
+}
+
+function estimatePineconeWriteUnitsForRecords(records: PineconeRecord<RecordMetadata>[]): number {
+  if (records.length === 0) return 0;
+  const bytes = records.reduce((sum, record) => {
+    const values = Array.isArray(record.values) ? record.values : [];
+    const dimension = Math.max(values.length, EMBEDDING_DIMENSION);
+    return (
+      sum +
+      Buffer.byteLength(String(record.id), "utf8") +
+      pineconeMetadataBytes(record.metadata ?? {}) +
+      dimension * 4 +
+      512
+    );
+  }, 0);
+  return Math.max(5, Math.ceil(bytes / 1024));
+}
+
+function pineconeReadUnits(result: unknown, fallback: number): number {
+  const usage = (result as { usage?: Record<string, unknown> } | undefined)?.usage;
+  const raw = usage?.readUnits ?? usage?.read_units ?? usage?.readUnit ?? usage?.read_unit;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function applyPineconeWriteBudget(
+  documents: ContextDocument[],
+  userId: string,
+  vectorUserId: string
+): { documents: ContextDocument[]; skipped: number; used: number; limit: number; requested: number; allowed: number } {
+  const limit = pineconeMaxWriteUnitsPerDay();
+  if (!pineconeWriteBudgetEnabled()) {
+    return { documents, skipped: 0, used: 0, limit, requested: 0, allowed: Number.POSITIVE_INFINITY };
+  }
+
+  const used = usedPineconeWriteUnitsLast24h(userId);
+  let remaining = Math.max(0, limit - used);
+  let requested = 0;
+  let accepting = true;
+  const allowedDocuments: ContextDocument[] = [];
+
+  for (const document of documents) {
+    const estimated = estimatePineconeWriteUnitsForDocument(document, vectorUserId);
+    requested += estimated;
+    if (accepting && remaining >= estimated) {
+      remaining -= estimated;
+      allowedDocuments.push(document);
+    } else {
+      accepting = false;
+    }
+  }
+
+  return {
+    documents: allowedDocuments,
+    skipped: documents.length - allowedDocuments.length,
+    used,
+    limit,
+    requested,
+    allowed: Math.max(0, limit - used)
+  };
+}
+
 function chunks<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -611,7 +722,11 @@ export async function storeContext(
   metadata: ContextDocument["metadata"],
   userId: string = "local"
 ): Promise<void> {
-  await storeContexts([{ text, metadata }], userId);
+  await storeContexts(
+    [{ text, metadata }],
+    userId,
+    envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true) ? { dedupKeyPrefix: "direct-context" } : undefined
+  );
 }
 
 export interface StoreContextsOptions {
@@ -756,6 +871,34 @@ export async function storeContexts(
     if (dedupHashes) dedupHashes = dedupHashes.slice(0, budget.allowed);
   }
 
+  let writeUnitBudgetSkipped = 0;
+  const writeBudget = applyPineconeWriteBudget(documentsToStore, userId, vectorUserId);
+  if (writeBudget.skipped > 0) {
+    writeUnitBudgetSkipped = writeBudget.skipped;
+    const budgetPayload = {
+      requestedEstimatedWriteUnits: writeBudget.requested,
+      allowedEstimatedWriteUnits: writeBudget.allowed,
+      skipped: writeUnitBudgetSkipped,
+      usedLast24h: writeBudget.used,
+      limitPer24h: writeBudget.limit
+    };
+    audit("vector_write_unit_budget", budgetPayload, userId);
+    if (writeBudget.documents.length === 0) {
+      const lastIngest = {
+        at: new Date().toISOString(),
+        attempted: validDocuments.length,
+        indexed: 0,
+        writeUnitBudgetSkipped,
+        writeBudget: budgetPayload
+      };
+      setInternalSetting(LAST_INGEST_KEY, lastIngest);
+      audit("vector_store", { ok: true, attempted: validDocuments.length, indexed: 0, writeUnitBudgetSkipped }, userId);
+      return { attempted: validDocuments.length, indexed: 0, skipped: true, budgetSkipped, writeUnitBudgetSkipped };
+    }
+    documentsToStore = writeBudget.documents;
+    if (dedupHashes) dedupHashes = dedupHashes.slice(0, documentsToStore.length);
+  }
+
   const { pc, voyage, initCacheKey, pineconeSource, voyageSource } = getClients(userId);
   if (!pc || !voyage) {
     console.log("[vector-db] Skipping storeContexts: Missing Voyage or Pinecone keys.");
@@ -813,12 +956,13 @@ export async function storeContexts(
       });
 
       if (records.length > 0) {
+        const estimatedWriteUnits = estimatePineconeWriteUnitsForRecords(records);
         // Pinecone JS SDK v8 takes an options object ({ records }), not a bare array.
         await withRagApiHealth("pinecone", pineconeSource, userId, "upsert", () =>
           index.upsert({ records } as any)
         );
         indexed += records.length;
-        meterPineconeUpsert(records.length, userId);
+        meterPineconeUpsert(records.length, userId, estimatedWriteUnits);
       }
     }
 
@@ -847,11 +991,12 @@ export async function storeContexts(
       at: new Date().toISOString(),
       attempted: validDocuments.length,
       indexed,
-      ...(budgetSkipped > 0 ? { budgetSkipped } : {})
+      ...(budgetSkipped > 0 ? { budgetSkipped } : {}),
+      ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {})
     };
     setInternalSetting(LAST_INGEST_KEY, lastIngest);
-    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(budgetSkipped > 0 ? { budgetSkipped } : {}) }, userId);
-    return { attempted: validDocuments.length, indexed, ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}) };
+    audit("vector_store", { ok: true, attempted: validDocuments.length, indexed, rejectedInvalidEmbeddings, ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) }, userId);
+    return { attempted: validDocuments.length, indexed, ...(rejectedInvalidEmbeddings > 0 ? { rejectedInvalidEmbeddings } : {}), ...(budgetSkipped > 0 ? { budgetSkipped } : {}), ...(writeUnitBudgetSkipped > 0 ? { writeUnitBudgetSkipped } : {}) };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.error("[vector-db] Error storing contexts:", err);
@@ -1066,6 +1211,40 @@ export async function getVectorStoreStats(userId: string = "local"): Promise<Vec
   }
 }
 
+/** All Pinecone index totals visible to this key. Diagnostic-only: the RAG coverage
+ * page is local-ledger based, so this exposes old/alternate indexes that can consume
+ * the same org-level Pinecone quota while not appearing in ticker coverage. */
+export async function getAllVectorStoreStats(userId: string = "local"): Promise<VectorIndexStats[]> {
+  const { pc, pineconeSource } = getClients(userId);
+  if (!pc) return [];
+  try {
+    const indexes = await withRagApiHealth("pinecone", pineconeSource, userId, "listIndexes", () => pc.listIndexes());
+    const names = (indexes.indexes ?? []).map((i) => i.name).filter((name): name is string => Boolean(name));
+    return Promise.all(
+      names.map(async (name) => {
+        try {
+          const stats = (await withRagApiHealth("pinecone", pineconeSource, userId, "describeIndexStats", () =>
+            pc.Index(name).describeIndexStats()
+          )) as {
+            totalRecordCount?: number;
+            totalVectorCount?: number;
+            dimension?: number;
+          };
+          return {
+            indexName: name,
+            totalVectorCount: stats.totalRecordCount ?? stats.totalVectorCount ?? 0,
+            dimension: stats.dimension
+          };
+        } catch (err) {
+          return { indexName: name, error: err instanceof Error ? err.message : String(err) };
+        }
+      })
+    );
+  } catch (err) {
+    return [{ indexName: indexName(), error: err instanceof Error ? err.message : String(err) }];
+  }
+}
+
 export interface RetrievedChunk {
   /** Real Pinecone vector id (NOT a fabricated `<SYMBOL>#i`). */
   id: string;
@@ -1261,7 +1440,7 @@ export async function retrieveContextDetailed(
         })
       );
       matches = results.matches || [];
-      meterPineconeQuery(fetchK, userId);
+      meterPineconeQuery(pineconeReadUnits(results, 1), userId, matches.length);
     } else {
       const [userResults, localResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
@@ -1285,7 +1464,11 @@ export async function retrieveContextDetailed(
           })
         )
       ]);
-      meterPineconeQuery(fetchK * 2, userId);
+      meterPineconeQuery(
+        pineconeReadUnits(userResults, 1) + pineconeReadUnits(localResults, 1),
+        userId,
+        (userResults.matches?.length ?? 0) + (localResults.matches?.length ?? 0)
+      );
 
       const combined = [...(userResults.matches || []), ...(localResults.matches || [])];
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));

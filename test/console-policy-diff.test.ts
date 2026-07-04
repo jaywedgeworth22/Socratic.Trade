@@ -173,15 +173,15 @@ describe("console guardrails: iraWashSaleHandling select classification", () => 
     expect(def.kind).toBe("select");
     expect(def.label).toBe("IRA taxable-loss rebuys");
     expect(def.hint).toContain("Same-IRA wash sales are ignored automatically");
-    expect(def.options?.map((o) => o.value)).toEqual(["block", "disregard"]);
+    expect(def.options?.map((o) => o.value)).toEqual(["disregard", "block"]);
     expect(def.looseRank).toEqual({ block: 0, disregard: 1 });
   });
 
   it("classifies block->disregard as LOOSER (typed word on LIVE) and back as TIGHTER", () => {
     expect(classify(def, "block", "disregard")).toBe("looser");
     expect(classify(def, "disregard", "block")).toBe("tighter");
-    // Legacy blank value = the shipped default ("block").
-    expect(classify(def, undefined, "disregard")).toBe("looser");
-    expect(classify(def, "disregard", undefined)).toBe("tighter");
+    // Blank value = the shipped default ("disregard").
+    expect(classify(def, undefined, "block")).toBe("tighter");
+    expect(classify(def, "block", undefined)).toBe("looser");
   });
 });

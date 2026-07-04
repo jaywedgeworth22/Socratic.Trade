@@ -23,10 +23,10 @@ describe("dashboard UI provenance helpers", () => {
 
   it("formats provenance labels and source names for the drawer", () => {
     expect(provenanceLabel("fcfYield")).toBe("FCF yield");
-    expect(friendlySource("nasdaq-delayed-screener")).toBe("Nasdaq");
+    expect(friendlySource("nasdaq-delayed-screener")).toBe("NASDAQ Delayed Screener");
     expect(friendlySource("congress")).toBe("Congress.Trade");
     expect(friendlySource("congress.trade")).toBe("Congress.Trade");
-    expect(friendlySource("yahoo-finance-delayed-quotes")).toBe("Yahoo Finance");
+    expect(friendlySource("yahoo-finance-delayed-quotes")).toBe("Yahoo Finance Delayed Quotes");
     expect(friendlySource("alpha-vantage")).toBe("alpha-vantage");
   });
 
@@ -35,6 +35,6 @@ describe("dashboard UI provenance helpers", () => {
       formatSourceList(
         "nasdaq-delayed-screener+congress.trade+tiingo+finnhub+fmp+yahoo-finance+finra+computed+congress+congress.trade+sec-edgar+blackrock-oef-holdings+yahoo-finance-delayed-quotes"
       )
-    ).toBe("NASDAQ, Congress.Trade, Tiingo, Finnhub, FMP, Yahoo Finance, FINRA, Computed, SEC EDGAR, BlackRock holdings");
+    ).toBe("NASDAQ Delayed Screener, Congress.Trade, Tiingo, Finnhub, FMP, Yahoo Finance, FINRA, Computed, SEC EDGAR, BlackRock Holdings, Yahoo Finance Delayed Quotes");
   });
 });

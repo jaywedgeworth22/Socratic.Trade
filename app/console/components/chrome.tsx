@@ -1,7 +1,7 @@
 "use client";
 
 /** Global chrome, rendered on every console screen:
- *  - word-first money-reality banner (NO ACCOUNT / PAPER / LIVE — words load-bearing)
+ *  - word-first account-state banner for NO ACCOUNT / PAPER only
  *  - account scope selector
  *  - run-state × authority chip in plain words
  *  - run-state action: Start/Resume when paused, STOP when running
@@ -30,13 +30,14 @@ import {
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Chip, Dot, LiveTag, Meter, TextInput } from "../ui/primitives";
+import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
 // ── Reality banner ───────────────────────────────────────────────────────────
 
 export function RealityBanner({ snapshot }: { snapshot: DashboardSnapshot }) {
   const reality = deriveReality(snapshot);
+  if (reality.tone === "live") return null;
   return (
     <div className={cx("con-reality", `con-reality-${reality.tone}`)}>
       <div className="mx-auto flex max-w-[1400px] items-baseline gap-2 px-4 py-1.5">
@@ -102,7 +103,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
           <span className="block truncate text-[length:var(--con-fs-sm)] font-semibold leading-tight">{label}</span>
           {!compact && (
             <span className="hidden truncate text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)] sm:block">
-              {reality.word} · {reality.phrase}
+              {reality.tone === "live" ? "Brokerage account" : `${reality.word} · ${reality.phrase}`}
             </span>
           )}
         </span>
@@ -112,7 +113,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       <Sheet open={open} onClose={() => setOpen(false)} title="Account scope">
         <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
           Exactly one account is active at a time. Switching rescopes everything — balances, guardrails, approvals,
-          the run state. Every row states its money-reality in words.
+          the run state, and decision history.
         </p>
         <div className="flex flex-col gap-2">
           {snapshot.connectedAccounts.length === 0 && (
@@ -122,7 +123,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                 <Chip tone="none">NO ACCOUNT · no account connected</Chip>
               </div>
               <p className="mt-1 text-[color:var(--con-muted)]">
-                Connect a broker account (paper or live) before the app can place orders.
+                Connect a broker account before the app can place orders.
               </p>
             </div>
           )}
@@ -139,26 +140,23 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
-                    <Chip tone={r.tone}>
-                      {r.word} · {r.phrase}
-                    </Chip>
+                    {r.tone !== "live" && (
+                      <Chip tone={r.tone}>
+                        {r.word} · {r.phrase}
+                      </Chip>
+                    )}
                     {account.isActive && <Chip tone="accent">active</Chip>}
                   </div>
                   {!account.isActive && (
                     <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
-                      {busyId === account.id ? "Switching…" : r.tone === "live" ? (
-                        <>
-                          Switch — real money <LiveTag />
-                        </>
-                      ) : (
-                        "Switch"
-                      )}
+                      {busyId === account.id ? "Switching…" : "Switch"}
                     </Btn>
                   )}
                 </div>
                 <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  {brokerName(account.broker)} · {account.environment}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""} — {r.clarification}
+                  {brokerName(account.broker)} · {r.tone === "paper" ? "paper account, not real money" : "brokerage account"}
+                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
+                  {r.tone !== "live" ? ` — ${r.clarification}` : ""}
                 </p>
               </div>
             );
@@ -226,7 +224,7 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
 }
 
 /** One control surface for run-state changes. Asymmetric friction:
- *  stopping = one tap + one confirm, no typing; starting on real money =
+ *  stopping = one tap + one confirm, no typing; starting a broker-connected account =
  *  typed ritual; winding down (the one stop verb that SELLS) = typed ritual. */
 function ControlSheet({
   snapshot,
@@ -330,12 +328,13 @@ function ControlSheet({
       open={open}
       onClose={onClose}
       title={sheetTitle}
-      tone={reality.tone === "live" ? "live" : undefined}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-sm)]">
-        <Chip tone={reality.tone}>
-          {reality.word} · {reality.phrase}
-        </Chip>
+        {reality.tone !== "live" && (
+          <Chip tone={reality.tone}>
+            {reality.word} · {reality.phrase}
+          </Chip>
+        )}
         <span className="text-[color:var(--con-muted)]">
           Now: <strong className="text-[color:var(--con-fg)]">{info.label}</strong>
         </span>
@@ -367,7 +366,7 @@ function ControlSheet({
                 {o.id === "start" &&
                   (startPhrase ? (
                     <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
-                      {startLabel}… <LiveTag />
+                      {startLabel}…
                     </Btn>
                   ) : (
                     <Btn variant="pos" size="sm" disabled={busy !== null} onClick={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}>
@@ -398,12 +397,12 @@ function ControlSheet({
                   busy={busy === "start"}
                   confirmLabel={
                     <>
-                      {startLabel} on real money <LiveTag />
+                      {startLabel} scheduled runs
                     </>
                   }
                   variant="primary"
-                  note={`This is a LIVE account. ${startGerund} is the risk-increasing direction, so it costs a typed phrase — stopping never does.`}
-                  onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on — on real money.")}
+                  note={`${startGerund} a broker-connected account changes automation state, so it costs the typed confirmation phrase — stopping never does.`}
+                  onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}
                 />
               )}
             </div>

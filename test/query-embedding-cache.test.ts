@@ -38,6 +38,8 @@ vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
   setInternalSetting: vi.fn(),
+  filterNewDocumentChunks: vi.fn((chunks) => chunks),
+  insertDocumentChunks: vi.fn(),
   // retrieveContextDetailed now consults the per-user LLM budget (isOverLlmBudget → getPolicy). With
   // no budget configured, checkLlmDailyBudget short-circuits to ok (both limits +Infinity) without
   // touching the usage ledger, so a bare policy stub is enough to keep these cache tests budget-off.

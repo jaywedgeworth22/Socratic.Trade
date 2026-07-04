@@ -45,7 +45,7 @@ const API_KEY_CATALOG = [
   },
   {
     service: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     category: "LLM",
     required: false,
     unlocks: "Gemini models for the Assistant and strategy review. Select a gemini-* model in the Assistant or Strategy screen to use.",

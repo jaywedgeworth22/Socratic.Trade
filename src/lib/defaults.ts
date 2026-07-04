@@ -8,10 +8,10 @@ export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
   // edge-vs-tax-cost guard decide (see policy.ts).
   washSaleHandling: "block",
-  // IRA-replacement rebuys (Rev. Rul. 2008-5) hard-block by default in every mode above;
-  // "disregard" is an explicit per-account opt-in that proceeds annotated + audited instead
-  // (owner rationale: brokers don't report cross-account IRA wash sales to the IRS).
-  iraWashSaleHandling: "block",
+  // IRA-replacement rebuys proceed annotated by default for IRA accounts. Owner rationale:
+  // brokers don't report cross-account IRA wash sales to the IRS, so blocking those buys by
+  // default is not appropriate for this app; the stricter "block" choice remains available.
+  iraWashSaleHandling: "disregard",
   shortTermRatePct: 24,
   longTermRatePct: 15
 };

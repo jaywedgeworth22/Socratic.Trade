@@ -344,7 +344,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                           <Chip tone={statusTone(p.status)}>{p.status}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <span title="Side-adjusted move since the proposal's reference price. For a rejected idea this is the counterfactual.">
+                            <span title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
                               <SignedText value={p.performanceSinceProposalPct}>
                                 since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
                               </SignedText>

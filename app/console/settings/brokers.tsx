@@ -45,6 +45,27 @@ const TAXATION_WORD: Record<TaxationType, string> = {
   traditional_ira: "traditional IRA"
 };
 
+const BROKER_ROADMAP = [
+  {
+    name: "Public.com",
+    status: "Needs API approval",
+    detail:
+      "Public.com is listed here so the intended broker set is visible, but this app does not have a Public.com trading gateway yet."
+  },
+  {
+    name: "eToro",
+    status: "Partner/API gated",
+    detail:
+      "eToro support needs an approved API path before account sync or order placement can be implemented safely."
+  },
+  {
+    name: "IBKR",
+    status: "Gateway required",
+    detail:
+      "Interactive Brokers needs an IB Gateway or TWS session plus a dedicated broker adapter before it can be connected here."
+  }
+] as const;
+
 export function BrokerAccountsCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -215,7 +236,7 @@ export function BrokerAccountsCard() {
                         size="sm"
                         variant="outline"
                         disabled={busy !== null}
-                        title={`Make this the active account. Everything in the console rescopes to it${r.tone === "live" ? " — this one trades REAL money" : ""}.`}
+                        title="Make this the active account. Everything in the console rescopes to it."
                         onClick={async () => {
                           setBusy(account.id);
                           try {
@@ -266,6 +287,41 @@ export function BrokerAccountsCard() {
         </div>
       )}
 
+      <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="text-[length:var(--con-fs-sm)] font-semibold">Broker roadmap</h3>
+          <Chip tone="muted" title="Visible planning list only. These buttons stay disabled until real broker gateways exist.">
+            not wired yet
+          </Chip>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-3">
+          {BROKER_ROADMAP.map((broker) => (
+            <div
+              key={broker.name}
+              className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-3"
+              title={broker.detail}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-semibold">{broker.name}</span>
+                <Chip tone="warn">{broker.status}</Chip>
+              </div>
+              <p className="mt-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+                {broker.detail}
+              </p>
+              <Btn
+                size="sm"
+                variant="ghost"
+                disabled
+                className="mt-2"
+                title={`Connect ${broker.name} is disabled because no ${broker.name} broker gateway exists in this app yet.`}
+              >
+                Connect unavailable
+              </Btn>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Disconnect confirm — explicit about what is and is not affected. */}
       <Sheet
         open={confirmRemove !== null}
@@ -281,8 +337,8 @@ export function BrokerAccountsCard() {
               stay exactly where they are; this app just stops seeing and managing them.
             </p>
             {realityForAccount(confirmRemove).tone === "live" && (
-              <p className="rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-live-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
-                This is a LIVE (real money) connection. After disconnecting, any app-managed stop rules for its
+              <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)]">
+                This is a brokerage connection. After disconnecting, any app-managed stop rules for its
                 positions stop running — only broker-held orders keep protecting them.
               </p>
             )}
@@ -360,7 +416,7 @@ function AlpacaConnectSheet({
         apiSecret: apiSecret.trim() || undefined,
         taxationType: taxationType || undefined
       });
-      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as PAPER (practice money)." : "Connected as LIVE (real money).");
+      toast.push("pos", "Alpaca account connected", inferredPaper ? "Connected as Alpaca PAPER Account (NOT Real Money)." : "Connected as a brokerage account.");
       setLabel("");
       setAccountNumber("");
       setApiKey("");
@@ -378,10 +434,10 @@ function AlpacaConnectSheet({
     <Sheet open={open} onClose={onClose} title="Connect Alpaca">
       <div className="flex flex-col gap-3">
         <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Paste the API key pair from your Alpaca dashboard. Paper vs live is inferred from the credentials
+          Paste the API key pair from your Alpaca dashboard. Paper accounts are inferred from the credentials
           (&quot;PA…&quot; account numbers and &quot;PK…&quot; keys are paper) — currently reading as{" "}
-          <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-live)]"}>
-            {inferredPaper ? "PAPER · practice money" : "LIVE · real money"}
+          <span className={inferredPaper ? "font-bold text-[color:var(--con-paper)]" : "font-bold text-[color:var(--con-accent)]"}>
+            {inferredPaper ? "Alpaca PAPER Account (NOT Real Money)" : "Brokerage Account"}
           </span>
           . Credentials are stored server-side and never shown again.
         </p>
@@ -453,7 +509,7 @@ function AlpacaConnectSheet({
             onClick={() => void submit()}
             title="Validate and store this connection server-side."
           >
-            {busy ? "Connecting…" : inferredPaper ? "Connect (paper)" : (
+            {busy ? "Connecting…" : inferredPaper ? "Connect Paper" : (
               <>
                 Connect <LiveTag />
               </>

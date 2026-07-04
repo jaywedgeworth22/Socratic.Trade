@@ -18,10 +18,10 @@ of the existing UI):
 
 ### The convergent spine (all three independently arrived at these — adopted wholesale)
 
-- **Word-first money-reality in ambient chrome.** TEST · practice money /
-  PAPER · practice money / LIVE · real money as an unhideable banner; color and
-  the LIVE viewport frame only reinforce the words (`components/chrome.tsx`,
-  `console-live` in `console.css`).
+- **Word-first account reality without alarm fatigue.** No-account and broker
+  paper states get explicit ambient banners; ordinary brokerage accounts are
+  treated as the normal trading state, with typed broker confirmations on
+  risk-increasing actions instead of a red viewport frame.
 - **Account scope always visible** and switchable from the chrome; every
   account row and every proposal repeats its own reality word.
 - **Approvals as the badge destination** — the one place the human is
@@ -30,8 +30,9 @@ of the existing UI):
   app-managed synthetic stops pausing while broker-held brackets keep resting,
   and **Close-only as the middle verb** ("what the circuit breakers choose").
 - **Asymmetric friction**: stopping/tightening/rejecting is one tap;
-  starting-on-live / Autopilot / wind-down / loosening-on-live / live approval
-  costs a typed phrase (paste disabled — the words are the consent).
+  starting brokerage automation / Autopilot / wind-down / loosening brokerage
+  constraints / broker approval costs a typed phrase (paste disabled — the
+  words are the consent).
 - **Decision receipts** (approval cards carry evidence, the adversarial
   verdict, gate reasons, since-proposed counterfactual) and **run forensics**
   (Activity → Runs expands to each run's persisted proposals and reasons).
@@ -50,14 +51,13 @@ of the existing UI):
   reject / if you do nothing", expiry countdown), guardrail one-liners, the
   "did nothing on purpose" framing for quiet runs, and the vocabulary layer
   (Running · Ask-first / Autopilot / Stopped / Exit-only / Winding down).
-- From **TradeDeck**: the always-visible scope bar in the header, danger
-  styled *at the object* (a LIVE proposal is individually marked inside any
-  list), status-tone chips for lifecycle states, and the operator-density
-  tables (positions, scorecards, tax lots).
+- From **TradeDeck**: the always-visible scope bar in the header, risk styled
+  at the object, status-tone chips for lifecycle states, and the
+  operator-density tables (positions, scorecards, tax lots).
 - From **Ledgerline**: the decision-lifecycle organization of Activity, the
   **review-and-commit model for policy edits** (sparse draft → unified diff
   sheet with per-field LOOSER/TIGHTER classification → typed CONFIRM only when
-  loosening on LIVE), and "every number wears its passport" (humanized
+  loosening brokerage-account authority), and "every number wears its passport" (humanized
   timestamps with exact-on-hover, `—` for missing data, buckets never sharing
   an axis).
 

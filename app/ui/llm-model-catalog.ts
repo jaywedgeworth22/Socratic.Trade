@@ -34,7 +34,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
       { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$" },
