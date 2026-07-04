@@ -52,6 +52,10 @@ to `socratictrade.com`, record the release commit + date here._
   `socratictrade.com`. Includes RAG provider/quota Sentry visibility, Pinecone-hosted
   embedding-model documentation, Infisical Socratic.Trade slug documentation, and
   production health 200 after deployment.
+- **2026-07-04** — `trading-live` published at `d39e1193` (PR #353) on
+  `socratictrade.com`. Includes explicit `Test Account - Local Mock Paper Account`
+  restore and Pinecone/Voyage/provider cap email alerts; production health 200 after
+  deployment.
 
 ---
 
@@ -150,20 +154,20 @@ to `socratictrade.com`, record the release commit + date here._
   (`codex/rag-sentry-visibility`): Sentry warning/error events for RAG provider failures and
   budget trips, Pinecone-hosted NVIDIA/MSFT embedding options documented as benchmark candidates,
   and Infisical project naming recorded as `Socratic.Trade` / `socratic-trade`.
+- **#353** — Test Account restore + usage cap email alerts
+  (`codex/restore-test-account-option`): explicit addable local mock Test Account that is not
+  default-selected, plus Pinecone/Voyage/provider cap trips routed through `budget_alert` with
+  email-capable fallback.
 
 ---
 
 ## 🔨 In Progress
 
-- **Test Account local mock paper option restore** (Codex,
-  `/Users/jay/apps/trading-codex`, branch `codex/restore-test-account-option`) — restores an
-  explicit addable `Test Account - Local Mock Paper Account` for learning/simulation trades. It is
-  never created or selected by default; the user must add it and make it active explicitly.
-- **Usage/quota cap email alerts** (Codex,
-  `/Users/jay/apps/trading-codex`, branch `codex/restore-test-account-option`) — routes Pinecone
-  Write Unit daily-fuse trips, RAG ingest daily-cap trips, provider rate/quota/billing failures, and
-  API Usage Monitor budget warnings through `budget_alert` notifications with email-capable operator
-  fallback.
+- **Controlled RAG filing ingest smoke test** (Codex,
+  `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
+  against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
+  `document_chunks`; the timed-out first-run 56 duplicate vectors were removed. Code fix for
+  deterministic SEC filing vector ids is implemented and awaiting PR.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.

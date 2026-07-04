@@ -250,6 +250,7 @@ export async function ingestFiling(
   const result = await storeDocument(
     {
       text,
+      doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
       title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
       doc_type: filingRef.docType.toLowerCase(),
