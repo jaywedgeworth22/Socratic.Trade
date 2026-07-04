@@ -175,18 +175,6 @@
   }
 }
 
-/* LIVE reality: an unmissable frame around the whole viewport. Words carry the
-   meaning; this is the peripheral-vision reinforcement. Never shown for
-   no-account/paper so it can never be normalized away. */
-.console-root.console-live::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  border: 3px solid var(--con-live);
-  pointer-events: none;
-  z-index: 90;
-}
-
 .console-root ::selection {
   background: color-mix(in oklab, var(--con-accent) 30%, transparent);
 }
@@ -500,19 +488,18 @@
 .con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
 .con-chip-none { border-color: var(--con-none-border); color: var(--con-none); background: var(--con-none-soft); }
 .con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
-.con-chip-live { border-color: var(--con-live-border); color: var(--con-live); background: var(--con-live-soft); }
+.con-chip-live { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
 
-/* Small LIVE word tag inside neutral primary actions (danger is reserved for
-   the reality banner/frame, STOP, and destructive confirms). On soft surfaces
-   it uses the live tint; inside filled buttons it inverts to the button's
+/* Small brokerage-confirmation tag inside neutral primary actions. On soft surfaces
+   it uses the accent tint; inside filled buttons it inverts to the button's
    contrast color so it stays WCAG-readable in both themes. */
 .con-live-tag {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid var(--con-live-border);
-  background: var(--con-live-soft);
-  color: var(--con-live);
+  border: 1px solid var(--con-accent-border);
+  background: var(--con-accent-soft);
+  color: var(--con-accent);
   padding: 1px 6px;
   font-size: 9.5px;
   font-weight: 800;
@@ -524,7 +511,7 @@
 .con-btn-danger .con-live-tag {
   border-color: transparent;
   background: var(--con-accent-contrast);
-  color: var(--con-live);
+  color: var(--con-accent);
 }
 
 /* ── Reality banner ── */
@@ -539,13 +526,13 @@
   background: linear-gradient(90deg, color-mix(in oklab, var(--con-paper) 12%, transparent), color-mix(in oklab, var(--con-paper) 3%, transparent));
 }
 .con-reality-live {
-  background: linear-gradient(90deg, color-mix(in oklab, var(--con-live) 18%, transparent), color-mix(in oklab, var(--con-live) 5%, transparent));
-  border-bottom-color: var(--con-live-border);
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-accent) 12%, transparent), color-mix(in oklab, var(--con-accent) 3%, transparent));
+  border-bottom-color: var(--con-accent-border);
 }
 .con-reality-word { font-weight: 800; letter-spacing: 0.12em; }
 .con-reality-none .con-reality-word { color: var(--con-none); }
 .con-reality-paper .con-reality-word { color: var(--con-paper); }
-.con-reality-live .con-reality-word { color: var(--con-live); }
+.con-reality-live .con-reality-word { color: var(--con-accent); }
 
 /* ── Inputs ── */
 .con-input,
@@ -778,7 +765,7 @@
   }
 }
 .con-sheet-live {
-  border-color: var(--con-live-border);
+  border-color: var(--con-accent-border);
 }
 
 /* ── Symbol drawer ── */

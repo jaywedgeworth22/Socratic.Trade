@@ -147,18 +147,18 @@ export interface AccountCapabilities {
  *              otherwise it is skipped with the math logged. Never silent.
  * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
  * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss is
- * hard-blocked by default in every mode above, because the replacement purchase inside the IRA
- * permanently destroys the disallowed loss — but the owner may opt an account into
- * "disregard" (see IraWashSaleHandling).
+ * allowed with an explicit annotation by default in this app, because brokers do not report
+ * cross-account IRA wash sales to the IRS. The owner may opt an account into the stricter
+ * "block" setting (see IraWashSaleHandling).
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
 
 /**
  * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
- *   - "block" (default): the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
+ *   - "block": the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
  *     2008-5: buying the replacement inside the IRA permanently destroys the disallowed loss,
- *     with no basis adjustment ever recoverable. This is today's behavior, byte-compatible.
- *   - "disregard": the buy proceeds through the normal authority flow (all other gates
+ *     with no basis adjustment ever recoverable.
+ *   - "disregard" (default): the buy proceeds through the normal authority flow (all other gates
  *     unchanged). Rationale (owner decision): brokers do not report cross-account IRA wash
  *     sales to the IRS — the rule only bites under audit — so respecting it is the account
  *     owner's call. NEVER silent: the decision carries outcome "ira_disregarded" with the
@@ -175,7 +175,7 @@ export interface TaxSettings {
   washSaleGuard: boolean;
   /** How a wash-sale lockout is handled for BUYs. Default "block" (see WashSaleHandling). */
   washSaleHandling?: WashSaleHandling;
-  /** How an IRA-replacement wash sale is handled. Default "block" (see IraWashSaleHandling). */
+  /** How an IRA-replacement wash sale is handled. Default "disregard" (see IraWashSaleHandling). */
   iraWashSaleHandling?: IraWashSaleHandling;
   /**
    * Optional floor (dollars) for a realized loss to trigger the wash-sale rebuy lockout.
@@ -1334,7 +1334,7 @@ export interface WashSaleGateAudit {
   note?: string;
   outcome:
     | "blocked" // handling "block" (default): refused outright
-    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; iraWashSaleHandling "block", the default)
+    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; explicit iraWashSaleHandling "block")
     | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" — annotated + audited, never silent
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
     | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed

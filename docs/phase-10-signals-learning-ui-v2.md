@@ -7,7 +7,7 @@ brainstorms. As of 2026-07-03, the older paper/Test-mode default framing in this
 document is stale: Socratic Trade treats connected broker account environment as
 the execution source of truth, and no connected account means no order placement.
 The Socratic autonomy implementation adds first-class surfaces and persistence
-for RAG contribution, dissent, outcome learning, coaching, and agent-authored
+for evidence contribution, dissent, outcome learning, coaching, and agent-authored
 framework improvements; `/design/socratic-trade` is now a coded public overview of those
 surfaces rather than a standalone mockup.
 See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.

@@ -72,7 +72,7 @@ export interface BullSystemParams {
    */
   washSaleHandling?: WashSaleHandling;
   /**
-   * True when the buyer is an IRA whose owner set iraWashSaleHandling = "disregard": the gate PERMITS
+   * True when the buyer is an IRA whose policy uses iraWashSaleHandling = "disregard": the gate PERMITS
    * locked rebuys here (brokers don't report cross-account IRA wash sales; the forfeited deduction is
    * the owner's accepted trade-off), so the wash-sale guidance line PERMITS proposing them instead of
    * forbidding — takes precedence over washSaleHandling, which governs the taxable-buyer case.

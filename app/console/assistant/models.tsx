@@ -26,6 +26,7 @@ export interface ModelGroup {
 }
 
 export const DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
+export const CHAT_MODEL_STORAGE_KEY = "console.assistant.model";
 
 /** Sentinel select value meaning "type a model id yourself". */
 export const CUSTOM_MODEL_VALUE = "custom";
@@ -69,7 +70,7 @@ export const MODEL_GROUPS: ModelGroup[] = [
   },
   {
     provider: "gemini",
-    label: "Google Gemini",
+    label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini", tier: "$" },
       { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash", tier: "$$" },

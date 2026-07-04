@@ -2,7 +2,7 @@
 
 /** Policy editing toolkit: sparse-draft editing over the live policy, a diff
  *  review sheet, and asymmetric friction — tightening saves with one click,
- *  loosening on LIVE money requires typing CONFIRM. The commit model comes
+ *  loosening brokerage-account authority requires typing CONFIRM. The commit model comes
  *  from the explainability design: you never "save settings", you review and
  *  commit a change. The diff/classification logic lives in ../lib/policy-diff
  *  (pure, unit-tested); this file is the React skin over it. */
@@ -308,7 +308,7 @@ export function PolicySaveBar({
   if (changeCount === 0) return null;
 
   // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can
-  // loosen the cage too — they must cost the typed word on LIVE like any field.
+  // loosen the cage too — they must cost the typed word on brokerage accounts like any field.
   const hasLooser = diff.some((d) => d.direction === "looser") || extraEntries.some((e) => e.direction === "looser");
   const needsTyped = reality.tone === "live" && hasLooser;
 
@@ -388,7 +388,7 @@ export function PolicySaveBar({
                 Commit changes <LiveTag />
               </>
             }
-            note="At least one change expands authority on a LIVE (real money) account. Unlocking authority costs a typed word; locking things down never does."
+            note="At least one change expands authority on a brokerage account. Unlocking authority costs a typed word; locking things down never does."
             onConfirm={() => void commit()}
           />
         ) : (

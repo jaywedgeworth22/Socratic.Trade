@@ -438,7 +438,7 @@ function executionBanner(state: ExecutionState): { className: string; title: str
   if (state.mode === "broker/live") {
     const brokerName = brokerNameForBanner(state);
     const title = `${brokerName} Brokerage Account`;
-    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`} • real money may be at risk`;
+    const detail = `orders route to ${state.accountLabel ?? `${brokerName} Brokerage`}`;
     return {
       className: "border-red-900 bg-red-950/70 text-red-200 ring-1 ring-red-500/40 motion-safe:animate-pulse",
       title: `${title} • ${detail}`,
@@ -454,7 +454,7 @@ function executionBanner(state: ExecutionState): { className: string; title: str
     const brokerName = brokerNameForBanner(state);
     const title = `${brokerName} Paper Account`;
     const routeLabel = state.broker === "alpaca" || state.broker === "alpaca-mcp" ? "Alpaca Paper" : `${brokerName} Paper`;
-    const detail = `orders route to ${routeLabel} • no real money is at risk`;
+    const detail = `orders route to ${routeLabel} • not real money`;
     return {
       className: "border-emerald-900/60 bg-emerald-950/40 text-emerald-300",
       title: `${title} • ${detail}`,
@@ -6428,9 +6428,9 @@ type LlmApiService = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "de
 
 const LLM_SERVICE_LABELS: Record<LlmApiService, string> = {
   openai: "OpenAI",
-  anthropic: "Anthropic",
-  xai: "xAI",
-  gemini: "Gemini",
+  anthropic: "Anthropic (Claude)",
+  xai: "xAI (Grok)",
+  gemini: "Google (Gemini)",
   mistral: "Mistral",
   deepseek: "DeepSeek"
 };

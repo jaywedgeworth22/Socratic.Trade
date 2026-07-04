@@ -60,7 +60,14 @@ function contextLabel(ctx: string | null): string {
 }
 
 function providerLabel(provider: string): string {
-  const map: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", xai: "xAI" };
+  const map: Record<string, string> = {
+    openai: "OpenAI",
+    anthropic: "Anthropic (Claude)",
+    xai: "xAI (Grok)",
+    gemini: "Google (Gemini)",
+    mistral: "Mistral",
+    deepseek: "DeepSeek"
+  };
   return map[provider] ?? provider;
 }
 

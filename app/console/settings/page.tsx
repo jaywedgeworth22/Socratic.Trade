@@ -371,7 +371,7 @@ function TaxSettingsCard() {
   const taxation: TaxationType = accountTaxationType ?? draft?.taxationType ?? current?.taxationType ?? "taxable";
   const isIra = taxation === "roth_ira" || taxation === "traditional_ira";
   const washSaleGuard: boolean = draft?.washSaleGuard ?? current?.washSaleGuard ?? true;
-  const iraWashSaleHandling: IraWashSaleHandling = draft?.iraWashSaleHandling ?? current?.iraWashSaleHandling ?? "block";
+  const iraWashSaleHandling: IraWashSaleHandling = draft?.iraWashSaleHandling ?? current?.iraWashSaleHandling ?? "disregard";
   const subtractFromResults: boolean = draft?.subtractFromResults ?? current?.subtractFromResults ?? false;
   const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
   const longTermRatePct: number = draft?.longTermRatePct ?? current?.longTermRatePct ?? 15;
@@ -465,19 +465,19 @@ function TaxSettingsCard() {
             <div className="mt-3 max-w-md">
               <Field
                 label="Taxable-loss rebuy inside this IRA"
-                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Block refuses the IRA replacement buy; Ignore/disregard lets it proceed with the audit note."
+                hint="Only applies when another taxable account sold the same symbol at a loss in the last 30 days. Ignore/disregard is the default for IRA accounts and lets the buy proceed with the audit note; Block is the stricter optional setting."
                 htmlFor="ira-wash-sale"
               >
                 <Select
                   id="ira-wash-sale"
                   value={iraWashSaleHandling}
-                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored."
+                  title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored. Default: ignore/disregard and annotate."
                   onChange={(e) =>
                     setDraft((d) => ({ ...(d ?? {}), iraWashSaleHandling: e.target.value as IraWashSaleHandling }))
                   }
                 >
-                  <option value="block">block cross-account IRA replacement buys</option>
-                  <option value="disregard">ignore / disregard and annotate</option>
+                  <option value="disregard">Ignore / disregard and annotate (default)</option>
+                  <option value="block">Block cross-account IRA replacement buys</option>
                 </Select>
               </Field>
             </div>

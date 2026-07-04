@@ -325,7 +325,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
               className="con-btn con-btn-outline con-btn-sm"
               title={
                 stagedLive
-                  ? "Open the Approvals screen. Approving there places a REAL order with real money."
+                  ? "Open the Approvals screen. Approving there places a broker order."
                   : "Open the Approvals screen to approve or reject this proposal."
               }
             >

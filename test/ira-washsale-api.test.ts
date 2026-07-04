@@ -1,6 +1,6 @@
 /**
  * /api/policy enum validation for taxSettings.iraWashSaleHandling (IRA wash-sale disregard
- * setting). "block" (default) and "disregard" persist; anything else 400s with a clear message.
+ * setting). "disregard" (default) and "block" persist; anything else 400s with a clear message.
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -21,10 +21,10 @@ function putTaxSettings(taxSettings: Record<string, unknown>) {
 }
 
 describe("/api/policy — taxSettings.iraWashSaleHandling validation", () => {
-  it("defaults to 'block' on a fresh policy", async () => {
+  it("defaults to 'disregard' on a fresh policy", async () => {
     const { getPolicy } = await import("../src/lib/db");
     const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
-    expect(getPolicy(DEFAULT_REQUEST_USER_ID).taxSettings?.iraWashSaleHandling).toBe("block");
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).taxSettings?.iraWashSaleHandling).toBe("disregard");
   });
 
   it("accepts and persists 'disregard'", async () => {

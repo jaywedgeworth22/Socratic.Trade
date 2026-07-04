@@ -18,6 +18,7 @@ import {
   Zap
 } from "lucide-react";
 import type { DashboardSnapshot, StrategyDecision } from "../dashboard-types";
+import { formatSourceList, friendlySource } from "@/lib/dashboard-ui";
 import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
 import { deriveDayPnl, deriveReality, deriveSpend, deriveStateInfo } from "./lib/derive";
 import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
@@ -123,7 +124,7 @@ export default function ConsoleHomePage() {
           <Card
             title={
               <span className="flex items-center gap-1.5">
-                <Database size={13} /> Evidence and RAG contribution
+                <Database size={13} /> Evidence
               </span>
             }
             action={
@@ -135,13 +136,13 @@ export default function ConsoleHomePage() {
             {evidenceRows.length > 0 ? (
               <div className="con-evidence-grid">
                 {evidenceRows.map((row) => (
-                  <EvidenceCard key={row.title} title={row.title} meta={row.meta} body={row.body} tone={row.tone} />
+                  <EvidenceCard key={row.title} {...row} />
                 ))}
               </div>
             ) : (
               <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
                 No decision evidence is available yet. The next run will persist scan evidence, policy reasoning,
-                RAG attributions, and dissent per decision.
+                retrieved evidence, and dissent per decision.
               </p>
             )}
           </Card>
@@ -160,9 +161,9 @@ export default function ConsoleHomePage() {
           >
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
               <Stat
-                label={`Portfolio value · ${reality.word}`}
+                label={reality.tone === "paper" ? "Portfolio Value · Paper" : "Portfolio Value"}
                 value={fmtMoney(portfolio?.totalMarketValue)}
-                sub={reality.phrase}
+                sub={reality.tone === "paper" ? reality.phrase : reality.account?.label}
               />
               <div>
                 <div className="con-card-title">Day P&amp;L</div>
@@ -202,7 +203,7 @@ export default function ConsoleHomePage() {
           >
             <div className="flex flex-col gap-2">
               {deriveDissentRows(primaryProposal, latest, primaryDecision).map((row) => (
-                <EvidenceCard key={row.title} title={row.title} meta={row.meta} body={row.body} tone={row.tone} />
+                <EvidenceCard key={row.title} {...row} />
               ))}
             </div>
           </Card>
@@ -251,7 +252,7 @@ export default function ConsoleHomePage() {
             ) : (
               <div className="flex flex-col gap-2">
                 {frameworkRows.map((row) => (
-                  <EvidenceCard key={row.title} title={row.title} meta={row.meta} body={row.body} tone={row.tone} />
+                  <EvidenceCard key={row.title} {...row} />
                 ))}
               </div>
             )}
@@ -272,9 +273,13 @@ export default function ConsoleHomePage() {
             <div className="mt-3 border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
               {state.state === "active" && nextRun ? (
                 <span title={fmtExact(nextRun)}>Next scheduled run {timeUntil(nextRun)} · cadence {snapshot.policy.runCadenceMinutes} min</span>
+              ) : state.state === "active" ? (
+                <span title={`Configured cadence: every ${snapshot.policy.runCadenceMinutes} minutes.`}>
+                  Running now. Planned cadence is every {snapshot.policy.runCadenceMinutes} min; the next run time is not available in this snapshot.
+                </span>
               ) : (
-                <span>
-                  No scheduled run is active. Start or change authority from the run-state control in the top bar.
+                <span title={`If restarted, scheduled runs use the configured cadence: every ${snapshot.policy.runCadenceMinutes} minutes.`}>
+                  Not running now. If restarted, planned cadence is every {snapshot.policy.runCadenceMinutes} min.
                 </span>
               )}
             </div>
@@ -292,12 +297,14 @@ type DecisionRowData = {
   size: string;
   status: string;
   rationale: string;
+  title?: string;
   confidence?: number;
 };
 
 type EvidenceRow = {
   title: string;
   meta: string;
+  metaTitle?: string;
   body: string;
   tone?: "pos" | "warn" | "neg" | "accent";
 };
@@ -339,34 +346,40 @@ function deriveActionRows(snapshot: DashboardSnapshot, latest: StrategyDecision 
   const persisted = snapshot.socratic?.decisions?.slice(0, 5).map(decisionFromSocratic) ?? [];
   if (persisted.length > 0) return persisted;
   const latestRows =
-    latest?.proposals?.slice(0, 5).map((item) => decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status)) ??
+    latest?.proposals
+      ?.slice(0, 5)
+      .map((item) => decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons)) ??
     [];
   if (latestRows.length > 0) return latestRows;
   return snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
 }
 
 function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
+  const reasons = decision.policyDecision?.reasons ?? [];
+  const rationale = decision.policyDecision?.socraticOverride?.applied
+    ? `${decision.rationale} Override: ${decision.policyDecision.socraticOverride.thesis}`
+    : decision.rationale;
   return {
     id: decision.id,
     symbol: decision.symbol ?? "Portfolio",
     verb: decision.side ? SIDE_LABEL[decision.side] ?? decision.side : "Observed",
     size: decision.notional ? fmtMoney(decision.notional) : EM_DASH,
     status: decision.status,
-    rationale: decision.policyDecision?.socraticOverride?.applied
-      ? `${decision.rationale}\n\nOverride: ${decision.policyDecision.socraticOverride.thesis}`
-      : decision.rationale,
+    rationale: withBlockReasons(rationale, decision.status, reasons),
+    title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: decision.confidenceScore
   };
 }
 
-function decisionFromProposal(id: string, proposal: TradeProposal, status: string): DecisionRowData {
+function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = []): DecisionRowData {
   return {
     id,
     symbol: proposal.symbol,
     verb: SIDE_LABEL[proposal.side] ?? proposal.side,
     size: proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : proposal.quantity ? `${proposal.quantity} sh` : EM_DASH,
     status,
-    rationale: proposal.rationale,
+    rationale: withBlockReasons(proposal.rationale, status, reasons),
+    title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: proposal.confidenceScore
   };
 }
@@ -383,17 +396,21 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
   const rows: EvidenceRow[] = [];
   if (decision) {
     for (const item of decision.evidence.slice(0, 5)) {
+      const source = evidenceSourceLabel(item.source);
       rows.push({
         title: item.title,
-        meta: [item.kind, item.source].filter(Boolean).join(" · "),
+        meta: [plainLabel(item.kind), source].filter(Boolean).join(" · "),
+        metaTitle: source ? `Source: ${source}` : undefined,
         body: item.summary,
         tone: toneFromSocratic(item.tone)
       });
     }
     for (const rag of decision.ragAttributions.slice(0, 2)) {
+      const source = evidenceSourceLabel(rag.source);
       rows.push({
-        title: rag.source ?? rag.docType ?? "Retrieved memory",
-        meta: rag.score != null ? `score ${rag.score.toFixed(2)}` : rag.symbol,
+        title: rag.docType ? `Retrieved ${plainLabel(rag.docType)}` : "Retrieved evidence",
+        meta: [source, rag.score != null ? `score ${rag.score.toFixed(2)}` : rag.symbol].filter(Boolean).join(" · "),
+        metaTitle: source ? `Source: ${source}` : undefined,
         body: rag.contribution,
         tone: "accent"
       });
@@ -402,9 +419,11 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
   }
   const scan = latest?.marketScan;
   if (scan) {
+    const sources = formatSourceList(scan.source);
     rows.push({
       title: "Market scan",
-      meta: `${scan.returnedQuotes}/${scan.scannedSymbols} quotes · ${scan.source}`,
+      meta: `${scan.returnedQuotes}/${scan.scannedSymbols} quotes${sources ? ` · ${sources}` : ""}`,
+      metaTitle: sources ? `Quote sources: ${sources}` : "Quote sources were not recorded for this scan.",
       body:
         typeof scan.breadthPct === "number"
           ? `Market breadth was ${fmtPct(scan.breadthPct, 1)} when the thesis was formed.`
@@ -436,9 +455,11 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
 
 function evidenceFromCandidate(candidate: MarketQuote): EvidenceRow {
   const bullet = candidate.evidenceBulletins?.[0] ?? candidate.headlines?.[0];
+  const sources = sourceListFromQuote(candidate) || evidenceSourceLabel(candidate.provider);
   return {
     title: candidate.symbol,
-    meta: `score ${Math.round(candidate.score)} · ${candidate.provider ?? "source attributed"}`,
+    meta: `score ${Math.round(candidate.score)}${sources ? ` · ${sources}` : ""}`,
+    metaTitle: sources ? `Data sources: ${sources}` : undefined,
     body:
       bullet ??
       `${candidate.companyName ?? candidate.symbol} was in the latest candidate set with ${fmtPct(candidate.intradayChangePct, 2, true)} intraday change.`,
@@ -488,7 +509,8 @@ function deriveFrameworkRows(snapshot: DashboardSnapshot): EvidenceRow[] {
     rows.push({
       title: topThesis.thesisTag,
       meta: `${topThesis.trades} closed · ${fmtPct(topThesis.winRate, 1)} win rate`,
-      body: `Average return ${fmtPct(topThesis.avgReturnPct, 2, true)}. Socratic Trade should use this as earned evidence before changing sizing or thesis weight.`,
+      metaTitle: "Raw realized return for closed lots in this thesis bucket, not benchmark-relative. The SPY comparison lives on Results.",
+      body: `Raw average return ${fmtPct(topThesis.avgReturnPct, 2, true)}. Socratic Trade should use this as earned evidence before changing sizing or thesis weight.`,
       tone: topThesis.avgReturnPct >= 0 ? "pos" : "warn"
     });
   }
@@ -497,7 +519,8 @@ function deriveFrameworkRows(snapshot: DashboardSnapshot): EvidenceRow[] {
     rows.push({
       title: topRegime.regime,
       meta: `${topRegime.trades} closed in regime`,
-      body: `Regime average return ${fmtPct(topRegime.avgReturnPct, 2, true)}. Use this to challenge or support future regime-specific autonomy.`,
+      metaTitle: "Raw realized return for closed lots opened in this regime, not benchmark-relative. The SPY comparison lives on Results.",
+      body: `Raw regime average return ${fmtPct(topRegime.avgReturnPct, 2, true)}. Use this to challenge or support future regime-specific autonomy.`,
       tone: topRegime.avgReturnPct >= 0 ? "pos" : "warn"
     });
   }
@@ -522,7 +545,7 @@ function toneFromSocratic(tone: string | undefined): EvidenceRow["tone"] {
 
 function DecisionRow({ row }: { row: DecisionRowData }) {
   return (
-    <article className="con-decision-row">
+    <article className="con-decision-row" title={row.title}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} showLogo={false} />}
@@ -539,16 +562,42 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
   );
 }
 
-function EvidenceCard({ title, meta, body, tone = "accent" }: EvidenceRow) {
+function EvidenceCard({ title, meta, metaTitle, body, tone = "accent" }: EvidenceRow) {
   return (
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
         <strong>{title}</strong>
-        <span>{meta}</span>
+        <span title={metaTitle}>{meta}</span>
       </div>
       <p>{body}</p>
     </article>
   );
+}
+
+function withBlockReasons(rationale: string, status: string, reasons: string[]): string {
+  if (reasons.length === 0) return rationale;
+  if (!/blocked|failed|rejected|skipped/i.test(status)) return rationale;
+  return `${rationale} Blocked because: ${reasons.slice(0, 3).join(" ")}${reasons.length > 3 ? " ..." : ""}`;
+}
+
+function evidenceSourceLabel(source?: string | null): string {
+  if (!source) return "";
+  return formatSourceList(source) || friendlySource(source);
+}
+
+function sourceListFromQuote(candidate: MarketQuote): string {
+  const sources = Object.values(candidate.sources ?? {}).filter(Boolean);
+  if (candidate.provider) sources.unshift(candidate.provider);
+  return formatSourceList(sources.join("+"));
+}
+
+function plainLabel(raw?: string | null): string {
+  if (!raw) return "";
+  return raw
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase; refresh: () => Promise<void> }) {

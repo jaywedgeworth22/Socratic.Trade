@@ -189,11 +189,11 @@ export function pushRagUsage(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const hasCost = typeof entry.costUsd === "number" && Number.isFinite(entry.costUsd);
-    const quantity = (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
-    // Voyage embed/rerank quantities are token estimates; Pinecone query/upsert quantities are
-    // record counts (tokensOut = recordCount) — reporting those as "token" would corrupt the
-    // monitor's token aggregates, so tag Pinecone volume as rows.
-    const unit: UsageUnit = entry.provider === "pinecone" ? "row" : "token";
+    const isPinecone = entry.provider === "pinecone";
+    const quantity = isPinecone ? (entry.tokensIn ?? 0) : (entry.tokensIn ?? 0) + (entry.tokensOut ?? 0);
+    // Voyage embed/rerank quantities are token estimates. Pinecone query/upsert quantities are
+    // Read/Write Units in tokensIn, with records kept separately in metadata.
+    const unit: UsageUnit = isPinecone ? "credit" : "token";
     enqueue({
       sourceApp: SOURCE_APP,
       environment: usageMonitorEnv(),
@@ -214,6 +214,7 @@ export function pushRagUsage(entry: {
         operation: entry.operation,
         userId: entry.userId,
         batchCount: entry.batchCount ?? null,
+        recordCount: isPinecone ? entry.tokensOut ?? null : null,
       }),
     });
   } catch {

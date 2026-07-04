@@ -2501,12 +2501,13 @@ async function proposeTrades(input: {
   // locked rebuy honestly instead of just seeing a forbidden list. In the default "block" mode the
   // context stays byte-identical (locked names remain a hard no).
   const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? "block";
-  // IRA-disregard: when the buyer is an IRA whose owner opted into iraWashSaleHandling "disregard",
+  // IRA-disregard: when the buyer is an IRA whose policy uses iraWashSaleHandling "disregard"
+  // (the shipped default),
   // the gate PERMITS locked rebuys (annotated + audited). The prompt must know this or the model,
   // still told "NEVER propose a locked buy", would never surface the very rebuys the setting exists
   // to allow. IRA detection uses the SAME source-of-truth precedence as the gate (isIraTaxRegime).
   const iraWashSaleDisregard =
-    (input.policy.taxSettings?.iraWashSaleHandling ?? "block") === "disregard" &&
+    (input.policy.taxSettings?.iraWashSaleHandling ?? "disregard") === "disregard" &&
     isIraTaxRegime(
       input.activeAccount?.taxationType,
       input.policy.taxSettings?.taxationType,

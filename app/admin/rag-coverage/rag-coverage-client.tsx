@@ -26,6 +26,7 @@ interface VectorStoreHealth {
     skipped?: boolean;
     error?: string;
     budgetSkipped?: number;
+    writeUnitBudgetSkipped?: number;
     budget?: {
       requested?: number;
       allowed?: number;
@@ -33,7 +34,21 @@ interface VectorStoreHealth {
       usedLast24h?: number;
       limitPer24h?: number;
     };
+    writeBudget?: {
+      requestedEstimatedWriteUnits?: number;
+      allowedEstimatedWriteUnits?: number;
+      skipped?: number;
+      usedLast24h?: number;
+      limitPer24h?: number;
+    };
   };
+}
+
+interface VectorIndexStats {
+  indexName: string;
+  totalVectorCount?: number;
+  dimension?: number;
+  error?: string;
 }
 
 interface CoverageData {
@@ -44,7 +59,21 @@ interface CoverageData {
   totalFilings: number;
   vectorStore: VectorStoreHealth;
   vectorStoreTotalVectors: number;
+  allVectorIndexes?: VectorIndexStats[];
+  allVectorStoreTotalVectors?: number;
   coverageGaps: string[];
+  providerUsage?: {
+    pinecone?: {
+      monthlyUsageApiAvailable: boolean;
+      note: string;
+      configuredIndexVectors?: number;
+      allVisibleIndexVectors?: number;
+    };
+    voyage?: {
+      usageApiAvailable: boolean;
+      note: string;
+    };
+  };
   ragUsage: {
     sinceDays: number;
     totalCostUsd: number;
@@ -87,6 +116,10 @@ function fmtRelDate(iso: string | null): string {
   } catch {
     return iso;
   }
+}
+
+function fmtInt(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "configured";
 }
 
 function opLabel(op: string): string {
@@ -152,6 +185,20 @@ function TickerRow({ coverage }: { coverage: TickerCoverage }) {
           <span>{fmtRelDate(coverage.latestChunkAt)}</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function VectorIndexRow({ row, configuredIndex }: { row: VectorIndexStats; configuredIndex: string }) {
+  const configured = row.indexName === configuredIndex;
+  return (
+    <div className="flex items-center gap-3 border-b border-line/30 px-4 py-2 text-xs last:border-0">
+      <span className="min-w-0 flex-1 truncate font-mono text-fg" title={row.indexName}>
+        {row.indexName}
+      </span>
+      {configured && <span className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-accent">configured</span>}
+      <span className="w-24 text-right font-mono text-fg">{row.totalVectorCount ?? "?"}</span>
+      <span className="w-20 text-right font-mono text-muted">{row.dimension ?? "?"}d</span>
     </div>
   );
 }
@@ -261,11 +308,31 @@ export function RagCoverageClient() {
               sub={data.vectorStore?.indexName ?? "No index"}
             />
             <SummaryCard
-              label="RAG cost"
+              label="App-recorded RAG"
               value={fmtCost(data.ragUsage.totalCostUsd)}
-              sub={`last ${data.sinceDays}d`}
+              sub={`estimated Voyage cost, last ${data.sinceDays}d`}
             />
           </div>
+
+          {(data.providerUsage?.pinecone || data.providerUsage?.voyage) && (
+            <StatusNotice tone="info" title="Provider Usage Cross-Check">
+              <div className="space-y-1">
+                {data.providerUsage?.pinecone?.note && <p>{data.providerUsage.pinecone.note}</p>}
+                {data.providerUsage?.voyage?.note && <p>{data.providerUsage.voyage.note}</p>}
+              </div>
+            </StatusNotice>
+          )}
+
+          {(data.vectorStoreTotalVectors > 0 && data.totalChunks === 0) && (
+            <StatusNotice tone="warning" title="Pinecone Has Vectors, Local Coverage Ledger Is Empty">
+              The configured Pinecone index reports {data.vectorStoreTotalVectors.toLocaleString()} vector{data.vectorStoreTotalVectors === 1 ? "" : "s"}, but this app&apos;s local <span className="font-mono">document_chunks</span> table has zero rows. Ticker coverage below is a local ledger view, not a full Pinecone inventory.
+            </StatusNotice>
+          )}
+          {((data.allVectorStoreTotalVectors ?? 0) > data.vectorStoreTotalVectors) && (
+            <StatusNotice tone="warning" title="Other Pinecone Indexes Also Consume This Org's Quota">
+              This project key can see {(data.allVectorStoreTotalVectors ?? 0).toLocaleString()} vector{(data.allVectorStoreTotalVectors ?? 0) === 1 ? "" : "s"} across all Pinecone indexes, while the configured app index has {data.vectorStoreTotalVectors.toLocaleString()}. Pinecone Write Units are organization-level, so older indexes can explain quota usage that this ticker table does not show.
+            </StatusNotice>
+          )}
 
           {/* Vector store health */}
           {data.vectorStore && !data.vectorStore.configured && (
@@ -293,6 +360,29 @@ export function RagCoverageClient() {
             <StatusNotice tone="warning" title="RAG Ingest Budget Reached">
               Skipped {data.vectorStore.lastIngest!.budgetSkipped} document{data.vectorStore.lastIngest!.budgetSkipped === 1 ? "" : "s"} before embedding. Current cap is {data.vectorStore.lastIngest!.budget?.limitPer24h ?? "configured"} texts per 24 hours.
             </StatusNotice>
+          )}
+          {(data.vectorStore?.lastIngest?.writeUnitBudgetSkipped ?? 0) > 0 && (
+            <StatusNotice tone="warning" title="Pinecone Write Unit Budget Reached">
+              Skipped {data.vectorStore.lastIngest!.writeUnitBudgetSkipped} document{data.vectorStore.lastIngest!.writeUnitBudgetSkipped === 1 ? "" : "s"} before Voyage embedding or Pinecone upsert. This run requested about {fmtInt(data.vectorStore.lastIngest!.writeBudget?.requestedEstimatedWriteUnits)} Write Units; {fmtInt(data.vectorStore.lastIngest!.writeBudget?.allowedEstimatedWriteUnits)} remained out of the {fmtInt(data.vectorStore.lastIngest!.writeBudget?.limitPer24h)} daily cap.
+            </StatusNotice>
+          )}
+
+          {data.allVectorIndexes && data.allVectorIndexes.length > 0 && (
+            <Card className="mb-6 overflow-hidden">
+              <div className="flex items-center gap-3 border-b border-line px-4 py-3 text-xs uppercase tracking-wide text-muted">
+                <span className="flex-1">Pinecone Index</span>
+                <span className="w-24 text-right">Vectors</span>
+                <span className="w-20 text-right">Dim</span>
+              </div>
+              <div>
+                {data.allVectorIndexes
+                  .slice()
+                  .sort((a, b) => (b.totalVectorCount ?? -1) - (a.totalVectorCount ?? -1))
+                  .map((row) => (
+                    <VectorIndexRow key={row.indexName} row={row} configuredIndex={data.vectorStore?.indexName ?? ""} />
+                  ))}
+              </div>
+            </Card>
           )}
 
           {/* Coverage gaps warning */}
@@ -323,13 +413,14 @@ export function RagCoverageClient() {
           {/* RAG usage table */}
           {data.ragUsage.rows.length > 0 && (
             <div className="mt-6">
-              <h2 className="text-sm font-semibold text-fg mb-2">RAG Usage</h2>
+              <h2 className="text-sm font-semibold text-fg mb-2">App-Recorded RAG Usage</h2>
               <Card className="overflow-hidden">
                 <div className="px-4 py-2 border-b border-line text-xs text-muted uppercase tracking-wide flex items-center gap-3">
                   <span className="w-24 shrink-0">Operation</span>
                   <span className="w-20 shrink-0">Provider</span>
                   <span className="flex-1">Model</span>
                   <span className="w-16 text-right">Calls</span>
+                  <span className="w-20 text-right">Units / Tokens</span>
                   <span className="w-20 text-right">Cost</span>
                 </div>
                 <div className="divide-y divide-line/20 max-h-[30vh] overflow-y-auto">
@@ -339,7 +430,18 @@ export function RagCoverageClient() {
                       <span className="w-20 shrink-0 text-muted">{providerLabel(row.provider)}</span>
                       <span className="flex-1 text-muted truncate">{row.model ?? "—"}</span>
                       <span className="w-16 text-right font-mono text-muted">{row.calls}</span>
-                      <span className="w-20 text-right font-mono text-fg">{fmtCost(row.costEstUsd)}</span>
+                      <span
+                        className="w-20 text-right font-mono text-muted"
+                        title={row.provider === "pinecone" && row.operation === "upsert" ? "Estimated Pinecone Write Units for upserts. Voyage rows show estimated input tokens." : row.provider === "pinecone" && row.operation === "query" ? "Pinecone Read Units reported by the query response when available, otherwise a conservative fallback." : "Estimated input tokens."}
+                      >
+                        {fmtInt(row.tokensIn)}
+                      </span>
+                      <span
+                        className="w-20 text-right font-mono text-fg"
+                        title={row.provider === "pinecone" ? "Pinecone cost is not estimated here; use provider billing/usage views for dollars. Units are shown in the Units / Tokens column." : "Estimated Voyage cost from app-recorded token volume and static pricing."}
+                      >
+                        {row.provider === "pinecone" ? "—" : fmtCost(row.costEstUsd)}
+                      </span>
                     </div>
                   ))}
                 </div>

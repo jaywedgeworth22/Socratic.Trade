@@ -4,7 +4,7 @@
  *  caps, stop-loss, daily-loss breaker, autonomy, extended hours), then the
  *  advanced rulebook grouped the way the domain groups it. Editing uses a
  *  review-and-commit model with asymmetric friction: tightening is one click,
- *  loosening on LIVE money requires typing CONFIRM. Autonomy has its own
+ *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
 
 import { useMemo, useState } from "react";
@@ -371,7 +371,7 @@ function AutonomyCard() {
           confirmLabel="Enable Autopilot"
           note={
             reality.tone === "live"
-              ? "This is a LIVE (real money) account. With Autopilot on, Socratic Trade can spend real capital without per-trade approval, including approved Socratic overrides of owner-preference gates."
+              ? "Autopilot lets Socratic Trade place orders in this brokerage account without per-trade approval, including approved Socratic overrides of owner-preference gates."
               : "Autopilot lets Socratic Trade place broker-paper orders itself, including approved Socratic overrides of owner-preference gates."
           }
           onConfirm={() => void setAuthority("decide")}

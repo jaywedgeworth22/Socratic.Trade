@@ -46,7 +46,7 @@ const FEATURES: Array<{ title: string; body: string }> = [
     body: "Every action is framed as a trace: belief, catalyst, size, status, supporting evidence, dissent, and what would make the agent change its mind."
   },
   {
-    title: "Evidence and RAG attribution",
+    title: "Evidence attribution",
     body: "Surfaces which data providers, retrieval memories, prior lessons, and market facts influenced the decision instead of hiding behind a single score."
   },
   {
@@ -80,7 +80,7 @@ const STEPS: Array<{ n: number; title: string; detail: string }> = [
     n: 3,
     title: "Explain, learn, and improve",
     detail:
-      "It shows the evidence path, RAG contribution, dissent, outcome, coaching notes, and proposed framework changes so the next run has a better memory."
+      "It shows the evidence path, dissent, outcome, coaching notes, and proposed framework changes so the next run has a better memory."
   }
 ];
 

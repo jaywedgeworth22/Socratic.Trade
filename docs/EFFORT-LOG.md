@@ -133,17 +133,27 @@ to `socratictrade.com`, record the release commit + date here._
   (`codex/live-thesis-portfolio-framing`): default RAG index `socratic-trade`, Pinecone/Voyage
   health visibility, RAG ingestion brakes, provider-specific model reasoning controls, `/old`,
   OAuth host canonicalization, ticker drawer coverage, and user/admin LLM usage visibility.
+- **#350** — AI Review inheritance, model catalog, and text-box font controls
+  (`codex/ai-review-model-inheritance`): removed the misleading account-review model fallback,
+  made blank AI Review inherit Red Team then Green Team, refreshed current curated provider model
+  options, added DeepSeek V4 thinking controls, and made console text boxes use consistent readable
+  fonts with user-selectable examples.
 
 ---
 
 ## 🔨 In Progress
 
-- **AI Review inheritance, current model catalog, and text-box font controls** (Codex, local,
-  branch `codex/ai-review-model-inheritance`) — owner correction: account review must not expose
-  or implement a separate account-level model. Blank AI Review inherits Red Team if configured,
-  otherwise Green Team. Also refreshing current non-OpenAI/non-Anthropic curated model options with
-  provider-specific reasoning controls and making text boxes use a consistent readable font with
-  user-selectable examples. Implementation and local verification are green; PR pending.
+- **Console actions/evidence/live-account polish** (Codex, local,
+  branch `codex/console-actions-evidence-live`) — owner-requested polish covering Autonomous Actions
+  blocked reasons/history, stopped cadence display, raw-vs-benchmark return tooltips, IRA wash-sale
+  buy blocking, Evidence/source wording, LLM settings usage links/coach model affordances, reduced
+  LIVE warnings, Public.com/eToro/IBKR account options investigation, app-wide provider/model naming
+  consistency, and the repo/folder rename handoff plan. Full local gate green; PR pending.
+- **RAG architecture review and Pinecone/Voyage write-safety** (Codex, local,
+  branch `codex/console-actions-evidence-live`) — evaluating Gemini's RAG stack suggestions against
+  Socratic Trade's current finance-specific retrieval path and adding hard write controls before any
+  fresh Pinecone account is connected; also correcting app-recorded RAG usage labeling and documenting
+  earnings-report ingestion/summarization design. Full local gate green; PR pending.
 
 - **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
   `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
@@ -261,3 +271,8 @@ to `socratictrade.com`, record the release commit + date here._
   exclusivity fix at `481e9dcc`; production health and live S&P/Nasdaq mutual-exclusion behavior
   verified. Started `codex/sell-to-fund-title-case` to title-case the Sell to Fund Buys selector
   labels/options and save-review summary.
+- 2026-07-03 — **#350 merged** (→ Completed): AI Review inheritance/model catalog/text-box font
+  controls. Started `codex/console-actions-evidence-live` for the owner-requested console polish
+  covering Actions, cadence, returns, IRA wash-sale behavior, Evidence/source labels, LLM settings
+  usage affordances, LIVE-warning reduction, broker-option investigation, provider/model naming
+  consistency, and repo/folder rename planning.

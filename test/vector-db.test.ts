@@ -34,7 +34,9 @@ vi.mock("voyageai", () => ({
 vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
-  setInternalSetting: vi.fn()
+  setInternalSetting: vi.fn(),
+  filterNewDocumentChunks: vi.fn((chunks) => chunks),
+  insertDocumentChunks: vi.fn()
 }));
 
 beforeEach(() => {
