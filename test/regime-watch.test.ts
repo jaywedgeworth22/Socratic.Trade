@@ -42,6 +42,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     // First call seeds the stored regime as Neutral.
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "16.00" }), // Neutral
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "16.00" }), // Neutral
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -63,6 +64,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     vi.doMock("../src/lib/events", () => ({ emitDashboardEvent: vi.fn() }));
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "26.00" }), // Risk-Off
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -89,6 +91,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     // Seed with a Crisis regime as the stored current value.
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "35.00" }), // Crisis
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "35.00" }), // Crisis
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -109,6 +112,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     vi.doMock("../src/lib/events", () => ({ emitDashboardEvent: vi.fn() }));
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "35.00" }), // same Crisis
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "35.00" }), // same Crisis
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -128,6 +132,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     vi.doMock("../src/lib/events", () => ({ emitDashboardEvent: vi.fn() }));
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "14.00" }), // Neutral
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "14.00" }), // Neutral
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -151,6 +156,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     // Seed with Risk-Off as the stored current.
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "25.00" }), // Risk-Off
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "25.00" }), // Risk-Off
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";
@@ -170,6 +176,7 @@ describe("checkRegimeFlip — broadcast gating", () => {
     vi.doMock("../src/lib/events", () => ({ emitDashboardEvent: emitDashboard }));
     vi.doMock("../src/lib/macro", () => ({
       fetchMacroData: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "14.00" }), // Neutral
+      fetchMacroDataWithLiveVix: vi.fn().mockResolvedValueOnce({ ...BASE_MACRO, vix: "14.00" }), // Neutral
       determineMarketRegime: (m: { vix: string }) => {
         const v = parseFloat(m.vix);
         if (v >= 30) return "Crisis (Extreme Volatility)";

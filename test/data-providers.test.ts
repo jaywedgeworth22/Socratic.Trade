@@ -6,6 +6,7 @@ import {
   AlpacaSnapshotEnrichmentProvider,
   CascadingEnrichmentProvider,
   alpacaDataFeed,
+  alpacaSnapshotTtlMs,
   analystScoreFromCounts,
   analystScoreFromMean,
   getEnrichmentProvider,
@@ -793,6 +794,70 @@ describe("parseAlpacaSnapshot", () => {
     expect(parseAlpacaSnapshot(null)).toEqual({});
     expect(parseAlpacaSnapshot(undefined)).toEqual({});
   });
+
+  // Composite review D/high/S: "Per-field freshness (asOf) map on quotes + Alpaca-snapshot asOf" —
+  // parseAlpacaSnapshot never set asOf before, so the maxQuoteAgeSec staleness gate (policy.ts)
+  // could not see that the snapshot was served from a stale cache entry.
+  describe("asOf stamping (staleness-gate visibility)", () => {
+    it("stamps asOf from latestTrade.t when latestTrade.p wins the price", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 205.75, t: "2026-07-04T14:30:00Z" },
+        dailyBar: { c: 205.60, v: 1_000_000, t: "2026-07-04T00:00:00Z" }
+      });
+      expect(result.price).toBe(205.75);
+      expect(result.asOf).toBe("2026-07-04T14:30:00Z");
+    });
+
+    it("stamps asOf from dailyBar.t when latestTrade is absent and dailyBar.c wins the price", () => {
+      const result = parseAlpacaSnapshot({
+        latestQuote: { bp: 100.00, ap: 100.10 },
+        dailyBar: { c: 100.05, v: 500_000, t: "2026-07-04T20:00:00Z" }
+      });
+      expect(result.price).toBe(100.05);
+      expect(result.asOf).toBe("2026-07-04T20:00:00Z");
+    });
+
+    it("omits asOf when no timestamp backs the winning price field (never guesses)", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 50.00 }, // no .t
+        dailyBar: { c: 50.00, v: 10_000 }
+      });
+      expect(result.price).toBe(50.00);
+      expect(result).not.toHaveProperty("asOf");
+    });
+
+    it("omits asOf for an unparsable timestamp string", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 50.00, t: "not-a-timestamp" }
+      });
+      expect(result).not.toHaveProperty("asOf");
+    });
+  });
+});
+
+describe("alpacaSnapshotTtlMs — per-data-class TTL (quote-family, not fundamentals)", () => {
+  const original = process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+    else process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = original;
+  });
+
+  it("defaults to ~30s — far shorter than the 6h fundamentals ttlMs()", () => {
+    delete process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
+  });
+
+  it("is configurable independently of NEWS_CACHE_TTL_MS", () => {
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "5000";
+    expect(alpacaSnapshotTtlMs()).toBe(5000);
+  });
+
+  it("falls back to the default for a non-finite/negative override", () => {
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "not-a-number";
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "-5";
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
+  });
 });
 
 describe("alpacaDataFeed", () => {
@@ -954,6 +1019,48 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     const r2 = await provider.enrich(["AAPL"]);
     expect(r2.AAPL?.price).toBe(200.00);
     expect(fetchCount).toBe(1); // cache hit — no second fetch
+  });
+
+  // Composite review D/high/S: the snapshot used to share the blanket 6h fundamentals ttlMs(), so a
+  // real-time price could replay from cache for up to 6h. It now gets its own short (~30s)
+  // alpacaSnapshotTtlMs() — this pins down that a cached snapshot actually expires quickly.
+  it("re-fetches after the short (~30s) quote-family TTL expires, unlike the 6h fundamentals cache", async () => {
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response(
+        JSON.stringify({
+          AAPL: {
+            latestTrade: { p: 200.00 },
+            latestQuote: { bp: 199.90, ap: 200.10 },
+            dailyBar: { c: 200.00, v: 1_000_000 },
+            prevDailyBar: { c: 198.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    vi.useFakeTimers();
+    try {
+      const r1 = await provider.enrich(["AAPL"]);
+      expect(r1.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(1);
+
+      // Still within the ~30s TTL — cache hit.
+      vi.advanceTimersByTime(10_000);
+      const r2 = await provider.enrich(["AAPL"]);
+      expect(r2.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(1);
+
+      // Past the ~30s TTL — must re-fetch (would still be cached under the old 6h ttlMs()).
+      vi.advanceTimersByTime(25_000);
+      const r3 = await provider.enrich(["AAPL"]);
+      expect(r3.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns empty objects on HTTP error and does not cache", async () => {

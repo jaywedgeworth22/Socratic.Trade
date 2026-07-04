@@ -45,6 +45,37 @@ stages — no new ingestion sources. Five items:
 Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
 (clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
 (green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+## 2026-07-04 — Wave-1 quick win: typed regime enum + live VIX overlay + Alpaca snapshot asOf (Claude)
+Branch `claude/w1-regime-data` (pushed, not yet landed — a landing train will pick it up; no
+PR opened per this lane's instructions). Three composite-review items (D+E, high/S each):
+1. **Typed regime enum + numeric severity** — new dependency-free `src/lib/market-regime.ts`
+   (`MarketRegime` enum, `MARKET_REGIME_LABELS`, `MARKET_REGIME_SEVERITY`, `classifyMarketRegime`,
+   `regimeFromLabel`, `isCrisisOrInvertedMarketRegime`, `isEscalationMarketRegime`,
+   `isRiskOffFilterRegime`). `src/lib/macro.ts` re-exports it; `determineMarketRegime` is now a thin
+   label-projection wrapper — byte-identical persisted label strings, unchanged. the risk-gate call
+   sites (`policy.ts` crisis cap, `strategy.ts` `deterministicBearFilter`) deliberately keep their
+   substring checks — enum adoption inside risk gates is the risk lane's (Monet, PR #360) per the
+   owner-assigned swimlane split; the console Macro regime card (`app/console/macro/indicators.ts`)
+   uses the enum (client-safe since `market-regime.ts` has zero server-only imports).
+   `regime-watch.ts`'s `isEscalationRegime` intentionally stays a plain substring check — its test
+   file fully mocks `./macro` with test-local labels, so importing the typed helpers there would
+   break under that mock (documented inline).
+2. **Live ^VIX overlay** — `fetchLiveVix`/`fetchMacroDataWithLiveVix` in `macro.ts`: a separate
+   short-TTL (10 min) cache entry off the same key-free Yahoo `^VIX` chart call, independent of the
+   24h `fetchMacroData` cache. The volatility panic brake (`strategy.ts`) and the regime-flip
+   detector (`regime-watch.ts`) now read the live overlay instead of the day-cached snapshot;
+   `vixAsOf` is stamped on the vol-brake audit/notification payload.
+3. **Per-data-class TTL + asOf on the Alpaca snapshot** — new `alpacaSnapshotTtlMs()` (~30s default,
+   `ALPACA_SNAPSHOT_CACHE_TTL_MS`-overridable) replaces the blanket 6h `ttlMs()` for the
+   `AlpacaSnapshotEnrichmentProvider` cache write; `parseAlpacaSnapshot` now stamps `asOf` from
+   `latestTrade.t`/`dailyBar.t` (whichever backs the winning price field) so the `maxQuoteAgeSec`
+   staleness gate in `policy.ts` can actually see the quote's true age.
+Verification: `npm run lint` 0 errors (pre-existing warning backlog unchanged), `npx tsc --noEmit`
+clean, `npm test` 247 files / 2401 tests green, `npm run build` succeeds (`/console/macro` compiles,
+confirming the client-bundle import of `market-regime.ts`). New tests:
+`test/market-regime.test.ts`, `test/macro-live-vix.test.ts`, plus additions to
+`test/data-providers.test.ts` and `test/regime-watch.test.ts`. Full detail:
+`docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
 ## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
 Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
 Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed
