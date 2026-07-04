@@ -172,7 +172,8 @@ to `socratictrade.com`, record the release commit + date here._
   strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
   machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
   2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
-  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`. **2026-07-04 (Fable):** Added 
+  #agent-sync channel & protocol documentation (docs-only, separate branch `claude/agent-sync-protocol-docs`).
 
 - **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
   Scope: reusable `RawNumInput` component (fixes
