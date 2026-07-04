@@ -198,6 +198,13 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Shared public dependency HTTPS hardening (Codex, branch `codex/shared-dep-https-hardening`,
+  worktree `/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`) — 2026-07-04.**
+  Socratic consumes `@jaywedgeworth22/congress-trading-shared` from the exact public HTTPS git tag,
+  removes GitHub Packages install auth/helper plumbing, and verifies no-token/no-SSH `npm ci` plus
+  lint/tsc/test/build. Paired Congress.Trade branch tightens `app/package*.json` to the same tag
+  and HTTPS lockfile URL.
+
 - **CODEX console/UI swimlane (Codex, worktree `/Users/jay/apps/trading-codex-ui-swimlane`,
   branch `codex/console-ui-swimlane`) — claimed 2026-07-04 from sync-21.** Priority:
   approvals surface pack first (approval-card provenance, red-team trigger chip, R:R geometry,

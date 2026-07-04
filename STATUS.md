@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Shared public dependency HTTPS hardening (Codex)
+Branch `codex/shared-dep-https-hardening`, worktree
+`/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`. Follow-up to the public
+`congress-trading-shared` migration: Socratic now pins the shared package to the exact public
+HTTPS git tag `git+https://github.com/jaywedgeworth22/congress-trading-shared.git#v1.2.0`,
+removes the old GitHub Packages `.npmrc` and `scripts/npm-ci-with-shared-deps.sh`, and changes
+CI/deploy/e2e/cloud setup install paths back to plain `npm ci`. This pairs with the Congress.Trade
+Codex branch of the same name, which tightens its app lockfile from `git+ssh` to `git+https`.
+
+Verification: tokenless/no-SSH `npm ci` passed with `NPM_TOKEN`, `NODE_AUTH_TOKEN`,
+`GITHUB_TOKEN`, and `GH_TOKEN` unset and `GIT_SSH_COMMAND='sh -c "exit 255"'`; `npm run lint`
+passed with 0 errors / 308 existing warnings; `npx tsc --noEmit`; `npm test` (253 files / 2457
+tests); `npm run build` passed with existing Next middleware/Sentry Edge warnings. `npm audit`
+still reports the pre-existing `tsx` -> `esbuild` moderate dev-server advisory.
+See `docs/rollouts/2026-07-04-shared-dep-https-hardening.md`.
+
 ## 2026-07-04 — Codex console/UI swimlane: approvals receipt, trace inspector, a11y/parity
 Branch `codex/console-ui-swimlane`, worktree `/Users/jay/apps/trading-codex-ui-swimlane`, claimed
 from `#agent-sync` sync-21 (not the sovereign review branch). Implemented the assigned console/UI
