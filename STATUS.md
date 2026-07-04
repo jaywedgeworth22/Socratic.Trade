@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Landing-operator merge-forward + dedup fix (Wave-2 Outcome Engine)
+Picked up `claude/w2-outcome-engine` mid-merge (prior operator restart left conflict markers
+uncommitted in `~/apps/trading-wt-w2-outcome`). Resolved `docs/EFFORT-LOG.md` /
+`docs/phase-7-strategy.md` / `docs/rollouts/2026-07-04-w1-learning-loops.md` (add/add,
+keep-both-newest-first), `src/lib/strategy.ts` (took `origin/main`'s newer
+`connectedAccountId`-scoped audit call — this branch never touched those lines itself),
+`src/lib/db-socratic.ts` (kept HEAD's 4 new outcome-engine functions, main had nothing there),
+`test/performance.test.ts` (kept both sides' new tests, no overlap). `tsc` then caught a REAL
+semantic conflict git's line-merge missed silently: two full duplicate copies of
+`RedTeamEfficacy`/`getRedTeamEfficacy` in `src/lib/performance.ts` (TS2323/TS2393) — removed the
+older pre-Codex-review duplicate, kept the newer account-scoped/keyed-lookup version (separate
+commit `e28db55`). Full quartet green post-fix: lint 0 errors, tsc clean, 252 files / 2455 tests,
+build green. See addendum in `docs/rollouts/2026-07-04-w2-outcome-engine.md`. Landing next.
+
 ## 2026-07-04 — Wave-2: the Outcome Engine lane (Claude)
 Branch `claude/w2-outcome-engine`, based on `origin/claude/w1-learning-loops` (worktree
 `~/apps/trading-wt-w2-outcome`); lands via the landing train AFTER the base lands — push only,

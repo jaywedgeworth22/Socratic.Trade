@@ -123,3 +123,55 @@ wrote it before).
   horizon targeting — the §A item's second half, not in this slice (backtest learner untouched
   beyond the coverage disclosure).
 - Exit-side counterfactuals (§A medium) would reuse `outcome-horizons.ts` directly.
+
+## 2026-07-04 addendum — landing operator merge-forward, dedup fix, re-verify
+
+This branch had been sitting on top of `origin/claude/w1-learning-loops` since before PR #365's
+Codex-review fixups and PR #437 landed on `main`; the worktree (`~/apps/trading-wt-w2-outcome`)
+was left mid-merge (conflict markers present, uncommitted) by the prior operator. Resolved every
+conflicted file:
+
+- `docs/EFFORT-LOG.md`, `docs/phase-7-strategy.md`, `docs/rollouts/2026-07-04-w1-learning-loops.md`
+  (add/add) — keep-both-newest-first per the docs protocol; main's continuations were strict
+  supersets in every hunk (PR numbers filled in, w1-learning-loops marked **merged**, the Codex
+  review-fixes section appended).
+- `src/lib/strategy.ts` — two small hunks around the Bear-veto audit call (~line 809). This
+  branch never touched these lines itself (inherited them from its `w1-learning-loops` base
+  before that base's own Codex-review fixup landed on main); took `origin/main`'s newer version
+  verbatim (adds `connectedAccountId` account-scoping to the audit call + explanatory comments).
+  Not in Monet's owned regions (breaker ~340-405, drawdownAdvisory ~2624).
+- `src/lib/db-socratic.ts` — HEAD added four new outcome-engine functions
+  (`listSocraticDecisionCasesNeedingOutcome`, `writeSocraticDecisionOutcome`,
+  `writeSocraticDecisionLessons`, `getSocraticOutcomeCoverage`) in a slot where main had nothing;
+  kept HEAD's additions in full, just removed the markers.
+- `test/performance.test.ts` — two new `getRedTeamEfficacy` tests from main
+  (kind-scoped-audit-flood, exit-veto-exclusion) landed in the same slot as nothing on HEAD's
+  side; kept both (union), no actual overlap.
+- `src/lib/backtest.ts`, `src/lib/counterfactual-learning.ts` — flagged `UU` by git status but
+  had **zero actual diff** between the merged working-tree content and either parent; git had
+  already resolved these via its own line-level merge (HEAD's Outcome Engine additions —
+  `coverageDisclosure`, `markedUnresolvable` — coexist correctly with main's `marketDateOf`
+  America/New York timezone fix for snapshot/anchor dates). Just needed `git add` to clear the
+  unmerged flag.
+
+**Real semantic conflict caught by `tsc`, not by git:** the merge silently produced two full
+duplicate copies of `RedTeamEfficacy` (interface) and `getRedTeamEfficacy` (function) in
+`src/lib/performance.ts` — no textual conflict markers because git's line-level merge algorithm
+treated each copy as a clean insertion in a different hunk, but the result was two exported
+symbols with the same name (`TS2323`/`TS2393`). Compared both: the surviving one (kept, ~line
+875-1017) is the newer Codex-reviewed implementation — `connectedAccountId`-scoped, uses
+`listAuditByKind` (LIMIT-after-kind-filter) + `getMaturedSkippedCounterfactualByRunSymbol` keyed
+lookups, excludes exit-side vetoes from `totalVetoes` — matching the "Codex review fixes" section
+in `docs/rollouts/2026-07-04-w1-learning-loops.md`. The duplicate (removed, was ~line 1043-1179)
+was the older pre-review version (`listAudit` + full scan, no account scoping, no exit-veto
+exclusion). Separate commit `e28db55` isolates this fix from the merge commit itself.
+
+Re-ran the full local quartet after the merge + dedup fix, in this worktree:
+- `npm run lint` — 0 errors (308 pre-existing grandfathered warnings).
+- `npx tsc --noEmit` — clean (this is what caught the duplicate-function conflict above).
+- `npm test` — 252 files / 2455 tests passed (up from 2383 pre-merge; deleted stale gitignored
+  `data/app.db` first).
+- `npm run build` — green.
+
+Landing via `scripts/land.sh` next; this is a push-only lane (no PR) per the original plan —
+lands via the active landing train.
