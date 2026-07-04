@@ -335,6 +335,20 @@ function ttlMs(): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_TTL_MS;
 }
 
+// Per-data-class TTL for the Alpaca snapshot cache (quote-family: price/bid/ask/volume/vwap) —
+// composite review D/high/S: the snapshot used to share the blanket 6h `ttlMs()` fundamentals TTL,
+// so real-time prices were pinned to a stale cache entry for up to 6h and `maxQuoteAgeSec` (the
+// staleness gate in policy.ts) couldn't see it because `parseAlpacaSnapshot` never stamped `asOf` —
+// every scan inside that window silently replayed the same quote. Quote-family data moves in
+// seconds, not hours, so this gets its own short, separately-configurable TTL (default ~30s) instead
+// of riding the fundamentals cadence. `ALPACA_SNAPSHOT_CACHE_TTL_MS` lets an operator tune it without
+// touching the unrelated `NEWS_CACHE_TTL_MS` fundamentals knob.
+const DEFAULT_ALPACA_SNAPSHOT_TTL_MS = 30_000; // ~30s — quote-family data, not fundamentals
+export function alpacaSnapshotTtlMs(): number {
+  const value = Number(process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS ?? DEFAULT_ALPACA_SNAPSHOT_TTL_MS);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_ALPACA_SNAPSHOT_TTL_MS;
+}
+
 function maxSymbols(): number {
   const value = Number(process.env.FMP_MAX_SYMBOLS ?? process.env.MARKET_SCAN_LIMIT ?? DEFAULT_MAX_SYMBOLS);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_MAX_SYMBOLS;
@@ -1578,7 +1592,9 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
           const data = parseAlpacaSnapshot(snap);
           const hasData = Object.keys(data).length > 0;
           if (hasData) {
-            writeEnrichmentCache("alpaca-snapshot", symbol, this.scope, this.userId, data, now + ttlMs());
+            // Quote-family TTL (~30s default), NOT the blanket 6h fundamentals ttlMs() — see
+            // alpacaSnapshotTtlMs() for why real-time price/bid/ask/volume can't share that cadence.
+            writeEnrichmentCache("alpaca-snapshot", symbol, this.scope, this.userId, data, now + alpacaSnapshotTtlMs());
           }
           result[symbol] = data;
         }
@@ -1591,9 +1607,9 @@ export class AlpacaSnapshotEnrichmentProvider implements MarketEnrichmentProvide
 }
 
 interface AlpacaSnapshot {
-  latestTrade?: { p?: number };
-  latestQuote?: { bp?: number; ap?: number };
-  dailyBar?: { o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number };
+  latestTrade?: { p?: number; t?: string };
+  latestQuote?: { bp?: number; ap?: number; t?: string };
+  dailyBar?: { o?: number; h?: number; l?: number; c?: number; v?: number; vw?: number; t?: string };
   prevDailyBar?: { c?: number };
 }
 
@@ -1619,13 +1635,22 @@ export function parseAlpacaSnapshot(snap: AlpacaSnapshot | undefined | null): Sy
     intradayChangePct = Math.round(((barClose - prevClose) / prevClose) * 10000) / 100;
   }
 
+  // Stamp asOf from whichever timestamp backs the winning PRICE field, so the staleness gate
+  // (policy.ts maxQuoteAgeSec) sees the quote's true age instead of inheriting a screener/enrichment
+  // asOf from an unrelated field (or none at all — parseAlpacaSnapshot never set asOf before this).
+  // Preference mirrors the price fallback above: latestTrade.t when latestTrade.p won, else
+  // dailyBar.t when dailyBar.c won. A malformed/missing timestamp is simply omitted — never guessed.
+  const asOfRaw = tradePrice !== undefined ? snap.latestTrade?.t : barClose !== undefined ? snap.dailyBar?.t : undefined;
+  const asOf = typeof asOfRaw === "string" && !Number.isNaN(new Date(asOfRaw).getTime()) ? asOfRaw : undefined;
+
   return {
     ...(price !== undefined && { price }),
     ...(bid !== undefined && { bid }),
     ...(ask !== undefined && { ask }),
     ...(volume !== undefined && { volume }),
     ...(vwap !== undefined && { vwap }),
-    ...(intradayChangePct !== undefined && { intradayChangePct })
+    ...(intradayChangePct !== undefined && { intradayChangePct }),
+    ...(asOf !== undefined && { asOf })
   };
 }
 
