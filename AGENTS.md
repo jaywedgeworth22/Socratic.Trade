@@ -106,11 +106,11 @@ one worktree's process at another's files.
 
 | Worktree | Branch | Port | Process | Public route | Owner |
 |----------|--------|------|---------|--------------|-------|
-| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
+| `~/Code/Socratic.Trade` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human integrator) |
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-cursor` | `cursor/*` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent-mode preview) |
+| `~/apps/trading-cursor` | `cursor/*` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (DeepSeek, parallel agent) |
 | `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
 | `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
@@ -167,7 +167,7 @@ must not silently drift behind beta after work lands.
   by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
   - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
     and `git push origin agent/foo:main`).
-  - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
+  - Refuses any push originating from `~/Code/Socratic.Trade` (integration worktree).
   - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
 - **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
   preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
@@ -176,30 +176,24 @@ must not silently drift behind beta after work lands.
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
   via its release steps only.
 
-### Cursor: primarily the human review cockpit (plus its own preview lane)
-Cursor's **main** role is the **human-in-the-loop** seat, not a fourth autonomous agent. The
-CLI/agentic tools (Claude Code / Monet, Codex, Antigravity) *produce* work in parallel `agent/*`
-worktrees; Cursor is where a human *reviews, steers, hand-edits, and integrates* it — from the
-existing **`main` integration worktree** (`~/Code/Agentic Trading`, port `4001`).
+### Cursor: a parallel agent (model: DeepSeek)
+Cursor now runs as a **parallel autonomous agent** (model **DeepSeek**), a peer to Claude Code /
+Monet, Codex, and Antigravity — not the human's review seat anymore. It *produces* work in its own
+worktree just like the other agents: `~/apps/trading-cursor` / branch `cursor/*` / PM2
+`trading-cursor` / port **4103** / preview `cursor.jays.services`. (The `main` integration worktree
+`~/Code/Socratic.Trade` at :4001 is the **human integrator's** review/merge seat; Cursor-the-agent
+does not edit there.)
 
-Cursor **also** has its own preview lane — `~/apps/trading-cursor` / PM2 `trading-cursor` /
-port **4103** / `cursor.jays.services` — for previewing Cursor's background/agent-mode branches
-(`cursor/*`) without disturbing the `main` beta preview. So there are two Cursor surfaces: review
-lives in the `main` worktree; Cursor's *own* generated work previews on `cursor.jays.services`.
-
-- **Best uses (review seat):** reviewing/merging the `agent/*` branches (inline-AI diff reading +
-  merge-conflict resolution), fast surgical hand-edits where firing a whole agent is overkill,
-  in-editor debugging, and codebase Q&A while you steer.
-- **Don't** make `main` an autonomous lane. Cursor's autonomous output belongs on its own
-  `cursor/*` branch previewing at `cursor.jays.services` (:4103), not on `main`.
-- **If you use Cursor's agent/background mode** for a feature, keep it on its own branch like the
-  others: background runs land on `cursor/*` branches (e.g.
-  `origin/cursor/setup-dev-environment-*`) — merge them like any `agent/*` branch.
+- **Own lane, same protocol as every agent:** edit only in `~/apps/trading-cursor` on a `cursor/*`
+  branch; live edits preview at `cursor.jays.services` via HMR. **Land via a PR, never push to
+  `main`** (the pre-push hook blocks it) — run `bash scripts/land.sh` from the worktree.
+- **Don't** edit in another agent's worktree or in the `main` integration worktree, and don't turn
+  `main` into an autonomous lane.
 - **Handoff still applies.** Cursor auto-loads `AGENTS.md` (and `.cursor/rules/`); `AGENTS.md`
   is the real file and `CLAUDE.md` is a symlink to it, so both carry the same content (incl. the
   Pre-Commit / Handoff Protocol above) — edit `AGENTS.md` to change either. Before
   any commit from Cursor, update `STATUS.md` + a `docs/rollouts/` note + `PLAN.md` like every
-  other tool.
+  other agent.
 
 ### A running port is NOT a work lock
 A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not

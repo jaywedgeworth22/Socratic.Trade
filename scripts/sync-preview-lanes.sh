@@ -17,7 +17,7 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCK_DIR"' EXIT
 
-INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Agentic Trading}"
+INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Socratic.Trade}"
 APPS_DIR="${TRADING_APPS_DIR:-$HOME/apps}"
 HEALTH_PATH="${TRADING_SYNC_HEALTH_PATH:-/api/health}"
 FETCH_REPO="${GITHUB_REPOSITORY:-jaywedgeworth22/agentic-trading}"

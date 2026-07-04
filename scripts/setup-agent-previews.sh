@@ -3,13 +3,13 @@
 #
 # Each AI agent edits in its OWN git worktree (its own branch, .next, data, .env.local) and
 # previews its LIVE in-progress edits on its own port via a PM2-managed `next dev` (HMR):
-#   Main review → ~/Code/Agentic Trading      (branch main)              http://localhost:4001 / trading-beta.jays.services
+#   Main review → ~/Code/Socratic.Trade      (branch main)              http://localhost:4001 / trading-beta.jays.services
 #   Claude      → ~/apps/trading-claude       (branch agent/claude)      http://localhost:4100
 #   Codex       → ~/apps/trading-codex        (branch agent/codex)       http://localhost:4101
 #   Antigravity → ~/apps/trading-antigravity  (branch agent/antigravity) http://localhost:4102
 #   Monet       → ~/apps/trading-monet        (branch agent/monet)       http://localhost:4104
 #
-# This worktree (~/Code/Agentic Trading, branch `main`) is the INTEGRATION
+# This worktree (~/Code/Socratic.Trade, branch `main`) is the INTEGRATION
 # checkout — merge agent branches here and review them at http://localhost:4001
 # or the Cloudflare beta route at https://trading-beta.jays.services.
 # Do not recreate a second dev/beta hostname for this lane.

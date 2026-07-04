@@ -38,7 +38,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 # ── 1. worktree / branch guards ────────────────────────────────────────────
-MAIN_INTEGRATION_WORKTREE="$HOME/Code/Agentic Trading"
+MAIN_INTEGRATION_WORKTREE="$HOME/Code/Socratic.Trade"
 CURRENT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")"
 
@@ -48,7 +48,7 @@ if [[ -z "${LAND_FORCE_PUSH:-}" ]]; then
   RESOLVED_MAIN="$(cd "$MAIN_INTEGRATION_WORKTREE" 2>/dev/null && pwd -P 2>/dev/null || echo "__not_found__")"
 
   if [[ "$RESOLVED_CURRENT" == "$RESOLVED_MAIN" ]]; then
-    die "You are in the MAIN INTEGRATION WORKTREE ('~/Code/Agentic Trading').
+    die "You are in the MAIN INTEGRATION WORKTREE ('~/Code/Socratic.Trade').
   That worktree is for human/Cursor review and merges only — NOT for agent landing.
   Work in your own worktree:
     Claude      → ~/apps/trading-claude   (branch agent/claude)
@@ -240,7 +240,7 @@ ok "PR ready: ${PR_URL}"
 echo ""
 echo -e "${BOLD}Next steps for reviewer:${RESET}"
 echo "  1. Review the PR at the URL above"
-echo "  2. Merge via GitHub UI  —OR—  pull to '~/Code/Agentic Trading' and:"
+echo "  2. Merge via GitHub UI  —OR—  pull to '~/Code/Socratic.Trade' and:"
 echo "       git fetch origin && git merge --ff-only origin/${CURRENT_BRANCH}"
 echo "  3. If .github/workflows/ files are staged in ci-pending/:"
 echo "       gh auth refresh -s workflow && cp ci-pending/*.yml .github/workflows/"

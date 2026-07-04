@@ -1,9 +1,9 @@
 ---
-description: Agentic Trading — repo guardrails, role, and the pre-commit handoff protocol Cursor must follow. Mirrors AGENTS.md (= CLAUDE.md).
+description: Socratic Trade — repo guardrails, role, and the pre-commit handoff protocol Cursor must follow. Mirrors AGENTS.md (= CLAUDE.md).
 alwaysApply: true
 ---
 
-# Cursor working rules — Agentic Trading
+# Cursor working rules — Socratic Trade
 
 `AGENTS.md` (the same file as `CLAUDE.md` via symlink) is the canonical source of truth; read
 it in full before non-trivial work. This file only points Cursor at the must-dos so they are
@@ -13,12 +13,13 @@ not missed.
 `AGENTS.md` → `STATUS.md` → `PLAN.md` → relevant `docs/phase-*.md` → latest `docs/rollouts/*`
 → `git log -3` + current diff.
 
-## Your role: the human review cockpit
-Cursor is the human-in-the-loop seat in the `main` integration worktree (`~/Code/Agentic
-Trading`) — review, steer, hand-edit, resolve merge conflicts, and integrate the `agent/*`
-branches. You are NOT a fourth autonomous agent. If you run Cursor's agent/background mode on a
-feature, keep it on its own `cursor/*` branch and merge it like any `agent/*` branch; never turn
-`main` into an autonomous lane.
+## Your role: a parallel autonomous agent (model: DeepSeek)
+Cursor now runs as a **parallel autonomous agent** (model: DeepSeek), a peer to Claude Code /
+Monet, Codex, and Antigravity. Work in your OWN worktree (`~/apps/trading-cursor`) on a
+`cursor/*` branch, preview your live edits at `cursor.jays.services` (:4103), and **land via a PR
+— never push to `main`** (the pre-push hook blocks it; run `bash scripts/land.sh` from your
+worktree to open one). Do NOT edit in the `main` integration worktree (`~/Code/Socratic.Trade`) —
+that is the human integrator's review/merge seat.
 
 ## Pre-commit / handoff protocol (MANDATORY before any commit or push)
 1. `STATUS.md` — current state, blockers, next action.

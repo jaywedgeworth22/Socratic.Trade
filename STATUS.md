@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Integration folder renamed + Cursor is now a parallel DeepSeek agent (Monet, cloud)
+On branch `claude/register-monet-lane` (PR #436). (1) **Main integration worktree moved**
+`~/Code/Agentic Trading` -> **`~/Code/Socratic.Trade`**: updated every *operational* reference —
+`scripts/land.sh` + `scripts/githooks/pre-push` (exact-path guards), `sync-preview-lanes.sh`,
+`sync-watchdog.sh`, `setup-agent-previews.sh`, `AGENTS.md`, `docs/deployment.md`, `README.md`,
+`PLAN.md`, `.cursor/rules/handoff.mdc`, `ci-pending/README.md`. Historical rollouts/reviews and
+brand-name mentions left as-is. **New path inferred as `~/Code/Socratic.Trade` — owner should
+confirm the exact path** (the `land.sh`/`pre-push` guards match it literally). (2) **Cursor is now
+a parallel autonomous agent (DeepSeek)**, a peer to Claude/Monet/Codex/Antigravity (worktree
+`~/apps/trading-cursor`, `cursor/*`, :4103); its "human review cockpit" role docs in `AGENTS.md` +
+`.cursor/rules/handoff.mdc` were reframed accordingly; the human-integrator seat stays the `main`
+worktree. Not yet script-managed in setup/sync (its 4103 tunnel ingress already exists). All five
+edited shell scripts pass `bash -n`. See
+`docs/rollouts/2026-07-04-integration-folder-rename-cursor-agent.md`.
+
 ## 2026-07-04 — Add the `agent/monet` preview lane + Cloudflare (Monet, cloud)
 Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
 lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` (+`monet`, port

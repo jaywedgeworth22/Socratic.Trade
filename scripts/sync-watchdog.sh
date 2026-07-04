@@ -7,7 +7,7 @@ set -euo pipefail
 
 INTERVAL_SECONDS="${TRADING_SYNC_INTERVAL_SECONDS:-60}"
 STATE_FILE="${TRADING_SYNC_STATE_FILE:-/tmp/trading-preview-sync-main.sha}"
-INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Agentic Trading}"
+INTEGRATION_DIR="${TRADING_INTEGRATION_DIR:-$HOME/Code/Socratic.Trade}"
 FETCH_REPO="${GITHUB_REPOSITORY:-jaywedgeworth22/agentic-trading}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

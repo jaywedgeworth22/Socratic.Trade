@@ -74,7 +74,7 @@ For one-off local development, open `http://127.0.0.1:3000`.
 On the host machine, prefer the PM2-managed previews:
 
 - Production deployed app: `https://socratictrade.com` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
-- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
+- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Socratic.Trade`, pm2 `trading-main`)
 - Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
 
 Do not create a second dev/beta hostname for this lane; use `trading-beta.jays.services`.

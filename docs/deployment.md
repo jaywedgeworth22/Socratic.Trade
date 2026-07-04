@@ -6,7 +6,7 @@ owner's Apple Silicon Mac.
 
 The pre-production beta route is **trading-beta.jays.services**, served by
 `next dev` (PM2 app `trading-main`) from the editable integration checkout
-`~/Code/Agentic Trading` on port `4001`. Production remains isolated on port
+`~/Code/Socratic.Trade` on port `4001`. Production remains isolated on port
 `4000`; beta should never point at an agent worktree such as `trading-claude`.
 
 Cloudflare DNS, Tunnel ingress, Access apps, redirect-rule exclusions, and
@@ -117,7 +117,7 @@ to its previous commit and restarts the PM2 app.
 Optional PM2 polling fallback:
 
 ```bash
-pm2 start ~/Code/Agentic\ Trading/scripts/sync-watchdog.sh --name trading-sync-watchdog
+pm2 start ~/Code/Socratic.Trade/scripts/sync-watchdog.sh --name trading-sync-watchdog
 pm2 save
 ```
 

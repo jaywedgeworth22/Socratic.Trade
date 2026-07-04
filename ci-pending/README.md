@@ -36,7 +36,7 @@ Two non-obvious implementation details (each cost a failed first deploy — see 
   with `could not read Username … Device not configured`. The job fetches through the
   job-scoped `GITHUB_TOKEN` (auto-masked in logs; `contents: read` is enough) instead.
 - **`reset --hard FETCH_HEAD`, not `checkout main`.** `~/apps/trading-live` is a *linked git
-  worktree* sharing the clone with the `~/Code/Agentic Trading` integration worktree, which
+  worktree* sharing the clone with the `~/Code/Socratic.Trade` integration worktree, which
   already has `main` checked out. Git refuses to check out `main` in two worktrees
   (`'main' is already used by worktree …`), so the deploy resets this worktree's working
   tree to the fetched commit without switching branches.

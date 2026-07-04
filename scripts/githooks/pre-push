@@ -8,7 +8,7 @@
 #   1. Any push that would land commits on refs/heads/main at the remote
 #      (covers both "git push origin main" and "git push origin feature:main")
 #   2. Any push originating from the main integration worktree
-#      (~/Code/Agentic Trading) — that worktree is for human review/merge only
+#      (~/Code/Socratic.Trade) — that worktree is for human review/merge only
 #
 # ALLOWS:
 #   - Any push to agent/* or other non-main branches
@@ -24,7 +24,7 @@ die()  { echo -e "${RED}[pre-push] BLOCKED: $*${RESET}" >&2; exit 1; }
 warn() { echo -e "${YELLOW}[pre-push] WARN: $*${RESET}" >&2; }
 
 REMOTE="${1:-origin}"
-MAIN_INTEGRATION_WORKTREE="$HOME/Code/Agentic Trading"
+MAIN_INTEGRATION_WORKTREE="$HOME/Code/Socratic.Trade"
 
 # ── guard 1: refuse pushes from the main integration worktree ──────────────
 if [[ -z "${HOOKS_ALLOW_MAIN_PUSH:-}" ]]; then
@@ -33,7 +33,7 @@ if [[ -z "${HOOKS_ALLOW_MAIN_PUSH:-}" ]]; then
   RESOLVED_MAIN="$(cd "$MAIN_INTEGRATION_WORKTREE" 2>/dev/null && pwd -P 2>/dev/null || echo "__not_found__")"
 
   if [[ "$RESOLVED_CURRENT" == "$RESOLVED_MAIN" ]]; then
-    die "You are pushing from '~/Code/Agentic Trading' (the main integration worktree).
+    die "You are pushing from '~/Code/Socratic.Trade' (the main integration worktree).
   That worktree is for human/Cursor review and merges only.
   Agents: push from your own worktree instead:
     Claude      → ~/apps/trading-claude   (branch agent/claude)

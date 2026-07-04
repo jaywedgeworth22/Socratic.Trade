@@ -1021,7 +1021,7 @@ filling the missing pieces.
 Hosting topology: production remains `socratictrade.com` on the
 `~/apps/trading-live` worktree / pm2 `trading` / port `4000`. The editable
 integration checkout uses the single pre-production beta hostname
-`trading-beta.jays.services` -> `~/Code/Agentic Trading` / pm2 `trading-main` /
+`trading-beta.jays.services` -> `~/Code/Socratic.Trade` / pm2 `trading-main` /
 port `4001`. Do not add a second dev/beta hostname in code, docs, Tunnel
 ingress, DNS, or Access configuration.
 
