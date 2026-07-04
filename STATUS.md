@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Landing operator: #372 needed a double merge-forward (base moved twice mid-land)
+PR #372's base moved out from under it twice: once catching up to several cars/docs work that
+had landed since #370, and again mid-wait when PR #440 (Outcome Engine lane) landed first
+(`mergeStateStatus` flipped `BLOCKED` -> `DIRTY`). Both merges resolved in this worktree
+(`~/apps/trading-wt-ci-efficiency`); the second conflict was `docs/EFFORT-LOG.md`'s "In
+Progress" section (this branch's own status line vs. the Outcome Engine's entry in the same
+slot) — resolved keep-both-newest-first, updating the Outcome Engine entry's status to
+"merged (PR #440)". Full quartet green both times (final: lint 0 errors, tsc clean, 252 files /
+2455 tests, build green). See both addenda in
+`docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+
 ## 2026-07-04 — Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370)
 Branch `claude/ci-hybrid-runner-verify`, worktree `~/apps/trading-wt-ci-efficiency`, off
 `origin/main`@`370692cf` (post-#370). Owner re-confirmed hybrid AFTER the tradeoff escalation,

@@ -196,3 +196,19 @@ Re-ran the full local quartet post-merge in this worktree:
 - `npm run build` — green.
 
 No follow-up beyond the items above; landing via `scripts/land.sh` next.
+
+## 2026-07-04 addendum #2 — second merge-forward after #440 landed
+
+Between the first merge-forward above and #372's actual merge, PR #440 (`claude/w2-outcome-engine`,
+the Wave-2 Outcome Engine lane) landed on `main` first (sha `2a0f8eac`), which is exactly why
+#372's `mergeStateStatus` flipped `BLOCKED` → `DIRTY` mid-wait — the base moved out from under it.
+Re-fetched and re-merged `origin/main` in this worktree: one conflict this time, in
+`docs/EFFORT-LOG.md` (both sides added an "In Progress" entry in the same slot — this branch's own
+PR #372 status line, and the Outcome Engine's entry). Resolved keep-both-newest-first per the docs
+protocol, updating the Outcome Engine entry's status to **merged (PR #440)** since that had since
+become true. No other file conflicted (still a CI/workflow-only branch). Merge commit `5e3b496` on
+top of main tip `2a0f8eac`.
+
+Re-ran the full local quartet again: `npm run lint` (0 errors), `npx tsc --noEmit` (clean),
+`npm test` (252 files / 2455 tests, matching car 11's post-merge count exactly), `npm run build`
+(green). Landing via `scripts/land.sh` again next.
