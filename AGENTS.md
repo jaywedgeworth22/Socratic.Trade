@@ -110,6 +110,7 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
+| `~/apps/trading-cursor` | `cursor/*` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent-mode preview) |
 | `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
 | `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
@@ -175,21 +176,24 @@ must not silently drift behind beta after work lands.
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
   via its release steps only.
 
-### Cursor: the human review cockpit (not a 4th agent lane)
-Cursor fills the **human-in-the-loop** seat, not a fourth autonomous agent. The three
-CLI/agentic tools (Claude Code, Codex, Antigravity) *produce* work in parallel `agent/*`
-worktrees; Cursor is where a human *reviews, steers, hand-edits, and integrates* it. Its home
-is the existing **`main` integration worktree** (`~/Code/Agentic Trading`) — no new port, no
-PM2 preview.
+### Cursor: primarily the human review cockpit (plus its own preview lane)
+Cursor's **main** role is the **human-in-the-loop** seat, not a fourth autonomous agent. The
+CLI/agentic tools (Claude Code / Monet, Codex, Antigravity) *produce* work in parallel `agent/*`
+worktrees; Cursor is where a human *reviews, steers, hand-edits, and integrates* it — from the
+existing **`main` integration worktree** (`~/Code/Agentic Trading`, port `4001`).
 
-- **Best uses:** reviewing/merging the `agent/*` branches (inline-AI diff reading + merge-
-  conflict resolution), fast surgical hand-edits where firing a whole agent is overkill,
+Cursor **also** has its own preview lane — `~/apps/trading-cursor` / PM2 `trading-cursor` /
+port **4103** / `cursor.jays.services` — for previewing Cursor's background/agent-mode branches
+(`cursor/*`) without disturbing the `main` beta preview. So there are two Cursor surfaces: review
+lives in the `main` worktree; Cursor's *own* generated work previews on `cursor.jays.services`.
+
+- **Best uses (review seat):** reviewing/merging the `agent/*` branches (inline-AI diff reading +
+  merge-conflict resolution), fast surgical hand-edits where firing a whole agent is overkill,
   in-editor debugging, and codebase Q&A while you steer.
-- **Don't** make `main` an autonomous lane or stand up an `agent/cursor` dev-server worktree to
-  run a 4th parallel agent — it adds a branch to merge and a preview to babysit for little gain
-  over the three you already have.
-- **If you do use Cursor's agent/background mode** for a feature, keep it on its own branch like
-  the others. It already does this: background runs land on `cursor/*` branches (e.g.
+- **Don't** make `main` an autonomous lane. Cursor's autonomous output belongs on its own
+  `cursor/*` branch previewing at `cursor.jays.services` (:4103), not on `main`.
+- **If you use Cursor's agent/background mode** for a feature, keep it on its own branch like the
+  others: background runs land on `cursor/*` branches (e.g.
   `origin/cursor/setup-dev-environment-*`) — merge them like any `agent/*` branch.
 - **Handoff still applies.** Cursor auto-loads `AGENTS.md` (and `.cursor/rules/`); `AGENTS.md`
   is the real file and `CLAUDE.md` is a symlink to it, so both carry the same content (incl. the
