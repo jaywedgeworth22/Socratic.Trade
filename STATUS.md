@@ -8,6 +8,40 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
+ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
+source of truth; agents never write issues, only a workflow does.
+`scripts/sync-effort-issues.py` (python3 stdlib, no third-party deps) parses `docs/EFFORT-LOG.md`
+at HEAD: top-level `##` section headings are classified by keyword (tolerating wording/emoji
+variation across repos — "Planned / Reserved Before Implementation" vs "Planned / Reserved" both
+map to `planned`), top-level `- `/`* ` bullets become items with indented continuation lines
+folded into the body, and `(none)`/`(seeded empty ...)`-style placeholders are skipped. Each item's
+identity is a SHA1 of its normalized first line, embedded in the issue body as
+`<!-- effort-key: <hash> -->` so re-runs are idempotent and state transitions (Planned -> In
+Progress -> Completed) update the same issue in place rather than creating a new one, as long as
+the first line's wording doesn't change. Planned/In Progress -> issue open (labels `effort-board` +
+`state:planned`/`state:in-progress`, assigned to `jaywedgeworth22` so GitHub pushes mobile
+notifications); Completed/Deployed -> issue closed (`state:completed`/`state:deployed`). Never
+deletes issues; a board row that disappears leaves its mirrored issue untouched. Hand-made issues
+without the marker are ignored entirely. Missing labels are created on first run. Duplicate board
+rows (same normalized first line appearing twice — found for real in this repo's own board, "Wave-1
+quick wins..." logged twice under In Progress) are deduped within a run so they don't multiply
+issues.
+Workflow `.github/workflows/effort-issues-sync.yml` (new, additive): triggers on push to `main`
+touching `docs/EFFORT-LOG.md`, a daily off-minute cron (`12 6 * * *`, drift catch), and
+`workflow_dispatch`. Uses the Actions-provided `GITHUB_TOKEN` (`issues: write`) via plain REST +
+stdlib `urllib`, no GraphQL.
+Rolled out to `Socratic.Trade` (this repo), `congress-trading-shared`, and `API-usage-monitor` —
+identical script/workflow in all three; the script reads `GITHUB_REPOSITORY` from the Actions
+environment so no repo-specific edits were needed. Canonical pattern documented as a new "Issues
+mirror (standard)" subsection in `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`, and the new-app bootstrap
+checklist there now includes copying the two files.
+Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not the machine-local
+live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
+operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
+every live-board edit; documented in the script's own docstring and in the protocol doc.
+See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
+
 ## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
 New Sentry project `fleet-infra` (org jays-services), DSN in
 `/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).

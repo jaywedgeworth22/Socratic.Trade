@@ -177,6 +177,22 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **GitHub Issues mirror of effort boards (cross-app, Claude coordinator, sonnet lane) — IN PROGRESS 2026-07-04.**
+  Per-repo additive workflow + sync script: `docs/EFFORT-LOG.md` (committed mirror) -> reconciled
+  labeled issues (open=planned/in-progress, closed=completed/deployed), owner-assigned for mobile
+  notifications, marked read-only (boards stay the single source of truth). Worktree
+  `~/apps/trading-wt-issues-mirror`, branch `claude/effort-issues-mirror`. New
+  `scripts/sync-effort-issues.py` (python3 stdlib, no deps) + new
+  `.github/workflows/effort-issues-sync.yml` (push to `main` touching this file, daily off-minute
+  cron, `workflow_dispatch`). Rolls out identically to `congress-trading-shared` and
+  `API-usage-monitor`; protocol doc (`/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`) gains a standard
+  "Issues mirror" subsection + bootstrap-checklist update. Local verification: parser tested
+  directly against all three repos' real boards (58/1/2 items respectively, correct bucketing,
+  duplicate-row dedup fixed after a live dry-run surfaced a genuine duplicate row in this repo's
+  own board), full quartet green (lint 0 errors, tsc clean, 2436 tests, build ok), live dry-run
+  against the real GitHub API confirmed label/issue reconciliation logic. See
+  `docs/rollouts/2026-07-04-effort-issues-mirror.md`.
+
 - **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
   GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
   `.github/workflows/ci.yml`: new cheap `classify` job computes on `pull_request` events whether
