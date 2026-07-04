@@ -24,6 +24,23 @@ function focusElement(el: HTMLElement | null) {
   }
 }
 
+export function nextSheetFocusTarget<T>(
+  focusables: T[],
+  active: T | null,
+  sheet: T,
+  shiftKey: boolean,
+  activeIsInside: boolean
+): T | null {
+  if (focusables.length === 0) return sheet;
+
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (!activeIsInside) return first ?? sheet;
+  if (shiftKey && (active === first || active === sheet)) return last ?? sheet;
+  if (!shiftKey && active === last) return first ?? sheet;
+  return null;
+}
+
 export function Sheet({
   open,
   onClose,
@@ -63,30 +80,18 @@ export function Sheet({
       if (e.key !== "Tab") return;
 
       const tabbables = getFocusableElements(currentSheet);
-      if (tabbables.length === 0) {
-        e.preventDefault();
-        focusElement(currentSheet);
-        return;
-      }
-
-      const first = tabbables[0];
-      const last = tabbables[tabbables.length - 1];
       const active = document.activeElement;
       const isInside = active instanceof Node ? currentSheet.contains(active) : false;
-      if (!isInside) {
+      const target = nextSheetFocusTarget(
+        tabbables,
+        active instanceof HTMLElement ? active : null,
+        currentSheet,
+        e.shiftKey,
+        isInside
+      );
+      if (target) {
         e.preventDefault();
-        focusElement(first);
-        return;
-      }
-
-      if (e.shiftKey) {
-        if (active === first || active === currentSheet) {
-          e.preventDefault();
-          focusElement(last);
-        }
-      } else if (active === last) {
-        e.preventDefault();
-        focusElement(first);
+        focusElement(target);
       }
     };
 

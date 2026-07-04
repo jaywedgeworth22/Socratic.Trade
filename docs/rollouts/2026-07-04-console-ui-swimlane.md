@@ -34,6 +34,7 @@
 - Approval cards now render persisted model provenance first, fallback-chain status, `redTeamVerdict.trigger`, sizing inputs/caps/drift, computed opening-order reward:risk geometry when bracket data is complete, and proposal-linked RAG citations from matching Socratic decision cases.
 - Mobile approvals now require the same `APPROVE LIVE <SYMBOL>` phrase before live broker approval commands are enabled; paste is disabled and the submitted phrase is normalized.
 - `Sheet` now traps focus, cycles Tab/Shift+Tab, closes on Escape, blocks focus escape while open, and restores focus to the opener.
+- The focus-trap test covers the Tab-cycle helper directly in the default Node test environment so the branch does not add a jsdom dependency to CI.
 - Added `GET /api/socratic/decisions/[id]` and `/console/decisions/[id]` for read-only decision traces: thesis/action/status, evidence, retrieved citations, dissent/red-team trigger, outcome, coach notes, note composer, linked framework proposals, `ownerResponse`, and lessons.
 - Console home decision rows now expose a Trace link.
 - Ticker drawer affordances were added to the most visible raw-symbol surfaces called out by subagent audit: decision trace, macro news tickers, allocation position rows, results wash-sale lockout chips, and assistant draft tickets.
