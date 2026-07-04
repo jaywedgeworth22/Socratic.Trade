@@ -28,9 +28,15 @@ const mocks = vi.hoisted(() => {
     rerank: vi.fn(),
     resolveApiKey: vi.fn(),
     audit: vi.fn(),
+    getInternalSetting: vi.fn(),
     setInternalSetting: vi.fn(),
     filterNewDocumentChunks: vi.fn(),
-    insertDocumentChunks: vi.fn()
+    insertDocumentChunks: vi.fn(),
+    captureMessage: vi.fn(),
+    withScope: vi.fn(),
+    scopeSetLevel: vi.fn(),
+    scopeSetTag: vi.fn(),
+    scopeSetContext: vi.fn()
   };
 });
 
@@ -54,9 +60,15 @@ vi.mock("voyageai", () => ({
 vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: mocks.audit,
+  getInternalSetting: mocks.getInternalSetting,
   setInternalSetting: mocks.setInternalSetting,
   filterNewDocumentChunks: mocks.filterNewDocumentChunks,
   insertDocumentChunks: mocks.insertDocumentChunks
+}));
+
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: mocks.captureMessage,
+  withScope: mocks.withScope
 }));
 
 function resetEnv() {
@@ -73,6 +85,7 @@ function resetEnv() {
   delete process.env.VECTOR_MIN_SCORE;
   delete process.env.VECTOR_ENABLE_RERANK;
   delete process.env.HYBRID_RETRIEVAL;
+  delete process.env.SENTRY_DSN;
 }
 
 beforeEach(() => {
@@ -84,6 +97,16 @@ beforeEach(() => {
     if (service === "voyage") return process.env.VOYAGE_API_KEY;
     return undefined;
   });
+  mocks.getInternalSetting.mockReturnValue(undefined);
+  mocks.withScope.mockImplementation((callback: (scope: {
+    setLevel: typeof mocks.scopeSetLevel;
+    setTag: typeof mocks.scopeSetTag;
+    setContext: typeof mocks.scopeSetContext;
+  }) => void) => callback({
+    setLevel: mocks.scopeSetLevel,
+    setTag: mocks.scopeSetTag,
+    setContext: mocks.scopeSetContext
+  }));
   mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
   mocks.describeIndex.mockResolvedValue({ metric: "cosine" });
   mocks.filterNewDocumentChunks.mockImplementation((hashes: any[]) => hashes);
@@ -106,6 +129,7 @@ describe("R7: index-metric assertion at bootstrap", () => {
   });
 
   it("warns (not throws) and audits when the index metric is NOT cosine", async () => {
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/1";
     mocks.describeIndex.mockResolvedValue({ metric: "euclidean" });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -120,6 +144,15 @@ describe("R7: index-metric assertion at bootstrap", () => {
       "local"
     );
     expect(warnSpy).toHaveBeenCalled();
+    await vi.waitFor(() => expect(mocks.captureMessage).toHaveBeenCalledWith("Pinecone index metric mismatch"));
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("component", "rag");
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.provider", "pinecone");
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.operation", "describeIndex");
+    expect(mocks.scopeSetContext).toHaveBeenCalledWith("rag", expect.objectContaining({
+      indexName: "socratic-trade",
+      metric: "euclidean",
+      expectedMetric: "cosine"
+    }));
     warnSpy.mockRestore();
   });
 
@@ -438,6 +471,7 @@ describe("R14: near-duplicate suppression (dedupeSimilarity) wired into retrieve
 
 describe("Pinecone write-unit budget", () => {
   it("skips before Voyage embed when the estimated Pinecone WU budget is exhausted", async () => {
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/1";
     process.env.RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY = "1";
     const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -454,6 +488,36 @@ describe("Pinecone write-unit budget", () => {
       expect.objectContaining({ skipped: 1, limitPer24h: 1 }),
       "local"
     );
+    await vi.waitFor(() => expect(mocks.captureMessage).toHaveBeenCalledWith("Pinecone write unit budget reached"));
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.provider", "pinecone");
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.operation", "upsert-budget");
+    expect(mocks.scopeSetContext).toHaveBeenCalledWith("rag", expect.objectContaining({
+      requestedEstimatedWriteUnits: expect.any(Number),
+      allowedEstimatedWriteUnits: 1,
+      skipped: 1,
+      limitPer24h: 1
+    }));
+  });
+
+  it("reports provider failures to Sentry without throwing from storeContexts", async () => {
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/1";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    mocks.upsert.mockRejectedValue(new Error("Pinecone 503 unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    const result = await storeContexts([
+      { text: "AAPL 8-K details", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-18" } }
+    ]);
+
+    expect(result.error).toContain("Pinecone 503 unavailable");
+    await vi.waitFor(() => expect(mocks.captureMessage).toHaveBeenCalledWith("Pinecone connection failed"));
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.provider", "pinecone");
+    expect(mocks.scopeSetTag).toHaveBeenCalledWith("rag.operation", "upsert");
+    expect(mocks.scopeSetContext).toHaveBeenCalledWith("rag", expect.objectContaining({
+      reason: expect.stringContaining("Pinecone 503 unavailable")
+    }));
+    consoleError.mockRestore();
   });
 });
 

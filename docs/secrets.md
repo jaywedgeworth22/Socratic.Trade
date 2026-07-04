@@ -52,8 +52,9 @@ infisical secrets set --env=prod --path=/ $(grep -vE '^\s*#|^\s*$' .env.local | 
 ```
 Then create a **Machine Identity** (Project → Access Control) with the **Universal Auth** method and
 copy its **Client ID** (a UUID — not secret) and a **Client Secret** (a 64-char string — secret,
-never committed). App secrets live in the **`agentic-trading`** project; shared App-A/B
-(congress-trade) secrets live in **`shared-at-ct`** (`18f563a3-9c88-454c-96eb-28fc9678f3ba`). To pull
+never committed). App secrets live in the **`Socratic.Trade`** project (slug `socratic-trade`);
+shared App-A/B (congress-trade) secrets live in **`shared-at-ct`**
+(`18f563a3-9c88-454c-96eb-28fc9678f3ba`). To pull
 both, give the cutover script a SECOND identity via `INFISICAL_SHARED_CLIENT_ID` +
 `INFISICAL_SHARED_CLIENT_SECRET` (and optionally `INFISICAL_SHARED_PROJECT_ID`): the runner fetches
 both projects with `infisical export` and merges them with the **app project winning** any overlapping
@@ -61,7 +62,7 @@ key (shared is the fallback). On the box set the bootstrap:
 ```bash
 export INFISICAL_CLIENT_ID='<machine-identity Client ID>'          # a UUID; identifier, not a secret
 export INFISICAL_CLIENT_SECRET='<machine-identity Client Secret>'  # the 64-char secret; never committed
-export INFISICAL_PROJECT_ID='39d93bb7-76f9-498c-8b50-a7def52e072f' # agentic-trading (agentic-trading-s-xn-n)
+export INFISICAL_PROJECT_ID='39d93bb7-76f9-498c-8b50-a7def52e072f' # Socratic.Trade (slug: socratic-trade)
 export INFISICAL_ENV='prod'
 export REQUIRE_SECRETS_MANAGER=1
 ```

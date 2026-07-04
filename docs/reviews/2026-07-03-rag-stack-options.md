@@ -26,16 +26,26 @@ auditable decision memory. The existing runtime already uses `voyage-finance-2`,
 - The codebase already implements the domain-specific parts a generic framework would not solve for
   us: chunking, content-hash dedup, as-of filtering, tenant scope, source metadata, API health,
   metering, and admin coverage views.
+- Paying for capacity is acceptable once it is deliberate usage. Do not pay merely to cover a coding
+  defect; prove dedup, write fuses, and admin/API Usage Monitor/Sentry visibility first.
 
 ## Consider later
 
 - **OpenAI embeddings**: credible fallback or A/B baseline, especially if vendor consolidation matters.
   Do not swap by default; there is no finance-specific default advantage, and dimensions/indexes must
   be migrated deliberately.
+- **Pinecone Inference embeddings (`llama-text-embed-v2`, `multilingual-e5-large`)**: credible cost
+  and simplicity candidate because Pinecone hosts the embedding step and exposes per-request inference
+  usage. The screenshot's 5M Starter limit applies to hosted embedding tokens, not Pinecone database
+  Write Units. Test with a gold corpus before migrating; integrated indexes require a different
+  `create_index_for_model`/`field_map` path, and new vectors cannot be mixed with old Voyage vectors.
 - **Cohere Embed/Rerank**: credible enterprise alternative, especially for multilingual/semi-structured
   rerank use. Benchmark against our actual filings and strategy questions before switching.
 - **Weaviate**: consider only if its built-in hybrid/platform features become more valuable than
   Pinecone's managed simplicity. This is a platform migration.
+- **Qdrant/Chroma/pgvector**: cheaper direct-vendor-cost options for local evals or self-hosting.
+  Consider if managed Pinecone cost stays disproportionate after fuses, but price savings trade for
+  ops/backups/monitoring work.
 - **LlamaIndex**: useful if document ingestion/query-engine abstraction becomes the bottleneck. Today
   the custom ingestion path is already tailored to SEC filings and decision memory.
 - **LangChain**: useful for generic RAG/agent experiments, not a production requirement for this stack.
@@ -69,11 +79,16 @@ auditable decision memory. The existing runtime already uses `voyage-finance-2`,
 - Start with `RAG_PINECONE_MAX_WRITE_UNITS_PER_DAY=50000` or lower on a fresh Starter account.
 - Leave `WEB_SOURCE_SEC8K_FULL_BODY=off` and `RAG_EMBED_DISCLOSURES=off` until the admin RAG pages show
   clean health, sane write volume, and correct coverage.
+- Configure API Usage Monitor push for cross-app trend visibility and Sentry warning capture for RAG
+  provider failures / Pinecone WU budget trips.
 
 ## Sources checked
 
 - Pinecone database limits and Write Unit accounting: https://docs.pinecone.io/reference/api/database-limits
 - Pinecone cost model: https://docs.pinecone.io/guides/manage-cost/understanding-cost
+- Pinecone hosted embedding models: https://docs.pinecone.io/models/llama-text-embed-v2 and https://docs.pinecone.io/models/multilingual-e5-large
+- Pinecone integrated embedding index API: https://docs.pinecone.io/reference/api/2025-01/control-plane/create_for_model
+- Pinecone usage monitoring: https://docs.pinecone.io/guides/manage-cost/monitor-usage-and-costs
 - Voyage pricing/model docs: https://docs.voyageai.com/docs/pricing
 - Voyage reranker docs: https://docs.voyageai.com/docs/reranker
 - OpenAI embeddings docs: https://developers.openai.com/api/docs/guides/embeddings

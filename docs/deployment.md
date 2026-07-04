@@ -30,8 +30,9 @@ runbook: `docs/secrets.md`; this is the deploy-side summary.
   `.env.local`, and Next never overrides an already-set var, so Infisical always
   wins.
 - **Projects** (slugs/IDs are identifiers, not secrets):
-  - App secrets → **`agentic-trading`** (`agentic-trading-s-xn-n`,
-    `39d93bb7-76f9-498c-8b50-a7def52e072f`), machine identity `agentic-trading`.
+  - App secrets → **`Socratic.Trade`** (slug `socratic-trade`,
+    project ID `39d93bb7-76f9-498c-8b50-a7def52e072f`), machine identity for the
+    Socratic.Trade app project.
   - Shared App-A/B (congress-trade) secrets → **`shared-at-ct`**
     (`shared-at-ct-tg-v7`, `18f563a3-9c88-454c-96eb-28fc9678f3ba`), machine
     identity `shared-at-ct`. Set `INFISICAL_SHARED_CLIENT_ID` +
