@@ -8,6 +8,9 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Fleet docs: delegation & model economics (Claude)
+Append new "Delegation & model economics" section to all four repos' AGENTS.md files per coordinator directive. Branch: `claude/delegation-standard-docs`.
+
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single

@@ -23,6 +23,8 @@ in place and note the correction.
 
 _As of 2026-07-04. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
 
+**2026-07-04**: Claude appended fleet "Delegation & model economics" section to AGENTS.md (docs-only).
+
 ---
 
 ## 🚀 Deployed to production
