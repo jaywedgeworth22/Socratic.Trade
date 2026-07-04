@@ -232,18 +232,32 @@ describe("strategy Red Team rejection — F2 audit", () => {
     const rejectionAudits = listAudit(500).filter((e) => e.kind === "proposal_rejected_by_red_team");
     expect(rejectionAudits.length).toBeGreaterThanOrEqual(1);
     const payload = rejectionAudits[0].payload as {
+      runId?: string;
       symbol?: string;
       side?: string;
       thesisTag?: string;
       reason?: string;
+      model?: string;
     };
     expect(payload.symbol).toBe("AAPL");
     expect(payload.side).toBe("buy");
     expect(payload.thesisTag).toBe("Quality-Compounder");
     expect(payload.reason).toContain("Overbought");
+    // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+    // counterfactual return.
+    expect(payload.runId).toBe(result.runId);
+    expect(payload.model).toBe("gpt-4.1-mini");
 
     // A rejected proposal never reaches execution → no AAPL fill was booked.
     const fills = listFillEvents("TEST", undefined, 100, "local");
     expect(fills.find((f) => f.symbol === "AAPL")).toBeUndefined();
+
+    // A Bear veto now feeds the SAME counterfactual pipeline as a policy block / human rejection
+    // (recordRejectedProposalCounterfactual), so its post-veto return can mature into
+    // getRedTeamEfficacy() below — previously the Red Team's own vetoes were the one rejection path
+    // with zero downstream measurement.
+    const { getRedTeamEfficacy } = await import("../src/lib/performance");
+    const efficacy = getRedTeamEfficacy("local");
+    expect(efficacy.totalVetoes).toBeGreaterThanOrEqual(1);
   }, 30_000);
 });

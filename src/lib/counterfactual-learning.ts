@@ -9,6 +9,7 @@ import {
 } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import type { OHLCBar } from "./indicators";
+import { addTradingDays, marketDateOf } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import type { MarketFactor, MarketFactorBreakdown } from "./types";
 
@@ -238,10 +239,20 @@ function selectExitBar(bars: OHLCBar[], targetDate: string): { date: string; clo
     .find((bar) => bar.date >= targetDate);
 }
 
+/**
+ * TRADING-day horizon target (see `market-calendar.addTradingDays` for the full historical
+ * note): `horizonDays` trading sessions after `snapshotAt`'s MARKET-day calendar date,
+ * honoring weekends and full-close holidays — NOT `horizonDays * 86_400_000` ms of calendar
+ * time. The anchor date is derived in America/New_York (`marketDateOf`), not UTC: an
+ * after-hours ET snapshot (e.g. Mon 19:30 ET = Tue 00:30 UTC) counts sessions from Monday's
+ * market day; the earlier UTC conversion delayed those horizons by one session (Codex review
+ * on PR #365). Named `targetBusinessDate` to match `backtest.ts`'s identical helper (kept as
+ * separate thin wrappers since each module owns its own snapshot-parsing/validation contract).
+ */
 function targetBusinessDate(snapshotAt: string, horizonDays: number): string | undefined {
-  const time = Date.parse(snapshotAt);
-  if (!Number.isFinite(time)) return undefined;
-  return new Date(time + horizonDays * DAY_MS).toISOString().slice(0, 10);
+  const snapshotDate = marketDateOf(snapshotAt);
+  if (!snapshotDate) return undefined;
+  return addTradingDays(snapshotDate, horizonDays);
 }
 
 function envHorizonDays(): number {

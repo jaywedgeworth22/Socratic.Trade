@@ -319,24 +319,44 @@ to `socratictrade.com`, record the release commit + date here._
   approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
+- **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
+  `claude/w1-learning-loops`, **merging now that gate is green**) — three items from the composite
+  expert review (§A, lines 37-161):
+  (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
+  (same pipeline as policy blocks/human rejections) in `strategy.ts`'s Bear-reject branch, stamped
+  with `runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` joins matured vetoed-candidate
+  returns to `proposal_rejected_by_red_team` audit events for rejection rate / veto value-add /
+  survivor-risk hit rate / per-model breakdown — API/db-level only, no console/Results UI wiring
+  (left for the console lane). (2) Re-index decision memory: `appendSocraticDecisionCoachNote` now
+  re-calls `indexSocraticDecisionMemory` after the coach-note append (dynamic import avoids a
+  `db-socratic -> socratic-memory -> vector-db -> ./db` cycle); the stable id/dedupKeyPrefix makes it
+  an in-place upsert. (Outcome/lesson writers don't exist yet in this codebase — a separate,
+  unassigned effort — so only the coach-note lifecycle path was wired.) (3) Trading-day horizon
+  arithmetic: new `addTradingDays()` in `market-calendar.ts` (honors `isTradingDay`, walks weekends
+  + holidays) replaces the calendar-ms arithmetic in `counterfactual-learning.ts` and `backtest.ts`'s
+  `targetBusinessDate`, fixing weekday-dependent horizon noise; historical target dates for
+  Thu/Fri-snapshotted candidates shift (one-time discontinuity, snapshot-tested). Verification green:
+  lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. See
+  `docs/rollouts/2026-07-04-w1-learning-loops.md`.
+
 - **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
   push-only branches; landing via the active train):
-  - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
-    headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent
-    trigger. **Merged** (PR #364).
-  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
-    decision memory on lifecycle changes; trading-day horizon arithmetic.
-  - `claude/w1-rag-quickwins` (this lane) — **landing now that gate is green.** Wired the
-    dormant relevance-floor + near-dup dedupe into `strategy.ts`/`chat/orchestrator.ts`; provenance
-    headers (`formatChunkWithProvenance`) prepended onto `strategy.ts`'s joined RAG context, stable
-    chunk ids left unchanged for a future `evidenceRefs` mechanism; confirmed `VECTOR_STORECONTEXTS_DEDUP`
-    was already default-on (stale claim in the source review) and widened `hashContent` 16→32 hex
-    chars (64→128-bit); stamped `embed_model`/`embed_rev` on every new vector in `cleanMetadata`;
-    raised the rerank-path over-fetch cap to an env-tunable 150 (`VECTOR_RERANK_OVERFETCH_K`),
-    non-rerank paths unchanged. Verify green: lint 0 errors, tsc clean, **2388/2388 tests**, build
-    green. See `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
-  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro cache;
-    per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
+  - `claude/w1-llm-fixes` — Bear schema `confidenceScore` fix (live bug: strict Bear
+    schema previously stripped confidence, zeroing the approval-time debate trigger and degrading
+    sizing); per-provider reasoning-token headroom for xAI/Gemini/Mistral/DeepSeek chat-completions
+    (previously OpenAI-only); cross-family Bear default (only when a cross-family credential exists)
+    + non-zero adversary temperature (0.7) for the Bear/debate roles via `withLlmRequestBounds`;
+    reward-abstention line in the Bull system prompt; stakes-scaled Red Team dissent trigger
+    (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
+    confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
+    no new hard gates. **Merged** (PR #364).
+  - `claude/w1-rag-quickwins` — dormant relevance-floor + near-dup dedupe wired into
+    `strategy.ts`/`chat/orchestrator.ts`; provenance headers (`formatChunkWithProvenance`) prepended
+    onto the joined RAG context; widened `hashContent` 16→32 hex chars (64→128-bit); stamped
+    `embed_model`/`embed_rev` on every new vector; env-tunable rerank over-fetch cap
+    (`VECTOR_RERANK_OVERFETCH_K`, default 150). **Merged** (PR #366).
+  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
+    cache; per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
 
 ---
 

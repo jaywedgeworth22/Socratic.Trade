@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
+Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
+expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same
+`recordRejectedProposalCounterfactual` pipeline as policy blocks/human rejections, stamped with
+`runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` scores rejection rate / veto
+value-add / survivor-risk hit rate / per-model — API/db-level only, no console/Results UI wiring
+(left for the console lane). (2) `appendSocraticDecisionCoachNote` now re-calls
+`indexSocraticDecisionMemory` after the append (dynamic import avoids a `db-socratic ->
+socratic-memory -> vector-db -> ./db` cycle) so a coach note is actually retrievable, not frozen
+at "coach_notes: none"; outcome/lesson writers don't exist yet in this codebase (separate,
+unassigned effort) so only the coach-note path was wired. (3) New `addTradingDays()` in
+`market-calendar.ts` (honors `isTradingDay`) replaces calendar-ms arithmetic in
+`counterfactual-learning.ts`/`backtest.ts`'s `targetBusinessDate` — fixes weekday-dependent
+horizon noise; historical target dates shift for Thu/Fri snapshots (one-time discontinuity,
+documented, not backfilled). Verification green: lint 0 errors, tsc clean, 2377 tests / 245 files,
+build green. PR pending (push-only; lands via the active landing train). See
+`docs/rollouts/2026-07-04-w1-learning-loops.md`.
 ## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
 ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
 source of truth; agents never write issues, only a workflow does.
