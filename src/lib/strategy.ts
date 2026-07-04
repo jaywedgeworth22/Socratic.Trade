@@ -29,7 +29,7 @@ import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
-import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
+import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
@@ -390,9 +390,11 @@ export async function runStrategyOnce(
     // Volatility panic auto-brake: independent of the drawdown breaker, a rare tail extreme on
     // VIX / VVIX / SKEW flips an active system to close_only so a market-wide panic stops opening
     // new risk even when this account hasn't drawn down yet. Risk-reducing exits still flow.
+    // Reads the LIVE (short-TTL) VIX overlay, not the bare 24h-cached fetchMacroData snapshot —
+    // pinning the brake to a day-old VIX would leave it up to a day blind on a crash day.
     if (!manualRun && policy.systemState === "active") {
       const [brakeMacro, brakeSignals] = await Promise.all([
-        fetchMacroData(userId).catch(() => undefined),
+        fetchMacroDataWithLiveVix(userId).catch(() => undefined),
         getMarketSignals(userId).catch(() => undefined)
       ]);
       const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
@@ -400,9 +402,13 @@ export async function runStrategyOnce(
         policy.systemState = "close_only";
         // Persist to the run's TARGET account (same reason as the drawdown breaker above).
         setPolicy(policy, userId, targetAccountId);
-        audit("policy_violation_vol_panic", { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only" }, userId);
+        audit(
+          "policy_violation_vol_panic",
+          { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only", vixAsOf: brakeMacro?.vixAsOf },
+          userId
+        );
         await sendNotification(
-          { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason } },
+          { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason, vixAsOf: brakeMacro?.vixAsOf } },
           { policy, userId }
         );
       }
@@ -1458,6 +1464,8 @@ export function deterministicBearFilter(
   const medianScore = sortedScores.length > 1
     ? sortedScores[Math.floor(sortedScores.length / 2)]
     : -Infinity;
+  // Substring match retained deliberately: this gate site is owned by the risk lane (Monet);
+  // it adopts the typed enum from ./market-regime inside #360. Do not convert here.
   const riskOffRegime = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
 
   const kept: TradeProposal[] = [];
