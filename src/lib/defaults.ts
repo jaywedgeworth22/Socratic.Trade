@@ -4,13 +4,19 @@ import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT, DEFAULT_MARKET_SCAN_OUTLIER_RESERV
 
 export const DEFAULT_TAX_SETTINGS: TaxSettings = {
   washSaleGuard: true,
-  // "block" preserves the original behavior: a wash-sale-locked rebuy is refused outright.
-  // "ask" routes it to a priced pending-approval card; "auto" lets the deterministic
-  // edge-vs-tax-cost guard decide (see policy.ts).
-  washSaleHandling: "block",
-  // IRA-replacement rebuys proceed annotated by default for IRA accounts. Owner rationale:
-  // brokers don't report cross-account IRA wash sales to the IRS, so blocking those buys by
-  // default is not appropriate for this app; the stricter "block" choice remains available.
+  // Owner decision (2026-07-03): the wash-sale gate is advisory, not a hard block, by default.
+  // "auto" always proceeds — an earlier deterministic edge-vs-tax-cost veto was removed because it
+  // re-arithmetized the LLM's own outputs (confidenceScore, bracketTakeProfit) rather than adding
+  // independent judgment. The priced tax cost still rides the decision as receipt telemetry and is
+  // threaded into the strategist prompt so the model weighs it against conviction itself. "block"
+  // and "ask" remain valid, stricter opt-ins (see policy.ts) for anyone who wants the old hard-stop
+  // or a priced approval prompt.
+  washSaleHandling: "auto",
+  // IRA-replacement rebuys (Rev. Rul. 2008-5) default to "disregard" for the same reason: brokers
+  // do not report cross-account IRA wash sales to the IRS, so the permanent-loss-forfeiture rule
+  // only bites under audit — the owner treats that as their call, not a hard system stop. Every
+  // disregarded purchase is still annotated + audited ("Wash Sale (Technically, but IRA purchase
+  // unreported to IRS)"); "block" remains available as a stricter per-account opt-in.
   iraWashSaleHandling: "disregard",
   shortTermRatePct: 24,
   longTermRatePct: 15
