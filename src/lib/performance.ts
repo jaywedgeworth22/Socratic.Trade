@@ -694,6 +694,9 @@ export function getFactorScorecard(
 ): FactorScorecardStat[] {
   const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
   // Optional regime filter — default (no option) preserves the original all-lots behavior.
+  // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
+  // doc comment before renaming a label; existing rows would silently stop matching.
   const closedLots = options?.regime
     ? allLots.filter((lot) => lot.regime?.trim() === options.regime?.trim())
     : allLots;

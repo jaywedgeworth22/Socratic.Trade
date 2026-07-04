@@ -1,4 +1,4 @@
-import { OPENING_ORDER_HEADROOM_PCT, WASH_SALE_AUTO_EDGE_MULTIPLE } from "./policy";
+import { OPENING_ORDER_HEADROOM_PCT } from "./policy";
 import type { WashSaleHandling } from "./types";
 
 /**
@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.3.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.4.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -66,9 +66,10 @@ export interface BullSystemParams {
   /** Whether a taxContext block is present (gates the tax-efficiency paragraph). */
   hasTaxContext: boolean;
   /**
-   * taxSettings.washSaleHandling ?? "block" — selects the wash-sale guidance line. "block"
-   * keeps the original absolute prohibition byte-identical; "ask"/"auto" explain the priced
-   * `taxContext.washSaleRebuyCosts` so the model weighs a locked rebuy honestly.
+   * taxSettings.washSaleHandling — selects the wash-sale guidance line. "block" (an explicit
+   * stricter opt-in) states the original absolute prohibition; "ask"/"auto" (the default) explain
+   * the priced `taxContext.washSaleRebuyCosts` so the model weighs a locked rebuy honestly — "auto"
+   * always proceeds and the choice of whether to take the trade is the model's own judgment call.
    */
   washSaleHandling?: WashSaleHandling;
   /**
@@ -123,7 +124,7 @@ export function buildBullSystem(p: BullSystemParams): string {
             : p.washSaleHandling === "ask"
             ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). Strongly prefer NOT to rebuy them; if you do propose one, it is routed to the owner for approval carrying the priced tax cost from `taxContext.washSaleRebuyCosts` — only propose it when the setup clearly justifies forfeiting that deduction, and say so in the rationale."
             : p.washSaleHandling === "auto"
-              ? `- Symbols in \`washSaleLockedSymbols\` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the deterministic policy gate ONLY when its expected edge is at least ${WASH_SALE_AUTO_EDGE_MULTIPLE}x the priced tax cost in \`taxContext.washSaleRebuyCosts\`; otherwise it is skipped. Propose one only with genuinely high conviction and a clear catalyst, and account for the tax cost in your rationale.`
+              ? "- Symbols in `washSaleLockedSymbols` were sold at a loss within 30 days (wash sale). A BUY of one is allowed by the policy gate — it is YOUR judgment call, not a deterministic threshold: weigh the priced forfeited deduction in `taxContext.washSaleRebuyCosts` (per-symbol: `estimatedTaxCostUsd`, `clearsOn`) against the setup's conviction and catalyst, and explicitly account for that tax cost in the rationale. Only propose one when the trade clearly justifies forfeiting the deduction."
               : "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
           "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
           "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
@@ -153,6 +154,7 @@ export function buildBullSystem(p: BullSystemParams): string {
     "Your `confidenceScore` (1–100) informs backend risk sizing limits, but it is not a substitute for choosing `dollarAmount`/`quantity`. Calibrate it honestly and choose the actual advised size yourself.",
     THESIS_PLAYBOOK_GUIDE,
     "",
+    "Returning ZERO proposals is a CORRECT and often the RIGHT outcome when nothing in today's evidence clears your conviction bar — it is not a failure to justify or pad with a marginal idea. Do not manufacture a proposal just to have output.",
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
 }
@@ -177,6 +179,7 @@ export function buildBearSystem(p: BearSystemParams): string {
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
     "Preserve or refine `autonomyOverride` when the Bull Agent made a serious, evidence-backed case to challenge owner-preference gates; remove it by setting null when the override thesis is weak, self-serving, or tries to bypass broker/account/integrity constraints.",
+    "Every surviving proposal MUST re-emit `confidenceScore` (1-100). PRESERVE the Bull Agent's original confidenceScore unchanged unless you are deliberately REVISING conviction (e.g. the evidence is weaker or stronger than the Bull judged) — in that case set your own revised score and say so explicitly in the rationale. Never drop or default this field.",
     `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
     "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
     "If none survive, return an empty array."

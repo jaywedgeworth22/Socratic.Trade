@@ -97,9 +97,11 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
-  it("blocks a buy of a wash-sale-locked symbol when the guard is on", () => {
+  it("blocks a buy of a wash-sale-locked symbol when the guard is on and handling is explicitly 'block'", () => {
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,
@@ -131,8 +133,10 @@ describe("evaluateTradeProposal", () => {
     vi.mocked(getUserWashSaleLockProvenance).mockReturnValueOnce(
       new Map([["TSLA", { account: "ACC1", clearDate: new Date("2026-07-20T00:00:00.000Z"), lossUsd: 100 }]])
     );
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,
@@ -148,8 +152,10 @@ describe("evaluateTradeProposal", () => {
 
   it("does not call getUserWashSaleLockProvenance when washSaleLockedSymbols is pre-populated", () => {
     vi.mocked(getUserWashSaleLockProvenance).mockClear();
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,

@@ -271,6 +271,7 @@ async function fetchVixOnlyFallback(scope: MacroCacheScope, userId: string | und
 export function clearMacroCacheForTests(): void {
   sharedMacroCache.entry = null;
   privateMacroCache.clear();
+  liveVixCache.entry = null;
 }
 
 /** Fetch the latest ^VIX close from Yahoo Finance (no API key required). Returns null on any failure. */
@@ -290,6 +291,60 @@ async function fetchVixFromYahoo(): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+// ── Live ^VIX overlay (short TTL, independent of the 24h macro cache) ────────────────────────
+// `fetchMacroData` is cached 24h — appropriate for the slow-moving FRED suite (rates, inflation,
+// GDP), but VIX can move double digits intraday, so pinning it to the same day-old snapshot means
+// the volatility panic brake and the regime-flip detector could be up to a day blind on a crash
+// day (composite review D/high/S). This is a SEPARATE cache entry with a short TTL, keyed off the
+// same key-free Yahoo ^VIX chart call `fetchVixFromYahoo` already used by the no-FRED fallback path
+// — so no new upstream dependency, just a much shorter TTL and its own cache slot. Callers that
+// need the freshest possible volatility read (the vol brake, regime-flip detection) should use
+// `fetchLiveVix`/`fetchMacroDataWithLiveVix` instead of trusting the 24h `fetchMacroData` snapshot.
+
+const LIVE_VIX_TTL_MS = 10 * 60_000; // 10 min — short enough to catch an intraday vol spike
+
+interface LiveVixEntry { expiresAt: number; vix: number | null; asOf: string }
+const liveVixCache: { entry: LiveVixEntry | null } = { entry: null };
+
+/**
+ * Live ^VIX reading with a short (10 min) TTL, independent of the 24h macro cache. Global/shared —
+ * the Yahoo ^VIX chart endpoint is key-free and carries no per-user licensing concern (same
+ * provenance reasoning as the no-FRED-key VIX fallback in fetchMacroData). Returns `vix: null` when
+ * the live fetch fails (never fabricates a reading); `asOf` is only a real ISO timestamp when the
+ * fetch actually succeeded this call or a still-fresh cache entry is served.
+ */
+export async function fetchLiveVix(now: number = Date.now()): Promise<{ vix: number | null; asOf: string | null }> {
+  const cached = liveVixCache.entry;
+  if (cached && cached.expiresAt > now) return { vix: cached.vix, asOf: cached.vix !== null ? cached.asOf : null };
+
+  const vix = await fetchVixFromYahoo();
+  const asOf = new Date(now).toISOString();
+  liveVixCache.entry = { expiresAt: now + LIVE_VIX_TTL_MS, vix, asOf };
+  return { vix, asOf: vix !== null ? asOf : null };
+}
+
+/**
+ * Overlay a live (short-TTL) VIX reading onto the (possibly 24h-stale) cached macro snapshot.
+ * Everything else — rates, inflation, credit spreads, etc. — still comes from the slow-moving FRED
+ * suite via `fetchMacroData`; only `vix` and `asOf` are refreshed from the live path, and only when
+ * the live fetch actually succeeds (a transient Yahoo failure falls back to the cached VIX rather
+ * than blanking a previously-good reading). Use this instead of bare `fetchMacroData` wherever a
+ * stale VIX would matter: the volatility panic brake and the regime-flip detector.
+ */
+export async function fetchMacroDataWithLiveVix(userId?: string): Promise<MacroData & { vixAsOf?: string }> {
+  const [macro, live] = await Promise.all([fetchMacroData(userId), fetchLiveVix()]);
+  if (live.vix === null || live.asOf === null) return macro;
+  return {
+    ...macro,
+    vix: live.vix.toFixed(2),
+    // A live VIX overlay always counts as a live snapshot for the regime classifier, even when the
+    // rest of the FRED suite is unavailable — asOf "unavailable" would otherwise force the
+    // classifier's early-return Unknown branch despite a real, fresh VIX reading in hand.
+    asOf: macro.asOf === "unavailable" ? live.asOf : macro.asOf,
+    vixAsOf: live.asOf
+  };
 }
 
 // Regime-critical fields that are always worth the tokens even when unchanged.
@@ -324,6 +379,22 @@ export function pruneMacro(
   return { macro, omitted };
 }
 
+// Typed regime enum + numeric severity + the classifier/gate helpers now live in the
+// dependency-free ./market-regime module so client-bundled code (e.g. the console Macro board)
+// can import the enum helpers by value without pulling in server-only modules (this file imports
+// ./db). Re-exported here so existing `import { X } from "./macro"` call sites are unaffected.
+export {
+  classifyMarketRegime,
+  isCrisisOrInvertedMarketRegime,
+  isEscalationMarketRegime,
+  isRiskOffFilterRegime,
+  MARKET_REGIME_LABELS,
+  MARKET_REGIME_SEVERITY,
+  regimeFromLabel,
+  type MarketRegime
+} from "./market-regime";
+import { classifyMarketRegime, MARKET_REGIME_LABELS } from "./market-regime";
+
 /**
  * Deterministic market-regime classifier. Primary axis is VIX (volatility), but the
  * yield curve (10y vs Fed funds) actually participates now: an inverted curve — a
@@ -331,22 +402,14 @@ export function pruneMacro(
  * surfaces a distinct "Cautious (Inverted Curve)" regime in calm-but-inverted markets.
  * Kept to a small, repeatable label set so the thesis×regime learning buckets stay
  * dense enough to learn from. Richer macro detail still reaches the LLM via the prompt.
+ *
+ * Returns the byte-identical label strings this function has always returned — persisted
+ * verbatim as `entryMarketRegime` — by projecting `classifyMarketRegime`'s enum (./market-regime)
+ * through `MARKET_REGIME_LABELS`. New code should prefer `classifyMarketRegime` (enum + severity)
+ * over string-matching this label.
  */
 export function determineMarketRegime(macro: MacroData): string {
-  // Unsourced macro (no FRED key) carries asOf "unavailable". Don't assert a confident regime off
-  // fabricated constants — return an explicit Unknown so downstream conditioning/caps stay neutral.
-  if (macro.asOf === "unavailable") return "Unknown (no macro feed)";
-  const vix = parseFloat(macro.vix);
-  const fedFunds = parseFloat(macro.fedFundsRate);
-  const dgs10 = parseFloat(macro.dgs10Treasury);
-  // Curve inversion: 10y meaningfully below the policy rate.
-  const inverted = Number.isFinite(fedFunds) && Number.isFinite(dgs10) && dgs10 < fedFunds - 0.1;
-  if (Number.isFinite(vix)) {
-    if (vix > 30) return "Crisis (Extreme Volatility)";
-    if (vix > 20 || (inverted && vix > 17)) return "Risk-Off (High Volatility)";
-    if (vix < 13 && !inverted) return "Risk-On (Low Volatility)";
-  }
-  return inverted ? "Cautious (Inverted Curve)" : "Neutral (Normal Volatility)";
+  return MARKET_REGIME_LABELS[classifyMarketRegime(macro).regime];
 }
 
 /** Tail-risk gauges the volatility panic brake reads (beyond VIX, which lives on MacroData). */

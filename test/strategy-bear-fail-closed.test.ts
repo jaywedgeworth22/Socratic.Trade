@@ -250,5 +250,11 @@ describe("inline Bear red-team fail-closed (Chat A item 1)", () => {
       .map((e) => e.kind);
     expect(runKinds).not.toContain("strategy_bear_review_unavailable");
     expect(runKinds).not.toContain("strategy_bear_review_routed_to_human");
+    // Regression (composite review B/high/S): the inline Bear schema now includes confidenceScore in
+    // both `properties` and `required`, so a Bear-surviving proposal retains a numeric score instead
+    // of silently degrading to undefined (which previously zeroed shouldRunRedTeamDebate's `?? 0`
+    // trigger and sizing's `?? 50` neutral fallback).
+    const aaplProposal = result.proposals.find((p) => p.proposal.symbol === "AAPL");
+    expect(aaplProposal?.proposal.confidenceScore).toBe(BULL_PROPOSAL.confidenceScore);
   }, 30_000);
 });

@@ -45,6 +45,137 @@ agent retrieves its own past decisions + owner coaching AT DECISION TIME.
    `test/experience-memory.test.ts` + `test/strategy-episodic-injection.test.ts`); build green.
    See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`. Pushed, no PR — lands via the
    landing train after its base branch lands.
+## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
+ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
+source of truth; agents never write issues, only a workflow does.
+`scripts/sync-effort-issues.py` (python3 stdlib, no third-party deps) parses `docs/EFFORT-LOG.md`
+at HEAD: top-level `##` section headings are classified by keyword (tolerating wording/emoji
+variation across repos — "Planned / Reserved Before Implementation" vs "Planned / Reserved" both
+map to `planned`), top-level `- `/`* ` bullets become items with indented continuation lines
+folded into the body, and `(none)`/`(seeded empty ...)`-style placeholders are skipped. Each item's
+identity is a SHA1 of its normalized first line, embedded in the issue body as
+`<!-- effort-key: <hash> -->` so re-runs are idempotent and state transitions (Planned -> In
+Progress -> Completed) update the same issue in place rather than creating a new one, as long as
+the first line's wording doesn't change. Planned/In Progress -> issue open (labels `effort-board` +
+`state:planned`/`state:in-progress`, assigned to `jaywedgeworth22` so GitHub pushes mobile
+notifications); Completed/Deployed -> issue closed (`state:completed`/`state:deployed`). Never
+deletes issues; a board row that disappears leaves its mirrored issue untouched. Hand-made issues
+without the marker are ignored entirely. Missing labels are created on first run. Duplicate board
+rows (same normalized first line appearing twice — found for real in this repo's own board, "Wave-1
+quick wins..." logged twice under In Progress) are deduped within a run so they don't multiply
+issues.
+Workflow `.github/workflows/effort-issues-sync.yml` (new, additive): triggers on push to `main`
+touching `docs/EFFORT-LOG.md`, a daily off-minute cron (`12 6 * * *`, drift catch), and
+`workflow_dispatch`. Uses the Actions-provided `GITHUB_TOKEN` (`issues: write`) via plain REST +
+stdlib `urllib`, no GraphQL.
+Rolled out to `Socratic.Trade` (this repo), `congress-trading-shared`, and `API-usage-monitor` —
+identical script/workflow in all three; the script reads `GITHUB_REPOSITORY` from the Actions
+environment so no repo-specific edits were needed. Canonical pattern documented as a new "Issues
+mirror (standard)" subsection in `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`, and the new-app bootstrap
+checklist there now includes copying the two files.
+Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not the machine-local
+live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
+operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
+every live-board edit; documented in the script's own docstring and in the protocol doc.
+**Merged and verified live:** Socratic.Trade PR #374, congress-trading-shared PR #4,
+API-usage-monitor PR #9 — all squash-merged. First sync (auto-fired by the `main` push trigger in
+Socratic.Trade; manually triggered once via `gh workflow run` in the other two) produced:
+Socratic.Trade 58 issues (32 `state:completed` + 6 `state:deployed`, closed; 9 `state:in-progress`
++ 11 `state:planned`, open), congress-trading-shared 2 open `state:in-progress` issues,
+API-usage-monitor 3 open `state:in-progress` issues — all confirmed via the Issues API with correct
+labels, assignee, and body content.
+See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
+
+## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
+New Sentry project `fleet-infra` (org jays-services), DSN in
+`/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).
+**Part A — host monitor (machine-side, no repo dependency):**
+`/Users/jay/apps/fleet-sentry-monitor/monitor.py`, a single-pass Python script whose ~120s cadence
+comes from pm2 restarting it after each pass sleeps and exits (registered as pm2 app
+`fleet-sentry-monitor`, `pm2 save`d — confirmed running, `status: online`). Each pass: `pm2 jlist`
+crash-loop detection (restart delta >= 5 within one interval -> error, fingerprinted per
+app+condition with hourly dedup via a local `state.json`), down detection (`trading`/`trading-main`
+non-online -> error, any other app -> warning); Claude desktop presence/RSS as breadcrumb only
+(not-running is not an error); disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+files >512MB warning; `gh api rate_limit` core/graphql <300 remaining -> warning with reset time;
+self-hosted Actions runner status as context only (offline is expected/normal); and a Sentry Crons
+self check-in (monitor slug `fleet-host-monitor`, upsert config: interval 2min, margin 5,
+max_runtime 2, America/Chicago) so a dead monitor alerts by absence. Verified live, not just
+locally: two real pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta mutation
+correctly fired the "pm2 crash loop: trading-codex" error at delta=7, and the `gh` rate-limit
+warning fired for real mid-session (fleet-wide testing burned graphql to 0 remaining).
+**Part B — CI failure reporter (repo-side, additive only):** new worktree
+`~/apps/trading-wt-sentry-ci` on branch `claude/sentry-ci-observability`, cut from `origin/main`
+(81c707c2). Two brand-new files, zero edits to any existing workflow:
+`.github/workflows/sentry-ci-report.yml` (listens on `workflow_run: types:[completed]` for all 7
+existing workflows — CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw Sentry envelope HTTP via
+`urllib`, no `sentry-sdk`/action-marketplace dependency). On failure conclusion: a Sentry error
+event tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`. On a
+schedule-triggered run: an additional Sentry Crons check-in (`ci-<workflow-slug>`, e.g.
+`ci-security`) whose `monitor_config.schedule` mirrors that workflow's own cron (Security
+`41 10 * * 1`, Playwright Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`) — so a
+nightly/weekly job that silently stops running (not "fails" but "never fires again") raises a
+missed-check-in alert. Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value
+mechanically from the `.env` file (never echoed to any log/transcript). Locally dry-ran the
+reporter script against the real DSN: both the failure-event and check-in envelope POSTs returned
+HTTP 200 before this went live in CI. See
+`docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail, verification commands,
+and follow-ups.
+## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
+Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
+Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner
+minutes with zero weakening of the merge gate. `.github/workflows/ci.yml`: added a cheap
+`classify` job that computes (on `pull_request` events, via `git diff --name-only base...head`)
+whether every changed file is documentation-class (`*.md` anywhere or `docs/**`); the existing
+`verify` job (same name, still the sole required status check — confirmed live via
+`gh api .../rulesets/17945518`, context `["verify"]` only) now gates its expensive steps
+(checkout/setup-node/.next-cache/install/lint/tsc/test/build) behind
+`needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff — gate skipped by path
+filter" + succeeds immediately when true. Any non-PR event, or any ambiguity in the diff
+computation, falls back to the full gate — deliberately conservative. `smoke`/`gitleaks`/
+`check-pin` are NOT required checks today (contrary to the AGENTS.md fallback list, which is
+explicitly only for if the ruleset API 404s — it didn't).
+
+**Mid-review addition (cache hygiene):** the repo hit its 10 GB Actions-cache cap. Root cause: a
+plain `actions/cache@v4` save on every run (source-hash-keyed, so it changes almost every commit)
+meant every PR push wrote its own ~340 MB `.next` entry scoped to that PR's ref, with no cleanup
+on PR close, plus `main` itself accumulating a new entry per push without removing the old one.
+Fixed by splitting to `actions/cache/restore@v4` (any event) + `actions/cache/save@v4` (gated to
+`main` pushes only), so PR runs get a warm cache but never write their own; added new
+`.github/workflows/cleanup-caches.yml` (not a required check) with a `delete-pr-caches` job
+(`pull_request: closed` → `gh cache delete --all --ref refs/pull/<n>/merge
+--succeed-on-no-caches`) and a daily-cron `prune-stale-caches` backstop job using new
+`scripts/prune-stale-actions-caches.py` to keep only the newest cache entry per (key-prefix, ref)
+lineage.
+
+**Scope guardrails + evolved decisions during review:** two further additions were proposed
+mid-task — (a) hybrid self-hosted/hosted runner routing for `verify` onto the production
+`trading-live-mac` box, and (b) a cross-repo `workflow_call` reusable entry point. Both were
+escalated back rather than built silently, since (a) reverses the repo's own documented
+2026-07-01 decision to move `verify` OFF that runner (queue bottleneck) and makes the required
+check's result depend on which OS/toolchain executed it. **The owner then re-confirmed (a) after
+seeing the tradeoff, with a resource-aware design answering each objection** (Mac-side
+availability publisher w/ load+RAM+hysteresis gating, instant hosted fallback on busy/stale
+state, hosted-Linux as arbiter on any self failure via exactly-one automatic hosted re-run,
+nightly hosted canary, per-run environment annotation) — to be built as its OWN clearly-labeled
+PR after PR #370 lands, never bundled. (b) stays deferred until that hybrid PR proves itself;
+hosted-only default when built. Full evolution recorded in
+`docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+
+**Codex review round (PR #370):** two genuine fail-open holes flagged and fixed — (1)
+`git diff --name-only` hides rename sources (a `git mv src/foo.ts docs/foo.md` would classify
+docs-only while deleting code); fixed with `--no-renames`, locally reproduced + re-verified. (2)
+a classify-job failure would SKIP the required `verify` job (skipped required checks can fail
+open); fixed with `if: ${{ !cancelled() }}` + an explicit fail-closed first step when
+`needs.classify.result != 'success'`.
+
+Verification: full local quartet green (lint 0 errors/308 pre-existing warnings, tsc clean,
+2436/2436 tests, build succeeded) plus `yaml-lint` on all workflow files, live ruleset API
+confirmation, a dry-run of the PR-cache-delete command against a nonexistent ref, and a
+synthetic-inventory test of the prune script's grouping logic. PR #370 CI/Smoke/Security were
+observed actually running live during this branch's review, so the Actions quota is not currently
+blocking runs (contrary to the initial task assumption).
 
 ## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
 Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
@@ -83,9 +214,147 @@ stages — no new ingestion sources. Five items:
 Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
 (clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
 (green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+## 2026-07-04 — Inter-agent coordination protocol (short pointer in AGENTS.md, canonical at /Users/jay/apps/AGENT-SYNC.md)
+Branch `claude/agent-sync-protocol-docs` (docs-only). Added short `## Inter-agent coordination` pointer
+section to AGENTS.md (3-4 lines) linking to the canonical `/Users/jay/apps/AGENT-SYNC.md` protocol reference
+(full protocol: sender tags, terse format, message structure, access/bot mechanics, realtime watcher, conflict resolution,
+effort-board integration, examples). Canonical file is branch-neutral (not in worktree); lives at `/Users/jay/apps/`.
+Rollout note updated at `docs/rollouts/2026-07-04-agent-sync-protocol-docs.md`.
+
+## 2026-07-04 — Wave-1 quick wins: LLM fixes lane (claude/w1-llm-fixes)
+Branch `claude/w1-llm-fixes` (off `origin/main`), one of four parallel Wave-1 lanes from the
+2026-07-04 composite expert review. Implemented the 5 assigned items (composite review sections B
+lines 163-232, E ~391-484): (1) fixed the Bear schema silently stripping `confidenceScore` — a live
+money-path bug where a Bear-surviving proposal's conviction score degraded to `undefined`, zeroing
+the approval-time debate trigger and sizing; (2) added per-provider reasoning-token headroom for
+xAI/Gemini/Mistral/DeepSeek chat-completions (previously OpenAI-only); (3) cross-family Bear default
+(only when a cross-family credential is configured, else same-family fallback — see deviation note
+in the rollout) + non-zero (0.7) adversary sampling temperature for Bear/debate via
+`withLlmRequestBounds`; (4) reward-abstention line in the Bull system prompt; (5) stakes-scaled Red
+Team dissent trigger — notional %-of-NAV, live opening, escalation regime, or a requested
+autonomyOverride now also demand the debate, not confidence alone. `STRATEGY_PROMPT_VERSION` bumped
+to `agentic-strategy@1.4.0`. Advisory-only; no new hard gates. Verification green: `npm run lint`
+(0 errors), `npx tsc --noEmit` (clean), `npm test` (245 files / 2385 tests), `npm run build` (exit
+0). Details in `docs/rollouts/2026-07-04-w1-llm-fixes.md`. **PR pending** (push-only branch; a
+landing train picks it up per the coordinator's instructions).
+## 2026-07-04 — Wave-1 quick win: typed regime enum + live VIX overlay + Alpaca snapshot asOf (Claude)
+Branch `claude/w1-regime-data` (pushed, not yet landed — a landing train will pick it up; no
+PR opened per this lane's instructions). Three composite-review items (D+E, high/S each):
+1. **Typed regime enum + numeric severity** — new dependency-free `src/lib/market-regime.ts`
+   (`MarketRegime` enum, `MARKET_REGIME_LABELS`, `MARKET_REGIME_SEVERITY`, `classifyMarketRegime`,
+   `regimeFromLabel`, `isCrisisOrInvertedMarketRegime`, `isEscalationMarketRegime`,
+   `isRiskOffFilterRegime`). `src/lib/macro.ts` re-exports it; `determineMarketRegime` is now a thin
+   label-projection wrapper — byte-identical persisted label strings, unchanged. the risk-gate call
+   sites (`policy.ts` crisis cap, `strategy.ts` `deterministicBearFilter`) deliberately keep their
+   substring checks — enum adoption inside risk gates is the risk lane's (Monet, PR #360) per the
+   owner-assigned swimlane split; the console Macro regime card (`app/console/macro/indicators.ts`)
+   uses the enum (client-safe since `market-regime.ts` has zero server-only imports).
+   `regime-watch.ts`'s `isEscalationRegime` intentionally stays a plain substring check — its test
+   file fully mocks `./macro` with test-local labels, so importing the typed helpers there would
+   break under that mock (documented inline).
+2. **Live ^VIX overlay** — `fetchLiveVix`/`fetchMacroDataWithLiveVix` in `macro.ts`: a separate
+   short-TTL (10 min) cache entry off the same key-free Yahoo `^VIX` chart call, independent of the
+   24h `fetchMacroData` cache. The volatility panic brake (`strategy.ts`) and the regime-flip
+   detector (`regime-watch.ts`) now read the live overlay instead of the day-cached snapshot;
+   `vixAsOf` is stamped on the vol-brake audit/notification payload.
+3. **Per-data-class TTL + asOf on the Alpaca snapshot** — new `alpacaSnapshotTtlMs()` (~30s default,
+   `ALPACA_SNAPSHOT_CACHE_TTL_MS`-overridable) replaces the blanket 6h `ttlMs()` for the
+   `AlpacaSnapshotEnrichmentProvider` cache write; `parseAlpacaSnapshot` now stamps `asOf` from
+   `latestTrade.t`/`dailyBar.t` (whichever backs the winning price field) so the `maxQuoteAgeSec`
+   staleness gate in `policy.ts` can actually see the quote's true age.
+Verification: `npm run lint` 0 errors (pre-existing warning backlog unchanged), `npx tsc --noEmit`
+clean, `npm test` 247 files / 2401 tests green, `npm run build` succeeds (`/console/macro` compiles,
+confirming the client-bundle import of `market-regime.ts`). New tests:
+`test/market-regime.test.ts`, `test/macro-live-vix.test.ts`, plus additions to
+`test/data-providers.test.ts` and `test/regime-watch.test.ts`. Full detail:
+`docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
+## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
+Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
+Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed
+together:
+
+1. **Defaults flip** (`DEFAULT_TAX_SETTINGS` in `src/lib/defaults.ts`):
+   `taxSettings.washSaleHandling` default `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling`
+   default `"block"` → `"disregard"`. `block`/`ask` remain valid enum values (persisted policies
+   may still reference them; the console Guardrails selects still offer all options) — just no
+   longer the shipped default. Every `?? "block"` fallback that mattered was updated to derive from
+   `DEFAULT_TAX_SETTINGS` (`src/lib/policy.ts`, `src/lib/strategy.ts`) so an unset field behaves
+   consistently everywhere, not just through the DB merge path.
+2. **Mid-task owner course-correction — "auto" no longer vetoes at all**: the owner rejected the
+   pre-existing edge-vs-tax-cost threshold (`WASH_SALE_AUTO_EDGE_MULTIPLE`, 3x) as pseudo-math — the
+   "expected edge" side of that comparison was itself derived from the LLM's own
+   `confidenceScore`/`bracketTakeProfit` outputs, so the gate was re-arithmetizing the model's
+   judgment rather than adding an independent check. `"auto"` now ALWAYS proceeds; the priced tax
+   cost (`estimatedTaxCostUsd`, `expectedEdgeUsd`) still rides `decision.washSale` as receipt
+   telemetry (never silent) and is now explained to the strategist LLM in the system prompt
+   (`taxContext.washSaleRebuyCosts` was already threaded per #323/#331 — only the prompt's
+   "ONLY when edge clears Nx" framing changed to "this is your judgment call, weigh the priced
+   cost"). `STRATEGY_PROMPT_VERSION` bumped `1.2.0` → `1.3.0`. The `auto_skipped` outcome is now
+   unreachable and removed from the `WashSaleGateAudit.outcome` union; `WASH_SALE_AUTO_EDGE_MULTIPLE`
+   is retained only to label the receipt field, not as a threshold.
+
+All receipt/annotation/audit machinery is untouched: the IRA-disregard verbatim note ("Wash Sale
+(Technically, but IRA purchase unreported to IRS)"), the `wash_sale_*` audit events, the
+approvals-card rendering, and the ask-mode escalation/override-token framework (shared with
+time-context gates) all behave exactly as before — only which mode is the *default*, and whether
+"auto" gates at all, changed. Explicit `"block"`/`"ask"` opt-ins are fully preserved and tested.
+Per a second owner note mid-task: no backward-compat shims for hypothetical other users (owner is
+the sole user today) — kept the diff to flipping defaults + the auto-veto removal, no migration
+machinery.
+Updated: `src/lib/defaults.ts`, `src/lib/types.ts`, `src/lib/policy.ts`, `src/lib/strategy.ts`,
+`src/lib/strategy-prompts.ts`, `app/console/guardrails/field-defs.ts`, `app/settings-search.ts`,
+`test/washsale-modes.test.ts`, `test/ira-washsale-api.test.ts`, `test/console-policy-diff.test.ts`,
+`test/chat-draft-policy.test.ts`, `test/policy.test.ts`, `test/run-strategy-offline.test.ts`.
+Verified: lint 0 errors (295 grandfathered warnings), tsc clean, targeted wash-sale/tax/policy
+suite 218/218 across 12 files, full suite 2352 passed / 17 failed (all 17 in the 8 pre-existing
+holiday-broken files — `persistence-notification`, `redteam-observability-g10`,
+`strategy-bear-fail-closed`, `strategy-bull-truncation`, `strategy-llm-failover`,
+`strategy-money-path-f-g`, `strategy-moneypath-drawdown-flip`, `strategy-rationale-collapse-gate`
+— unrelated `run_skipped_market_closed`/date issues), build green. **Landing deferred** until the
+holiday-date test fix (tracked separately) merges, per instruction — this branch is pushed but has
+no PR yet. See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+## 2026-07-03 — Console small fixes: numeric-input pattern, regime label contract, deletion loss preview, notify.bridge.error formatter (Claude)
+Branch `claude/console-small-fixes` (isolated worktree `~/apps/trading-wt-console-small`, off
+`origin/main` @ `eae514be`), four small verified-open tasks bundled on one branch. **Not landed
+yet** — pushed only, per instructions (no PR, land deferred). **(t7)** extracted the "0."-collapse
+raw-while-focused/commit-on-blur numeric-input pattern (previously only in `PolicyFieldRow`) into a
+reusable `RawNumInput` (`app/console/ui/primitives.tsx`), applied at the eight scoring-weight
+inputs (`app/console/strategy/page.tsx`) and the tax-rate + market-scan-shape integer inputs
+(`app/console/settings/page.tsx`). **(t18)** exported `MARKET_REGIME_LABELS` (stable id -> exact
+label) from `src/lib/macro.ts`, typed `determineMarketRegime`'s return as that union, added
+traceability comments at the three exact-equality join sites (`strategy.ts` `selectThesisStat`,
+`performance.ts` `getFactorScorecard`, `app/console/macro/page.tsx`'s regime-scorecard lookup —
+none hardcode a literal label, so no string values changed), and added a dedicated "regime label
+set is a persisted contract" test block in `test/macro.test.ts` driving all six branches with
+`toBe()` exact-string assertions. **(t22)** account-deletion scope preview
+(`app/console/settings/danger.tsx`) now shows a warning line when
+`preview.counts.learned_context_pending > 0`, linking to `/console/approvals`; added a
+preview-count assertion to `test/account-deletion.test.ts`. **(t39)** added a
+`notify.bridge.error` ops-formatter branch to `src/lib/dashboard-feed.ts` (title "Notification
+delivery failed", mirrors the `web_source_refresh` pattern) + a `test/dashboard-feed.test.ts` case.
+Verification: lint 0 errors / 295 grandfathered warnings (unchanged baseline), `tsc --noEmit`
+clean, targeted vitest (macro/dashboard-feed/account-deletion*) 54/54 + console tests 50/50, full
+`npm test` 2356 passed / 17 failed — the 17 failures are exactly the 8 pre-existing
+holiday-time-dependent files another agent owns (`strategy-llm-failover`,
+`strategy-bear-fail-closed`, `strategy-moneypath-drawdown-flip`, `strategy-money-path-f-g`,
+`strategy-rationale-collapse-gate`, `redteam-observability-g10`, `strategy-bull-truncation`,
+`persistence-notification`), `npm run build` green. See
+`docs/rollouts/2026-07-03-console-small-fixes.md`.
+## 2026-07-04 — Drawdown breaker → ADVISORY default (owner correction; Monet, cloud)
+Branch `claude/drawdown-advisory-rescope` (off `origin/main`). Owner reassigned this lane to Monet
+(swap: Fable → memory/RAG; Monet → risk engine — coordinated on Slack `#claude-monet-sync`). Reverts
+the mistaken hard-halt default from #343 to the owner's actual philosophy: guardrails are ADVISORY
+("nothing is hard except which account to work in; agent decides, logs everything"). `drawdownBreakerAction`
+is now `"advisory" | "close_only" | "halt"`, **default `"advisory"`**: on a drawdown/daily-loss breach the
+breaker writes a receipt and threads a `drawdownAdvisory` block into the strategist's `userContent` (agent
+decides how to react) — it does NOT change `systemState`. `close_only`/`halt` remain as explicit owner
+opt-ins. Files: `types.ts`, `strategy.ts`, `api/policy/route.ts` (validator), guardrails/dashboard copy,
+drawdown tests. Verified: tsc clean · lint 0 errors · **2375 tests / 245 files** · build green.
+See `docs/rollouts/2026-07-04-drawdown-advisory-rescope.md`. Follow-up: thread the advisory into the Bear
+context too; broader per-gate hard-block sweep goes to the owner as questions first (not bundled).
 
 ## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
-Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
+Branch `claude/expert-design-review` (off `origin/main`, merged as #356). An 8-expert agent panel (ML/learning,
 RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
 synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
 across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,
