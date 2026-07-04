@@ -5,6 +5,18 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-04 (`claude/tokenless-git-dep`, Claude): **Tokenless git dependency for
+> congress-trading-shared** — no roadmap scope change, an infra/ops switch. Owner-directed:
+> the shared package repo is now public, so `package.json` moves from the private GitHub
+> Packages registry pin (`^1.2.0` + `NODE_AUTH_TOKEN` auth) to
+> `github:jaywedgeworth22/congress-trading-shared#semver:^1.2.x`. Deleted `.npmrc` and
+> `scripts/npm-ci-with-shared-deps.sh`; simplified `ci.yml`/`deploy.yml`/`e2e.yml`/
+> `codex-autofix.yml`/`sync-previews.yml`/`scripts/sync-preview-lanes.sh`/
+> `scripts/cloud-setup.sh` to plain `npm ci`. Proven tokenless end-to-end (clean `npm ci` with
+> `NODE_AUTH_TOKEN` unset and SSH deliberately broken). The shared repo's own prep work
+> (`claude/tokenless-git-dep-prep`) turned out to already be merged (PR #7, tag `v1.2.0`) before
+> this session started; Congress.Trade gets a matching separate PR under its own conventions.
+> See `docs/rollouts/2026-07-04-tokenless-git-dependency-consumer.md`.
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"

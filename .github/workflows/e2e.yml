@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
@@ -57,11 +56,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         shell: bash
-        env:
-          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          # See ci.yml: GH_PAT lacks read:packages, so it must not precede the job GITHUB_TOKEN here.
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: bash scripts/npm-ci-with-shared-deps.sh
+        # @jaywedgeworth22/congress-trading-shared is a public tokenless git dependency
+        # (github:...#semver:^1.2.x) as of 2026-07-04 -- no registry auth needed.
+        run: npm ci
       - name: Install Playwright browser
         shell: bash
         run: |

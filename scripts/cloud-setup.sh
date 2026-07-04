@@ -14,9 +14,11 @@ cd "$(dirname "$0")/.."
 
 echo "==> Node: $(node --version 2>/dev/null || echo 'not found')  npm: $(npm --version 2>/dev/null || echo 'not found')"
 
-# Deterministic install from the committed lockfile.
+# Deterministic install from the committed lockfile. @jaywedgeworth22/congress-trading-shared
+# is a public tokenless git dependency (github:...#semver:^1.2.x) as of 2026-07-04 -- no
+# registry auth needed.
 echo "==> Installing dependencies (npm ci)"
-bash scripts/npm-ci-with-shared-deps.sh
+npm ci
 
 # Give the sandbox explicit, safe defaults + a place for injected secrets.
 # Non-destructive: never clobber an existing .env.local.

@@ -67,17 +67,19 @@ maybe_install_deps() {
   local before="$1"
   if ! git diff --quiet "$before" HEAD -- package.json package-lock.json; then
     log "dependency files changed; running npm ci in $(pwd)"
-    bash scripts/npm-ci-with-shared-deps.sh
+    # @jaywedgeworth22/congress-trading-shared is a public tokenless git dependency
+    # (github:...#semver:^1.2.x) as of 2026-07-04 -- no registry auth needed.
+    npm ci
   fi
 }
 
 restart_pm2() {
   local app="$1"
   if pm2 describe "$app" >/dev/null 2>&1; then
-    # Strip package/git auth for the --update-env restart so the long-running preview PM2 process
-    # does not inherit a GitHub Packages-capable token in its runtime env. The token is only needed
-    # by the git fetch + npm ci above, not by the app. (Review: PR #279.)
-    env -u GITHUB_TOKEN -u GH_TOKEN -u NODE_AUTH_TOKEN pm2 restart "$app" --update-env >/dev/null
+    # Strip fetch auth for the --update-env restart so the long-running preview PM2 process
+    # does not inherit a repo-fetch-capable token in its runtime env. The token is only needed
+    # by the git fetch above, not by the app.
+    env -u GITHUB_TOKEN -u GH_TOKEN pm2 restart "$app" --update-env >/dev/null
   else
     warn "PM2 app '$app' is missing; skip restart"
   fi

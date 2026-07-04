@@ -1,525 +1,340 @@
-# Effort Log — cross-agent board
+# Trading Effort Log - canonical live cross-agent board
 
-**Canonical live board:** `/Users/jay/apps/TRADING-EFFORT-LOG.md`
+This is the branch-neutral live coordination board for Socratic Trade work across
+Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions, and manual
+operator edits.
 
-This repo file is the tracked mirror for commits/PRs. Update the canonical live board first so
-agents in other worktrees can see reservations before code lands, then mirror relevant state here
-before committing.
+Canonical location:
 
-The owner's at-a-glance ledger of every effort and its state. **Every agent on every platform
-(Claude Code, Codex, Antigravity/Gemini, Cursor, web/cloud sessions) MUST keep this current** as
-part of the Pre-Commit / Handoff Protocol in `AGENTS.md`. Move each row between the four states as
-it changes; add new efforts as they are conceived; never delete another agent's row — correct it
-in place and note the correction.
+`/Users/jay/apps/TRADING-EFFORT-LOG.md`
 
-**State definitions**
-- **Planned** — agreed/queued, not started. Include blockers (esp. "needs owner decision").
-- **In Progress** — actively being built; carry a one-line status + the owning agent/branch.
-- **Completed** — merged to `main`. This auto-deploys to **beta/integration only**
-  (`trading-beta.jays.services`), NOT production.
-- **Deployed to production** — the separate **owner-run** release step (`~/apps/trading-live`,
-  pm2 `trading`, release branch). Cloud/agent sessions cannot perform or verify this — only move a
-  row here when the owner (or a release runner) confirms the production deploy actually happened.
+Tracked mirror in the repo:
 
-_As of 2026-07-04. PR numbers are GitHub `jaywedgeworth22/agentic-trading`._
+`docs/EFFORT-LOG.md`
 
----
+Rules:
+- Every non-trivial effort must be logged here as Planned before substantial work begins.
+- Move active work to In Progress before substantial edits.
+- Move to Completed only after merge to `main`.
+- Move to Deployed only after production at `socratictrade.com` is actually released and verified.
+- Never delete another agent's row. Correct in place and note the correction.
+- When committing, also update the repo-tracked mirror at `docs/EFFORT-LOG.md`.
 
-## 🚀 Deployed to production
+State definitions:
+- Planned: agreed or reserved, not started.
+- In Progress: actively being built; include owner/worktree/branch and one-line status.
+- Completed: merged to `main`; beta/integration only unless separately deployed.
+- Deployed: released to production (`socratictrade.com`) and verified.
 
-_Owner-managed release; not verifiable from cloud/agent sessions. When the owner promotes `main`
-to `socratictrade.com`, record the release commit + date here._
-
-- **2026-07-02 (evening)** — `trading-live` observed at `eae514be` (post-#338) on the
-  deploy machine. **Incident:** the deploy boot-crashed on the pre-existing prod DB
-  (`no such column: client_turn_id`, Sentry `a595484d…`, release `8e2b1181` = #333);
-  `/api/health` 500 with pm2 crash-looping. **Recovered 2026-07-03 ~01:50 CDT** by
-  backing up the DB and applying the migration's own additive `ALTER`, then restart —
-  health 200. Root cause + regression test in the P0 hotfix row below; full detail in
-  `docs/rollouts/2026-07-03-clientturnid-migration-hotfix.md`.
-- **2026-07-03** — `trading-live` published at `7b803bff` (PR #346) on
-  `socratictrade.com`. Includes #345 run-state UX and #346 IRA wash-sale UI correction;
-  production health 200 and live Roth IRA Settings page verified.
-- **2026-07-03** — `trading-live` published at `481e9dcc` (PR #347) on
-  `socratictrade.com`. Includes the Guardrails Universe index exclusivity fix;
-  production health 200 and live S&P/Nasdaq mutual-exclusion UI behavior verified.
-- **2026-07-03** — `trading-live` published at `0941b4d2` (PR #349) on
-  `socratictrade.com`. Includes Socratic admin/RAG/Pinecone/settings parity,
-  provider-specific model reasoning controls, OAuth host canonicalization,
-  `/old`, ticker drawer coverage, and user/admin LLM usage visibility. Production
-  health 200 and Google/GitHub OAuth redirect URIs verified on the Socratic domain.
-- **2026-07-03** — `trading-live` published at `afbe1c87` (PR #352) on
-  `socratictrade.com`. Includes RAG provider/quota Sentry visibility, Pinecone-hosted
-  embedding-model documentation, Infisical Socratic.Trade slug documentation, and
-  production health 200 after deployment.
-- **2026-07-04** — `trading-live` published at `d39e1193` (PR #353) on
-  `socratictrade.com`. Includes explicit `Test Account - Local Mock Paper Account`
-  restore and Pinecone/Voyage/provider cap email alerts; production health 200 after
-  deployment.
+As of 2026-07-04.
 
 ---
 
-## ✅ Completed (merged to `main`, on beta/integration)
+## Deployed
 
-### Console parity port — legacy `app/ui/*` rebuilt as `/console` (2026-07-02)
-- **#321** — parity-port foundation: logo/model/drilldown primitives, nav scaffolding, model-attribution approval card.
-- **#322** — Settings expansions: brokers, API keys, LLM model picker, delivery channels, glossary.
-- **#324** — Learned-context approval inbox on `/console/approvals`.
-- **#325** — AI Assistant chat destination (`/console/assistant`) → staged proposals. _(incl. coordinator round-2 fixes: ref-during-render lint, image-exfil block, preview-race generation guard, frozen staged scope.)_
-- **#326** — Macro & market-regime board (`/console/macro`) + honest no-FRED handling (`fredSourced`).
-- **#327** — Scan destination: Market Scan table + Smart Money.
-- **#328** — Orders destination: open orders, stale-limit detection, replace-at-market, cancel.
-- **#329** — Parity tail: run-blocked routing, sign-out, allocation, watchlist+alerts, consent gate, sharing prefs, account deletion, admin links, badge fold-in.
-- **#330** — Symbol drilldown superset of the legacy company drawer.
+- 2026-07-04 - Documentation update: added durable naming notes to `AGENTS.md`,
+  `/Users/jay/apps/README.md`, and `docs/EFFORT-LOG.md` that
+  `Socratic.Trade` is canonical and `Socratic.Trading` is a typo/mistake; also
+  corrected the remaining stale `git -C ~/Code/Agentic\ Trading ...` worktree
+  command in `/Users/jay/apps/README.md`.
+- 2026-07-04 - Ops correction: renamed the main Code-folder worktree from the
+  mistaken intermediate `/Users/jay/Code/Socratic.Trading` to the intended
+  `/Users/jay/Code/Socratic.Trade`, repaired Git linked-worktree metadata,
+  recreated and saved PM2 `trading-main` from the corrected path, verified
+  local 4001 and production health, and updated active coordination path
+  references in `AGENTS.md` and `/Users/jay/apps/README.md`.
+- 2026-07-04 - Ops cleanup: deleted the stray `robinhood-agentic` Pinecone
+  index from the new Pinecone account; verified Infisical still exports
+  `PINECONE_INDEX_NAME=socratic-trade` and Pinecone now lists only
+  `socratic-trade` with 95 vectors. Renamed the main Code-folder project
+  worktree from `/Users/jay/Code/Agentic Trading` to
+  `/Users/jay/Code/Socratic.Trade`, repaired Git linked-worktree metadata
+  including nested `.claude/worktrees`, recreated `trading-main` from the new
+  path via `scripts/infisical-run.mjs`, saved PM2, and verified local 4001
+  health plus production `socratictrade.com` health. Updated the active
+  coordination path references in `AGENTS.md` and `/Users/jay/apps/README.md`.
+- 2026-07-04 - Ops mitigation: investigated stray `robinhood-agentic`
+  Pinecone index in the new account. It contains 16 SEC 8-K vectors, not
+  Robinhood trade/account data, and was consistent with a stale worktree using
+  the old `robinhood-agentic` fallback while pointed at the new Pinecone key.
+  Added Infisical prod `PINECONE_INDEX_NAME=socratic-trade`, restarted
+  `trading`, `trading-main`, and `trading-codex`, verified main/Codex preview
+  envs are pinned, production health is 200, and Pinecone counts at the time
+  were `robinhood-agentic=16`, `socratic-trade=95` before the later cleanup.
+- 2026-07-04 - Ops rotation: `ADMIN_REINDEX_TOKEN` added to the
+  Socratic.Trade Infisical prod app project (`socratic-trade`), production
+  `trading` PM2 process restarted, and `/api/admin/reindex-10k` verified as
+  gated: no identity -> 401, identity without token -> 403, identity plus token
+  -> 200 against Pinecone index `socratic-trade` with 95 vectors. Token value
+  was not committed or logged.
+- 2026-07-04 - `trading-live` published at `d39e1193` (PR #353) on
+  `socratictrade.com`; production health 200; explicit local mock Test Account
+  can be added without becoming the default account, and Pinecone/Voyage/provider
+  cap trips now route through `budget_alert` with email-capable fallback.
+- 2026-07-04 - `trading-live` published at `a017624a` (PR #354) on
+  `socratictrade.com`; production health 200; new Pinecone `socratic-trade`
+  index verified at 95 MSFT 10-Q vectors with matching local chunk ledger, and
+  SEC filing ingest now uses deterministic vector ids for retry safety.
+- 2026-07-03 - Ops rotation: Pinecone key replaced in Infisical prod and local
+  preview env files (`trading-claude`, `trading-codex`, `trading-antigravity`);
+  explicit RAG/Pinecone write fuses set in Infisical and preview envs; production,
+  Codex, and Claude PM2 processes restarted; new Pinecone account has empty
+  `socratic-trade` cosine/1024 serverless index (`vectors:0`). Key value was not
+  committed or logged. `trading-main` PM2 env also refreshed through Infisical
+  without touching tracked files in the dirty integration checkout.
+- 2026-07-03 - `trading-live` published at `afbe1c87` (PR #352) on
+  `socratictrade.com`; production health 200; RAG provider/quota failures now
+  emit Sentry events when `SENTRY_DSN` is set, Pinecone-hosted NVIDIA/MSFT
+  embeddings are documented as benchmark candidates, and Infisical current
+  project naming is `Socratic.Trade` / `socratic-trade`. Fresh Pinecone key was
+  not committed or logged.
+- 2026-07-03 - `trading-live` published at `0941b4d2` (PR #349) on
+  `socratictrade.com`; production health 200, Google/GitHub OAuth redirect URIs
+  verified on the Socratic domain, and Codex preview synced back to main.
+- 2026-07-03 - `trading-live` published at `481e9dcc` (PR #347) on
+  `socratictrade.com`; production health 200 and S&P/Nasdaq mutual-exclusion UI
+  behavior verified.
+- 2026-07-03 - `trading-live` published at `7b803bff` (PR #346) on
+  `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
-### Real-money / tax gate (2026-07-02)
-- **#323** — Wash-sale handling modes (`block`/`ask`/`auto`) + Decide-mode escalation framework. _(incl. coordinator round-2: account tax-type precedence, in-run cap demotion, `transitionProposalIfPending` CAS.)_
-- **#331** — IRA wash-sale disregard setting (`taxSettings.iraWashSaleHandling`), owner-requested. Default `block` (unchanged); `disregard` proceeds annotated ("Wash Sale (Technically, but IRA purchase unreported to IRS)") + audited. _(incl. coordinator Codex round-1: prompt threading via `isIraTaxRegime`, deferred disregard audit to execution, `decision.approved` gate.)_
+## Completed
 
-### Backend follow-ups (2026-07-02, landed by parallel sessions)
-- **#332** — `@sentry/nextjs` bump to ^10.63.0 + short/cover risk-path semantics clarification.
-- **#333** — Chat idempotency: `clientTurnId` retry dedupe on `POST /api/chat` (migration v10).
-- **#334** — Persist failover-aware `proposedByModel` per proposal; blank (never fabricate) no-FRED macro (`DEFAULT_MACRO`→`BLANK_MACRO`, `pruneMacro` drops `""`).
-- **#335** — `EquityOrder` limit/stop/TIF through Alpaca+Robinhood mappers + `/console/orders` columns; disclosure-ordered congress cap; `MarketQuoteSummary` factor/headlines/volume fields; Turbopack dev fix.
-- **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
-- **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
+- **PR #374 - GitHub Issues mirror of the effort board (Claude, sonnet lane), cross-app.**
+  Merged 2026-07-04. Additive, read-only owner-visibility layer over docs/EFFORT-LOG.md: boards
+  stay the single source of truth, agents never write issues — a new workflow reconciles them.
+  scripts/sync-effort-issues.py (python3 stdlib, no deps) parses the board (keyword-classified
+  sections tolerant of heading/emoji drift, top-level bullets as items, SHA1-of-first-line
+  identity marker for idempotent re-runs); Planned/In Progress -> issue open
+  (effort-board + state:planned|state:in-progress, assigned jaywedgeworth22 for mobile
+  notifications), Completed/Deployed -> issue closed. New .github/workflows/effort-issues-sync.yml
+  (push to main touching the board file, daily off-minute cron, workflow_dispatch). Rolled out
+  identically to congress-trading-shared (PR #4) and API-usage-monitor (PR #9); protocol doc
+  (/Users/jay/apps/EFFORT-LOG-PROTOCOL.md) gained an "Issues mirror (standard)" subsection +
+  bootstrap-checklist update. Verified: parser tested against all three repos' real boards before
+  rollout; a genuine duplicate board row (this repo's own "Wave-1 quick wins..." logged twice
+  under In Progress) was caught by a live dry-run and fixed with in-run dedup; full quartet green;
+  post-merge first sync created 58 Socratic.Trade issues (32 completed/6 deployed closed, 9
+  in-progress/11 planned open), 2 open issues in congress-trading-shared, 3 open issues in
+  API-usage-monitor — all confirmed via the Issues API. See
+  docs/rollouts/2026-07-04-effort-issues-mirror.md.
+- **PR #371 - Fleet-wide Sentry observability (Claude, sonnet lane).** Merged 2026-07-04
+  (`120968725f7e58f383917aafe5c63ec8cfcd10d0`), CI `verify` green. Sentry project `fleet-infra`
+  (org jays-services). (a) `/Users/jay/apps/fleet-sentry-monitor/monitor.py` registered under pm2
+  (`fleet-sentry-monitor`, `pm2 save`d, machine-side, not in this repo) — pm2 crash-loop (restart
+  delta >= 5/interval, hourly-deduped fingerprints) + down detection (error for
+  `trading`/`trading-main`, warning otherwise), disk free (<20GB warn/<8GB error) + known SQLite
+  WAL >512MB warning, Claude.app presence/RSS (context only), `gh api rate_limit` <300 remaining
+  warning, self-hosted runner status (context only), self check-in to Sentry Crons monitor
+  `fleet-host-monitor` (interval 2min, margin 5, max_runtime 2, America/Chicago). Verified: two
+  live pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta test correctly
+  fired the crash-loop error, and the real `gh` rate-limit warning fired live (fleet burned
+  graphql to 0 during testing). Note: another agent has since continued iterating on
+  `monitor.py` in place (adding per-app agent/app tags, Codex session breadcrumbs) — see the
+  Codex coordination row above; this is expected concurrent enhancement of the same singleton,
+  not a regression of this PR's scope. (b) `.github/workflows/sentry-ci-report.yml` +
+  `scripts/sentry-ci-report.py`, ADDITIVE ONLY (zero edits to any pre-existing workflow): on
+  `workflow_run: types:[completed]` across all 7 workflows that existed at authoring time (CI,
+  Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check, Playwright Smoke,
+  Security) — failure conclusion -> raw-envelope Sentry error event {workflow, branch, actor}
+  fingerprinted [workflow, branch]; schedule-triggered runs -> Sentry Crons check-in mirroring
+  that workflow's own cron (slugs `ci-security`, `ci-playwright-smoke`,
+  `ci-shared-package-pin-check`). Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` (value
+  never echoed). Locally dry-ran the reporter script against the real DSN before pushing — both
+  envelope POSTs returned HTTP 200. Landed via `scripts/land.sh` (merged `origin/main`'s
+  concurrently-merged PR #370 cleanly first) + `gh pr merge --squash --auto`. See
+  `docs/rollouts/2026-07-04-fleet-sentry-observability.md`.
+- PR #370 - CI Actions efficiency: docs-only fast path on required `verify` (fail-closed gate-job pattern incl. --no-renames + !cancelled() Codex-review fixes), .next/cache restore/save split (PR restore-only, main-push save), cleanup-caches.yml (PR-close delete + daily prune backstop). Merged 2026-07-04; hybrid runner-routing follow-up continues as claude/ci-hybrid-runner-verify (PR #372).
+- PR #350 - AI Review inheritance, model catalog, and text-box font controls.
+- PR #349 - Socratic admin/RAG/Pinecone/settings parity implementation.
+- PR #348 - Sell to Fund Buys title-case copy fix.
+- PR #347 - Console universe index exclusivity fix.
+- PR #346 - IRA wash-sale UI correction.
+- PR #345 - Run-state UX fix.
+- PR #344 - Socratic Trade Autonomy Desk implementation.
+- PR #340 - Socratic Trade rebrand.
 
-### P0 hotfix (2026-07-03)
-- **#341** (`claude/fix-baseddl-index-migration`) — boot crash on every pre-existing DB: #333's baseline-DDL
-  `idx_chat_turns_user_client` ran before the versioned ALTER (`no such column` on old DBs; fresh-DB CI
-  stayed green). Baseline reverted to frozen `SCHEMA_BASELINE`; versioned migration is the single source;
-  regression test boots `getDb()` against a simulated pre-#333 DB. Prod/preview DBs already hand-patched
-  (see Deployed section).
+## In Progress
 
-### Rebrand (2026-07-03)
-- **#340** — Rebrand Agentic Trading → **Socratic Trade** / socratictrade.com (`claude/rebrand-socratic-trade`).
-  Owner set up prod infra as "Socratic Trade" (Sentry project, Cloudflare DNS, GitHub OAuth callbacks,
-  Google authorized domains — owner-side). Code aligned: display brand → "Socratic Trade" (no-space
-  "Socratic.Trade"); legacy production host fallback → `socratictrade.com` (env-first);
-  Sentry slug → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion fallback identifiers
-  now use Socratic Trade naming. Deliberately NOT touched: `mail@jays.services` login email, the Robinhood
-  "Agentic" account nickname, internal jays.services preview subdomains.
+- **CODEX console/UI swimlane (Codex, worktree `/Users/jay/apps/trading-codex-ui-swimlane`,
+  branch `codex/console-ui-swimlane`) — claimed 2026-07-04 from sync-21.** Priority:
+  approvals surface pack first (approval-card provenance, red-team trigger chip, R:R geometry,
+  mobile LIVE phrase-gate parity, Sheet focus-trap), then `/console/decisions/[id]` decision-trace
+  inspector over the W2 case shapes, coach-on-trace UI, and the reserved ticker/settings/model
+  parity trio. KEEPOUT: Claude memory/RAG internals and Monet risk gates.
 
-### De-paternalization + CI hardening (2026-07-03)
-- **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
-  "defaults to Test mode" framing from `AGENTS.md`; added the "Product philosophy — real trading,
-  owner's risk" section (an account is an account; no Test-mode/local-sim; harden CORRECTNESS +
-  multi-user safety, NOT obedience). Also fixed the July-4 CI holiday flake (`isTradingDay` VITEST-gated
-  test seam, so `verify` stops going red on market-closed days) and purged the contradicting Cursor
-  rule (`.cursor/rules/handoff.mdc`). _(incl. coordinator Codex round: VITEST gate on the seam so a
-  stray flag can't defeat the real market-closed guard; Cursor-rule rewrite; EFFORT-LOG stale-bullet
-  supersede.)_
-- **#342** — De-paternalize Step 2: removed `policy.paperMode`/`paperStartingCash` and the `test/local`
-  local-simulator execution path entirely (`usesLocalSimulation`, `getPaperPortfolioProjection`, local
-  paper-fill/portfolio branches). `deriveExecutionState` (`execution-mode.ts`) is the sole hub — mode is
-  purely `broker/paper`/`broker/live` from the active account's `environment`; no account ⇒ honest
-  "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback. `TestBrokerGateway`/
-  `broker:"test"` kept as test infrastructure only (~36 test files migrated to a connected test-broker
-  account). Fixed a real bug: broker-paper fills were mislabeled "Test" in the Activity feed. 83 files,
-  +854/−1208.
+- **Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
+  infra) — 2026-07-04.** Scope: make Codex follow the canonical `#agent-sync` +
+  effort-log protocol across current/future repos, add missing bootstrap/audit
+  tooling, and extend the singleton `fleet-sentry-monitor` with Codex-specific
+  breadcrumbs/warnings instead of creating a duplicate monitor. Collision notes:
+  do not touch Monet PR #367's repo Slack engine; do not duplicate Claude's
+  `fleet-sentry-monitor` / `sentry-ci-report.yml` singleton lanes. Current state:
+  `.secrets` bot-token Slack posting verified, Codex host/session breadcrumbs
+  added to the singleton monitor, stale Codex OTLP config removed from
+  `~/.codex/config.toml`, and Congress.Trade docs-only PR #137 opened with green
+  checks.
 
-### Socratic autonomy UI/runtime (2026-07-03)
-- **#344** — Socratic Trade Autonomy Desk implementation (`codex/socratic-trade-autonomy-mockup`):
-  persisted Socratic decisions/framework proposals, `/api/socratic/*`, RAG attribution, coach notes,
-  framework proposal review, strategy-loop decision recording, private institutional-memory indexing,
-  Socratic override semantics for owner-preference gates, public `/welcome` and `/how-it-works`,
-  coded `/design/socratic-trade`, and exact production-domain references changed to
-  `socratictrade.com`.
-- **#345** — Run-state UX fix (`codex/run-state-ux-fix`): Start/Resume are no longer hidden behind a
-  red STOP affordance. Paused states show Start or Resume as the primary header action; STOP/Wind down
-  remain red, and start/autonomy confirm flows use primary styling.
-- **#346** — IRA wash-sale UI correction (`codex/ira-washsale-ui-fix`): Roth/traditional IRA accounts
-  show same-account IRA wash sales as ignored/not applicable, hide the taxable Block / Ask / Auto
-  selector, and expose only the cross-account IRA taxable-loss rebuy setting.
-- **#347** — Console universe index exclusivity fix (`codex/universe-exclusive-indexes`):
-  `/console/guardrails` now uses the shared `toggleIncludedIndex` helper for Base indices, so
-  S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite replace each other immediately in the draft.
-- **#348** — Sell to Fund Buys title-case copy fix (`codex/sell-to-fund-title-case`):
-  Guardrails and legacy dashboard Sell to Fund Buys labels/options now use Title Case, and the
-  Guardrails save-review diff shows Title Case instead of raw lowercase enum values.
-- **#349** — Socratic admin/RAG/Pinecone/settings parity implementation
-  (`codex/live-thesis-portfolio-framing`): default RAG index `socratic-trade`, Pinecone/Voyage
-  health visibility, RAG ingestion brakes, provider-specific model reasoning controls, `/old`,
-  OAuth host canonicalization, ticker drawer coverage, and user/admin LLM usage visibility.
-- **#350** — AI Review inheritance, model catalog, and text-box font controls
-  (`codex/ai-review-model-inheritance`): removed the misleading account-review model fallback,
-  made blank AI Review inherit Red Team then Green Team, refreshed current curated provider model
-  options, added DeepSeek V4 thinking controls, and made console text boxes use consistent readable
-  fonts with user-selectable examples.
-- **#351** — Console actions/evidence/live-account polish + RAG quota safeguards
-  (`codex/console-actions-evidence-live`): action history/blocker copy, stopped cadence display,
-  raw-vs-benchmark return tooltips, reduced live-account warning copy, broker roadmap, RAG usage
-  labeling, Pinecone estimated Write Unit fuse, and earnings/RAG design docs.
-- **#352** — RAG Sentry visibility + Pinecone hosted-model review
-  (`codex/rag-sentry-visibility`): Sentry warning/error events for RAG provider failures and
-  budget trips, Pinecone-hosted NVIDIA/MSFT embedding options documented as benchmark candidates,
-  and Infisical project naming recorded as `Socratic.Trade` / `socratic-trade`.
-- **#353** — Test Account restore + usage cap email alerts
-  (`codex/restore-test-account-option`): explicit addable local mock Test Account that is not
-  default-selected, plus Pinecone/Voyage/provider cap trips routed through `budget_alert` with
-  email-capable fallback.
+- **`claude/ci-hybrid-runner-verify` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) —
+  moved from Planned 2026-07-04 after PR #370 merged.** Hybrid resource-aware runner routing for
+  the required `verify` check (owner re-confirmed with design; verbatim intent: "hybrid so that
+  it only uses local when there is sufficient extra CPU/RAM available"). ci.yml 2 jobs -> 4:
+  classify (+route output; self only for fresh <5 min publisher state on same-repo
+  pull_request/push, everything else hosted), verify-self (macOS lane: [self-hosted,
+  trading-live], timeout 30, concurrency-1, guard, node fail-fast, nice -n 19, macOS cache
+  namespace), verify-hosted (Linux lane: routed-hosted + exactly-one auto re-run when self did
+  not succeed; saves Linux .next cache on main pushes AND nightly schedule), verify (REQUIRED
+  check, pure gate: fail-closed on classify failure, hosted wins on disagreement — Linux
+  arbiter, per-run environment annotation). Nightly hosted canary cron. New owner-run
+  scripts/runner-availability.sh (ASCII, bash-3.2-verified) publishes VERIFY_RUNNER_STATE every
+  60s (load<0.6/cpu, RAM>6GB free+inactive, runner alive, pm2 trading online; 2-check
+  hysteresis to self, instant hosted on busy, EXIT-trap hosted). Repo var pre-created
+  {"mode":"hosted","ts":0} — merging changes nothing until the owner starts the publisher (pm2
+  one-liner in docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md, which carries the full
+  history/objections/re-confirmation + gate decision table + failure-mode table). STATUS:
+  implemented, verification green (yaml-lint, bash 3.2 -n + ASCII, 8-case route test, read-only
+  Mac probes, local quartet), PR #372 open, auto-merge armed.
 
-### Fleet observability (2026-07-04)
-- **#371** — Additive Sentry CI failure reporter (`claude/sentry-ci-observability`), fleet-wide
-  observability half (b). New `.github/workflows/sentry-ci-report.yml` +
-  `scripts/sentry-ci-report.py`, zero edits to any pre-existing workflow: on
-  `workflow_run: types:[completed]` across all 7 workflows that existed at authoring time,
-  failure conclusion sends a raw-envelope Sentry error event to the `fleet-infra` Sentry project
-  tagged `{workflow, branch, actor}` and fingerprinted `[workflow, branch]`; schedule-triggered
-  runs additionally send a Sentry Crons check-in mirroring that workflow's own cron so a
-  nightly/weekly job that silently stops running also alerts. Repo secret `SENTRY_FLEET_DSN` set
-  via `gh secret set` (value never echoed/logged). Companion host-side monitor
-  (`fleet-sentry-monitor` under pm2, machine-side, not in this repo) covers pm2 crash-loop/down
-  detection, disk/WAL space, and `gh` rate-limit budget — see
-  `docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail on both halves.
-- **PR #374 — GitHub Issues mirror of the effort board (`claude/effort-issues-mirror`).**
-  Additive, read-only owner-visibility layer over `docs/EFFORT-LOG.md`: boards stay the single
-  source of truth, agents never write issues — a workflow reconciles them. New
-  `scripts/sync-effort-issues.py` (python3 stdlib, no deps) parses the board (keyword-classified
-  `##` sections tolerant of heading/emoji drift, top-level bullets as items with continuation
-  lines folded in, `<!-- effort-key: sha1(first-line) -->` identity marker for idempotent
-  re-runs). Planned/In Progress -> issue open (`effort-board` + `state:planned`/`state:in-progress`,
-  assigned `jaywedgeworth22` for mobile notifications); Completed/Deployed -> issue closed
-  (`state:completed`/`state:deployed`). Never deletes issues; ignores hand-made issues without the
-  marker; creates missing labels on first run. New additive workflow
-  `.github/workflows/effort-issues-sync.yml` (push to `main` touching this file, daily off-minute
-  cron for drift, `workflow_dispatch`). Rolled out identically to `congress-trading-shared` (PR #4)
-  and `API-usage-monitor` (PR #9); canonical protocol doc
-  (`/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`) gained an "Issues mirror (standard)" subsection +
-  bootstrap-checklist update. Verified: parser tested directly against all three repos' real
-  boards before rollout (58/1/2 items respectively, correct bucketing); a genuine duplicate board
-  row surfaced by a live dry-run (this repo's own "Wave-1 quick wins..." logged twice under In
-  Progress) was caught and fixed with in-run dedup; full local quartet green (lint 0 errors, tsc
-  clean, 2436 tests, build ok); post-merge the push-triggered workflow run created all 58 issues
-  correctly bucketed (32 completed/6 deployed closed, 9 in-progress/11 planned open), confirmed via
-  the Issues API. See `docs/rollouts/2026-07-04-effort-issues-mirror.md`.
+- **`claude/drawdown-advisory-rescope` (Monet, cloud — risk swimlane) → PR #360, auto-merge armed.**
+  `drawdownBreakerAction = "advisory"|"close_only"|"halt"`, default advisory: breach → receipt +
+  `drawdownAdvisory` block in strategist context, NO systemState flip; halt/close_only explicit
+  opt-in. Reverts #343's hard-halt default. Gates green (tsc/lint 0/2375 tests/build).
+  Follow-on (Monet): adopt the typed regime enum inside breaker/crisis-cap/bear-filter after
+  Fable's w1-regime-data hits main. _(Row mirrored by Fable — Monet is cloud-side and cannot
+  write this board directly; repo docs/EFFORT-LOG.md carries Monet's own copy.)_
 
----
+- Wave-1 quick wins from the composite expert review (Claude coordinator, 4 Sonnet lanes, push-only branches; landed via the 2026-07-04 landing train — Fable operator):
+  - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent trigger. STATUS: **MERGED (PR #364)**.
+  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index decision memory on lifecycle changes; trading-day horizon arithmetic; + Codex second-pass review fixes (market-day horizon anchoring via new `market-calendar.marketDateOf`, kind-scoped veto audit queries + keyed efficacy joins, NULL-evidence backfill on `insertSkippedCounterfactualCandidate`). STATUS: **MERGED (PR #365)**. `getRedTeamEfficacy()` remains API/db-level only (console lane owns UI wiring). Deferred: `skipped_candidate_counterfactuals` has no `side` column, so vetoed SHORTs still read as long moves in the GENERIC missed-opportunity path (efficacy path side-adjusts) — candidate for the w2-outcome-engine lane's schema pass.
+  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap. STATUS: **MERGED (PR #366)**.
+  - `claude/w1-regime-data` — typed regime enum + numeric severity (new dependency-free `src/lib/market-regime.ts`); live ^VIX off the 24h macro cache; per-data-class TTLs + asOf on Alpaca snapshot. STATUS: **MERGED (PR #368)**. NOTE (correction to the earlier row text): the crisis cap (policy.ts) and bear filter (strategy.ts) deliberately KEPT their substring checks per the Fable/Monet swimlane keepout — enum adoption inside risk gates is Monet's (#360 landed with them intact); only the console regime card adopted the enum.
 
-## 🔨 In Progress
+- 2026-07-04 landing train (Fable operator) — also landed: `claude/console-small-fixes` (**PR #361**), `claude/washsale-advisory-defaults` (**PR #362**), `claude/socratic-expert-review-doc` (**PR #363**), `claude/agent-sync-protocol-docs` (**PR #369**). Wave-2 lanes now landing sequentially: `w2-episodic-retrieval` (PR #437 in flight), then `w2-outcome-engine`, `w2-coaching-durable`, `w2-reflection-decompose`.
 
-- **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
-  GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
-  `.github/workflows/ci.yml`: new cheap `classify` job computes on `pull_request` events whether
-  the diff (`git diff --name-only base...head`) touches ONLY documentation-class paths (`*.md`
-  anywhere, `docs/**`); the existing `verify` job (unchanged name — confirmed via
-  `gh api repos/jaywedgeworth22/agentic-trading/rulesets/17945518` that `verify` is the ONLY
-  required status check today, not smoke/gitleaks/check-pin as the AGENTS.md fallback list
-  assumes) now step-conditionally skips checkout/install/lint/tsc/test/build when
-  `docs-only == 'true'` and reports success immediately; any non-PR event or diff ambiguity falls
-  back to the full gate.
-  **Mid-review addition:** repo hit its 10 GB Actions-cache cap because a plain `actions/cache@v4`
-  save (source-hash-keyed) wrote a new ~340 MB `.next` entry on every PR push with no cleanup on
-  close, plus unbounded growth on `main`. Fixed via restore/save split
-  (`actions/cache/restore@v4` always, `actions/cache/save@v4` gated to `main` pushes only) plus
-  new `.github/workflows/cleanup-caches.yml` (PR-close cache delete + daily prune backstop via new
-  `scripts/prune-stale-actions-caches.py`; not a required check).
-  **Escalated, then re-confirmed during review:** hybrid self-hosted/hosted runner routing for
-  `verify` onto the production `trading-live-mac` box was proposed; escalated back with
-  objections (reverses the repo's own 2026-07-01 decision to move `verify` OFF that runner; a
-  required check should not depend on which of two OS/toolchain environments executed it); the
-  owner then re-confirmed AFTER seeing the tradeoff, with a resource-aware design answering each
-  objection (availability publisher w/ load+RAM+hysteresis, instant hosted fallback on
-  busy/stale, hosted-Linux arbiter on any self failure via exactly-one automatic hosted re-run,
-  nightly hosted canary, per-run environment annotation) — to be built as its OWN PR after #370
-  lands (see Planned row below). A cross-repo `workflow_call` reusable entry point stays deferred
-  until that hybrid PR proves itself; hosted-only default when built. Neither implemented in this
-  branch. **Codex review round:** two fail-open holes fixed (`--no-renames` rename-source hole;
-  classify-failure skip hole via `!cancelled()` + explicit fail-closed step).
-  No other workflow modified besides the two above — full audit table (every push/PR-triggered
-  workflow, approx minutes, required-check status, batching candidates) in
-  `docs/rollouts/2026-07-04-ci-actions-efficiency.md`, report-only for those other workflows.
-  Verification: local quartet green (lint 0 errors, tsc clean, 2436/2436 tests, build ok) +
-  `yaml-lint` on all workflow files + live ruleset API check + dry-run of the cache-delete command
-  + synthetic-inventory test of the prune script. STATUS: implemented, PR #370 open; CI/Smoke/
-  Security observed running live on the PR during review, so Actions quota is not currently
-  blocking (contrary to the initial task assumption of exhaustion).
+- **`claude/tokenless-git-dep` (Claude, worktree `/Users/jay/apps/trading-wt-tokenless-dep`) —
+  2026-07-04, cross-repo effort resuming a died-mid-task lane.** `congress-trading-shared` is
+  now public; owner-directed switch from the private GitHub Packages registry
+  (`NODE_AUTH_TOKEN` auth) to a tokenless git dependency. Shared repo's prep work
+  (`claude/tokenless-git-dep-prep`) was found ALREADY MERGED (PR #7) with tag `v1.2.0`
+  already cut before this session started — see
+  `/Users/jay/apps/CONGRESS-SHARED-EFFORT-LOG.md`. This row covers the Socratic.Trade
+  consumer switch: `package.json` -> `github:jaywedgeworth22/congress-trading-shared#semver:^1.2.x`,
+  dropped `.npmrc`, regenerated lockfile tokenlessly (proven: clean `npm ci` with
+  `NODE_AUTH_TOKEN` unset and `GIT_SSH_COMMAND=/bin/false`), removed
+  `scripts/npm-ci-with-shared-deps.sh` and its call sites in `ci.yml`/`deploy.yml`/`e2e.yml`/
+  `codex-autofix.yml`/`sync-previews.yml`/`scripts/sync-preview-lanes.sh`/`scripts/cloud-setup.sh`.
+  Coordination note: PR #372 (`claude/ci-hybrid-runner-verify`) is open and also touches
+  `ci.yml` — this branch merges `origin/main` before landing and keeps both changes if #372
+  lands first. Congress.Trade gets its own PR (separate repo, separate AGENTS.md rules).
+  STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
-- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
-  push-only branches; landing via the active train):
-  - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
-    headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent
-    trigger. **Merged** (PR #364).
-  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
-    decision memory on lifecycle changes; trading-day horizon arithmetic. **Merged** (PR #365).
-  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
-    chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
-    **Merged** (PR #366).
-  - `claude/w1-regime-data` — landing now that gate is green. Typed `MarketRegime` enum + numeric
-    severity in new dependency-free `src/lib/market-regime.ts` (re-exported from `macro.ts`;
-    `determineMarketRegime` now a thin label-projection, byte-identical persisted strings).
-    **Swimlane keepout:** the crisis cap (`policy.ts`) and bear filter (`strategy.ts`) deliberately
-    KEEP their original substring/`startsWith` checks — per the owner-assigned Fable/Monet swimlane
-    split (`#claude-monet-sync` sync·2), enum adoption inside risk-gate call sites belongs to the
-    risk lane (Monet, PR #360); the typed predicates are exported and pinned by
-    `test/market-regime.test.ts` for a one-line adoption there. The console regime card
-    (`app/console/macro/indicators.ts`) does use the enum (client-safe, zero server-only imports).
-    Live ^VIX overlay (`fetchLiveVix`/`fetchMacroDataWithLiveVix`, 10 min TTL, separate from the 24h
-    macro cache) now feeds the vol brake and the regime-flip detector instead of the day-cached
-    snapshot. `alpacaSnapshotTtlMs()` (~30s) replaces the blanket 6h TTL for the Alpaca snapshot
-    enrichment cache, and `parseAlpacaSnapshot` now stamps `asOf` from `latestTrade.t`/`dailyBar.t`
-    so the `maxQuoteAgeSec` staleness gate can see true quote age. Verified: lint 0 errors, tsc
-    clean, 247 files / 2401 tests green, build green. See
-    `docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
+## Planned / Reserved Before Implementation
 
-- **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude,
-  **merged**, PR #362). Owner decision: `taxSettings.washSaleHandling` default
-  `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.
-  Mid-task correction: "auto" no longer vetoes on a deterministic edge-vs-tax-cost threshold at
-  all (removed as pseudo-math — it re-arithmetized the LLM's own confidence/target outputs); it
-  now always proceeds, with the priced tax cost recorded on the receipt and threaded into the
-  strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
-  machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
-  2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
-  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`. **2026-07-04 (Fable):** Added 
-  #agent-sync channel & protocol documentation (docs-only, separate branch `claude/agent-sync-protocol-docs`).
+- **CI standard rollout (cross-app, Claude coordinator) — RESERVED, RE-SCOPED 2026-07-04.**
+  Deferred until the hybrid resource-aware routing PR above lands and proves itself. Scope when
+  picked up: convert the verify gate to a reusable `workflow_call` (hub = this repo,
+  **hosted-only by default, zero self-hosted references baked in**; resource-aware routing is a
+  separately-approved explicit opt-in input per repo, never inherited silently), flip hub Actions
+  access to owner-repos, add caller workflows to congress-trading-shared + API-usage-monitor
+  (+ Congress.Trade when bootstrapped), and update canon/global-config bootstrap stanza for
+  future repos.
 
-- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
-  Scope: reusable `RawNumInput` component (fixes
-  the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
-  contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
-  warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.
-  See `docs/rollouts/2026-07-03-console-small-fixes.md`.
+- **Wave-2 memory/RAG core (Claude/Fable coordinator — OWNER-ASSIGNED swimlane) — IN PROGRESS as of 2026-07-04 (moved from Planned; lanes stacked on their w1 dependency branches rather than waiting for the train).** Lanes:
+  - `outcome-engine` — outcome writer (matured outcomes onto decision cases), multi-horizon
+    `outcomes[]` (15m/1h/1d/1w, SPY-relative, vs-alternatives), durable due-jobs substrate,
+    survivorship kill (terminal `unresolvable` + coverage disclosure).
+    STATUS: **implemented 2026-07-04** on `claude/w2-outcome-engine` (worktree
+    `~/apps/trading-wt-w2-outcome`, base `origin/claude/w1-learning-loops`). New scheduled job
+    `src/lib/outcome-engine.ts` on the counterfactual cadence: placed decisions join
+    fill_events/closed lots; blocked/rejected (incl. Bear vetoes) join counterfactual refPrice;
+    writes `outcome`+`measuredAt`, per-case receipt, awaited vector-memory re-index. Multi-horizon
+    `outcomes[]` rows land on decision cases AND skipped-counterfactual rows (new
+    `outcomes`/`resolution_reason` columns); 1d/1w from the daily cascade SPY-relative
+    (trading-day arithmetic); 15m/1h only via an actually-sampled live quote, else honest
+    `unresolvable(no_intraday_source)`. Kill-survivorship: terminal `unresolvable` after a
+    bounded 10-trading-day recheck; coverage disclosures on job receipts, `getRedTeamEfficacy`,
+    missed-opportunity summary, `certifyForwardResolution`. Budget-gated batch-capped LLM
+    post-mortem lessons at maturation (direction-tagged + verdictOnBelief/whichDissentMattered)
+    via `ingestLearned` origin `autonomous`; all skips receipted. NOT in this slice (per spec):
+    the durable due-jobs substrate (separate later item), vs-alternatives `altReturnPct`
+    population, multi-horizon IC in the backtest learner. Verification green (lint 0 errors /
+    tsc clean / 2383 tests / 246 files / build). Pushed, no PR — lands via the train after
+    w1-learning-loops. See docs/rollouts/2026-07-04-w2-outcome-engine.md.
+  - `episodic-retrieval` — new `experience-memory.ts`: decision-time k-NN analogs +
+    counterexamples + owner-coaching blocks into Bull AND Bear; situation-sketch queries.
+    STATUS: **implemented 2026-07-04** on `claude/w2-episodic-retrieval` (worktree
+    `~/apps/trading-wt-w2-episodic`, base `origin/claude/w1-rag-quickwins`). Closed-lot experience
+    writer hooked in `recordFillFromProposal` (keyed by entry proposalId, realized
+    return/holding-days/risk-exit/mae-mfe metadata); second retrieval pass over
+    ['socratic-decision','coach-note','lesson'] with situation-sketch query, cross-symbol,
+    same-run exclusion, as-of stamp; labeled analogs (+COUNTEREXAMPLE) + owner-coaching blocks in
+    BOTH Bull and Bear payloads; injected ids persisted per run (`experience_retrieval` audit +
+    rag attributions). Verification green (lint 0 errors / tsc clean / 2395 tests / build).
+    Pushed, no PR — lands via the train after the w1-rag-quickwins base lands. See
+    docs/rollouts/2026-07-04-w2-episodic-retrieval.md. Known v1 gap: live closing fills write
+    their experience only after reconciliation (paper covered today).
+  - `coaching-durable` — coach notes through `ingestLearned` (origin `coach`), kill the silent
+    `slice(-20)`, coach-note vectors, approvals routing for risk-tier notes. STATUS: **implemented
+    2026-07-04** on `claude/w2-coaching-durable` (worktree `~/apps/trading-wt-w2-coaching`, base
+    `origin/claude/w1-learning-loops`). `appendSocraticDecisionCoachNote` now runs every note through
+    `ingestLearned` (origin `'coach'`): fact-tier → durable `learned_context` row linked to the
+    decision id (`subject: coach:<decisionId>`); risk/directive-tier → the existing approval inbox
+    (not chat-hard-capped). `coachNotes.slice(-20)` replaced with archival to a new
+    `socratic_coach_note_archive` table (append-only, never deleted) + a receipt audit event emitted
+    only when archival occurs. Coaching outcome stamped as a `coaching`-kind evidence item so coached-
+    case retrievals carry "coached"/promoted-to-durable-lesson provenance. New
+    `buildCoachNoteMemoryDocument`/`indexCoachNoteMemory` in `socratic-memory.ts` store each note as
+    its own retrievable vector (`doc_type: 'coach-note'`, metadata `{symbol, thesis_tag, regime,
+    decision_id}`). New `listApprovedRiskContextForDecision` in `db-learning.ts` feeds a labeled
+    "OWNER-APPROVED GUIDANCE (advisory)" block with approval date into `retrieveLearnedContext` —
+    previously an approved risk row never reached any prompt. `LearnedContextOrigin` widened to
+    include `'coach'` with a guarded `sqlite_master`-DDL rebuild so existing on-disk DBs accept the
+    new origin. Verification green (lint 0 errors / tsc clean / 2383 tests / build). Pushed, no PR —
+    lands via the train after its w1-learning-loops base lands. See
+    docs/rollouts/2026-07-04-w2-coaching-durable.md.
+  - `reflection-decompose` — **done, pushed, awaiting the landing train** (branch
+    `claude/w2-reflection-decompose`, base `origin/claude/w2-episodic-retrieval`, STACKED).
+    Reflection blob → discrete (thesisTag x regime) lesson rows in `learned_context` (new
+    `regime`/`thesis_tag`/`dominant_factor` columns; min 5 lots per bucket; regime-agnostic
+    `@all-regimes` fallback for thin regimes) carrying realized win-rate/MAE-MFE/capturePct, each
+    ALSO embedded as a `doc_type="lesson"` vector consumed by the episodic lane's retrieval pass.
+    Blob DEMOTED out of the Bull system prompt once lessons exist (kept as zero-lesson fallback).
+    `retrieveLearnedContext` boosts by current run regime + candidate theses and labels
+    mismatched-regime facts "(learned in <regime>)" — label, never filter. Reflections re-keyed
+    (userId, accountNumber) into the append-only `reflection_versions` table (monotonic version +
+    input-stats hash; two-account clobber fixed; account-deletion covered). Verify green: lint 0
+    errors / tsc clean / 2404 tests / build. See
+    docs/rollouts/2026-07-04-w2-reflection-decompose.md.
 
-- **Controlled RAG filing ingest smoke test** (Codex,
-  `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
-  against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
-  `document_chunks`; the timed-out first-run 56 duplicate vectors were removed. Code fix for
-  deterministic SEC filing vector ids is implemented and awaiting PR.
+- Universal ticker detail drawer parity - restore old-site discoverability by
+  making ticker symbols open a shared right-side drilldown drawer consistently
+  across scan, home, evidence cards, proposals, orders, activity, outcomes,
+  approvals, and watchlist. Reserved under the broader Codex parity effort.
+- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
+  replace confusing loose/tight wording with lock/unlock-style affordances, and
+  turn absolute-vs-percent constraint pairs into polished mode switches where
+  they represent alternative ways to express one setting.
+- Model/provider control parity - move strategy model controls toward curated
+  dropdowns with provider-aware settings, showing reasoning controls only for
+  models that actually support them.
+- Admin connection health and backend-failure notification pass - surface every
+  backend dependency including Pinecone/Voyage, distinguish global backend failures
+  from user-key failures, and route global failures to admin email/health while
+  user-key failures become user notifications.
+- Old-vs-new console parity audit follow-through - review the legacy dashboard for
+  features still missing or less discoverable in `/console`, including scan column
+  customization, admin/operator navigation, account display preferences, and
+  connection status.
 
-- **Live-execution hardening — drawdown breaker → hard-halt** (coordinator, cloud, branch
-  `claude/live-execution-hardening`) — first slice of the hardening build; implements owner decision #1.
-  The account-level drawdown/daily-loss breaker now **hard-halts** on breach (`systemState → "halted"`:
-  subsequent scheduled runs skip, manual `executeProposal` refuses, until the owner re-arms to
-  `"active"`) instead of the softer `close_only`. Built as the owner's **overridable preference**
-  `riskRules.drawdownBreakerAction: "halt" | "close_only"` (default `"halt"`), not a hardcoded cage; the
-  breaker is still opt-in via the thresholds. Vol-panic brake stays `close_only` (out of scope of the
-  drawdown decision). Verified current-run safety (in-run exec uses `placeEquityOrder`, not the
-  halted-throwing `executeProposal`; policy gate treats halted==close_only for the current run, so it
-  winds down gracefully). Gate green: tsc clean, lint 0 errors, **2351 tests / 239 files**, build green.
-  **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
-  follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
-  NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
-  see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
+## Changelog
 
-- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
-  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
-  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
-  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
-  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
-  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
-  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
-  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
-
-- **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
-  `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
-  quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) + synthesis produced
-  `docs/reviews/2026-07-04-expert-design-review.md`: 147 prioritized improvements across memory/learning,
-  LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems, each with a concrete
-  approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
-  roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
-
-- **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
-  `claude/w1-learning-loops`, **merging now that gate is green**) — three items from the composite
-  expert review (§A, lines 37-161):
-  (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
-  (same pipeline as policy blocks/human rejections) in `strategy.ts`'s Bear-reject branch, stamped
-  with `runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` joins matured vetoed-candidate
-  returns to `proposal_rejected_by_red_team` audit events for rejection rate / veto value-add /
-  survivor-risk hit rate / per-model breakdown — API/db-level only, no console/Results UI wiring
-  (left for the console lane). (2) Re-index decision memory: `appendSocraticDecisionCoachNote` now
-  re-calls `indexSocraticDecisionMemory` after the coach-note append (dynamic import avoids a
-  `db-socratic -> socratic-memory -> vector-db -> ./db` cycle); the stable id/dedupKeyPrefix makes it
-  an in-place upsert. (Outcome/lesson writers don't exist yet in this codebase — a separate,
-  unassigned effort — so only the coach-note lifecycle path was wired.) (3) Trading-day horizon
-  arithmetic: new `addTradingDays()` in `market-calendar.ts` (honors `isTradingDay`, walks weekends
-  + holidays) replaces the calendar-ms arithmetic in `counterfactual-learning.ts` and `backtest.ts`'s
-  `targetBusinessDate`, fixing weekday-dependent horizon noise; historical target dates for
-  Thu/Fri-snapshotted candidates shift (one-time discontinuity, snapshot-tested). Verification green:
-  lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. See
-  `docs/rollouts/2026-07-04-w1-learning-loops.md`.
-
-- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
-  push-only branches; landing via the active train):
-  - `claude/w1-llm-fixes` — Bear schema `confidenceScore` fix (live bug: strict Bear
-    schema previously stripped confidence, zeroing the approval-time debate trigger and degrading
-    sizing); per-provider reasoning-token headroom for xAI/Gemini/Mistral/DeepSeek chat-completions
-    (previously OpenAI-only); cross-family Bear default (only when a cross-family credential exists)
-    + non-zero adversary temperature (0.7) for the Bear/debate roles via `withLlmRequestBounds`;
-    reward-abstention line in the Bull system prompt; stakes-scaled Red Team dissent trigger
-    (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
-    confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
-    no new hard gates. **Merged** (PR #364).
-  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
-    decision memory on lifecycle changes; trading-day horizon arithmetic; Codex review fixes
-    (market-day horizons, kind-scoped veto audits, evidence backfill). **Merged** (PR #365).
-  - `claude/w1-rag-quickwins` — dormant relevance-floor + near-dup dedupe wired into
-    `strategy.ts`/`chat/orchestrator.ts`; provenance headers (`formatChunkWithProvenance`) prepended
-    onto the joined RAG context; widened `hashContent` 16→32 hex chars (64→128-bit); stamped
-    `embed_model`/`embed_rev` on every new vector; env-tunable rerank over-fetch cap
-    (`VECTOR_RERANK_OVERFETCH_K`, default 150). **Merged** (PR #366).
-  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
-    cache; per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
-
-- **Wave-2 memory/RAG core** (Claude/Fable coordinator — OWNER-ASSIGNED swimlane; lanes stacked on
-  their w1 dependency branches, push-only, landing via the train). Lanes: `outcome-engine`,
-  `episodic-retrieval`, `coaching-durable`, `reflection-decompose` (full lane list on the live board
-  `/Users/jay/apps/TRADING-EFFORT-LOG.md`).
-  - `claude/w2-episodic-retrieval` (this lane) — **done, pushed, awaiting the landing train** (base:
-    `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
-    `src/lib/experience-memory.ts` — closed-lot experience writer hooked fire-and-forget in
-    `performance.recordFillFromProposal` (state vector: 8 factor sub-scores + entryMarketRegime +
-    breadth snapshot + thesisTag + sector + entry rationale; realized
-    `{return_pct, holding_days, risk_exit, mae?, mfe?}` metadata; `source="experience-memory"`
-    namespace keyed by the ENTRY proposalId); decision-time SECOND retrieval pass over
-    `['socratic-decision','coach-note','lesson']` with a situation-sketch query (cross-symbol via
-    additive `RetrieveOptions.matchAllSymbols`, same-run exclusion, as-of stamped); labeled
-    "Closest historical analogs" (+`[COUNTEREXAMPLE]` on opposite-sign priors, top-analog
-    similarity shown) + "Owner coaching" blocks injected into BOTH Bull and Bear userContent;
-    injected ids persisted per run (`experience_retrieval` audit + rag attributions). Opt-out
-    `EXPERIENCE_MEMORY=off`. Verify green: lint 0 errors, tsc clean, **2395/2395 tests**, build
-    green. See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`.
-
----
-
-## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
-
-1. **Drawdown circuit-breakers → ADVISORY** _(CORRECTED later on 2026-07-03 — the "HARD-HALT" record
-   was wrong; the owner didn't understand the question as originally asked)._ Confirmed intent, in the
-   owner's words: **"nothing is hard except which account to work in."** A drawdown breach is an
-   advisory input the agent weighs with its own judgment; it may proceed, and every deviation surfaces
-   as a logged receipt for review and coaching. The same philosophy governs ALL guardrail lines (spend
-   caps, sizing, etc.) — the **account boundary is the only absolute**. Confirmed option: "Agent
-   decides, logs everything." See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
-   ~~Was recorded as: HARD-HALT — a drawdown breach halts autonomous trading until manually re-armed.~~
-2. **Stop-losses → PROMPT-EXPECTED.** The LLM proposes stops and policy validates; NOT schema-forced.
-   _(Owner chose the more flexible option over the fail-closed default.)_
-3. **Manager model tier → EVALUATE cross-provider, not a single pick.** Owner wants a list of options
-   (incl. DeepSeek for cost) and to measure how each performs — see `docs/manager-model-options.md`.
-   Recommended path: A/B Sonnet 5 / DeepSeek V4 Pro / GPT-5.5-or-Gemini-3.1-Pro in paper mode and rank
-   by realized per-model P&L (now measurable via #334's `proposedByModel`). Budget: $25–200/mo covers a
-   single model at ~20 runs/day; ~$300/mo covers a 3-model A/B.
-4. **Draft #315 → CLOSED** (superseded by the console port).
-
----
-
-## 📋 Planned
-
-- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
-  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
-  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
-  owner, answering the objections raised when this was first proposed): (1) Mac-side
-  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
-  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
-  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
-  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
-  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
-  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
-  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
-  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
-  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
-  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
-  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
-  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
-  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
-  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
-  hosted-only default stands; resource-aware routing stays opt-in per repo.
-
-### Socratic console parity sub-lanes — reserved before implementation
-- **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
-  open the shared drilldown/drawer consistently across scan, home, evidence cards, proposals, orders,
-  and other console surfaces. Reserved under the broader Codex parity effort so parallel agents do not
-  start a duplicate ticker-detail lane.
-- **Settings affordance and tooltip pass** — add clearer option descriptions/tooltips, replace confusing
-  loose/tight wording with lock/unlock-style affordances, and turn absolute-vs-percent pairs into a
-  polished mode switch where the pair represents alternative ways to express one constraint.
-- **Model/provider control parity** — move strategy model controls toward curated dropdowns with
-  provider-aware settings, showing reasoning controls only for models that actually support them.
-- **Admin connection health and backend-failure notification pass** — surface every backend dependency
-  including Pinecone/Voyage, distinguish global backend failures from user-key failures, and route
-  global failures to admin email/health while user-key failures become user notifications.
-
-### Ready to build — decisions in
-- **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Advisory drawdown awareness (corrected target)** — surface the breach state to the agent
-    (prompt context) and to the owner (receipt/notification + coaching trail); NO halting.
-    _(Corrected from "hard-halt" — see Owner decisions above.)_
-  - **Hard-halt drawdown circuit-breakers** — ✅ built (merged as #343, branch
-    `claude/live-execution-hardening`): `riskRules.drawdownBreakerAction` default `"halt"` flips the
-    breaker to `systemState → "halted"` on breach until manually re-armed; overridable to `"close_only"`.
-    NOTE: built before the decision-record correction landed; re-scope pending owner review.
-  - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
-    stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
-  - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
-    `paperMode` default is gone (#342). Keep the existing typed-confirm ritual before any live toggle.
-- **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
-  DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
-  See `docs/manager-model-options.md`.
-
-### Planned — actionable, not yet started
-- **Per-model hit rates on Results** — now that `proposedByModel` persists (#334), surface realized
-  win/return grouped by served model. _(Directly enables the Manager-model A/B above.)_
-- **Per-field FRED sourcing** — a partially-failing FRED fetch still placeholder-fills individual
-  series while the suite is flagged sourced; close with per-series flags (#326/#334 follow-up).
-- **SSE for the learned-context inbox** — replace the 60s poll if the console gains an event stream.
-- **`MarketQuoteSummary` factor bars for all scanned symbols** — #335 carried factor fields into the
-  summary tier; confirm drilldown factor bars now populate for every scanned symbol, not just top candidates.
-
----
-
-## Changelog of this log
-- 2026-07-03 — Created (coordinator). Seeded from the 2026-07-02 landings (#321–#335) + the
-  in-progress `sources.price` fix + blocked sovereign-design decisions.
-- 2026-07-03 — #336 merged (→ Completed). Recorded the four owner decisions (drawdown=hard-halt,
-  stops=prompt-expected, Manager=cross-provider A/B, #315 closed). Live-execution hardening moved
-  Blocked → Ready. Added `docs/manager-model-options.md`.
-- 2026-07-03 — #337 merged (→ Completed). In Progress now empty; next work is the Ready items
-  (live-execution hardening + Manager-model A/B).
-- 2026-07-03 — Added the CI holiday-flake fix (In Progress → on #339) after `verify` went red on the
-  observed July 4 closure; fixed via a `vitest.config` `test.env` seam in `isTradingDay`, zero test-file
-  edits so it won't collide with the paperMode-removal branch.
-- 2026-07-03 — **#339 merged** (→ Completed): de-paternalize Step 1 rules + CI holiday-flake fix +
-  Cursor-rule purge (incl. Codex round: VITEST-gated seam, Cursor rewrite). In Progress now = Step 2
-  paperMode/test-mode runtime removal + the Socratic Trade rebrand.
-- 2026-07-03 — Started the **Socratic Trade rebrand** (branch `claude/rebrand-socratic-trade`): brand
-  "Agentic Trading" → "Socratic Trade", public host fallback → `socratictrade.com`, Sentry slug →
-  `socratic-trade`; login email + internal machine slugs + Robinhood "Agentic" nickname untouched.
-- 2026-07-03 — **#340 rebrand merged** (→ Completed) and **#341 DB P0 hotfix merged** (→ Completed).
-- 2026-07-03 — De-paternalize **Step 2 code-complete** (branch `claude/remove-paper-test-mode`):
-  `policy.paperMode` + the `test/local` local-simulator execution path fully removed across ~35 src +
-  36 test files; rebased on `origin/main` (#340 + #341); gate green (tsc/lint/2350 tests/build); PR
-  opened, still In Progress until merged.
-- 2026-07-03 — **#342 merged** (→ Completed): paperMode/Test-mode runtime removal. Started
-  **live-execution hardening slice 1** (branch `claude/live-execution-hardening`): drawdown breaker →
-  hard-halt via overridable `riskRules.drawdownBreakerAction` (default `"halt"`); gate green
-  (tsc/lint/2351 tests/build); PR pending. Remaining: prompt-expected stop-losses (decision #2).
-- 2026-07-03 — **#344 merged** (→ Completed): Socratic Trade autonomy UI/runtime implementation.
-  Started the run-state UX fix (`codex/run-state-ux-fix`) so Start/Resume is no longer hidden behind
-  a red STOP control and start flows do not use danger-red styling.
-- 2026-07-03 — **#345 merged** (→ Completed): run-state UX fix. Started the IRA wash-sale UI
-  correction (`codex/ira-washsale-ui-fix`) so Roth/traditional IRA settings do not present taxable
-  Block / Ask / Auto as the relevant same-account wash-sale control.
-- 2026-07-03 — **#346 merged + deployed** (→ Completed / Deployed): IRA wash-sale UI correction at
-  `7b803bff`; production health and Roth IRA Settings UI verified. Started
-  `codex/universe-exclusive-indexes` to restore mutually-exclusive full-overlap index selection in the
-  console Guardrails universe picker.
-- 2026-07-03 — Made `docs/EFFORT-LOG.md` maintenance explicitly binding at start/handoff/commit/PR/
-  merge/deploy boundaries in `AGENTS.md`. Started the broader Socratic admin/RAG/Pinecone/settings
-  parity implementation in Codex branch `codex/live-thesis-portfolio-framing`.
-- 2026-07-03 — Tightened the `AGENTS.md` EFFORT-LOG rule: every non-trivial effort gets a **Planned**
-  row before substantial work starts, specifically to stop parallel agents/platforms from duplicating
-  the same lane.
-- 2026-07-03 — **#347 merged + deployed** (→ Completed / Deployed): console Universe index
-  exclusivity fix at `481e9dcc`; production health and live S&P/Nasdaq mutual-exclusion behavior
-  verified. Started `codex/sell-to-fund-title-case` to title-case the Sell to Fund Buys selector
-  labels/options and save-review summary.
-- 2026-07-03 — **#350 merged** (→ Completed): AI Review inheritance/model catalog/text-box font
-  controls. Started `codex/console-actions-evidence-live` for the owner-requested console polish
-  covering Actions, cadence, returns, IRA wash-sale behavior, Evidence/source labels, LLM settings
-  usage affordances, LIVE-warning reduction, broker-option investigation, provider/model naming
-  consistency, and repo/folder rename planning.
-- 2026-07-03 — **CORRECTION:** "drawdown=hard-halt" was mis-recorded (the owner didn't understand the
-  question). Owner confirmed: guardrails are ADVISORY — agent decides, logs everything; the account
-  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
-  hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
-  owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+- 2026-07-04 - Closed the spaced-folder diff review for
+  `/Users/jay/Code/Socratic Trade`: it is a stale standalone checkout on the old
+  `agentic-trading` remote, not a PM2-backed active worktree. Its dirty
+  improvements were already present or superseded in `/Users/jay/Code/Socratic.Trade`
+  (`next-env.d.ts`, Sentry `next.config.mjs`, `.mcp.json`, opening-notional
+  naming, side-adjusted return comments, and opening-side risk comments). Did not
+  port its `@jaywedgeworth22/congress-trading-shared` `^1.0.0` package range
+  because the active repo intentionally pins `1.0.0` in current docs and the
+  GitHub Packages registry check failed with `E401`, so changing that here would
+  be unaudited dependency drift.
+- 2026-07-03 - Created branch-neutral canonical log at `/Users/jay/apps/TRADING-EFFORT-LOG.md`.

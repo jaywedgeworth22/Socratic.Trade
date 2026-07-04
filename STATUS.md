@@ -8,6 +8,49 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Tokenless git dependency for congress-trading-shared (Claude)
+Branch `claude/tokenless-git-dep` (worktree `/Users/jay/apps/trading-wt-tokenless-dep`, cut
+from `origin/main`). Resumes a died-mid-task lane: `congress-trading-shared` was made public
+and the owner directed every consumer off the private GitHub Packages registry
+(`NODE_AUTH_TOKEN` auth) onto a tokenless git dependency. On inspection, the shared repo's prep
+branch (`claude/tokenless-git-dep-prep`) had **already merged** as PR #7 before this session
+started, with tag `v1.2.0` already cut (matches its already-current `package.json` version) and
+the two stale `codex/package-*` branches already evaluated/recorded as dead (resolves shared-repo
+backlog t167) — see `/Users/jay/apps/CONGRESS-SHARED-EFFORT-LOG.md` and
+`docs/rollouts/2026-07-04-tokenless-git-dependency.md` in that repo. This session's actual scope
+was narrower than the original brief: the Socratic.Trade consumer switch only.
+
+Changes: `package.json` dependency spec ->
+`github:jaywedgeworth22/congress-trading-shared#semver:^1.2.x` (previously `^1.2.0` against the
+registry); deleted `.npmrc` (only content was the scoped-registry auth lines); regenerated
+`package-lock.json` (proven tokenless: `npm ci` succeeds from a clean lockfile with
+`NODE_AUTH_TOKEN` unset AND `GIT_SSH_COMMAND=/bin/false`, i.e. no SSH fallback either — confirmed
+pure HTTPS git-tarball fetch); deleted `scripts/npm-ci-with-shared-deps.sh` (its entire purpose
+was registry/deploy-key auth for this one package) and updated its 6 call sites: `ci.yml`,
+`deploy.yml`, `e2e.yml`, `codex-autofix.yml`, `sync-previews.yml`, `scripts/sync-preview-lanes.sh`,
+`scripts/cloud-setup.sh` — all now call plain `npm ci`, with the `packages: read` permission and
+`NODE_AUTH_TOKEN`/`CONGRESS_TRADING_SHARED_DEPLOY_KEY`/`GH_PACKAGES_TOKEN` env wiring dropped
+wherever that was their only purpose. `GITHUB_TOKEN`/`GH_TOKEN` used for the repo's own git
+fetch (Socratic.Trade is still private) were left untouched in `deploy.yml` and
+`sync-preview-lanes.sh`. `shared-package-pin-check.yml`'s `GH_PACKAGES_TOKEN` use (peer-repo API
+read, unrelated to npm auth) is untouched — separate purpose.
+
+Coordination: PR #372 (`claude/ci-hybrid-runner-verify`) is open and also touches `ci.yml` —
+per the task brief this is a known merge-loop risk; `land.sh` merges `origin/main` first and
+this note records keep-both intent if #372 lands first.
+
+Verify: lint 0 errors (308 pre-existing warnings unchanged) / `npx tsc --noEmit` clean / 2449
+tests pass / `npm run build` ok. Full details, proof commands, and deferred items in
+`docs/rollouts/2026-07-04-tokenless-git-dependency-consumer.md`.
+
+**Deferred (not done here, flagged for a follow-up):** the "Refuse untrusted PR source"
+fork/bot gate in `ci.yml`/`e2e.yml` exists to protect the now-retired package secret; its error
+message ("private-repo deploy key secret") is now inaccurate but the gate itself was left in
+place (still harmless, may have independent value) rather than unilaterally removing a security
+control outside this task's stated scope. `.env.example` had no `NODE_AUTH_TOKEN`/registry
+lines to begin with. Congress.Trade gets its own separate PR (different repo, different
+AGENTS.md conventions) — tracked in that repo's own board/STATUS.
+
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single
