@@ -196,16 +196,43 @@ export function interactiveStrategyReasoningEffort(model: string, effort: LlmRea
   return isDisallowedInteractiveStrategyReasoningConfig(model, normalized) ? "medium" : normalized;
 }
 
-/** Extra output-token headroom for reasoning models (hidden reasoning tokens are billed as output). */
-const REASONING_TOKEN_BUDGET: Record<"low" | "medium" | "high", number> = {
+/**
+ * Extra output-token headroom for reasoning models (hidden reasoning tokens are billed against the
+ * same completion cap as the visible answer). Originally OpenAI-only (Fable composite review
+ * B/high/S: `withLlmRequestBounds` added this headroom ONLY in the `provider === 'openai'` branch,
+ * so xAI/Gemini/Mistral/DeepSeek chat-completions calls kept the bare 1500-token cap even at
+ * medium/high reasoning effort — a hard-thinking non-OpenAI call could spend its whole budget on
+ * hidden reasoning tokens and truncate the visible JSON answer before it ever started). Covers every
+ * effort level any provider's capability options expose (`none`/`minimal` need no extra headroom).
+ */
+const REASONING_TOKEN_BUDGET: Record<Exclude<LlmReasoningEffort, "none">, number> = {
+  minimal: 1000,
   low: 2000,
   medium: 4000,
-  high: 8000
+  high: 8000,
+  xhigh: 12000,
+  max: 16000
 };
+
+/** Extra visible-output headroom for a provider's reasoning effort, or 0 when the effort spends no
+ *  hidden tokens against the completion cap ("none", or no reasoning capability at all). */
+function reasoningTokenHeadroom(effort: LlmReasoningEffort | undefined): number {
+  if (!effort || effort === "none") return 0;
+  return REASONING_TOKEN_BUDGET[effort];
+}
 
 export const LLM_REQUEST_DEFAULTS = {
   deterministicTemperature: 0,
-  maxOutputTokens: 1500
+  maxOutputTokens: 1500,
+  /**
+   * Sampling temperature for the adversary/reviewer roles (inline Bear + the separate high-conviction
+   * `debateProposal` debate). Composite review B/medium/S: "everything runs at temperature 0
+   * including red-teaming, so one greedy same-family Bear surfaces one failure mode." A non-zero
+   * adversary temperature widens the set of objections a re-run could surface instead of always
+   * finding the exact same (or no) flaw. Per-role sampling: the proposer (Bull/Green) keeps
+   * temperature 0 (deterministic, unaffected) — only the critique roles use this.
+   */
+  adversaryTemperature: 0.7
 } as const;
 
 /** Hard wall-clock cap on a single LLM HTTP call. A half-open OpenAI/Anthropic connection
@@ -288,7 +315,7 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
     // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
     const effort = normalizedEffort as "low" | "medium" | "high";
-    const maxOutputTokens = bounds.maxOutputTokens + REASONING_TOKEN_BUDGET[effort];
+    const maxOutputTokens = bounds.maxOutputTokens + reasoningTokenHeadroom(effort);
     if (transport === "responses") {
       return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
     }
@@ -300,18 +327,24 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     return { ...body, max_output_tokens: bounds.maxOutputTokens, temperature };
   }
   if (capability && normalizedEffort) {
+    // Same headroom rationale as the OpenAI branch above, extended to every other
+    // reasoning-capable chat-completions provider (xAI, Gemini, Mistral, DeepSeek): these all bill
+    // hidden "thinking"/reasoning tokens against the SAME `max_completion_tokens` cap as the visible
+    // JSON answer, so a bare 1500-token cap at medium/high effort starves the visible output before
+    // it can even start (composite review B/high/S — this was previously OpenAI-only).
+    const maxCompletionTokens = bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort);
     if (capability.provider === "deepseek") {
       const deepSeekThinking =
         normalizedEffort === "none"
           ? { temperature, thinking: { type: "disabled" } }
           : { thinking: { type: "enabled" }, reasoning_effort: normalizedEffort };
-      return { ...body, max_completion_tokens: bounds.maxOutputTokens, ...deepSeekThinking };
+      return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
     }
     const providerReasoning =
       capability.provider === "mistral" && normalizedEffort !== "none"
         ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
         : { reasoning_effort: normalizedEffort };
-    return { ...body, max_completion_tokens: bounds.maxOutputTokens, temperature, ...providerReasoning };
+    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, ...providerReasoning };
   }
   return { ...body, max_completion_tokens: bounds.maxOutputTokens, temperature };
 }

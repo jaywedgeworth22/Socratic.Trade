@@ -246,6 +246,24 @@ to `socratictrade.com`, record the release commit + date here._
   approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
+- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
+  push-only branches; landing via the active train):
+  - `claude/w1-llm-fixes` (this lane) — Bear schema `confidenceScore` fix (live bug: strict Bear
+    schema previously stripped confidence, zeroing the approval-time debate trigger and degrading
+    sizing); per-provider reasoning-token headroom for xAI/Gemini/Mistral/DeepSeek chat-completions
+    (previously OpenAI-only); cross-family Bear default (only when a cross-family credential exists)
+    + non-zero adversary temperature (0.7) for the Bear/debate roles via `withLlmRequestBounds`;
+    reward-abstention line in the Bull system prompt; stakes-scaled Red Team dissent trigger
+    (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
+    confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
+    no new hard gates. **PR pending.**
+  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
+    decision memory on lifecycle changes; trading-day horizon arithmetic.
+  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
+    chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
+  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
+    cache; per-data-class TTLs + asOf on Alpaca snapshot.
+
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping

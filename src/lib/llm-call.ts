@@ -29,6 +29,16 @@ export interface LlmRequestSpec {
   maxOutputTokens: number;
   reasoningEffort?: LlmReasoningEffort;
   /**
+   * Sampling temperature for non-reasoning/deterministic-sampling paths (ignored by models that
+   * reject custom temperature — reasoning models steer via `reasoningEffort` instead; see
+   * `withLlmRequestBounds`). Defaults to `LLM_REQUEST_DEFAULTS.deterministicTemperature` (0) when
+   * omitted, preserving every existing call site's greedy-decode behavior. Set explicitly for
+   * per-role sampling (composite review B/medium/S): the Bear/debate adversary roles run at a
+   * non-zero temperature so a single same-family, temperature-0 critique doesn't always find the
+   * exact same (or no) objection — see the Bear/debateProposal call sites.
+   */
+  temperature?: number;
+  /**
    * Structured-output schema. When present:
    * - OpenAI/compatible (non-DeepSeek) → strict `json_schema` (unless `openAiJsonObject`);
    * - DeepSeek → `json_object` (it rejects strict json_schema);
@@ -69,7 +79,12 @@ export function buildLlmRequestBody(
 ): Record<string, unknown> {
   const { transport } = endpoint;
   const { systemPrompt, userContent, schema, openAiJsonObject } = spec;
-  const bounds = { maxOutputTokens: spec.maxOutputTokens, model: spec.model, reasoningEffort: spec.reasoningEffort };
+  const bounds = {
+    maxOutputTokens: spec.maxOutputTokens,
+    model: spec.model,
+    reasoningEffort: spec.reasoningEffort,
+    temperature: spec.temperature
+  };
 
   if (transport === "anthropic-messages") {
     const base: Record<string, unknown> = {
