@@ -5,6 +5,11 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-04 - Shared public dependency hardening (Codex).** No roadmap scope change. Socratic
+> now consumes `congress-trading-shared` from the public HTTPS git tag instead of GitHub Packages,
+> and CI/deploy setup returns to plain `npm ci`. This removes package-read token requirements for
+> the shared contract dependency while preserving the cross-app pin check.
+
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"

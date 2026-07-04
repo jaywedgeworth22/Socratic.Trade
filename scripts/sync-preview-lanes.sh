@@ -67,16 +67,15 @@ maybe_install_deps() {
   local before="$1"
   if ! git diff --quiet "$before" HEAD -- package.json package-lock.json; then
     log "dependency files changed; running npm ci in $(pwd)"
-    bash scripts/npm-ci-with-shared-deps.sh
+    npm ci
   fi
 }
 
 restart_pm2() {
   local app="$1"
   if pm2 describe "$app" >/dev/null 2>&1; then
-    # Strip package/git auth for the --update-env restart so the long-running preview PM2 process
-    # does not inherit a GitHub Packages-capable token in its runtime env. The token is only needed
-    # by the git fetch + npm ci above, not by the app. (Review: PR #279.)
+    # Strip git auth for the --update-env restart so the preview PM2 process
+    # does not inherit workflow credentials from the sync job.
     env -u GITHUB_TOKEN -u GH_TOKEN -u NODE_AUTH_TOKEN pm2 restart "$app" --update-env >/dev/null
   else
     warn "PM2 app '$app' is missing; skip restart"

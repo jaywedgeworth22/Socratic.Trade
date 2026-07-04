@@ -16,7 +16,7 @@ echo "==> Node: $(node --version 2>/dev/null || echo 'not found')  npm: $(npm --
 
 # Deterministic install from the committed lockfile.
 echo "==> Installing dependencies (npm ci)"
-bash scripts/npm-ci-with-shared-deps.sh
+npm ci
 
 # Give the sandbox explicit, safe defaults + a place for injected secrets.
 # Non-destructive: never clobber an existing .env.local.

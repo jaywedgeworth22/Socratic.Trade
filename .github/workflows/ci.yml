@@ -172,14 +172,7 @@ jobs:
             ${{ runner.os }}-nextjs-
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        shell: bash
-        env:
-          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          # Drop GH_PAT from this chain: it is the Codex-Autofix PAT (repo + workflow scope, no
-          # read:packages), so preferring it over the packages-scoped job GITHUB_TOKEN makes the
-          # private-package install 403 when only GH_PAT is configured. (Review: PR #279.)
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: bash scripts/npm-ci-with-shared-deps.sh
+        run: npm ci
       - if: needs.classify.outputs.docs-only != 'true'
         run: npm run lint
       - if: needs.classify.outputs.docs-only != 'true'
