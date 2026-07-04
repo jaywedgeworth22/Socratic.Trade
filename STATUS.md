@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — CORRECTION: guardrails are ADVISORY, not hard-halt (Claude)
+Branch `claude/correct-drawdown-decision`. Docs-only. The #337 record "drawdown
+breakers → hard-halt" was WRONG — the owner said they didn't understand that
+question, and stated the governing philosophy verbatim: **"nothing is hard
+except which account to work in."** Confirmed same-day via structured question:
+**"Agent decides, logs everything"** — every guardrail line (drawdown, spend
+caps, sizing, …) is an advisory input to the agent's own judgment; every
+deviation is a logged, reviewable, coachable receipt; the ONLY absolute is the
+account boundary. Corrected in place: decision 1 + hardening scope in
+`docs/EFFORT-LOG.md`, correction banner in
+`docs/rollouts/2026-07-03-owner-decisions-manager-model.md`, full decision +
+follow-ups in `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+**Next:** the live-execution hardening build implements advisory drawdown
+awareness (prompt context + receipts), NO halting; per-gate hard-block sweep
+goes back to the owner as plain-language questions before flipping defaults.
 ## 2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex)
 Branch `codex/rag-filing-ingest-smoke-fix` in `/Users/jay/apps/trading-codex`.
 Production Infisical runtime was verified against the new Pinecone account: the only visible

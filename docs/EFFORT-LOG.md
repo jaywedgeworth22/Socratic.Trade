@@ -181,13 +181,21 @@ to `socratictrade.com`, record the release commit + date here._
   winds down gracefully). Gate green: tsc clean, lint 0 errors, **2351 tests / 239 files**, build green.
   **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
   follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
+  NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
+  see Owner decisions below); re-scope pending owner review.
 
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
 
-1. **Drawdown circuit-breakers → HARD-HALT.** During the live soak, a drawdown breach halts autonomous
-   trading until manually re-armed. _(Unblocks the hardening build.)_
+1. **Drawdown circuit-breakers → ADVISORY** _(CORRECTED later on 2026-07-03 — the "HARD-HALT" record
+   was wrong; the owner didn't understand the question as originally asked)._ Confirmed intent, in the
+   owner's words: **"nothing is hard except which account to work in."** A drawdown breach is an
+   advisory input the agent weighs with its own judgment; it may proceed, and every deviation surfaces
+   as a logged receipt for review and coaching. The same philosophy governs ALL guardrail lines (spend
+   caps, sizing, etc.) — the **account boundary is the only absolute**. Confirmed option: "Agent
+   decides, logs everything." See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+   ~~Was recorded as: HARD-HALT — a drawdown breach halts autonomous trading until manually re-armed.~~
 2. **Stop-losses → PROMPT-EXPECTED.** The LLM proposes stops and policy validates; NOT schema-forced.
    _(Owner chose the more flexible option over the fail-closed default.)_
 3. **Manager model tier → EVALUATE cross-provider, not a single pick.** Owner wants a list of options
@@ -217,9 +225,13 @@ to `socratictrade.com`, record the release commit + date here._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
-  - **Hard-halt drawdown circuit-breakers** — ✅ built (In Progress → PR pending, branch
+  - **Advisory drawdown awareness (corrected target)** — surface the breach state to the agent
+    (prompt context) and to the owner (receipt/notification + coaching trail); NO halting.
+    _(Corrected from "hard-halt" — see Owner decisions above.)_
+  - **Hard-halt drawdown circuit-breakers** — ✅ built (merged as #343, branch
     `claude/live-execution-hardening`): `riskRules.drawdownBreakerAction` default `"halt"` flips the
     breaker to `systemState → "halted"` on breach until manually re-armed; overridable to `"close_only"`.
+    NOTE: built before the decision-record correction landed; re-scope pending owner review.
   - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
     stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
   - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
@@ -290,3 +302,8 @@ to `socratictrade.com`, record the release commit + date here._
   covering Actions, cadence, returns, IRA wash-sale behavior, Evidence/source labels, LLM settings
   usage affordances, LIVE-warning reduction, broker-option investigation, provider/model naming
   consistency, and repo/folder rename planning.
+- 2026-07-03 — **CORRECTION:** "drawdown=hard-halt" was mis-recorded (the owner didn't understand the
+  question). Owner confirmed: guardrails are ADVISORY — agent decides, logs everything; the account
+  boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
+  hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
+  owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
