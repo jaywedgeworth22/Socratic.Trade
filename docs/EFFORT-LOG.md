@@ -163,8 +163,19 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, landing now that
-  gate is green. Scope: reusable `RawNumInput` component (fixes
+- **Wash-sale gate — non-blocking defaults** (`claude/washsale-advisory-defaults`, Claude,
+  landing now that gate is green). Owner decision: `taxSettings.washSaleHandling` default
+  `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`.
+  Mid-task correction: "auto" no longer vetoes on a deterministic edge-vs-tax-cost threshold at
+  all (removed as pseudo-math — it re-arithmetized the LLM's own confidence/target outputs); it
+  now always proceeds, with the priced tax cost recorded on the receipt and threaded into the
+  strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
+  machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
+  2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+
+- **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
+  Scope: reusable `RawNumInput` component (fixes
   the "0."-input-collapse bug) applied at 4 numeric-input sites; `MARKET_REGIME_LABELS` persisted-
   contract const + test coverage for `determineMarketRegime`; account-deletion scope preview now
   warns about discarded pending learned-context items; `notify.bridge.error` ops-feed formatter.

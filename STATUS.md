@@ -8,6 +8,51 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
+Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
+Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed
+together:
+
+1. **Defaults flip** (`DEFAULT_TAX_SETTINGS` in `src/lib/defaults.ts`):
+   `taxSettings.washSaleHandling` default `"block"` → `"auto"`; `taxSettings.iraWashSaleHandling`
+   default `"block"` → `"disregard"`. `block`/`ask` remain valid enum values (persisted policies
+   may still reference them; the console Guardrails selects still offer all options) — just no
+   longer the shipped default. Every `?? "block"` fallback that mattered was updated to derive from
+   `DEFAULT_TAX_SETTINGS` (`src/lib/policy.ts`, `src/lib/strategy.ts`) so an unset field behaves
+   consistently everywhere, not just through the DB merge path.
+2. **Mid-task owner course-correction — "auto" no longer vetoes at all**: the owner rejected the
+   pre-existing edge-vs-tax-cost threshold (`WASH_SALE_AUTO_EDGE_MULTIPLE`, 3x) as pseudo-math — the
+   "expected edge" side of that comparison was itself derived from the LLM's own
+   `confidenceScore`/`bracketTakeProfit` outputs, so the gate was re-arithmetizing the model's
+   judgment rather than adding an independent check. `"auto"` now ALWAYS proceeds; the priced tax
+   cost (`estimatedTaxCostUsd`, `expectedEdgeUsd`) still rides `decision.washSale` as receipt
+   telemetry (never silent) and is now explained to the strategist LLM in the system prompt
+   (`taxContext.washSaleRebuyCosts` was already threaded per #323/#331 — only the prompt's
+   "ONLY when edge clears Nx" framing changed to "this is your judgment call, weigh the priced
+   cost"). `STRATEGY_PROMPT_VERSION` bumped `1.2.0` → `1.3.0`. The `auto_skipped` outcome is now
+   unreachable and removed from the `WashSaleGateAudit.outcome` union; `WASH_SALE_AUTO_EDGE_MULTIPLE`
+   is retained only to label the receipt field, not as a threshold.
+
+All receipt/annotation/audit machinery is untouched: the IRA-disregard verbatim note ("Wash Sale
+(Technically, but IRA purchase unreported to IRS)"), the `wash_sale_*` audit events, the
+approvals-card rendering, and the ask-mode escalation/override-token framework (shared with
+time-context gates) all behave exactly as before — only which mode is the *default*, and whether
+"auto" gates at all, changed. Explicit `"block"`/`"ask"` opt-ins are fully preserved and tested.
+Per a second owner note mid-task: no backward-compat shims for hypothetical other users (owner is
+the sole user today) — kept the diff to flipping defaults + the auto-veto removal, no migration
+machinery.
+Updated: `src/lib/defaults.ts`, `src/lib/types.ts`, `src/lib/policy.ts`, `src/lib/strategy.ts`,
+`src/lib/strategy-prompts.ts`, `app/console/guardrails/field-defs.ts`, `app/settings-search.ts`,
+`test/washsale-modes.test.ts`, `test/ira-washsale-api.test.ts`, `test/console-policy-diff.test.ts`,
+`test/chat-draft-policy.test.ts`, `test/policy.test.ts`, `test/run-strategy-offline.test.ts`.
+Verified: lint 0 errors (295 grandfathered warnings), tsc clean, targeted wash-sale/tax/policy
+suite 218/218 across 12 files, full suite 2352 passed / 17 failed (all 17 in the 8 pre-existing
+holiday-broken files — `persistence-notification`, `redteam-observability-g10`,
+`strategy-bear-fail-closed`, `strategy-bull-truncation`, `strategy-llm-failover`,
+`strategy-money-path-f-g`, `strategy-moneypath-drawdown-flip`, `strategy-rationale-collapse-gate`
+— unrelated `run_skipped_market_closed`/date issues), build green. **Landing deferred** until the
+holiday-date test fix (tracked separately) merges, per instruction — this branch is pushed but has
+no PR yet. See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
 ## 2026-07-03 — Console small fixes: numeric-input pattern, regime label contract, deletion loss preview, notify.bridge.error formatter (Claude)
 Branch `claude/console-small-fixes` (isolated worktree `~/apps/trading-wt-console-small`, off
 `origin/main` @ `eae514be`), four small verified-open tasks bundled on one branch. **Not landed

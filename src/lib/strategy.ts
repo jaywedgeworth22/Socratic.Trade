@@ -2515,16 +2515,17 @@ async function proposeTrades(input: {
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
-  // locked rebuy honestly instead of just seeing a forbidden list. In the default "block" mode the
-  // context stays byte-identical (locked names remain a hard no).
-  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? "block";
-  // IRA-disregard: when the buyer is an IRA whose policy uses iraWashSaleHandling "disregard"
-  // (the shipped default),
-  // the gate PERMITS locked rebuys (annotated + audited). The prompt must know this or the model,
-  // still told "NEVER propose a locked buy", would never surface the very rebuys the setting exists
-  // to allow. IRA detection uses the SAME source-of-truth precedence as the gate (isIraTaxRegime).
+  // locked rebuy honestly instead of just seeing a forbidden list. Only in "block" mode (a
+  // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
+  // remain a hard no).
+  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
+  // IRA-disregard: when the buyer is an IRA whose owner is on iraWashSaleHandling "disregard"
+  // (the default), the gate PERMITS locked rebuys (annotated + audited). The prompt must know this
+  // or the model, still told "NEVER propose a locked buy", would never surface the very rebuys the
+  // setting exists to allow. IRA detection uses the SAME source-of-truth precedence as the gate
+  // (isIraTaxRegime).
   const iraWashSaleDisregard =
-    (input.policy.taxSettings?.iraWashSaleHandling ?? "disregard") === "disregard" &&
+    (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
     isIraTaxRegime(
       input.activeAccount?.taxationType,
       input.policy.taxSettings?.taxationType,

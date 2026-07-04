@@ -5,6 +5,17 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
+> non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
+> `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"
+> no longer vetoes on a deterministic edge-vs-tax-cost threshold at all (that math re-arithmetized
+> the LLM's own confidence/target outputs); it always proceeds, with the priced tax cost surfaced
+> as receipt telemetry + strategist-prompt context instead. `block`/`ask` remain valid opt-ins; all
+> receipt/annotation/audit machinery unchanged. No roadmap scope change — a guardrail-philosophy
+> correction, part of "nothing is hard except the account" (see
+> `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md` on branch
+> `claude/correct-drawdown-decision`). Landing deferred until the holiday-date test fix merges. See
+> `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
 > 2026-07-03 (`claude/console-small-fixes`, Claude): **Console small fixes (t7/t18/t22/t39)** —
 > four small verified-open items, no roadmap scope change: extracted the "0."-collapse raw-while-
 > focused/commit-on-blur numeric-input pattern into a reusable `RawNumInput` (applied at the
