@@ -8,6 +8,27 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-2: the Outcome Engine lane (Claude)
+Branch `claude/w2-outcome-engine`, based on `origin/claude/w1-learning-loops` (worktree
+`~/apps/trading-wt-w2-outcome`); lands via the landing train AFTER the base lands — push only,
+no PR from this lane. Four composite-review §A items: (1) **the outcome writer** — new scheduled
+job `src/lib/outcome-engine.ts` piggybacking the counterfactual cadence; joins placed decisions
+to fill_events/closed lots and blocked/rejected (incl. Bear-vetoed) decisions to counterfactual
+refPrice; writes `outcome`+`measuredAt`, per-case `socratic_outcome_recorded` receipt, awaited
+lifecycle re-index. (2) **multi-horizon schema** — `outcomes[] {15m|1h|1d|1w, returnPct,
+spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+skipped-counterfactual rows (new `outcomes`/`resolution_reason` columns); 1d/1w from the daily
+cascade SPY-relative on trading-day arithmetic; 15m/1h only from an actually-sampled live quote,
+else honest `unresolvable(no_intraday_source)`. (3) **kill survivorship** — terminal
+`unresolvable` after a bounded 10-trading-day recheck window; coverage disclosures
+("N/M resolved (X%)") on job receipts, `getRedTeamEfficacy`, missed-opportunity summary, and
+`certifyForwardResolution`. (4) **real per-decision lessons** — budget-gated, batch-capped LLM
+post-mortem at maturation → 1-3 direction-tagged lessons + `{verdictOnBelief,
+whichDissentMattered}`, replacing the template strings, re-indexed, routed through
+`ingestLearned` (origin `autonomous`); every skip is receipted (`socratic_lessons_skipped`).
+Verification green: lint 0 errors, tsc clean, 2383 tests / 246 files, build green. See
+`docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+
 ## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
 Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
 expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same

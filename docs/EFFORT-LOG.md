@@ -163,6 +163,23 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
+  worktree `~/apps/trading-wt-w2-outcome`, based on `claude/w1-learning-loops`) — four §A items:
+  (1) THE OUTCOME WRITER: new scheduled job `src/lib/outcome-engine.ts` on the counterfactual
+  cadence; placed decisions join fill_events/closed lots, blocked/rejected (incl. Bear vetoes)
+  join counterfactual refPrice; writes `outcome`+`measuredAt`, per-case receipt, awaited
+  vector-memory re-index. (2) Multi-horizon outcome schema `outcomes[] {15m|1h|1d|1w, returnPct,
+  spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+  skipped-counterfactual rows; 1d/1w from the daily cascade SPY-relative (trading-day
+  arithmetic); 15m/1h only via an actually-sampled live quote, else honest
+  `unresolvable(no_intraday_source)`. (3) Kill-survivorship: terminal `unresolvable` after a
+  bounded 10-trading-day recheck; coverage disclosures on job receipts, `getRedTeamEfficacy`,
+  missed-opportunity summary, `certifyForwardResolution`. (4) Budget-gated, batch-capped LLM
+  post-mortem lessons at maturation (direction-tagged + verdictOnBelief/whichDissentMattered),
+  routed through `ingestLearned` origin `autonomous`; all skips receipted. Gate green: lint 0
+  errors, tsc clean, 2383 tests / 246 files, build green. **Pushed; NO PR — lands via the
+  landing train after the base branch.** See `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
   against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local

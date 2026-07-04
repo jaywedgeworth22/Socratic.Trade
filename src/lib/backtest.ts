@@ -160,6 +160,9 @@ export interface ForwardResolutionCertification {
   pointInTimeExits: number;
   /** True when every resolved exit satisfied the point-in-time invariant (no look-ahead detected). */
   pointInTimeClean: boolean;
+  /** Human coverage disclosure ("N/M resolved (X%) — may be survivor-biased"): unresolved candidates
+   *  stay in the denominator so the reader sees exactly how survivor-thinned the learner's join is. */
+  coverageDisclosure: string;
   note: string;
 }
 
@@ -217,12 +220,17 @@ export async function certifyForwardResolution(
     }
   }
 
+  const coveragePct = totalCandidates > 0 ? Number(((resolvedForward / totalCandidates) * 100).toFixed(1)) : 0;
   return {
     totalCandidates,
     resolvedForward,
     forwardCoveragePct: totalCandidates > 0 ? Number((resolvedForward / totalCandidates).toFixed(4)) : 0,
     pointInTimeExits,
     pointInTimeClean: resolvedForward === pointInTimeExits,
+    coverageDisclosure:
+      totalCandidates > 0
+        ? `${resolvedForward}/${totalCandidates} resolved (${coveragePct}%) — may be survivor-biased`
+        : "0 candidates — nothing to resolve",
     note: "SURVIVORSHIP PROXY — forwardCoveragePct measures resolvable forward prices, NOT absence of survivorship bias (the signal_snapshot log may itself be survivor-only). Diagnostic only; gates nothing."
   };
 }

@@ -125,6 +125,8 @@ describe("counterfactual skipped-candidate learning", () => {
     const rowB = listMaturedSkippedCounterfactuals(userB)[0];
     expect(rowA.returnPct).toBe(-20);
     expect(rowB.returnPct).toBe(60);
-    expect(calls).toEqual([`${userA}:NVDA`, `${userB}:NVDA`]);
+    // The materializer now also fetches one SPY series per run (for the multi-horizon rows'
+    // SPY-relative excess) before the per-candidate fetches.
+    expect(calls).toEqual([`${userA}:SPY`, `${userA}:NVDA`, `${userB}:SPY`, `${userB}:NVDA`]);
   });
 });
