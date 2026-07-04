@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
+Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
+RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
+synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
+across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,
+each with a concrete approach + `[impact/effort]`; plus a cross-cutting-gaps section, quick-wins/big-bets
+tables, and a Now/Next/Later roadmap. Docs-only; no source touched. (This cloud session is "Monet".)
+**Read section E + the risk items through the CLARIFIED philosophy that guardrails are ADVISORY
+("agent decides, logs everything") — see the correction entry directly below.** My earlier #343 drawdown
+HARD-HALT default is misaligned with that and needs re-scoping to advisory (owner review flagged on the board).
+
 ## 2026-07-03 — CORRECTION: guardrails are ADVISORY, not hard-halt (Claude)
 Branch `claude/correct-drawdown-decision`. Docs-only. The #337 record "drawdown
 breakers → hard-halt" was WRONG — the owner said they didn't understand that

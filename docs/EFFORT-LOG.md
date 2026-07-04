@@ -184,6 +184,14 @@ to `socratictrade.com`, record the release commit + date here._
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
   see Owner decisions below); re-scope pending owner review.
 
+- **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
+  `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
+  quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) + synthesis produced
+  `docs/reviews/2026-07-04-expert-design-review.md`: 147 prioritized improvements across memory/learning,
+  LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems, each with a concrete
+  approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
+  roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
+
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
