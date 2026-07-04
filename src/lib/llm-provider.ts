@@ -2,6 +2,7 @@ import { resolveLlmCredential } from "./db";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
+export type LlmModelFamily = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
 
 export interface LlmEndpoint {
   provider: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
@@ -13,9 +14,63 @@ export interface LlmEndpoint {
   transport: LlmTransport;
 }
 
-function resolveRoleModel(policy: { llmModel?: string | null; redTeamLlmModel?: string | null } | undefined | null, role: LlmTeamRole): string {
+/**
+ * The model FAMILY (provider) a model name belongs to, using the same name-prefix rules
+ * `resolveLlmEndpoint` uses to pick a wire transport. Exposed so callers (the cross-family Bear
+ * default below) can compare families without duplicating the regexes.
+ */
+export function llmModelFamily(model: string | undefined): LlmModelFamily {
+  const normalized = (model ?? "").trim();
+  if (/^claude/i.test(normalized)) return "anthropic";
+  if (/^grok/i.test(normalized)) return "xai";
+  if (/^gemini/i.test(normalized)) return "gemini";
+  if (/^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)/i.test(normalized)) return "mistral";
+  if (/^deepseek/i.test(normalized)) return "deepseek";
+  return "openai";
+}
+
+/**
+ * Cross-family default Bear/reviewer model for each Bull family (composite review B/medium/S: "Green
+ * and Red resolve to the same model by default ... one greedy same-family Bear surfaces one failure
+ * mode"). Picked as a cheap, fast, widely-available model from a DIFFERENT provider than the given
+ * family, so an unconfigured `redTeamLlmModel` no longer echoes the Bull's own blind spots. Anthropic
+ * Bulls default to a cheap OpenAI reviewer (mirrors the same cross-family intent in the other
+ * direction); every non-Anthropic Bull defaults to Claude Haiku (the same model
+ * `debateProposal`'s Anthropic path already uses by default).
+ */
+const CROSS_FAMILY_RED_TEAM_DEFAULT: Record<LlmModelFamily, string> = {
+  openai: "claude-haiku-4-5",
+  anthropic: "gpt-5.4-mini",
+  xai: "claude-haiku-4-5",
+  gemini: "claude-haiku-4-5",
+  mistral: "claude-haiku-4-5",
+  deepseek: "claude-haiku-4-5"
+};
+
+/** The default Bear/reviewer model when the policy hasn't set an explicit `redTeamLlmModel`. */
+export function defaultCrossFamilyRedTeamModel(bullModel: string | undefined): string {
+  return CROSS_FAMILY_RED_TEAM_DEFAULT[llmModelFamily(bullModel)];
+}
+
+function resolveRoleModel(
+  policy: { llmModel?: string | null; redTeamLlmModel?: string | null } | undefined | null,
+  role: LlmTeamRole,
+  userId: string
+): string {
   const redModel = role === "red" ? policy?.redTeamLlmModel?.trim() : undefined;
-  return redModel || resolveOpenAiModel(policy);
+  if (redModel) return redModel;
+  const bullModel = resolveOpenAiModel(policy);
+  if (role !== "red") return bullModel;
+  // Cross-family Bear default: only when the owner hasn't set an explicit redTeamLlmModel. Redirect
+  // ONLY when a credential for the cross-family model's provider is actually available — an
+  // environment/account with just one provider key configured keeps today's same-family fallback
+  // (no silent fail-closed routing-to-human-review from defaulting to a provider nobody connected;
+  // this app's guardrails are advisory, never a paternalistic default that breaks unconfigured
+  // setups). Falls back to the Bull's own model when the cross-family provider has no credential.
+  const crossFamilyModel = defaultCrossFamilyRedTeamModel(bullModel);
+  const crossFamilyProvider = llmModelFamily(crossFamilyModel);
+  const hasCrossFamilyCredential = Boolean(resolveLlmCredential(crossFamilyProvider, userId).key);
+  return hasCrossFamilyCredential ? crossFamilyModel : bullModel;
 }
 
 /**
@@ -36,7 +91,7 @@ export function resolveLlmEndpoint(
   role: LlmTeamRole = "green"
 ): LlmEndpoint {
 
-  const model = resolveRoleModel(policy, role);
+  const model = resolveRoleModel(policy, role, userId);
 
   if (/^claude/i.test(model)) {
     const url =

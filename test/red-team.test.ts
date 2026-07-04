@@ -60,7 +60,7 @@ describe("debateProposal — T11 fail-open contract", () => {
 });
 
 describe("debateProposal LLM request bounds", () => {
-  it("adds chat-completions output caps and deterministic sampling", async () => {
+  it("adds chat-completions output caps and the adversary sampling temperature", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
 
@@ -108,7 +108,9 @@ describe("debateProposal LLM request bounds", () => {
     expect(result).toEqual({ rejected: false, available: true, reason: "No fatal flaw found.", model: "gpt-4.1-mini" });
     expect(bodies).toHaveLength(1);
     expect(bodies[0].max_completion_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.redTeamDebate);
-    expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
+    // Per-role sampling (composite review B/medium/S): the adversary (Bear/debate) role now samples
+    // at a non-zero temperature instead of the Bull's greedy temp-0 decode.
+    expect(bodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
     expect(bodies[0].max_output_tokens).toBeUndefined();
     // Item 6: OpenAI-compatible providers request STRICT json_schema (not a bare json_object), so the
     // verdict is schema-enforced rather than regex/prose-parsed.
