@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
+import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -867,16 +867,24 @@ export interface RedTeamEfficacy {
 
 export function getRedTeamEfficacy(
   userId: string = "local",
-  options: { auditLimit?: number; limit?: number } = {}
+  options: { auditLimit?: number; limit?: number; connectedAccountId?: string } = {}
 ): RedTeamEfficacy {
   const auditLimit = options.auditLimit ?? 500;
   const limit = options.limit ?? 50;
 
   const vetoesByKey = new Map<string, { runId: string; symbol: string; side?: string; thesisTag?: string; reason?: string; model?: string }>();
-  for (const event of listAudit(auditLimit, userId)) {
-    if (event.kind !== "proposal_rejected_by_red_team") continue;
+  // Kind-scoped audit query (Codex review on PR #365): the LIMIT applies AFTER the kind
+  // filter, so newer audit rows of other kinds can never push older Bear vetoes out of the
+  // scanned window and zero the scorecard's history.
+  for (const event of listAuditByKind("proposal_rejected_by_red_team", auditLimit, userId, options.connectedAccountId)) {
     const payload = event.payload as { runId?: string; symbol?: string; side?: string; thesisTag?: string; reason?: string; model?: string } | undefined;
     if (!payload?.runId || !payload.symbol) continue;
+    // Opening sides only: the strategy audits EVERY Bear veto but records counterfactual
+    // candidates only for vetoed buy/short OPENINGS (a vetoed exit is not a missed
+    // opportunity), so counting exit vetoes here would permanently depress maturation
+    // coverage with rows that can never mature. Legacy audits without a side are kept
+    // (the writer has always been opening-scoped downstream).
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
     const symbol = normalizeSymbol(payload.symbol);
     vetoesByKey.set(`${payload.runId}:${symbol}`, {
       runId: payload.runId,
@@ -889,13 +897,16 @@ export function getRedTeamEfficacy(
   }
 
   const totalVetoes = vetoesByKey.size;
-  const records: RedTeamVetoRecord[] = [];
-  if (totalVetoes > 0) {
-    for (const row of listMaturedSkippedCounterfactuals(userId, Math.max(auditLimit, totalVetoes * 2))) {
-      const veto = vetoesByKey.get(`${row.runId}:${normalizeSymbol(row.symbol)}`);
-      if (!veto || row.returnPct === undefined) continue;
-      const returnPct = veto.side === "short" ? -row.returnPct : row.returnPct;
-      records.push({
+  // Keyed (runId, symbol) lookups rather than a return_pct-DESC top slice of all matured
+  // rows: the top-return slice could drop exactly the low/negative-return vetoes (the
+  // avoided losers) that vetoValueAddRate exists to count (Codex review on PR #365).
+  const maturedPairs: Array<{ record: RedTeamVetoRecord; maturedAt: string }> = [];
+  for (const veto of vetoesByKey.values()) {
+    const row = getMaturedSkippedCounterfactualByRunSymbol(userId, veto.runId, veto.symbol);
+    if (!row || row.returnPct === undefined) continue;
+    const returnPct = veto.side === "short" ? -row.returnPct : row.returnPct;
+    maturedPairs.push({
+      record: {
         runId: veto.runId,
         symbol: veto.symbol,
         side: veto.side,
@@ -903,9 +914,13 @@ export function getRedTeamEfficacy(
         reason: veto.reason,
         model: veto.model,
         returnPct
-      });
-    }
+      },
+      maturedAt: row.updatedAt
+    });
   }
+  // Most recent counterfactual maturation first (the documented `records` ordering contract).
+  maturedPairs.sort((a, b) => b.maturedAt.localeCompare(a.maturedAt));
+  const records: RedTeamVetoRecord[] = maturedPairs.map((pair) => pair.record);
 
   const maturedVetoes = records.length;
   const valueAdds = records.filter((r) => r.returnPct < 0).length;

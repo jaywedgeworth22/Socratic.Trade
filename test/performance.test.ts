@@ -343,6 +343,35 @@ describe("getThesisScorecard", () => {
     expect(efficacy.vetoValueAddRate).toBe(100);
   });
 
+  it("getRedTeamEfficacy scans audits BY KIND — a flood of newer other-kind audits cannot evict veto history", async () => {
+    const { audit } = await import("../src/lib/db");
+    const userId = `redteam-eff-kind-${randomUUID()}`;
+
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-old", symbol: "AAPL", side: "buy", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    // Ten newer audit rows of OTHER kinds — more than the auditLimit below. Under the old
+    // all-kind scan (LIMIT applied before the kind filter), these would push the veto out
+    // of the window entirely and the scorecard would report zero veto history.
+    for (let i = 0; i < 10; i += 1) {
+      audit("signal_snapshot", { runId: `run-noise-${i}`, signals: [] }, userId);
+    }
+
+    const efficacy = getRedTeamEfficacy(userId, { auditLimit: 5 });
+    expect(efficacy.totalVetoes).toBe(1);
+  });
+
+  it("getRedTeamEfficacy excludes EXIT vetoes from totals (no counterfactual is ever recorded for them)", async () => {
+    const { audit } = await import("../src/lib/db");
+    const userId = `redteam-eff-exit-${randomUUID()}`;
+
+    // A vetoed SELL (exit) is audited by the strategy but never gets a counterfactual row —
+    // counting it in totalVetoes would permanently depress maturation coverage.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-exit", symbol: "AAPL", side: "sell", reason: "Premature exit.", model: "gpt-4.1-mini" }, userId);
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-open", symbol: "MSFT", side: "buy", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.totalVetoes).toBe(1);
+  });
+
   it("groups realized outcomes by the sector each position was opened in", async () => {
     const { insertFillEvent } = await import("../src/lib/db");
     const account = "SECT1";
