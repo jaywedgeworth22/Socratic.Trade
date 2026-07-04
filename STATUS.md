@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Production deployed: Codex #442 and shared-dep #444
+Production `trading-live` is at `1e1a15bc` (`origin/main`), which includes both
+`94669873` / PR #442 (`feat(console): add swimlane approval and decision trace UI`) and
+PR #444 (`chore(deps): pin shared package to public HTTPS tag`). GitHub Actions `Deploy`
+completed successfully for the current `main`, PM2 `trading` is online from
+`/Users/jay/apps/trading-live`, `https://socratictrade.com/api/health` returns 200, and the
+new decision trace API/page artifacts exist in the production `.next/server/app` build.
+
+Preview caveat: beta/Codex preview worktrees were not force-synced because the local
+worktrees have generated `next-env.d.ts` diffs; per preview freshness policy, leave them
+untouched until their owners clean/sync them. Source of truth for deployed behavior is
+production `socratictrade.com`.
+
 ## 2026-07-04 — Shared public dependency HTTPS hardening (Codex)
 Branch `codex/shared-dep-https-hardening`, worktree
 `/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`. Follow-up to the public
@@ -22,7 +35,8 @@ Verification: tokenless/no-SSH `npm ci` passed with `NPM_TOKEN`, `NODE_AUTH_TOKE
 passed with 0 errors / 308 existing warnings; `npx tsc --noEmit`; `npm test` (253 files / 2457
 tests); `npm run build` passed with existing Next middleware/Sentry Edge warnings. `npm audit`
 still reports the pre-existing `tsx` -> `esbuild` moderate dev-server advisory.
-See `docs/rollouts/2026-07-04-shared-dep-https-hardening.md`.
+PR #444 merged and deployed to production at `1e1a15bc`; see
+`docs/rollouts/2026-07-04-shared-dep-https-hardening.md`.
 
 ## 2026-07-04 — Codex console/UI swimlane: approvals receipt, trace inspector, a11y/parity
 Branch `codex/console-ui-swimlane`, worktree `/Users/jay/apps/trading-codex-ui-swimlane`, claimed
@@ -38,8 +52,8 @@ stored custom IDs visible instead of collapsing to an anonymous custom input.
 Verification green after merge-forward to `origin/main`: `npm run lint` (0 errors, 308 existing
 warnings), `npx tsc --noEmit`, `npm test` (253 files / 2457 tests), `npm run build` (passes with
 existing Next middleware deprecation + webpack cache warnings).
-See `docs/rollouts/2026-07-04-console-ui-swimlane.md`. Next action: open the PR, then sync the
-Codex preview after landing if the worktree is clean.
+PR #442 merged and is live in current production HEAD `1e1a15bc`; see
+`docs/rollouts/2026-07-04-console-ui-swimlane.md`.
 
 ## 2026-07-04 — Landing-operator merge-forward + dedup fix (Wave-2 Outcome Engine)
 Picked up `claude/w2-outcome-engine` mid-merge (prior operator restart left conflict markers

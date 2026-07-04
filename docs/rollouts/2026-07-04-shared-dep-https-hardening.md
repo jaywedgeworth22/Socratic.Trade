@@ -38,8 +38,12 @@
 - `npm test` — 253 files, 2457 tests passed.
 - `npm run build` — passed with existing Next middleware deprecation and Sentry Edge runtime warnings.
 - `npm audit` — still reports the pre-existing `tsx` -> `esbuild` moderate dev-server advisory.
+- PR #444 merged to `main` as `1e1a15bc` on 2026-07-04.
+- GitHub Actions `Deploy` completed successfully for `1e1a15bc`.
+- Production `/Users/jay/apps/trading-live` is at `1e1a15bc`; PM2 `trading` is online.
+- `https://socratictrade.com/api/health` returned 200 after deployment.
 
 ## Follow-ups
 
-- Land the paired Congress.Trade HTTPS lockfile hardening so both pin checks compare the same exact `v1.2.0` git ref.
-- The older `claude/tokenless-git-dep` PR is superseded for the dependency/auth cleanup if this branch lands first.
+- Paired Congress.Trade HTTPS lockfile hardening landed first as PR #140, so both consumers pin the same exact `v1.2.0` git ref.
+- The older `claude/tokenless-git-dep` PR is superseded for the dependency/auth cleanup.

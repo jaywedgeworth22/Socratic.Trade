@@ -50,6 +50,15 @@
 - `npm test` - passed before merge-forward at 252 files / 2451 tests; passed after merge-forward at 253 files / 2457 tests.
 - `npm run build` - passed; existing warnings: Next `middleware` deprecation and webpack cache big-string notices.
 
+## Deployment
+- PR #442 merged to `main` as `94669873` on 2026-07-04.
+- The current production worktree `/Users/jay/apps/trading-live` is at `1e1a15bc`, which contains `94669873`.
+- GitHub Actions `Deploy` completed successfully for the current `main`.
+- PM2 process `trading` is online from `/Users/jay/apps/trading-live`.
+- `https://socratictrade.com/api/health` and local `http://localhost:4000/api/health` returned 200.
+- Production build artifacts exist for `app/api/socratic/decisions/[id]/route.js` and `app/console/decisions/[id]/page.js`.
+- Beta/Codex previews were not force-synced because their worktrees had generated `next-env.d.ts` diffs; leave them for the owning worktree cleanup per preview freshness policy.
+
 ## Follow-ups
 - The approval card can only show fallback-chain configuration, not per-hop failover history, because persisted proposals currently store the served model but not each failed model attempt.
 - Reward:risk geometry intentionally remains unavailable for exits or proposals missing a complete opening bracket.

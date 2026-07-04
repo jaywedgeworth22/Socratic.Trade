@@ -8,7 +8,8 @@ filling the missing pieces.
 > **2026-07-04 - Shared public dependency hardening (Codex).** No roadmap scope change. Socratic
 > now consumes `congress-trading-shared` from the public HTTPS git tag instead of GitHub Packages,
 > and CI/deploy setup returns to plain `npm ci`. This removes package-read token requirements for
-> the shared contract dependency while preserving the cross-app pin check.
+> the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
+> deployed to production at `1e1a15bc`.
 
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
@@ -46,7 +47,8 @@ filling the missing pieces.
 > LIVE phrase-gate parity, Sheet focus trap, read-only `/console/decisions/[id]` trace inspector with
 > coach notes/framework `ownerResponse`, high-signal ticker drawer affordances, and Strategy custom
 > model select parity. No roadmap scope change; this hardens the existing Autonomy Desk/console
-> parity track. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+> parity track. Merged as PR #442 and live in production HEAD `1e1a15bc`. See
+> `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
 
 > **2026-07-03 - Socratic admin/RAG/settings parity pass (Codex).** The
 > branch `codex/live-thesis-portfolio-framing` is the current broad follow-up

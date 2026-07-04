@@ -56,6 +56,17 @@ to `socratictrade.com`, record the release commit + date here._
   `socratictrade.com`. Includes explicit `Test Account - Local Mock Paper Account`
   restore and Pinecone/Voyage/provider cap email alerts; production health 200 after
   deployment.
+- **2026-07-04** — `trading-live` contains `94669873` (PR #442) and current
+  production HEAD `1e1a15bc` on `socratictrade.com`. Includes the Codex
+  console/UI swimlane: approval provenance/citations, mobile LIVE phrase parity,
+  Sheet focus trap, read-only decision trace, ticker drawer parity, and Strategy
+  custom-model select parity. Verified Deploy workflow success, PM2 `trading`
+  online, `/api/health` 200, and built route/page artifacts present under
+  `.next/server/app`.
+- **2026-07-04** — `trading-live` published at `1e1a15bc` (PR #444) on
+  `socratictrade.com`. Includes the tokenless public HTTPS
+  `congress-trading-shared` dependency path; production health 200 after
+  deployment.
 
 ---
 
@@ -197,24 +208,6 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
-
-- **Shared public dependency HTTPS hardening (Codex, branch `codex/shared-dep-https-hardening`,
-  worktree `/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`) — 2026-07-04.**
-  Socratic consumes `@jaywedgeworth22/congress-trading-shared` from the exact public HTTPS git tag,
-  removes GitHub Packages install auth/helper plumbing, and verifies no-token/no-SSH `npm ci` plus
-  lint/tsc/test/build. Paired Congress.Trade branch tightens `app/package*.json` to the same tag
-  and HTTPS lockfile URL.
-
-- **CODEX console/UI swimlane (Codex, worktree `/Users/jay/apps/trading-codex-ui-swimlane`,
-  branch `codex/console-ui-swimlane`) — claimed 2026-07-04 from sync-21.** Priority:
-  approvals surface pack first (approval-card provenance, red-team trigger chip, R:R geometry,
-  mobile LIVE phrase-gate parity, Sheet focus-trap), then `/console/decisions/[id]` decision-trace
-  inspector over W2 case shapes, coach-on-trace UI, and the reserved ticker/settings/model parity
-  trio. KEEPOUT: Claude memory/RAG internals and Monet risk gates. **Status 2026-07-04:** implemented
-  and locally verified on branch; PR pending. Delivered approval provenance/citations, mobile LIVE
-  phrase parity, Sheet focus trap, read-only decision trace + coach notes/framework `ownerResponse`,
-  top ticker drawer gaps, and Strategy custom-model select parity. Verification: lint 0 errors / 308
-  warnings, tsc, 253-file/2457-test suite, build.
 
 - **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
   worktree `~/apps/trading-wt-w2-outcome`, based on `claude/w1-learning-loops`) — four §A items:
