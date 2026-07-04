@@ -8,6 +8,43 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
+Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
+provenance headers + stable chunk ids). Implements the composite expert review's single
+highest-leverage item (section A item 1, [Both]): close the write-only episodic memory loop so the
+agent retrieves its own past decisions + owner coaching AT DECISION TIME.
+1. **New `src/lib/experience-memory.ts`.** WRITE half: `recordClosedLotExperience` — hooked
+   fire-and-forget from `performance.recordFillFromProposal` on every sell/cover fill — replays the
+   account's fills through the same FIFO accounting the scorecards use (`calculatePnl`), finds the
+   lots THAT fill closed, and embeds one experience document per closed lot: entry state (8 factor
+   sub-scores, `entryMarketRegime`, breadth snapshot, thesisTag, sector, entry rationale) +
+   realized outcome metadata `{return_pct, holding_days, risk_exit, mae?, mfe?}`, into the
+   `source="experience-memory"` namespace keyed by the ENTRY proposalId (`doc_type=
+   "socratic-decision"` so it shares the episodic retrieval surface). Entry fills now also stamp
+   the FULL `factorBreakdown` + `scanBreadthPct` into `raw` (additive) so the state vector is the
+   entry-time state, not a lookahead reconstruction.
+2. **Decision-time retrieval (READ half).** `retrieveDecisionExperiences`: a SECOND retrieval pass
+   per run in `strategy.ts` over doc types `['socratic-decision','coach-note','lesson']`
+   (coach-note/lesson writers land via parallel lanes; consumed here), queried with a SITUATION
+   SKETCH (regime + candidate dominant-factor/sector/evidence bulletins — NOT the generic filings
+   query), cross-symbol (`RetrieveOptions.matchAllSymbols`, additive), k-NN 5-10 (default 8),
+   same-run neighbors excluded (entry OR exit run id), as-of stamped (no lookahead).
+3. **Injection with evidence parity.** Labeled `closestHistoricalAnalogs` ("CLOSEST HISTORICAL
+   ANALOGS", top-analog similarity shown, opposite-realized-sign priors labeled
+   `[COUNTEREXAMPLE — opposite realized sign]`) + `ownerCoaching` blocks injected into BOTH Bull
+   and Bear userContent. Advisory only — never threaded into sizing/policy.
+4. **Per-run injected-id persistence.** Audit kind `experience_retrieval` records
+   `{runId, asOf, query, analogIds, coachingIds, counterexampleIds, topAnalogSimilarity}`; the
+   chunks also ride onto `socraticRagAttributions` (persisted + re-indexed per decision case) —
+   the run-input side of retrieval-usefulness scoring (full scoring is a later item).
+   Additive `RetrievedChunk.metadata` passthrough (text omitted) supports the exclusion/labeling.
+   Opt-out: `EXPERIENCE_MEMORY=off`. Known v1 gap: live (broker) closing fills are
+   `pending_reconciliation` at hook time, so their experience write no-ops until a later hook on
+   the reconciliation path (documented in the rollout note).
+   Verification: lint 0 errors; tsc clean; 2395 tests / 249 files green (7 new across
+   `test/experience-memory.test.ts` + `test/strategy-episodic-injection.test.ts`); build green.
+   See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`. Pushed, no PR — lands via the
+   landing train after its base branch lands.
 ## 2026-07-04 — Add the `agent/monet` preview lane (Monet, cloud)
 Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
 lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` gains `monet` +
