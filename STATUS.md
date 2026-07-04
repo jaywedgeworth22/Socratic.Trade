@@ -8,6 +8,43 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
+New Sentry project `fleet-infra` (org jays-services), DSN in
+`/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).
+**Part A — host monitor (machine-side, no repo dependency):**
+`/Users/jay/apps/fleet-sentry-monitor/monitor.py`, a single-pass Python script whose ~120s cadence
+comes from pm2 restarting it after each pass sleeps and exits (registered as pm2 app
+`fleet-sentry-monitor`, `pm2 save`d — confirmed running, `status: online`). Each pass: `pm2 jlist`
+crash-loop detection (restart delta >= 5 within one interval -> error, fingerprinted per
+app+condition with hourly dedup via a local `state.json`), down detection (`trading`/`trading-main`
+non-online -> error, any other app -> warning); Claude desktop presence/RSS as breadcrumb only
+(not-running is not an error); disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+files >512MB warning; `gh api rate_limit` core/graphql <300 remaining -> warning with reset time;
+self-hosted Actions runner status as context only (offline is expected/normal); and a Sentry Crons
+self check-in (monitor slug `fleet-host-monitor`, upsert config: interval 2min, margin 5,
+max_runtime 2, America/Chicago) so a dead monitor alerts by absence. Verified live, not just
+locally: two real pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta mutation
+correctly fired the "pm2 crash loop: trading-codex" error at delta=7, and the `gh` rate-limit
+warning fired for real mid-session (fleet-wide testing burned graphql to 0 remaining).
+**Part B — CI failure reporter (repo-side, additive only):** new worktree
+`~/apps/trading-wt-sentry-ci` on branch `claude/sentry-ci-observability`, cut from `origin/main`
+(81c707c2). Two brand-new files, zero edits to any existing workflow:
+`.github/workflows/sentry-ci-report.yml` (listens on `workflow_run: types:[completed]` for all 7
+existing workflows — CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw Sentry envelope HTTP via
+`urllib`, no `sentry-sdk`/action-marketplace dependency). On failure conclusion: a Sentry error
+event tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`. On a
+schedule-triggered run: an additional Sentry Crons check-in (`ci-<workflow-slug>`, e.g.
+`ci-security`) whose `monitor_config.schedule` mirrors that workflow's own cron (Security
+`41 10 * * 1`, Playwright Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`) — so a
+nightly/weekly job that silently stops running (not "fails" but "never fires again") raises a
+missed-check-in alert. Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value
+mechanically from the `.env` file (never echoed to any log/transcript). Locally dry-ran the
+reporter script against the real DSN: both the failure-event and check-in envelope POSTs returned
+HTTP 200 before this went live in CI. See
+`docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail, verification commands,
+and follow-ups.
+
 ## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
 Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
 2026-07-04 composite expert review (section C, lines 233-310). S-effort wiring of already-built RAG
