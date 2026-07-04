@@ -74,6 +74,16 @@ adversarial-debate lenses before making a decision.
   proposal is dropped — parity with the sibling `proposal_skipped_negative_ev` /
   `proposal_skipped_correlation` audits — so a vetoed high-conviction trade is visible in the
   Activity/Audit feed rather than only in the server console.
+- **Bear-veto counterfactuals + efficacy scorecard (2026-07-04):** the audit event above is now
+  additionally stamped with `runId` and `model`, and the Bear-reject branch calls
+  `recordRejectedProposalCounterfactual` for opening (buy/short) proposals — the same
+  counterfactual pipeline policy blocks and human rejections already feed — so a vetoed
+  high-conviction trade's post-veto return matures into missed-opportunity analytics. New
+  `getRedTeamEfficacy()` (`src/lib/performance.ts`) joins the audit events to matured
+  counterfactual rows (via `runId+symbol`) and reports rejection rate, veto value-add (the vetoed
+  trade lost money — the Bear helped), survivor-risk hit rate (the vetoed trade won — the Bear
+  missed it), and a per-model breakdown. Advisory/read-only; API/db-level only — no console/Results
+  UI wiring yet (see `docs/rollouts/2026-07-04-w1-learning-loops.md`).
 
 ---
 

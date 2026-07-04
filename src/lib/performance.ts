@@ -811,6 +811,135 @@ export function getSkippedCandidateReturns(
   return returns.sort((a, b) => b.returnPct - a.returnPct).slice(0, limit);
 }
 
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
+}
+
+/**
+ * Red Team (Bear) efficacy scorecard — advisory-only measurement of the adversary that can veto any
+ * high-conviction proposal. Joins `proposal_rejected_by_red_team` audit events (the veto decision;
+ * stamped with runId + model since 2026-07) to their matured counterfactual return in
+ * `skipped_candidate_counterfactuals` (written by `recordRejectedProposalCounterfactual` at veto time,
+ * same pipeline as policy blocks / human rejections) via the shared `(runId, symbol)` key. A veto whose
+ * counterfactual return is NEGATIVE means the vetoed trade would have lost money — the Bear "added
+ * value" by keeping the proposal out. A veto whose counterfactual return is POSITIVE means the vetoed
+ * trade would have made money — the Bear's rejection MISSED a winner. Never gates anything; this is a
+ * read-only scorecard for the approval-time debate prompt and the Results page (console wiring left for
+ * the console lane — see docs/rollouts/2026-07-04-w1-learning-loops.md).
+ */
+export interface RedTeamEfficacy {
+  /** Total Bear-veto audit events observed in the scanned window (matured or not). */
+  totalVetoes: number;
+  /** Vetoes whose post-veto counterfactual return has matured (resolvable — never fabricated). */
+  maturedVetoes: number;
+  /** maturedVetoes / totalVetoes (0 when no vetoes observed). Coverage, not a rejection rate. */
+  maturedCoveragePct: number;
+  /** Share of MATURED vetoes where the counterfactual return was negative (the veto avoided a loser). */
+  vetoValueAddRate: number;
+  /** Share of MATURED vetoes where the counterfactual return was positive (the veto missed a winner —
+   *  the survivor-risk the Bear itself introduced by rejecting a trade that would have worked). */
+  survivorRiskHitRate: number;
+  /** Mean counterfactual return (%) across matured vetoes; negative is good (vetoes avoided losses). */
+  avgReturnPct: number;
+  /** Per red-team model breakdown (present only for models that stamped ≥1 matured veto). */
+  byModel: Array<{
+    model: string;
+    maturedVetoes: number;
+    vetoValueAddRate: number;
+    survivorRiskHitRate: number;
+    avgReturnPct: number;
+  }>;
+  /** The individual matured veto records, most recent counterfactual maturation first — bounded by `limit`. */
+  records: RedTeamVetoRecord[];
+}
+
+export function getRedTeamEfficacy(
+  userId: string = "local",
+  options: { auditLimit?: number; limit?: number } = {}
+): RedTeamEfficacy {
+  const auditLimit = options.auditLimit ?? 500;
+  const limit = options.limit ?? 50;
+
+  const vetoesByKey = new Map<string, { runId: string; symbol: string; side?: string; thesisTag?: string; reason?: string; model?: string }>();
+  for (const event of listAudit(auditLimit, userId)) {
+    if (event.kind !== "proposal_rejected_by_red_team") continue;
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; thesisTag?: string; reason?: string; model?: string } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    const symbol = normalizeSymbol(payload.symbol);
+    vetoesByKey.set(`${payload.runId}:${symbol}`, {
+      runId: payload.runId,
+      symbol,
+      side: payload.side,
+      thesisTag: payload.thesisTag,
+      reason: payload.reason,
+      model: payload.model
+    });
+  }
+
+  const totalVetoes = vetoesByKey.size;
+  const records: RedTeamVetoRecord[] = [];
+  if (totalVetoes > 0) {
+    for (const row of listMaturedSkippedCounterfactuals(userId, Math.max(auditLimit, totalVetoes * 2))) {
+      const veto = vetoesByKey.get(`${row.runId}:${normalizeSymbol(row.symbol)}`);
+      if (!veto || row.returnPct === undefined) continue;
+      const returnPct = veto.side === "short" ? -row.returnPct : row.returnPct;
+      records.push({
+        runId: veto.runId,
+        symbol: veto.symbol,
+        side: veto.side,
+        thesisTag: veto.thesisTag,
+        reason: veto.reason,
+        model: veto.model,
+        returnPct
+      });
+    }
+  }
+
+  const maturedVetoes = records.length;
+  const valueAdds = records.filter((r) => r.returnPct < 0).length;
+  const survivorHits = records.filter((r) => r.returnPct > 0).length;
+  const avgReturnPct = maturedVetoes > 0 ? records.reduce((sum, r) => sum + r.returnPct, 0) / maturedVetoes : 0;
+
+  const byModelMap = new Map<string, RedTeamVetoRecord[]>();
+  for (const record of records) {
+    if (!record.model) continue;
+    const bucket = byModelMap.get(record.model);
+    if (bucket) bucket.push(record);
+    else byModelMap.set(record.model, [record]);
+  }
+
+  return {
+    totalVetoes,
+    maturedVetoes,
+    maturedCoveragePct: totalVetoes > 0 ? Number(((maturedVetoes / totalVetoes) * 100).toFixed(1)) : 0,
+    vetoValueAddRate: maturedVetoes > 0 ? Number(((valueAdds / maturedVetoes) * 100).toFixed(1)) : 0,
+    survivorRiskHitRate: maturedVetoes > 0 ? Number(((survivorHits / maturedVetoes) * 100).toFixed(1)) : 0,
+    avgReturnPct: Number(avgReturnPct.toFixed(2)),
+    byModel: Array.from(byModelMap.entries()).map(([model, modelRecords]) => {
+      const modelValueAdds = modelRecords.filter((r) => r.returnPct < 0).length;
+      const modelSurvivorHits = modelRecords.filter((r) => r.returnPct > 0).length;
+      const modelAvg = modelRecords.reduce((sum, r) => sum + r.returnPct, 0) / modelRecords.length;
+      return {
+        model,
+        maturedVetoes: modelRecords.length,
+        vetoValueAddRate: Number(((modelValueAdds / modelRecords.length) * 100).toFixed(1)),
+        survivorRiskHitRate: Number(((modelSurvivorHits / modelRecords.length) * 100).toFixed(1)),
+        avgReturnPct: Number(modelAvg.toFixed(2))
+      };
+    }),
+    records: records.slice(0, limit)
+  };
+}
+
 /**
  * Minimum closed lots before the auto-tuner is allowed to recommend factor-weight
  * shifts. Below this, suggestions are statistically untrustworthy and could overfit

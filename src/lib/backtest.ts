@@ -15,6 +15,7 @@
 import { listSignalSnapshotAuditAfter, type SignalSnapshotAuditRow } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import type { OHLCBar } from "./indicators";
+import { addTradingDays } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import type { MarketFactor, MarketFactorBreakdown, ScoringWeights } from "./types";
@@ -447,11 +448,18 @@ function extractSubScores(breakdown?: MarketFactorBreakdown): Record<MarketFacto
   return any ? out : undefined;
 }
 
-/** Mirror of counterfactual-learning's convention: snapshot day + N calendar days, ISO date. */
+/**
+ * Shared with counterfactual-learning's `targetBusinessDate`: snapshot day + N TRADING
+ * days (see `market-calendar.addTradingDays`), not N calendar days. Prior to 2026-07 this
+ * added `horizonDays * 86_400_000` ms of calendar time under a "business date" name, so a
+ * Friday snapshot matured after only 3 trading sessions while a Monday one matured after
+ * the full 5 — see docs/rollouts/2026-07-04-w1-learning-loops.md for the discontinuity note.
+ */
 function targetBusinessDate(snapshotDate: string, horizonDays: number): string {
   const time = Date.parse(snapshotDate);
   if (!Number.isFinite(time)) return snapshotDate;
-  return new Date(time + horizonDays * DAY_MS).toISOString().slice(0, 10);
+  const normalized = new Date(time).toISOString().slice(0, 10);
+  return addTradingDays(normalized, horizonDays);
 }
 
 /** First daily close on/after `targetDate`. Undefined → not matured (never fabricate). */

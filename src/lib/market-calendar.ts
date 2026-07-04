@@ -105,6 +105,50 @@ export function isTradingDay(date?: Date): boolean {
   return !holidays.has(dateStr);
 }
 
+const ONE_DAY_MS = 86_400_000;
+
+/**
+ * Add `horizonDays` TRADING days (not calendar days) to a 'YYYY-MM-DD' date, honoring
+ * `isTradingDay` (weekends + full-close holidays). Returns the resulting date as
+ * 'YYYY-MM-DD'.
+ *
+ * Historical note: prior to 2026-07, both `counterfactual-learning.ts` and
+ * `backtest.ts` computed this as `snapshotDate + horizonDays * 86_400_000` ms of
+ * CALENDAR time under a "business date" name — so a Friday snapshot matured after
+ * only 3 trading days (Sat/Sun absorbed into the horizon) while a Monday snapshot
+ * matured after the full 5, introducing weekday-dependent noise into every downstream
+ * IC/counterfactual metric. This function is the single shared replacement; it always
+ * lands exactly `horizonDays` TRADING sessions after the input date regardless of which
+ * weekday the snapshot fell on. Switching to it shifts historical target dates for
+ * snapshots taken on Thu/Fri (and around holidays) — see
+ * docs/rollouts/2026-07-04-w1-learning-loops.md for the one-time discontinuity note.
+ *
+ * `horizonDays <= 0` returns the input date unchanged. Uses UTC-midnight date-only
+ * arithmetic (the input/output are calendar date strings, not timestamps), so DST does
+ * not affect day-stepping.
+ */
+export function addTradingDays(dateStr: string, horizonDays: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return dateStr;
+  // Anchor at UTC noon (not midnight): isTradingDay() reads the America/New_York wall-clock
+  // date, and NY is always behind UTC (UTC-4/-5), so a UTC-midnight anchor rolls back into
+  // the PRIOR NY calendar day. Noon UTC is always still the same NY date year-round.
+  let cursor = new Date(Date.UTC(y, m - 1, d, 12));
+  if (!Number.isFinite(cursor.getTime())) return dateStr;
+  let remaining = Math.max(0, Math.floor(horizonDays));
+  // Bound the walk generously (10x the requested horizon, min 30) so a pathological
+  // input can never spin forever; isTradingDay() only ever excludes a small fraction
+  // of days so this is never reached in practice.
+  const maxSteps = Math.max(30, remaining * 10 + 30);
+  let steps = 0;
+  while (remaining > 0 && steps < maxSteps) {
+    cursor = new Date(cursor.getTime() + ONE_DAY_MS);
+    steps += 1;
+    if (isTradingDay(cursor)) remaining -= 1;
+  }
+  return nycDateString(cursor);
+}
+
 /** True when the US equity market is open for regular trading right now. */
 export function isMarketOpen(date: Date = new Date()): boolean {
   // Weekends

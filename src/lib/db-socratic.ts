@@ -263,7 +263,22 @@ export function appendSocraticDecisionCoachNote(id: string, note: string, userId
   const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
   upsertSocraticDecisionCase({ ...existing, userId, coachNotes });
   audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
-  return getSocraticDecisionCase(id, userId);
+  const updated = getSocraticDecisionCase(id, userId);
+  // Re-index the vector-memory case doc so the appended note is actually retrievable at decision
+  // time, not frozen at "coach_notes: none" the way it was written at creation
+  // (indexSocraticDecisionMemory previously ran exactly once, at strategy.ts's original upsert).
+  // The doc's dedupKeyPrefix ("socratic-decision") + stable id/contextId make this an in-place
+  // upsert, not a duplicate vector. Dynamic import avoids a module cycle: socratic-memory ->
+  // vector-db -> ./db (this barrel) -> db-socratic. Fire-and-forget + non-fatal, matching every
+  // other indexSocraticDecisionMemory call site.
+  if (updated) {
+    void import("./socratic-memory")
+      .then(({ indexSocraticDecisionMemory }) => indexSocraticDecisionMemory(updated))
+      .catch((err) => {
+        console.warn("[db-socratic] re-index after coach note failed:", err instanceof Error ? err.message : String(err));
+      });
+  }
+  return updated;
 }
 
 export function createSocraticFrameworkProposal(input: {

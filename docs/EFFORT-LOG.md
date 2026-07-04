@@ -192,6 +192,25 @@ to `socratictrade.com`, record the release commit + date here._
   approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
+- **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
+  `claude/w1-learning-loops`) — three items from the composite expert review (§A, lines 37-161):
+  (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
+  (same pipeline as policy blocks/human rejections) in `strategy.ts`'s Bear-reject branch, stamped
+  with `runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` joins matured vetoed-candidate
+  returns to `proposal_rejected_by_red_team` audit events for rejection rate / veto value-add /
+  survivor-risk hit rate / per-model breakdown — API/db-level only, no console/Results UI wiring
+  (left for the console lane). (2) Re-index decision memory: `appendSocraticDecisionCoachNote` now
+  re-calls `indexSocraticDecisionMemory` after the coach-note append (dynamic import avoids a
+  `db-socratic -> socratic-memory -> vector-db -> ./db` cycle); the stable id/dedupKeyPrefix makes it
+  an in-place upsert. (Outcome/lesson writers don't exist yet in this codebase — a separate,
+  unassigned effort — so only the coach-note lifecycle path was wired.) (3) Trading-day horizon
+  arithmetic: new `addTradingDays()` in `market-calendar.ts` (honors `isTradingDay`, walks weekends
+  + holidays) replaces the calendar-ms arithmetic in `counterfactual-learning.ts` and `backtest.ts`'s
+  `targetBusinessDate`, fixing weekday-dependent horizon noise; historical target dates for
+  Thu/Fri-snapshotted candidates shift (one-time discontinuity, snapshot-tested). Verification green:
+  lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. **PR pending** (push-only; lands
+  via the active landing train). See `docs/rollouts/2026-07-04-w1-learning-loops.md`.
+
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping

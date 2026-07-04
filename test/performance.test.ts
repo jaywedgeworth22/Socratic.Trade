@@ -8,6 +8,7 @@ import {
   getClosedLotCount,
   getConfidenceCalibration,
   getFactorScorecard,
+  getRedTeamEfficacy,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
@@ -289,6 +290,57 @@ describe("getThesisScorecard", () => {
     const rows = getSkippedCandidateReturns({ AAPL: 110 }, userA);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ runId: "run-skip-a", symbol: "AAPL", returnPct: 10, dominantFactor: "momentum" });
+  });
+
+  it("getRedTeamEfficacy joins Bear-veto audit events to matured counterfactual returns, per model", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-${randomUUID()}`;
+
+    // Veto 1 (model A): would have LOST money — the Bear added value.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-1", symbol: "AAPL", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-1:AAPL:5`, userId, exitDate: "2026-06-06", exitPrice: 90, returnPct: -10 });
+
+    // Veto 2 (model A): would have WON — a survivor-risk hit (the veto missed a winner).
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-2", symbol: "MSFT", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 200, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-2:MSFT:5`, userId, exitDate: "2026-06-06", exitPrice: 220, returnPct: 10 });
+
+    // Veto 3 (model B, unmatured): counted in totalVetoes but not maturedVetoes.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-3", symbol: "NVDA", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "claude-opus" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-3", symbol: "NVDA", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 300, horizonDays: 5, targetDate: "2026-06-06" });
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.totalVetoes).toBe(3);
+    expect(efficacy.maturedVetoes).toBe(2);
+    expect(efficacy.maturedCoveragePct).toBeCloseTo((2 / 3) * 100, 1);
+    expect(efficacy.vetoValueAddRate).toBe(50); // 1 of 2 matured vetoes avoided a loser
+    expect(efficacy.survivorRiskHitRate).toBe(50); // 1 of 2 matured vetoes missed a winner
+    expect(efficacy.avgReturnPct).toBe(0); // (-10 + 10) / 2
+
+    const modelA = efficacy.byModel.find((m) => m.model === "gpt-4.1-mini");
+    expect(modelA?.maturedVetoes).toBe(2);
+    expect(modelA?.vetoValueAddRate).toBe(50);
+    expect(modelA?.survivorRiskHitRate).toBe(50);
+    // Model B has zero MATURED vetoes, so it's absent from byModel (never a fabricated 0/0 row).
+    expect(efficacy.byModel.find((m) => m.model === "claude-opus")).toBeUndefined();
+
+    expect(efficacy.records).toHaveLength(2);
+  });
+
+  it("getRedTeamEfficacy side-adjusts SHORT vetoes (a short's counterfactual close-price-up is a value-add)", async () => {
+    const { audit, insertSkippedCounterfactualCandidate, markSkippedCounterfactualMatured } = await import("../src/lib/db");
+    const userId = `redteam-eff-short-${randomUUID()}`;
+
+    // A vetoed SHORT whose price ROSE (raw returnPct positive) means the short thesis would have
+    // LOST money — the veto added value. Side-adjusted returnPct should be negative.
+    audit("proposal_rejected_by_red_team", { runId: "run-rt-short", symbol: "TSLA", side: "short", thesisTag: "Breakdown", reason: "Squeeze risk.", model: "gpt-4.1-mini" }, userId);
+    insertSkippedCounterfactualCandidate({ userId, runId: "run-rt-short", symbol: "TSLA", snapshotAt: "2026-06-01T00:00:00.000Z", refPrice: 100, horizonDays: 5, targetDate: "2026-06-06" });
+    markSkippedCounterfactualMatured({ id: `${userId}:run-rt-short:TSLA:5`, userId, exitDate: "2026-06-06", exitPrice: 120, returnPct: 20 });
+
+    const efficacy = getRedTeamEfficacy(userId);
+    expect(efficacy.records[0]?.returnPct).toBe(-20);
+    expect(efficacy.vetoValueAddRate).toBe(100);
   });
 
   it("groups realized outcomes by the sector each position was opened in", async () => {

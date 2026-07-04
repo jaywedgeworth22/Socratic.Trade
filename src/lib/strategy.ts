@@ -682,7 +682,30 @@ export async function runStrategyOnce(
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
           // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
-          audit("proposal_rejected_by_red_team", { symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason }, userId);
+          // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+          // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
+          audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId);
+          // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
+          // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
+          // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
+          // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
+          // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
+          // is not a missed opportunity); best-effort + non-fatal.
+          if (proposal.side === "buy" || proposal.side === "short") {
+            try {
+              recordRejectedProposalCounterfactual({
+                userId,
+                connectedAccountId,
+                runId,
+                symbol: proposal.symbol,
+                refPrice: proposal.referencePrice,
+                createdAt: new Date().toISOString(),
+                regime: proposal.entryMarketRegime
+              });
+            } catch (err) {
+              console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+            }
+          }
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
         } else if (!redTeamResult.available) {
