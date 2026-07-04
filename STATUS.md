@@ -8,6 +8,13 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Inter-agent coordination protocol (short pointer in AGENTS.md, canonical at /Users/jay/apps/AGENT-SYNC.md)
+Branch `claude/agent-sync-protocol-docs` (docs-only). Added short `## Inter-agent coordination` pointer
+section to AGENTS.md (3-4 lines) linking to the canonical `/Users/jay/apps/AGENT-SYNC.md` protocol reference
+(full protocol: sender tags, terse format, message structure, access/bot mechanics, realtime watcher, conflict resolution,
+effort-board integration, examples). Canonical file is branch-neutral (not in worktree); lives at `/Users/jay/apps/`.
+Rollout note updated at `docs/rollouts/2026-07-04-agent-sync-protocol-docs.md`.
+
 ## 2026-07-04 — Wave-1 quick wins: LLM fixes lane (claude/w1-llm-fixes)
 Branch `claude/w1-llm-fixes` (off `origin/main`), one of four parallel Wave-1 lanes from the
 2026-07-04 composite expert review. Implemented the 5 assigned items (composite review sections B
