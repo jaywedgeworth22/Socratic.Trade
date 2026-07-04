@@ -29,7 +29,7 @@ import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
-import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, isRiskOffFilterRegime, regimeFromLabel, type MacroData } from "./macro";
+import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
@@ -1453,7 +1453,9 @@ export function deterministicBearFilter(
   const medianScore = sortedScores.length > 1
     ? sortedScores[Math.floor(sortedScores.length / 2)]
     : -Infinity;
-  const riskOffRegime = isRiskOffFilterRegime(regimeFromLabel(regime));
+  // Substring match retained deliberately: this gate site is owned by the risk lane (Monet);
+  // it adopts the typed enum from ./market-regime inside #360. Do not convert here.
+  const riskOffRegime = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
 
   const kept: TradeProposal[] = [];
   const vetoed: Array<{ symbol: string; side: string; reason: string }> = [];

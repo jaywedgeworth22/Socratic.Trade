@@ -15,10 +15,11 @@ PR opened per this lane's instructions). Three composite-review items (D+E, high
    (`MarketRegime` enum, `MARKET_REGIME_LABELS`, `MARKET_REGIME_SEVERITY`, `classifyMarketRegime`,
    `regimeFromLabel`, `isCrisisOrInvertedMarketRegime`, `isEscalationMarketRegime`,
    `isRiskOffFilterRegime`). `src/lib/macro.ts` re-exports it; `determineMarketRegime` is now a thin
-   label-projection wrapper — byte-identical persisted label strings, unchanged. `policy.ts`'s crisis
-   cap and `strategy.ts`'s `deterministicBearFilter` now key off the enum instead of independent
-   substring/`startsWith` checks; the console Macro regime card (`app/console/macro/indicators.ts`)
-   uses the enum too (client-safe since `market-regime.ts` has zero server-only imports).
+   label-projection wrapper — byte-identical persisted label strings, unchanged. the risk-gate call
+   sites (`policy.ts` crisis cap, `strategy.ts` `deterministicBearFilter`) deliberately keep their
+   substring checks — enum adoption inside risk gates is the risk lane's (Monet, PR #360) per the
+   owner-assigned swimlane split; the console Macro regime card (`app/console/macro/indicators.ts`)
+   uses the enum (client-safe since `market-regime.ts` has zero server-only imports).
    `regime-watch.ts`'s `isEscalationRegime` intentionally stays a plain substring check — its test
    file fully mocks `./macro` with test-local labels, so importing the typed helpers there would
    break under that mock (documented inline).

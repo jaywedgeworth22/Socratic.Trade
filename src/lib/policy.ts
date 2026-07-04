@@ -19,7 +19,6 @@ import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./inde
 import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
-import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./macro";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -846,7 +845,8 @@ function deRiskInCrisisReason(
 }
 
 function isCrisisOrInvertedRegime(regime?: string): boolean {
-  return isCrisisOrInvertedMarketRegime(regimeFromLabel(regime));
+  const normalized = regime?.toLowerCase() ?? "";
+  return normalized.includes("crisis") || normalized.includes("inverted");
 }
 
 function projectedExposurePct(

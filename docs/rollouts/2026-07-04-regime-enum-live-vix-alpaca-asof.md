@@ -16,12 +16,16 @@ Wave-1 quick-win lane `claude/w1-regime-data`, three composite-review items (sec
    `MARKET_REGIME_LABELS[classifyMarketRegime(macro).regime]` — so it still returns the
    byte-identical label strings that get persisted verbatim as `TradeProposal.entryMarketRegime`
    and read back by every learning bucket/scorecard.
-   - `src/lib/policy.ts`'s `isCrisisOrInvertedRegime` (the crisis-cap gate) now calls
-     `isCrisisOrInvertedMarketRegime(regimeFromLabel(regime))` instead of
-     `regime.toLowerCase().includes("crisis") || .includes("inverted")`.
-   - `src/lib/strategy.ts`'s `deterministicBearFilter` now computes `riskOffRegime` via
-     `isRiskOffFilterRegime(regimeFromLabel(regime))` instead of
-     `regime.startsWith("Crisis") || regime.startsWith("Risk-Off")`.
+   - **Risk-gate call sites deliberately NOT converted (swimlane keepout):** `src/lib/policy.ts`'s
+     `isCrisisOrInvertedRegime` (crisis-cap gate) and `src/lib/strategy.ts`'s
+     `deterministicBearFilter` `riskOffRegime` keep their original substring checks. Per the
+     owner-assigned Fable/Monet swimlane split (Fable=memory/RAG, Monet=risk; #claude-monet-sync
+     sync·2), enum adoption INSIDE risk gates belongs to the risk lane — Monet adopts
+     `isCrisisOrInvertedMarketRegime`/`isRiskOffFilterRegime` from `./market-regime` in the
+     drawdown-advisory re-scope (PR #360). The predicates are exported and pinned by
+     `test/market-regime.test.ts`, so adoption is a one-line swap per site. (An earlier draft of
+     this lane converted both sites; the conversion was stripped before landing to honor the
+     keepout.)
    - `app/console/macro/indicators.ts`'s `regimeInfo` (the console regime card) now classifies via
      `regimeFromLabel` first, falling back to the old substring check only when the enum resolves to
      `"unknown"` (keeps the card's forward-compat degrade-gracefully behavior for any non-canonical
@@ -87,11 +91,11 @@ from cache for up to 6h with the staleness gate unable to detect it.
 - `src/lib/macro.ts` — re-exports `market-regime.ts`; `determineMarketRegime` now a projection over
   `classifyMarketRegime`; adds `fetchLiveVix`, `fetchMacroDataWithLiveVix`, `LIVE_VIX_TTL_MS`,
   `liveVixCache`; `clearMacroCacheForTests` now also clears the live-VIX cache.
-- `src/lib/policy.ts` — `isCrisisOrInvertedRegime` now delegates to
-  `isCrisisOrInvertedMarketRegime(regimeFromLabel(regime))`.
-- `src/lib/strategy.ts` — `deterministicBearFilter`'s `riskOffRegime` now delegates to
-  `isRiskOffFilterRegime(regimeFromLabel(regime))`; the volatility panic brake now reads
-  `fetchMacroDataWithLiveVix` and stamps `vixAsOf` on the audit/notification.
+- `src/lib/policy.ts` — UNTOUCHED in the landed diff (crisis-cap enum adoption stripped per the
+  Fable/Monet swimlane keepout; Monet adopts the predicates in PR #360).
+- `src/lib/strategy.ts` — `deterministicBearFilter` substring check kept (same keepout; comment at
+  the site); the volatility panic brake now reads `fetchMacroDataWithLiveVix` and stamps `vixAsOf`
+  on the audit/notification.
 - `src/lib/regime-watch.ts` — `checkRegimeFlip` now reads `fetchMacroDataWithLiveVix` and stamps
   `vixAsOf` on the `regime_flip` audit entry; `isEscalationRegime` kept as a documented plain
   substring check (see Deviations).
