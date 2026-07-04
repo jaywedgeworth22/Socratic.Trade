@@ -30,8 +30,9 @@ import {
 } from "../src/lib/db";
 import { randomUUID } from "crypto";
 import type { LearnedContextPendingRow } from "../src/lib/types";
-import { applyApprovedPending, ingestLearned, mergeStrategyDirectiveBlock } from "../src/lib/learned-context/store";
+import { applyApprovedPending, ingestLearned, mergeStrategyDirectiveBlock, retrieveLearnedContext } from "../src/lib/learned-context/store";
 import { userIdForEmail } from "../src/lib/auth/identity";
+import { listApprovedRiskContextForDecision, listLearnedContextForDecision } from "../src/lib/db-learning";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${process.env.TMPDIR ?? "/tmp"}/learned-context-pending-test-${Date.now()}.db`;
@@ -187,6 +188,59 @@ describe("approve — risk PROMOTES to advisory row WITHOUT mutating numeric pol
     expect(getStrategyPrompt(USER_A)).toBe(promptBefore);
 
     expect(getPendingLearnedContext(id, USER_A)?.status).toBe("approved");
+  });
+});
+
+describe("owner-approved risk-tier rows reach the retrieval payload (previously write-only)", () => {
+  it("an approved risk row is returned by listApprovedRiskContextForDecision but NOT by the fact-only listLearnedContextForDecision", async () => {
+    const userId = userIdForEmail("risk-retrieval@example.com");
+    const r = await ingestLearned(userId, { ...riskCandidate, symbol: "NVDA" }, "ingest");
+    const id = r.pendingId!;
+    expect(approveAs(id, userId)).toBe(200);
+
+    // The fact-only reader (unchanged invariant) never returns a risk-tier row.
+    const facts = listLearnedContextForDecision(userId, ["NVDA"]);
+    expect(facts.every((row) => row.riskTier === "fact")).toBe(true);
+    expect(facts.some((row) => row.subject === "max_position")).toBe(false);
+
+    // The new risk-tier reader returns exactly the approved row, symbol-scoped.
+    const approvedRisk = listApprovedRiskContextForDecision(userId, ["NVDA"]);
+    expect(approvedRisk.some((row) => row.subject === "max_position" && row.riskTier === "risk")).toBe(true);
+
+    // A different, unrelated symbol does not pull in this NVDA-scoped row.
+    expect(listApprovedRiskContextForDecision(userId, ["XOM"]).some((row) => row.subject === "max_position")).toBe(false);
+
+    // An UNAPPROVED (still-pending) risk candidate must not appear.
+    const stillPending = await ingestLearned(userId, { kind: "pattern", subject: "leverage", value: "run 2x leverage", symbol: "NVDA" }, "ingest");
+    expect(stillPending.pending).not.toBeNull();
+    expect(listApprovedRiskContextForDecision(userId, ["NVDA"]).some((row) => row.subject === "leverage")).toBe(false);
+  });
+
+  it("retrieveLearnedContext appends a labeled 'OWNER-APPROVED GUIDANCE (advisory)' block with the approval date", async () => {
+    const userId = userIdForEmail("risk-retrieval-block@example.com");
+
+    // No approved risk yet: no block should appear.
+    const before = retrieveLearnedContext(userId, ["TSLA"], undefined, { includeShared: false });
+    expect(before.some((line) => line.includes("OWNER-APPROVED GUIDANCE"))).toBe(false);
+
+    const r = await ingestLearned(userId, { kind: "pattern", subject: "max position", value: "cap TSLA at 25% of book", symbol: "TSLA" }, "ingest");
+    const id = r.pendingId!;
+    const beforeApproveIso = new Date().toISOString();
+    expect(approveAs(id, userId)).toBe(200);
+
+    const out = retrieveLearnedContext(userId, ["TSLA"], undefined, { includeShared: false });
+    const headerIndex = out.findIndex((line) => line === "OWNER-APPROVED GUIDANCE (advisory):");
+    expect(headerIndex).toBeGreaterThanOrEqual(0);
+    const approvedLine = out[headerIndex + 1];
+    expect(approvedLine).toContain("TSLA");
+    expect(approvedLine).toContain("cap TSLA at 25% of book");
+    // Approval date is stamped (YYYY-MM-DD) and is today's date (assertEqual on the date prefix,
+    // tolerant of the exact ISO millisecond).
+    expect(approvedLine).toContain(`approved ${beforeApproveIso.slice(0, 10)}`);
+
+    // The invariant this item must preserve: never feeds deterministic sizing — these are advisory
+    // STRINGS returned from the DATA-only retrieval function, never a parsed/typed numeric value.
+    expect(typeof approvedLine).toBe("string");
   });
 });
 

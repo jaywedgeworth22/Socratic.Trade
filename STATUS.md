@@ -8,6 +8,51 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-2 coaching-durable lane: coaching becomes durable learning (Claude)
+Branch `claude/w2-coaching-durable`, worktree `~/apps/trading-wt-w2-coaching`, cut from
+`origin/claude/w1-learning-loops` (its lifecycle re-index-on-coach-note hook is the base this lane
+builds on). Composite expert review §A (`docs/reviews/2026-07-04-composite-expert-review.md`,
+lines ~37-161 — not present on this branch's base yet since w1 forked before that doc landed on
+`main`; pulled the exact text via `git show origin/main:...` for the full "How" specs). Fileset:
+`db-socratic.ts`, `socratic-memory.ts` (indexing helpers only), the learned-context ingestion
+pipeline (`ingestLearned` + its store writes), `db-learning.ts`
+(`listLearnedContextForDecision`/new sibling), the coach-note API route. Three items: **(1)
+Coaching becomes durable learning** — `appendSocraticDecisionCoachNote` now runs every note through
+`ingestLearned` with a new origin `'coach'` (fact-tier → durable `learned_context` row linked to the
+decision id via `subject: coach:<decisionId>`; risk/directive-tier → the existing approval inbox,
+since `'coach'` is not chat and is never hard-capped); the silent `coachNotes.slice(-20)` is replaced
+with archival to a new `socratic_coach_note_archive` table (append-only, never deleted) plus an
+audit receipt (`socratic_decision_coach_notes_archived`) emitted only when archival actually occurs;
+the promotion outcome is stamped as a `coaching`-kind `SocraticEvidenceItem` on the case so
+retrievals of a coached case carry "coached"/"promoted to durable lesson" provenance via
+`buildSocraticMemoryDocument`'s evidence summary. **(2) Coach-note vectors** — new
+`buildCoachNoteMemoryDocument`/`indexCoachNoteMemory` in `socratic-memory.ts` store each coach note
+as its own retrievable vector (`doc_type: 'coach-note'`, metadata `{symbol, thesis_tag, regime,
+decision_id}`, `dedupKeyPrefix: "coach-note"` — a disjoint namespace from the decision doc's
+`"socratic-decision"` prefix, so this is always additive, never an overwrite). **(3) Owner-approved
+risk-tier rows now reach prompts** — new `listApprovedRiskContextForDecision` in `db-learning.ts`
+(symbol-scoped, `risk_tier='risk'`, this user's own approved rows only — never pooled across the
+`shared` scope); `retrieveLearnedContext` in `learned-context/store.ts` now appends a labeled "OWNER-
+APPROVED GUIDANCE (advisory)" block with the approval date (`assertedAt`, stamped at promotion time)
+after the ordinary fact bullets — still advisory strings only, never a parsed numeric that could feed
+sizing. `origin`/`LearnedContextOrigin` widened to include `'coach'` with a guarded, idempotent
+`sqlite_master`-DDL-inspecting rebuild of `learned_context`/`learned_context_pending` so an EXISTING
+db.ts on-disk database (not just fresh ones) accepts `'coach'` inserts without breaking its CHECK
+constraint — verified against both a synthetic pre-migration DB and a fresh one. Side-fixes required
+by the widened `LearnedContextOrigin` union: `app/console/approvals/learned-context.tsx`'s
+`ORIGIN_LABEL` map (compile error) plus its stale doc comment claiming risk rows never reach
+retrieval; `account-deletion.ts`'s `DELETE_TABLES_BY_USER_ID` gained the new
+`socratic_coach_note_archive` table (caught by the existing `account-deletion-coverage.test.ts`
+regression guard). New/updated tests: `test/socratic-db.test.ts` (fact→durable row+evidence,
+risk→pending inbox+evidence, archival-at-cap+receipt+non-deletion, coach-note vector shape),
+`test/learned-context-pending.test.ts` (approved risk reaches `listApprovedRiskContextForDecision`
+but not the fact-only reader, symbol scoping, unapproved-pending exclusion, the labeled advisory
+block + approval date in `retrieveLearnedContext`). Verification green: lint 0 errors (pre-existing
+warning backlog only), tsc clean, **2383 tests / 245 files**, build green. Did NOT touch `strategy.ts`,
+`vector-db.ts` internals, or `post-mortem.ts` (other Wave-2 lanes' filesets) — read-only for context.
+Pushed, no PR (lands via the active landing train after its base branch lands). See
+`docs/rollouts/2026-07-04-w2-coaching-durable.md`.
+
 ## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
 Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
 expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same

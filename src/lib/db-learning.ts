@@ -474,6 +474,32 @@ export function listLearnedContextForDecision(
     .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
 }
 
+/**
+ * Live OWNER-APPROVED risk-tier rows for a decision: `applyApprovedPending` promotes an approved
+ * risk-tier pending row into `learned_context` (riskTier='risk'), but `listLearnedContextForDecision`
+ * hard-filters to `risk_tier = 'fact'` only — so an approved risk row previously never reached any
+ * prompt, making the approval inbox a write-only ritual. This is the READ side that closes that loop:
+ * it returns exactly the rows a human explicitly approved (never a row still sitting unreviewed in
+ * `learned_context_pending`), filtered to this user's own rows only (risk-tier guidance is never
+ * pooled across the 'shared' scope — approval is a personal, per-owner act) and to the given symbols
+ * (plus symbol-less general guidance). READ-ONLY — never mutates, and callers must render this as
+ * advisory text only; nothing here is a number that may feed sizing/weights.
+ */
+export function listApprovedRiskContextForDecision(userId: string, symbols: string[]): LearnedContextRow[] {
+  const nowIso = new Date().toISOString();
+  const normalizedSymbols = new Set(symbols.map((s) => s.toUpperCase()));
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM learned_context
+       WHERE superseded_by IS NULL AND risk_tier = 'risk' AND user_id = ?`
+    )
+    .all(userId) as RawLearnedContextRow[];
+  return rows
+    .map(mapLearnedContext)
+    .filter((r) => r.expiresAt === null || r.expiresAt > nowIso)
+    .filter((r) => r.symbol === null || normalizedSymbols.has(r.symbol.toUpperCase()));
+}
+
 export function listLearnedContext(userId: string): LearnedContextRow[] {
   const rows = getDb()
     .prepare("SELECT * FROM learned_context WHERE user_id = ? AND superseded_by IS NULL ORDER BY asserted_at DESC")

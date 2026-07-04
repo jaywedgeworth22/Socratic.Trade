@@ -37,6 +37,7 @@ const DELETE_TABLES_BY_USER_ID = [
   "learned_context_pending",
   "socratic_decisions",
   "socratic_framework_proposals",
+  "socratic_coach_note_archive",
   "synthetic_trailing_stops",
   "broker_protective_stops",
   "audit_events",

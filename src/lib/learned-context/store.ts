@@ -22,6 +22,7 @@ import {
   getStrategyPrompt,
   insertLearnedContext,
   insertPendingLearnedContext,
+  listApprovedRiskContextForDecision,
   listLearnedContextForDecision,
   setStrategyPrompt,
   supersedeLearnedContext
@@ -171,9 +172,17 @@ export async function ingestLearned(
  * from any contributor, formatted as advisory bullet strings for the strategy prompt's
  * `learnedContext` DATA section.
  *
+ * Also appends a labeled "OWNER-APPROVED GUIDANCE (advisory)" block of any risk-tier rows the owner
+ * has explicitly approved out of the pending-changes queue (`applyApprovedPending`) — previously
+ * `listLearnedContextForDecision`'s hard `risk_tier = 'fact'` filter meant an approved risk row NEVER
+ * reached any prompt, making the approval inbox a write-only ritual. This block is clearly separated
+ * and dated so the model (and a human reading the run) can tell it apart from ordinary facts; it
+ * NEVER feeds deterministic sizing — same DATA-only channel as every other learned-context string.
+ *
  * ISOLATION GUARANTEE: a different user's PRIVATE (scope='private') row is NEVER returned to
  * this user — the listLearnedContextForDecision query only widens to scope='shared' rows, never
- * to another user's private rows.
+ * to another user's private rows. Owner-approved risk guidance is never pooled across users either
+ * (listApprovedRiskContextForDecision is always scoped to this user's own approvals).
  *
  * The `regime` argument is accepted for forward-compatibility (regime-conditioned facts) but is
  * not yet used as a filter in this slice.
@@ -206,10 +215,29 @@ export function retrieveLearnedContext(
     if (selected.length >= limit) break;
   }
 
-  return selected.map((row) => {
+  const factLines = selected.map((row) => {
     const sym = row.symbol ? `[${row.symbol}] ` : "";
     return `- ${sym}${row.subject}: ${row.value}`;
   });
+
+  const approvedRisk = listApprovedRiskContextForDecision(userId, symbols).sort((a, b) =>
+    b.assertedAt.localeCompare(a.assertedAt)
+  );
+  if (approvedRisk.length === 0) return factLines;
+
+  // `assertedAt` on a promoted risk row IS its approval date — applyApprovedPending stamps it at
+  // promotion time (the row didn't exist before the owner approved it).
+  const approvedLines = approvedRisk.map((row) => {
+    const sym = row.symbol ? `[${row.symbol}] ` : "";
+    const approvedDate = row.assertedAt.slice(0, 10);
+    return `- ${sym}${row.subject}: ${row.value} (approved ${approvedDate})`;
+  });
+
+  return [
+    ...factLines,
+    "OWNER-APPROVED GUIDANCE (advisory):",
+    ...approvedLines
+  ];
 }
 
 // ── Pending-queue APPROVAL (safety-critical) ────────────────────────────────────

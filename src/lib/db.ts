@@ -872,7 +872,7 @@ function migrate(database: Database.Database): void {
       symbol TEXT,
       value TEXT NOT NULL,
       source TEXT NOT NULL DEFAULT 'inferred',
-      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest','coach')),
       risk_tier TEXT NOT NULL DEFAULT 'fact' CHECK(risk_tier IN ('fact','risk','strategy-directive')),
       confidence REAL NOT NULL DEFAULT 0.5,
       contributor_user_id TEXT,
@@ -891,7 +891,7 @@ function migrate(database: Database.Database): void {
       symbol TEXT,
       value TEXT NOT NULL,
       source TEXT NOT NULL DEFAULT 'inferred',
-      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest')),
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest','coach')),
       risk_tier TEXT NOT NULL CHECK(risk_tier IN ('risk','strategy-directive')),
       classifier_reason TEXT,
       created_at TEXT NOT NULL,
@@ -934,6 +934,20 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_socratic_decisions_user_created ON socratic_decisions (user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_socratic_decisions_run ON socratic_decisions (user_id, run_id);
     CREATE INDEX IF NOT EXISTS idx_socratic_decisions_proposal ON socratic_decisions (user_id, proposal_id);
+
+    -- Coach notes never silently disappear: socratic_decisions.coach_notes keeps only the most
+    -- recent COACH_NOTES_LIVE_CAP notes for prompt/display use, and every note that ages off that
+    -- live window is archived here (append-only, never deleted) with a receipt at archival time
+    -- (see appendSocraticDecisionCoachNote in db-socratic.ts).
+    CREATE TABLE IF NOT EXISTS socratic_coach_note_archive (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      decision_id TEXT NOT NULL,
+      connected_account_id TEXT,
+      note TEXT NOT NULL,
+      archived_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_socratic_coach_note_archive_decision ON socratic_coach_note_archive (user_id, decision_id, archived_at);
 
     CREATE TABLE IF NOT EXISTS socratic_framework_proposals (
       id TEXT PRIMARY KEY,
@@ -1192,6 +1206,68 @@ function migrate(database: Database.Database): void {
       `);
     }
   }
+
+  // Coaching-becomes-durable-learning: 'coach' joins the learned_context origin enum so a coach
+  // note that classifies as a fact can be ingested with its own attributable origin instead of
+  // being mislabeled 'ingest'/'autonomous'. CREATE TABLE IF NOT EXISTS never widens an existing
+  // CHECK constraint, so on an upgraded DB the old ('chat','autonomous','ingest') constraint is
+  // still in force and would reject every 'coach' insert. Guarded by inspecting the live DDL in
+  // sqlite_master (idempotent: only rebuilds tables that still carry the narrower constraint).
+  // Both tables also need a `learned_context.origin` widen because learned_context_pending re-uses
+  // the same origin enum for queued risk/strategy-directive rows.
+  const widenOriginCheck = (table: string, extraColumnsDdl: string, columnNames: string) => {
+    const ddlRow = database
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table) as { sql: string } | undefined;
+    if (ddlRow && !ddlRow.sql.includes("'coach'")) {
+      database.exec(`
+        CREATE TABLE ${table}_v2 (${extraColumnsDdl});
+        INSERT INTO ${table}_v2 (${columnNames}) SELECT ${columnNames} FROM ${table};
+        DROP TABLE ${table};
+        ALTER TABLE ${table}_v2 RENAME TO ${table};
+      `);
+    }
+  };
+  widenOriginCheck(
+    "learned_context",
+    `id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest','coach')),
+      risk_tier TEXT NOT NULL DEFAULT 'fact' CHECK(risk_tier IN ('fact','risk','strategy-directive')),
+      confidence REAL NOT NULL DEFAULT 0.5,
+      contributor_user_id TEXT,
+      asserted_at TEXT NOT NULL,
+      superseded_by TEXT,
+      expires_at TEXT`,
+    "id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, confidence, contributor_user_id, asserted_at, superseded_by, expires_at"
+  );
+  database.exec("CREATE INDEX IF NOT EXISTS idx_learned_context_user ON learned_context (user_id, scope, superseded_by);");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_learned_context_symbol ON learned_context (symbol, scope, superseded_by);");
+  widenOriginCheck(
+    "learned_context_pending",
+    `id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'private' CHECK(scope IN ('private','shared')),
+      kind TEXT NOT NULL CHECK(kind IN ('pattern','decision','fact')),
+      subject TEXT NOT NULL,
+      symbol TEXT,
+      value TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'inferred',
+      origin TEXT NOT NULL CHECK(origin IN ('chat','autonomous','ingest','coach')),
+      risk_tier TEXT NOT NULL CHECK(risk_tier IN ('risk','strategy-directive')),
+      classifier_reason TEXT,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      resolved_at TEXT`,
+    "id, user_id, scope, kind, subject, symbol, value, source, origin, risk_tier, classifier_reason, created_at, status, resolved_at"
+  );
+  database.exec("CREATE INDEX IF NOT EXISTS idx_learned_context_pending_user ON learned_context_pending (user_id, status, created_at);");
 
   const now = new Date().toISOString();
   // NOTE: We no longer seed global settings rows for 'policy' and 'strategyPrompt'.

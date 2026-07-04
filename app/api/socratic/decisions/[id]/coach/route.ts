@@ -11,7 +11,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (note.length > 4000) return NextResponse.json({ error: "note must be 4000 characters or fewer" }, { status: 400 });
   const { id } = await context.params;
   const userId = resolveRequestUserId(request);
-  const decision = appendSocraticDecisionCoachNote(id, note, userId);
+  const decision = await appendSocraticDecisionCoachNote(id, note, userId);
   if (!decision) return NextResponse.json({ error: "decision not found" }, { status: 404 });
   return NextResponse.json(decision);
 }

@@ -192,6 +192,32 @@ to `socratictrade.com`, record the release commit + date here._
   approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
+- **Wave-2 composite-review lane — coaching becomes durable learning** (Claude, worktree
+  `~/apps/trading-wt-w2-coaching`, branch `claude/w2-coaching-durable`, cut from
+  `origin/claude/w1-learning-loops`) — three items from the composite expert review §A: (1)
+  **Coaching becomes durable learning**: `appendSocraticDecisionCoachNote` now runs every coach note
+  through `ingestLearned` with new origin `'coach'` — fact-tier lands a durable `learned_context` row
+  linked to the decision id (`subject: coach:<decisionId>`); risk/directive-tier routes to the
+  existing approval inbox (not chat-hard-capped). The silent `coachNotes.slice(-20)` is replaced with
+  archival to a new `socratic_coach_note_archive` table (append-only, never deleted) plus a receipt
+  audit event emitted only when archival actually occurs. Coaching outcome is stamped as a
+  `coaching`-kind evidence item so coached-case retrievals carry "coached"/promoted-to-durable-lesson
+  provenance. (2) **Coach-note vectors**: new `buildCoachNoteMemoryDocument`/`indexCoachNoteMemory` in
+  `socratic-memory.ts` store each note as its own retrievable vector (`doc_type: 'coach-note'`,
+  metadata `{symbol, thesis_tag, regime, decision_id}`), additive via a disjoint `dedupKeyPrefix`
+  from the parent decision doc. (3) **Owner-approved risk rows now reach prompts**: new
+  `listApprovedRiskContextForDecision` in `db-learning.ts` (symbol-scoped, this user's own approved
+  rows only) feeds a labeled "OWNER-APPROVED GUIDANCE (advisory)" block with approval date into
+  `retrieveLearnedContext` — advisory strings only, the never-feeds-deterministic-sizing invariant is
+  preserved. `LearnedContextOrigin` widened to include `'coach'` with a guarded `sqlite_master`-DDL
+  rebuild of `learned_context`/`learned_context_pending` so existing on-disk DBs accept `'coach'`
+  inserts without breaking their CHECK constraint. Side-fixes: `app/console/approvals/learned-
+  context.tsx` `ORIGIN_LABEL` map + stale doc comment; `account-deletion.ts` gained the new archive
+  table (caught by `account-deletion-coverage.test.ts`). Verification green: lint 0 errors, tsc
+  clean, **2383 tests / 245 files**, build green. Did not touch `strategy.ts`/`vector-db.ts`
+  internals/`post-mortem.ts` (other Wave-2 lanes). **Pushed, no PR** (lands via the active landing
+  train after its base lands). See `docs/rollouts/2026-07-04-w2-coaching-durable.md`.
+
 - **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
   `claude/w1-learning-loops`) — three items from the composite expert review (§A, lines 37-161):
   (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
@@ -334,3 +360,10 @@ to `socratictrade.com`, record the release commit + date here._
   boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
   hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
   owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+- 2026-07-04 — Started **Wave-2 composite-review lane — coaching becomes durable learning** (Claude,
+  worktree `~/apps/trading-wt-w2-coaching`, branch `claude/w2-coaching-durable`, cut from
+  `origin/claude/w1-learning-loops`). ingestLearned-on-coach-note (origin `'coach'`), coach-note
+  archival + receipt (replaces silent `slice(-20)`), coach-note vectors (`doc_type: 'coach-note'`),
+  and owner-approved risk-tier rows now reaching prompts via a labeled advisory block. Gate green:
+  lint 0 errors, tsc clean, 2383 tests / 245 files, build green. Pushed, no PR (lands after its base
+  branch lands). See `docs/rollouts/2026-07-04-w2-coaching-durable.md`.

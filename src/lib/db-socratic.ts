@@ -14,6 +14,12 @@ import type {
   TradeProposal
 } from "./types";
 
+// Coach notes live on socratic_decisions.coach_notes for fast prompt/display access, but that
+// column must never grow unbounded. COACH_NOTES_LIVE_CAP notes stay "live" on the row; anything
+// older is ARCHIVED (never deleted) into socratic_coach_note_archive with a receipt — replacing
+// the old silent `slice(-20)` that used to drop the oldest note with no trace at all.
+const COACH_NOTES_LIVE_CAP = 20;
+
 type DecisionRow = {
   id: string;
   user_id: string;
@@ -63,6 +69,77 @@ type FrameworkRow = {
   created_at: string;
   updated_at: string;
 };
+
+export interface ArchivedCoachNote {
+  id: string;
+  userId: string;
+  decisionId: string;
+  connectedAccountId?: string;
+  note: string;
+  archivedAt: string;
+}
+
+type ArchivedCoachNoteRow = {
+  id: string;
+  user_id: string;
+  decision_id: string;
+  connected_account_id: string | null;
+  note: string;
+  archived_at: string;
+};
+
+function rowToArchivedCoachNote(row: ArchivedCoachNoteRow): ArchivedCoachNote {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    decisionId: row.decision_id,
+    ...(row.connected_account_id ? { connectedAccountId: row.connected_account_id } : {}),
+    note: row.note,
+    archivedAt: row.archived_at
+  };
+}
+
+/**
+ * Archive coach notes that have aged off the live `socratic_decisions.coach_notes` window.
+ * Append-only, never deleted — this is the durable record that replaces the old silent
+ * `slice(-20)` truncation. Returns the archived rows (empty if nothing to archive).
+ */
+function archiveCoachNotes(
+  decisionId: string,
+  userId: string,
+  connectedAccountId: string | undefined,
+  notes: string[]
+): ArchivedCoachNote[] {
+  if (notes.length === 0) return [];
+  const now = new Date().toISOString();
+  const archived: ArchivedCoachNote[] = notes.map((note) => ({
+    id: crypto.randomUUID(),
+    userId,
+    decisionId,
+    ...(connectedAccountId ? { connectedAccountId } : {}),
+    note,
+    archivedAt: now
+  }));
+  const stmt = getDb().prepare(
+    `INSERT INTO socratic_coach_note_archive (id, user_id, decision_id, connected_account_id, note, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  const insertMany = getDb().transaction((rows: ArchivedCoachNote[]) => {
+    for (const row of rows) stmt.run(row.id, row.userId, row.decisionId, row.connectedAccountId ?? null, row.note, row.archivedAt);
+  });
+  insertMany(archived);
+  return archived;
+}
+
+/** List every archived coach note for a decision, oldest first — the durable record of notes that aged off the live window. */
+export function listArchivedCoachNotes(decisionId: string, userId: string = "local"): ArchivedCoachNote[] {
+  const rows = getDb()
+    .prepare(
+      "SELECT * FROM socratic_coach_note_archive WHERE decision_id = ? AND user_id = ? ORDER BY archived_at ASC"
+    )
+    .all(decisionId, userId) as ArchivedCoachNoteRow[];
+  return rows.map(rowToArchivedCoachNote);
+}
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -257,23 +334,136 @@ export function getSocraticDecisionCase(id: string, userId: string = "local"): S
   return row ? rowToDecision(row) : undefined;
 }
 
-export function appendSocraticDecisionCoachNote(id: string, note: string, userId: string = "local"): SocraticDecisionCase | undefined {
+/**
+ * Append an owner coach note to a decision case. This is the "coaching becomes durable learning"
+ * closure: a coach note used to be a bare string capped at `slice(-20)` (the 21st note silently
+ * deleted the oldest with no receipt) that never reached any prompt. Now, on every append:
+ *   (a) the vector-memory case doc is RE-INDEXED (below) so the note is retrievable at decision
+ *       time, not frozen at "coach_notes: none" the way it was written at creation;
+ *   (b) the note is run through `ingestLearned` with origin 'coach' — a fact-tier note lands a
+ *       durable `learned_context` row linked to this decision id; a risk/directive-tier note
+ *       routes to the learned-context approval inbox (ingestLearned's existing non-chat routing —
+ *       'coach' is not chat, so it is never silently dropped, only queued for human confirmation);
+ *   (c) the live `coach_notes` column keeps only the most recent COACH_NOTES_LIVE_CAP notes —
+ *       anything older is ARCHIVED (never deleted) with a receipt, replacing the old silent
+ *       `slice(-20)`;
+ *   (d) the promotion outcome is stamped as a `coaching`-kind evidence item on the case so later
+ *       retrievals of this coached case carry "coached" + promoted-to-durable-lesson provenance
+ *       (surfaced via `buildSocraticMemoryDocument`'s evidence summary).
+ * Best-effort on (b): the coaching append itself must never fail because ingestLearned/the
+ * semantic-gate LLM call failed — the receipt-worthy append (a)/(c) always happens synchronously;
+ * (b)/(d) degrade to a "pending processing" evidence note on failure rather than throwing.
+ */
+export async function appendSocraticDecisionCoachNote(
+  id: string,
+  note: string,
+  userId: string = "local"
+): Promise<SocraticDecisionCase | undefined> {
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;
-  const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
-  upsertSocraticDecisionCase({ ...existing, userId, coachNotes });
-  audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
+  const trimmedNote = note.trim();
+  const allNotes = [...existing.coachNotes, trimmedNote].filter(Boolean);
+  const liveNotes = allNotes.slice(-COACH_NOTES_LIVE_CAP);
+  const notesToArchive = allNotes.slice(0, Math.max(0, allNotes.length - COACH_NOTES_LIVE_CAP));
+
+  // (b) Run the note through ingestLearned (origin 'coach') BEFORE the archival cut so the evidence
+  // item below can describe exactly what happened to THIS note. Never let a classifier/LLM failure
+  // block the append itself.
+  let coachingEvidence: SocraticEvidenceItem;
+  try {
+    const { ingestLearned } = await import("./learned-context/store");
+    const result = await ingestLearned(
+      userId,
+      {
+        kind: "decision",
+        subject: `coach:${id}`,
+        value: trimmedNote,
+        symbol: existing.symbol ?? undefined,
+        source: "coach",
+        confidence: 0.6,
+        intent: trimmedNote
+      },
+      "coach"
+    );
+    if (result.written) {
+      coachingEvidence = {
+        kind: "coaching",
+        title: "Coach note promoted to durable lesson",
+        summary: trimmedNote,
+        source: `learned_context:${result.written.id}`,
+        tone: "positive",
+        data: { learnedContextId: result.written.id, tier: result.tier }
+      };
+    } else if (result.pending) {
+      coachingEvidence = {
+        kind: "coaching",
+        title: "Coach note routed to owner-approval inbox (risk-tier)",
+        summary: trimmedNote,
+        source: `learned_context_pending:${result.pending.id}`,
+        tone: "warning",
+        data: { pendingId: result.pending.id, tier: result.tier }
+      };
+    } else {
+      // PII-dropped or (impossible for origin 'coach', which is not chat-hard-capped) chat-dropped.
+      coachingEvidence = {
+        kind: "coaching",
+        title: "Coach note recorded (not durably ingested)",
+        summary: `${trimmedNote} (dropped from learned_context: ${result.dropped ?? "unknown"})`,
+        tone: "neutral",
+        data: { dropped: result.dropped }
+      };
+    }
+  } catch (err) {
+    coachingEvidence = {
+      kind: "coaching",
+      title: "Coach note recorded (durable-learning ingest pending retry)",
+      summary: trimmedNote,
+      tone: "neutral",
+      data: { error: err instanceof Error ? err.message : String(err) }
+    };
+  }
+
+  upsertSocraticDecisionCase({
+    ...existing,
+    userId,
+    coachNotes: liveNotes,
+    evidence: [...existing.evidence, coachingEvidence]
+  });
+  audit("socratic_decision_coached", { decisionId: id, note: trimmedNote }, userId, existing.connectedAccountId);
+
+  // (c) Archive notes that aged off the live window — append-only, never deleted — and emit a
+  // receipt (audit event) ONLY when archival actually occurred this call.
+  if (notesToArchive.length > 0) {
+    const archived = archiveCoachNotes(id, userId, existing.connectedAccountId, notesToArchive);
+    audit(
+      "socratic_decision_coach_notes_archived",
+      { decisionId: id, archivedCount: archived.length, archivedIds: archived.map((row) => row.id) },
+      userId,
+      existing.connectedAccountId
+    );
+  }
+
   const updated = getSocraticDecisionCase(id, userId);
-  // Re-index the vector-memory case doc so the appended note is actually retrievable at decision
+  // (a) Re-index the vector-memory case doc so the appended note is actually retrievable at decision
   // time, not frozen at "coach_notes: none" the way it was written at creation
   // (indexSocraticDecisionMemory previously ran exactly once, at strategy.ts's original upsert).
   // The doc's dedupKeyPrefix ("socratic-decision") + stable id/contextId make this an in-place
   // upsert, not a duplicate vector. Dynamic import avoids a module cycle: socratic-memory ->
   // vector-db -> ./db (this barrel) -> db-socratic. Fire-and-forget + non-fatal, matching every
   // other indexSocraticDecisionMemory call site.
+  //
+  // Also index THIS note as its own standalone 'coach-note' vector (see socratic-memory.ts). The
+  // note's index is its position in the all-time coach-note history for this decision
+  // (existing.coachNotes.length BEFORE this append, i.e. allNotes.length - 1), so re-indexing the
+  // decision doc on a LATER note never collides with this note's vector id/accession. Sequenced
+  // (not Promise.all) so a transient failure in one never silently swallows the other via a single
+  // shared .catch(), and so both awaits resolve against the identical cached module instance.
   if (updated) {
     void import("./socratic-memory")
-      .then(({ indexSocraticDecisionMemory }) => indexSocraticDecisionMemory(updated))
+      .then(async ({ indexSocraticDecisionMemory, indexCoachNoteMemory }) => {
+        await indexSocraticDecisionMemory(updated);
+        await indexCoachNoteMemory(updated, trimmedNote, allNotes.length - 1);
+      })
       .catch((err) => {
         console.warn("[db-socratic] re-index after coach note failed:", err instanceof Error ? err.message : String(err));
       });

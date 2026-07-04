@@ -1773,7 +1773,7 @@ export interface MemoryItem {
 // this fact-tier slice, is audit-logged-and-dropped (the pending queue is a later slice).
 export type LearnedContextScope = "private" | "shared";
 export type LearnedContextKind = "pattern" | "decision" | "fact";
-export type LearnedContextOrigin = "chat" | "autonomous" | "ingest";
+export type LearnedContextOrigin = "chat" | "autonomous" | "ingest" | "coach";
 export type LearnedContextRiskTier = "fact" | "risk" | "strategy-directive";
 
 /** A persisted learned-context row. `supersededBy` non-null means a newer fact replaced it. */

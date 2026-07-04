@@ -2,12 +2,13 @@
 
 /** Learned-context approval inbox: the queue of things the AI inferred it
  *  wants to remember (risk observations / strategy directives from autonomous
- *  runs or document ingestion) awaiting the owner's explicit approve/reject.
- *  A queued item is NOT in the brain — nothing influences the AI until it is
- *  approved here, and an approval NEVER changes numeric risk limits. Honesty
- *  note: an approved 'risk' observation is recorded durably (advisory row) but
- *  is NOT yet retrieved into runs — listLearnedContextForDecision only reads
- *  fact-tier rows — so the copy says "recorded", never "the AI reads it".
+ *  runs, document ingestion, or owner coach notes) awaiting the owner's
+ *  explicit approve/reject. A queued item is NOT in the brain — nothing
+ *  influences the AI until it is approved here, and an approval NEVER changes
+ *  numeric risk limits. Honesty note: an approved 'risk' observation IS now
+ *  retrieved into runs — as a labeled "OWNER-APPROVED GUIDANCE (advisory)"
+ *  block with its approval date, never as a number that feeds sizing — so the
+ *  copy says "advisory guidance the AI reads", never "changes your limits".
  *
  *  Console rules honored: asymmetric friction (reject is one tap; approve —
  *  which adds standing influence — shows exactly what will be applied first),
@@ -34,6 +35,7 @@ const POLL_MS = 60_000;
 const ORIGIN_LABEL: Record<PendingLearnedItem["origin"], string> = {
   autonomous: "autonomous run",
   ingest: "document ingestion",
+  coach: "your coach note",
   chat: "chat" // defensive: chat-origin risk items are hard-capped server-side and never queued
 };
 
@@ -43,7 +45,7 @@ function tierMeta(tier: PendingLearnedItem["riskTier"]): { label: string; tone: 
         label: "Risk observation",
         tone: "warn",
         explain:
-          "A risk-related takeaway. Approving records it durably in the learned-context store; it is not yet fed back into runs, and it never changes your numeric risk limits."
+          "A risk-related takeaway. Approving records it durably and feeds it back into future runs as labeled, advisory owner guidance — it never changes your numeric risk limits."
       }
     : {
         label: "Strategy directive",
