@@ -25,6 +25,138 @@ horizon noise; historical target dates shift for Thu/Fri snapshots (one-time dis
 documented, not backfilled). Verification green: lint 0 errors, tsc clean, 2377 tests / 245 files,
 build green. PR pending (push-only; lands via the active landing train). See
 `docs/rollouts/2026-07-04-w1-learning-loops.md`.
+## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
+ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
+source of truth; agents never write issues, only a workflow does.
+`scripts/sync-effort-issues.py` (python3 stdlib, no third-party deps) parses `docs/EFFORT-LOG.md`
+at HEAD: top-level `##` section headings are classified by keyword (tolerating wording/emoji
+variation across repos — "Planned / Reserved Before Implementation" vs "Planned / Reserved" both
+map to `planned`), top-level `- `/`* ` bullets become items with indented continuation lines
+folded into the body, and `(none)`/`(seeded empty ...)`-style placeholders are skipped. Each item's
+identity is a SHA1 of its normalized first line, embedded in the issue body as
+`<!-- effort-key: <hash> -->` so re-runs are idempotent and state transitions (Planned -> In
+Progress -> Completed) update the same issue in place rather than creating a new one, as long as
+the first line's wording doesn't change. Planned/In Progress -> issue open (labels `effort-board` +
+`state:planned`/`state:in-progress`, assigned to `jaywedgeworth22` so GitHub pushes mobile
+notifications); Completed/Deployed -> issue closed (`state:completed`/`state:deployed`). Never
+deletes issues; a board row that disappears leaves its mirrored issue untouched. Hand-made issues
+without the marker are ignored entirely. Missing labels are created on first run. Duplicate board
+rows (same normalized first line appearing twice — found for real in this repo's own board, "Wave-1
+quick wins..." logged twice under In Progress) are deduped within a run so they don't multiply
+issues.
+Workflow `.github/workflows/effort-issues-sync.yml` (new, additive): triggers on push to `main`
+touching `docs/EFFORT-LOG.md`, a daily off-minute cron (`12 6 * * *`, drift catch), and
+`workflow_dispatch`. Uses the Actions-provided `GITHUB_TOKEN` (`issues: write`) via plain REST +
+stdlib `urllib`, no GraphQL.
+Rolled out to `Socratic.Trade` (this repo), `congress-trading-shared`, and `API-usage-monitor` —
+identical script/workflow in all three; the script reads `GITHUB_REPOSITORY` from the Actions
+environment so no repo-specific edits were needed. Canonical pattern documented as a new "Issues
+mirror (standard)" subsection in `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`, and the new-app bootstrap
+checklist there now includes copying the two files.
+Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not the machine-local
+live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
+operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
+every live-board edit; documented in the script's own docstring and in the protocol doc.
+**Merged and verified live:** Socratic.Trade PR #374, congress-trading-shared PR #4,
+API-usage-monitor PR #9 — all squash-merged. First sync (auto-fired by the `main` push trigger in
+Socratic.Trade; manually triggered once via `gh workflow run` in the other two) produced:
+Socratic.Trade 58 issues (32 `state:completed` + 6 `state:deployed`, closed; 9 `state:in-progress`
++ 11 `state:planned`, open), congress-trading-shared 2 open `state:in-progress` issues,
+API-usage-monitor 3 open `state:in-progress` issues — all confirmed via the Issues API with correct
+labels, assignee, and body content.
+See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
+
+## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
+New Sentry project `fleet-infra` (org jays-services), DSN in
+`/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).
+**Part A — host monitor (machine-side, no repo dependency):**
+`/Users/jay/apps/fleet-sentry-monitor/monitor.py`, a single-pass Python script whose ~120s cadence
+comes from pm2 restarting it after each pass sleeps and exits (registered as pm2 app
+`fleet-sentry-monitor`, `pm2 save`d — confirmed running, `status: online`). Each pass: `pm2 jlist`
+crash-loop detection (restart delta >= 5 within one interval -> error, fingerprinted per
+app+condition with hourly dedup via a local `state.json`), down detection (`trading`/`trading-main`
+non-online -> error, any other app -> warning); Claude desktop presence/RSS as breadcrumb only
+(not-running is not an error); disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+files >512MB warning; `gh api rate_limit` core/graphql <300 remaining -> warning with reset time;
+self-hosted Actions runner status as context only (offline is expected/normal); and a Sentry Crons
+self check-in (monitor slug `fleet-host-monitor`, upsert config: interval 2min, margin 5,
+max_runtime 2, America/Chicago) so a dead monitor alerts by absence. Verified live, not just
+locally: two real pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta mutation
+correctly fired the "pm2 crash loop: trading-codex" error at delta=7, and the `gh` rate-limit
+warning fired for real mid-session (fleet-wide testing burned graphql to 0 remaining).
+**Part B — CI failure reporter (repo-side, additive only):** new worktree
+`~/apps/trading-wt-sentry-ci` on branch `claude/sentry-ci-observability`, cut from `origin/main`
+(81c707c2). Two brand-new files, zero edits to any existing workflow:
+`.github/workflows/sentry-ci-report.yml` (listens on `workflow_run: types:[completed]` for all 7
+existing workflows — CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw Sentry envelope HTTP via
+`urllib`, no `sentry-sdk`/action-marketplace dependency). On failure conclusion: a Sentry error
+event tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`. On a
+schedule-triggered run: an additional Sentry Crons check-in (`ci-<workflow-slug>`, e.g.
+`ci-security`) whose `monitor_config.schedule` mirrors that workflow's own cron (Security
+`41 10 * * 1`, Playwright Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`) — so a
+nightly/weekly job that silently stops running (not "fails" but "never fires again") raises a
+missed-check-in alert. Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value
+mechanically from the `.env` file (never echoed to any log/transcript). Locally dry-ran the
+reporter script against the real DSN: both the failure-event and check-in envelope POSTs returned
+HTTP 200 before this went live in CI. See
+`docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail, verification commands,
+and follow-ups.
+## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
+Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
+Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner
+minutes with zero weakening of the merge gate. `.github/workflows/ci.yml`: added a cheap
+`classify` job that computes (on `pull_request` events, via `git diff --name-only base...head`)
+whether every changed file is documentation-class (`*.md` anywhere or `docs/**`); the existing
+`verify` job (same name, still the sole required status check — confirmed live via
+`gh api .../rulesets/17945518`, context `["verify"]` only) now gates its expensive steps
+(checkout/setup-node/.next-cache/install/lint/tsc/test/build) behind
+`needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff — gate skipped by path
+filter" + succeeds immediately when true. Any non-PR event, or any ambiguity in the diff
+computation, falls back to the full gate — deliberately conservative. `smoke`/`gitleaks`/
+`check-pin` are NOT required checks today (contrary to the AGENTS.md fallback list, which is
+explicitly only for if the ruleset API 404s — it didn't).
+
+**Mid-review addition (cache hygiene):** the repo hit its 10 GB Actions-cache cap. Root cause: a
+plain `actions/cache@v4` save on every run (source-hash-keyed, so it changes almost every commit)
+meant every PR push wrote its own ~340 MB `.next` entry scoped to that PR's ref, with no cleanup
+on PR close, plus `main` itself accumulating a new entry per push without removing the old one.
+Fixed by splitting to `actions/cache/restore@v4` (any event) + `actions/cache/save@v4` (gated to
+`main` pushes only), so PR runs get a warm cache but never write their own; added new
+`.github/workflows/cleanup-caches.yml` (not a required check) with a `delete-pr-caches` job
+(`pull_request: closed` → `gh cache delete --all --ref refs/pull/<n>/merge
+--succeed-on-no-caches`) and a daily-cron `prune-stale-caches` backstop job using new
+`scripts/prune-stale-actions-caches.py` to keep only the newest cache entry per (key-prefix, ref)
+lineage.
+
+**Scope guardrails + evolved decisions during review:** two further additions were proposed
+mid-task — (a) hybrid self-hosted/hosted runner routing for `verify` onto the production
+`trading-live-mac` box, and (b) a cross-repo `workflow_call` reusable entry point. Both were
+escalated back rather than built silently, since (a) reverses the repo's own documented
+2026-07-01 decision to move `verify` OFF that runner (queue bottleneck) and makes the required
+check's result depend on which OS/toolchain executed it. **The owner then re-confirmed (a) after
+seeing the tradeoff, with a resource-aware design answering each objection** (Mac-side
+availability publisher w/ load+RAM+hysteresis gating, instant hosted fallback on busy/stale
+state, hosted-Linux as arbiter on any self failure via exactly-one automatic hosted re-run,
+nightly hosted canary, per-run environment annotation) — to be built as its OWN clearly-labeled
+PR after PR #370 lands, never bundled. (b) stays deferred until that hybrid PR proves itself;
+hosted-only default when built. Full evolution recorded in
+`docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+
+**Codex review round (PR #370):** two genuine fail-open holes flagged and fixed — (1)
+`git diff --name-only` hides rename sources (a `git mv src/foo.ts docs/foo.md` would classify
+docs-only while deleting code); fixed with `--no-renames`, locally reproduced + re-verified. (2)
+a classify-job failure would SKIP the required `verify` job (skipped required checks can fail
+open); fixed with `if: ${{ !cancelled() }}` + an explicit fail-closed first step when
+`needs.classify.result != 'success'`.
+
+Verification: full local quartet green (lint 0 errors/308 pre-existing warnings, tsc clean,
+2436/2436 tests, build succeeded) plus `yaml-lint` on all workflow files, live ruleset API
+confirmation, a dry-run of the PR-cache-delete command against a nonexistent ref, and a
+synthetic-inventory test of the prune script's grouping logic. PR #370 CI/Smoke/Security were
+observed actually running live during this branch's review, so the Actions quota is not currently
+blocking runs (contrary to the initial task assumption).
+
 ## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
 Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
 2026-07-04 composite expert review (section C, lines 233-310). S-effort wiring of already-built RAG
