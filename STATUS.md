@@ -45,6 +45,16 @@ agent retrieves its own past decisions + owner coaching AT DECISION TIME.
    `test/experience-memory.test.ts` + `test/strategy-episodic-injection.test.ts`); build green.
    See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`. Pushed, no PR — lands via the
    landing train after its base branch lands.
+## 2026-07-04 — Add the `agent/monet` preview lane (Monet, cloud)
+Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
+lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` gains `monet` +
+port `4103` (appended, no renumbering of 4100-4102); `AGENTS.md` worktree table + launch-dir list
+gain the Monet row (`~/apps/trading-monet`, `agent/monet`, pm2 `trading-monet`,
+`monet.jays.services`). The `agent/monet` branch was created on the remote from `main` (via the
+GitHub API — git-over-HTTP push was 503-ing). Running `setup-agent-previews.sh` on the Mac
+materializes the worktree + PM2 preview; the `monet.jays.services` Cloudflare tunnel is host-local
+and left to the owner. See `docs/rollouts/2026-07-04-agent-monet-preview-lane.md`.
+
 ## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
 Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
 expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same
