@@ -116,6 +116,9 @@ describe("llm-request — withLlmRequestBounds", () => {
       reasoningEffort: "high"
     });
     expect(xai.reasoning_effort).toBe("high");
+    // Reasoning-token headroom (composite review B/high/S) is no longer OpenAI-only: xAI bills
+    // hidden reasoning tokens against the same max_completion_tokens cap as the visible JSON.
+    expect(xai.max_completion_tokens).toBe(1500 + 8000);
 
     const mistral = withLlmRequestBounds({ model: "mistral-large-2512" }, "chat-completions", {
       maxOutputTokens: 1500,
@@ -124,6 +127,7 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect(mistral.reasoning_effort).toBe("xhigh");
     expect(mistral.prompt_mode).toBe("reasoning");
+    expect(mistral.max_completion_tokens).toBe(1500 + 12000);
 
     const deepseek = withLlmRequestBounds({ model: "deepseek-v4-pro" }, "chat-completions", {
       maxOutputTokens: 1500,
@@ -133,6 +137,7 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(deepseek.reasoning_effort).toBe("max");
     expect(deepseek.thinking).toEqual({ type: "enabled" });
     expect("temperature" in deepseek).toBe(false);
+    expect(deepseek.max_completion_tokens).toBe(1500 + 16000);
 
     const deepseekOff = withLlmRequestBounds({ model: "deepseek-v4-flash" }, "chat-completions", {
       maxOutputTokens: 1500,
@@ -159,5 +164,47 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect(chat.reasoning_effort).toBe("medium");
     expect(chat.max_completion_tokens).toBe(1000 + 4000);
+  });
+
+  // Composite review B/high/S: "Reasoning-token headroom exists only for OpenAI — other providers'
+  // reasoning calls starve the JSON answer." Assert, for EVERY reasoning-capable provider and EVERY
+  // effort level it supports, that the effective visible-output budget (max_completion_tokens /
+  // max_output_tokens / max_tokens minus the hidden-reasoning headroom) is always >= the requested
+  // cap — i.e. hidden reasoning tokens never eat into the caller's requested visible budget.
+  it("every provider x effort combination preserves the full requested visible-output budget", () => {
+    const requestedCap = 1500;
+    const modelsByProvider: Record<string, string> = {
+      openai: "gpt-5.4-mini",
+      xai: "grok-4.3",
+      gemini: "gemini-2.5-flash",
+      mistral: "mistral-large-2512",
+      deepseek: "deepseek-v4-pro",
+      anthropic: "claude-opus-4-8"
+    };
+
+    for (const [provider, model] of Object.entries(modelsByProvider)) {
+      const capability = reasoningCapabilityForModel(model);
+      expect(capability?.provider, `expected a reasoning capability for ${model}`).toBe(provider);
+      for (const option of capability!.options) {
+        const transport = provider === "anthropic" ? "anthropic-messages" : provider === "openai" ? "responses" : "chat-completions";
+        const bounded = withLlmRequestBounds(
+          { model },
+          transport,
+          { maxOutputTokens: requestedCap, model, reasoningEffort: option.value }
+        );
+        const effectiveCap =
+          (bounded.max_completion_tokens as number | undefined) ??
+          (bounded.max_output_tokens as number | undefined) ??
+          (bounded.max_tokens as number | undefined);
+        expect(
+          effectiveCap,
+          `provider=${provider} model=${model} effort=${option.value} must expose a token cap`
+        ).toBeDefined();
+        expect(
+          effectiveCap!,
+          `provider=${provider} effort=${option.value}: effective visible-output budget (${effectiveCap}) must be >= requested cap (${requestedCap})`
+        ).toBeGreaterThanOrEqual(requestedCap);
+      }
+    }
   });
 });

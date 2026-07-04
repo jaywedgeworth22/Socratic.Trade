@@ -19,6 +19,9 @@ vi.mock("../src/lib/vector-db", () => ({
   retrieveContext: async () => [],
   retrieveContextDetailed: async () => [],
   defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));

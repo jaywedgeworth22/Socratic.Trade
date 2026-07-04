@@ -139,17 +139,22 @@ export interface AccountCapabilities {
 
 /**
  * What a wash-sale lockout MEANS for a BUY in a taxable account (taxSettings.washSaleHandling):
- *   - "block" (default): the buy is refused outright — the pre-existing behavior.
+ *   - "block": the buy is refused outright — the original hard-stop behavior. A stricter opt-in;
+ *              no longer the default (owner decision 2026-07-03 — see defaults.ts).
  *   - "ask":   the buy becomes a PENDING-APPROVAL card (in both propose and decide authority)
  *              priced with the estimated forfeited deduction; the owner decides.
- *   - "auto":  the system decides deterministically — the buy proceeds only when its expected
- *              edge exceeds the priced tax cost by WASH_SALE_AUTO_EDGE_MULTIPLE (policy.ts);
- *              otherwise it is skipped with the math logged. Never silent.
+ *   - "auto":  (DEFAULT) the buy ALWAYS proceeds. Historically this mode vetoed the buy unless a
+ *              deterministic expected-edge calculation cleared a fixed multiple of the priced tax
+ *              cost; the owner rejected that as pseudo-math (the "edge" side of the comparison was
+ *              itself derived from the LLM's own confidenceScore/bracketTakeProfit outputs, so it
+ *              wasn't an independent check). The priced tax cost is still real information — it
+ *              rides decision.washSale as receipt telemetry and is threaded into the strategist
+ *              prompt (taxContext.washSaleRebuyCosts) so the model weighs it against conviction
+ *              itself. Never silent; never a hard block by default.
  * The IRA-replacement rule (Rev. Rul. 2008-5) is governed SEPARATELY by
- * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss is
- * allowed with an explicit annotation by default in this app, because brokers do not report
- * cross-account IRA wash sales to the IRS. The owner may opt an account into the stricter
- * "block" setting (see IraWashSaleHandling).
+ * taxSettings.iraWashSaleHandling: an IRA buying a symbol locked by a taxable-account loss
+ * defaults to "disregard" (see IraWashSaleHandling) for the same reason — the owner may still
+ * opt an account into the stricter "block".
  */
 export type WashSaleHandling = "block" | "ask" | "auto";
 
@@ -157,14 +162,16 @@ export type WashSaleHandling = "block" | "ask" | "auto";
  * What an IRA-replacement wash sale MEANS for a BUY in an IRA (taxSettings.iraWashSaleHandling):
  *   - "block": the buy is refused outright in EVERY washSaleHandling mode — Rev. Rul.
  *     2008-5: buying the replacement inside the IRA permanently destroys the disallowed loss,
- *     with no basis adjustment ever recoverable.
- *   - "disregard" (default): the buy proceeds through the normal authority flow (all other gates
- *     unchanged). Rationale (owner decision): brokers do not report cross-account IRA wash
- *     sales to the IRS — the rule only bites under audit — so respecting it is the account
- *     owner's call. NEVER silent: the decision carries outcome "ira_disregarded" with the
- *     verbatim annotation "Wash Sale (Technically, but IRA purchase unreported to IRS)" plus
- *     the priced lock provenance, an audit event fires, and the note renders wherever the
- *     purchase shows. Choosing "disregard" is an explicit audit-risk acceptance.
+ *     with no basis adjustment ever recoverable. A stricter per-account opt-in; no longer the
+ *     default.
+ *   - "disregard": (DEFAULT) the buy proceeds through the normal authority flow (all other gates
+ *     unchanged). Rationale (owner decision 2026-07-03): brokers do not report cross-account IRA
+ *     wash sales to the IRS — the rule only bites under audit — so respecting it is the account
+ *     owner's call, not a hard system stop. NEVER silent: the decision carries outcome
+ *     "ira_disregarded" with the verbatim annotation "Wash Sale (Technically, but IRA purchase
+ *     unreported to IRS)" plus the priced lock provenance, an audit event fires, and the note
+ *     renders wherever the purchase shows. This is still an explicit audit-risk acceptance —
+ *     the transparency machinery is unchanged, only the default toggle position.
  */
 export type IraWashSaleHandling = "block" | "disregard";
 
@@ -173,7 +180,7 @@ export interface TaxSettings {
   taxationType?: TaxationType;
   /** Block the agent from rebuying a symbol it closed at a loss within 30 days (IRC §1091). */
   washSaleGuard: boolean;
-  /** How a wash-sale lockout is handled for BUYs. Default "block" (see WashSaleHandling). */
+  /** How a wash-sale lockout is handled for BUYs. Default "auto" (see WashSaleHandling). */
   washSaleHandling?: WashSaleHandling;
   /** How an IRA-replacement wash sale is handled. Default "disregard" (see IraWashSaleHandling). */
   iraWashSaleHandling?: IraWashSaleHandling;
@@ -205,6 +212,15 @@ export interface TuningSettings {
   sizingCeilingPct?: number;
   /** Minimum proposal confidenceScore that triggers Red Team review. Default 80. */
   redTeamConvictionThreshold?: number;
+  /**
+   * Stakes-scaled dissent (composite review E/high/S): notional-as-%-of-NAV threshold that also
+   * triggers the approval-time Red Team debate for an OPENING (buy/short) proposal, independent of
+   * confidenceScore. Without this, `shouldRunRedTeamDebate` gated on confidence ONLY, so a
+   * low-confidence but large-notional LIVE trade got no adversarial review while a high-confidence
+   * $50 paper trade did. Default 15 (%). Advisory routing only — widens which trades get a second
+   * look; never blocks anything.
+   */
+  redTeamNotionalPctOfNavThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
   /**
@@ -475,17 +491,20 @@ export interface RiskRules {
   maxDailyLossNotional?: number;
   /**
    * What the account-level breaker (maxDrawdownPct / maxDailyLossNotional) does on breach — the
-   * owner's overridable preference, defaulting to "halt":
-   * - "halt" (default): flip systemState → "halted" — a HARD stop of autonomous trading until the
-   *   owner manually re-arms (sets systemState back to "active"). Subsequent scheduled runs skip
-   *   entirely and `executeProposal` refuses, so the loop places NO further orders (including exits);
-   *   open positions rely on their resting broker protective stops. This is the stronger "put a human
-   *   back in the loop" response the owner chose for the live soak.
-   * - "close_only": flip systemState → "close_only" — block only NEW entries; the loop keeps running
-   *   and risk-reducing exits (sell/cover) still flow. Softer; auto-manages the wind-down.
+   * owner's overridable preference. Per the governing philosophy ("nothing is hard except which
+   * account to work in; agent decides, logs everything"), the DEFAULT is "advisory": guardrails
+   * inform the agent, they never seize control.
+   * - "advisory" (DEFAULT): does NOT change systemState. It writes a `policy_violation_drawdown`
+   *   receipt and surfaces the drawdown as decision context to the strategist (see `drawdownAdvisory`
+   *   threading in strategy.ts) so the agent can choose to de-risk — advisory awareness, no halting.
+   *   The account boundary remains the only absolute.
+   * - "close_only": OPT-IN hard enforcement — flip systemState → "close_only": block only NEW entries;
+   *   risk-reducing exits (sell/cover) still flow.
+   * - "halt": OPT-IN hard enforcement — flip systemState → "halted": a full stop until the owner
+   *   manually re-arms. The strongest response; the owner must explicitly choose it.
    * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
    */
-  drawdownBreakerAction?: "halt" | "close_only";
+  drawdownBreakerAction?: "advisory" | "close_only" | "halt";
 }
 
 export interface NotificationSettings {
@@ -888,8 +907,20 @@ export interface TradeProposal {
    *   - `model`: the model that actually served the debate (per-proposal Red Team resolution,
    *     including the cross-provider Anthropic path). Optional: legacy persisted verdicts predate
    *     it — readers fall back to the snapshot policy's configured red-team model.
+   *   - `trigger`: WHICH stakes-scaled-dissent condition demanded this debate (composite review
+   *     E/high/S) — "confidence" (the original threshold), "notional" (large %-of-NAV order),
+   *     "live_opening" (a live, non-paper opening), "override_requested" (the proposal itself asks to
+   *     override an owner preference), or "escalation_regime" (entered during a Risk-Off/Crisis/
+   *     Inverted regime). Optional: legacy persisted verdicts predate stakes-scaled dissent and
+   *     always meant "confidence".
    */
-  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  redTeamVerdict?: {
+    rejected: boolean;
+    available: boolean;
+    reason: string;
+    model?: string;
+    trigger?: "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
+  };
   /**
    * Explicit agent-authored request to override owner preference gates for this decision.
    * This is not a client-side bypass token and does not override broker/account/integrity gates.
@@ -1361,7 +1392,12 @@ export interface WashSaleGateAudit {
   clearDate?: string;
   disallowedLossUsd?: number;
   estimatedTaxCostUsd?: number;
-  /** "auto" guard math (outcome auto_proceeded / auto_skipped). */
+  /**
+   * "auto" handling RECEIPT telemetry (outcome auto_proceeded) — no longer a gate threshold (owner
+   * decision 2026-07-03: the old edge-vs-cost veto re-arithmetized the LLM's own outputs, so it was
+   * removed; "auto" always proceeds now). Kept only so the priced tax-cost math stays on the record
+   * and can still be surfaced to the model/owner. requiredEdgeUsd is legacy/unused going forward.
+   */
   expectedEdgeUsd?: number;
   requiredEdgeUsd?: number;
   edgeMultiple?: number;
@@ -1374,12 +1410,11 @@ export interface WashSaleGateAudit {
    */
   note?: string;
   outcome:
-    | "blocked" // handling "block" (default): refused outright
-    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; explicit iraWashSaleHandling "block")
-    | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" — annotated + audited, never silent
+    | "blocked" // handling "block" (a stricter opt-in, no longer the default): refused outright
+    | "blocked_ira" // IRA replacement purchase — hard block (Rev. Rul. 2008-5; iraWashSaleHandling "block", a stricter opt-in)
+    | "ira_disregarded" // IRA replacement purchase allowed by iraWashSaleHandling "disregard" (the default) — annotated + audited, never silent
     | "ask_escalated" // handling "ask": refused here, marked escalatable for the run loop
-    | "auto_proceeded" // handling "auto": edge cleared the cost multiple — buy allowed
-    | "auto_skipped" // handling "auto": edge did not clear the cost multiple — refused
+    | "auto_proceeded" // handling "auto" (the default): always proceeds — priced tax cost recorded as receipt telemetry, never a veto
     | "approved_via_override" // approval path honored the stored ask/auto override token
     | "reescalated_cost_changed"; // stale override refused: cost moved past tolerance since approval — re-escalated at the current price
 }

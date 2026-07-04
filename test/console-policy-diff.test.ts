@@ -141,7 +141,7 @@ describe("console guardrails: washSaleHandling select classification", () => {
   it("is a select field with the three modes ranked block < ask < auto", () => {
     expect(def.kind).toBe("select");
     expect(def.label).toBe("Taxable-account wash-sale rebuys");
-    expect(def.hint).toContain("Taxable accounts only");
+    expect(def.hint).toContain("Auto (default)");
     expect(def.options?.map((o) => o.value)).toEqual(["block", "ask", "auto"]);
     expect(def.looseRank).toEqual({ block: 0, ask: 1, auto: 2 });
   });
@@ -158,11 +158,12 @@ describe("console guardrails: washSaleHandling select classification", () => {
     expect(classify(def, "auto", "block")).toBe("tighter");
   });
 
-  it("treats a blank stored value as the shipped default ('block')", () => {
-    // Legacy policies without the field: blank -> "ask" must still cost the typed word.
-    expect(classify(def, undefined, "ask")).toBe("looser");
-    expect(classify(def, "ask", undefined)).toBe("tighter");
-    expect(classify(def, undefined, "block")).toBe("changed");
+  it("treats a blank stored value as the shipped default ('auto', owner decision 2026-07-03)", () => {
+    // Unset field: blank -> "block" or "ask" is TIGHTENING (auto is the loosest rank), one click.
+    expect(classify(def, undefined, "block")).toBe("tighter");
+    expect(classify(def, undefined, "ask")).toBe("tighter");
+    expect(classify(def, "ask", undefined)).toBe("looser"); // ask(1) -> blank/auto(2): looser, typed word
+    expect(classify(def, undefined, "auto")).toBe("changed"); // same rank as the default: no direction
   });
 });
 
@@ -172,16 +173,20 @@ describe("console guardrails: iraWashSaleHandling select classification", () => 
   it("is a select with block < disregard looseness ranking", () => {
     expect(def.kind).toBe("select");
     expect(def.label).toBe("IRA taxable-loss rebuys");
-    expect(def.hint).toContain("Same-IRA wash sales are ignored automatically");
-    expect(def.options?.map((o) => o.value)).toEqual(["disregard", "block"]);
+    expect(def.hint).toContain("Under Rev. Rul. 2008-5");
+    expect(def.options?.map((o) => o.value)).toEqual(["block", "disregard"]);
     expect(def.looseRank).toEqual({ block: 0, disregard: 1 });
   });
 
   it("classifies block->disregard as LOOSER (typed word on LIVE) and back as TIGHTER", () => {
     expect(classify(def, "block", "disregard")).toBe("looser");
     expect(classify(def, "disregard", "block")).toBe("tighter");
-    // Blank value = the shipped default ("disregard").
+  });
+
+  it("treats a blank stored value as the shipped default ('disregard', owner decision 2026-07-03)", () => {
+    // Unset field: blank -> "block" is TIGHTENING (disregard is the looser rank), one click.
     expect(classify(def, undefined, "block")).toBe("tighter");
-    expect(classify(def, "block", undefined)).toBe("looser");
+    expect(classify(def, "block", undefined)).toBe("looser"); // block(0) -> blank/disregard(1): looser, typed word
+    expect(classify(def, undefined, "disregard")).toBe("changed"); // same rank as the default: no direction
   });
 });

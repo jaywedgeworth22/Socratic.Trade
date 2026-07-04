@@ -64,7 +64,9 @@ describe("resolveLlmEndpoint", () => {
     expect(endpoint.transport).toBe("chat-completions");
   });
 
-  it("falls Red Team back to the Green model when no red override is set", () => {
+  it("falls Red Team back to the Green model when no red override is set AND no cross-family credential exists", () => {
+    // No Anthropic credential configured in this DB/env, so the cross-family default (below) cannot
+    // be honored — same-family fallback preserves today's behavior for a single-provider setup.
     const endpoint = resolveLlmEndpoint(
       { llmModel: "gpt-5.4-mini" },
       "local",
@@ -73,6 +75,48 @@ describe("resolveLlmEndpoint", () => {
     );
     expect(endpoint.provider).toBe("openai");
     expect(endpoint.model).toBe("gpt-5.4-mini");
+  });
+
+  it("defaults the Red Team to a cross-family model when no override is set but a cross-family credential IS available", async () => {
+    // Composite review B/medium/S: "Green and Red resolve to the same model by default ... one
+    // greedy same-family Bear surfaces one failure mode." When the owner configures an Anthropic key
+    // (without setting redTeamLlmModel explicitly), an OpenAI Bull's Bear now defaults to Claude
+    // instead of silently echoing gpt-5.4-mini.
+    const { upsertUserApiKey, deleteUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("cross-family-user", "anthropic", "test-anthropic-key", "test fixture");
+    try {
+      const endpoint = resolveLlmEndpoint(
+        { llmModel: "gpt-5.4-mini" },
+        "cross-family-user",
+        "https://api.openai.com/v1/responses",
+        "red"
+      );
+      expect(endpoint.provider).toBe("anthropic");
+      expect(endpoint.model).toBe("claude-haiku-4-5");
+
+      // Green role with the same policy is unaffected — only the red role's default changes.
+      const green = resolveLlmEndpoint({ llmModel: "gpt-5.4-mini" }, "cross-family-user");
+      expect(green.provider).toBe("openai");
+    } finally {
+      deleteUserApiKey("cross-family-user", "anthropic");
+    }
+  });
+
+  it("cross-family default for an Anthropic Bull is a cheap OpenAI reviewer", async () => {
+    const { upsertUserApiKey, deleteUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey("cross-family-user-2", "openai", "test-openai-key", "test fixture");
+    try {
+      const endpoint = resolveLlmEndpoint(
+        { llmModel: "claude-opus-4-8" },
+        "cross-family-user-2",
+        "https://api.openai.com/v1/responses",
+        "red"
+      );
+      expect(endpoint.provider).toBe("openai");
+      expect(endpoint.model).toBe("gpt-5.4-mini");
+    } finally {
+      deleteUserApiKey("cross-family-user-2", "openai");
+    }
   });
 
   it("routes empty/no policy to OpenAI (default model unchanged)", () => {

@@ -55,6 +55,49 @@ export function latestAuditByKind(
   };
 }
 
+/**
+ * Recent audit events of ONE kind, newest first. Unlike `listAudit` (all kinds, then the
+ * caller filters), the LIMIT applies AFTER the kind filter — so a flood of newer audit rows
+ * of other kinds can never push the requested kind's history out of the window (Codex review
+ * on PR #365: `getRedTeamEfficacy` scanned the all-kind feed and could report zero/partial
+ * veto history in busy accounts). When `connectedAccountId` is given, user-wide rows
+ * (connected_account_id IS NULL) are included too: veto audits were historically written
+ * user-wide, so an account-scoped query must not silently drop that legacy history.
+ */
+export function listAuditByKind(
+  kind: string,
+  limit = 100,
+  userId: string = "local",
+  connectedAccountId?: string
+): Array<{ id: string; createdAt: string; kind: string; payload: unknown; connectedAccountId?: string }> {
+  const rows = (connectedAccountId
+    ? getDb()
+      .prepare(
+        `SELECT id, connected_account_id, created_at, kind, payload
+         FROM audit_events
+         WHERE kind = ? AND user_id = ? AND (connected_account_id = ? OR connected_account_id IS NULL)
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(kind, userId, connectedAccountId, limit)
+    : getDb()
+      .prepare(
+        `SELECT id, connected_account_id, created_at, kind, payload
+         FROM audit_events
+         WHERE kind = ? AND user_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(kind, userId, limit)) as Array<{ id: string; connected_account_id: string | null; created_at: string; kind: string; payload: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    kind: row.kind,
+    payload: JSON.parse(row.payload),
+    connectedAccountId: row.connected_account_id ?? undefined
+  }));
+}
+
 export interface SignalSnapshotAuditRow {
   rowid: number;
   id: string;
@@ -258,7 +301,47 @@ export function insertSkippedCounterfactualCandidate(input: SkippedCounterfactua
   const userId = input.userId ?? "local";
   const now = input.now ?? new Date().toISOString();
   const id = `${userId}:${input.runId}:${input.symbol}:${input.horizonDays}`;
-  const result = getDb()
+  const db = getDb();
+  const existing = db
+    .prepare("SELECT id FROM skipped_candidate_counterfactuals WHERE id = ? AND user_id = ?")
+    .get(id, userId);
+  if (existing) {
+    // A row for this (runId, symbol, horizon) already exists — e.g. a Bear-veto/policy-block
+    // early insert that carried only `regime`, later followed by the run's richer
+    // signal_snapshot ingestion carrying score/sector/dominant-factor/bulletin evidence
+    // (Codex review on PR #365: pure INSERT OR IGNORE let the early bare insert permanently
+    // strip the matured row of the evidence metadata missed-opportunity analytics/tuning read).
+    // Backfill ONLY evidence columns that are still NULL: the first write stays authoritative
+    // for pricing/snapshot/status (never re-priced), existing evidence is never overwritten,
+    // and updated_at is left alone so metadata backfill can't reorder maturation listings.
+    if (
+      input.score !== undefined ||
+      input.sector !== undefined ||
+      input.regime !== undefined ||
+      input.dominantFactor !== undefined ||
+      (input.bulletins && input.bulletins.length > 0)
+    ) {
+      db.prepare(
+        `UPDATE skipped_candidate_counterfactuals SET
+          score = COALESCE(score, ?),
+          sector = COALESCE(sector, ?),
+          regime = COALESCE(regime, ?),
+          dominant_factor = COALESCE(dominant_factor, ?),
+          bulletins = COALESCE(bulletins, ?)
+         WHERE id = ? AND user_id = ?`
+      ).run(
+        input.score ?? null,
+        input.sector ?? null,
+        input.regime ?? null,
+        input.dominantFactor ?? null,
+        input.bulletins && input.bulletins.length > 0 ? JSON.stringify(input.bulletins) : null,
+        id,
+        userId
+      );
+    }
+    return false;
+  }
+  const result = db
     .prepare(
       `INSERT OR IGNORE INTO skipped_candidate_counterfactuals (
         id, user_id, connected_account_id, run_id, symbol, snapshot_at, ref_price, horizon_days,
@@ -492,6 +575,30 @@ export function listMaturedSkippedCounterfactuals(
         )
         .all(userId, limit)) as RawSkippedCounterfactualRow[];
   return rows.map(toSkippedCounterfactualRow);
+}
+
+/**
+ * The MATURED counterfactual row for one (runId, symbol) veto key — the precise join input
+ * for the Red Team efficacy scorecard. Unlike joining against `listMaturedSkippedCounterfactuals`
+ * (a return_pct-DESC top slice), a keyed lookup can never drop the low/negative-return rows —
+ * the exact avoided-loss cases `vetoValueAddRate` exists to count (Codex review on PR #365).
+ * Multiple horizons can exist per key; the shortest horizon wins deterministically.
+ */
+export function getMaturedSkippedCounterfactualByRunSymbol(
+  userId: string,
+  runId: string,
+  symbol: string
+): SkippedCounterfactualRow | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT *
+       FROM skipped_candidate_counterfactuals
+       WHERE user_id = ? AND run_id = ? AND symbol = ? AND status = 'matured'
+       ORDER BY horizon_days ASC
+       LIMIT 1`
+    )
+    .get(userId, runId, symbol) as RawSkippedCounterfactualRow | undefined;
+  return row ? toSkippedCounterfactualRow(row) : undefined;
 }
 
 // ── Learned-context fact-tier CRUD ────────────────────────────────────────────

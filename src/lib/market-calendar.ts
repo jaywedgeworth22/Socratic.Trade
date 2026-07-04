@@ -66,6 +66,24 @@ function nycDateString(date: Date): string {
 }
 
 /**
+ * The America/New_York calendar date ('YYYY-MM-DD') of an instant, for anchoring
+ * trading-day arithmetic (`addTradingDays`) to the MARKET day rather than the UTC day.
+ * An after-hours ET timestamp (e.g. Mon 19:30 ET = Tue 00:30 UTC) must count trading
+ * sessions from Monday, not Tuesday — deriving the date via `toISOString().slice(0, 10)`
+ * silently shifts every evening/after-hours snapshot one session forward (Codex review
+ * on PR #365). Date-only inputs (already a calendar date, no time component) pass through
+ * unchanged rather than being parsed as UTC midnight — which is 19:00/20:00 ET the PRIOR
+ * day and would shift them one day BACK. Invalid input returns undefined.
+ */
+export function marketDateOf(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const time = Date.parse(trimmed);
+  if (!Number.isFinite(time)) return undefined;
+  return nycDateString(new Date(time));
+}
+
+/**
  * True when the given day (default: today) is a trading day — not a weekend or full-close holiday,
  * regardless of the time of day.
  *

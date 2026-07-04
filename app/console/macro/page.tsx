@@ -160,6 +160,9 @@ function RegimeCard({
   const vix = sourcing.vix ? numFrom(board.macro.vix) : undefined;
   const curve = sourcing.fred ? board.derived.yieldCurveSpread : undefined;
   const inverted = typeof curve === "number" && curve < -0.1;
+  // Exact-string join: both `r.regime` (scorecard) and `board.regime` are `entryMarketRegime`-
+  // derived values from MARKET_REGIME_LABELS (src/lib/macro.ts) — a persisted contract. See that
+  // const's doc comment before renaming a label; existing rows would silently stop matching.
   const stat = regimeScorecard?.find((r) => r.regime === board.regime);
   // VIX-only fallback: the backend still computed this label, but its yield-curve
   // input was a placeholder constant — say so instead of presenting it as fully backed.

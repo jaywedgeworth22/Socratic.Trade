@@ -121,3 +121,51 @@ unrelated build-artifact side effect; reverted before committing since it isn't 
   matches the review's own framing of it as a "one-time discontinuity" to note, not backfill.
 - `strategy.ts` is shared scope across the Wave-1 lanes; this lane only touched the Bear-reject branch
   (~line 681-705) and the audit-payload literal on that same line. No other lane's region was touched.
+
+## Codex review fixes (2026-07-04, second review pass on PR #365)
+
+Three verified P2 findings from the Codex bot review, each fixed at the root
+(commit `b971b66`):
+
+1. **Market-day horizon anchoring** (`counterfactual-learning.ts`, `backtest.ts`,
+   new `market-calendar.marketDateOf`): `targetBusinessDate` derived the snapshot
+   date via `toISOString().slice(0, 10)` — the UTC day — so an after-hours ET
+   veto (Mon 19:30 ET = Tue 00:30Z) counted trading sessions from Tuesday and
+   matured one session late. `marketDateOf` resolves the America/New_York
+   calendar date for timestamps and passes date-only strings through unchanged
+   (UTC-midnight parsing would have shifted those a day BACK). `backtest.ts`'s
+   `parseSnapshot` gets the same fix; bar dates deliberately keep `toBusinessDay`
+   (daily-OHLC bar times at UTC midnight ARE the date).
+2. **Kind-scoped, keyed efficacy joins** (`performance.ts`, `db-learning.ts`):
+   `getRedTeamEfficacy` scanned the all-kind audit feed (LIMIT before kind
+   filter — other-kind floods could evict veto history) and joined against a
+   `return_pct DESC` top slice (could drop exactly the avoided-loss rows
+   `vetoValueAddRate` counts). Now: new `listAuditByKind` (LIMIT after kind
+   filter; account-scoped queries include legacy user-wide rows) + new
+   `getMaturedSkippedCounterfactualByRunSymbol` keyed lookups. Exit-side vetoes
+   (sell/cover) are excluded from `totalVetoes` (no counterfactual is ever
+   recorded for them — they could never mature and only depressed coverage).
+   The strategy's veto audit now stamps `connectedAccountId` (account-scoped in
+   multi-account runs).
+3. **Evidence backfill instead of preemption** (`db-learning.ts`):
+   `insertSkippedCounterfactualCandidate` was pure `INSERT OR IGNORE`, so the
+   Bear-veto early insert (regime only) permanently blocked the run's later,
+   richer `signal_snapshot` insert for the same `(runId, symbol, horizon)` key —
+   the matured row lost the score/sector/dominant-factor/bulletin evidence that
+   missed-opportunity analytics and tuning read. The insert now backfills ONLY
+   NULL evidence columns on an existing row: first write stays authoritative for
+   pricing/snapshot/status, existing evidence is never overwritten, and the
+   "inserted" boolean still reports false (no double-count).
+
+Verification: `npm run lint` (0 errors), `npx tsc --noEmit` (clean), `npm test`
+(full suite green — includes 4 new tests: after-hours market-day anchoring,
+evidence backfill incl. no-repricing/no-overwrite, kind-scoped audit flood,
+exit-veto exclusion), `npm run build` (green). Exact counts in the PR thread.
+
+Deferred (noted on the review thread, not fixed here): the GENERIC
+missed-opportunity path (`getSkippedCandidateReturns`) still reads a vetoed
+SHORT's raw price move as a long return because `skipped_candidate_counterfactuals`
+has no `side` column — the efficacy path side-adjusts, but surfacing vetoed
+shorts correctly in missed-opportunity/tuning context needs a schema addition
+(a good candidate to fold into the Wave-2 outcome-engine lane, which already
+adds guarded ALTERs to this table).

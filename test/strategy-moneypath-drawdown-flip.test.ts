@@ -18,6 +18,9 @@ vi.mock("../src/lib/vector-db", () => ({
   retrieveContext: async () => [],
   retrieveContextDetailed: async () => [],
   defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -58,7 +61,7 @@ function zeroProposalFetchStub() {
 }
 
 describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
-  it("hard-halts an active autonomous run (systemState → halted, the default) and audits policy_violation_drawdown on a breach", async () => {
+  it("is ADVISORY by default: on a breach it audits a receipt and does NOT change systemState", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", zeroProposalFetchStub());
 
@@ -90,7 +93,7 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
       includedIndices: [],
       additionalSymbols: ["AAPL"],
       strategyAuthority: "decide",
-      // No drawdownBreakerAction set → default "halt".
+      // No drawdownBreakerAction set → default "advisory" (receipt + agent context, no state change).
       riskRules: { ...DEFAULT_POLICY.riskRules, maxDrawdownPct: 20 }
     });
 
@@ -98,17 +101,18 @@ describe("runStrategyOnce drawdown kill-switch wiring (G5)", () => {
     const result = await runStrategyOnce();
     expect(result.status).toBe("completed");
 
-    // (a) systemState was HARD-HALTED (→ "halted") and persisted via setPolicy — a subsequent
-    // scheduled run will now skip entirely until the owner manually re-arms.
-    expect(getPolicy("local").systemState).toBe("halted");
+    // (a) ADVISORY default: systemState is UNCHANGED (stays "active"). The breaker informs the agent,
+    // it never seizes control — "nothing is hard except which account to work in; agent decides, logs
+    // everything." Hard enforcement is opt-in only (see the close_only/halt tests below).
+    expect(getPolicy("local").systemState).toBe("active");
 
-    // (b) the breach was audited with the halt action.
+    // (b) the breach was still logged as a receipt, tagged action "advisory", with NO state transition.
     const drawdownAudits = listAudit(500).filter((e) => e.kind === "policy_violation_drawdown");
     expect(drawdownAudits.length).toBeGreaterThanOrEqual(1);
     const payload = drawdownAudits[0].payload as { from?: string; revertedTo?: string; action?: string; highWaterMark?: number };
     expect(payload.from).toBe("active");
-    expect(payload.revertedTo).toBe("halted");
-    expect(payload.action).toBe("halt");
+    expect(payload.action).toBe("advisory");
+    expect(payload.revertedTo).toBeUndefined();
     expect(payload.highWaterMark).toBe(250_000);
   }, 30_000);
 

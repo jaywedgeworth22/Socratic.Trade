@@ -10,6 +10,7 @@
 
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { EM_DASH } from "../lib/format";
+import { regimeFromLabel } from "@/lib/market-regime";
 
 export type Board = NonNullable<DashboardSnapshot["macroBoard"]>;
 export type TileTone = "pos" | "neg" | "warn" | undefined;
@@ -624,9 +625,22 @@ export interface RegimeInfo {
   meaning: string;
 }
 
+// Typed-enum classification of the persisted label (see src/lib/market-regime.ts — the same
+// dependency-free module policy.ts/strategy.ts/regime-watch.ts key their gates off). Falls back to
+// a substring match for anything `regimeFromLabel` doesn't recognize as one of the five canonical
+// labels (older snapshot payloads, or a future/unexpected label) so this card degrades gracefully
+// instead of collapsing every unrecognized string to "no data".
 export function regimeInfo(regime: string): RegimeInfo {
+  const enumRegime = regimeFromLabel(regime);
   const l = regime.toLowerCase();
-  if (l.includes("crisis")) {
+  const isCrisis = enumRegime === "crisis" || (enumRegime === "unknown" && l.includes("crisis"));
+  const isRiskOff = enumRegime === "risk-off" || (enumRegime === "unknown" && l.includes("risk-off"));
+  const isCautiousInverted =
+    enumRegime === "cautious-inverted" || (enumRegime === "unknown" && (l.includes("inverted") || l.includes("cautious")));
+  const isRiskOn = enumRegime === "risk-on" || (enumRegime === "unknown" && l.includes("risk-on"));
+  const isUnknown = enumRegime === "unknown" && l.includes("unknown");
+
+  if (isCrisis) {
     return {
       chipTone: "neg",
       chipWord: "escalation",
@@ -634,7 +648,7 @@ export function regimeInfo(regime: string): RegimeInfo {
         "VIX above 30 — panic-level volatility. Buy ideas scoring below the scan median are hard-vetoed, and the optional crisis exposure cap can shrink every newly opened position."
     };
   }
-  if (l.includes("risk-off")) {
+  if (isRiskOff) {
     return {
       chipTone: "neg",
       chipWord: "escalation",
@@ -642,7 +656,7 @@ export function regimeInfo(regime: string): RegimeInfo {
         "VIX above 20 (or above 17 with an inverted yield curve) — stressed markets. Buy ideas scoring below the scan median are hard-vetoed, and a flip into this regime can trigger an immediate strategy run."
     };
   }
-  if (l.includes("inverted") || l.includes("cautious")) {
+  if (isCautiousInverted) {
     return {
       chipTone: "warn",
       chipWord: "escalation",
@@ -650,7 +664,7 @@ export function regimeInfo(regime: string): RegimeInfo {
         "Volatility is calm, but the 10Y Treasury yields less than the Fed's policy rate — a classic late-cycle recession warning. The optional crisis/inverted exposure cap applies to new positions."
     };
   }
-  if (l.includes("risk-on")) {
+  if (isRiskOn) {
     return {
       chipTone: "pos",
       chipWord: "calm",
@@ -658,7 +672,7 @@ export function regimeInfo(regime: string): RegimeInfo {
         "VIX below 13 with a normal yield curve — unusually calm, trend-friendly markets. No regime-specific vetoes or caps apply."
     };
   }
-  if (l.includes("unknown")) {
+  if (isUnknown) {
     return {
       chipTone: "muted",
       chipWord: "no data",

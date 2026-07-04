@@ -5,6 +5,26 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
+> non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
+> `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"
+> no longer vetoes on a deterministic edge-vs-tax-cost threshold at all (that math re-arithmetized
+> the LLM's own confidence/target outputs); it always proceeds, with the priced tax cost surfaced
+> as receipt telemetry + strategist-prompt context instead. `block`/`ask` remain valid opt-ins; all
+> receipt/annotation/audit machinery unchanged. No roadmap scope change — a guardrail-philosophy
+> correction, part of "nothing is hard except the account" (see
+> `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md` on branch
+> `claude/correct-drawdown-decision`). Landing deferred until the holiday-date test fix merges. See
+> `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+> 2026-07-03 (`claude/console-small-fixes`, Claude): **Console small fixes (t7/t18/t22/t39)** —
+> four small verified-open items, no roadmap scope change: extracted the "0."-collapse raw-while-
+> focused/commit-on-blur numeric-input pattern into a reusable `RawNumInput` (applied at the
+> scoring-weight, tax-rate, and market-scan-shape inputs); exported `MARKET_REGIME_LABELS` from
+> `src/lib/macro.ts` as an explicit persisted contract with dedicated exact-string test coverage;
+> the account-deletion scope preview now warns when pending learned-context items would be
+> discarded; and a `notify.bridge.error` ops-feed formatter humanizes notification-delivery
+> failures. Pushed but landing deferred until the holiday-time-dependence test fix merges. See
+> `docs/rollouts/2026-07-03-console-small-fixes.md`.
 > **2026-07-03 — SUPERSEDING DIRECTIVE (owner): real trading, no fake modes.** This is a real
 > trading app; the owner accepts 100% risk. **`policy.paperMode` and the local "Test mode" simulator
 > (`test/local`, `usesLocalSimulation`, `getPaperPortfolioProjection`) have been removed** (rules in
@@ -62,6 +82,20 @@ filling the missing pieces.
 > `doc_id` values generated UUID-based vector ids, so a timed-out partial ingest could leave duplicate
 > vectors on retry. SEC filing ingestion now passes `ticker:accession:docType` as `doc_id`; preserve
 > that invariant before any larger RAG backfill.
+
+> **2026-07-04 - RAG quick-wins Wave-1 lane: wire dormant stages (Claude).**
+> Branch `claude/w1-rag-quickwins` (one of four Wave-1 quick-win lanes off the 2026-07-04 composite
+> expert review, section C). Wired `retrieveContextDetailed`'s already-built-but-never-called
+> `minRelevanceScore`/`dedupeSimilarity` into both real call sites (`strategy.ts`,
+> `chat/orchestrator.ts`); added `formatChunkWithProvenance()` so `strategy.ts` prefixes each
+> retrieved chunk with a `[doc_type · section · symbol · date · rel N.NN]` header before joining
+> into the prompt (chunk ids were already stable/real, left unchanged); confirmed
+> `VECTOR_STORECONTEXTS_DEDUP` was already default-on from an earlier commit (the source review's
+> "default OFF" was stale) and widened `hashContent` from 64-bit to 128-bit; stamped
+> `embed_model`/`embed_rev` on every new vector in `cleanMetadata`; raised the rerank-path
+> over-fetch cap to an env-tunable 150 (`VECTOR_RERANK_OVERFETCH_K`), non-rerank paths unchanged.
+> All five items are env-tunable/opt-in-consistent, no hard gates. Verify green: lint 0 errors, tsc
+> clean, 2388/2388 tests, build green. See `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
 
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
 > Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
