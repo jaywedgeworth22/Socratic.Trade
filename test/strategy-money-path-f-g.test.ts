@@ -155,18 +155,24 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     expect(aaplProposal?.status).toBe("placed");
 
     // F1: the redTeamVerdict field round-trips through the persisted JSON payload (no migration),
-    // including the served red-team model attribution (t3).
+    // including the served red-team model attribution (t3) and the stakes-scaled-dissent trigger
+    // (E/high/S) — this proposal's confidenceScore (90) alone clears the threshold.
     expect(aaplProposal?.proposal.redTeamVerdict).toEqual({
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-4.1-mini"
+      model: "gpt-4.1-mini",
+      trigger: "confidence"
     });
     // t3: the persisted proposal carries the FAILOVER-AWARE served Green model (here the primary),
     // so approval-time attribution doesn't drift with later policy edits.
     expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4.1-mini");
     // Backward-compat rationale text is still appended.
     expect(aaplProposal?.proposal.rationale).toContain("Red Team Debate Survived");
+    // Regression (composite review B/high/S): the Bear schema now round-trips confidenceScore — a
+    // Bear-surviving proposal must retain the Bull's numeric conviction score, not degrade to
+    // undefined (which previously zeroed shouldRunRedTeamDebate/sizing downstream).
+    expect(aaplProposal?.proposal.confidenceScore).toBe(90);
   }, 30_000);
 });
 

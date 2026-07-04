@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Wave-1 quick wins: LLM fixes lane (claude/w1-llm-fixes)
+Branch `claude/w1-llm-fixes` (off `origin/main`), one of four parallel Wave-1 lanes from the
+2026-07-04 composite expert review. Implemented the 5 assigned items (composite review sections B
+lines 163-232, E ~391-484): (1) fixed the Bear schema silently stripping `confidenceScore` — a live
+money-path bug where a Bear-surviving proposal's conviction score degraded to `undefined`, zeroing
+the approval-time debate trigger and sizing; (2) added per-provider reasoning-token headroom for
+xAI/Gemini/Mistral/DeepSeek chat-completions (previously OpenAI-only); (3) cross-family Bear default
+(only when a cross-family credential is configured, else same-family fallback — see deviation note
+in the rollout) + non-zero (0.7) adversary sampling temperature for Bear/debate via
+`withLlmRequestBounds`; (4) reward-abstention line in the Bull system prompt; (5) stakes-scaled Red
+Team dissent trigger — notional %-of-NAV, live opening, escalation regime, or a requested
+autonomyOverride now also demand the debate, not confidence alone. `STRATEGY_PROMPT_VERSION` bumped
+to `agentic-strategy@1.4.0`. Advisory-only; no new hard gates. Verification green: `npm run lint`
+(0 errors), `npx tsc --noEmit` (clean), `npm test` (245 files / 2385 tests), `npm run build` (exit
+0). Details in `docs/rollouts/2026-07-04-w1-llm-fixes.md`. **PR pending** (push-only branch; a
+landing train picks it up per the coordinator's instructions).
+
 ## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
 Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
 RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +

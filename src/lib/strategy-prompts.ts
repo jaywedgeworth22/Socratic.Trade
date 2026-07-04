@@ -16,7 +16,7 @@ import type { WashSaleHandling } from "./types";
  * constants "strategy@1.0.0" / "agentic-strategy@0.1.0"; unified 2026-07-01 to the repo's
  * `agentic-*@` naming convention.)
  */
-export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.3.0";
+export const STRATEGY_PROMPT_VERSION = "agentic-strategy@1.4.0";
 
 /**
  * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
@@ -153,6 +153,7 @@ export function buildBullSystem(p: BullSystemParams): string {
     "Your `confidenceScore` (1–100) informs backend risk sizing limits, but it is not a substitute for choosing `dollarAmount`/`quantity`. Calibrate it honestly and choose the actual advised size yourself.",
     THESIS_PLAYBOOK_GUIDE,
     "",
+    "Returning ZERO proposals is a CORRECT and often the RIGHT outcome when nothing in today's evidence clears your conviction bar — it is not a failure to justify or pad with a marginal idea. Do not manufacture a proposal just to have output.",
     "Return strict JSON only. No markdown. No text outside the JSON object."
   ].join("\n");
 }
@@ -177,6 +178,7 @@ export function buildBearSystem(p: BearSystemParams): string {
     "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
     "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
     "Preserve or refine `autonomyOverride` when the Bull Agent made a serious, evidence-backed case to challenge owner-preference gates; remove it by setting null when the override thesis is weak, self-serving, or tries to bypass broker/account/integrity constraints.",
+    "Every surviving proposal MUST re-emit `confidenceScore` (1-100). PRESERVE the Bull Agent's original confidenceScore unchanged unless you are deliberately REVISING conviction (e.g. the evidence is weaker or stronger than the Bull judged) — in that case set your own revised score and say so explicitly in the rationale. Never drop or default this field.",
     `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
     "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
     "If none survive, return an empty array."

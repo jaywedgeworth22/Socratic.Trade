@@ -524,7 +524,10 @@ describe("persistence and notifications", () => {
         LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
         LLM_OUTPUT_TOKEN_CAPS.strategyCritique
       ]);
-      expect(openAiBodies.every((body) => body.temperature === LLM_REQUEST_DEFAULTS.deterministicTemperature)).toBe(true);
+      // Per-role sampling (composite review B/medium/S): the Bull (proposer, index 0) stays
+      // deterministic; the Bear (adversary/reviewer, index 1) now samples at a non-zero temperature.
+      expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
+      expect(openAiBodies[1].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
       expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];

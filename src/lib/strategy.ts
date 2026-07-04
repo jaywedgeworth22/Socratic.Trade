@@ -32,7 +32,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
 import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
@@ -64,7 +64,7 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
-import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { fetchDailyOHLC } from "./history";
@@ -89,6 +89,7 @@ import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
+import { isEscalationRegime } from "./regime-watch";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import {
   applySocraticOverrideSizing,
@@ -664,7 +665,20 @@ export async function runStrategyOnce(
       }
     }
     for (const proposal of sizedProposals) {
-      if (shouldRunRedTeamDebate(proposal, policy)) {
+      // Stakes-scaled dissent (composite review E/high/S): widen the debate trigger beyond
+      // confidenceScore alone — large-notional and live openings, an escalation-regime entry, or the
+      // proposal itself requesting an owner-preference override all demand a second look regardless
+      // of stated confidence. Advisory routing only: this decides whether a review runs, never a block.
+      const isOpeningSide = proposal.side === "buy" || proposal.side === "short";
+      const dissentContext: RedTeamDissentContext = {
+        notionalPctOfNav:
+          isOpeningSide && workingPortfolio.totalMarketValue > 0
+            ? (estimateNotional(proposal) / workingPortfolio.totalMarketValue) * 100
+            : undefined,
+        isLiveOpening: isOpeningSide && executionState.environment === "live",
+        entryMarketRegime: proposal.entryMarketRegime
+      };
+      if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
@@ -676,7 +690,9 @@ export async function runStrategyOnce(
           reason: redTeamResult.reason,
           // The model that actually served the debate (incl. the cross-provider Anthropic path) —
           // persisted so the approval card's red-team badge doesn't drift with later policy edits.
-          ...(redTeamResult.model ? { model: redTeamResult.model } : {})
+          ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
+          // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
+          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {})
         };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
@@ -1391,14 +1407,70 @@ export function approvedEscalationsFromDecision(decision: PolicyDecision | undef
     }));
 }
 
-export function shouldRunRedTeamDebate(proposal: TradeProposal, policy: TradingPolicy): boolean {
-  return (proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy);
+export const DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD = 15;
+
+/**
+ * Stakes-scaled dissent context (composite review E/high/S). All fields optional so every existing
+ * 2-arg call site (tests, and any future caller that doesn't have this context yet) is unaffected —
+ * `shouldRunRedTeamDebate` degrades to the original confidence-only gate when omitted.
+ */
+export interface RedTeamDissentContext {
+  /** Estimated order notional as % of portfolio NAV (totalMarketValue). */
+  notionalPctOfNav?: number;
+  /** True for an OPENING (buy/short) proposal on a LIVE (non-paper) account. */
+  isLiveOpening?: boolean;
+  /** The regime label the proposal was scored in (checked via isEscalationRegime). */
+  entryMarketRegime?: string;
+}
+
+/**
+ * Whether the approval-time Red Team debate (debateProposal) is required for this proposal.
+ * Originally gated on confidenceScore ALONE, so a low-confidence but large-notional LIVE trade got
+ * no adversarial review while a high-confidence $50 paper trade did (composite review E/high/S:
+ * "Stakes-scaled dissent"). Now ANY of the following demands the debate: high confidence (existing
+ * behavior, unchanged), notional at/above the policy-tunable %-of-NAV threshold, a LIVE opening, an
+ * escalation-regime entry, or the proposal itself carrying a requested autonomyOverride (the agent is
+ * already asking to deviate from an owner preference — that deserves a second look). Advisory
+ * routing only: this only decides whether a REVIEW runs, never a hard block.
+ */
+export function shouldRunRedTeamDebate(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  context: RedTeamDissentContext = {}
+): boolean {
+  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return true;
+  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return true;
+  if (context.isLiveOpening) return true;
+  if (proposal.autonomyOverride?.requested) return true;
+  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return true;
+  return false;
+}
+
+/** WHICH trigger demanded the debate (for the verdict receipt) — mirrors shouldRunRedTeamDebate's
+ *  checks in the same order so the reported trigger is the first one that actually fired. */
+export function redTeamDebateTrigger(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  context: RedTeamDissentContext = {}
+): "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime" | undefined {
+  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return "confidence";
+  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return "notional";
+  if (context.isLiveOpening) return "live_opening";
+  if (proposal.autonomyOverride?.requested) return "override_requested";
+  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return "escalation_regime";
+  return undefined;
 }
 
 export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): number {
   const threshold = policy.tuning?.redTeamConvictionThreshold;
   if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_CONVICTION_THRESHOLD;
   return Math.max(0, Math.min(100, threshold));
+}
+
+export function redTeamNotionalPctOfNavThresholdForPolicy(policy: TradingPolicy): number {
+  const threshold = policy.tuning?.redTeamNotionalPctOfNavThreshold;
+  if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD;
+  return Math.max(0, threshold);
 }
 
 /**
@@ -2957,6 +3029,7 @@ async function proposeTrades(input: {
             "marketHours",
             "rationale",
             "tradeThesisTag",
+            "confidenceScore",
             "autonomyOverride"
           ],
           properties: {
@@ -2973,6 +3046,14 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
+            // FIX (composite review B/high/S): the Bear schema previously omitted confidenceScore from
+            // both `properties` and `required` while `additionalProperties:false` forbid re-emitting it —
+            // strict structured output silently stripped every Bear-surviving proposal's confidence to
+            // undefined, which zeroed shouldRunRedTeamDebate's approval-time trigger (`?? 0`), degraded
+            // sizing to a neutral `?? 50`, and fed the wash-sale auto-edge math the same undefined. The
+            // Bear system prompt (buildBearSystem) now instructs it to preserve the Bull's score unless it
+            // is REVISING conviction, so this is restored as a required, re-emitted field.
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100 — preserve the Bull's score unless you are deliberately revising conviction; state why in the rationale if you change it." },
             autonomyOverride: autonomyOverrideSchema
           }
         }
@@ -3089,7 +3170,12 @@ async function proposeTrades(input: {
       userContent: JSON.stringify(bearUserContent),
       schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
-      reasoningEffort: bearReasoningEffort
+      reasoningEffort: bearReasoningEffort,
+      // Per-role sampling (composite review B/medium/S): the adversary role runs at a non-zero
+      // temperature so repeated runs can surface different objections instead of the same greedy,
+      // deterministic critique every time. Ignored by reasoning models (they reject temperature and
+      // steer via reasoningEffort instead — see withLlmRequestBounds).
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
     }
   );
 
