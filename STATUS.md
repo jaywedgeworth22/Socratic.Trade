@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex)
+Branch `codex/rag-filing-ingest-smoke-fix` in `/Users/jay/apps/trading-codex`.
+Production Infisical runtime was verified against the new Pinecone account: the only visible
+index is `socratic-trade`, dimension 1024. A controlled MSFT SEC 10-Q ingest wrote 95 vectors
+to the new index, recorded 95 `document_chunks`, recorded accession `0001193125-26-191507`,
+and retrieval returned MSFT MD&A chunks from `sec-edgar`. The first manual run timed out after
+writing 56 vectors but before local bookkeeping; those orphan vectors were deleted, returning the
+index to 95 vectors. Code fix in this branch passes a deterministic SEC filing `doc_id`
+(`ticker:accession:docType`) into `storeDocument` so retries overwrite the same vector ids instead
+of generating duplicate UUID-based ids. Focused verification: `npx vitest run
+test/sec-filings.test.ts`.
+
 ## 2026-07-04 - RAG Sentry visibility + Pinecone hosted-model review (Codex)
 Branch `codex/rag-sentry-visibility` in `/Users/jay/apps/trading-codex`.
 Follow-up after PR #351 merged. RAG provider failures, missing keys, Pinecone metric checks,

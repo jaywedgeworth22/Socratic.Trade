@@ -54,6 +54,15 @@ filling the missing pieces.
 > incremental single-trader use should not hit it; if it does, inspect deduping/chunking/cadence
 > before raising the cap.
 
+> **2026-07-04 - RAG filing ingest smoke + deterministic vector ids (Codex).**
+> Branch `codex/rag-filing-ingest-smoke-fix` verified production writes/searches the new
+> `socratic-trade` Pinecone index by ingesting one MSFT 10-Q. The successful state is 95 vectors,
+> 95 local `document_chunks`, and accession `0001193125-26-191507` recorded in
+> `ingested_accessions`. The smoke surfaced a retry-safety bug: SEC filings without deterministic
+> `doc_id` values generated UUID-based vector ids, so a timed-out partial ingest could leave duplicate
+> vectors on retry. SEC filing ingestion now passes `ticker:accession:docType` as `doc_id`; preserve
+> that invariant before any larger RAG backfill.
+
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
 > Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
 > adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled
