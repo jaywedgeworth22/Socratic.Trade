@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Codex console/UI swimlane: approvals receipt, trace inspector, a11y/parity
+Branch `codex/console-ui-swimlane`, worktree `/Users/jay/apps/trading-codex-ui-swimlane`, claimed
+from `#agent-sync` sync-21 (not the sovereign review branch). Implemented the assigned console/UI
+pack: approval cards now show persisted served-model/failover provenance, red-team trigger chips,
+sizing provenance, reward:risk geometry, and proposal-linked RAG citations; live mobile approvals
+now require the same `APPROVE LIVE <SYMBOL>` phrase; `Sheet` has a focus trap and opener focus
+restore; `/api/socratic/decisions/[id]` + `/console/decisions/[id]` expose a read-only decision
+trace with coach notes and linked framework `ownerResponse`; console decision rows link to Trace;
+high-signal ticker surfaces now use the shared drawer affordance; Strategy model selects keep
+stored custom IDs visible instead of collapsing to an anonymous custom input.
+
+Verification green: `npm run lint` (0 errors, 308 existing warnings), `npx tsc --noEmit`,
+`npm test` (252 files / 2451 tests), `npm run build` (passes with existing Next/Sentry Edge warning).
+See `docs/rollouts/2026-07-04-console-ui-swimlane.md`. Next action: commit and open the PR, then
+sync the Codex preview after landing if the worktree is clean.
+
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single
