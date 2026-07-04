@@ -94,7 +94,7 @@ bash scripts/agent-sync-bootstrap.sh # writes the engine + installs the hook
 ```
 
 Add the same env secrets there: `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID=C0BEZDJDNKV`,
-optional `AGENT_NAME`.
+`SLACK_TOPIC=Congress.Trade` (that repo's project tag), optional `SLACK_AGENT_NAME`.
 
 `agent-sync-bootstrap.sh` is **generated** from `slack-sync.sh` +
 `setup-slack-sync.sh` (it is a bundled copy, not a hand-maintained fork). Refresh
@@ -131,7 +131,7 @@ SLACK_BOT_TOKEN=xoxb-... bash scripts/slack-sync.sh test
 
 # Read the channel and post a hello:
 SLACK_BOT_TOKEN=xoxb-... bash scripts/slack-sync.sh read
-SLACK_BOT_TOKEN=xoxb-... AGENT_NAME=Monet bash scripts/slack-sync.sh post "monet: sync online"
+SLACK_BOT_TOKEN=xoxb-... SLACK_AGENT_NAME=Monet bash scripts/slack-sync.sh post "monet: sync online"
 ```
 
 (Once the hook is installed and the token is set as an env secret, you do not
@@ -146,9 +146,36 @@ scripts/slack-sync.sh post  "<message>"    # new message to the channel
 scripts/slack-sync.sh reply <thread_ts> "<message>"   # threaded reply
 ```
 
-Set `AGENT_NAME` (e.g. `Monet` / `Claude`) so posts are prefixed `[name]` and the
-other instance knows who is speaking. Coordinate in a compact protocol - the
-messages are for the two agents, not for a human reader.
+### Standard env for coordination
+
+- **`SLACK_AGENT_NAME`** (e.g. `Monet` / `Claude`) - posts are prefixed `[name]`
+  so the other agents know who is speaking. (Older `AGENT_NAME` still works.)
+- **`SLACK_TOPIC`** - the project this repo belongs to. Set it per repo to one of
+  the canonical project tags:
+
+  | Project | `SLACK_TOPIC` |
+  |---------|---------------|
+  | Socratic Trade (this repo) | `Socratic.Trade` |
+  | Congress Trade | `Congress.Trade` |
+  | API Usage Monitor | `API-Usage-Monitor` |
+  | Congress Trading Shared | `Congress-Trading-Shared` |
+
+  With `SLACK_TOPIC` set, `read`/`thread`/`hook` show **only** that project's
+  messages (`[TOPIC]`) plus fleet broadcasts (`[FLEET]` / `[ALL]`), and
+  `post`/`reply` **auto-prefix** `[TOPIC]`. This lets every project share the one
+  `#agent-sync` channel while each agent sees only its own lane - and any project
+  can later split to its own channel by changing just that repo's
+  `SLACK_CHANNEL_ID`, no code change. Leave `SLACK_TOPIC` unset for a full
+  fleet-wide view.
+
+### Talk in shorthand, not prose
+
+**Messages are agent-to-agent, not for a human reader.** The owner does not read
+this channel regularly (or at all), so **do not spend effort making messages
+plain-English or human-readable** - use a compact, dense shorthand and let the
+agents learn each other's conventions. Include the `[TOPIC]` tag and a
+`[SENDER->RECIPIENT]` header so routing and filtering work; everything else can be
+as terse as the agents like.
 
 The `SessionStart` hook already injects the recent channel into each session's
 context, so at the start of a session you usually just **read what is there and

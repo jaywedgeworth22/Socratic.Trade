@@ -56,8 +56,16 @@ cat > "$DEST" <<'SLACK_SYNC_ENGINE_EOF'
 #                     never logged, and never placed in a process argv.
 #   SLACK_CHANNEL_ID  channel to read/post (default C0BEZDJDNKV = #agent-sync,
 #                     formerly #claude-monet-sync; the ID is stable across renames)
-#   AGENT_NAME        optional; when set, posted/replied text is prefixed "[name] "
-#                     so the other instance knows who is speaking.
+#   SLACK_AGENT_NAME  optional; when set, posted/replied text is prefixed "[name] "
+#                     so the other agents know who is speaking (e.g. Monet / Claude).
+#                     (Older var AGENT_NAME is still honored as a fallback.)
+#   SLACK_TOPIC       optional project tag (e.g. Socratic.Trade, Congress.Trade,
+#                     API-Usage-Monitor, Congress-Trading-Shared). When set:
+#                       - read / thread / hook show ONLY messages tagged "[TOPIC]"
+#                         (plus "[FLEET]" / "[ALL]" broadcasts), so many projects can
+#                         share one channel and each agent sees only its own lane.
+#                       - post / reply auto-prefix "[TOPIC] " to the message.
+#                     Unset = see and post to the whole channel (fleet view).
 #
 # Safety model:
 #   - read / thread NEVER fail hard: on missing arg, network error, or Slack
@@ -74,7 +82,14 @@ set -u
 
 SLACK_API="https://slack.com/api"
 CHANNEL_ID="${SLACK_CHANNEL_ID:-C0BEZDJDNKV}"
-AGENT_NAME="${AGENT_NAME:-}"
+# Preferred name is SLACK_AGENT_NAME; AGENT_NAME kept as a fallback for anyone
+# who set the older var.
+AGENT_NAME="${SLACK_AGENT_NAME:-${AGENT_NAME:-}}"
+# Optional project tag. When set, read/thread/hook show ONLY messages tagged
+# [TOPIC] (plus [FLEET]/[ALL] broadcasts), and post/reply auto-prefix [TOPIC].
+# Canonical tags: Socratic.Trade, Congress.Trade, API-Usage-Monitor,
+# Congress-Trading-Shared.
+TOPIC="${SLACK_TOPIC:-}"
 READ_LIMIT_DEFAULT=20
 THREAD_LIMIT=200
 
@@ -168,13 +183,21 @@ except Exception:
   fi
 }
 
-# format_messages RESPONSE -> one human line per message, oldest first.
+# format_messages RESPONSE [TOPIC] -> one line per message, oldest first. When
+# TOPIC is non-empty, keep only messages whose text contains "[TOPIC]" (case-
+# insensitive) or a "[FLEET]"/"[ALL]" broadcast tag.
 format_messages() {
-  _resp="$1"
+  _resp="$1"; _topic="${2:-}"
   if command -v jq >/dev/null 2>&1; then
-    printf '%s' "$_resp" | jq -r '
+    printf '%s' "$_resp" | jq -r --arg topic "$_topic" '
       (.messages // [])
       | reverse
+      | map(select(
+          ($topic == "")
+          or ((.text // "") | ascii_downcase
+              | (contains("[" + ($topic | ascii_downcase) + "]")
+                 or contains("[fleet]") or contains("[all]")))
+        ))
       | .[]
       | ((.user // .username // .bot_id // "unknown")) as $who
       | "[" + (.ts // "?") + "] " + $who + ": "
@@ -183,21 +206,34 @@ format_messages() {
   fi
   if command -v python3 >/dev/null 2>&1; then
     printf '%s' "$_resp" | python3 -c 'import json,sys
+topic = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
 for m in reversed(d.get("messages", []) or []):
+    raw = m.get("text") or ""
+    if topic:
+        low = raw.lower()
+        if ("[" + topic + "]") not in low and "[fleet]" not in low and "[all]" not in low:
+            continue
     who = m.get("user") or m.get("username") or m.get("bot_id") or "unknown"
     ts = m.get("ts", "?")
-    text = (m.get("text") or "").replace("\r", "").replace("\n", "\n    ")
-    print("[%s] %s: %s" % (ts, who, text))'
+    text = raw.replace("\r", "").replace("\n", "\n    ")
+    print("[%s] %s: %s" % (ts, who, text))' "$_topic"
     return 0
   fi
   # Last resort: crude and lossy (does not un-escape), but better than nothing.
-  printf '%s' "$_resp" \
+  # In this degraded path the topic filter matches "[TOPIC]" only (broadcasts may
+  # be missed); grep -F treats the brackets literally.
+  _out="$(printf '%s' "$_resp" \
     | grep -o '"text"[[:space:]]*:[[:space:]]*"[^"]*"' \
-    | sed -e 's/^"text"[[:space:]]*:[[:space:]]*"//' -e 's/"$//'
+    | sed -e 's/^"text"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')"
+  if [ -n "$_topic" ]; then
+    printf '%s\n' "$_out" | grep -iF "[$_topic]"
+  else
+    printf '%s\n' "$_out"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -298,7 +334,12 @@ emit_envelope() {
 # ---------------------------------------------------------------------------
 
 do_read() {
-  _limit="${1:-$READ_LIMIT_DEFAULT}"
+  _limit="${1:-}"
+  if [ -z "$_limit" ]; then
+    # Default fetch. When filtering by TOPIC, pull a wider window first so the
+    # project's messages are not crowded out of the last-N by other projects.
+    if [ -n "$TOPIC" ]; then _limit="${SLACK_TOPIC_FETCH_LIMIT:-100}"; else _limit="$READ_LIMIT_DEFAULT"; fi
+  fi
   case "$_limit" in
     ''|*[!0-9]*) _limit="$READ_LIMIT_DEFAULT" ;;
   esac
@@ -308,7 +349,9 @@ do_read() {
   if ! resp_ok "$_resp"; then
     soft_fail "Slack API error (conversations.history): $(resp_error "$_resp")"
   fi
-  emit_envelope "channel #$CHANNEL_ID (last $_limit messages, oldest first)" "$(format_messages "$_resp")"
+  _scope="channel #$CHANNEL_ID (last $_limit messages, oldest first)"
+  [ -n "$TOPIC" ] && _scope="channel #$CHANNEL_ID (topic [$TOPIC] + broadcasts, from last $_limit, oldest first)"
+  emit_envelope "$_scope" "$(format_messages "$_resp" "$TOPIC")"
 }
 
 do_test() {
@@ -348,10 +391,12 @@ do_hook() {
   fi
   echo "Slack coordination channel #$CHANNEL_ID (a.k.a. #agent-sync) is live."
   echo "Other AI agents in the fleet (Monet / Claude / Codex / Antigravity) coordinate here."
+  [ -n "$TOPIC" ] && echo "Filtered to this project's lane [$TOPIC] (plus [FLEET]/[ALL] broadcasts)."
+  echo "Agents talk to each other in a compact shorthand - it need not be plain English."
   echo "To reply, run one of:"
   echo "  scripts/slack-sync.sh post \"<compact message>\"            # new message"
   echo "  scripts/slack-sync.sh reply <thread_ts> \"<compact message>\" # threaded reply"
-  do_read "$READ_LIMIT_DEFAULT"
+  do_read
 }
 
 do_thread() {
@@ -365,7 +410,7 @@ do_thread() {
   if ! resp_ok "$_resp"; then
     soft_fail "Slack API error (conversations.replies): $(resp_error "$_resp")"
   fi
-  emit_envelope "thread $_ts in #$CHANNEL_ID (oldest first)" "$(format_messages "$_resp")"
+  emit_envelope "thread $_ts in #$CHANNEL_ID (oldest first)" "$(format_messages "$_resp" "$TOPIC")"
 }
 
 do_post() {
@@ -375,6 +420,7 @@ do_post() {
     exit 1
   fi
   [ -n "$AGENT_NAME" ] && _text="[$AGENT_NAME] $_text"
+  [ -n "$TOPIC" ] && _text="[$TOPIC] $_text"
   init_auth
   BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/slack-sync-body.XXXXXX" 2>/dev/null)" \
     || soft_fail "could not create temp file for message body"
@@ -395,6 +441,7 @@ do_reply() {
     exit 1
   fi
   [ -n "$AGENT_NAME" ] && _text="[$AGENT_NAME] $_text"
+  [ -n "$TOPIC" ] && _text="[$TOPIC] $_text"
   init_auth
   BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/slack-sync-body.XXXXXX" 2>/dev/null)" \
     || soft_fail "could not create temp file for message body"
