@@ -172,26 +172,31 @@ to `socratictrade.com`, record the release commit + date here._
   (`fleet-sentry-monitor` under pm2, machine-side, not in this repo) covers pm2 crash-loop/down
   detection, disk/WAL space, and `gh` rate-limit budget — see
   `docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail on both halves.
+- **PR #374 — GitHub Issues mirror of the effort board (`claude/effort-issues-mirror`).**
+  Additive, read-only owner-visibility layer over `docs/EFFORT-LOG.md`: boards stay the single
+  source of truth, agents never write issues — a workflow reconciles them. New
+  `scripts/sync-effort-issues.py` (python3 stdlib, no deps) parses the board (keyword-classified
+  `##` sections tolerant of heading/emoji drift, top-level bullets as items with continuation
+  lines folded in, `<!-- effort-key: sha1(first-line) -->` identity marker for idempotent
+  re-runs). Planned/In Progress -> issue open (`effort-board` + `state:planned`/`state:in-progress`,
+  assigned `jaywedgeworth22` for mobile notifications); Completed/Deployed -> issue closed
+  (`state:completed`/`state:deployed`). Never deletes issues; ignores hand-made issues without the
+  marker; creates missing labels on first run. New additive workflow
+  `.github/workflows/effort-issues-sync.yml` (push to `main` touching this file, daily off-minute
+  cron for drift, `workflow_dispatch`). Rolled out identically to `congress-trading-shared` (PR #4)
+  and `API-usage-monitor` (PR #9); canonical protocol doc
+  (`/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`) gained an "Issues mirror (standard)" subsection +
+  bootstrap-checklist update. Verified: parser tested directly against all three repos' real
+  boards before rollout (58/1/2 items respectively, correct bucketing); a genuine duplicate board
+  row surfaced by a live dry-run (this repo's own "Wave-1 quick wins..." logged twice under In
+  Progress) was caught and fixed with in-run dedup; full local quartet green (lint 0 errors, tsc
+  clean, 2436 tests, build ok); post-merge the push-triggered workflow run created all 58 issues
+  correctly bucketed (32 completed/6 deployed closed, 9 in-progress/11 planned open), confirmed via
+  the Issues API. See `docs/rollouts/2026-07-04-effort-issues-mirror.md`.
 
 ---
 
 ## 🔨 In Progress
-
-- **GitHub Issues mirror of effort boards (cross-app, Claude coordinator, sonnet lane) — IN PROGRESS 2026-07-04.**
-  Per-repo additive workflow + sync script: `docs/EFFORT-LOG.md` (committed mirror) -> reconciled
-  labeled issues (open=planned/in-progress, closed=completed/deployed), owner-assigned for mobile
-  notifications, marked read-only (boards stay the single source of truth). Worktree
-  `~/apps/trading-wt-issues-mirror`, branch `claude/effort-issues-mirror`. New
-  `scripts/sync-effort-issues.py` (python3 stdlib, no deps) + new
-  `.github/workflows/effort-issues-sync.yml` (push to `main` touching this file, daily off-minute
-  cron, `workflow_dispatch`). Rolls out identically to `congress-trading-shared` and
-  `API-usage-monitor`; protocol doc (`/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`) gains a standard
-  "Issues mirror" subsection + bootstrap-checklist update. Local verification: parser tested
-  directly against all three repos' real boards (58/1/2 items respectively, correct bucketing,
-  duplicate-row dedup fixed after a live dry-run surfaced a genuine duplicate row in this repo's
-  own board), full quartet green (lint 0 errors, tsc clean, 2436 tests, build ok), live dry-run
-  against the real GitHub API confirmed label/issue reconciliation logic. See
-  `docs/rollouts/2026-07-04-effort-issues-mirror.md`.
 
 - **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
   GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
