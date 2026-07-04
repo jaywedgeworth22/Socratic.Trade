@@ -303,6 +303,35 @@ to `socratictrade.com`, record the release commit + date here._
   - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro cache;
     per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
 
+- **Fleet-wide Sentry observability (Claude, sonnet lane) — 2026-07-04.** New Sentry project
+  `fleet-infra` (org jays-services). **(a) Host monitor (machine-side, no repo dependency):**
+  `/Users/jay/apps/fleet-sentry-monitor/monitor.py`, registered under pm2 as `fleet-sentry-monitor`
+  (`pm2 save`d). Each ~120s pass: `pm2 jlist` crash-loop detection (restart delta >= 5 per interval
+  -> error, fingerprinted per app+condition, hourly dedup via a local state file), down detection
+  (`trading`/`trading-main` non-online -> error, other apps -> warning); Claude desktop
+  presence/RSS as breadcrumb only; disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+  files >512MB warning; `gh api rate_limit` core/graphql <300 remaining warning with reset time;
+  self-hosted Actions runner status as context only (offline is normal); a Sentry Crons self
+  check-in (monitor `fleet-host-monitor`, interval 2min/margin 5/max_runtime 2/America-Chicago) so
+  a dead monitor alerts by absence. Verified live: two pm2-driven passes completed real check-ins,
+  a synthetic restart-delta test correctly fired the crash-loop error, and the `gh` rate-limit
+  warning fired for real (graphql hit 0 remaining from fleet-wide testing during this session).
+  **(b) CI failure reporter (repo-side, additive only):** worktree
+  `~/apps/trading-wt-sentry-ci` (branch `claude/sentry-ci-observability`), two brand-new files —
+  `.github/workflows/sentry-ci-report.yml` (on `workflow_run: types:[completed]` across all 7
+  existing workflows: CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+  Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw envelope HTTP via
+  urllib, no sentry-sdk/action-marketplace dependency). Failure conclusion -> Sentry error event
+  tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`;
+  schedule-triggered runs additionally send a Sentry Crons check-in (`ci-<workflow-slug>`) whose
+  `monitor_config.schedule` mirrors that workflow's own cron (Security `41 10 * * 1`, Playwright
+  Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`), so a nightly/weekly job that silently
+  stops firing raises a missed-check-in alert. Zero edits to any existing workflow file. Repo
+  secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value mechanically from
+  `/Users/jay/apps/fleet-sentry-monitor/.env` (never echoed/logged). Locally dry-ran the reporter
+  script against the real DSN: both the failure-event and check-in envelope POSTs returned HTTP
+  200. See `docs/rollouts/2026-07-04-fleet-sentry-observability.md`.
+
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
