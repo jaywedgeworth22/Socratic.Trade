@@ -190,7 +190,14 @@ to `socratictrade.com`, record the release commit + date here._
   `docs/reviews/2026-07-04-expert-design-review.md`: 147 prioritized improvements across memory/learning,
   LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems, each with a concrete
   approach + `[impact/effort]`; cross-cutting-gaps section; quick-wins/big-bets tables; Now/Next/Later
-  roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
+  roadmap. Docs-only. **Merged (#356).** (Read section E through the ADVISORY-guardrails correction above.)
+
+- **Composite expert review — Fable + Monet merged backlog** (Monet, cloud, branch
+  `claude/composite-expert-review`) — integrated Fable's ~209-item panel with Monet's 147-item panel
+  (#356) into `docs/reviews/2026-07-04-composite-expert-review.md`: **284 distinct items**, source-tagged
+  **[Both]** (50 convergent = highest-confidence critical path), **[Fable]**, or **[Monet]**, across 8
+  sections (A–H incl. Security/injection/ops-resilience), a numbered critical-path list, quick-wins/
+  big-bets tables, and a Now/Next/Later roadmap. Docs-only. **PR pending.**
 
 ---
 

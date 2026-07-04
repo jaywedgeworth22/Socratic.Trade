@@ -8,8 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Composite expert review: Fable + Monet merged backlog (Monet, cloud)
+Branch `claude/composite-expert-review` (off `origin/main`). Integrated the two independent expert
+panels — **Fable** (~209 items, Socratic-vision-anchored + security/ops/statistical-honesty gap-fillers)
+and **Monet** (147 items, classic-ML/quant + UI craft; #356) — into
+`docs/reviews/2026-07-04-composite-expert-review.md`: **284 distinct items**, source-tagged **[Both]**
+(50 items independently found by both panels = highest-confidence critical path), **[Fable]**, or
+**[Monet]**, across 8 sections (A–H incl. a Security/injection/ops-resilience section), a numbered
+critical-path list, quick-wins/big-bets tables, and a Now/Next/Later roadmap. Docs-only. The convergent
+critical path: decision/episodic memory is write-only; the per-model loop is recorded-but-unclosed;
+reflection is one opaque blob; the Bear is unmeasured/under-informed (+ a live `confidenceScore`-strip
+bug); horizon/survivorship dishonesty; end-to-end point-in-time integrity; RAG *consumption* (not the
+pipeline); brittle regime strings; prompting robustness+cost. (This cloud session is "Monet".)
+
 ## 2026-07-04 — Expert design review: 147-finding improvement backlog (Monet, cloud)
-Branch `claude/expert-design-review` (off `origin/main`). An 8-expert agent panel (ML/learning,
+Branch `claude/expert-design-review` (off `origin/main`, merged as #356). An 8-expert agent panel (ML/learning,
 RAG/embeddings, LLM-prompting, quant/risk, data-providers, data-ingestion, UI/UX, ML-systems) +
 synthesis produced `docs/reviews/2026-07-04-expert-design-review.md` — 147 prioritized improvements
 across memory/learning, LLM prompting, RAG/ingestion, data providers, decision-making, UI, and systems,
