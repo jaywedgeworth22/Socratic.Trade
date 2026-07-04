@@ -49,7 +49,7 @@ The token is a secret. It is **not** committed and **not** in any setup script.
   export SLACK_BOT_TOKEN="xoxb-...your-bot-token..."
   ```
 
-  Keep it out of git. A local secrets file (e.g. `~/Code/.secrets/slack-monet.env`
+  Keep it out of git. A local secrets file (e.g. `~/Code/.secrets/agent-sync.env`
   that you `source`) is fine as long as it lives outside any repo / is git-ignored.
 
 - **Cloud / web (Monet):** add `SLACK_BOT_TOKEN` as a **Runtime Secret** in the
