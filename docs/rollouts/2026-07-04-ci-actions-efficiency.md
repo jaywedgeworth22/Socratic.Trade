@@ -1,7 +1,8 @@
-# 2026-07-04 — CI Actions efficiency (docs-only fast path + caching)
+# 2026-07-04 — CI Actions efficiency (docs-only fast path + caching + cache hygiene)
 
 Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, off
-`origin/main`. Workflow-only change; no application code touched.
+`origin/main`. Workflow-only change; no application code touched (one new helper script,
+`scripts/prune-stale-actions-caches.py`, used only by the new cleanup workflow).
 
 ## Why
 
@@ -41,12 +42,95 @@ required check that never reports stays **pending forever**, permanently blockin
 name) running and reporting in both cases, satisfying the ruleset either way.
 
 **Caching added to `verify`:** `setup-node@v4` already had `cache: npm` (keyed on
-`package-lock.json` — pre-existing, unchanged). New: `.next/cache` restore via `actions/cache@v4`,
-same key/restore-key pattern already used in `e2e.yml`'s Playwright job (`${{ runner.os
-}}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}` with two
-looser restore-key fallbacks). This warm-starts `npm run build`'s Next.js compile instead of a
-cold build every run. `node_modules` itself is not cached directly — `setup-node`'s built-in npm
-cache (the documented pattern) is relied on instead, consistent with the existing e2e/verify setup.
+`package-lock.json` — pre-existing, unchanged). New: `.next/cache` restore/save via
+`actions/cache/restore@v4` + `actions/cache/save@v4` (split, not the combined `actions/cache@v4`
+action — see "Cache hygiene" below for why), same key/restore-key pattern already used in
+`e2e.yml`'s Playwright job (`${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{
+hashFiles('src/**', 'app/**') }}` with two looser restore-key fallbacks). This warm-starts `npm run
+build`'s Next.js compile instead of a cold build every run. `node_modules` itself is not cached
+directly — `setup-node`'s built-in npm cache (the documented pattern) is relied on instead,
+consistent with the existing e2e/verify setup.
+
+## Cache hygiene (added same day, mid-review)
+
+While this branch was in review the repo hit its **10 GB total Actions-cache cap**
+(`gh cache list` showed the account was being throttled/evicted). Root cause, diagnosed live:
+
+- A plain (non-split) `actions/cache@v4` step — as this branch originally added it — **saves a
+  new entry on every run it doesn't get an exact-key hit on**, scoped to the run's own ref. Since
+  the `.next/cache` key includes a `hashFiles('src/**', 'app/**')` source hash, it changes on
+  almost every commit — so every PR push was saving its own ~340 MB entry scoped to
+  `refs/pull/<n>/merge`. That entry has no natural cleanup: GitHub only evicts caches when the
+  10 GB cap is exceeded (oldest-first, repo-wide), so closed/merged/abandoned PRs left their
+  cache entries around indefinitely, competing with everyone else's for the same 10 GB budget.
+- The same is true on `main` itself: every push to `main` also saves a brand-new entry (again,
+  the source hash changes every commit) without removing the previous `main` entry, so even the
+  "long-lived" branch was accumulating a growing list rather than a single rolling one.
+
+Fix, in this same branch (still `verify`/`ci.yml`-scoped, no new required-check surface):
+
+1. **Restore-only on PR/merge_group, save-only on `main` pushes.** `.github/workflows/ci.yml`'s
+   `Restore Next.js build cache` step now uses `actions/cache/restore@v4` unconditionally (any
+   event, falls back through the two restore-keys to the latest available entry — typically
+   `main`'s). A new `Save Next.js build cache (main only)` step uses `actions/cache/save@v4`
+   gated on `if: ... && github.ref == 'refs/heads/main' && github.event_name == 'push'`. Net
+   effect: PR pushes get a warm cache to restore from but never write their own entry, so cache
+   storage grows by one superseding entry per `main` push instead of one throwaway entry per PR
+   push.
+2. **New workflow `.github/workflows/cleanup-caches.yml`** (not a required check, no interaction
+   with the ruleset):
+   - `delete-pr-caches` job, on `pull_request: closed` (merged or not) — runs
+     `gh cache delete --all --ref refs/pull/<n>/merge --succeed-on-no-caches`, removing any cache
+     entries scoped to that PR's ref so a forgotten/pre-fix PR cache can't linger. (Dry-run tested
+     against a nonexistent PR ref: `gh cache delete --all --ref refs/pull/999999/merge
+     --succeed-on-no-caches` exits 0 with no entries found — confirms the flag combination is
+     valid and safely idempotent.)
+   - `prune-stale-caches` job, on a daily cron (`5 3 * * *`) plus `workflow_dispatch` — lists all
+     caches, groups them by (key-with-trailing-hash-stripped, ref) via the new
+     `scripts/prune-stale-actions-caches.py` helper, and deletes every entry in each group except
+     the most recently created one. This is a **backstop**, not the primary control (item 1
+     above is): it mainly guards `main`'s own Next.js/npm cache lineages against re-accumulating,
+     and incidentally also protects the small long-lived tool caches (`gitleaks-cache-*`,
+     `bun-*`) if they ever start duplicating. Verified locally against a synthetic 6-entry sample
+     inventory (3 `main`-ref Next.js entries with different content hashes, 1 npm-cache entry, 1
+     gitleaks entry, 1 PR-ref entry) — correctly prunes only the two oldest `main` Next.js
+     entries, leaves the single-entry groups (npm/gitleaks/PR-ref) untouched.
+
+**Before/after cache-storage behavior:**
+
+| | Before this fix | After this fix |
+|---|---|---|
+| Every PR push | Saves a new ~340 MB `.next` entry scoped to that PR's ref | Restores only; saves nothing |
+| PR closes | Cache entry lingers (no automatic cleanup) until the 10 GB cap evicts something, oldest-first, repo-wide | `delete-pr-caches` removes it immediately on close |
+| Every `main` push | Saves a new ~340 MB entry, previous `main` entry NOT removed | Saves a new entry (same as before — this is the one lineage that's supposed to grow) |
+| Steady-state `main` cache count | Unbounded growth (one entry per push, ever) | Bounded to 1 (daily prune backstop keeps only the newest) |
+| Cache inventory at time of fix | 4 entries, 606.8 MiB total (`gh cache list`) — small at the moment of measurement because caches had only just started accumulating post-2026-07-01 self-hosted-runner migration; the reported 10 GB cap event was observed by the owner separately during heavier concurrent PR activity | Same 4 entries immediately after (fix is forward-looking — it changes what gets written from here, not a retroactive purge); the `prune-stale-caches` and `delete-pr-caches` jobs will keep future growth bounded |
+
+## Deferred / rejected scope (recorded for the record)
+
+Two further additions were proposed mid-task and explicitly resolved by the owner before this
+branch was finalized:
+
+- **Hybrid self-hosted+hosted runner routing for `verify`** (route the required check to the
+  `trading-live-mac` self-hosted runner when available, hosted otherwise) — **rejected,
+  indefinitely, everywhere**, unless the owner explicitly re-confirms after seeing the tradeoff,
+  and even then only as its own separately-labeled PR, never bundled into a general efficiency
+  change. Reason: `trading-live-mac` is the production box; `verify` was deliberately moved off
+  it on 2026-07-01 per this same repo's `ci.yml` comment and `AGENTS.md` because it "was the main
+  source of the runner queue bottleneck" — routing the required check back onto it (even
+  conditionally) risks reintroducing that exact bottleneck (the proposed design's own
+  `max-in-flight 1` concurrency group **is** that serialization) plus new resource contention
+  with live trading traffic, and makes the required check's pass/fail meaning depend on which of
+  two different OS/toolchain environments happened to execute it — a correctness/auditability
+  regression, not just a cost tradeoff, for a change whose explicit mandate was zero weakening of
+  the merge gate. Not implemented in this branch or anywhere else.
+- **Cross-repo reusable `workflow_call` entry point** exposing this gate for all present/future
+  repos — **deferred** to a follow-up PR, contingent on the hybrid-runner question above being
+  resolved first (bundling an unresolved self-hosted-routing design into a shared template other
+  repos inherit would propagate the same risk rather than isolate it). When built, the reusable
+  gate is to be **hosted-only by default with zero self-hosted references**; any runner routing
+  would be a separately-approved, explicit opt-in input, never silently inherited. Not implemented
+  in this branch.
 
 ## Required-check verification
 
@@ -133,7 +217,12 @@ discipline:
 ## Files touched
 
 - `.github/workflows/ci.yml` — `classify` job added; `verify` job's expensive steps now
-  step-conditional on `needs.classify.outputs.docs-only`; `.next/cache` restore step added.
+  step-conditional on `needs.classify.outputs.docs-only`; `.next/cache` restore/save (split,
+  restore-only on PR/merge_group, save-only on `main` pushes) added.
+- `.github/workflows/cleanup-caches.yml` — new. Deletes PR-ref caches on PR close; daily-cron
+  backstop prune of stale same-lineage cache entries.
+- `scripts/prune-stale-actions-caches.py` — new. Pure-stdin/stdout helper used only by
+  `cleanup-caches.yml`'s scheduled prune job; no application-code call sites.
 - `docs/rollouts/2026-07-04-ci-actions-efficiency.md` — this note.
 - `STATUS.md` — prepended entry.
 - `docs/EFFORT-LOG.md` — mirror row.
@@ -169,15 +258,14 @@ test file since the logic lives entirely in workflow YAML `run:` steps, not appl
 
 ## Follow-ups
 
-- **No live Actions run has exercised this workflow yet** — the Pro-plan spending limit is
-  reportedly at $0/exhausted, so hosted `ubuntu-latest` jobs may fail outright or sit queued until
-  the owner raises the spending budget (Settings -> Billing -> Plans and usage -> Spending limit).
-  `verify`'s in-file comment already documents this failure mode. Once the owner unblocks the
-  budget, watch the first few PRs (one docs-only, one code-touching) to confirm the classify job's
-  live GitHub Actions behavior matches this local reasoning (in particular: that
-  `github.event.pull_request.base.sha`/`head.sha` are populated as expected on `pull_request`
-  events, and that `needs.<job>.outputs.<x>` step-conditionals behave as designed when the
-  upstream job itself has a skipped step).
+- **Actions quota update:** contrary to this note's original assumption at task start (spending
+  limit reportedly at $0/exhausted), PR #370's own CI/Playwright Smoke/Security runs were
+  observed actually executing live (`in_progress`/`completed`) while this branch was in review —
+  so the budget is not currently blocking runs. Watch the first few live runs on this PR (one
+  docs-only follow-up commit, one code-touching) to confirm the `classify` job's behavior matches
+  this local reasoning (in particular: that `github.event.pull_request.base.sha`/`head.sha` are
+  populated as expected, and that `needs.<job>.outputs.<x>` step-conditionals behave as designed
+  when the upstream job itself has a skipped step).
 - **Audit-flagged candidates for a follow-up efficiency pass** (not implemented here, out of
   scope): apply the same gate-job docs-only pattern to `e2e.yml`'s `smoke` job, and consider
   dropping/narrowing the `push: branches: [agent/**]` trigger on `ci.yml`/`e2e.yml`/`security.yml`
@@ -186,3 +274,14 @@ test file since the logic lives entirely in workflow YAML `run:` steps, not appl
   repo's heavy per-commit doc-update discipline), not measured from GitHub's Actions usage API.
   Once minutes reporting is available again, `gh api /repos/.../actions/runs` timing data could
   replace the estimate with a measured before/after number.
+- **Hybrid self-hosted+hosted runner routing** — rejected indefinitely per the owner's explicit
+  decision (see "Deferred / rejected scope" above); revisit only on a fresh, explicit owner
+  request, and even then as its own PR.
+- **Cross-repo reusable `workflow_call` gate** — deferred pending the item above; when picked up,
+  must default to hosted-only execution with no self-hosted references baked in.
+- **Cache-hygiene follow-up worth considering separately:** the daily `prune-stale-caches` cron
+  in `cleanup-caches.yml` currently targets only same-key-prefix lineages; if `setup-node`'s
+  built-in npm cache (keyed only on lockfile hash, no source hash) ever starts accumulating
+  multiple entries per ref for some other reason, the same grouping logic already covers it
+  (verified in the local sample test) — no separate handling needed unless a new failure mode
+  appears.

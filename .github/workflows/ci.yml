@@ -136,9 +136,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Split restore/save (2026-07-04, cache-hygiene follow-up): a plain `actions/cache@v4`
+      # step saves a NEW ~340MB entry scoped to the CURRENT ref on every run, including every
+      # PR push — those PR-scoped entries outlive the PR (GitHub only evicts on the repo's
+      # 10 GB total cap via oldest-first LRU) and were the actual driver of repeated
+      # near-cap-eviction thrash, not job minutes. PR/merge_group runs now ONLY restore
+      # (read-only, falls back through restore-keys to main's latest cache); only pushes to
+      # `main` save a new entry, so the cache population is a single rolling per-branch
+      # lineage instead of one throwaway entry per PR push. `cleanup-caches.yml` deletes any
+      # stray PR-ref entries on PR close and prunes older `main` entries as a backstop.
       - name: Restore Next.js build cache
         if: needs.classify.outputs.docs-only != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
@@ -163,3 +172,13 @@ jobs:
         run: npm test
       - if: needs.classify.outputs.docs-only != 'true'
         run: npm run build
+      - name: Save Next.js build cache (main only)
+        # Only `main` pushes persist a new cache entry — PR/merge_group runs restore from
+        # the latest main entry above but never write their own, so cache storage grows by
+        # one rolling entry per main push (superseding, not stacking) instead of one entry
+        # per PR push that then lingers until the repo-wide 10 GB cap evicts it.
+        if: needs.classify.outputs.docs-only != 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}

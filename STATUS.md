@@ -8,27 +8,50 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` (Claude)
-Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`. Personal Actions
-Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner minutes with zero
-weakening of the merge gate. `.github/workflows/ci.yml` only: added a cheap `classify` job that
-computes (on `pull_request` events, via `git diff --name-only base...head`) whether every changed
-file is documentation-class (`*.md` anywhere or `docs/**`); the existing `verify` job (same name,
-still the sole required status check — confirmed live via `gh api .../rulesets/17945518`, context
-`["verify"]` only) now gates its expensive steps (checkout/setup-node/.next-cache-restore/install/
-lint/tsc/test/build) behind `needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff —
-gate skipped by path filter" + succeeds immediately when true. Any non-PR event, or any ambiguity
-in the diff computation, falls back to the full gate — deliberately conservative. Also added a
-`.next/cache` restore step (same key pattern already used in `e2e.yml`) so non-docs-only runs
-warm-start the Next build. No other workflow touched; `smoke`/`gitleaks`/`check-pin` are NOT
-required checks today (contrary to the AGENTS.md fallback list, which is explicitly only for if the
-ruleset API 404s — it didn't). Full audit table of every push/PR-triggered workflow with
-minute/required-check/batching notes in `docs/rollouts/2026-07-04-ci-actions-efficiency.md`
-(report-only — none of those other workflows were modified). Verification: full local quartet
-green (lint 0 errors/308 pre-existing warnings, tsc clean, 2436/2436 tests, build succeeded) plus
-`yaml-lint` on all 7 workflow files and live ruleset API confirmation. Actions quota is currently
-exhausted, so no live run has exercised this workflow yet — auto-merge will wait until the owner
-raises the spending budget.
+## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
+Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
+Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner
+minutes with zero weakening of the merge gate. `.github/workflows/ci.yml`: added a cheap
+`classify` job that computes (on `pull_request` events, via `git diff --name-only base...head`)
+whether every changed file is documentation-class (`*.md` anywhere or `docs/**`); the existing
+`verify` job (same name, still the sole required status check — confirmed live via
+`gh api .../rulesets/17945518`, context `["verify"]` only) now gates its expensive steps
+(checkout/setup-node/.next-cache/install/lint/tsc/test/build) behind
+`needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff — gate skipped by path
+filter" + succeeds immediately when true. Any non-PR event, or any ambiguity in the diff
+computation, falls back to the full gate — deliberately conservative. `smoke`/`gitleaks`/
+`check-pin` are NOT required checks today (contrary to the AGENTS.md fallback list, which is
+explicitly only for if the ruleset API 404s — it didn't).
+
+**Mid-review addition (cache hygiene):** the repo hit its 10 GB Actions-cache cap. Root cause: a
+plain `actions/cache@v4` save on every run (source-hash-keyed, so it changes almost every commit)
+meant every PR push wrote its own ~340 MB `.next` entry scoped to that PR's ref, with no cleanup
+on PR close, plus `main` itself accumulating a new entry per push without removing the old one.
+Fixed by splitting to `actions/cache/restore@v4` (any event) + `actions/cache/save@v4` (gated to
+`main` pushes only), so PR runs get a warm cache but never write their own; added new
+`.github/workflows/cleanup-caches.yml` (not a required check) with a `delete-pr-caches` job
+(`pull_request: closed` → `gh cache delete --all --ref refs/pull/<n>/merge
+--succeed-on-no-caches`) and a daily-cron `prune-stale-caches` backstop job using new
+`scripts/prune-stale-actions-caches.py` to keep only the newest cache entry per (key-prefix, ref)
+lineage.
+
+**Scope guardrails held during review:** two further additions were proposed mid-task —(a) hybrid
+self-hosted/hosted runner routing for `verify` onto the production `trading-live-mac` box, and
+(b) a cross-repo `workflow_call` reusable entry point bundling that routing. Both were escalated
+back rather than built silently: (a) reverses the repo's own documented 2026-07-01 decision to
+move `verify` OFF that exact runner because it was the runner-queue bottleneck, and makes a
+required check's pass/fail depend on which of two different OS/toolchain environments executed
+it — the owner confirmed **no-go, indefinitely, everywhere**, unless explicitly re-confirmed later
+and even then only as its own separate PR; (b) is **deferred** pending (a), and must default
+hosted-only with zero self-hosted references when eventually built. Full detail, before/after
+cache table, and the resolution transcript in `docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+
+Verification: full local quartet green (lint 0 errors/308 pre-existing warnings, tsc clean,
+2436/2436 tests, build succeeded) plus `yaml-lint` on all workflow files, live ruleset API
+confirmation, a dry-run of the PR-cache-delete command against a nonexistent ref, and a
+synthetic-inventory test of the prune script's grouping logic. PR #370 CI/Smoke/Security were
+observed actually running live during this branch's review, so the Actions quota is not currently
+blocking runs (contrary to the initial task assumption).
 
 ## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
 Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
