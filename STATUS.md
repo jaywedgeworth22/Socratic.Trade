@@ -8,6 +8,28 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` (Claude)
+Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`. Personal Actions
+Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner minutes with zero
+weakening of the merge gate. `.github/workflows/ci.yml` only: added a cheap `classify` job that
+computes (on `pull_request` events, via `git diff --name-only base...head`) whether every changed
+file is documentation-class (`*.md` anywhere or `docs/**`); the existing `verify` job (same name,
+still the sole required status check — confirmed live via `gh api .../rulesets/17945518`, context
+`["verify"]` only) now gates its expensive steps (checkout/setup-node/.next-cache-restore/install/
+lint/tsc/test/build) behind `needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff —
+gate skipped by path filter" + succeeds immediately when true. Any non-PR event, or any ambiguity
+in the diff computation, falls back to the full gate — deliberately conservative. Also added a
+`.next/cache` restore step (same key pattern already used in `e2e.yml`) so non-docs-only runs
+warm-start the Next build. No other workflow touched; `smoke`/`gitleaks`/`check-pin` are NOT
+required checks today (contrary to the AGENTS.md fallback list, which is explicitly only for if the
+ruleset API 404s — it didn't). Full audit table of every push/PR-triggered workflow with
+minute/required-check/batching notes in `docs/rollouts/2026-07-04-ci-actions-efficiency.md`
+(report-only — none of those other workflows were modified). Verification: full local quartet
+green (lint 0 errors/308 pre-existing warnings, tsc clean, 2436/2436 tests, build succeeded) plus
+`yaml-lint` on all 7 workflow files and live ruleset API confirmation. Actions quota is currently
+exhausted, so no live run has exercised this workflow yet — auto-merge will wait until the owner
+raises the spending budget.
+
 ## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
 Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
 2026-07-04 composite expert review (section C, lines 233-310). S-effort wiring of already-built RAG

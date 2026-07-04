@@ -163,6 +163,24 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`).**
+  GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
+  `.github/workflows/ci.yml` only: new cheap `classify` job computes on `pull_request` events
+  whether the diff (`git diff --name-only base...head`) touches ONLY documentation-class paths
+  (`*.md` anywhere, `docs/**`); the existing `verify` job (unchanged name — confirmed via
+  `gh api repos/jaywedgeworth22/agentic-trading/rulesets/17945518` that `verify` is the ONLY
+  required status check today, not smoke/gitleaks/check-pin as the AGENTS.md fallback list
+  assumes) now step-conditionally skips checkout/install/lint/tsc/test/build when
+  `docs-only == 'true'` and reports success immediately; any non-PR event or diff ambiguity falls
+  back to the full gate. Added `.next/cache` restore (same pattern as `e2e.yml`) for warm-started
+  builds on non-docs-only runs. No other workflow modified — full audit table (every push/PR-
+  triggered workflow, approx minutes, required-check status, batching candidates) in
+  `docs/rollouts/2026-07-04-ci-actions-efficiency.md`, report-only. Verification: local quartet
+  green (lint 0 errors, tsc clean, 2436/2436 tests, build ok) + `yaml-lint` on all 7 workflow files
+  + live ruleset API check. STATUS: implemented, PR pending; Actions quota is exhausted so no live
+  workflow run has exercised this yet — auto-merge will wait on the owner raising the spending
+  budget.
+
 - **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
   push-only branches; landing via the active train):
   - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
