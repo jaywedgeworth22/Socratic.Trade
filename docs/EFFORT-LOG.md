@@ -163,6 +163,28 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
+  push-only branches; landing via the active train):
+  - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
+    headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent
+    trigger.
+  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
+    decision memory on lifecycle changes; trading-day horizon arithmetic.
+  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
+    chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
+  - `claude/w1-regime-data` — **done, pushed** (not yet landed). Typed `MarketRegime` enum + numeric
+    severity in new dependency-free `src/lib/market-regime.ts` (re-exported from `macro.ts`;
+    `determineMarketRegime` now a thin label-projection, byte-identical persisted strings); crisis
+    cap (`policy.ts`) and bear filter (`strategy.ts`) now key off the enum instead of independent
+    substring/`startsWith` checks; console regime card (`app/console/macro/indicators.ts`) too.
+    Live ^VIX overlay (`fetchLiveVix`/`fetchMacroDataWithLiveVix`, 10 min TTL, separate from the 24h
+    macro cache) now feeds the vol brake and the regime-flip detector instead of the day-cached
+    snapshot. `alpacaSnapshotTtlMs()` (~30s) replaces the blanket 6h TTL for the Alpaca snapshot
+    enrichment cache, and `parseAlpacaSnapshot` now stamps `asOf` from `latestTrade.t`/`dailyBar.t`
+    so the `maxQuoteAgeSec` staleness gate can see true quote age. Verified: lint 0 errors, tsc
+    clean, 247 files / 2401 tests green, build green. See
+    `docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
+
 - **Controlled RAG filing ingest smoke test** (Codex,
   `/Users/jay/apps/trading-codex`, branch `codex/rag-filing-ingest-smoke-fix`) — production verified
   against the new `socratic-trade` Pinecone index. One MSFT 10-Q now has 95 vectors and 95 local
