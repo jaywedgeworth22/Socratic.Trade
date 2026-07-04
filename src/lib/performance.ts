@@ -196,6 +196,9 @@ export function recordFillFromProposal(input: {
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
+  // The symbol's full scan candidate at fill time (factor breakdown source for the entry stamps below).
+  const entryCandidate = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+
   const fill = insertFillEvent({
     userId: input.userId,
     proposalId: input.proposalId,
@@ -221,7 +224,15 @@ export function recordFillFromProposal(input: {
       execution: input.execution,
       sector: input.marketScan?.quotesBySymbol[symbol]?.sector,
       ...((input.proposal.side === "buy" || input.proposal.side === "short")
-        ? { dominantFactor: dominantFactor(input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.factorBreakdown) }
+        ? {
+            dominantFactor: dominantFactor(entryCandidate?.factorBreakdown),
+            // Episodic experience memory (2026-07-04 composite review A1): also stamp the FULL
+            // 8-factor breakdown + scan breadth at ENTRY, so the closed-lot experience vector can
+            // embed the entry-time state instead of a lookahead reconstruction at exit. Additive
+            // raw fields only — existing readers (thesisMetaFromFill) are unaffected.
+            ...(entryCandidate?.factorBreakdown ? { factorBreakdown: entryCandidate.factorBreakdown } : {}),
+            ...(typeof input.marketScan?.breadthPct === "number" ? { scanBreadthPct: input.marketScan.breadthPct } : {})
+          }
         : {})
     }
   });
@@ -235,6 +246,28 @@ export function recordFillFromProposal(input: {
     } catch {
       // ratchet bookkeeping must never break fill recording
     }
+  }
+
+  // Episodic experience memory write hook (2026-07-04 composite review A1): a sell/cover fill may
+  // have just CLOSED one or more lots — embed each closed lot's entry state + realized outcome into
+  // the experience-memory vector namespace, keyed by the entry proposalId. Strictly fire-and-forget:
+  // the dynamic import + async body keep this sync function's signature and money-path behavior
+  // untouched, and any failure (no vector keys, no matched lot, provider error) degrades to a
+  // console warning inside recordClosedLotExperience (which never throws).
+  if (input.proposal.side === "sell" || input.proposal.side === "cover") {
+    void import("./experience-memory")
+      .then((experienceMemory) =>
+        experienceMemory.recordClosedLotExperience({
+          userId: input.userId,
+          accountNumber: input.accountNumber,
+          source: input.source,
+          closingFill: fill,
+          closingProposal: input.proposal
+        })
+      )
+      .catch((err) => {
+        console.warn("[performance] experience-memory hook failed:", err instanceof Error ? err.message : String(err));
+      });
   }
   return fill;
 }

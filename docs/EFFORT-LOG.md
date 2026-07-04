@@ -210,6 +210,25 @@ to `socratictrade.com`, record the release commit + date here._
   - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro cache;
     per-data-class TTLs + asOf on Alpaca snapshot.
 
+- **Wave-2 memory/RAG core** (Claude/Fable coordinator — OWNER-ASSIGNED swimlane; lanes stacked on
+  their w1 dependency branches, push-only, landing via the train). Lanes: `outcome-engine`,
+  `episodic-retrieval`, `coaching-durable`, `reflection-decompose` (full lane list on the live board
+  `/Users/jay/apps/TRADING-EFFORT-LOG.md`).
+  - `claude/w2-episodic-retrieval` (this lane) — **done, pushed, awaiting the landing train** (base:
+    `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
+    `src/lib/experience-memory.ts` — closed-lot experience writer hooked fire-and-forget in
+    `performance.recordFillFromProposal` (state vector: 8 factor sub-scores + entryMarketRegime +
+    breadth snapshot + thesisTag + sector + entry rationale; realized
+    `{return_pct, holding_days, risk_exit, mae?, mfe?}` metadata; `source="experience-memory"`
+    namespace keyed by the ENTRY proposalId); decision-time SECOND retrieval pass over
+    `['socratic-decision','coach-note','lesson']` with a situation-sketch query (cross-symbol via
+    additive `RetrieveOptions.matchAllSymbols`, same-run exclusion, as-of stamped); labeled
+    "Closest historical analogs" (+`[COUNTEREXAMPLE]` on opposite-sign priors, top-analog
+    similarity shown) + "Owner coaching" blocks injected into BOTH Bull and Bear userContent;
+    injected ids persisted per run (`experience_retrieval` audit + rag attributions). Opt-out
+    `EXPERIENCE_MEMORY=off`. Verify green: lint 0 errors, tsc clean, **2395/2395 tests**, build
+    green. See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`.
+
 ---
 
 ## ✅ Owner decisions (2026-07-03) — sovereign-design + housekeeping
