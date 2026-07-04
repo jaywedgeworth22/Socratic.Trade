@@ -11,6 +11,9 @@ vi.mock("../src/lib/vector-db", () => ({
   retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],
   retrieveContextDetailed: async () => [{ id: "c1", text: "SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition.", source: "sec", as_of: null, score: 0.9, url: null }],
   defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }, symbol?: string) => (symbol ? `[${symbol}]\n${chunk.text}` : chunk.text),
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -536,6 +539,11 @@ describe("persistence and notifications", () => {
       expect(systemContent).toContain("`retrievedFinancialContext`");
       expect(systemContent).not.toContain("Item 2.02 Results of Operations");
       expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");
+      // 2026-07-04 RAG quick-wins: strategy.ts now prefixes each retrieved chunk with a provenance
+      // header (via formatChunkWithProvenance, stubbed above to prepend "[SYMBOL]") before joining
+      // into ragContext, so the model sees which symbol each chunk came from and can cite it — the
+      // original chunk text still survives verbatim as a substring (asserted above).
+      expect(userContent.retrievedFinancialContext).toMatch(/^\[AAPL\]/);
       for (const body of openAiBodies) {
         const content = body.input.find((item: any) => item.role === "user")?.content ?? "{}";
         expect(JSON.parse(content).executionMode).toBe("broker/paper");

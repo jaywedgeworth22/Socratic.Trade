@@ -4,7 +4,7 @@ import * as dbModule from "./db";
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting, type ApiKeySource } from "./db";
 import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
-import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
+import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { envFlagOn } from "./rag/env-flag";
 import { fuseHybrid } from "./rag/hybrid";
 import { dedupeSimilar } from "./rag/dedupe-similar";
@@ -64,6 +64,15 @@ export interface VectorIndexStats {
 
 // Using "voyage-finance-2" for high fidelity financial embeddings
 const VOYAGE_MODEL = "voyage-finance-2";
+/**
+ * Embedding representation revision (2026-07-04 RAG quick-wins, builds on the composite review's
+ * embed-model version-tag item). Bump this whenever the embedding-space representation changes in
+ * a way that breaks direct cosine comparability against previously-indexed vectors — e.g. a
+ * `VOYAGE_MODEL` swap, or flipping `VECTOR_EMBED_CLEAN_TEXT` (R17). Vectors written before this
+ * item shipped carry no `embed_rev` at all; callers should treat a missing value as rev 0, NOT as
+ * this rev, so a mixed population stays distinguishable.
+ */
+const EMBED_REV = 1;
 const EMBEDDING_DIMENSION = 1024; // voyage-finance-2 dimension
 const DEFAULT_INDEX_NAME = "socratic-trade";
 const DEFAULT_EMBED_BATCH_SIZE = 8;
@@ -121,6 +130,40 @@ function numericEnv(name: string, fallback: number, min = 0, max = Number.POSITI
  *  Set VECTOR_MIN_SCORE=0 to disable the floor (restores the previous no-floor behavior). Default 0.30. */
 export function defaultMinScore(): number {
   return numericEnv("VECTOR_MIN_SCORE", 0.3, 0, 1);
+}
+
+/**
+ * Post-rerank relevance floor (2026-07-04 RAG quick-wins — "wire the dormant relevance-floor +
+ * near-duplicate suppression stages"): `rankPool`/`RetrieveOptions.minRelevanceScore` have existed
+ * since the 2026-07-01 backlog but no caller ever passed a value, so the Voyage cross-encoder floor
+ * never ran in production. On rerank-2.5's relevance scale (distinct from Pinecone cosine `score`).
+ * Set VECTOR_MIN_RELEVANCE_SCORE=0 to disable (restores pre-wiring behavior of no post-rerank
+ * floor). Default 0.3 — the low end of the review's suggested 0.3-0.5 band, kept conservative so a
+ * genuinely relevant chunk that reranks modestly isn't dropped before the floor is tuned on a
+ * golden set.
+ */
+export function defaultRelevanceFloor(): number {
+  return numericEnv("VECTOR_MIN_RELEVANCE_SCORE", 0.3, 0, 1);
+}
+
+/**
+ * Near-duplicate suppression threshold (2026-07-04 RAG quick-wins, same item as
+ * `defaultRelevanceFloor` above): `dedupeSimilar`/`RetrieveOptions.dedupeSimilarity` have existed
+ * since the 2026-07-01 backlog but no caller ever passed a value, so the final top-K context could
+ * be several near-identical restatements of one passage. Jaccard-shingle similarity (0-1); the
+ * default is 0.6 per the review's suggested value.
+ *
+ * IMPORTANT: unlike `defaultMinScore`/`VECTOR_MIN_SCORE=0`, a threshold of literal `0` here is NOT
+ * a safe "disable" value — `dedupeSimilar` treats `jaccardSimilarity(...) >= 0` as always true, so
+ * threshold 0 would flag every subsequent non-empty chunk as a duplicate of the first one kept
+ * (the opposite of disabling). Returns `undefined` — the actual "don't run dedup" sentinel
+ * `RetrieveOptions.dedupeSimilarity`/`rankPool` already understand — when `VECTOR_DEDUPE_SIMILARITY`
+ * resolves to <= 0, so an operator setting it to 0 to "turn dedup off" gets the behavior they
+ * intended instead of a silently-broken threshold.
+ */
+export function defaultDedupeSimilarity(): number | undefined {
+  const value = numericEnv("VECTOR_DEDUPE_SIMILARITY", 0.6, 0, 1);
+  return value > 0 ? value : undefined;
 }
 
 function embedBatchSize(): number {
@@ -214,9 +257,24 @@ function rerankEnabled(): boolean {
 function rerankModel(): string {
   return process.env.VOYAGE_RERANK_MODEL || DEFAULT_RERANK_MODEL;
 }
-/** How many candidates to pull from Pinecone before reranking/as-of filtering down to `limit`. */
+/** How many candidates to pull from Pinecone before as-of filtering (non-rerank path) down to `limit`. */
 function overFetchK(limit: number): number {
   return Math.min(Math.max(limit * 5, limit), 50);
+}
+
+/**
+ * Rerank-path candidate-pool cap (2026-07-04 RAG quick-wins, composite review "raise the rerank
+ * candidate-pool cap"). `overFetchK` hard-capped every over-fetch path (rerank, hybrid, as-of) at
+ * 50, but `rerank-2.5` can cross-encode hundreds-to-1000 candidates cheaply — for a mega-cap with a
+ * full 10-K plus many 8-Ks, the flip-the-decision chunk at dense rank 51+ never reached the
+ * reranker. Env-tunable via VECTOR_RERANK_OVERFETCH_K (default 150); ONLY widens the pool actually
+ * handed to reranking. The non-rerank overfetch paths (as-of-only, hybrid-without-rerank) keep the
+ * existing modest `overFetchK` cap — this does not change their Pinecone topK.
+ */
+const DEFAULT_RERANK_OVERFETCH_K = 150;
+function rerankOverFetchK(limit: number): number {
+  const cap = Math.floor(numericEnv("VECTOR_RERANK_OVERFETCH_K", DEFAULT_RERANK_OVERFETCH_K, 1));
+  return Math.max(limit, cap);
 }
 
 /** Hybrid dense+BM25 retrieval via Reciprocal Rank Fusion. OFF by default — set HYBRID_RETRIEVAL=on to enable.
@@ -590,9 +648,20 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
   // New vectors carry an explicit `scope` field; legacy vectors written before this change
   // do NOT have it (backward-compat: they are still matched via the userId filter).
   const scope: VectorScope = userId === "local" ? SHARED_SCOPE : PRIVATE_SCOPE;
-  const out: Record<string, string | number | boolean | string[]> = { text, userId, scope };
+  // Embedding-model/representation version tag (2026-07-04 RAG quick-wins): stamp every new vector
+  // with the model that produced it + a representation revision, so a mixed population (e.g. after
+  // a VOYAGE_MODEL swap or a VECTOR_EMBED_CLEAN_TEXT flip) can be detected/filtered/migrated later
+  // instead of silently comparing across incompatible embedding spaces. Legacy vectors written
+  // before this field existed simply lack it — treat missing as rev 0 (see EMBED_REV above).
+  const out: Record<string, string | number | boolean | string[]> = {
+    text,
+    userId,
+    scope,
+    embed_model: VOYAGE_MODEL,
+    embed_rev: EMBED_REV
+  };
   for (const [key, value] of Object.entries(metadata)) {
-    if (key === "text" || key === "userId" || key === "scope") continue;
+    if (key === "text" || key === "userId" || key === "scope" || key === "embed_model" || key === "embed_rev") continue;
     if (key === "doc_type" && typeof value === "string") {
       // Normalize doc_type to lowercase AT WRITE TIME so every new vector is consistent, regardless
       // of what casing the caller passed in (some ingesters historically passed "10-K"/"10-Q").
@@ -1452,6 +1521,40 @@ export function matchToChunk(match: any): RetrievedChunk {
 }
 
 /**
+ * Compact provenance header (2026-07-04 RAG quick-wins, composite review "Provenance headers +
+ * stable chunk ids on retrieved chunks"): `strategy.ts` used to join raw chunk text with no
+ * indication of doc_type/section/date/relevance, so the model had no signal to weight a fresh 8-K
+ * over a stale 10-K, and no visible reference to cite back. Prefixing each chunk with
+ * `[10-K · risk-factors · AAPL · 2026-02-01 · rel 0.82]` gives the model exactly that signal inline
+ * with the text it's reading, using data `RetrievedChunk` already carries (doc_type/section/as_of/
+ * score/relevanceScore) — no new retrieval work. Chunk ids (`RetrievedChunk.id`, the real Pinecone
+ * vector id) are already stable/real (see `matchToChunk`) and are NOT part of this text header —
+ * they travel alongside it (`SocraticRagAttribution.chunkId`, orchestrator's `chunk_id`) for a
+ * future `evidenceRefs` citation mechanism to key off.
+ *
+ * Date is truncated to YYYY-MM-DD (a citation header doesn't need sub-day precision); relevance
+ * prefers the post-rerank `relevanceScore` (Voyage cross-encoder, the more meaningful "is this
+ * actually relevant" signal) and falls back to the Pinecone cosine `score` when rerank didn't run.
+ * Any missing field is simply omitted rather than rendered as a placeholder — a header for
+ * unenriched legacy metadata still degrades gracefully instead of showing "undefined".
+ */
+export function formatChunkWithProvenance(chunk: RetrievedChunk, symbol?: string): string {
+  const parts: string[] = [];
+  if (chunk.doc_type) parts.push(chunk.doc_type.toUpperCase());
+  if (chunk.section) parts.push(chunk.section);
+  const sym = symbol ? canonicalTicker(symbol) : "";
+  if (sym) parts.push(sym);
+  if (chunk.as_of) {
+    const dateOnly = String(chunk.as_of).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) parts.push(dateOnly);
+  }
+  const relevance = chunk.relevanceScore ?? chunk.score;
+  if (typeof relevance === "number" && Number.isFinite(relevance)) parts.push(`rel ${relevance.toFixed(2)}`);
+  if (parts.length === 0) return chunk.text;
+  return `[${parts.join(" · ")}]\n${chunk.text}`;
+}
+
+/**
  * Retrieve relevant chunks from Pinecone with REAL provenance (id/score/as_of/url) so answers can
  * be grounded and honestly cited.
  */
@@ -1564,7 +1667,11 @@ export async function retrieveContextDetailed(
   // high quality. Hybrid must be included even when rerank is off: otherwise fetchK == limit and the
   // BM25/RRF step only reorders the dense top-N, so an exact ticker/accession hit at dense rank
   // limit+1 is never in the pool and the recall gap the flag targets can't be recovered.
-  const fetchK = options?.asOf || wantRerank || wantHybrid ? overFetchK(limit) : limit;
+  // When reranking will actually run, use the wider env-tunable rerank-path cap (default 150) — the
+  // cross-encoder is cheap to run over hundreds of candidates and a modest-50 cap otherwise hides a
+  // flip-the-decision chunk at dense rank 51+ from ever reaching it. Non-rerank over-fetch (as-of or
+  // hybrid alone) keeps the existing modest `overFetchK` cap — this does not change their Pinecone topK.
+  const fetchK = wantRerank ? rerankOverFetchK(limit) : options?.asOf || wantHybrid ? overFetchK(limit) : limit;
   const extraFilter = buildExtraFilters(options);
 
   try {
