@@ -15,9 +15,13 @@ name: Shared package pin check
 #   4. (Legacy) If this repo git-commit-pins the package, also warns when the pin is behind main.
 #
 # Requires the GH_PACKAGES_TOKEN repo secret: a PAT with read access to the private
-# jaywedgeworth22/congress-trading-shared AND jaywedgeworth22/Congress.Trade repos. Without it the
-# peer comparison is skipped with a notice (the default GITHUB_TOKEN cannot read other private
-# repos), so an unauthenticated run never hard-fails.
+# jaywedgeworth22/Congress.Trade repo, so this job can read its package.json via the GitHub API
+# (the default GITHUB_TOKEN cannot read other private repos). Without it the peer comparison is
+# skipped with a notice, so an unauthenticated run never hard-fails. NOTE: as of 2026-07-04
+# congress-trading-shared itself is public and both consumers pin it as a tokenless git dependency
+# (github:.../congress-trading-shared#<ref>) instead of a GitHub Packages registry version -- this
+# token is ONLY for reading the still-private peer app repo's package.json, not for npm registry
+# auth.
 #
 # NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
 # flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
@@ -55,8 +59,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Strip a leading range operator (^ ~ >= <= > < =) and whitespace, leaving the version core.
-          norm() { printf '%s' "$1" | sed -E 's/^[[:space:]]*[~^><=]+//; s/[[:space:]]//g'; }
+          # Both consumers now pin this package as a tokenless git dependency (github:.../congress-trading-shared#<ref>),
+          # not a registry semver range, since the shared repo went public (2026-07-04). Compare git-dep specs by
+          # extracting the ref after '#' (works for '#semver:^1.2.x' and an exact '#vX.Y.Z' tag alike); fall back to
+          # stripping a leading range operator for any spec that is still a bare registry version.
+          norm() {
+            case "$1" in
+              github:*|git+*|*"#"*)
+                printf '%s' "$1" | sed -E 's/^.*#//'
+                ;;
+              *)
+                printf '%s' "$1" | sed -E 's/^[[:space:]]*[~^><=]+//; s/[[:space:]]//g'
+                ;;
+            esac
+          }
 
           LOCAL_SPEC=$(node -p "require('./${LOCAL_PACKAGE_JSON_PATH}').dependencies['${PKG}'] ?? ''")
           if [ -z "$LOCAL_SPEC" ]; then
