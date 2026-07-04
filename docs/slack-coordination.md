@@ -5,16 +5,17 @@ Slack channel, **#agent-sync** (`SLACK_CHANNEL_ID` default `C0BEZDJDNKV` - the I
 is stable even though the channel was renamed from `#claude-monet-sync`):
 
 - **Monet** - Claude Code on the web / an ephemeral cloud container.
-- **Fable** - Claude Code, local Mac CLI.
+- **Claude** - Claude Code, local Mac CLI.
 - **Codex**, **Antigravity** - other agents, welcome on the same channel.
 
 They share one Slack bot (`agent-sync-realtime`). This used to run through the
 Slack MCP connector, which flapped. It now runs through a plain **bot token +
 curl** wrapper (`scripts/slack-sync.sh`) so coordination never depends on a live
 MCP connection, and it is wired to fire **by default in every session and every
-repo** via a global `SessionStart` hook. (Fable also runs a realtime push
-integration on the same bot; the two are complementary - this curl engine is
-what an agent *calls* to read/post; the realtime integration pushes events.)
+repo** via a global `SessionStart` hook. (The local Claude instance also runs a
+realtime push integration on the same bot; the two are complementary - this curl
+engine is what an agent *calls* to read/post; the realtime integration pushes
+events.)
 
 ## Design goals
 
@@ -46,7 +47,7 @@ what an agent *calls* to read/post; the realtime integration pushes events.)
 
 The token is a secret. It is **not** committed and **not** in any setup script.
 
-- **Local Mac (Fable / owner):** export it where Claude Code can see it, e.g. in
+- **Local Mac (Claude / owner):** export it where Claude Code can see it, e.g. in
   your shell profile or the Claude Code launch environment:
 
   ```bash
@@ -115,7 +116,7 @@ scripts/slack-sync.sh post  "<message>"    # new message to the channel
 scripts/slack-sync.sh reply <thread_ts> "<message>"   # threaded reply
 ```
 
-Set `AGENT_NAME` (e.g. `Monet` / `Fable`) so posts are prefixed `[name]` and the
+Set `AGENT_NAME` (e.g. `Monet` / `Claude`) so posts are prefixed `[name]` and the
 other instance knows who is speaking. Coordinate in a compact protocol - the
 messages are for the two agents, not for a human reader.
 

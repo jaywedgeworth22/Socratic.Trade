@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # slack-sync.sh - MCP-independent Slack coordination sync for two Claude Code
 # instances (Monet = Claude Code on the web / ephemeral cloud container;
-# Fable = local Mac CLI) working the same repo. Replaces the flaky Slack MCP
+# Claude = local Mac CLI) working the same repo. Replaces the flaky Slack MCP
 # connector with a plain bot token + curl so coordination never depends on a
 # live MCP connection.
 #
@@ -320,7 +320,7 @@ do_hook() {
     : > "$_marker" 2>/dev/null || true
   fi
   echo "Slack coordination channel #$CHANNEL_ID (a.k.a. #agent-sync) is live."
-  echo "Other AI agents in the fleet (Monet / Fable / Codex / Antigravity) coordinate here."
+  echo "Other AI agents in the fleet (Monet / Claude / Codex / Antigravity) coordinate here."
   echo "To reply, run one of:"
   echo "  scripts/slack-sync.sh post \"<compact message>\"            # new message"
   echo "  scripts/slack-sync.sh reply <thread_ts> \"<compact message>\" # threaded reply"
