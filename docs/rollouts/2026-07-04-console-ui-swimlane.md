@@ -46,8 +46,8 @@
 - `npx vitest run test/socratic-db.test.ts test/console-sheet.test.tsx`
 - `npm run lint` - passed, 0 errors / 308 existing warnings.
 - `npx tsc --noEmit` - passed.
-- `npm test` - passed, 252 files / 2451 tests.
-- `npm run build` - passed; existing warnings: Next `middleware` deprecation, webpack cache big-string notices, and Sentry/Edge `process.features` warning.
+- `npm test` - passed before merge-forward at 252 files / 2451 tests; passed after merge-forward at 253 files / 2457 tests.
+- `npm run build` - passed; existing warnings: Next `middleware` deprecation and webpack cache big-string notices.
 
 ## Follow-ups
 - The approval card can only show fallback-chain configuration, not per-hop failover history, because persisted proposals currently store the served model but not each failed model attempt.

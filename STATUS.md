@@ -19,11 +19,46 @@ trace with coach notes and linked framework `ownerResponse`; console decision ro
 high-signal ticker surfaces now use the shared drawer affordance; Strategy model selects keep
 stored custom IDs visible instead of collapsing to an anonymous custom input.
 
-Verification green: `npm run lint` (0 errors, 308 existing warnings), `npx tsc --noEmit`,
-`npm test` (252 files / 2451 tests), `npm run build` (passes with existing Next/Sentry Edge warning).
-See `docs/rollouts/2026-07-04-console-ui-swimlane.md`. Next action: commit and open the PR, then
-sync the Codex preview after landing if the worktree is clean.
+Verification green after merge-forward to `origin/main`: `npm run lint` (0 errors, 308 existing
+warnings), `npx tsc --noEmit`, `npm test` (253 files / 2457 tests), `npm run build` (passes with
+existing Next middleware deprecation + webpack cache warnings).
+See `docs/rollouts/2026-07-04-console-ui-swimlane.md`. Next action: open the PR, then sync the
+Codex preview after landing if the worktree is clean.
 
+## 2026-07-04 — Landing-operator merge-forward + dedup fix (Wave-2 Outcome Engine)
+Picked up `claude/w2-outcome-engine` mid-merge (prior operator restart left conflict markers
+uncommitted in `~/apps/trading-wt-w2-outcome`). Resolved `docs/EFFORT-LOG.md` /
+`docs/phase-7-strategy.md` / `docs/rollouts/2026-07-04-w1-learning-loops.md` (add/add,
+keep-both-newest-first), `src/lib/strategy.ts` (took `origin/main`'s newer
+`connectedAccountId`-scoped audit call — this branch never touched those lines itself),
+`src/lib/db-socratic.ts` (kept HEAD's 4 new outcome-engine functions, main had nothing there),
+`test/performance.test.ts` (kept both sides' new tests, no overlap). `tsc` then caught a REAL
+semantic conflict git's line-merge missed silently: two full duplicate copies of
+`RedTeamEfficacy`/`getRedTeamEfficacy` in `src/lib/performance.ts` (TS2323/TS2393) — removed the
+older pre-Codex-review duplicate, kept the newer account-scoped/keyed-lookup version (separate
+commit `e28db55`). Full quartet green post-fix: lint 0 errors, tsc clean, 252 files / 2455 tests,
+build green. See addendum in `docs/rollouts/2026-07-04-w2-outcome-engine.md`. Landing next.
+
+## 2026-07-04 — Wave-2: the Outcome Engine lane (Claude)
+Branch `claude/w2-outcome-engine`, based on `origin/claude/w1-learning-loops` (worktree
+`~/apps/trading-wt-w2-outcome`); lands via the landing train AFTER the base lands — push only,
+no PR from this lane. Four composite-review §A items: (1) **the outcome writer** — new scheduled
+job `src/lib/outcome-engine.ts` piggybacking the counterfactual cadence; joins placed decisions
+to fill_events/closed lots and blocked/rejected (incl. Bear-vetoed) decisions to counterfactual
+refPrice; writes `outcome`+`measuredAt`, per-case `socratic_outcome_recorded` receipt, awaited
+lifecycle re-index. (2) **multi-horizon schema** — `outcomes[] {15m|1h|1d|1w, returnPct,
+spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+skipped-counterfactual rows (new `outcomes`/`resolution_reason` columns); 1d/1w from the daily
+cascade SPY-relative on trading-day arithmetic; 15m/1h only from an actually-sampled live quote,
+else honest `unresolvable(no_intraday_source)`. (3) **kill survivorship** — terminal
+`unresolvable` after a bounded 10-trading-day recheck window; coverage disclosures
+("N/M resolved (X%)") on job receipts, `getRedTeamEfficacy`, missed-opportunity summary, and
+`certifyForwardResolution`. (4) **real per-decision lessons** — budget-gated, batch-capped LLM
+post-mortem at maturation → 1-3 direction-tagged lessons + `{verdictOnBelief,
+whichDissentMattered}`, replacing the template strings, re-indexed, routed through
+`ingestLearned` (origin `autonomous`); every skip is receipted (`socratic_lessons_skipped`).
+Verification green: lint 0 errors, tsc clean, 2383 tests / 246 files, build green. See
+`docs/rollouts/2026-07-04-w2-outcome-engine.md`.
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single
