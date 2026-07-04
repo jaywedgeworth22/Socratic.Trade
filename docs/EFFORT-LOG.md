@@ -247,7 +247,8 @@ to `socratictrade.com`, record the release commit + date here._
   roadmap. Docs-only. **PR pending.** (Read section E through the ADVISORY-guardrails correction above.)
 
 - **Wave-1 composite-review quick wins — memory & learning-loop lane** (Claude, branch
-  `claude/w1-learning-loops`) — three items from the composite expert review (§A, lines 37-161):
+  `claude/w1-learning-loops`, **merging now that gate is green**) — three items from the composite
+  expert review (§A, lines 37-161):
   (1) Bear-veto counterfactuals: a Red Team veto now calls `recordRejectedProposalCounterfactual`
   (same pipeline as policy blocks/human rejections) in `strategy.ts`'s Bear-reject branch, stamped
   with `runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` joins matured vetoed-candidate
@@ -262,8 +263,24 @@ to `socratictrade.com`, record the release commit + date here._
   + holidays) replaces the calendar-ms arithmetic in `counterfactual-learning.ts` and `backtest.ts`'s
   `targetBusinessDate`, fixing weekday-dependent horizon noise; historical target dates for
   Thu/Fri-snapshotted candidates shift (one-time discontinuity, snapshot-tested). Verification green:
-  lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. **PR pending** (push-only; lands
-  via the active landing train). See `docs/rollouts/2026-07-04-w1-learning-loops.md`.
+  lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. See
+  `docs/rollouts/2026-07-04-w1-learning-loops.md`.
+
+- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
+  push-only branches; landing via the active train):
+  - `claude/w1-llm-fixes` — Bear schema `confidenceScore` fix (live bug: strict Bear
+    schema previously stripped confidence, zeroing the approval-time debate trigger and degrading
+    sizing); per-provider reasoning-token headroom for xAI/Gemini/Mistral/DeepSeek chat-completions
+    (previously OpenAI-only); cross-family Bear default (only when a cross-family credential exists)
+    + non-zero adversary temperature (0.7) for the Bear/debate roles via `withLlmRequestBounds`;
+    reward-abstention line in the Bull system prompt; stakes-scaled Red Team dissent trigger
+    (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
+    confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
+    no new hard gates. **Merged** (PR #364).
+  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
+    chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
+  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
+    cache; per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
 
 ---
 
