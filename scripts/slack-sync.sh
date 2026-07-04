@@ -15,6 +15,7 @@
 #   scripts/slack-sync.sh post   <text...>      # post a new message to the channel
 #   scripts/slack-sync.sh reply  <thread_ts> <text...>  # threaded reply
 #   scripts/slack-sync.sh hook                  # SessionStart context inject (read + how-to header; hook-safe)
+#   scripts/slack-sync.sh test                  # verify the token + print bot identity (auth.test)
 #   scripts/slack-sync.sh help                  # this help
 #
 # Environment:
@@ -26,7 +27,8 @@
 #                     The token is sent ONLY via the "Authorization: Bearer" header,
 #                     loaded from a 0600 temp curl config file. It is never echoed,
 #                     never logged, and never placed in a process argv.
-#   SLACK_CHANNEL_ID  channel to read/post (default C0BEZDJDNKV = #claude-monet-sync)
+#   SLACK_CHANNEL_ID  channel to read/post (default C0BEZDJDNKV = #agent-sync,
+#                     formerly #claude-monet-sync; the ID is stable across renames)
 #   AGENT_NAME        optional; when set, posted/replied text is prefixed "[name] "
 #                     so the other instance knows who is speaking.
 #
@@ -282,6 +284,20 @@ do_read() {
   emit_envelope "channel #$CHANNEL_ID (last $_limit messages, oldest first)" "$(format_messages "$_resp")"
 }
 
+do_test() {
+  # Verify the token and print the bot identity (auth.test). Not hook-safe on
+  # purpose: exits nonzero on failure so a human/CI caller sees a bad token.
+  init_auth
+  _resp="$(slack_get "$SLACK_API/auth.test")" \
+    || { note "network error contacting Slack (auth.test)"; exit 1; }
+  if ! resp_ok "$_resp"; then
+    note "Slack API error (auth.test): $(resp_error "$_resp")"
+    exit 1
+  fi
+  # auth.test returns team/user/bot identity - it never echoes the token.
+  printf '%s\n' "$_resp"
+}
+
 do_hook() {
   # SessionStart context injection. A short how-to header (so the agent knows it
   # can reply and how) followed by the recent channel messages via do_read. The
@@ -303,8 +319,8 @@ do_hook() {
     [ -e "$_marker" ] && exit 0
     : > "$_marker" 2>/dev/null || true
   fi
-  echo "Slack coordination channel #$CHANNEL_ID (a.k.a. #claude-monet-sync) is live."
-  echo "Other Claude Code instances (e.g. Monet / Fable) post coordination here."
+  echo "Slack coordination channel #$CHANNEL_ID (a.k.a. #agent-sync) is live."
+  echo "Other AI agents in the fleet (Monet / Fable / Codex / Antigravity) coordinate here."
   echo "To reply, run one of:"
   echo "  scripts/slack-sync.sh post \"<compact message>\"            # new message"
   echo "  scripts/slack-sync.sh reply <thread_ts> \"<compact message>\" # threaded reply"
@@ -394,6 +410,7 @@ fi
 
 case "$CMD" in
   hook)   do_hook ;;
+  test)   do_test ;;
   read)   do_read "${1:-}" ;;
   thread) do_thread "${1:-}" ;;
   post)   do_post "$*" ;;

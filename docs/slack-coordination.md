@@ -1,16 +1,20 @@
-# Slack coordination sync for Claude Code instances
+# Slack coordination sync for the agent fleet
 
-Two Claude Code instances run this repo in parallel:
+Several AI coding agents work the owner's repos in parallel and coordinate in one
+Slack channel, **#agent-sync** (`SLACK_CHANNEL_ID` default `C0BEZDJDNKV` - the ID
+is stable even though the channel was renamed from `#claude-monet-sync`):
 
 - **Monet** - Claude Code on the web / an ephemeral cloud container.
-- **Fable** - the local Mac CLI.
+- **Fable** - Claude Code, local Mac CLI.
+- **Codex**, **Antigravity** - other agents, welcome on the same channel.
 
-They coordinate through one Slack channel, **#claude-monet-sync**
-(`SLACK_CHANNEL_ID` default `C0BEZDJDNKV`). This used to run through the Slack
-MCP connector, which flapped. It now runs through a plain **bot token + curl**
-wrapper (`scripts/slack-sync.sh`) so coordination never depends on a live MCP
-connection, and it is wired to fire **by default in every session and every
-repo** via a global `SessionStart` hook.
+They share one Slack bot (`agent-sync-realtime`). This used to run through the
+Slack MCP connector, which flapped. It now runs through a plain **bot token +
+curl** wrapper (`scripts/slack-sync.sh`) so coordination never depends on a live
+MCP connection, and it is wired to fire **by default in every session and every
+repo** via a global `SessionStart` hook. (Fable also runs a realtime push
+integration on the same bot; the two are complementary - this curl engine is
+what an agent *calls* to read/post; the realtime integration pushes events.)
 
 ## Design goals
 
