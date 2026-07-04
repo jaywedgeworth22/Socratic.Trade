@@ -182,7 +182,16 @@ to `socratictrade.com`, record the release commit + date here._
   **PR pending.** Remaining hardening half — prompt-expected stop-losses (decision #2) — is a separate
   follow-up. See `docs/rollouts/2026-07-03-drawdown-hard-halt.md`.
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
-  see Owner decisions below); re-scope pending owner review.
+  see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
+
+- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
+  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
+  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
+  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
+  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
+  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
+  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
 
 - **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
   `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,

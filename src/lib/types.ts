@@ -475,17 +475,20 @@ export interface RiskRules {
   maxDailyLossNotional?: number;
   /**
    * What the account-level breaker (maxDrawdownPct / maxDailyLossNotional) does on breach — the
-   * owner's overridable preference, defaulting to "halt":
-   * - "halt" (default): flip systemState → "halted" — a HARD stop of autonomous trading until the
-   *   owner manually re-arms (sets systemState back to "active"). Subsequent scheduled runs skip
-   *   entirely and `executeProposal` refuses, so the loop places NO further orders (including exits);
-   *   open positions rely on their resting broker protective stops. This is the stronger "put a human
-   *   back in the loop" response the owner chose for the live soak.
-   * - "close_only": flip systemState → "close_only" — block only NEW entries; the loop keeps running
-   *   and risk-reducing exits (sell/cover) still flow. Softer; auto-manages the wind-down.
+   * owner's overridable preference. Per the governing philosophy ("nothing is hard except which
+   * account to work in; agent decides, logs everything"), the DEFAULT is "advisory": guardrails
+   * inform the agent, they never seize control.
+   * - "advisory" (DEFAULT): does NOT change systemState. It writes a `policy_violation_drawdown`
+   *   receipt and surfaces the drawdown as decision context to the strategist (see `drawdownAdvisory`
+   *   threading in strategy.ts) so the agent can choose to de-risk — advisory awareness, no halting.
+   *   The account boundary remains the only absolute.
+   * - "close_only": OPT-IN hard enforcement — flip systemState → "close_only": block only NEW entries;
+   *   risk-reducing exits (sell/cover) still flow.
+   * - "halt": OPT-IN hard enforcement — flip systemState → "halted": a full stop until the owner
+   *   manually re-arms. The strongest response; the owner must explicitly choose it.
    * The breaker itself is still opt-in via the thresholds above (unset ⇒ no breaker at all).
    */
-  drawdownBreakerAction?: "halt" | "close_only";
+  drawdownBreakerAction?: "advisory" | "close_only" | "halt";
 }
 
 export interface NotificationSettings {
