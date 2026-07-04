@@ -17,9 +17,20 @@ const DEFAULT_OVERLAP_RATIO = 0.12;
  */
 export const CHARS_PER_TOKEN_CEILING = 8;
 
-/** Hash chunk text with SHA-256 for dedup (cheaper than re-embedding via Voyage). */
+/**
+ * Hash chunk text with SHA-256 for dedup (cheaper than re-embedding via Voyage).
+ *
+ * Widened to 128 bits (first 32 hex chars) as of 2026-07-04 (composite review "content-hash dedup
+ * default-on + widen to 128 bits"): the prior 64-bit (16 hex char) truncation made a content_hash
+ * collision between two genuinely-distinct chunks a real (if small) risk, and `document_chunks` is
+ * keyed on `content_hash` ALONE — a collision would silently drop a distinct chunk from ever being
+ * embedded. `document_chunks.content_hash` is a plain TEXT primary key (no fixed-length schema
+ * change needed); `INSERT OR IGNORE` tolerates the one-time re-embed of any pre-existing 16-char
+ * hash rows once this widens (they simply won't match a newly-computed 32-char hash, so that one
+ * chunk re-embeds once — cheap and harmless, never a correctness issue).
+ */
 export function hashContent(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 32);
 }
 
 export interface ChunkInput {

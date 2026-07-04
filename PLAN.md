@@ -83,6 +83,20 @@ filling the missing pieces.
 > vectors on retry. SEC filing ingestion now passes `ticker:accession:docType` as `doc_id`; preserve
 > that invariant before any larger RAG backfill.
 
+> **2026-07-04 - RAG quick-wins Wave-1 lane: wire dormant stages (Claude).**
+> Branch `claude/w1-rag-quickwins` (one of four Wave-1 quick-win lanes off the 2026-07-04 composite
+> expert review, section C). Wired `retrieveContextDetailed`'s already-built-but-never-called
+> `minRelevanceScore`/`dedupeSimilarity` into both real call sites (`strategy.ts`,
+> `chat/orchestrator.ts`); added `formatChunkWithProvenance()` so `strategy.ts` prefixes each
+> retrieved chunk with a `[doc_type · section · symbol · date · rel N.NN]` header before joining
+> into the prompt (chunk ids were already stable/real, left unchanged); confirmed
+> `VECTOR_STORECONTEXTS_DEDUP` was already default-on from an earlier commit (the source review's
+> "default OFF" was stale) and widened `hashContent` from 64-bit to 128-bit; stamped
+> `embed_model`/`embed_rev` on every new vector in `cleanMetadata`; raised the rerank-path
+> over-fetch cap to an env-tunable 150 (`VECTOR_RERANK_OVERFETCH_K`), non-rerank paths unchanged.
+> All five items are env-tunable/opt-in-consistent, no hard gates. Verify green: lint 0 errors, tsc
+> clean, 2388/2388 tests, build green. See `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
 > Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and
 > adds RAG quota protections before fresh Pinecone keys are connected: app-recorded RAG usage is labeled

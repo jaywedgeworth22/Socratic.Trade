@@ -54,6 +54,27 @@ describe("buildProductionDeps().searchKnowledge — R13 provenance payload", () 
     expect("isStale" in chunk).toBe(false); // never present when the flag is off — not even as undefined-valued key noise
   });
 
+  // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor + near-dup
+  // suppression into this call site — both existed since 2026-07-01 but no caller ever passed them.
+  it("passes minRelevanceScore and dedupeSimilarity through to retrieveContextDetailed", async () => {
+    mocks.retrieveContextDetailed.mockResolvedValue([]);
+    const { buildProductionDeps } = await import("../src/lib/chat/orchestrator");
+    const deps = buildProductionDeps();
+
+    await deps.searchKnowledge({ query: "supply chain risk", ticker: "AAPL" }, "local");
+
+    expect(mocks.retrieveContextDetailed).toHaveBeenCalledWith(
+      "supply chain risk",
+      "AAPL",
+      5,
+      "local",
+      expect.objectContaining({
+        minRelevanceScore: expect.any(Number),
+        dedupeSimilarity: expect.any(Number)
+      })
+    );
+  });
+
   it("includes isStale when RAG_CITATION_STALENESS is on, computed from as_of + doc_type", async () => {
     process.env.RAG_CITATION_STALENESS = "on";
     const oldDate = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();

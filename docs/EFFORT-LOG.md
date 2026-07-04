@@ -199,7 +199,8 @@ to `socratictrade.com`, record the release commit + date here._
   strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
   machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
   2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
-  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`. **2026-07-04 (Fable):** Added 
+  #agent-sync channel & protocol documentation (docs-only, separate branch `claude/agent-sync-protocol-docs`).
 
 - **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
   Scope: reusable `RawNumInput` component (fixes
@@ -277,8 +278,11 @@ to `socratictrade.com`, record the release commit + date here._
     (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
     confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
     no new hard gates. **Merged** (PR #364).
-  - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable
-    chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap.
+  - `claude/w1-rag-quickwins` — dormant relevance-floor + near-dup dedupe wired into
+    `strategy.ts`/`chat/orchestrator.ts`; provenance headers (`formatChunkWithProvenance`) prepended
+    onto the joined RAG context; widened `hashContent` 16→32 hex chars (64→128-bit); stamped
+    `embed_model`/`embed_rev` on every new vector; env-tunable rerank over-fetch cap
+    (`VECTOR_RERANK_OVERFETCH_K`, default 150). **Merged** (PR #366).
   - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
     cache; per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
 
