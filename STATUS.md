@@ -45,6 +45,29 @@ stages — no new ingestion sources. Five items:
 Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
 (clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
 (green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+## 2026-07-04 — Inter-agent coordination protocol (short pointer in AGENTS.md, canonical at /Users/jay/apps/AGENT-SYNC.md)
+Branch `claude/agent-sync-protocol-docs` (docs-only). Added short `## Inter-agent coordination` pointer
+section to AGENTS.md (3-4 lines) linking to the canonical `/Users/jay/apps/AGENT-SYNC.md` protocol reference
+(full protocol: sender tags, terse format, message structure, access/bot mechanics, realtime watcher, conflict resolution,
+effort-board integration, examples). Canonical file is branch-neutral (not in worktree); lives at `/Users/jay/apps/`.
+Rollout note updated at `docs/rollouts/2026-07-04-agent-sync-protocol-docs.md`.
+
+## 2026-07-04 — Wave-1 quick wins: LLM fixes lane (claude/w1-llm-fixes)
+Branch `claude/w1-llm-fixes` (off `origin/main`), one of four parallel Wave-1 lanes from the
+2026-07-04 composite expert review. Implemented the 5 assigned items (composite review sections B
+lines 163-232, E ~391-484): (1) fixed the Bear schema silently stripping `confidenceScore` — a live
+money-path bug where a Bear-surviving proposal's conviction score degraded to `undefined`, zeroing
+the approval-time debate trigger and sizing; (2) added per-provider reasoning-token headroom for
+xAI/Gemini/Mistral/DeepSeek chat-completions (previously OpenAI-only); (3) cross-family Bear default
+(only when a cross-family credential is configured, else same-family fallback — see deviation note
+in the rollout) + non-zero (0.7) adversary sampling temperature for Bear/debate via
+`withLlmRequestBounds`; (4) reward-abstention line in the Bull system prompt; (5) stakes-scaled Red
+Team dissent trigger — notional %-of-NAV, live opening, escalation regime, or a requested
+autonomyOverride now also demand the debate, not confidence alone. `STRATEGY_PROMPT_VERSION` bumped
+to `agentic-strategy@1.4.0`. Advisory-only; no new hard gates. Verification green: `npm run lint`
+(0 errors), `npx tsc --noEmit` (clean), `npm test` (245 files / 2385 tests), `npm run build` (exit
+0). Details in `docs/rollouts/2026-07-04-w1-llm-fixes.md`. **PR pending** (push-only branch; a
+landing train picks it up per the coordinator's instructions).
 ## 2026-07-04 — Wave-1 quick win: typed regime enum + live VIX overlay + Alpaca snapshot asOf (Claude)
 Branch `claude/w1-regime-data` (pushed, not yet landed — a landing train will pick it up; no
 PR opened per this lane's instructions). Three composite-review items (D+E, high/S each):

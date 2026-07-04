@@ -199,7 +199,8 @@ to `socratictrade.com`, record the release commit + date here._
   strategist prompt instead. `block`/`ask` remain valid opt-ins; receipt/annotation/audit
   machinery unchanged. Verified: lint 0 errors, tsc clean, targeted suite 218/218, full suite
   2352 passed / 17 failed (all 17 in the 8 pre-existing holiday-broken files), build green.
-  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`.
+  See `docs/rollouts/2026-07-03-washsale-advisory-defaults.md`. **2026-07-04 (Fable):** Added 
+  #agent-sync channel & protocol documentation (docs-only, separate branch `claude/agent-sync-protocol-docs`).
 
 - **Console small fixes (t7/t18/t22/t39)** — branch `claude/console-small-fixes`, **merged** (PR #361).
   Scope: reusable `RawNumInput` component (fixes
@@ -249,10 +250,11 @@ to `socratictrade.com`, record the release commit + date here._
 - **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
   push-only branches; landing via the active train):
   - `claude/w1-llm-fixes` — Bear schema confidenceScore fix (live bug); non-OpenAI reasoning-token
-    headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent trigger.
+    headroom; cross-family Bear default + temperature; reward-abstention; stakes-scaled dissent
+    trigger. **Merged** (PR #364).
   - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
     decision memory on lifecycle changes; trading-day horizon arithmetic.
-  - `claude/w1-rag-quickwins` (this lane) — **done, pushed, awaiting the landing train.** Wired the
+  - `claude/w1-rag-quickwins` (this lane) — **landing now that gate is green.** Wired the
     dormant relevance-floor + near-dup dedupe into `strategy.ts`/`chat/orchestrator.ts`; provenance
     headers (`formatChunkWithProvenance`) prepended onto `strategy.ts`'s joined RAG context, stable
     chunk ids left unchanged for a future `evidenceRefs` mechanism; confirmed `VECTOR_STORECONTEXTS_DEDUP`
@@ -262,7 +264,7 @@ to `socratictrade.com`, record the release commit + date here._
     non-rerank paths unchanged. Verify green: lint 0 errors, tsc clean, **2388/2388 tests**, build
     green. See `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
   - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro cache;
-    per-data-class TTLs + asOf on Alpaca snapshot.
+    per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
 
 ---
 

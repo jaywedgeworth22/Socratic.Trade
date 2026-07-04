@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { reconcilePendingFills, generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity, redTeamConvictionThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
+import { reconcilePendingFills, generateProactiveRiskProposals, planTakeProfitTrims, takeProfitTrimQuantity, redTeamConvictionThresholdForPolicy, redTeamDebateTrigger, redTeamNotionalPctOfNavThresholdForPolicy, shouldRunRedTeamDebate } from "../src/lib/strategy";
 import { insertFillEvent, listFillEvents } from "../src/lib/db";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import type { BrokerGateway } from "../src/lib/types";
@@ -428,5 +428,51 @@ describe("red-team conviction threshold", () => {
     expect(redTeamConvictionThresholdForPolicy(policy)).toBe(65);
     expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 64 }, policy)).toBe(false);
     expect(shouldRunRedTeamDebate({ ...baseProposal, confidenceScore: 65 }, policy)).toBe(true);
+  });
+
+  // Stakes-scaled dissent (composite review E/high/S): widen the debate trigger beyond
+  // confidenceScore alone.
+  describe("stakes-scaled dissent", () => {
+    const lowConfidence = { ...baseProposal, confidenceScore: 10 };
+
+    it("defaults the notional threshold to 15% of NAV", () => {
+      expect(redTeamNotionalPctOfNavThresholdForPolicy(DEFAULT_POLICY)).toBe(15);
+      expect(redTeamNotionalPctOfNavThresholdForPolicy({ ...DEFAULT_POLICY, tuning: { redTeamNotionalPctOfNavThreshold: 25 } })).toBe(25);
+    });
+
+    it("does NOT trigger the debate for a low-confidence, small-notional paper trade with no context", () => {
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY)).toBe(false);
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, {})).toBe(false);
+      expect(redTeamDebateTrigger(lowConfidence, DEFAULT_POLICY, {})).toBeUndefined();
+    });
+
+    it("triggers on large notional even at low confidence", () => {
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, { notionalPctOfNav: 15 })).toBe(true);
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, { notionalPctOfNav: 14.99 })).toBe(false);
+      expect(redTeamDebateTrigger(lowConfidence, DEFAULT_POLICY, { notionalPctOfNav: 20 })).toBe("notional");
+    });
+
+    it("triggers on a LIVE opening regardless of confidence or notional", () => {
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, { isLiveOpening: true })).toBe(true);
+      expect(redTeamDebateTrigger(lowConfidence, DEFAULT_POLICY, { isLiveOpening: true })).toBe("live_opening");
+    });
+
+    it("triggers when the proposal itself requests an owner-preference override", () => {
+      const overrideProposal = { ...lowConfidence, autonomyOverride: { requested: true, thesis: "panic discount" } };
+      expect(shouldRunRedTeamDebate(overrideProposal, DEFAULT_POLICY, {})).toBe(true);
+      expect(redTeamDebateTrigger(overrideProposal, DEFAULT_POLICY, {})).toBe("override_requested");
+    });
+
+    it("triggers on an escalation-regime entry (Risk-Off/Crisis/Inverted)", () => {
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, { entryMarketRegime: "Risk-Off (High Volatility)" })).toBe(true);
+      expect(redTeamDebateTrigger(lowConfidence, DEFAULT_POLICY, { entryMarketRegime: "Risk-Off (High Volatility)" })).toBe("escalation_regime");
+      // A calm regime does not trigger on its own.
+      expect(shouldRunRedTeamDebate(lowConfidence, DEFAULT_POLICY, { entryMarketRegime: "Neutral (Normal Volatility)" })).toBe(false);
+    });
+
+    it("reports the confidence trigger first when multiple conditions fire", () => {
+      const highConfidence = { ...baseProposal, confidenceScore: 90 };
+      expect(redTeamDebateTrigger(highConfidence, DEFAULT_POLICY, { notionalPctOfNav: 50, isLiveOpening: true })).toBe("confidence");
+    });
   });
 });

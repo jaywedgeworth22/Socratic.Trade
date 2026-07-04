@@ -212,6 +212,15 @@ export interface TuningSettings {
   sizingCeilingPct?: number;
   /** Minimum proposal confidenceScore that triggers Red Team review. Default 80. */
   redTeamConvictionThreshold?: number;
+  /**
+   * Stakes-scaled dissent (composite review E/high/S): notional-as-%-of-NAV threshold that also
+   * triggers the approval-time Red Team debate for an OPENING (buy/short) proposal, independent of
+   * confidenceScore. Without this, `shouldRunRedTeamDebate` gated on confidence ONLY, so a
+   * low-confidence but large-notional LIVE trade got no adversarial review while a high-confidence
+   * $50 paper trade did. Default 15 (%). Advisory routing only — widens which trades get a second
+   * look; never blocks anything.
+   */
+  redTeamNotionalPctOfNavThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
   /**
@@ -898,8 +907,20 @@ export interface TradeProposal {
    *   - `model`: the model that actually served the debate (per-proposal Red Team resolution,
    *     including the cross-provider Anthropic path). Optional: legacy persisted verdicts predate
    *     it — readers fall back to the snapshot policy's configured red-team model.
+   *   - `trigger`: WHICH stakes-scaled-dissent condition demanded this debate (composite review
+   *     E/high/S) — "confidence" (the original threshold), "notional" (large %-of-NAV order),
+   *     "live_opening" (a live, non-paper opening), "override_requested" (the proposal itself asks to
+   *     override an owner preference), or "escalation_regime" (entered during a Risk-Off/Crisis/
+   *     Inverted regime). Optional: legacy persisted verdicts predate stakes-scaled dissent and
+   *     always meant "confidence".
    */
-  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  redTeamVerdict?: {
+    rejected: boolean;
+    available: boolean;
+    reason: string;
+    model?: string;
+    trigger?: "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
+  };
   /**
    * Explicit agent-authored request to override owner preference gates for this decision.
    * This is not a client-side bypass token and does not override broker/account/integrity gates.
