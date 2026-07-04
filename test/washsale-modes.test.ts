@@ -3,15 +3,19 @@
  * escalation framework — gate-level, end-to-end through evaluateTradeProposal, plus the strategy
  * helpers that route escalations (shouldEscalateDecision / approvedEscalationsFromDecision).
  *
- * Safety contract under test (owner-locked spec):
- *   - taxable-account default ("block") behavior byte-compatible with the pre-existing hard block;
+ * Safety contract under test (owner-locked spec, updated 2026-07-03 — defaults now non-blocking):
+ *   - DEFAULT is "auto" (taxable) + "disregard" (IRA) — the gate is advisory, not a hard block,
+ *     unless an operator explicitly opts into "block" or "ask";
+ *   - "block" (explicit opt-in) refuses the buy outright — the original hard-stop behavior;
  *   - "ask" refuses at the gate but marks the failure escalatable with the PRICED tax cost
  *     (disallowed loss × shortTermRatePct) — approvable later only via a server-stored token;
- *   - "auto" proceeds ONLY when expected edge >= WASH_SALE_AUTO_EDGE_MULTIPLE × cost, and both
- *     outcomes are recorded on decision.washSale (never silent);
- *   - IRA replacement purchases proceed annotated by default, ignoring override tokens and even
- *     the per-account washSaleGuard flag; explicit iraWashSaleHandling="block" hard-blocks them;
- *   - the override token never weakens the default block (ignored when handling is "block")
+ *   - "auto" ALWAYS proceeds — the priced tax cost/expected-edge math rides decision.washSale as
+ *     receipt telemetry (never silent) instead of gating; the old edge-vs-cost veto was removed
+ *     because it re-arithmetized the LLM's own outputs rather than adding independent judgment;
+ *   - IRA replacement purchases are hard-blocked ONLY when iraWashSaleHandling is explicitly
+ *     "block" (Rev. Rul. 2008-5), ignoring override tokens and even the per-account
+ *     washSaleGuard flag; the default ("disregard") lets them proceed, annotated + audited;
+ *   - the override token never weakens an explicit "block" (ignored when handling is "block")
  *     and never bypasses OTHER gates at approval time;
  *   - only the closed escalation allowlist (ask-mode wash sale + time-context gates) can ever
  *     escalate; per-order caps / blocklist / shorting-disabled failures never do.
@@ -119,9 +123,27 @@ const iraCapable: AccountCapabilities = {
   accountType: "roth_ira"
 };
 
-describe("wash-sale handling — mode 'block' (default)", () => {
-  it("blocks a locked rebuy when washSaleHandling is unset (default unchanged)", () => {
+describe("wash-sale handling — default (unset taxSettings.washSaleHandling)", () => {
+  it("owner decision 2026-07-03: an unset washSaleHandling now defaults to 'auto', not 'block'", () => {
+    // "auto" always proceeds; the priced tax cost still rides the receipt (never silent).
     const decision = evaluateTradeProposal(buy, ctx(policyWith()));
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
+    expect(decision.washSale?.handling).toBe("auto");
+  });
+
+  it("a policy with NO taxSettings at all still gets auto + disregard defaults (DEFAULT_TAX_SETTINGS)", () => {
+    const bare = policyWith({ taxSettings: undefined });
+    const decision = evaluateTradeProposal(buy, ctx(bare));
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
+    expect(decision.washSale?.handling).toBe("auto");
+  });
+});
+
+describe("wash-sale handling — mode 'block' (explicit, stricter opt-in)", () => {
+  it("blocks a locked rebuy when washSaleHandling is explicitly 'block'", () => {
+    const decision = evaluateTradeProposal(buy, ctx(policyWith({ taxSettings: taxSettings({ washSaleHandling: "block" }) })));
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale lockout"))).toBe(true);
     // Not escalatable: block mode produces no escalation entry.
@@ -288,51 +310,48 @@ describe("wash-sale handling — mode 'ask'", () => {
   });
 });
 
-describe("wash-sale handling — mode 'auto' (deterministic edge-vs-cost guard)", () => {
+describe("wash-sale handling — mode 'auto' (always proceeds; priced cost is receipt telemetry, not a veto)", () => {
   const autoPolicy = policyWith({ taxSettings: taxSettings({ washSaleHandling: "auto" }) });
 
-  it("proceeds when expected edge >= 3x the priced cost, recording the math (never silent)", () => {
-    // edge = 3000 × 20% take-profit × 80% confidence = $480 >= required 3 × $120 = $360.
+  it("proceeds and records the priced expected-edge math on the receipt (never silent)", () => {
+    // edge = 3000 × 20% take-profit × 80% confidence = $480. Recorded, not compared to a threshold.
     const decision = evaluateTradeProposal(buy, ctx(autoPolicy));
     expect(decision.approved).toBe(true);
     expect(decision.washSale?.outcome).toBe("auto_proceeded");
     expect(decision.washSale?.expectedEdgeUsd).toBe(480);
-    expect(decision.washSale?.requiredEdgeUsd).toBe(360);
+    expect(decision.washSale?.estimatedTaxCostUsd).toBe(120);
     expect(decision.washSale?.edgeMultiple).toBe(WASH_SALE_AUTO_EDGE_MULTIPLE);
   });
 
-  it("skips with the guard math in the reason when the edge is too small", () => {
-    // Confidence 40 → edge = 3000 × 0.2 × 0.4 = $240 < $360 required.
+  it("still proceeds when the expected edge is small — owner decision 2026-07-03 removed the threshold veto", () => {
+    // Confidence 40 → edge = 3000 × 0.2 × 0.4 = $240, well under the old 3x-cost threshold — but
+    // "auto" no longer vetoes on this math, so the buy proceeds anyway.
     const decision = evaluateTradeProposal({ ...buy, confidenceScore: 40 }, ctx(autoPolicy));
-    expect(decision.approved).toBe(false);
-    const reason = decision.reasons.join(" ");
-    expect(reason).toContain("wash_sale_auto_skip");
-    expect(reason).toContain("$240.00");
-    expect(reason).toContain("$360.00");
-    expect(decision.washSale?.outcome).toBe("auto_skipped");
-    // Auto skips are NOT escalatable — they stay visible blocked entries.
-    expect(decision.escalations ?? []).toHaveLength(0);
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
+    expect(decision.washSale?.expectedEdgeUsd).toBe(240);
+    expect(decision.reasons).toHaveLength(0);
   });
 
-  it("fail-safe: skips when the cost cannot be priced (legacy Set, no provenance)", () => {
+  it("proceeds even when the cost cannot be priced (legacy Set, no provenance)", () => {
     const decision = evaluateTradeProposal(
       buy,
       ctx(autoPolicy, { washSaleLocks: undefined, washSaleLockedSymbols: new Set(["TSLA"]) })
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("fail-safe skip");
-    expect(decision.washSale?.outcome).toBe("auto_skipped");
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
+    expect(decision.washSale?.estimatedTaxCostUsd).toBeUndefined();
   });
 
-  it("fail-safe: missing conviction prices the edge at $0 and skips", () => {
+  it("proceeds even with missing conviction (expected edge prices at $0 on the receipt, still not a veto)", () => {
     const decision = evaluateTradeProposal({ ...buy, confidenceScore: undefined }, ctx(autoPolicy));
-    expect(decision.approved).toBe(false);
-    expect(decision.washSale?.outcome).toBe("auto_skipped");
+    expect(decision.approved).toBe(true);
+    expect(decision.washSale?.outcome).toBe("auto_proceeded");
     expect(decision.washSale?.expectedEdgeUsd).toBe(0);
   });
 });
 
-describe("washSaleExpectedEdgeUsd — documented guard math", () => {
+describe("washSaleExpectedEdgeUsd — receipt telemetry math (not a gate — owner decision 2026-07-03)", () => {
   const policy = policyWith();
 
   it("= notional × takeProfitPct × confidence", () => {
@@ -344,7 +363,7 @@ describe("washSaleExpectedEdgeUsd — documented guard math", () => {
     expect(washSaleExpectedEdgeUsd(withBracket, policy, 3000)).toBe(240); // 3000 × 0.10 × 0.80
   });
 
-  it("degrades to $0 (fail-safe) without conviction or a positive target", () => {
+  it("degrades to $0 (an honest 'unpriced' receipt value) without conviction or a positive target", () => {
     expect(washSaleExpectedEdgeUsd({ ...buy, confidenceScore: undefined }, policy, 3000)).toBe(0);
     const noTarget = policyWith({ riskRules: { ...policy.riskRules, takeProfitPct: 0 } });
     expect(washSaleExpectedEdgeUsd(buy, noTarget, 3000)).toBe(0);
@@ -473,6 +492,7 @@ describe("IRA-replacement default disregard — every taxable wash-sale mode", (
     expect(decision.washSale?.outcome).toBe("blocked_ira");
   });
 });
+
 
 describe("IRA wash-sale disregard (taxSettings.iraWashSaleHandling = 'disregard')", () => {
   const iraDisregard = (handling: "block" | "ask" | "auto") =>
