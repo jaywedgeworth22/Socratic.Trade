@@ -73,7 +73,7 @@ import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
-import { checkBudgetAndAlert } from "./usage-budget";
+import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
@@ -278,10 +278,42 @@ export async function runStrategyOnce(
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
-    // Phase 2 (model-downgrade / cycle-skip enforcement) is DEFERRED to a follow-up PR: it must skip
-    // only the LLM proposal step — never the broker reconciliation or the risk-reducing exits below —
-    // and must not persist a temporary downgrade; see docs/usage-monitor-integration.md.
     void checkBudgetAndAlert(userId, policy).catch(() => {});
+
+    // ADVISORY (always on when the monitor is configured, independent of USAGE_BUDGET_ENFORCE): read
+    // budget status once and (a) stamp a receipt so operator spend is auditable per-run even when
+    // enforcement is off, (b) format a compact advisory line threaded into the Bull/Bear userContent
+    // below (see `budgetAdvisory` on proposeTrades' input) — DATA for the agent, never a command; the
+    // agent decides whether a cheaper model or skipping is worth it. Enforcement (Phase 2, below at
+    // the LLM budget choke point) is the owner's opt-in override of that same decision via
+    // USAGE_BUDGET_ENFORCE. Best-effort: never blocks or fails a run.
+    let budgetAdvisory: string | undefined;
+    try {
+      const budgetStatus = await getBudgetStatusCached();
+      if (budgetStatus) {
+        const enforceOn = usageBudgetEnforceEnabled();
+        const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
+        audit(
+          "usage_budget_status",
+          {
+            runId,
+            enforceOn,
+            summary: budgetStatus.summary,
+            providers: budgetStatus.providers.map((p) => ({ name: p.name, status: p.status, spentUsd: p.spentUsd, monthlyBudgetUsd: p.monthlyBudgetUsd, percentUsed: p.percentUsed })),
+            wouldSkip: wouldDecide.skip,
+            wouldDowngrade: wouldDecide.downgraded,
+            suggestedLlmModel: wouldDecide.llmModel,
+            suggestedRedTeamLlmModel: wouldDecide.redTeamLlmModel,
+            reason: wouldDecide.reason
+          },
+          userId,
+          connectedAccountId
+        );
+        budgetAdvisory = formatBudgetAdvisory(budgetStatus);
+      }
+    } catch {
+      /* advisory is best-effort — never break the run */
+    }
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -414,6 +446,50 @@ export async function runStrategyOnce(
           { policy, userId }
         );
       }
+    }
+
+    // ── Usage-budget Phase 2 enforcement (opt-in, USAGE_BUDGET_ENFORCE) ────
+    // Owner's off-by-default switch on top of the ADVISORY computed above. Placed at this same
+    // choke point — AFTER the risk-reducing breakers, BEFORE any LLM call — so it can only ever skip
+    // the LLM proposal step, never risk maintenance. skip ends the run gracefully right here (audit +
+    // notifyBudgetSkip, no LLM call, no reservation taken); downgrade swaps the model fields on THIS
+    // run's in-memory `policy` object only (never persisted — the next run reads the owner's
+    // configured model again) and is picked up by both `resolveLlmEndpoint(policy, ...)` in
+    // `proposeTrades` and by `debateProposal`'s explicit `policy` argument above. Fail-open on any
+    // evaluator error (evaluateBudgetForRun never throws, but this is the same posture as everything
+    // else in this file's budget handling).
+    try {
+      const enforceDecision = await evaluateBudgetForRun(userId, policy);
+      if (enforceDecision.skip) {
+        const reason = enforceDecision.reason ?? "Over budget.";
+        audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);
+        await notifyBudgetSkip(userId, policy, runId, reason);
+        const summary = `Strategy run skipped — over usage budget. ${reason}`;
+        result = { runId, status: "completed", summary, proposals: [] };
+        finishStrategyRun(runId, "completed", summary, userId);
+        releaseStrategyLock(userId, connectedAccountId);
+        return result;
+      }
+      if (enforceDecision.downgraded) {
+        const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+        if (enforceDecision.llmModel) policy.llmModel = enforceDecision.llmModel;
+        if (enforceDecision.redTeamLlmModel) policy.redTeamLlmModel = enforceDecision.redTeamLlmModel;
+        audit(
+          "usage_budget_enforced",
+          {
+            runId,
+            userId,
+            action: "downgrade",
+            reason: enforceDecision.reason,
+            before,
+            after: { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel }
+          },
+          userId,
+          connectedAccountId
+        );
+      }
+    } catch {
+      /* fail-open — never let usage-budget enforcement break a run */
     }
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
@@ -715,7 +791,8 @@ export async function runStrategyOnce(
         learnedContext,
         ...(experienceAnalogs ? { experienceAnalogs } : {}),
         ...(ownerCoaching ? { ownerCoaching } : {}),
-        drawdownAdvisory
+        drawdownAdvisory,
+        budgetAdvisory
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
@@ -788,7 +865,10 @@ export async function runStrategyOnce(
       if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // Pass the run's in-memory `policy` explicitly (rather than letting debateProposal re-read
+        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of policy.redTeamLlmModel — applied
+        // to this run-scoped object only, never persisted — actually reaches the Bear's model choice.
+        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, policy);
         // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
         proposal.redTeamVerdict = {
@@ -2661,6 +2741,13 @@ async function proposeTrades(input: {
   experienceAnalogs?: string;
   ownerCoaching?: string;
   drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
+  /**
+   * Usage-budget ADVISORY (formatBudgetAdvisory output): a compact 1-2 line summary of operator LLM
+   * spend vs budget, injected next to `drawdownAdvisory` below. DATA for the agent, never a command —
+   * present whenever the usage monitor is configured and at least one provider is at warning/exceeded,
+   * independent of whether USAGE_BUDGET_ENFORCE is on.
+   */
+  budgetAdvisory?: string;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -2873,6 +2960,14 @@ async function proposeTrades(input: {
             equity: input.drawdownAdvisory.equity,
             highWaterMark: input.drawdownAdvisory.highWaterMark,
             detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
+    ...(input.budgetAdvisory
+      ? {
+          budgetAdvisory: {
+            note: "ADVISORY, not a block: operator LLM spend context. YOU decide whether a cheaper model tier or skipping this cycle is worth it — every choice is logged and coachable.",
+            detail: input.budgetAdvisory
           }
         }
       : {}),
