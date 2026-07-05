@@ -250,6 +250,15 @@ to `socratictrade.com`, record the release commit + date here._
   Follow-ups: extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. See
   `docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
 
+- **Approvals triage upgrades + alert center (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-approvals-alert-center`, branch
+  `codex/approvals-alert-center`. Focused slice only: pending-approval sort/filter, bulk safe
+  actions via existing per-item proposal endpoints, and a console alert center built from existing
+  notifications/activity data. Keepout: settings/model/live-data/coach/tooltip broad conversions,
+  Monet risk files, Claude memory/RAG files, workflows, AGENTS, and Slack scripts. Verification
+  green: tsc clean, focused approvals/dashboard tests 24, full suite 2467 tests / 255 files, lint
+  0 errors, build green.
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
@@ -605,8 +614,6 @@ locks — re-negotiate in #agent-sync._
 #### CODEX lane (adds to the annotated parity rows above)
 - **Scan table column customization parity (CODEX, M)** — visibility/ordering/reset/saved state vs
   the legacy dashboard. (console-parity-open-items)
-- **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
-  console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
   streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
   the SSE learned-context-inbox row above. (expert reviews)
