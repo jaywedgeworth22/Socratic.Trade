@@ -19,6 +19,10 @@ Round 3 (same day): owner saved B/E/H/I, combined with the parallel session's th
 (Examined Trade, Dialectic, Stoa — copied from branch `claude/logo-ideas-c5n61b`), plus the four
 Firefly comps processed into light/dark-ready transparent assets — all in one board at
 `docs/branding/shortlist.html` (assets in `docs/branding/firefly/`).
+Round 4 (same day): upright vector remake of the candlestick wordmark — SOCRATIC TRADE with every
+letter built from red/green candles, vertically normal (not tilted) — generated via
+Pillow glyph masks → SVG; on the shortlist board as F5 with light/dark PNG exports in
+`docs/branding/firefly/`.
 Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the

@@ -69,6 +69,18 @@ of the Firefly images.
   copies of the other branch's shortlisted marks (same paths, so a future merge
   of that branch is conflict-free).
 
+## Round 4 (same day) — upright candlestick wordmark (vector remake)
+
+Owner asked for "Socratic Trade" in red/green candlesticks but vertically
+normal, not tilted like the Firefly originals. Rebuilt the idea from scratch
+as a generated vector: Liberation Sans Bold glyph masks rendered in Pillow,
+each letter column converted to candlestick bodies+wicks (seeded random
+green/red mix, ~62/38), emitted as SVG — perfectly upright, scales cleanly.
+
+- `docs/branding/firefly/candle-wordmark-upright.svg` (source of truth)
+- `docs/branding/firefly/candle-wordmark-upright-{light,dark}.png` (exports)
+- `shortlist.html` gains card **F5** showing it on both grounds.
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
