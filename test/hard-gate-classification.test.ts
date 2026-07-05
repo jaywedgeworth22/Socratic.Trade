@@ -58,6 +58,13 @@ const PREFERENCE_REASONS: Array<[string, string]> = [
   ["staleness", "staleness_gate: NVDA quote is 400s old (max 120s)."],
   ["stop-loss add block", "Stop-loss rule blocks adding to a losing position."],
   ["take-profit add block", "Take-profit rule blocks adding past the profit target."],
+  // PRE-POLICY vetoes folded into the sized PolicyDecision as OVERRIDABLE reasons (pre-veto override
+  // flow). Both must classify as preferences so an autonomyOverride thesis can pass them on openings —
+  // this is the whole mechanism that makes the deterministic-bear filter and approval-time Red Team
+  // advisory-overridable without touching policy.ts.
+  ["deterministic-bear regime veto", "deterministic_bear_veto: Crisis (Extreme Volatility) regime with below-median scan score (40.0 < median 70.0); risk-on entry too weak"],
+  ["deterministic-bear fundamentals veto", "deterministic_bear_veto: Fundamentals veto: FCF yield -3.10% below floor 0% (cash-burning)"],
+  ["red-team veto", "red_team_veto: The bull thesis ignores a deteriorating balance sheet and a fresh guidance cut."],
   // the DENYLIST default: an unrecognized / future gate must be overridable, not hard
   ["novel unlisted future gate", "Some brand-new risk preference gate the agent has never seen would be exceeded."]
 ];
@@ -78,5 +85,26 @@ describe("isHardGateReason — the short-side broker/policy discrimination", () 
   it("broker-capability short block is HARD; policy-toggle short block is an overridable preference", () => {
     expect(isHardGateReason('Order side "short" rejected: the connected account does not support short selling.')).toBe(true);
     expect(isHardGateReason('Order side "short" rejected: short-selling is disabled in policy.')).toBe(false);
+  });
+});
+
+describe("isHardGateReason — pre-veto tags stay preferences even when the free-text payload contains a hard-gate substring (ISSUE 2 regression)", () => {
+  // A Red Team veto's reason is unconstrained LLM prose and may coincidentally contain a hard-gate word
+  // ("broker", "buying power", "PERMANENTLY", "wash sale"). The `red_team_veto:` / `deterministic_bear_veto:`
+  // prefix must classify it as a preference BEFORE the substring scan, or a valid override is silently
+  // refused (and the card mislabels the veto as overridden while the trade was actually blocked).
+  it.each([
+    "red_team_veto: The broker-dealer subsidiary faces a regulatory probe.",
+    "red_team_veto: Management is burning buying power on buybacks.",
+    "red_team_veto: This looks like permanently impaired capital.",
+    "red_team_veto: The thesis relies on a wash sale of the prior lot.",
+    "deterministic_bear_veto: over-levered; the broker flagged intraday margin risk."
+  ])("PREFERENCE despite an embedded hard-gate substring: %s", (reason) => {
+    expect(isHardGateReason(reason)).toBe(false);
+  });
+
+  it("does NOT let the prefix mask a genuine hard reason", () => {
+    expect(isHardGateReason("Order of $7000.00 exceeds available buying power $6000.00.")).toBe(true);
+    expect(isHardGateReason("Sell quantity exceeds current AAPL holdings.")).toBe(true);
   });
 });

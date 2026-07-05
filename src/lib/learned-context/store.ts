@@ -184,6 +184,26 @@ export function retrieveLearnedContext(
   _regime?: string,
   options: { includeShared?: boolean; limit?: number; perContributorCap?: number } = {}
 ): string[] {
+  return retrieveLearnedContextDetailed(userId, symbols, _regime, options).lines;
+}
+
+/** The formatted advisory lines plus the underlying selected rows (for age receipts etc.). */
+export interface RetrievedLearnedContext {
+  lines: string[];
+  rows: LearnedContextRow[];
+}
+
+/**
+ * Same selection as retrieveLearnedContext (identical per-contributor cap + shared/private
+ * isolation — retrieveLearnedContext delegates here), but also returns the selected ROWS so
+ * callers can read real provenance (assertedAt for evidence-age receipts) without re-querying.
+ */
+export function retrieveLearnedContextDetailed(
+  userId: string,
+  symbols: string[],
+  _regime?: string,
+  options: { includeShared?: boolean; limit?: number; perContributorCap?: number } = {}
+): RetrievedLearnedContext {
   const limit = options.limit ?? 12;
   const perContributorCap = options.perContributorCap ?? 6;
   // When options.includeShared is explicitly supplied (e.g. from tests), use it; otherwise
@@ -206,10 +226,27 @@ export function retrieveLearnedContext(
     if (selected.length >= limit) break;
   }
 
-  return selected.map((row) => {
-    const sym = row.symbol ? `[${row.symbol}] ` : "";
-    return `- ${sym}${row.subject}: ${row.value}`;
-  });
+  return { lines: selected.map(formatLearnedContextLine), rows: selected };
+}
+
+/**
+ * One advisory bullet per fact, now carrying compact INLINE PROVENANCE (CR-H prompt-safety lane,
+ * 2026-07-05): `- [SYM] subject: value [origin=chat source=owner-chat asserted=2026-07-01 conf=0.8]`.
+ * The model can weigh a fresh, low-confidence chat-origin assertion differently from an old,
+ * high-confidence ingested fact — previously all four fields were dropped here. Only fields that
+ * actually exist are emitted; lines stay single-line and compact.
+ */
+function formatLearnedContextLine(row: LearnedContextRow): string {
+  const sym = row.symbol ? `[${row.symbol}] ` : "";
+  const prov: string[] = [];
+  if (row.origin) prov.push(`origin=${row.origin}`);
+  if (row.source) prov.push(`source=${row.source}`);
+  const day = typeof row.assertedAt === "string" ? row.assertedAt.slice(0, 10) : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) prov.push(`asserted=${day}`);
+  if (typeof row.confidence === "number" && Number.isFinite(row.confidence)) {
+    prov.push(`conf=${Number(row.confidence.toFixed(2))}`);
+  }
+  return `- ${sym}${row.subject}: ${row.value}${prov.length > 0 ? ` [${prov.join(" ")}]` : ""}`;
 }
 
 // ── Pending-queue APPROVAL (safety-critical) ────────────────────────────────────

@@ -87,7 +87,14 @@ import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
-import { retrieveLearnedContext } from "./learned-context/store";
+import { retrieveLearnedContextDetailed } from "./learned-context/store";
+import {
+  collectEvidenceAgeAnomalies,
+  scanForInjectionAttempts,
+  type EvidenceAgeInput,
+  type InjectionFinding,
+  type UntrustedPromptField
+} from "./prompt-safety";
 import { debateProposal } from "./red-team";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
@@ -102,7 +109,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -219,6 +226,28 @@ function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, ru
     note: nudge.note
   }, userId);
   return nudge.weights;
+}
+
+/**
+ * Whether a debated OPENING should count toward the sell-to-fund intended-notional. A pre-veto-tagged
+ * opening (deterministic-bear / red-team veto, now tag-not-drop) is BLOCKED downstream unless the agent
+ * self-overrides it — which only AUTO-EXECUTES in "execute" mode with a requested override thesis
+ * ("propose" routes it to requiresHumanReview and is excluded there; "off" / no-thesis stays blocked).
+ * Counting a non-auto-executing tagged opening would let `sellToFundBuy: "automated"` liquidate real
+ * holdings to fund a buy the system then refuses — the exact regression tag-not-drop introduced, since
+ * a vetoed buy used to be dropped and contribute $0. Untagged openings are unaffected (return true).
+ * Exported for direct unit testing.
+ */
+export function preVetoTaggedOpeningWillPlace(
+  p: TradeProposal,
+  socraticOverrideMode: TradingPolicy["socraticOverrideMode"]
+): boolean {
+  if (!p.preVetoReasons?.length) return true;
+  return (
+    socraticOverrideMode === "execute" &&
+    p.autonomyOverride?.requested === true &&
+    !!p.autonomyOverride.thesis?.trim()
+  );
 }
 
 export async function runStrategyOnce(
@@ -516,6 +545,11 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
+    // decision case this run records. Populated by the evidence-age check below and the
+    // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
+    const promptSafetyEvidence: SocraticEvidenceItem[] = [];
+    const evidenceAgeInputs: EvidenceAgeInput[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -545,6 +579,21 @@ export async function runStrategyOnce(
         );
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
+        // (fresh text steering a same-day decision). Aggregated + audited once below.
+        const relevanceFloor = defaultRelevanceFloor();
+        for (const context of contexts) {
+          for (const chunk of context.chunks) {
+            evidenceAgeInputs.push({
+              kind: "rag_chunk",
+              id: chunk.id,
+              label: `${context.sym} ${chunk.doc_type ?? "chunk"}${chunk.as_of ? ` ${String(chunk.as_of).slice(0, 10)}` : ""}`,
+              timestamp: chunk.as_of,
+              relevanceScore: chunk.relevanceScore ?? chunk.score,
+              relevanceFloor
+            });
+          }
+        }
         if (validContexts.length > 0) {
           // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
           // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
@@ -566,12 +615,41 @@ export async function runStrategyOnce(
     try {
       const learnedSymbols = marketScan.topCandidates.slice(0, 8).map((c) => c.symbol);
       // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContext(userId, learnedSymbols);
-      if (learnedFacts.length > 0) {
-        learnedContext = learnedFacts.join("\n");
+      const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
+      if (learnedFacts.lines.length > 0) {
+        learnedContext = learnedFacts.lines.join("\n");
+      }
+      // Evidence-age receipt inputs: a fact FIRST ASSERTED <24h ago entering today's prompt.
+      for (const row of learnedFacts.rows) {
+        evidenceAgeInputs.push({
+          kind: "learned_fact",
+          id: row.id,
+          label: `${row.symbol ?? "GENERAL"} ${row.subject}`,
+          timestamp: row.assertedAt
+        });
       }
     } catch (e) {
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
+    }
+
+    // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
+    // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
+    // changed, nothing is dropped or blocked — the receipt IS the control.
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    if (evidenceAgeAnomalies.length > 0) {
+      audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+      promptSafetyEvidence.push({
+        kind: "safety",
+        tone: "warning",
+        title: "Same-day evidence entered this run",
+        summary:
+          `${evidenceAgeAnomalies.length} evidence item(s) first seen <24h before this run: ` +
+          `${evidenceAgeAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
+          "Advisory receipt only — nothing was altered or blocked.",
+        source: "prompt-safety",
+        data: evidenceAgeAnomalies
+      });
     }
 
     // ── Episodic decision memory: closest historical analogs + owner coaching ──
@@ -721,6 +799,27 @@ export async function runStrategyOnce(
       llmSteps = proposed.llmSteps;
       bearReviewUnavailable = proposed.bearReviewUnavailable === true;
       bearReviewReason = proposed.bearReviewReason;
+      // Advisory injection receipts from the prompt-assembly scan (audited inside proposeTrades):
+      // fold into kind-'safety' evidence, one item per flagged field, so every decision case this
+      // run records carries the receipt. Never alters proposals or routing.
+      if (proposed.promptSafetyFindings && proposed.promptSafetyFindings.length > 0) {
+        const byField = new Map<string, InjectionFinding[]>();
+        for (const finding of proposed.promptSafetyFindings) {
+          byField.set(finding.name, [...(byField.get(finding.name) ?? []), finding]);
+        }
+        for (const [field, findings] of Array.from(byField.entries()).slice(0, 4)) {
+          promptSafetyEvidence.push({
+            kind: "safety",
+            tone: "warning",
+            title: `Possible prompt-injection pattern in ${field}`,
+            summary:
+              `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
+              "The text was passed through unmodified — advisory receipt, generation was not blocked.",
+            source: "prompt-safety",
+            data: findings
+          });
+        }
+      }
     }
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
@@ -803,40 +902,80 @@ export async function runStrategyOnce(
         };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
-          // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
-          // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
-          // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
-          // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
-          // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
-          // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
-          // account's vetoes bleed into another account's efficacy scorecard.
-          audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
-          // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
-          // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
-          // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
-          // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
-          // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
-          // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
-          // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
-          // score/sector/factor/bulletin evidence onto this early row — see
-          // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
-          if (proposal.side === "buy" || proposal.side === "short") {
-            try {
-              recordRejectedProposalCounterfactual({
-                userId,
-                connectedAccountId,
+          // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent
+          // attaches an autonomyOverride thesis to an OPENING and socraticOverrideMode isn't "off".
+          // In that case we TAG the proposal with an overridable `red_team_veto:` reason and fall
+          // through to debatedProposals (NO continue) — the sized override decision then happens once
+          // at resolveSocraticOverride. Otherwise the Bear genuinely kept the trade out and we keep
+          // today's exact behavior (audit + missed-opportunity counterfactual + continue).
+          const isOpening = proposal.side === "buy" || proposal.side === "short";
+          const overrideRequested =
+            isOpening &&
+            proposal.autonomyOverride?.requested === true &&
+            !!proposal.autonomyOverride.thesis?.trim() &&
+            policy.socraticOverrideMode !== "off";
+
+          if (overrideRequested) {
+            // ADVISORY path — tag, do NOT continue. FIX #1: emit a DISTINCT audit kind
+            // (red_team_veto_overridden) and DO NOT write the missed-opportunity counterfactual. This
+            // trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
+            // corrupt getRedTeamEfficacy() (it keys strictly off proposal_rejected_by_red_team joined
+            // to the counterfactual return) — double-booking the same symbol as both a missed winner
+            // and a real position. Override payoff is measured through the matured-position path
+            // (frameworkProposalFromDecision's "Review overridden gate") instead.
+            audit(
+              "red_team_veto_overridden",
+              {
                 runId,
                 symbol: proposal.symbol,
-                refPrice: proposal.referencePrice,
-                createdAt: new Date().toISOString(),
-                regime: proposal.entryMarketRegime
-              });
-            } catch (err) {
-              console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+                side: proposal.side,
+                thesisTag: proposal.tradeThesisTag,
+                reason: redTeamResult.reason,
+                model: redTeamResult.model,
+                mode: policy.socraticOverrideMode
+              },
+              userId,
+              connectedAccountId
+            );
+            proposal.redTeamVerdict = { ...proposal.redTeamVerdict!, rejected: true, overridden: true };
+            proposal.preVetoReasons = [...(proposal.preVetoReasons ?? []), `red_team_veto: ${redTeamResult.reason}`];
+            // fall through to debatedProposals.push(proposal) — NO continue
+          } else {
+            // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
+            // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
+            // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+            // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
+            // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
+            // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
+            // account's vetoes bleed into another account's efficacy scorecard.
+            audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
+            // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
+            // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
+            // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
+            // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
+            // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
+            // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
+            // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
+            // score/sector/factor/bulletin evidence onto this early row — see
+            // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
+            if (proposal.side === "buy" || proposal.side === "short") {
+              try {
+                recordRejectedProposalCounterfactual({
+                  userId,
+                  connectedAccountId,
+                  runId,
+                  symbol: proposal.symbol,
+                  refPrice: proposal.referencePrice,
+                  createdAt: new Date().toISOString(),
+                  regime: proposal.entryMarketRegime
+                });
+              } catch (err) {
+                console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+              }
             }
+            // Skip this proposal completely, as the Red Team found a critical flaw
+            continue;
           }
-          // Skip this proposal completely, as the Red Team found a critical flaw
-          continue;
         } else if (!redTeamResult.available) {
           console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
           proposal.rationale += `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${redTeamResult.reason}); routed to human approval.`;
@@ -873,6 +1012,25 @@ export async function runStrategyOnce(
       }
     }
 
+    // FIX #3 — propose-mode override pre-routing. The pre-veto fold-in + override resolution happen
+    // LATER, inside the placement loop (before resolveSocraticOverride), which is AFTER the sell-to-
+    // fund planner below reads `requiresHumanReview` (intendedOpeningNotional excludes members of that
+    // set). An opening that carries a pre-veto tag + a requested override thesis will, in "propose"
+    // mode, route to human — so it must be in requiresHumanReview NOW, or the planner would drive
+    // automated funding sells for a buy that never auto-executes. This mirrors the Bear-unavailable
+    // and rationale-collapse gates above and works precisely because it sits before line ~882. Cheap
+    // pure predicate — no sizing; the AUTHORITATIVE sized cap/mode decision still runs once at the
+    // override call inside the loop. (execute mode self-executes and needs no pre-route; off keeps the
+    // block, so only propose pre-routes here.)
+    if (policy.socraticOverrideMode === "propose") {
+      for (const p of debatedProposals) {
+        const isOpening = p.side === "buy" || p.side === "short";
+        if (isOpening && p.preVetoReasons?.length && p.autonomyOverride?.requested === true && !!p.autonomyOverride.thesis?.trim()) {
+          requiresHumanReview.add(p);
+        }
+      }
+    }
+
     // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
     // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
     // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
@@ -888,7 +1046,10 @@ export async function runStrategyOnce(
       // (e.g. a Bear-unavailable or rationale-collapse-gated buy) must not drive automated funding
       // sells — otherwise in "decide" mode we'd auto-liquidate holdings to fund buys that are merely
       // queued for approval and won't execute (potentially leaving the account short on buying power).
-      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p)).reduce((sum, p) => {
+      // Also exclude a pre-veto-TAGGED opening that won't auto-execute (no override thesis / mode !=
+      // execute): the fold-in below keeps it blocked, so — like the pre-tag-not-drop hard drop — it
+      // must contribute $0 and never trigger funding sells (preVetoTaggedOpeningWillPlace).
+      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p) && preVetoTaggedOpeningWillPlace(p, policy.socraticOverrideMode)).reduce((sum, p) => {
         const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
         const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
         return sum + (Number.isFinite(notional) ? notional : 0);
@@ -979,7 +1140,9 @@ export async function runStrategyOnce(
             review: input.review,
             marketScan,
             ragAttributions: socraticRagAttributions,
-            overrideResolution: input.overrideResolution
+            overrideResolution: input.overrideResolution,
+            // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
+            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {})
           }),
           createdAt: now,
           updatedAt: now
@@ -1041,6 +1204,23 @@ export async function runStrategyOnce(
           ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
           : 0
       });
+
+      // Pre-veto fold-in (Option 2): the two PRE-POLICY vetoes (deterministic-bear filter + approval-
+      // time Red Team) no longer DROP a candidate — they TAG it with advisory `preVetoReasons`. Fold
+      // those reasons into the single sized PolicyDecision right here, before the one override call, so
+      // the SAME resolveSocraticOverride path that governs owner-preference gates also governs the
+      // vetoes: `isHardGateReason("deterministic_bear_veto: …")` and `isHardGateReason("red_team_veto:
+      // …")` are both false, so they classify as OVERRIDABLE conflicts and an autonomyOverride thesis
+      // can pass them on openings (subject to socraticOverrideMode + the override cap on the already-
+      // sized notional). With no thesis (or mode "off") they keep the candidate blocked exactly as the
+      // old hard-drop did. No parallel override system and no second override call.
+      if (normalizedProposal.preVetoReasons?.length) {
+        decision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, ...normalizedProposal.preVetoReasons]
+        };
+      }
 
       // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
       // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
@@ -1679,7 +1859,12 @@ export function deterministicBearFilter(
     const sym = normalizeSymbol(p.symbol);
     const quote = quoteBySymbol.get(sym);
 
-    // Rule 1: can't sell a long position that doesn't exist in the live book
+    // Rule 1: can't sell a long position that doesn't exist in the live book.
+    // DELIBERATELY a hard `continue` DROP and NOT tagged as an overridable pre-veto: it is an
+    // accounting impossibility (a phantom sell/cover), not a risk preference, and it fires only on
+    // NON-opening sides which resolveSocraticOverride refuses anyway — so there is nothing to override.
+    // Do not "fix" this into a preVetoReasons tag; that would surface a non-openable, non-overridable
+    // reason on a card as if it could be overridden.
     if (p.side === "sell" && !heldLong.has(sym)) {
       vetoed.push({ symbol: sym, side: "sell", reason: "No existing long position to sell" });
       continue;
@@ -1696,30 +1881,48 @@ export function deterministicBearFilter(
       }
     }
 
-    // Rule 4: model-free fundamentals hard-veto on buys (independent of the Bull/Bear LLMs, which
+    // Rule 4: model-free fundamentals veto on buys (independent of the Bull/Bear LLMs, which
     // share one model and can rationalize a weak long). Catches cash-burning / over-levered names
     // regardless of what the LLMs agree on. Skipped when the threshold is unset OR the field is
     // unavailable, so a missing fundamental never false-vetoes a legitimate name.
+    //
+    // ⚠️ OWNER-RATIFICATION FLAG (2026-07-05): Rule 4 was DELIBERATELY model-INDEPENDENT — it exists
+    // precisely because the Bull and Bear share one model and can jointly rationalize a weak long, so
+    // it vetoed cash-burning / over-levered names no matter what the LLMs agreed on. This change makes
+    // it OVERRIDABLE by an autonomyOverride thesis authored BY THAT SAME MODEL (per owner philosophy
+    // "nothing is hard but the account boundary"). That re-couples the exact failure mode Rule 4 was
+    // built to be independent of. It is now tag-not-drop (kept + preVetoReasons) rather than a hard
+    // `continue`. TO REVERT to a non-overridable hard veto, change the two lines below back to
+    // `vetoed.push({...}); continue;` (drop the preVetoReasons tag + kept.push). Flagged for explicit
+    // owner ratification — see the rollout note.
     if (p.side === "buy" && quote) {
       const fcfFloor = vetoThresholds?.fcfYieldFloorPct;
       const deCeil = vetoThresholds?.debtToEquityCeiling;
       if (fcfFloor != null && typeof quote.fcfYield === "number" && Number.isFinite(quote.fcfYield) && quote.fcfYield < fcfFloor) {
-        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)` });
+        const reason = `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)`;
+        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+        kept.push(p);
         continue;
       }
       if (deCeil != null && typeof quote.debtToEquity === "number" && Number.isFinite(quote.debtToEquity) && quote.debtToEquity > deCeil) {
-        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)` });
+        const reason = `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)`;
+        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+        kept.push(p);
         continue;
       }
     }
 
-    // Rule 3: below-median buy in a risk-off/crisis regime → hard veto
+    // Rule 3: below-median buy in a risk-off/crisis regime → advisory pre-veto (tag-not-drop). Was a
+    // hard `continue` drop; now tagged as an OVERRIDABLE `deterministic_bear_veto:` reason and KEPT, so
+    // an autonomyOverride thesis can pass it on the opening at the single resolveSocraticOverride call.
+    // With no thesis (or socraticOverrideMode "off") the tag keeps it blocked exactly as the old drop.
     if (p.side === "buy" && riskOffRegime && quote && quote.score < medianScore) {
-      vetoed.push({
-        symbol: sym,
-        side:   "buy",
-        reason: `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`
-      });
+      const reason = `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`;
+      vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+      p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+      kept.push(p);
       continue;
     }
 
@@ -2634,6 +2837,13 @@ interface ProposeTradesResult {
    */
   bearReviewUnavailable?: boolean;
   bearReviewReason?: string;
+  /**
+   * Advisory findings from the deterministic prompt-injection scan over the untrusted text
+   * blocks assembled into the Bull/Bear prompts (see src/lib/prompt-safety.ts). Already audited
+   * (kind 'prompt_injection_suspected') inside proposeTrades; the caller folds them into
+   * decision-case evidence. NEVER affects the proposals themselves.
+   */
+  promptSafetyFindings?: InjectionFinding[];
 }
 
 async function proposeTrades(input: {
@@ -2800,7 +3010,9 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     strategyPrompt: input.prompt,
-    reflection,
+    // reflection deliberately NOT interpolated into the SYSTEM prompt anymore (prompt-safety
+    // lane, agentic-strategy@1.5.0): the post-mortem writer persists raw LLM output, so it rides
+    // in userContent as the fenced `reflectionSummary` DATA field below instead.
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
@@ -2898,11 +3110,52 @@ async function proposeTrades(input: {
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
     ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    // Historical reflection RELOCATED here from the Bull SYSTEM prompt (prompt-safety lane): it is
+    // persisted raw LLM output, so it enters as fenced, labeled user-role DATA — the system prompt
+    // references it by name and the data-not-command clause covers it.
+    ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
     // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
     ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
     ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
+
+  // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
+  // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
+  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
+  // headlines, smartMoney = first 3 bulletins). Detection IS the control: on a hit we audit and
+  // surface evidence — the text is NEVER altered or dropped, and generation always proceeds.
+  const untrustedPromptFields: UntrustedPromptField[] = [
+    { name: "owner_strategy_prompt", text: input.prompt },
+    { name: "reflection_summary", text: reflection },
+    { name: "retrievedFinancialContext", text: input.ragContext ?? "" },
+    { name: "learnedContext", text: input.learnedContext ?? "" },
+    { name: "closestHistoricalAnalogs", text: input.experienceAnalogs ?? "" },
+    { name: "ownerCoaching", text: input.ownerCoaching ?? "" },
+    ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
+      const sym = normalizeSymbol(candidate.symbol);
+      const fields: UntrustedPromptField[] = [];
+      const news = candidate.headlines?.slice(0, 2) ?? [];
+      if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
+      const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
+      if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
+      return fields;
+    })
+  ];
+  const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  if (promptSafetyFindings.length > 0) {
+    audit(
+      "prompt_injection_suspected",
+      {
+        runId: input.runId,
+        fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
+        patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
+        findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
 
   const model = resolvedModel;
   const llmSteps: StrategyLlmStep[] = [];
@@ -3169,9 +3422,12 @@ async function proposeTrades(input: {
   });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
-  // See deterministicBearFilter for the three rules (no-phantom-exit, momentum overextension
-  // flag, below-median buy in risk-off regime). Vetoed proposals are logged, not silently
-  // dropped, so runs are auditable.
+  // See deterministicBearFilter for the rules (no-phantom-exit HARD drop, momentum overextension
+  // flag, and the ADVISORY fundamentals + below-median-in-risk-off pre-vetoes which now TAG the
+  // candidate with `preVetoReasons` and keep it rather than dropping it). Vetoed proposals are logged
+  // and — FIX #2b — durably AUDITED below so an overridden pre-veto is recorded even when the trade
+  // proceeds (the filter previously recorded nothing but a console.log, leaving an overridden
+  // fundamentals veto invisible in the audit feed).
   const { kept: bullProposals, vetoed: deterministicVetoed } = deterministicBearFilter(
     rawBullProposals,
     input.positions,
@@ -3184,6 +3440,17 @@ async function proposeTrades(input: {
   );
   if (deterministicVetoed.length > 0) {
     console.log("[DeterministicBear] Vetoed before Bear LLM:", deterministicVetoed.map(v => `${v.symbol} ${v.side}: ${v.reason}`).join(" | "));
+    // FIX #2b: durably audit each deterministic-bear veto (kept-and-tagged OR hard-dropped) so an
+    // overridden fundamentals/regime veto is visible in the Activity/Audit feed, not just console.
+    // ACCOUNT-scoped (connectedAccountId) to match the counterfactual rows and the red-team audits.
+    for (const v of deterministicVetoed) {
+      audit(
+        "deterministic_bear_veto",
+        { runId: input.runId, symbol: v.symbol, side: v.side, reason: v.reason, regime: currentMarketRegime },
+        input.userId,
+        input.policy.connectedAccountId
+      );
+    }
   }
 
   // Phase 7: Bear Agent (Red Team) Critique (prompt in ./strategy-prompts, Chat A item 2)
@@ -3340,7 +3607,13 @@ async function proposeTrades(input: {
       kind: "provider_degraded",
       data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
     }).catch((err) => console.error("[Bear] notify error:", err));
-    return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
+    return {
+      proposals: bullProposals,
+      llmSteps,
+      bearReviewUnavailable: true,
+      bearReviewReason: reason,
+      ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
+    };
   };
 
   if (!bearKey) {
@@ -3459,7 +3732,7 @@ async function proposeTrades(input: {
     status: "completed",
     proposalCount: bearProposals.length
   });
-  return { proposals: bearProposals, llmSteps };
+  return { proposals: bearProposals, llmSteps, ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}) };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
