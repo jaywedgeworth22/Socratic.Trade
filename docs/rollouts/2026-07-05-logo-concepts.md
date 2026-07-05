@@ -121,6 +121,24 @@ batch captures corrupt the bottom row of each page, so every 40th frame
 sacrificial dummy bottom row, re-encoded all three outputs, and verified by
 decoding the final MP4 back to frames (zero bright outliers).
 
+## Round 7 (same day) — transparent-background video exports
+
+Owner asked for videos with transparency. Re-rendered the morph's 360 frames
+with real alpha (Chromium `--default-background-color=00000000`, sacrificial
+bottom rows to dodge the batch-capture artifact; alpha coverage verified per
+frame), then encoded:
+
+- `candle-morph-alpha.webm` — VP9 + alpha (yuva420p), 2.9 MB; plays with
+  transparency in Chrome/Edge/Firefox `<video>`.
+- `candle-morph-alpha.webp` — animated WebP with alpha, 15 fps, 3.8 MB;
+  the GIF-replacement for chat/web embeds.
+- ProRes 4444 MOV (yuva444p12le, ~113 MB) — generated and delivered to the
+  owner directly; NOT committed (size). Regenerate from `candle-morph.svg`
+  via the frame pipeline if needed. Safari/iOS note: Apple only plays
+  HEVC-with-alpha, which can't be encoded on Linux — use the ProRes file in
+  an Apple editor or convert on-device if a Safari-native alpha video is
+  ever needed.
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
