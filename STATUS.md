@@ -64,6 +64,56 @@ across both paths). tsc clean; focused suite green (see rollout note for exact c
 `npm test`/`npm run build` deferred to the central landing operator per this branch's rules. See
 `docs/rollouts/2026-07-05-durable-due-jobs.md`.
 **Next:** land via the sequential landing operator.
+## 2026-07-05 — Usage-budget Phase 2 wired into runStrategyOnce (advisory-first) (CLAUDE, `claude/usage-budget-advisory-wiring`)
+Wired the previously-dormant usage-budget Phase 2 (`evaluateBudgetForRun`/`cheaperModel` in
+`src/lib/usage-budget.ts` — zero production callers before this) into `runStrategyOnce`, per the
+owner's "advisory-first, owner-overridable" guardrail philosophy:
+- **ADVISORY (always on** when the API Usage Monitor is configured, independent of the enforce
+  flag): every run now stamps a `usage_budget_status` audit receipt (spend, per-provider status,
+  and what enforcement WOULD do via a new `previewBudgetDecision` preview) and, when a provider is
+  at warning/exceeded, injects a compact `formatBudgetAdvisory()` line into the Bull userContent
+  next to `drawdownAdvisory` — data for the agent, never a command.
+- **ENFORCEMENT (opt-in via existing `USAGE_BUDGET_ENFORCE`, default off):** applied at the
+  per-user/day LLM budget choke point (after risk breakers, before any LLM call). Skip ends the run
+  gracefully with an audit + `notifyBudgetSkip` before any LLM call; downgrade swaps
+  `policy.llmModel`/`policy.redTeamLlmModel` on the in-memory run policy only (never persisted).
+  Both write a `usage_budget_enforced` audit receipt (before/after models on downgrade).
+- `debateProposal` (`src/lib/red-team.ts`) gained an optional 5th `policyOverride` param so the
+  Bear review picks up the SAME in-memory downgraded policy the Bull used, instead of re-reading
+  `getPolicy(userId)` from the DB (which would miss a transient, non-persisted downgrade). Backward
+  compatible — existing 4-arg callers unchanged.
+- Refactored `evaluateBudgetForRun`'s internal decision logic into a shared `computeBudgetDecision`
+  so the new `previewBudgetDecision` (ungated on `USAGE_BUDGET_ENFORCE`, only gated on the monitor
+  being configured) can preview the same decision for the advisory receipt without needing
+  enforcement turned on. `evaluateBudgetForRun`'s tested public contract is unchanged.
+- New `formatBudgetAdvisory()` helper (unit-tested, 4 new tests) plus a new
+  `test/usage-budget-strategy-integration.test.ts` (4 e2e tests via `runStrategyOnce` +
+  `TestBrokerGateway`, modeled on `test/strategy-money-path-f-g.test.ts`) covering: advisory-only
+  (enforce off), enforced downgrade, enforced skip, and evaluator-failure fail-open.
+Verification: `npx tsc --noEmit` clean; focused vitest run across usage-budget + strategy +
+red-team + budget-adjacent test files — 175/175 passed (see rollout note for the exact list).
+See `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+
+**Review fixes (second commit, same day, HEAD after `98123f3c`):** a review found a BLOCKER — the
+enforcement block mutated the shared `policy` object in place (`policy.llmModel = ...`), so a
+same-run cap-breach demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` (in
+`autoRevertOnCapBreach`) would have persisted the "in-memory only" downgrade to the DB permanently.
+Fixed by carrying the downgrade as a separate `runLlmOverride`, merged into a new `runPolicy`
+(`{ ...policy, ...runLlmOverride }`) that is now the ONLY object passed to
+`proposeTrades`/`debateProposal`/`revalidatePendingProposals`/`generateReflectionSummary` for model
+resolution — `policy` itself (used by every `setPolicy`/`autoRevertOnCapBreach` call) is never
+mutated. Also fixed: the skip sequence now runs outside the enforcement try/catch (a post-audit
+throw could previously fall through into the full LLM path); `generateReflectionSummary` gained an
+optional `policyOverride` param so the post-mortem reflection sees the downgrade too (outcome-engine's
+fire-and-forget lesson pass is a documented intentional exemption — it outlives the run); the
+already-fetched budget status is now reused instead of double-fetched; the downgrade test now also
+asserts the Red Team request body's model. Verification: `tsc --noEmit` clean; 6 targeted test files
+/ 36 tests green; full `npm test` 258 files / 2521 tests green; `npm run build` clean. See
+`docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`'s "Review fixes" section.
+
+**Next:** land via `land.sh` once this lane is picked up for landing (not run in this session per
+instructions) → PR → squash auto-merge once `verify` is green. Consider a follow-up to add
+`redTeamLlmModel` visibility into the dashboard's budget-status admin view.
 ## 2026-07-05 — Prompt-safety fencing + injection receipts (CLAUDE, `claude/prompt-safety-fencing`)
 CR-H prompt-safety slice for the money-path prompts — ADVISORY ONLY (receipts + owner-visible
 evidence, never a block; deterministicBearFilter/policy/regime-watch untouched). (1) Bull system

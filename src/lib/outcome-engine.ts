@@ -788,7 +788,15 @@ async function generatePostMortemLessons(
   return { written: true };
 }
 
-/** Real LLM call (same plumbing as post-mortem.ts). Returns undefined when no key is configured. */
+/**
+ * Real LLM call (same plumbing as post-mortem.ts). Returns undefined when no key is configured.
+ *
+ * INTENTIONALLY EXEMPT from strategy.ts's run-scoped usage-budget model downgrade: this job runs
+ * fire-and-forget, detached from any single `runStrategyOnce` call's lifetime (it matures cases
+ * across accounts/runs and can still be in flight after the triggering run returns), so there is no
+ * single well-defined "this run's downgrade" to hand it. It always re-reads the owner's persisted
+ * (undowngraded) policy — same behavior as before the usage-budget downgrade existed.
+ */
 async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
