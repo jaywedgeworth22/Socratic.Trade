@@ -1,4 +1,5 @@
-import { getSocraticDecisionCase } from "@/lib/db";
+import { getSocraticDecisionCase, getStrategyRunById } from "@/lib/db";
+import type { SocraticDecisionTrace } from "@/lib/types";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { NextResponse } from "next/server";
 
@@ -9,5 +10,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const userId = resolveRequestUserId(request);
   const decision = getSocraticDecisionCase(id, userId);
   if (!decision) return NextResponse.json({ error: "decision not found" }, { status: 404 });
-  return NextResponse.json(decision);
+  const payload: SocraticDecisionTrace = {
+    decision,
+    ...(decision.runId ? { run: getStrategyRunById(decision.runId, userId) } : {})
+  };
+  return NextResponse.json(payload);
 }

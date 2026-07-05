@@ -8,6 +8,7 @@ import type {
   SocraticDecisionStatus,
   SocraticEvidenceItem,
   SocraticFrameworkProposal,
+  SocraticFrameworkOwnerVerb,
   SocraticFrameworkProposalStatus,
   SocraticRagAttribution,
   StrategyAuthority,
@@ -59,6 +60,7 @@ type FrameworkRow = {
   rationale: string;
   proposed_change: string;
   evidence: string;
+  owner_verb: string | null;
   owner_response: string | null;
   created_at: string;
   updated_at: string;
@@ -125,8 +127,38 @@ function rowToFramework(row: FrameworkRow): SocraticFrameworkProposal {
     rationale: row.rationale,
     proposedChange: row.proposed_change,
     evidence: parseJson<SocraticEvidenceItem[]>(row.evidence, []),
+    ...(row.owner_verb ? { ownerVerb: row.owner_verb as SocraticFrameworkOwnerVerb } : {}),
     ...(row.owner_response ? { ownerResponse: row.owner_response } : {})
   };
+}
+
+function updateDecisionLifecycle(
+  existing: SocraticDecisionCase,
+  userId: string,
+  patch: Partial<Pick<SocraticDecisionCase, "coachNotes" | "lessons">>
+): SocraticDecisionCase | undefined {
+  upsertSocraticDecisionCase({
+    ...existing,
+    userId,
+    coachNotes: patch.coachNotes ?? existing.coachNotes,
+    lessons: patch.lessons ?? existing.lessons
+  });
+  return getSocraticDecisionCase(existing.id, userId);
+}
+
+function reindexDecisionMemory(updated: SocraticDecisionCase, mode: "await" | "fire-and-forget"): Promise<void> | void {
+  const run = async () => {
+    const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+    await indexSocraticDecisionMemory(updated);
+  };
+  if (mode === "await") {
+    return run().catch((err) => {
+      console.warn("[db-socratic] lifecycle re-index failed:", err instanceof Error ? err.message : String(err));
+    });
+  }
+  void run().catch((err) => {
+    console.warn("[db-socratic] lifecycle re-index failed:", err instanceof Error ? err.message : String(err));
+  });
 }
 
 export function upsertSocraticDecisionCase(input: {
@@ -261,24 +293,67 @@ export function appendSocraticDecisionCoachNote(id: string, note: string, userId
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;
   const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
-  upsertSocraticDecisionCase({ ...existing, userId, coachNotes });
+  const updated = updateDecisionLifecycle(existing, userId, { coachNotes });
   audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
-  const updated = getSocraticDecisionCase(id, userId);
-  // Re-index the vector-memory case doc so the appended note is actually retrievable at decision
-  // time, not frozen at "coach_notes: none" the way it was written at creation
-  // (indexSocraticDecisionMemory previously ran exactly once, at strategy.ts's original upsert).
-  // The doc's dedupKeyPrefix ("socratic-decision") + stable id/contextId make this an in-place
-  // upsert, not a duplicate vector. Dynamic import avoids a module cycle: socratic-memory ->
-  // vector-db -> ./db (this barrel) -> db-socratic. Fire-and-forget + non-fatal, matching every
-  // other indexSocraticDecisionMemory call site.
   if (updated) {
-    void import("./socratic-memory")
-      .then(({ indexSocraticDecisionMemory }) => indexSocraticDecisionMemory(updated))
-      .catch((err) => {
-        console.warn("[db-socratic] re-index after coach note failed:", err instanceof Error ? err.message : String(err));
-      });
+    reindexDecisionMemory(updated, "fire-and-forget");
   }
   return updated;
+}
+
+export async function attachSocraticDecisionCoachPrimitives(
+  id: string,
+  input: {
+    note: string;
+    promoteTo?: "lesson" | "framework";
+    lessonText?: string;
+    framework?: Pick<SocraticFrameworkProposal, "priority" | "subsystem" | "title" | "rationale" | "proposedChange">;
+  },
+  userId: string = "local"
+): Promise<{ decision: SocraticDecisionCase; frameworkProposal?: SocraticFrameworkProposal; promotedLesson?: string } | undefined> {
+  const existing = getSocraticDecisionCase(id, userId);
+  if (!existing) return undefined;
+  const cleanedNote = input.note.trim();
+  if (!cleanedNote) return undefined;
+  const coachNotes = [...existing.coachNotes, cleanedNote].filter(Boolean).slice(-20);
+  const lessonCandidate = (input.lessonText ?? cleanedNote).trim();
+  const promotedLesson =
+    input.promoteTo === "lesson" && lessonCandidate
+      ? [...existing.lessons, lessonCandidate].filter((value, index, list) => Boolean(value) && list.indexOf(value) === index).slice(-12)
+      : existing.lessons;
+  const updated = updateDecisionLifecycle(existing, userId, {
+    coachNotes,
+    lessons: promotedLesson
+  });
+  if (!updated) return undefined;
+  audit("socratic_decision_coached", { decisionId: id, note: cleanedNote }, userId, existing.connectedAccountId);
+  if (input.promoteTo === "lesson" && lessonCandidate) {
+    audit("socratic_decision_coach_promoted", { decisionId: id, kind: "lesson", lesson: lessonCandidate }, userId, existing.connectedAccountId);
+  }
+  let frameworkProposal: SocraticFrameworkProposal | undefined;
+  if (input.promoteTo === "framework") {
+    const frameworkInput = input.framework;
+    const frameworkId = createSocraticFrameworkProposal({
+      userId,
+      connectedAccountId: existing.connectedAccountId,
+      decisionId: existing.id,
+      runId: existing.runId,
+      priority: frameworkInput?.priority ?? "medium",
+      subsystem: frameworkInput?.subsystem ?? "coaching",
+      title: frameworkInput?.title?.trim() || `Coach follow-up for ${existing.symbol ?? existing.thesis ?? "decision"}`,
+      rationale: frameworkInput?.rationale?.trim() || cleanedNote,
+      proposedChange: frameworkInput?.proposedChange?.trim() || cleanedNote,
+      evidence: existing.evidence.filter((item) => item.kind === "learning" || item.kind === "framework" || item.kind === "override").slice(0, 6)
+    });
+    frameworkProposal = getSocraticFrameworkProposal(frameworkId, userId);
+    audit("socratic_decision_coach_promoted", { decisionId: id, kind: "framework", frameworkProposalId: frameworkId }, userId, existing.connectedAccountId);
+  }
+  await reindexDecisionMemory(updated, "await");
+  return {
+    decision: updated,
+    ...(frameworkProposal ? { frameworkProposal } : {}),
+    ...(input.promoteTo === "lesson" && lessonCandidate ? { promotedLesson: lessonCandidate } : {})
+  };
 }
 
 /**
@@ -477,21 +552,27 @@ export function listSocraticFrameworkProposals(
   return rows.map(rowToFramework);
 }
 
+export function getSocraticFrameworkProposal(id: string, userId: string = "local"): SocraticFrameworkProposal | undefined {
+  const row = getDb().prepare("SELECT * FROM socratic_framework_proposals WHERE id = ? AND user_id = ?").get(id, userId) as FrameworkRow | undefined;
+  return row ? rowToFramework(row) : undefined;
+}
+
 export function updateSocraticFrameworkProposalStatus(
   id: string,
   status: SocraticFrameworkProposalStatus,
   userId: string = "local",
-  ownerResponse?: string
+  ownerResponse?: string,
+  ownerVerb?: SocraticFrameworkOwnerVerb
 ): SocraticFrameworkProposal | undefined {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      "UPDATE socratic_framework_proposals SET status = ?, owner_response = COALESCE(?, owner_response), updated_at = ? WHERE id = ? AND user_id = ?"
+      "UPDATE socratic_framework_proposals SET status = ?, owner_verb = COALESCE(?, owner_verb), owner_response = COALESCE(?, owner_response), updated_at = ? WHERE id = ? AND user_id = ?"
     )
-    .run(status, ownerResponse ?? null, now, id, userId);
+    .run(status, ownerVerb ?? null, ownerResponse ?? null, now, id, userId);
   const row = getDb().prepare("SELECT * FROM socratic_framework_proposals WHERE id = ? AND user_id = ?").get(id, userId) as FrameworkRow | undefined;
   if (!row) return undefined;
   const framework = rowToFramework(row);
-  audit("socratic_framework_proposal_resolved", { id, status, ownerResponse }, userId, framework.connectedAccountId);
+  audit("socratic_framework_proposal_resolved", { id, status, ownerVerb, ownerResponse }, userId, framework.connectedAccountId);
   return framework;
 }

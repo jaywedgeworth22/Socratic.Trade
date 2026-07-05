@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Coach/framework primitives slice ready to land (Codex, issue #473)
+Branch `codex/coach-framework-primitives`, worktree
+`/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, now merge-forwarded to
+`origin/main` @ `0bfa4f1e` without scope creep. The branch-owned slice is complete: coach-note
+POST can optionally promote into lesson/framework primitives, framework review persists explicit
+`accept`/`rewrite`/`reject` owner verbs plus `ownerResponse`, and decision traces include linked
+run metadata through a direct run lookup instead of the earlier 200-run scan cap. Route-level
+tests now cover coach promotion and rewrite validation.
+
+Verification in this worktree is fully green: `npm test -- test/socratic-db.test.ts` (1 file,
+3 tests), `./node_modules/.bin/tsc --noEmit --pretty false`, `./node_modules/.bin/eslint .
+--quiet`, `npm test` (256 files / 2507 tests), and `npm run build` (passes; `/api/socratic/*`,
+`/console`, and `/console/decisions/[id]` all present in the build output). Next action: update
+handoff docs, commit, push, open READY PR, and arm squash auto-merge if CI is still pending.
+
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
 Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
@@ -85,6 +100,17 @@ folded back into the canonical file and re-propagated: the initial issue listing
 inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
 our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
 `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+## 2026-07-04 — Coach/framework primitives slice (Codex, issue #473)
+Branch `codex/coach-framework-primitives`, worktree
+`/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`. Focused in-repo slice only:
+decision-trace coaching can now stay attached to the case while optionally promoting into a
+durable lesson or linked framework proposal; framework review persists explicit owner
+`rewrite`/`accept`/`reject` verb semantics plus `ownerResponse`; and the decision-trace route/UI
+surfaces linked run metadata when the originating `runId` exists. Keepout respected:
+no live-data/settings/tooltip sweeps, Monet risk files, Claude memory/RAG files, workflows,
+AGENTS, or Slack scripts. Targeted verification is green on `test/socratic-db.test.ts`; broader
+repo gates are now green for `tsc` / `lint` / `test`; `npm run build` stalled without emitting a
+failure in this worktree and was interrupted, so build verification is the remaining blocker.
 
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
 Owner-directed: promoted every still-open item from the review docs

@@ -259,6 +259,16 @@ to `socratictrade.com`, record the release commit + date here._
   green: tsc clean, focused approvals/dashboard tests 24, full suite 2467 tests / 255 files, lint
   0 errors, build green.
 
+- **Coach chat → framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
+  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
+  can optionally promote into lesson/framework primitives, framework review now carries explicit
+  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
+  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
+  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
+  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. Ready to commit/push/PR.
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
@@ -619,8 +629,6 @@ locks — re-negotiate in #agent-sync._
   the SSE learned-context-inbox row above. (expert reviews)
 - **`/console/settings` second IA pass (CODEX, M)** — account identity/authority/keys/
   notifications/admin-links reorg. (console-parity-open-items)
-- **Coach chat → framework primitives (CODEX, M)** — attach note to decision, promote lesson, show
-  consuming run; framework `rewrite` verb + ownerResponse. (console-parity + composite review)
 - **Accessible tooltip/popover primitive everywhere (CODEX, S)** — retire native `title`;
   universal coverage across controls/metrics/cells. (expert reviews + console-parity)
 
