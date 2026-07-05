@@ -18,10 +18,15 @@ else exponential backoff (15s base, 120s cap), all retry sleeps drawn from a bou
 per-run budget; (c) when the budget is exhausted, exit 0 with an explicit "PARTIAL SYNC —
 resume on next run" summary instead of exit 1 (the sync is idempotent; the daily cron +
 next push re-run resume cleanly, and a red run for an expected partial pass is noise).
-Verified with an offline monkeypatched harness (15 checks: detection, Retry-After
-vs. backoff, budget accounting, both partial-exit paths) plus a live `--dry-run`. Next
-action: propagate the identical file to congress-trading-shared, api-usage-monitor, and
-Congress.Trade via their own PRs (fleet protocol: the file is copied verbatim). See
+Verified with an offline monkeypatched harness (19 checks: detection, Retry-After
+vs. backoff, budget accounting, all partial-exit paths) plus a live `--dry-run`.
+**Done 2026-07-05:** merged as PR #694 and validated live on `main` — the previously
+hard-failing bulk run completed green (created=101 updated=305, exit 0). Propagated
+verbatim to congress-trading-shared (PR #27, merged), api-usage-monitor (PR #38, merged),
+and Congress.Trade (PR #162). Codex's PR-review pass on #162 produced three refinements,
+folded back into the canonical file and re-propagated: the initial issue listing is now
+inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
+our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
 `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
 
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)

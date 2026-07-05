@@ -95,11 +95,14 @@ trip GitHub's *secondary* rate limit: the API 403s with "secondary rate limit
 ... temporarily blocked from content creation". Three mitigations:
 
   - Every successful issue creation is followed by a small throttle sleep
-    (CREATE_THROTTLE_SECONDS) to stay under the content-creation rate.
+    (CREATE_THROTTLE_SECONDS), and every successful update by a lighter one
+    (UPDATE_THROTTLE_SECONDS), to stay under the content-creation rate.
   - On a rate-limit response (403/429 with a rate-limit/abuse message or a
     Retry-After header), the request is retried: we sleep Retry-After when the
-    server sent one, else exponential backoff. All retry sleeps draw from a
-    single bounded per-run budget (RATE_LIMIT_RETRY_BUDGET_SECONDS).
+    server sent one (honored as-is, never shortened), else exponential backoff.
+    All retry sleeps draw from a single bounded per-run budget
+    (RATE_LIMIT_RETRY_BUDGET_SECONDS). This covers every API call, including
+    the initial issue listing.
   - If that budget runs out, the run stops early and exits 0 with an explicit
     "partial sync — resume on next run" summary instead of failing. The sync
     is idempotent and board-driven, so the next scheduled/triggered run picks
@@ -129,6 +132,9 @@ API_BASE = "https://api.github.com"
 # Pause after every successful issue creation — bulk creation without pacing
 # trips GitHub's secondary ("content creation") rate limit.
 CREATE_THROTTLE_SECONDS = 2.5
+# Lighter pause after every successful issue update: GitHub's guidance is >=1s
+# between mutating requests, and a body-churn run can PATCH hundreds of issues.
+UPDATE_THROTTLE_SECONDS = 1.0
 # Total per-run budget for rate-limit retry sleeps. When it is exhausted the
 # run ends as a PARTIAL sync (exit 0) and the next run resumes idempotently.
 RATE_LIMIT_RETRY_BUDGET_SECONDS = 300.0
@@ -332,8 +338,13 @@ class GitHubClient:
             attempt += 1
             wait = _retry_after_seconds(headers)
             if wait is None:
-                wait = RATE_LIMIT_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
-            wait = min(wait, RATE_LIMIT_BACKOFF_MAX_SECONDS)
+                # Cap only our own guess — a server-sent Retry-After is honored
+                # as-is (retrying sooner would just re-trip the limit and burn
+                # budget; if it exceeds the remaining budget we go partial now).
+                wait = min(
+                    RATE_LIMIT_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+                    RATE_LIMIT_BACKOFF_MAX_SECONDS,
+                )
             if wait > self.retry_budget_remaining:
                 raise RateLimitBudgetExhausted(
                     f"rate limited on {method} {url} and the next wait ({wait:.0f}s) exceeds the "
@@ -406,6 +417,7 @@ class GitHubClient:
         status, resp = self._request("PATCH", f"{API_BASE}/repos/{self.repo}/issues/{number}", fields)
         if status >= 300:
             raise RuntimeError(f"update issue #{number} failed: {status} {resp}")
+        time.sleep(UPDATE_THROTTLE_SECONDS)
 
 
 def build_body(item: BoardItem, repo: str, ref: str) -> str:
@@ -443,15 +455,16 @@ def issue_label_names(issue: dict) -> set[str]:
 def reconcile(items: list[BoardItem], client: GitHubClient, repo: str, ref: str, assignee: str | None) -> dict:
     stats = {"created": 0, "updated": 0, "unchanged": 0, "reopened": 0, "closed": 0, "partial": None}
 
-    existing_issues = client.list_all_issues()
     by_key: dict[str, dict] = {}
-    for issue in existing_issues:
-        key = issue_marker_key(issue)
-        if key:
-            by_key[key] = issue
-
     seen_keys: set[str] = set()
     try:
+        # The initial issue listing is inside the partial handling too: budget
+        # exhaustion while paging GET /issues must also end as a partial sync,
+        # not an exception that turns the workflow red.
+        for issue in client.list_all_issues():
+            key = issue_marker_key(issue)
+            if key:
+                by_key[key] = issue
         _reconcile_items(items, client, repo, ref, assignee, by_key, seen_keys, stats)
     except RateLimitBudgetExhausted as e:
         stats["partial"] = str(e)
