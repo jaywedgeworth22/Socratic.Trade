@@ -19,7 +19,10 @@ hoist the orchestrator import into `beforeAll(…, 120_000)` in
 `test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
 green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
 `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
-**Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
+**MERGED:** PR #812 squash-merged to `main` 2026-07-05 08:46Z (verify/smoke/gitleaks green).
+Note: two foreign uncommitted items remain preserved in this worktree, deliberately NOT landed —
+an AGENTS.md Monet-lane port edit (4103→4104, unclaimed; raised in #agent-sync) and untracked
+`.codex/` setup scripts. Whoever owns them should claim/land them.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude

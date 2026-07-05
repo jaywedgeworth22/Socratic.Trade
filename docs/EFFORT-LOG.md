@@ -238,13 +238,16 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
-  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
-  Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +
-  Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12s/test solo, past 30s under 4-worker
-  full-suite load; chat-orchestrator's first test pays the ~15s orchestrator module-graph import
-  inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the `market.ts` module boundary
-  in `order-confirmation-status` + `approval-lock` (same class); hoist the orchestrator import into
-  `beforeAll` with an explicit long hook budget.
+  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **COMPLETED 2026-07-05, merged
+  PR #812.** Root causes (measured, not timeout-tuning): `executeProposal` tests ran a REAL market
+  scan (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12-13s/test solo,
+  past 30s under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class — its
+  2026-06-21 fix only padded timeouts); hoist the orchestrator import into `beforeAll(…, 120_000)`.
+  After: full suite 256 files / 2506 tests green in 20.77s wall; the three files ~1s of test time.
+  See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
+  at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
 
 - **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
   `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
