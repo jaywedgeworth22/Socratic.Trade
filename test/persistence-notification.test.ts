@@ -9,6 +9,11 @@ vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
   upsertExperiences: async () => {},
   retrieveContext: async () => ["SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition."],
+  retrieveContextDetailed: async () => [{ id: "c1", text: "SEC 8-K filing for AAPL.\nReported item(s): Item 2.02 Results of Operations and Financial Condition.", source: "sec", as_of: null, score: 0.9, url: null }],
+  defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }, symbol?: string) => (symbol ? `[${symbol}]\n${chunk.text}` : chunk.text),
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -18,7 +23,14 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
+
+async function seedLocalOpenAiKey(): Promise<() => void> {
+  const { deleteUserApiKey, upsertUserApiKey } = await import("../src/lib/db");
+  upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
+  return () => deleteUserApiKey("local", "openai");
+}
 
 describe("persistence and notifications", () => {
   it("counts reviewed estimated notional for share-quantity market orders", async () => {
@@ -67,14 +79,18 @@ describe("persistence and notifications", () => {
     releaseStrategyLock(userB);
   });
 
-  it("maps legacy dryRun policy storage to paperMode without leaking dryRun", async () => {
+  it("strips legacy dryRun/paperMode keys from old stored policy JSON instead of leaking them", async () => {
     const { getPolicy, setSetting } = await import("../src/lib/db");
-    setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: undefined });
+    setSetting("policy", { ...DEFAULT_POLICY, dryRun: true, paperMode: false, paperStartingCash: 5000 });
 
-    const policy = getPolicy() as typeof DEFAULT_POLICY & { dryRun?: boolean };
+    const policy = getPolicy() as typeof DEFAULT_POLICY & { dryRun?: boolean; paperMode?: boolean; paperStartingCash?: number };
 
-    expect(policy.paperMode).toBe(true);
+    // These fields were removed entirely — an account's own `environment` (paper/live) is the sole
+    // source of truth for execution mode now, not a policy-level override. Old rows that still carry
+    // them must not leak the stale values back out.
     expect(policy.dryRun).toBeUndefined();
+    expect(policy.paperMode).toBeUndefined();
+    expect(policy.paperStartingCash).toBeUndefined();
   });
 
   it("activates strategy profiles without corrupting user-scoped settings", async () => {
@@ -130,7 +146,7 @@ describe("persistence and notifications", () => {
 
   });
 
-  it("keeps active broker paper account separate from the Test policy toggle", async () => {
+  it("derives broker/paper execution state purely from the connected account's own environment", async () => {
     const userId = `execution-mode-user-${randomUUID()}`;
     const accountId = randomUUID();
     const { getActiveConnectedAccount, getPolicy, setPolicy, upsertConnectedAccount } = await import("../src/lib/db");
@@ -145,13 +161,12 @@ describe("persistence and notifications", () => {
       label: "Alpaca Paper",
       isActive: true
     });
-    setPolicy({ ...DEFAULT_POLICY, paperMode: false, accountNumber: "APCA-PAPER-TEST", activeBroker: "alpaca" }, userId);
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "APCA-PAPER-TEST", activeBroker: "alpaca" }, userId);
 
     const policy = getPolicy(userId);
     const activeAccount = getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
 
-    expect(policy.paperMode).toBe(false);
     expect(policy.activeBroker).toBe("alpaca");
     expect(policy.connectedAccountId).toBe(accountId);
     expect(executionState.mode).toBe("broker/paper");
@@ -181,8 +196,18 @@ describe("persistence and notifications", () => {
 
   it("writes one strategy_run audit event from runStrategyOnce", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
+    // Seed a key + stub the LLM so the run completes (0 proposals). The strategy session now
+    // requires a resolvable LLM credential — without one runStrategyOnce returns "failed" — and
+    // this test only needs the run to complete to assert the audit event was written.
+    process.env.OPENAI_API_KEY = "test-openai-key";
     vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      if (String(url).includes("api.openai.com")) {
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
       if (String(url).includes("nasdaq.com")) {
         return new Response(
           JSON.stringify({
@@ -210,6 +235,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
       
@@ -228,7 +254,9 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -239,12 +267,195 @@ describe("persistence and notifications", () => {
       expect(result.status).toBe("completed");
       expect(after).toBe(before + 1);
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
     }
-  }, 15_000);
+  }, 30_000);
+
+  it("records a failed Green Team LLM step when the proposal request times out", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("api.openai.com")) {
+        throw new Error("The operation was aborted due to timeout");
+      }
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-15",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
+      const { listAudit, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Timeout Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        llmModel: "gpt-5.5",
+        llmReasoningEffort: "high",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
+
+      const result = await runStrategyOnce();
+      expect(result.status).toBe("failed");
+      expect(result.summary).toContain("Green Team proposal timed out after 60s using OpenAI gpt-5.5");
+      expect(result.llmSteps).toMatchObject([
+        {
+          step: "bull",
+          label: "Green Team proposal",
+          provider: "openai",
+          model: "gpt-5.5",
+          status: "failed"
+        }
+      ]);
+
+      const audit = listAudit(200);
+      const stepEvents = audit
+        .filter((event) => event.kind === "llm_step")
+        .map((event) => event.payload as { runId?: string; status?: string; reason?: string })
+        .filter((payload) => payload.runId === result.runId);
+      expect(stepEvents.map((event) => event.status).sort()).toEqual(["failed", "started"]);
+      expect(stepEvents.find((event) => event.status === "failed")?.reason).toContain("Lower reasoning effort");
+
+      const runAudit = audit
+        .filter((event) => event.kind === "strategy_run")
+        .map((event) => event.payload as { runId?: string; llmSteps?: unknown[] })
+        .find((payload) => payload.runId === result.runId);
+      expect(runAudit?.llmSteps).toMatchObject([{ step: "bull", status: "failed" }]);
+    } finally {
+      cleanupOpenAiKey?.();
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
+    }
+  }, 30_000);
+
+  it("records a pre-run portfolio snapshot before any proposals execute", async () => {
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
+    // Seed a key + stub the LLM to return 0 proposals → the run completes as a no-op. (The strategy
+    // session now requires a resolvable LLM credential; without one runStrategyOnce returns "failed".)
+    // We just need to verify a pre-run snapshot was written with the run's runId.
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.includes("api.openai.com")) {
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("nasdaq.com")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              asof: "2026-06-21",
+              table: {
+                rows: [
+                  {
+                    symbol: "AAPL",
+                    lastsale: "$200",
+                    pctchange: "1%",
+                    volume: "1000000",
+                    marketCap: "3000000000000",
+                    sector: "Technology",
+                    industry: "Consumer Electronics"
+                  }
+                ]
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
+      const { listPortfolioSnapshots, setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
+      const { runStrategyOnce } = await import("../src/lib/strategy");
+
+      const mockAccountId = randomUUID();
+      // The test broker's getAccounts() always returns accountNumber "TEST", so the policy
+      // must also reference "TEST" for the account-selection check to pass.
+      upsertConnectedAccount({
+        id: mockAccountId,
+        userId: "local",
+        broker: "test",
+        environment: "paper",
+        accountNumber: "TEST",
+        label: "Pre-Snapshot Test Account",
+        isActive: true
+      });
+      setActiveConnectedAccount(mockAccountId);
+      setPolicy({
+        ...DEFAULT_POLICY,
+        systemState: "active",
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
+        includedIndices: [],
+        additionalSymbols: ["AAPL"],
+        strategyAuthority: "decide"
+      });
+
+      const snapshotsBefore = listPortfolioSnapshots("TEST").length;
+      const result = await runStrategyOnce();
+      expect(result.status).toBe("completed");
+      // After the run, at least two snapshots must exist (pre-run + post-run).
+      const snapshotsAfter = listPortfolioSnapshots("TEST");
+      expect(snapshotsAfter.length).toBeGreaterThan(snapshotsBefore);
+      // The pre-run snapshot is the first snapshot written for this runId.
+      const runSnapshots = snapshotsAfter.filter((s) => s.runId === result.runId);
+      expect(runSnapshots.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      cleanupOpenAiKey?.();
+      if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
+      else delete process.env.OPENAI_API_KEY;
+    }
+  }, 20_000);
 
   it("sends retrieved context in user content instead of the stable system prompt", async () => {
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    let cleanupOpenAiKey: (() => void) | undefined;
     process.env.OPENAI_API_KEY = "test-openai-key";
     const openAiBodies: any[] = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
@@ -283,6 +494,7 @@ describe("persistence and notifications", () => {
     });
 
     try {
+      cleanupOpenAiKey = await seedLocalOpenAiKey();
       const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount } = await import("../src/lib/db");
       const { runStrategyOnce } = await import("../src/lib/strategy");
 
@@ -300,7 +512,9 @@ describe("persistence and notifications", () => {
       setPolicy({
         ...DEFAULT_POLICY,
         systemState: "active",
-        paperMode: true,
+        // Classic model so request-body assertions check temperature + exact caps
+        // (reasoning-model bounds are covered by test/llm-request.test.ts).
+        llmModel: "gpt-4.1-mini",
         includedIndices: [],
         additionalSymbols: ["AAPL"],
         strategyAuthority: "decide"
@@ -313,24 +527,32 @@ describe("persistence and notifications", () => {
         LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
         LLM_OUTPUT_TOKEN_CAPS.strategyCritique
       ]);
-      expect(openAiBodies.every((body) => body.temperature === LLM_REQUEST_DEFAULTS.deterministicTemperature)).toBe(true);
+      // Per-role sampling (composite review B/medium/S): the Bull (proposer, index 0) stays
+      // deterministic; the Bear (adversary/reviewer, index 1) now samples at a non-zero temperature.
+      expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
+      expect(openAiBodies[1].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
       expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];
       const systemContent = bullBody.input.find((item: any) => item.role === "system")?.content ?? "";
       const userContent = JSON.parse(bullBody.input.find((item: any) => item.role === "user")?.content ?? "{}");
-      expect(systemContent).toContain('Current executionMode is "test/local"');
-      expect(systemContent).toContain("not Alpaca Paper");
-      expect(userContent.executionMode).toBe("test/local");
-      expect(userContent.executionModeClarification).toContain("not Alpaca Paper");
+      expect(systemContent).toContain('Current executionMode is "broker/paper"');
+      expect(userContent.executionMode).toBe("broker/paper");
+      expect(userContent.executionModeClarification).toContain("local simulated fills");
       expect(systemContent).toContain("`retrievedFinancialContext`");
       expect(systemContent).not.toContain("Item 2.02 Results of Operations");
       expect(userContent.retrievedFinancialContext).toContain("Item 2.02 Results of Operations");
+      // 2026-07-04 RAG quick-wins: strategy.ts now prefixes each retrieved chunk with a provenance
+      // header (via formatChunkWithProvenance, stubbed above to prepend "[SYMBOL]") before joining
+      // into ragContext, so the model sees which symbol each chunk came from and can cite it — the
+      // original chunk text still survives verbatim as a substring (asserted above).
+      expect(userContent.retrievedFinancialContext).toMatch(/^\[AAPL\]/);
       for (const body of openAiBodies) {
         const content = body.input.find((item: any) => item.role === "user")?.content ?? "{}";
-        expect(JSON.parse(content).executionMode).toBe("test/local");
+        expect(JSON.parse(content).executionMode).toBe("broker/paper");
       }
     } finally {
+      cleanupOpenAiKey?.();
       if (originalOpenAiKey) process.env.OPENAI_API_KEY = originalOpenAiKey;
       else delete process.env.OPENAI_API_KEY;
     }
@@ -342,6 +564,49 @@ describe("persistence and notifications", () => {
     expect(event.status).toBe("skipped");
     expect(event.error).toContain("Notifications Webhook");
   });
+
+  it("bridges legacy notification events to direct email delivery", async () => {
+    const { getDb, setNotifyPrefs } = await import("../src/lib/db");
+    const { sendNotification } = await import("../src/lib/notifications");
+    const userId = `notify-email-${randomUUID()}`;
+    const calls: Array<{ url: string; body: unknown }> = [];
+
+    vi.stubEnv("RESEND_API_KEY", "rk_test");
+    vi.stubEnv("NOTIFY_EMAIL_FROM", "alerts@example.test");
+    vi.stubGlobal(
+      "fetch",
+      (async (url: string | URL, init?: RequestInit) => {
+        calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch
+    );
+    setNotifyPrefs(userId, { channels: ["email"], email: "ops@example.test" });
+
+    const event = await sendNotification(
+      {
+        type: "fill",
+        title: "AAPL fill",
+        payload: { fill: { symbol: "AAPL", side: "buy", status: "filled", quantity: 1, notional: 123.45 } }
+      },
+      { policy: DEFAULT_POLICY, userId }
+    );
+
+    expect(event.status).toBe("skipped");
+    expect(event.error).toContain("Notifications Webhook");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.resend.com/emails");
+    const emailBody = calls[0]?.body as { text?: string };
+    expect(emailBody).toMatchObject({
+      from: "alerts@example.test",
+      to: ["ops@example.test"],
+      subject: "AAPL fill"
+    });
+    expect(String(emailBody.text)).toContain("AAPL");
+    const audit = getDb()
+      .prepare("SELECT payload FROM audit_events WHERE user_id = ? AND kind = 'notify.sent' ORDER BY created_at DESC LIMIT 1")
+      .get(userId) as { payload: string } | undefined;
+    expect(JSON.parse(audit?.payload ?? "{}")).toMatchObject({ channel: "email", kind: "fill" });
+  }, 15000);
 
   it("records notification events under the requested user", async () => {
     const { listNotificationEvents } = await import("../src/lib/db");
@@ -396,5 +661,72 @@ describe("persistence and notifications", () => {
     const gateway1 = getAlpacaGateway(userId);
     expect(((gateway1 as any).alpaca).configuration.baseUrl).toBe("https://custom-alpaca-endpoint.com");
   });
-});
 
+  it("does not fall back to generic Alpaca keys for a selected connected account with missing credentials", async () => {
+    const originalPaperKey = process.env.ALPACA_PAPER_API_KEY;
+    const originalPaperSecret = process.env.ALPACA_PAPER_SECRET_KEY;
+    process.env.ALPACA_PAPER_API_KEY = "PK-OTHER-ACCOUNT";
+    process.env.ALPACA_PAPER_SECRET_KEY = "other-secret";
+    try {
+      const { getAlpacaGateway } = await import("../src/lib/alpaca");
+      const { upsertConnectedAccount } = await import("../src/lib/db");
+      const userId = `alpaca-missing-key-user-${randomUUID()}`;
+
+      upsertConnectedAccount({
+        id: randomUUID(),
+        userId,
+        broker: "alpaca",
+        environment: "live",
+        accountNumber: "294709855",
+        label: "Roth IRA",
+        baseUrl: "https://api.alpaca.markets",
+        isActive: true
+      });
+
+      expect(() => getAlpacaGateway(userId)).toThrow(/Alpaca credentials are missing for Roth IRA/);
+    } finally {
+      if (originalPaperKey) process.env.ALPACA_PAPER_API_KEY = originalPaperKey;
+      else delete process.env.ALPACA_PAPER_API_KEY;
+      if (originalPaperSecret) process.env.ALPACA_PAPER_SECRET_KEY = originalPaperSecret;
+      else delete process.env.ALPACA_PAPER_SECRET_KEY;
+    }
+  });
+
+  it("binds Alpaca credentials to the targeted connected account, not only the active one", async () => {
+    const { getAlpacaGateway } = await import("../src/lib/alpaca");
+    const { upsertConnectedAccount } = await import("../src/lib/db");
+    const userId = `alpaca-target-user-${randomUUID()}`;
+    const paperId = randomUUID();
+    const rothId = randomUUID();
+
+    upsertConnectedAccount({
+      id: paperId,
+      userId,
+      broker: "alpaca",
+      environment: "paper",
+      accountNumber: "PAPER-ACTIVE",
+      label: "Alpaca Paper",
+      apiKey: "PK-PAPER",
+      apiSecret: "paper-secret",
+      isActive: true
+    });
+    upsertConnectedAccount({
+      id: rothId,
+      userId,
+      broker: "alpaca",
+      environment: "live",
+      accountNumber: "ROTH-TARGET",
+      label: "Roth IRA",
+      apiKey: "PK-ROTH",
+      apiSecret: "roth-secret",
+      baseUrl: "https://api.alpaca.markets",
+      isActive: false
+    });
+
+    const gateway = getAlpacaGateway(userId, rothId);
+    const config = ((gateway as unknown as { alpaca: { configuration: { keyId?: string; oauth?: string; baseUrl?: string } } }).alpaca)
+      .configuration;
+    expect(config.keyId).toBe("PK-ROTH");
+    expect(config.baseUrl).toBe("https://api.alpaca.markets");
+  });
+});

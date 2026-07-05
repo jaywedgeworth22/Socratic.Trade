@@ -68,15 +68,23 @@ describe("Yahoo Finance Quotes", () => {
 });
 
 describe("FRED Macroeconomic Data", () => {
-  it("returns defaults when FRED_API_KEY is not set", async () => {
+  it("returns BLANK FRED fields (no placeholder constants) when FRED_API_KEY is not set", async () => {
     const { fetchMacroData } = await import("../src/lib/macro");
     delete process.env.FRED_API_KEY;
+    // Block the key-free Yahoo ^VIX fallback too so the result is deterministic: fully
+    // unavailable -- every field "" (never a fabricated constant), asOf "unavailable".
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("no network in test");
+    });
 
     const data = await fetchMacroData();
-    expect(data.fedFundsRate).toBe("5.25%");
-    expect(data.dgs10Treasury).toBe("4.20%");
-    expect(data.cpiInflation).toBe("3.10%");
-    expect(data.unemploymentRate).toBe("3.90%");
+    expect(data.fedFundsRate).toBe("");
+    expect(data.dgs10Treasury).toBe("");
+    expect(data.cpiInflation).toBe("");
+    expect(data.unemploymentRate).toBe("");
+    expect(data.vix).toBe("");
+    expect(data.asOf).toBe("unavailable");
+    expect(data.fredSourced).toBe(false);
   });
 
   it("fetches from FRED API when API key is set", async () => {

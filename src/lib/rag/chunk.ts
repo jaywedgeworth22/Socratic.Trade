@@ -3,10 +3,35 @@
 // headings set section metadata, tables are kept atomic, long prose is split with overlap, and
 // each chunk carries a deterministic context header plus a point-in-time `acceptance_datetime`.
 
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 
-const DEFAULT_MAX_TOKENS = 480;
+export const DEFAULT_MAX_TOKENS = 480;
 const DEFAULT_OVERLAP_RATIO = 0.12;
+
+/**
+ * Rough chars-per-token ceiling used to size a downstream char cap from a token budget. English
+ * prose averages ~5–6 chars/token; markdown tables (pipe-delimited, kept atomic by chunkDocument)
+ * run longer per token because of `|`/whitespace padding. 8 is a deliberately generous upper bound
+ * so a legitimately atomic, already-token-bounded chunk is never truncated downstream — it only
+ * needs to cover the worst case, not be a tight estimate.
+ */
+export const CHARS_PER_TOKEN_CEILING = 8;
+
+/**
+ * Hash chunk text with SHA-256 for dedup (cheaper than re-embedding via Voyage).
+ *
+ * Widened to 128 bits (first 32 hex chars) as of 2026-07-04 (composite review "content-hash dedup
+ * default-on + widen to 128 bits"): the prior 64-bit (16 hex char) truncation made a content_hash
+ * collision between two genuinely-distinct chunks a real (if small) risk, and `document_chunks` is
+ * keyed on `content_hash` ALONE — a collision would silently drop a distinct chunk from ever being
+ * embedded. `document_chunks.content_hash` is a plain TEXT primary key (no fixed-length schema
+ * change needed); `INSERT OR IGNORE` tolerates the one-time re-embed of any pre-existing 16-char
+ * hash rows once this widens (they simply won't match a newly-computed 32-char hash, so that one
+ * chunk re-embeds once — cheap and harmless, never a correctness issue).
+ */
+export function hashContent(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 32);
+}
 
 export interface ChunkInput {
   text: string;
@@ -25,6 +50,8 @@ export interface DocumentChunk {
   chunk_id: string;
   title: string;
   text: string;
+  /** SHA-256 hex (first 16 chars) of chunk text for re-embed dedup. */
+  content_hash: string;
   context_header: string;
   ticker: string[];
   doc_type: string;
@@ -184,6 +211,7 @@ export function chunkDocument(doc: ChunkInput, options: ChunkOptions = {}): Docu
       chunk_id: `${doc_id}#c${String(n).padStart(3, "0")}`,
       title,
       text: clean,
+      content_hash: hashContent(clean),
       context_header,
       ticker,
       doc_type,

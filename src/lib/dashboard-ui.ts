@@ -21,15 +21,50 @@ const SOURCE_LABELS: Record<string, string> = {
   finnhub: "Finnhub",
   fmp: "FMP",
   "yahoo-finance": "Yahoo Finance",
-  "nasdaq-delayed-screener": "Nasdaq",
-  "alpaca-quotes": "Alpaca",
-  "alpaca-snapshot": "Alpaca",
-  "alpaca-news": "Alpaca",
+  "yahoo-finance-delayed": "Yahoo Finance Delayed",
+  "yahoo-finance-delayed-quotes": "Yahoo Finance Delayed Quotes",
+  "yahoo-finance-synthetic": "Yahoo Finance Synthetic",
+  "nasdaq-delayed-screener": "NASDAQ Delayed Screener",
+  "nasdaq-delayed-screener-universe": "NASDAQ Delayed Screener Universe",
+  "sp500-universe": "S&P 500 Universe",
+  "sp100-universe": "S&P 100 Universe",
+  "nasdaq100-universe": "NASDAQ 100 Universe",
+  "nasdaq-composite-universe": "NASDAQ Composite Universe",
+  "alpaca-quotes": "Alpaca Quotes",
+  "alpaca-snapshot": "Alpaca Snapshot",
+  "alpaca-news": "Alpaca News",
   "massive-vwap": "Massive",
-  "broker-quotes": "Broker quotes",
+  "broker-quotes": "Broker Quotes",
   robinhood: "Robinhood",
-  "robinhood-quotes": "Robinhood",
-  blended: "blended (multiple sources)"
+  "robinhood-quotes": "Robinhood Quotes",
+  congress: "Congress.Trade",
+  "congress.trade": "Congress.Trade",
+  "congress-disclosure": "Congressional Disclosures",
+  "senate-efd": "Senate EFD",
+  "house-clerk": "House Clerk",
+  "apify-congress": "Apify Congress",
+  "sec-edgar": "SEC EDGAR",
+  "sec-8k": "SEC 8-K",
+  "sec-10k": "SEC 10-K",
+  "sec-xbrl": "SEC XBRL",
+  "insider-filing": "Insider Filing",
+  "sec-form-4": "SEC Form 4",
+  "blackrock-oef-holdings": "BlackRock Holdings",
+  "tradingview": "TradingView",
+  "cboe": "Cboe",
+  "cftc": "CFTC",
+  "kenneth-french": "Kenneth French",
+  fred: "FRED",
+  computed: "Computed",
+  blended: "Blended (Multiple Sources)"
+};
+
+const SOURCE_LIST_LABELS: Record<string, string> = {
+  ...SOURCE_LABELS,
+  tiingo: "Tiingo",
+  "alpha-vantage": "Alpha Vantage",
+  finra: "FINRA",
+  "finra-short-volume": "FINRA Short Volume"
 };
 
 const PROVENANCE_LABELS: Partial<Record<keyof EnrichmentSources, string>> = {
@@ -92,7 +127,24 @@ export function enrichPositionsForDisplay(positions: EquityPosition[], totalMark
 
 export function friendlySource(name?: string): string {
   if (!name) return "unknown";
-  return SOURCE_LABELS[name] ?? name;
+  return SOURCE_LABELS[normalizeSourceKey(name)] ?? name;
+}
+
+export function formatSourceList(sourceString?: string): string {
+  if (!sourceString) return "";
+  const labels = sourceString
+    .split("+")
+    .map((source) => sourceListLabel(source))
+    .filter((label) => label && !/^live$/i.test(label) && !/^(none|unknown|-)$/i.test(label));
+  const seen = new Set<string>();
+  return labels
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(", ");
 }
 
 export function provenanceLabel(field: keyof EnrichmentSources): string {
@@ -108,6 +160,22 @@ export function orderedSourceEntries(sources?: EnrichmentSources): Array<[keyof 
     if (leftOrder !== rightOrder) return leftOrder - rightOrder;
     return String(left).localeCompare(String(right));
   });
+}
+
+function normalizeSourceKey(source: string): string {
+  return source.trim().toLowerCase();
+}
+
+function sourceListLabel(source: string): string {
+  const key = normalizeSourceKey(source);
+  return SOURCE_LIST_LABELS[key] ?? titleizeSource(key);
+}
+
+function titleizeSource(source: string): string {
+  return source
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
 }
 
 export function companyTitle(symbol: string, symbolMetaBySymbol: Record<string, SymbolMeta>): string | undefined {
@@ -252,7 +320,7 @@ function executedActionLabel(side?: OrderSide): string {
 }
 
 function paperActionLabel(side?: OrderSide): string {
-  return side === "sell" ? "Test Sell" : side === "buy" ? "Test Buy" : "Test Trade";
+  return side === "sell" ? "Paper Sell" : side === "buy" ? "Paper Buy" : "Paper Trade";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

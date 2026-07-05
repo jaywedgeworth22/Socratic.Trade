@@ -22,6 +22,21 @@ export interface KbChunk {
   section?: string;
   score?: number;
   url?: string;
+  /**
+   * R13 (2026-07-01 RAG backlog): the chunk's document type (e.g. "10-k", "8-k", "congress-trade"),
+   * surfaced from `RetrievedChunk.doc_type` — additive-only field so existing consumers/fixtures
+   * that don't read it are unaffected. Backend/payload only; no UI renders this yet (a parallel
+   * dashboard-redesign thread owns any citation UI work).
+   */
+  doc_type?: string;
+  /**
+   * R13: advisory-only recency label — true when this chunk's `as_of` is older than the doc-type
+   * horizon (see `isStale` in `../vector-db`). ONLY set when `RAG_CITATION_STALENESS` is on;
+   * omitted (not `false`) when the flag is off or no `as_of`/`doc_type` is available to judge —
+   * never a validity judgment, never fed into any numeric/sizing path. Purely advisory metadata
+   * for a future citation UI to optionally render.
+   */
+  isStale?: boolean;
 }
 
 /** A draft order ticket. `executed` is always false — the chat assistant has no execution path. */
@@ -80,6 +95,9 @@ export interface LlmResult {
 
 export interface ChatLLM {
   run(args: LlmRunArgs): Promise<LlmResult>;
+  /** The model id this LLM speaks to (e.g. "gpt-5.4-mini", "claude-opus-4-8", "mock"). Recorded on
+   *  each assistant turn and shown in the transcript / hover so the user can see who answered. */
+  readonly modelName?: string;
 }
 
 export interface ChatReply {
@@ -90,4 +108,6 @@ export interface ChatReply {
   memory: { written: number; held: number };
   intent: string;
   promptVersion: string;
+  /** Model that produced this reply (so the UI can tag the message without a refetch). */
+  model?: string;
 }

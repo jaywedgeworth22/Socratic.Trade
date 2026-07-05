@@ -1,4 +1,4 @@
-# Agentic Trading Dashboard
+# Socratic Trade Dashboard
 
 Local-only Next.js dashboard for managing supported agentic trading accounts,
 including Robinhood through MCP and Alpaca through API keys.
@@ -30,8 +30,9 @@ and a dated rollout note before commit/push. Do not recreate a single
 - Reviews broker-routed orders through the active provider before placement when
   the provider supports a review step.
 - Uses idempotency keys for live order placement.
-- Defaults to Test mode, a local simulator with simulated fills. Users can
-  optionally connect one or more supported broker accounts from Accounts.
+- Trades through a connected broker account (paper or live) from Accounts. An
+  account's `environment` decides paper vs. live; there is no local-simulation
+  fallback, so the app can't place orders until an account is connected.
 
 ## Safety Defaults
 
@@ -68,15 +69,29 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+For one-off local development, open `http://127.0.0.1:3000`.
 
-For Codex sessions, use the pinned launcher instead:
+On the host machine, prefer the PM2-managed previews:
+
+- Production deployed app: `https://socratictrade.com` -> `http://localhost:4000` (`~/apps/trading-live`, pm2 `trading`)
+- Main integration/review beta: `https://trading-beta.jays.services` -> `http://localhost:4001` (`~/Code/Agentic Trading`, pm2 `trading-main`)
+- Codex live preview: `https://codex.jays.services` -> `http://localhost:4101` (`~/apps/trading-codex`, pm2 `trading-codex`)
+
+Do not create a second dev/beta hostname for this lane; use `trading-beta.jays.services`.
+
+Bootstrap or repair those PM2 previews with:
+
+```bash
+bash scripts/setup-agent-previews.sh
+```
+
+For older disposable Codex sessions, the legacy pinned launcher is still available:
 
 ```bash
 npm run dev:codex
 ```
 
-Open `http://127.0.0.1:3001`. The Codex launcher frees only port `3001` and
+Open `http://127.0.0.1:3001`. The legacy Codex launcher frees only port `3001` and
 retries there if Next initially falls back to another port.
 
 If the UI appears as plain, unstyled HTML, the dev server is likely serving stale
@@ -124,7 +139,7 @@ ALPHAVANTAGE_API_KEY=...
 FRED_API_KEY=...
 
 # Optional: public web-source and technical-signal controls.
-SEC_EDGAR_USER_AGENT=RobinhoodAgenticTrading/1.0 (contact: you@example.com)
+SEC_EDGAR_USER_AGENT=SocraticTrade/1.0 (contact: you@example.com)
 WEB_SOURCE_CONGRESS=on
 WEB_SOURCE_INSIDER=on
 WEB_SOURCE_FINRA=on
@@ -164,19 +179,21 @@ MASSIVE_SECRET_ACCESS_KEY=...
 WEBHOOK_URL=...
 ```
 
-## Test, Paper, And Brokerage Accounts
+## Paper And Brokerage Accounts
 
-- **Test mode** is the local simulator: it starts from configurable local cash,
-  applies simulated fills, and is available even when no broker account is
-  connected.
-- **Paper** is optional and broker-hosted. Users only enter Paper mode after
-  connecting a supported provider's paper/sandbox account, such as Alpaca Paper.
-  The app does not invent balances or fills for these accounts.
-- **Brokerage** is a production broker account, such as Robinhood MCP or Alpaca
-  Brokerage. Broker-routed orders can affect real capital when policy, approval,
-  and risk gates allow them.
-- All modes use the same market-data and policy paths where possible; the account
-  connection only changes where balances, positions, fills, and orders come from.
+- An account is an account: execution mode is decided purely by the connected
+  account's `environment` — there is no local simulator and no "Test mode"
+  fallback. With no connected account, the app cannot place orders.
+- **Paper** is broker-hosted. Users enter Paper mode by connecting a supported
+  provider's paper/sandbox account, such as Alpaca Paper. The app does not
+  invent balances or fills for these accounts.
+- **Brokerage** (live) is a production broker account, such as Robinhood MCP or
+  Alpaca Brokerage. Broker-routed orders can affect real capital when policy,
+  approval, and risk gates allow them.
+- Both modes use the same market-data and policy paths; the account connection
+  only changes where balances, positions, fills, and orders come from. (A
+  `broker: "test"` gateway exists purely as test infrastructure for the unit
+  suite — it is not a user-facing mode.)
 
 To use a real MCP transport, set:
 
@@ -189,23 +206,41 @@ ROBINHOOD_MCP_AUTH_TOKEN=...
 The adapter calls MCP `tools/call` using JSON-RPC.
 
 For hosted MCP servers that require OAuth instead of a static bearer token, leave
-`ROBINHOOD_MCP_AUTH_TOKEN` empty and configure:
+`ROBINHOOD_MCP_AUTH_TOKEN` empty. For Robinhood's official Trading MCP, the app
+uses the documented MCP link (`ROBINHOOD_MCP_URL`) as the source of truth and
+discovers OAuth endpoints from the MCP auth challenge:
 
 ```bash
-ROBINHOOD_MCP_AUTHORIZATION_URL=https://...
-ROBINHOOD_MCP_TOKEN_URL=https://...
-ROBINHOOD_MCP_CLIENT_ID=...
-ROBINHOOD_MCP_CLIENT_SECRET=... # only when required by the provider
-ROBINHOOD_MCP_REDIRECT_URI=http://localhost:3000/api/auth/robinhood/callback
-ROBINHOOD_MCP_SCOPES=tools:call
+ROBINHOOD_MCP_URL=https://agent.robinhood.com/mcp/trading
+ROBINHOOD_MCP_RESOURCE=https://agent.robinhood.com/mcp/trading
+# Optional. Leave blank in hosted environments; the app derives the public callback URL.
+ROBINHOOD_MCP_REDIRECT_URI=
+ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=off
+ROBINHOOD_MCP_SCOPES=internal
 ```
 
-If the provider supports dynamic client registration, use
-`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` instead of `ROBINHOOD_MCP_CLIENT_ID`.
+For custom or non-discoverable MCP providers, set
+`ROBINHOOD_MCP_OAUTH_DISCOVERY=off` and configure
+`ROBINHOOD_MCP_AUTHORIZATION_URL`, `ROBINHOOD_MCP_TOKEN_URL`, and optionally
+`ROBINHOOD_MCP_CLIENT_REGISTRATION_URL` / `ROBINHOOD_MCP_CLIENT_ID`.
+When discovery is enabled for the official Robinhood MCP URL, discovered OAuth
+endpoints take precedence over manual endpoint env values. `ROBINHOOD_MCP_RESOURCE`
+defaults to `ROBINHOOD_MCP_URL` and is sent as the OAuth resource indicator on
+authorization and token requests.
 Then run the app locally and use Accounts -> Connect Robinhood Agentic Account
 or open `/api/auth/robinhood/start` to complete consent. The app stores OAuth
 state, the registered client, and refreshable tokens in the local SQLite
 settings table.
+
+For production behind the Cloudflare tunnel, the default is to leave
+`ROBINHOOD_MCP_REDIRECT_URI` blank; the app will use `x-forwarded-host`,
+`NEXT_PUBLIC_SITE_URL`, or `https://socratictrade.com` for
+`/api/auth/robinhood/callback`. If Robinhood rejects the public callback during
+the logged-in consent step, a same-machine operator can instead set
+`ROBINHOOD_MCP_REDIRECT_URI=http://localhost:4000/api/auth/robinhood/callback`
+and `ROBINHOOD_MCP_ALLOW_LOOPBACK_REDIRECT=on`. Public app login still starts
+the flow; only Robinhood's provider callback returns through localhost, and the
+state-bound callback redirects back to the public site after token storage.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
-import { listConnectedAccounts, listFillEvents } from "./db";
+import { getPolicy, listConnectedAccounts, listFillEvents } from "./db";
 import { normalizeSymbol } from "./money";
-import { getClosedLotsDetailed, getOpenLots, type ClosedLot } from "./performance";
+import { getClosedLotsDetailed, getOpenLots, type ClosedLot, type PrefetchedFills } from "./performance";
 import type { FillEvent, FillSource, TaxSettings, TaxationType } from "./types";
 
 const MS_PER_DAY = 86_400_000;
@@ -67,53 +67,158 @@ function holdingDays(entryAt: string | undefined, exitAt: string | undefined): n
 }
 
 /**
+ * PR #8 — per-symbol wash-sale provenance. When a symbol is locked, this records WHICH account's
+ * loss is binding and WHEN the lockout clears, so the Approvals card can name the culprit
+ * ("locked by a loss in Robinhood · clears Jul 24"). `clearDate` is when the symbol becomes
+ * rebuyable = the latest contributing loss's exit + 30 days (the binding loss — a symbol stays
+ * locked until every contributing loss ages out of the window).
+ */
+export interface WashSaleLock {
+  account: string; // the BINDING contributing account's number/id (latest clear date)
+  clearDate: Date; // date the symbol becomes rebuyable (binding loss exit + 30d)
+  /**
+   * Total positive dollars of still-in-window realized loss on the symbol, SUMMED across every
+   * contributing lot and account (a rebuy now washes all of them under IRC §1091 — the rule
+   * applies across the taxpayer's accounts). This is the disallowed-loss amount the "ask"/"auto"
+   * wash-sale handling modes price: estimated tax cost = lossUsd × shortTermRatePct.
+   * Losses below the per-account washSaleMinLossUsd floor contribute neither lock nor lossUsd.
+   */
+  lossUsd: number;
+}
+export type WashSaleLockMap = Map<string, WashSaleLock>;
+
+// Keep the BINDING loss per symbol — the one with the latest clear date, since the symbol stays
+// locked until the most recent contributing loss ages out of the 30-day window. lossUsd SUMS
+// across contributions (see WashSaleLock.lossUsd) while account/clearDate track the binding loss.
+function mergeWashSaleLock(map: WashSaleLockMap, symbol: string, lock: WashSaleLock): void {
+  const existing = map.get(symbol);
+  if (!existing) {
+    map.set(symbol, lock);
+    return;
+  }
+  const binding = lock.clearDate.getTime() > existing.clearDate.getTime() ? lock : existing;
+  map.set(symbol, {
+    account: binding.account,
+    clearDate: binding.clearDate,
+    lossUsd: Number((existing.lossUsd + lock.lossUsd).toFixed(2))
+  });
+}
+
+/**
+ * Per-account wash-sale lockout WITH provenance: for each symbol whose LONG position was closed at
+ * a LOSS within the last 30 days (IRC §1091), record the account + the clear date. The Set-returning
+ * helpers below project this so the authoritative enforcement gate keeps its exact `Set<string>`
+ * shape (never a silent runtime reshape) while the Approvals UI reads provenance from the map.
+ */
+export function getWashSaleLockProvenance(
+  accountNumber: string,
+  source: FillSource,
+  now = new Date(),
+  userId: string = "local",
+  prefetched?: PrefetchedFills,
+  minLossUsd?: number
+): WashSaleLockMap {
+  const locked: WashSaleLockMap = new Map();
+  const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
+  // Optional materiality floor (taxSettings.washSaleMinLossUsd): losses smaller than this do
+  // NOT contribute a lockout. Default undefined/<=0 = every loss locks (original behavior).
+  const lossFloor = typeof minLossUsd === "number" && Number.isFinite(minLossUsd) && minLossUsd > 0 ? minLossUsd : 0;
+  for (const lot of getClosedLotsDetailed(accountNumber, source, userId, prefetched)) {
+    if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
+    if (lossFloor > 0 && Math.abs(lot.pnl) < lossFloor) continue;
+    const exitT = new Date(lot.exitAt).getTime();
+    if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) {
+      const clearDate = new Date(exitT + WASH_WINDOW_DAYS * MS_PER_DAY);
+      const lossUsd = Number(Math.abs(lot.pnl).toFixed(2));
+      mergeWashSaleLock(locked, normalizeSymbol(lot.symbol), { account: accountNumber, clearDate, lossUsd });
+    }
+  }
+  return locked;
+}
+
+/**
  * Symbols currently inside a 30-day wash-sale lockout: a LONG position in the symbol
  * was closed at a LOSS within the last 30 days, so rebuying now (within the 61-day
  * window) would create a wash sale and disallow that loss (IRC §1091). Used by the
- * policy guardrail to block new buys.
+ * policy guardrail to block new buys. Derived from the provenance map (one source of truth).
  */
-export function getWashSaleLockedSymbols(accountNumber: string, source: FillSource, now = new Date(), userId: string = "local"): Set<string> {
-  const locked = new Set<string>();
-  const cutoff = now.getTime() - WASH_WINDOW_DAYS * MS_PER_DAY;
-  for (const lot of getClosedLotsDetailed(accountNumber, source, userId)) {
-    if (lot.pnl >= 0 || lot.side !== "long" || !lot.exitAt || !lot.symbol) continue;
-    const exitT = new Date(lot.exitAt).getTime();
-    if (Number.isFinite(exitT) && exitT >= cutoff && exitT <= now.getTime()) locked.add(normalizeSymbol(lot.symbol));
-  }
-  return locked;
+export function getWashSaleLockedSymbols(
+  accountNumber: string,
+  source: FillSource,
+  now = new Date(),
+  userId: string = "local",
+  prefetched?: PrefetchedFills,
+  minLossUsd?: number
+): Set<string> {
+  return new Set(getWashSaleLockProvenance(accountNumber, source, now, userId, prefetched, minLossUsd).keys());
 }
 
 export interface AccountTaxContext {
   accountNumber: string;
   source: FillSource;
   taxationType?: TaxationType;
+  /** Per-account materiality floor for lockout contribution (taxSettings.washSaleMinLossUsd). */
+  washSaleMinLossUsd?: number;
 }
 
 /**
- * Cross-account wash-sale lockout (IRC §1091 + Rev. Rul. 2008-5): a LOSS realized in a TAXABLE
- * account locks rebuys of that symbol across ALL of the user's accounts — including the IRAs —
- * for 30 days, because buying the replacement inside an IRA permanently destroys the disallowed
- * basis. Losses realized INSIDE an IRA create no lockout (a wash sale has no benefit there).
- * Returns the union of locked symbols contributed by the user's taxable accounts.
+ * Cross-account wash-sale lockout WITH provenance (IRC §1091 + Rev. Rul. 2008-5): a LOSS realized in
+ * a TAXABLE account locks rebuys of that symbol across ALL of the user's accounts — including the
+ * IRAs — for 30 days, because buying the replacement inside an IRA permanently destroys the
+ * disallowed basis. Losses realized INSIDE an IRA create no lockout (a wash sale has no benefit
+ * there). Returns the merged provenance map contributed by the user's taxable accounts.
  */
-export function getWashSaleLockedSymbolsForUser(accounts: AccountTaxContext[], now = new Date(), userId: string = "local"): Set<string> {
-  const locked = new Set<string>();
+export function getWashSaleLockProvenanceForUser(accounts: AccountTaxContext[], now = new Date(), userId: string = "local"): WashSaleLockMap {
+  const locked: WashSaleLockMap = new Map();
   for (const acct of accounts) {
     if (acct.taxationType === "roth_ira" || acct.taxationType === "traditional_ira") continue;
     if (!acct.accountNumber) continue;
-    for (const sym of getWashSaleLockedSymbols(acct.accountNumber, acct.source, now, userId)) locked.add(sym);
+    for (const [sym, lock] of getWashSaleLockProvenance(acct.accountNumber, acct.source, now, userId, undefined, acct.washSaleMinLossUsd)) {
+      mergeWashSaleLock(locked, sym, lock);
+    }
   }
   return locked;
 }
 
-/** Convenience: resolve the user's connected accounts and compute the cross-account lockout. */
+/** Union of locked symbols across the user's taxable accounts (projection of the provenance map). */
+export function getWashSaleLockedSymbolsForUser(accounts: AccountTaxContext[], now = new Date(), userId: string = "local"): Set<string> {
+  return new Set(getWashSaleLockProvenanceForUser(accounts, now, userId).keys());
+}
+
+/**
+ * Resolve the user's connected accounts and compute the cross-account lockout provenance.
+ *
+ * PR #8 — a Test/sim account is EXCLUDED from contribution: it trades fake money, so a simulated
+ * loss must never lock a symbol in a real taxable account. (Previously Test was mapped to the
+ * "paper" source and included, letting a simulated loss lock a real account.)
+ */
+export function getUserWashSaleLockProvenance(userId: string = "local", now = new Date()): WashSaleLockMap {
+  const accounts: AccountTaxContext[] = listConnectedAccounts(userId)
+    .filter((a) => a.broker !== "test")
+    .map((a) => ({
+      accountNumber: a.accountNumber ?? "",
+      source: (a.environment === "paper" ? "paper" : "live") as FillSource,
+      taxationType: a.taxationType,
+      // Each account contributes its losses under ITS OWN policy's materiality floor
+      // (taxSettings.washSaleMinLossUsd) — policies are account-scoped.
+      washSaleMinLossUsd: safeAccountWashSaleMinLoss(userId, a.id)
+    }));
+  return getWashSaleLockProvenanceForUser(accounts, now, userId);
+}
+
+/** Best-effort per-account taxSettings.washSaleMinLossUsd lookup. A policy read failure must
+ *  never break the lockout computation — degrade to undefined (= every loss locks). */
+function safeAccountWashSaleMinLoss(userId: string, connectedAccountId: string): number | undefined {
+  try {
+    return getPolicy(userId, connectedAccountId).taxSettings?.washSaleMinLossUsd;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Convenience: the user's cross-account locked-symbol Set (projection; feeds the enforcement gate). */
 export function getUserWashSaleLockedSymbols(userId: string = "local", now = new Date()): Set<string> {
-  const accounts: AccountTaxContext[] = listConnectedAccounts(userId).map((a) => ({
-    accountNumber: a.accountNumber ?? "",
-    source: (a.broker === "test" || a.environment === "paper" ? "paper" : "live") as FillSource,
-    taxationType: a.taxationType
-  }));
-  return getWashSaleLockedSymbolsForUser(accounts, now, userId);
+  return new Set(getUserWashSaleLockProvenance(userId, now).keys());
 }
 
 /**
@@ -154,13 +259,17 @@ export function getTaxSummary(
   currentPrices: Record<string, number> = {},
   settings?: Partial<TaxSettings>,
   now = new Date(),
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): TaxSummary {
   const tax = resolveTaxSettings(settings);
   const taxYear = now.getFullYear();
-  const fills = listFillEvents(accountNumber, source, 500, userId);
-  const closedLots = getClosedLotsDetailed(accountNumber, source, userId);
-  const openLotsRaw = getOpenLots(accountNumber, source, userId);
+  // Prefer the pre-fetched source-matching fills so a shared request replays them once; the direct
+  // `detectWashSales` read here reuses the same array instead of a third SELECT for the same source.
+  const prefetchedSourceFills = source === "live" ? prefetched?.liveFills : source === "paper" ? prefetched?.paperFills : undefined;
+  const fills = prefetchedSourceFills ?? listFillEvents(accountNumber, source, 500, userId);
+  const closedLots = getClosedLotsDetailed(accountNumber, source, userId, prefetched);
+  const openLotsRaw = getOpenLots(accountNumber, source, userId, prefetched);
 
   const washSales = detectWashSales(fills, closedLots, taxYear);
   const disallowedKeys = new Set(washSales.map((w) => `${w.symbol}:${w.soldAt}`));
@@ -229,7 +338,9 @@ export function getTaxSummary(
     estimatedLongTermTax: Number(estimatedLongTermTax.toFixed(2)),
     estimatedTaxLiability: Number((estimatedShortTermTax + estimatedLongTermTax).toFixed(2)),
     washSales,
-    lockedSymbols: tax.washSaleGuard ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId)) : [],
+    lockedSymbols: tax.washSaleGuard
+      ? Array.from(getWashSaleLockedSymbols(accountNumber, source, now, userId, prefetched, tax.washSaleMinLossUsd))
+      : [],
     openLots,
     harvestCandidates,
     settings: tax

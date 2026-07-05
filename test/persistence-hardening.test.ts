@@ -87,12 +87,35 @@ describe("estimateReviewNotional — never fabricates a price", () => {
     expect(estimateReviewNotional({ quantity: 10, stopPrice: 40 }, 999).estimatedNotional).toBe(400);
     expect(estimateReviewNotional({ quantity: 10 }, 30).estimatedNotional).toBe(300);
   });
-  it("fails CLOSED (over-cap + alert) when no price is available — never $100", () => {
+  it("fails CLOSED (over-cap + alert) when no price is available for an OPENING order — never $100", () => {
+    // Opening orders (buy/short, or unspecified side) keep the over-cap sentinel: an un-sizable open is blocked.
     const r = estimateReviewNotional({ quantity: 500 }, undefined);
     expect(r.estimatedNotional).toBe(Number.MAX_SAFE_INTEGER);
     expect(r.estimatedNotional).not.toBe(50000);
     expect(r.alerts.length).toBeGreaterThan(0);
     expect(estimateReviewNotional({ quantity: 500 }, 0).estimatedNotional).toBe(Number.MAX_SAFE_INTEGER);
+    expect(estimateReviewNotional({ side: "buy", quantity: 500 }, undefined).estimatedNotional).toBe(Number.MAX_SAFE_INTEGER);
+    expect(estimateReviewNotional({ side: "short", quantity: 500 }, undefined).estimatedNotional).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("does NOT use the over-cap sentinel for an EXIT with no price — returns 0 (exits aren't notional-capped)", () => {
+    // Regression: a risk-exit SELL/cover with no live quote previously got MAX_SAFE_INTEGER, which
+    // corrupted the displayed notional (~$9 quadrillion) and the net-exposure projection, blocking the exit.
+    for (const side of ["sell", "cover"] as const) {
+      const r = estimateReviewNotional({ side, quantity: 500 }, undefined);
+      expect(r.estimatedNotional).toBe(0);
+      expect(r.estimatedNotional).not.toBe(Number.MAX_SAFE_INTEGER);
+      expect(r.alerts.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("falls back to referencePrice for an exit when the live quote is missing", () => {
+    // The entry anchor is a real captured price (not fabricated), good enough for an exempt exit's display.
+    expect(estimateReviewNotional({ side: "sell", quantity: 10, referencePrice: 42 }, undefined).estimatedNotional).toBe(420);
+    // Opening orders do NOT use referencePrice — an un-sizable open must still fail closed.
+    expect(estimateReviewNotional({ side: "buy", quantity: 10, referencePrice: 42 }, undefined).estimatedNotional).toBe(Number.MAX_SAFE_INTEGER);
+    // A live quote / explicit order price still wins over the anchor for an exit.
+    expect(estimateReviewNotional({ side: "sell", quantity: 10, referencePrice: 42 }, 50).estimatedNotional).toBe(500);
   });
 });
 
@@ -103,7 +126,6 @@ describe("evaluateTradeProposal — universe gate skips exits", () => {
   const policy: TradingPolicy = {
     ...DEFAULT_POLICY,
     systemState: "active",
-    paperMode: false,
     strategyAuthority: "decide",
     accountNumber: "A1",
     includedIndices: [],

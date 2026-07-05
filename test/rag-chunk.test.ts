@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkDocument, canonicalTicker } from "../src/lib/rag/chunk";
+import { chunkDocument, canonicalTicker, hashContent } from "../src/lib/rag/chunk";
 import { isWithinAsOf } from "../src/lib/vector-db";
 
 describe("rag chunkDocument", () => {
@@ -53,6 +53,32 @@ describe("rag chunkDocument", () => {
   it("canonicalTicker uppercases and strips noise", () => {
     expect(canonicalTicker(" brk.b ")).toBe("BRK.B");
     expect(canonicalTicker("aapl123")).toBe("AAPL");
+  });
+
+  it("hashContent is deterministic", () => {
+    const h1 = hashContent("hello world");
+    const h2 = hashContent("hello world");
+    expect(h1).toBe(h2);
+    expect(h1.length).toBe(32); // 128-bit (first 32 hex chars of SHA-256)
+  });
+
+  it("hashContent produces different hashes for different texts", () => {
+    const h1 = hashContent("risk factors for AAPL");
+    const h2 = hashContent("risk factors for MSFT");
+    expect(h1).not.toBe(h2);
+  });
+
+  it("chunks carry content_hash", () => {
+    const chunks = chunkDocument({ text: "Test content for hashing.", ticker: "TSLA", doc_type: "10-K", source: "sec" });
+    expect(chunks.length).toBe(1);
+    expect(chunks[0]!.content_hash).toBeDefined();
+    expect(chunks[0]!.content_hash.length).toBe(32); // 128-bit (first 32 hex chars of SHA-256)
+    // Same content → same hash
+    const chunks2 = chunkDocument({ text: "Test content for hashing.", ticker: "TSLA", doc_type: "10-K", source: "sec" });
+    expect(chunks2[0]!.content_hash).toBe(chunks[0]!.content_hash);
+    // Different content → different hash
+    const chunks3 = chunkDocument({ text: "Different content.", ticker: "TSLA", doc_type: "10-K", source: "sec" });
+    expect(chunks3[0]!.content_hash).not.toBe(chunks[0]!.content_hash);
   });
 });
 

@@ -32,6 +32,7 @@ const CIK_POLITE_DELAY_MS = 300;
 // Threshold above which we treat VECTOR_EMBED_BATCH_DELAY_MS as free-tier (unpaid Voyage).
 // Default is 21_000 ms; operators with a paid key set this to 0 (or very low).
 const PAID_KEY_THRESHOLD_MS = 5_000;
+const DEFAULT_MAX_FILINGS_PER_RUN = 1;
 
 export interface FilingRef {
   accession: string;   // dashed form: NNNNNNNNNN-YY-NNNNNN
@@ -180,13 +181,15 @@ export async function fetchFilingHtml(url: string): Promise<string> {
  *  5. Collapse whitespace runs.
  */
 export function extractFilingText(html: string): string {
-  // 1. Remove script / style blocks
-  let text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ");
-
-  // 2. Inject newlines around structural block elements
-  text = text.replace(/<\/?(div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>/gi, "\n");
+  // 1, 2, 4. Unified tag extraction in a single pass to minimize massive intermediate string allocations
+  let text = html.replace(
+    /(<script[\s\S]*?<\/script>)|(<style[\s\S]*?<\/style>)|(<\/?(?:div|p|h[1-6]|li|tr|td|th|table|thead|tbody|tfoot|blockquote|article|section|header|footer|main|aside|figure|figcaption|pre|hr|br)[^>]*>)|(<[^>]+>)/gi,
+    (match, script, style, blockTag) => {
+      if (script || style) return " ";
+      if (blockTag) return "\n";
+      return " ";
+    }
+  );
 
   // 3. Decode XML entities (mirrors sec8k.ts decodeXmlEntities)
   text = text
@@ -197,9 +200,6 @@ export function extractFilingText(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
-
-  // 4. Strip remaining tags
-  text = text.replace(/<[^>]+>/g, " ");
 
   // 5. Collapse whitespace: replace runs of spaces/tabs with a single space,
   //    preserve structural newlines (collapse 3+ newlines to 2).
@@ -250,6 +250,7 @@ export async function ingestFiling(
   const result = await storeDocument(
     {
       text,
+      doc_id: `${ticker}:${filingRef.accession}:${filingRef.docType}`,
       ticker,
       title: `${ticker} ${filingRef.docType} (${filingRef.filedAt})`,
       doc_type: filingRef.docType.toLowerCase(),
@@ -288,6 +289,11 @@ function isFreeTier(): boolean {
   return !Number.isFinite(delay) || delay > PAID_KEY_THRESHOLD_MS;
 }
 
+function maxFilingsPerRunFromEnv(): number {
+  const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN ?? DEFAULT_MAX_FILINGS_PER_RUN);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_FILINGS_PER_RUN;
+}
+
 /** Whether we're due for a filing ingest check (weekly TTL). */
 export function isFilingIngestDue(now: number = Date.now()): boolean {
   const last = getInternalSetting<string>(ATTEMPT_KEY);
@@ -302,15 +308,15 @@ export function isFilingIngestDue(now: number = Date.now()): boolean {
  * invocation to avoid multi-hour scheduler stalls. The function is still called every tick but
  * the TTL gate (isFilingIngestDue) means it's a no-op until a week has passed.
  *
- * Paid-tier (VECTOR_EMBED_BATCH_DELAY_MS ≤ 5000): processes up to `maxPerRun` filings per
- * invocation (default: all pending ones, up to the cap).
+ * Paid-tier (VECTOR_EMBED_BATCH_DELAY_MS <= 5000): processes up to `maxPerRun` filings per
+ * invocation (default: SEC_FILING_RAG_MAX_PER_RUN, or 1).
  *
  * Never throws — all errors are captured in the returned result and the audit log.
  */
 export async function refreshFilingBodies(
   symbols: string[],
   now: number = Date.now(),
-  maxPerRun = Number.POSITIVE_INFINITY
+  maxPerRun = maxFilingsPerRunFromEnv()
 ): Promise<RefreshFilingBodiesResult> {
   const result: RefreshFilingBodiesResult = { attempted: 0, ingested: 0, skipped: 0, errors: [] };
 

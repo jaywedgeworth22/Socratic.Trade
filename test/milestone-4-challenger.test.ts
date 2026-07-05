@@ -93,7 +93,7 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
   });
 
   it("deduplicates records by ID, keeping the instance with the higher score", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1] }] });
 
     // User query returns doc-1 with score 0.7
@@ -121,7 +121,7 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
   });
 
   it("deduplicates records by ID, keeping the user version if user score is higher", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1] }] });
 
     mocks.query.mockResolvedValueOnce({
@@ -140,7 +140,7 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
   });
 
   it("handles missing scores by sorting them as 0", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1] }] });
 
     mocks.query.mockResolvedValueOnce({
@@ -165,7 +165,7 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
   });
 
   it("slices output to match limit constraint", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1] }] });
 
     mocks.query.mockResolvedValueOnce({
@@ -185,7 +185,7 @@ describe("Milestone 4 Challenger: Pinecone Query Merging & Deduplication Correct
   });
 
   it("skips records without metadata.text", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1] }] });
 
     mocks.query.mockResolvedValueOnce({
@@ -327,7 +327,8 @@ describe("Milestone 4 Challenger: Finnhub & FMP Cache Poisoning Protection", () 
     const res1 = await provider.enrich(["AAPL"]);
 
     expect(res1.AAPL).toEqual({ insiderSentiment: 100 });
-    expect(mockFetch).toHaveBeenCalledTimes(4); // FMP calls 4 endpoints
+    // FMP calls 4 endpoints: ratios-ttm, grades-consensus, insider-trading, senate-trading.
+    expect(mockFetch).toHaveBeenCalledTimes(4);
 
     // Call second time to ensure cache bypass
     const res2 = await provider.enrich(["AAPL"]);

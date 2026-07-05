@@ -88,7 +88,7 @@ export function ScorecardBars({
   data,
   height = 150
 }: {
-  data: Array<{ label: string; pnl: number; winRate: number; trades: number }>;
+  data: Array<{ label: string; pnl: number; winRate: number; trades: number; avgDaysHeld?: number; shortTermPct?: number }>;
   height?: number;
 }) {
   if (data.length === 0) {
@@ -102,15 +102,40 @@ export function ScorecardBars({
       {rows.map((row) => {
         const width = Math.max(6, (Math.abs(row.pnl) / maxAbs) * 100);
         const positive = row.pnl >= 0;
+        // Turnover/tax-lot context (avg holding days + % of lots closed short-term) — surfaced in the
+        // tooltip only when present, so it never adds noise for sources that don't compute it.
+        const turnover = [
+          typeof row.avgDaysHeld === "number" ? `${row.avgDaysHeld.toFixed(0)}d avg hold` : null,
+          typeof row.shortTermPct === "number" ? `${row.shortTermPct.toFixed(0)}% short-term` : null
+        ]
+          .filter(Boolean)
+          .join(" - ");
         return (
           <div key={row.label} className="grid grid-cols-[112px_minmax(0,1fr)_88px] items-center gap-2 text-xs">
             <div className="truncate text-muted" title={row.label}>{row.label}</div>
-            <div className="h-3 overflow-hidden rounded-full bg-surface-3/60">
-              <div
-                className={positive ? "h-full rounded-full bg-up" : "h-full rounded-full bg-down"}
-                style={{ width: `${width}%` }}
-                title={`${signedMoney(row.pnl)} - ${formatPct(row.winRate)} win - ${row.trades} trades`}
-              />
+            <div className="relative h-3 w-full overflow-hidden rounded-full bg-surface-3/30">
+              {/* Midpoint line */}
+              <div className="absolute left-1/2 top-0 h-full w-[1px] bg-line-strong/80 z-10" />
+              
+              {/* Negative bar (grows left from center) */}
+              {!positive && (
+                <div className="absolute right-1/2 top-0 h-full flex justify-end" style={{ width: `${width / 2}%` }}>
+                  <div
+                    className="h-full w-full rounded-l-full bg-down"
+                    title={`${signedMoney(row.pnl)} - ${formatPct(row.winRate)} win - ${row.trades} trades${turnover ? ` - ${turnover}` : ""}`}
+                  />
+                </div>
+              )}
+              
+              {/* Positive bar (grows right from center) */}
+              {positive && (
+                <div className="absolute left-1/2 top-0 h-full flex justify-start" style={{ width: `${width / 2}%` }}>
+                  <div
+                    className="h-full w-full rounded-r-full bg-up"
+                    title={`${signedMoney(row.pnl)} - ${formatPct(row.winRate)} win - ${row.trades} trades${turnover ? ` - ${turnover}` : ""}`}
+                  />
+                </div>
+              )}
             </div>
             <div className={positive ? "tnum text-right text-up" : "tnum text-right text-down"}>{signedMoney(row.pnl)}</div>
           </div>

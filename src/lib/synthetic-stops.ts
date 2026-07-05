@@ -2,7 +2,9 @@ import crypto from "crypto";
 import {
   audit,
   claimSyntheticStop,
+  dailyExecutionStats,
   deleteSyntheticStop,
+  getActiveConnectedAccount,
   insertFillEvent,
   listSyntheticStops,
   revertSyntheticStopClaim,
@@ -10,10 +12,26 @@ import {
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
+import { applyPaperExitCost } from "./execution-cost";
+import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
+import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
-import type { EquityPosition, FillSource, TradingPolicy } from "./types";
+import { evaluateTradeProposal } from "./policy";
+import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradeProposal, TradingPolicy } from "./types";
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
+
+// Order states that mean a broker order is still RESTING (not filled/canceled/expired/rejected).
+// We list only clearly-live states so a terminal or unknown-status order never makes us skip
+// synthetic protection (bias: when unsure, protect).
+const LIVE_ORDER_STATES = new Set([
+  "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open"
+]);
+
+/** A resting broker-held stop leg (e.g. an Alpaca OCO bracket stop) — a live order whose type is a stop. */
+function isLiveBrokerStop(order: EquityOrder): boolean {
+  return /stop/i.test(order.type) && LIVE_ORDER_STATES.has(String(order.state).trim().toLowerCase());
+}
 
 export interface StopEvaluation {
   newExtreme: number;
@@ -61,18 +79,23 @@ export interface MonitorResult {
 /**
  * Synthetic trailing-stop monitor (works for any broker, incl. Robinhood MCP). Detection — extreme
  * tracking, trigger computation, bad-tick filtering — is always safe. Placing the market EXIT only
- * happens when `running` is true (the system was deliberately Started); the scheduler only calls
- * this for `systemState === "active"` users, so exits are gated behind Start. Purges stops for
- * positions that have closed, and auto-registers a stop for each LONG position when
- * `policy.riskRules.trailingStopPct` is configured and none exists yet.
+ * happens when `running` is true (the system was deliberately Started or is in a protective state
+ * such as close_only/liquidating). Purges stops for positions that have closed, and auto-registers
+ * a stop for each open position when `policy.riskRules.trailingStopPct` is configured and none
+ * exists yet.
  */
 export async function runSyntheticStopMonitor(userId: string, policy: TradingPolicy, running: boolean): Promise<MonitorResult> {
   const result: MonitorResult = { evaluated: 0, triggered: 0, exited: 0, purged: 0 };
   const accountNumber = policy.accountNumber;
   if (!accountNumber) return result;
 
+  const activeAccount = getActiveConnectedAccount(userId);
+  const executionState = deriveExecutionState(policy, activeAccount);
+  // An account is an account: with none connected there is no broker to protect against.
+  if (!executionState.mode) return result;
+  const executionMode: ExecutionMode = executionState.mode;
   const gateway = getBrokerGateway(policy, userId);
-  const source: FillSource = policy.paperMode ? "paper" : "live";
+  const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
 
   let positions: EquityPosition[];
   try {
@@ -82,12 +105,33 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   }
   const liveSymbols = new Set(positions.filter((p) => Math.abs(p.quantity) > 0.000001).map((p) => normalizeSymbol(p.symbol)));
 
+  // Symbols that already carry a broker-held stop (Alpaca OCO bracket). We must NOT also auto-register
+  // a synthetic trailing stop on these: with two exit paths, if the synthetic market-sells first the
+  // broker's resting stop leg is stranded and can later fill as an oversell (an unintended short).
+  // Keyed off ACTUAL resting orders (not policy inference) so a position is never left unprotected —
+  // if listing orders fails or no live broker stop exists, the synthetic still registers below.
+  let brokerStopSymbols = new Set<string>();
+  try {
+    const openOrders = await gateway.getEquityOrders(accountNumber);
+    brokerStopSymbols = new Set(openOrders.filter(isLiveBrokerStop).map((o) => normalizeSymbol(o.symbol)));
+  } catch {
+    // Can't list orders — fall back to registering synthetic stops (protection over dedup).
+  }
+
   // Purge stops whose position has closed (size hit 0).
   for (const stop of listSyntheticStops(accountNumber, userId)) {
     if (!liveSymbols.has(stop.symbol.toUpperCase())) {
       deleteSyntheticStop(stop.id, userId);
       result.purged++;
     }
+  }
+
+  // Robinhood true broker-held protective stops (opt-in): place resting stops for open longs and
+  // cancel them on close. No-op unless policy.robinhoodBrokerStops is on and execution is live RH.
+  try {
+    await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running });
+  } catch (err) {
+    audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
   }
 
   // Auto-register a trailing stop for each open position when a trail % is configured.
@@ -98,7 +142,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const existing = new Set(listSyntheticStops(accountNumber, userId).map((s) => s.symbol.toUpperCase()));
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
-      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym)) continue;
+      // Skip symbols already covered by a broker-held stop — the broker bracket is the exit path there.
+      if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym) || brokerStopSymbols.has(sym)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
       const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
@@ -123,8 +168,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   let quotes: Record<string, { price?: number; symbol?: string }> = {};
   try {
     quotes = await gateway.getEquityQuotes(accountNumber, stops.map((s) => normalizeSymbol(s.symbol)));
-  } catch {
-    return result;
+  } catch (err) {
+    // API outage fallback: populate quotes with the last known price from database
+    console.error("[synthetic-stops] gateway quotes fetch failed, using lastPrice database cache fallback:", err);
+    for (const stop of stops) {
+      if (stop.lastPrice && stop.lastPrice > 0) {
+        quotes[normalizeSymbol(stop.symbol)] = { price: stop.lastPrice, symbol: stop.symbol };
+      }
+    }
   }
   const priceFor = (sym: string): number | undefined => {
     const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];
@@ -156,6 +207,47 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       continue;
     }
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    const exitProposal: TradeProposal = {
+      symbol: normalizeSymbol(stop.symbol),
+      side: exitSide,
+      type: "market",
+      quantity: qty,
+      timeInForce: "gfd",
+      marketHours,
+      rationale: "Synthetic trailing stop fired from the protective scheduler.",
+      tradeThesisTag: "Synthetic Stop",
+      entryMarketRegime: "Risk Exit"
+    };
+    const tradability = await gateway.getEquityTradability(accountNumber, [exitProposal.symbol]).catch((err) => {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "tradability_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      return undefined;
+    });
+    if (!tradability?.[exitProposal.symbol]?.tradable) {
+      audit("synthetic_stop_blocked", {
+        symbol: stop.symbol,
+        reason: tradability?.[exitProposal.symbol]?.reason ?? "Symbol is not tradable for the protective exit."
+      }, userId);
+      continue;
+    }
+    const portfolio = await gateway.getPortfolio(accountNumber).catch((err) => {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "portfolio_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      return undefined;
+    });
+    if (!portfolio) continue;
+    const daily = dailyExecutionStats(accountNumber, new Date(), userId);
+    const policyDecision = evaluateTradeProposal(exitProposal, {
+      policy,
+      portfolio,
+      positions,
+      dailyNotionalUsed: daily.notional,
+      dailyOrderCount: daily.openingOrderCount,
+      estimatedNotional: qty * price,
+      isLiveExecution: executionMode === "broker/live"
+    });
+    if (!policyDecision.approved) {
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reasons: policyDecision.reasons }, userId);
+      continue;
+    }
     // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
     // monitor is still mid-placement (slow broker call spanning the next 60s tick), it already
     // claimed the stop and this run skips it — so the same protective exit can't fire twice.
@@ -177,15 +269,20 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         marketHours,
         refId
       });
+      // B8: a paper/test protective exit is booked at the raw quote here (no broker reconciliation), so
+      // debit the same execution-cost model the entry path uses — otherwise the losing tail exits cost-free
+      // and overstates realized edge feeding the tuner/sizer. Live exits are unchanged (reconciled later).
+      const exitPrice = applyPaperExitCost(price, exitSide, source);
       insertFillEvent({
         userId,
         accountNumber,
         source,
+        executionMode,
         symbol: normalizeSymbol(stop.symbol),
         side: exitSide,
         quantity: qty,
-        price,
-        notional: qty * price,
+        price: exitPrice,
+        notional: qty * exitPrice,
         // Live exits are provisional at the quote price; reconcilePendingFills books the
         // real fill price/qty from the broker (brokerOrderId is the match key). Booking
         // 'filled' at the quote understates slippage at the worst possible moment. Paper/
@@ -194,6 +291,9 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
+      // If a broker-held protective stop is resting for this symbol, cancel it now so it can't
+      // also fire on shares this synthetic exit is selling (double-sell). Best-effort.
+      await cancelBrokerProtectiveStop(userId, accountNumber, stop.symbol, gateway).catch(() => {});
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;

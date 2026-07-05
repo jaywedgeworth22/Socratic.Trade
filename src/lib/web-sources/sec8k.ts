@@ -4,14 +4,31 @@
 // agreements, etc.), so a fresh 8-K is a catalyst flag worth surfacing to the agent.
 // Free, no key (UA only). We read the market-wide "current 8-K" atom feed, map each
 // filer's CIK to a ticker via SEC's company_tickers.json (cached weekly), and keep a
-// short rolling window of "TICKER filed an 8-K" events. Coarse by design (no per-item
-// parsing yet — that needs a fetch per filing); item-level detail is a follow-up.
+// short rolling window of "TICKER filed an 8-K" events. Per-item label enrichment
+// IS implemented: parseEightKItemsFromHtml() fetches the filing summary page and
+// extracts item codes (e.g. "Item 5.02"); eightKHasMaterialItem() filters an
+// expert-panel allowlist; items surface in bulletins and trigger the event-driven
+// engine (`src/lib/triggers.ts`) when a material item code is detected.
 // Never fabricated: no feed / no CIK match -> no event.
 
 import { audit, getInternalSetting, setInternalSetting } from "../db";
+import { hasIngestedAccession, insertIngestedAccession } from "../db";
 import { normalizeSymbol } from "../money";
+import { envFlagOn } from "../rag/env-flag";
 import { retryBackoffMs } from "./congress";
-import { politeFetchText, secUserAgent } from "./http";
+import { politeFetchText, runRateLimited, secUserAgent, sleep } from "./http";
+import { extractFilingText } from "./sec-filings";
+
+/**
+ * R10 (2026-07-01 RAG backlog): content_hash dedup for the always-on 8-K SUMMARY ingest
+ * below. Default ON - avoids re-embedding the same short summary on every refresh cycle
+ * even when the underlying event data hasn't changed (the Pinecone upsert is idempotent by
+ * contextId, but the Voyage embed call is NOT free). Set VECTOR_STORECONTEXTS_DEDUP=off only
+ * when intentionally forcing a re-embed.
+ */
+function storeContextsDedupEnabled(): boolean {
+  return envFlagOn("VECTOR_STORECONTEXTS_DEDUP", true);
+}
 
 const DATASET_KEY = "webSource:sec8k:dataset";
 const ATTEMPT_KEY = "webSource:sec8k:lastAttempt";
@@ -82,6 +99,23 @@ export function parseCikTickerMap(json: unknown): Record<string, string> {
   return map;
 }
 
+/**
+ * Parse SEC company_tickers.json into a ticker -> numeric-CIK-string map. Unlike parseCikTickerMap
+ * (which collapses each CIK to ONE ticker), this keeps EVERY ticker, so dual-class names that share a
+ * CIK (e.g. GOOGL & GOOG) both resolve to their CIK.
+ */
+export function parseTickerCikMap(json: unknown): Record<string, string> {
+  const map: Record<string, string> = {};
+  const rows = json && typeof json === "object" ? Object.values(json as Record<string, unknown>) : [];
+  for (const row of rows) {
+    const r = row as { cik_str?: number | string; ticker?: string };
+    if (r?.cik_str == null || !r.ticker) continue;
+    const ticker = normalizeSymbol(r.ticker);
+    if (ticker) map[ticker] = String(Number(r.cik_str));
+  }
+  return map;
+}
+
 // ── Read API ─────────────────────────────────────────────────────────────────
 
 export interface EightKSignal {
@@ -127,14 +161,49 @@ export function isEightKRefreshDue(now: number = Date.now()): boolean {
   return now - Date.parse(ds.fetchedAt) >= eightKTtlMs();
 }
 
+// Shared in-flight promises for the cold company_tickers.json fetch. Both maps derive from the SAME
+// SEC file; without these guards, concurrent scans (or repeated dashboard refreshes) that all miss the
+// weekly cache would each fire a duplicate request and defeat SEC fair-access throttling. A pending load
+// is shared across callers and cleared once settled, so a later cache expiry re-fetches.
+let cikMapInFlight: Promise<Record<string, string>> | null = null;
+let tickerCikMapInFlight: Promise<Record<string, string>> | null = null;
+
 /** Load the CIK→ticker map, cached weekly in the settings KV. */
 export async function loadCikMap(now: number): Promise<Record<string, string>> {
   const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(CIK_KEY);
   if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
-  const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
-  const map = parseCikTickerMap(json);
-  if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
-  return map;
+  if (cikMapInFlight) return cikMapInFlight;
+  cikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseCikTickerMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await cikMapInFlight;
+  } finally {
+    cikMapInFlight = null;
+  }
+}
+
+const TICKER_CIK_KEY = "webSource:sec:tickerCikMap";
+
+/** Load the ticker→CIK map (preserves dual-class tickers), cached weekly in the settings KV. */
+export async function loadTickerCikMap(now: number): Promise<Record<string, string>> {
+  const cached = getInternalSetting<{ map: Record<string, string>; fetchedAt: string }>(TICKER_CIK_KEY);
+  if (cached?.map && cached.fetchedAt && now - Date.parse(cached.fetchedAt) < CIK_TTL_MS) return cached.map;
+  if (tickerCikMapInFlight) return tickerCikMapInFlight;
+  tickerCikMapInFlight = (async () => {
+    const json = JSON.parse(await politeFetchText(`${SEC_BASE}/files/company_tickers.json`, { headers: { "user-agent": secUserAgent() } }));
+    const map = parseTickerCikMap(json);
+    if (Object.keys(map).length > 0) setInternalSetting(TICKER_CIK_KEY, { map, fetchedAt: new Date(now).toISOString() });
+    return map;
+  })();
+  try {
+    return await tickerCikMapInFlight;
+  } finally {
+    tickerCikMapInFlight = null;
+  }
 }
 
 export function mergeEightK(existing: EightKEvent[], fresh: EightKEvent[], now: number, window = windowDays()): EightKEvent[] {
@@ -182,19 +251,18 @@ export function parseEightKItemsFromHtml(html: string): string[] {
 async function enrichEightKEvents(events: EightKEvent[]): Promise<EightKEvent[]> {
   const limit = Number(process.env.WEB_SOURCE_SEC8K_DETAIL_LIMIT ?? 25);
   const maxDetails = Number.isFinite(limit) && limit > 0 ? limit : 25;
-  const enriched = await Promise.all(
-    events.slice(0, maxDetails).map(async (event) => {
-      const url = absoluteSecUrl(event.filingUrl);
-      if (!url) return event;
-      try {
-        const html = await politeFetchText(url, { headers: { "user-agent": secUserAgent(), accept: "text/html" } });
-        const items = parseEightKItemsFromHtml(html);
-        return items.length > 0 ? { ...event, filingUrl: url, items } : { ...event, filingUrl: url };
-      } catch {
-        return { ...event, filingUrl: url };
-      }
-    })
-  );
+  const slice = events.slice(0, maxDetails);
+  const enriched = await runRateLimited(slice, 250, async (event) => {
+    const url = absoluteSecUrl(event.filingUrl);
+    if (!url) return event;
+    try {
+      const html = await politeFetchText(url, { headers: { "user-agent": secUserAgent(), accept: "text/html" } });
+      const items = parseEightKItemsFromHtml(html);
+      return items.length > 0 ? { ...event, filingUrl: url, items } : { ...event, filingUrl: url };
+    } catch {
+      return { ...event, filingUrl: url };
+    }
+  });
   return [...enriched, ...events.slice(maxDetails)];
 }
 
@@ -245,6 +313,9 @@ export async function reindexEightKDataset(
         symbol: event.symbol,
         source: "sec-8k",
         timestamp: event.filedAt,
+        // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+        acceptance_datetime: event.filedAt,
+        doc_type: "8-k",
         accession: event.accession,
         filingUrl: event.filingUrl,
         items: event.items ?? []
@@ -314,20 +385,136 @@ export async function refreshEightK(now: number = Date.now(), force = false): Pr
     const ragEvents = fresh.slice(0, eightKRagLimit());
     import("../vector-db")
       .then(({ storeContexts }) =>
-        storeContexts(ragEvents.map((event) => ({
-          text: buildEightKContext(event),
-          metadata: {
-            symbol: event.symbol,
-            source: "sec-8k",
-            timestamp: event.filedAt,
-            accession: event.accession,
-            filingUrl: event.filingUrl,
-            items: event.items ?? []
-          }
-        })))
+        storeContexts(
+          ragEvents.map((event) => ({
+            text: buildEightKContext(event),
+            metadata: {
+              symbol: event.symbol,
+              source: "sec-8k",
+              timestamp: event.filedAt,
+              // Point-in-time anchor so retrieveContextDetailed({asOf}) can exclude look-ahead filings.
+              acceptance_datetime: event.filedAt,
+              doc_type: "8-k",
+              accession: event.accession,
+              filingUrl: event.filingUrl,
+              items: event.items ?? []
+            }
+          })),
+          "local",
+          // R10: dedup so an unchanged summary isn't re-embedded every refresh cycle.
+          storeContextsDedupEnabled() ? { dedupKeyPrefix: "sec8k-summary" } : undefined
+        )
       )
       .catch((error) => console.warn("[sec8k] vector store failed", error));
   }
 
+  // 8-K full-body ingest: when enabled, fetch + embed the FULL filing text (not just the
+  // 6-line summary) via the same storeDocument pipeline as 10-K/10-Qs. Gated behind
+  // WEB_SOURCE_SEC8K_FULL_BODY (default OFF) because it multiplies EDGAR fetch + Voyage
+  // cost per filing. Fire-and-forget so refresh durability is unaffected.
+  if (eightKFullBodyEnabled() && fresh.length > 0) {
+    const bodyLimit = Number(process.env.WEB_SOURCE_SEC8K_FULL_BODY_LIMIT ?? 5);
+    const cap = Number.isFinite(bodyLimit) && bodyLimit > 0 ? Math.floor(bodyLimit) : 5;
+    const bodyEvents = fresh.slice(0, cap);
+    // Don't block the refresh — body ingest runs async.
+    ingestEightKBodies(bodyEvents, now).catch((error) =>
+      console.warn("[sec8k] full-body ingest failed:", error)
+    );
+  }
+
   return { id: "sec8k", ok, recordCount: merged.length, sources: ["sec-edgar"], fetchedAt, warning };
+}
+
+// ── 8-K full-body ingest (gated behind WEB_SOURCE_SEC8K_FULL_BODY) ───────────
+
+const DEFAULT_SEC8K_FULL_BODY_LIMIT = 5;
+
+/** Whether full 8-K body ingestion is enabled (default OFF). */
+export function eightKFullBodyEnabled(): boolean {
+  const v = String(process.env.WEB_SOURCE_SEC8K_FULL_BODY ?? "off").trim().toLowerCase();
+  return ["1", "true", "on", "yes"].includes(v);
+}
+
+/**
+ * Fetch the full 8-K filing body for one event, chunk it via storeDocument, and record
+ * the accession in ingested_accessions so the same filing is never re-fetched.
+ *
+ * Only calls storeDocument when the accession isn't already in ingested_accessions.
+ * Returns the number of chunks indexed (0 = skipped or failed).
+ */
+export async function ingestEightKBody(event: EightKEvent, now: number = Date.now()): Promise<{ skipped: boolean; chunks: number; error?: string }> {
+  if (hasIngestedAccession(event.accession, "8-K-body")) {
+    return { skipped: true, chunks: 0 };
+  }
+
+  const url = absoluteSecUrl(event.filingUrl);
+  if (!url) {
+    return { skipped: false, chunks: 0, error: "no filing URL" };
+  }
+
+  let html: string;
+  try {
+    html = await politeFetchText(url, {
+      headers: { "user-agent": secUserAgent(), accept: "text/html,application/xhtml+xml" },
+      timeoutMs: 30_000
+    });
+  } catch (err) {
+    return { skipped: false, chunks: 0, error: `fetch failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const text = extractFilingText(html);
+  if (text.length < 100) {
+    return { skipped: false, chunks: 0, error: "extracted text too short" };
+  }
+
+  const { storeDocument } = await import("../vector-db");
+  const result = await storeDocument(
+    {
+      text,
+      ticker: event.symbol,
+      title: `${event.symbol} 8-K (${event.filedAt})`,
+      doc_type: "8-k",
+      published_at: event.filedAt,
+      acceptance_datetime: event.filedAt,
+      source: "sec-8k",
+      url
+    },
+    "local"
+  );
+
+  if (result.error) {
+    return { skipped: false, chunks: result.indexed, error: result.error };
+  }
+
+  insertIngestedAccession(event.accession, "8-K-body", event.symbol, result.indexed);
+  return { skipped: false, chunks: result.indexed };
+}
+
+/**
+ * Ingest full 8-K bodies for multiple events sequentially (respects EDGAR fair-use).
+ * Never throws — errors are logged and aggregated.
+ */
+export async function ingestEightKBodies(
+  events: EightKEvent[],
+  now: number = Date.now()
+): Promise<{ attempted: number; ingested: number; skipped: number; errors: string[] }> {
+  const result = { attempted: 0, ingested: 0, skipped: 0, errors: [] as string[] };
+  for (const event of events) {
+    result.attempted++;
+    try {
+      const ingestResult = await ingestEightKBody(event, now);
+      if (ingestResult.skipped) {
+        result.skipped++;
+      } else if (ingestResult.error) {
+        result.errors.push(`${event.symbol} ${event.accession}: ${ingestResult.error}`);
+      } else {
+        result.ingested++;
+      }
+      // Polite delay between EDGAR fetches
+      if (result.attempted < events.length) await sleep(300);
+    } catch (err) {
+      result.errors.push(`${event.symbol} ${event.accession}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return result;
 }

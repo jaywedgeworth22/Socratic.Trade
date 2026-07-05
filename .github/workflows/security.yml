@@ -2,6 +2,9 @@ name: Security
 
 on:
   pull_request:
+  # Required for the GitHub merge queue: the `gitleaks` check must run on the
+  # queue's temporary merge_group branch, or queued PRs hang forever.
+  merge_group:
   push:
     branches:
       - main
@@ -9,16 +12,47 @@ on:
   schedule:
     - cron: "41 10 * * 1"
 
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gitleaks:
+    # Moved off the self-hosted runner (2026-07-01): fast, generic, no
+    # production-box dependency, and was contributing to the runner queue
+    # bottleneck. Ephemeral hosted runners start clean, so the old
+    # "clean stale gitleaks installer temp files" step (needed on the
+    # persistent self-hosted box) no longer applies. Revert to
+    # `[self-hosted, trading-live]` if the account's Actions spending limit
+    # ever blocks this (Settings → Billing → Plans and usage → Spending limit).
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Refuse untrusted PR source
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::error::Fork PRs cannot run this job."
+            exit 1
+          fi
+          actor="${{ github.actor }}"
+          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
+            case "$actor" in
+              'cursor[bot]'|'dependabot[bot]')
+                echo "Trusted same-repo bot: $actor"
+                ;;
+              *)
+                echo "::error::Bot PRs cannot run this job (untrusted bot: $actor)."
+                exit 1
+                ;;
+            esac
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

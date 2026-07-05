@@ -10,6 +10,7 @@ import {
   insertProposal,
   revertSyntheticStopClaim,
   setPolicy,
+  transitionProposalIfPending,
   updateProposalStatus,
   upsertSyntheticStop,
   listSyntheticStops
@@ -54,9 +55,71 @@ describe("claimProposalForExecution — atomic proposal claim", () => {
     expect(getProposal(id, "local")?.status).toBe("blocked");
   });
 
+  it("can persist blocked policy decisions when status changes", () => {
+    const id = seedProposed();
+    updateProposalStatus(
+      id,
+      "blocked",
+      undefined,
+      undefined,
+      undefined,
+      "local",
+      undefined,
+      undefined,
+      { approved: false, reasons: ["Symbol is not in the allowed universe."] }
+    );
+
+    const row = getProposal(id, "local");
+    expect(row?.status).toBe("blocked");
+    expect(row?.decision).toMatchObject({
+      approved: false,
+      reasons: ["Symbol is not in the allowed universe."]
+    });
+  });
+
   it("is scoped by userId (cannot claim another user's proposal)", () => {
     const id = seedProposed("local");
     expect(claimProposalForExecution(id, "placing", "someone-else")).toBe(false);
+    expect(getProposal(id, "local")?.status).toBe("proposed");
+  });
+});
+
+// ── Codex #323 round 2: refusal-path writes must not revive non-pending rows ─
+describe("transitionProposalIfPending — guarded refusal-path status writes", () => {
+  it("re-queues a still-pending row: status stays 'proposed' and the fresh decision persists", () => {
+    const id = seedProposed();
+    const reescalated = {
+      approved: false,
+      reasons: ["needs your call at the new price"],
+      escalations: [{ kind: "wash_sale_ask", symbol: "AAPL", token: "tok-fresh" }]
+    } as never;
+    expect(transitionProposalIfPending(id, "proposed", "local", { decision: reescalated })).toBe(true);
+    const row = getProposal(id, "local");
+    expect(row?.status).toBe("proposed");
+    expect(row?.decision).toMatchObject({ reasons: ["needs your call at the new price"] });
+  });
+
+  it("refuses to resurrect a proposal rejected while the approval was in flight", () => {
+    const id = seedProposed();
+    updateProposalStatus(id, "rejected", undefined, undefined, undefined, "local");
+    expect(
+      transitionProposalIfPending(id, "proposed", "local", {
+        decision: { approved: false, reasons: ["stale re-escalation"] }
+      })
+    ).toBe(false);
+    expect(getProposal(id, "local")?.status).toBe("rejected");
+  });
+
+  it("does not overwrite a scheduler expiry with 'blocked'", () => {
+    const id = seedProposed();
+    updateProposalStatus(id, "expired", undefined, undefined, undefined, "local");
+    expect(transitionProposalIfPending(id, "blocked", "local")).toBe(false);
+    expect(getProposal(id, "local")?.status).toBe("expired");
+  });
+
+  it("is scoped by userId (cannot touch another user's proposal)", () => {
+    const id = seedProposed("local");
+    expect(transitionProposalIfPending(id, "blocked", "someone-else")).toBe(false);
     expect(getProposal(id, "local")?.status).toBe("proposed");
   });
 });

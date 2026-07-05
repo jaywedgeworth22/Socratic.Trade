@@ -12,7 +12,24 @@
 // header and run open outside production. `requireAdmin` composes WITH that: pass `allowToken`/`allowNonProd`
 // (both default true) so the email allowlist is an ADDITIONAL way in, not a regression of the prior gate.
 
+import crypto from "crypto";
 import { AUTHENTICATED_EMAIL_HEADER } from "../request-user";
+import { isPrimaryEmail } from "./identity";
+
+/**
+ * Constant-time string equality for secret comparison (admin tokens). Guards against a timing
+ * side-channel that a naive `===` leaks. Denies (returns false) without ever calling
+ * `crypto.timingSafeEqual` on mismatched-length buffers — that call THROWS on unequal lengths, and
+ * comparing length first would itself leak length; instead an empty/undefined side or any length
+ * mismatch short-circuits to `false`. Both inputs are required and non-empty to match.
+ */
+export function timingSafeEqualStr(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 function adminEmails(): string[] {
   return (process.env.ADMIN_USER_EMAILS || "")
@@ -21,24 +38,38 @@ function adminEmails(): string[] {
     .filter(Boolean);
 }
 
-/** The primary operator's email, read fresh from env so deployment config (and tests) take effect. */
-function primaryEmail(): string {
-  return (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
-}
-
-/** True if `email` is configured as an admin (or is the primary operator). */
+/** True if `email` is configured as an admin (or is the primary operator, including any primary aliases). */
 export function isAdminEmail(email: string | null | undefined): boolean {
   const e = (email || "").trim().toLowerCase();
   if (!e || !e.includes("@")) return false;
-  if (e === primaryEmail()) return true;
+  if (isPrimaryEmail(e)) return true; // primary operator + PRIMARY_USER_EMAIL_ALIASES
   return adminEmails().includes(e);
 }
 
 export interface RequireAdminOptions {
   /** Allow the legacy `x-admin-token` === `ADMIN_REINDEX_TOKEN` bypass. Default true. */
   allowToken?: boolean;
-  /** Allow non-production to run open (preserves existing dev/ops ergonomics). Default true. */
+  /**
+   * Allow non-production to run open (preserves existing dev/ops ergonomics). Default true.
+   *
+   * RISK: with the default `true`, any environment where `NODE_ENV !== "production"` grants admin
+   * access to EVERY caller regardless of email allowlist or token. That is intentional for local
+   * dev/test ergonomics, but it means an admin route deployed with a non-"production" NODE_ENV (a
+   * misconfiguration) is wide open. The edge auth gate (middleware.ts) does NOT rely on NODE_ENV for
+   * exactly this reason. In production the value is "production", so this branch is inert; callers that
+   * want a hard gate even in non-prod (e.g. a security-sensitive admin action) should pass
+   * `allowNonProd: false`. Default kept `true` to avoid breaking the running dashboard's dev/ops flows.
+   */
   allowNonProd?: boolean;
+  /**
+   * When true, a verified admin EMAIL alone is NOT sufficient in production — the `x-admin-token`
+   * must also match. Restores the legacy per-route production token gate for cost/side-effecting
+   * operator routes (the SEC reindex backfills). Rationale: when app auth is unconfigured,
+   * `middleware.ts` injects the primary-operator email for EVERY request as a dev/local fallback,
+   * which would otherwise satisfy the email path here and let an unauthenticated caller trigger a
+   * paid Voyage backfill in a production misconfiguration. Non-production still honors `allowNonProd`.
+   */
+  requireTokenInProd?: boolean;
 }
 
 export interface AdminCheck {
@@ -57,19 +88,27 @@ export interface AdminCheck {
  * Otherwise denied → callers should return 403.
  */
 export function checkAdmin(request: Request, options: RequireAdminOptions = {}): AdminCheck {
-  const { allowToken = true, allowNonProd = true } = options;
+  const { allowToken = true, allowNonProd = true, requireTokenInProd = false } = options;
+  const inProd = process.env.NODE_ENV === "production";
+
+  // Constant-time compare so a wrong token can't be recovered byte-by-byte via response timing.
+  // timingSafeEqualStr denies when either side is empty/undefined (no configured token → no match).
+  const tokenMatches =
+    allowToken && timingSafeEqualStr(process.env.ADMIN_REINDEX_TOKEN, request.headers.get("x-admin-token"));
+
+  // Hard token gate for cost/side-effecting routes in production: a synthetic/injected admin email
+  // (app auth unconfigured) or the non-prod bypass must NOT grant — only a real token match does.
+  if (requireTokenInProd && inProd) {
+    if (tokenMatches) return { ok: true, reason: "admin-token", email: null };
+    return { ok: false, reason: "forbidden-token-required", email: null };
+  }
 
   const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
   if (isAdminEmail(email)) return { ok: true, reason: "admin-email", email: (email || "").trim().toLowerCase() };
 
-  if (allowToken) {
-    const token = process.env.ADMIN_REINDEX_TOKEN;
-    if (token && request.headers.get("x-admin-token") === token) {
-      return { ok: true, reason: "admin-token", email: null };
-    }
-  }
+  if (tokenMatches) return { ok: true, reason: "admin-token", email: null };
 
-  if (allowNonProd && process.env.NODE_ENV !== "production") {
+  if (allowNonProd && !inProd) {
     return { ok: true, reason: "non-prod", email: null };
   }
 

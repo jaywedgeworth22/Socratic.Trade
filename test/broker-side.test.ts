@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { toBrokerSide, isShortIntent } from "../src/lib/broker-side";
+import { toBrokerSide, isShortIntent, isRejectedOrCanceledState } from "../src/lib/broker-side";
 import { toMcpOrder } from "../src/lib/robinhood";
 import type { EquityOrderInput, OrderSide } from "../src/lib/types";
 
@@ -33,6 +33,31 @@ describe("toBrokerSide — intent side → broker buy/sell", () => {
     expect(isShortIntent("cover")).toBe(true);
     expect(isShortIntent("buy")).toBe(false);
     expect(isShortIntent("sell")).toBe(false);
+  });
+});
+
+describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check", () => {
+  it("recognizes both spellings of canceled and other terminal-decline states", () => {
+    expect(isRejectedOrCanceledState("rejected")).toBe(true);
+    expect(isRejectedOrCanceledState("canceled")).toBe(true);
+    expect(isRejectedOrCanceledState("cancelled")).toBe(true);
+    expect(isRejectedOrCanceledState("failed")).toBe(true);
+    expect(isRejectedOrCanceledState("expired")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isRejectedOrCanceledState("REJECTED")).toBe(true);
+    expect(isRejectedOrCanceledState("Cancelled")).toBe(true);
+  });
+
+  it("does not flag accepted/filled/unknown states", () => {
+    expect(isRejectedOrCanceledState("filled")).toBe(false);
+    expect(isRejectedOrCanceledState("partially_filled")).toBe(false);
+    expect(isRejectedOrCanceledState("accepted")).toBe(false);
+    expect(isRejectedOrCanceledState("new")).toBe(false);
+    expect(isRejectedOrCanceledState("submitted")).toBe(false);
+    expect(isRejectedOrCanceledState(undefined)).toBe(false);
+    expect(isRejectedOrCanceledState(null)).toBe(false);
   });
 });
 

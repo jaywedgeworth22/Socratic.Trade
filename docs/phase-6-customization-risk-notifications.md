@@ -5,7 +5,7 @@
 - Add named strategy profiles.
 - Persist policy JSON, prompt text, scoring weights, and active profile selection.
 - Enforce deterministic risk rules in code.
-- Send webhook notifications when configured and audit all notification outcomes.
+- Send configured notifications and audit notification outcomes.
 
 ## Profiles
 
@@ -18,6 +18,8 @@ Each `StrategyProfile` stores:
 - active flag
 
 The existing global policy and prompt are migrated into a default profile.
+`strategy_profiles` carries a `user_id` column added via the `migrate()` backfill
+in `src/lib/db.ts` (same pattern as other per-user tables).
 
 ## Risk Rules
 
@@ -26,7 +28,7 @@ Policy enforcement includes:
 - sector exposure caps for buys
 - stop-loss protection for adding to losing positions
 - take-profit protection for adding to extended winners
-- optional trailing stop metadata for future broker reconciliation
+- trailing stop enforcement via the synthetic-stops engine (`src/lib/synthetic-stops.ts`)
 
 ## Notifications
 
@@ -38,11 +40,23 @@ Supported events:
 - pending_approval
 - kill_switch
 
-Webhook delivery is disabled unless a webhook URL is configured. No webhook means the event is audited as skipped, not failed.
+Multi-channel delivery is implemented (`src/lib/notify.ts`, ported from Atlas):
+phone push (ntfy / Pushover), webhook, email (Resend), and SMS (Twilio). Each
+channel is independently gated — disabled unless admin config is present AND the
+user has a matching target. No configured channel means the event is audited as
+skipped, not failed.
+
+Legacy strategy/feed events still call `sendNotification(...)` so the
+`notification_events` table and Activity feed semantics stay intact. That legacy
+path now also mirrors enabled events into direct delivery for email/push/SMS
+(and direct webhook only when a legacy policy webhook is not already configured),
+skipping `price_alert` and `provider_degraded` because those flows already call
+the direct dispatcher explicitly.
 
 ## Acceptance
 
 - Active profile controls policy and prompt used by strategy runs.
 - Dashboard can switch profiles and update profile-backed policy fields.
 - Risk-rule blocks include clear reasons.
-- Every notification attempt is stored in `notification_events` and mirrored in audit events.
+- Legacy strategy/feed notifications are stored in `notification_events`; direct
+  channel delivery is mirrored in audit events (`notify.sent` / `notify.error`).

@@ -1,24 +1,202 @@
+# The `verify` job below is the REQUIRED status check gating every merge to `main`
+# (enforced by the `main-protection` ruleset, not classic branch protection). It must be
+# green before a PR can merge; `gh pr merge <n> --squash --auto` lands the PR once it passes.
+#
+# Docs-only fast path (2026-07-04): `classify` is a cheap first job that inspects the PR
+# diff. When it touches ONLY documentation-class paths (*.md anywhere, docs/**), `verify`
+# skips lint/tsc/test/build and reports success immediately instead of paying for a full
+# install+build. The job is still NAMED `verify` and still reports a conclusion in both
+# modes — only the trigger (`paths:`/`paths-ignore:` on the workflow) would leave the
+# required check permanently pending on a skipped run, which is why this uses conditional
+# steps inside the job instead. Classification is deliberately conservative: anything other
+# than a pure-docs diff (code, configs, package.json, workflows, scripts, public/, etc.), or
+# any push/merge_group event where a clean base..head diff isn't straightforward, runs the
+# full gate unchanged.
 name: CI
 
 on:
   pull_request:
+  # Required for the GitHub merge queue: the `verify` check must run on the
+  # queue's temporary merge_group branch, or queued PRs hang forever.
+  merge_group:
   push:
     branches:
       - main
       - "agent/**"
+  # Manual re-kick lever. Pushes/PRs made through the Claude cloud git proxy
+  # generate NO pull_request/synchronize workflow runs (observed on PR #367/#798:
+  # zero check runs on any head after the proxy pushed), which strands the
+  # required `verify` check as "expected" forever and auto-merge never fires.
+  # Dispatching this workflow on the PR branch attaches a `verify` check run to
+  # the branch-head SHA, which satisfies the ruleset. Trigger from a cloud
+  # session with the GitHub MCP actions_run_trigger tool, or:
+  #   gh workflow run ci.yml --ref <branch>
+  workflow_dispatch:
+
+# Cancel a superseded run for the same branch/PR instead of letting it queue
+# behind newer pushes — the single trading-live-mac runner was serializing a
+# backlog of stale runs from repeated pushes to the same branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  verify:
+  classify:
+    # Cheap gate-shape job: figure out if this diff is documentation-only so `verify`
+    # can skip the expensive steps. Only `pull_request` gets the fast path — push/
+    # merge_group always fall through to the full run (see docs-only output default).
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      docs-only: ${{ steps.check.outputs.docs_only }}
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - name: Determine whether the diff is documentation-only
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull_request event (${{ github.event_name }}) — running full gate."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$base" ] || [ -z "$head" ]; then
+            echo "Missing base/head SHA — running full gate to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git merge-base "$base" "$head" >/dev/null 2>&1; then
+            echo "No merge-base found between base and head — running full gate to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # --no-renames is load-bearing (Codex review, PR #370): with rename detection
+          # active, `git diff --name-only` reports ONLY the destination path of a rename,
+          # so `git mv src/foo.ts docs/foo.md` would list just docs/foo.md and classify as
+          # docs-only while code was removed. --no-renames splits every rename into
+          # delete(old)+add(new) so BOTH paths get classified.
+          changed_files="$(git diff --name-only --no-renames "$base...$head" 2>/dev/null || true)"
+          if [ -z "$changed_files" ]; then
+            echo "Could not compute a changed-files list — running full gate to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$changed_files"
+
+          non_docs="$(printf '%s\n' "$changed_files" | grep -Ev '(^|/)[^/]+\.md$|^docs/' || true)"
+          if [ -z "$non_docs" ]; then
+            echo "All changed files are documentation-class (*.md or docs/**) — docs-only fast path applies."
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-documentation files changed — running full gate:"
+            echo "$non_docs"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    needs: classify
+    # `!cancelled()` (not `always()`, which would also run on cancelled/superseded runs and
+    # defeat the concurrency cancel-in-progress above) so verify still RUNS when classify
+    # fails — a skipped required check can fail open (Codex review, PR #370: GitHub treats a
+    # job skipped via a failed dependency as not blocking in some required-check paths).
+    # The first step below then fails verify closed explicitly.
+    if: ${{ !cancelled() }}
+    # Moved off the self-hosted runner (2026-07-01): this job is a generic
+    # lint/typecheck/test/build with no dependency on the production box, and
+    # was the main source of the runner queue bottleneck. Requires the repo's
+    # GitHub Actions spending limit to be > $0 (Settings → Billing → Plans and
+    # usage → Spending limit) — a $0 limit makes hosted jobs fail outright once
+    # free minutes run out, which would then block merges since this is a
+    # required status check. Revert to `[self-hosted, trading-live]` if that's
+    # ever a problem.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Fail closed if classify did not succeed
+        if: needs.classify.result != 'success'
+        run: |
+          echo "::error::classify job did not succeed (result: ${{ needs.classify.result }}) — failing verify closed; the docs-only fast path never fails open."
+          exit 1
+      - name: Refuse untrusted PR source
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::error::Fork PRs cannot run this job (it installs deps with a private-repo deploy key secret)."
+            exit 1
+          fi
+          actor="${{ github.actor }}"
+          if printf '%s' "$actor" | grep -Eq '\[bot\]$'; then
+            case "$actor" in
+              'cursor[bot]'|'dependabot[bot]')
+                echo "Trusted same-repo bot: $actor"
+                ;;
+              *)
+                echo "::error::Bot PRs cannot run package installs with this secret (untrusted bot: $actor)."
+                exit 1
+                ;;
+            esac
+          fi
+      - name: Docs-only short-circuit
+        if: needs.classify.outputs.docs-only == 'true'
+        run: echo "docs-only diff — gate skipped by path filter"
+      - uses: actions/checkout@v4
+        if: needs.classify.outputs.docs-only != 'true'
       - uses: actions/setup-node@v4
+        if: needs.classify.outputs.docs-only != 'true'
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm test
-      - run: npm run build
+      # Split restore/save (2026-07-04, cache-hygiene follow-up): a plain `actions/cache@v4`
+      # step saves a NEW ~340MB entry scoped to the CURRENT ref on every run, including every
+      # PR push — those PR-scoped entries outlive the PR (GitHub only evicts on the repo's
+      # 10 GB total cap via oldest-first LRU) and were the actual driver of repeated
+      # near-cap-eviction thrash, not job minutes. PR/merge_group runs now ONLY restore
+      # (read-only, falls back through restore-keys to main's latest cache); only pushes to
+      # `main` save a new entry, so the cache population is a single rolling per-branch
+      # lineage instead of one throwaway entry per PR push. `cleanup-caches.yml` deletes any
+      # stray PR-ref entries on PR close and prunes older `main` entries as a backstop.
+      - name: Restore Next.js build cache
+        if: needs.classify.outputs.docs-only != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
+      - name: Install dependencies
+        if: needs.classify.outputs.docs-only != 'true'
+        run: npm ci
+      - if: needs.classify.outputs.docs-only != 'true'
+        run: npm run lint
+      - if: needs.classify.outputs.docs-only != 'true'
+        run: npx tsc --noEmit
+      - if: needs.classify.outputs.docs-only != 'true'
+        run: npm test
+      - if: needs.classify.outputs.docs-only != 'true'
+        run: npm run build
+      - name: Save Next.js build cache (main only)
+        # Only `main` pushes persist a new cache entry — PR/merge_group runs restore from
+        # the latest main entry above but never write their own, so cache storage grows by
+        # one rolling entry per main push (superseding, not stacking) instead of one entry
+        # per PR push that then lingers until the repo-wide 10 GB cap evicts it.
+        if: needs.classify.outputs.docs-only != 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'app/**') }}

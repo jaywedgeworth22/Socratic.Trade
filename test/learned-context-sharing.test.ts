@@ -48,9 +48,10 @@ function makeFactRow(overrides: Partial<LearnedContextRow>): LearnedContextRow {
 // ── Case 1: contributeShared ON/OFF controls scope of written fact row ────────
 
 describe("Case 1 — contributeShared flag controls scope on write", () => {
-  it("contributeShared OFF (default) → fact row is scope='private'", async () => {
+  it("contributeShared OFF → fact row is scope='private'", async () => {
     const userId = "share-write-off-user";
-    // Default: contributeShared is false — no explicit setLearnedContextSharing call needed.
+    // contributeShared now defaults ON, so opt OUT explicitly to exercise the private path.
+    setLearnedContextSharing(userId, { contributeShared: false });
     const r = await ingestLearned(
       userId,
       { kind: "decision", subject: "fact:MSFT", value: "Microsoft has a dominant cloud platform." },
@@ -237,10 +238,10 @@ describe("Case 4 — risk and strategy-directive tiers are never written as shar
 // ── Settings helpers ──────────────────────────────────────────────────────────
 
 describe("getLearnedContextSharing / setLearnedContextSharing helpers", () => {
-  it("defaults: includeShared=true, contributeShared=false", () => {
+  it("defaults: includeShared=true, contributeShared=true", () => {
     const prefs = getLearnedContextSharing("prefs-fresh-user");
     expect(prefs.includeShared).toBe(true);
-    expect(prefs.contributeShared).toBe(false);
+    expect(prefs.contributeShared).toBe(true);
   });
 
   it("can set and retrieve individual flags independently", () => {

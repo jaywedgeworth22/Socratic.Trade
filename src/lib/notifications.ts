@@ -1,7 +1,9 @@
-import { audit, getPolicy, insertNotificationEvent } from "./db";
+import { audit, getNotifyPrefs, getPolicy, insertNotificationEvent } from "./db";
+import { notify } from "./notify";
 import type { NotificationEvent, NotificationEventType, TradingPolicy } from "./types";
 
 type Fetcher = typeof fetch;
+const DIRECT_NOTIFY_ALREADY_SENT = new Set<NotificationEventType>(["price_alert", "provider_degraded"]);
 
 export async function sendNotification(
   input: {
@@ -17,11 +19,13 @@ export async function sendNotification(
   const webhookUrl = settings.webhookUrl?.trim();
 
   if (!settings.enabledEvents.includes(input.type)) {
-    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId);
+    return record(input, "skipped", webhookUrl, "Notification type is disabled.", userId, policy.connectedAccountId);
   }
 
+  await sendDirectNotification(input, userId, { skipWebhook: !!webhookUrl });
+
   if (!webhookUrl) {
-    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId);
+    return record(input, "skipped", undefined, "Notifications Webhook Not Configured", userId, policy.connectedAccountId);
   }
 
   const isDiscord = webhookUrl.includes("discord.com/api/webhooks") || webhookUrl.includes("discordapp.com/api/webhooks");
@@ -47,13 +51,103 @@ export async function sendNotification(
     });
     clearTimeout(timeout);
     if (!response.ok) {
-      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId);
+      return record(input, "failed", webhookUrl, `Webhook returned HTTP ${response.status}.`, userId, policy.connectedAccountId);
     }
-    return record(input, "sent", webhookUrl, undefined, userId);
+    return record(input, "sent", webhookUrl, undefined, userId, policy.connectedAccountId);
   } catch (error) {
     clearTimeout(timeout);
-    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId);
+    return record(input, "failed", webhookUrl, error instanceof Error ? error.message : "Webhook request failed.", userId, policy.connectedAccountId);
   }
+}
+
+async function sendDirectNotification(
+  input: { type: NotificationEventType; title: string; payload: unknown },
+  userId: string,
+  options: { skipWebhook?: boolean } = {}
+): Promise<void> {
+  if (DIRECT_NOTIFY_ALREADY_SENT.has(input.type)) return;
+  try {
+    const prefs = options.skipWebhook
+      ? (() => {
+          const current = getNotifyPrefs(userId);
+          return { ...current, channels: current.channels.filter((channel) => channel !== "webhook") };
+        })()
+      : undefined;
+    await notify(
+      userId,
+      {
+        title: input.title,
+        body: directNotificationBody(input),
+        kind: input.type,
+        data: input.payload
+      },
+      prefs ? { prefs } : {}
+    );
+  } catch (error) {
+    audit(
+      "notify.bridge.error",
+      {
+        userId,
+        type: input.type,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      userId
+    );
+  }
+}
+
+function directNotificationBody(input: { type: NotificationEventType; title: string; payload: unknown }): string {
+  const { type } = input;
+  const payload = asRecord(input.payload);
+  switch (type) {
+    case "fill": {
+      const fill = asRecord(payload.fill);
+      if (!fill) return input.title;
+      const side = fill.side ? String(fill.side).toUpperCase() : "ORDER";
+      const status = fill.status ? ` ${String(fill.status)}` : "";
+      const quantity = fill.quantity != null ? ` ${fill.quantity}` : "";
+      const symbol = fill.symbol ? ` ${fill.symbol}` : "";
+      const notional = Number.isFinite(Number(fill.notional)) ? ` ($${Number(fill.notional).toFixed(2)})` : "";
+      return `${side}${quantity}${symbol}${status}${notional}`.trim();
+    }
+    case "block": {
+      const decision = asRecord(payload.decision);
+      const rawReasons = Array.isArray(decision?.reasons) ? decision.reasons : payload.reason ? [payload.reason] : [];
+      const reasons = rawReasons.map(String);
+      return reasons.length > 0 ? reasons.join("\n") : input.title;
+    }
+    case "pending_approval": {
+      const proposal = asRecord(payload.proposal);
+      if (!proposal) return input.title;
+      const side = proposal.side ? String(proposal.side).toUpperCase() : "ORDER";
+      const symbol = proposal.symbol ? ` ${proposal.symbol}` : "";
+      return `Approval needed for ${side}${symbol}`.trim();
+    }
+    case "kill_switch":
+    case "run_failed":
+      return String(payload.summary ?? input.title);
+    case "limit_order_stale":
+      return String(payload.summary ?? input.title);
+    case "proposal_withdrawn":
+      return String(payload.reason ?? input.title);
+    case "budget_alert": {
+      const provider = payload.provider ? String(payload.provider) : "provider";
+      const operation = payload.operation ? String(payload.operation) : "usage check";
+      const limitName = payload.limitName ? String(payload.limitName) : "usage limit";
+      const unit = payload.unit ? ` ${String(payload.unit)}` : "";
+      const used = Number.isFinite(Number(payload.used)) ? Number(payload.used).toLocaleString("en-US") : undefined;
+      const limit = Number.isFinite(Number(payload.limit)) ? Number(payload.limit).toLocaleString("en-US") : undefined;
+      const recommendation = payload.recommendation ? `\nAction: ${String(payload.recommendation)}` : "";
+      const usage = used || limit ? `\nUsage: ${used ?? "unknown"}${unit}${limit ? ` of ${limit}${unit}` : ""}` : "";
+      return `${provider} hit ${limitName} during ${operation}.${usage}${recommendation}`;
+    }
+    default:
+      return input.title;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function formatDiscordPayload(input: {
@@ -176,6 +270,46 @@ function formatDiscordPayload(input: {
       }
       break;
     }
+    case "limit_order_stale": {
+      color = 15105570; // Orange
+      const order = payload?.order;
+      description = payload?.summary ?? "Limit order is still working after the configured threshold.";
+      if (order) {
+        fields.push(
+          { name: "Symbol", value: String(order.symbol), inline: true },
+          { name: "Side", value: String(order.side).toUpperCase(), inline: true },
+          { name: "State", value: String(order.state), inline: true }
+        );
+        if (payload?.remainingQuantity !== undefined) {
+          fields.push({ name: "Remaining", value: String(payload.remainingQuantity), inline: true });
+        }
+        if (payload?.ageMinutes !== undefined) {
+          fields.push({ name: "Age", value: `${payload.ageMinutes} min`, inline: true });
+        }
+      }
+      break;
+    }
+    case "budget_alert": {
+      color = 15105570; // Orange
+      description = payload?.recommendation ?? "A provider usage cap, quota, or budget threshold was reached.";
+      fields.push(
+        { name: "Provider", value: String(payload?.provider ?? "Unknown"), inline: true },
+        { name: "Limit", value: String(payload?.limitName ?? "Usage limit"), inline: true },
+        { name: "Operation", value: String(payload?.operation ?? "Unknown"), inline: true }
+      );
+      if (payload?.used !== undefined || payload?.limit !== undefined) {
+        const unit = payload?.unit ? ` ${String(payload.unit)}` : "";
+        fields.push({
+          name: "Usage",
+          value: `${payload?.used ?? "unknown"}${unit}${payload?.limit !== undefined ? ` / ${payload.limit}${unit}` : ""}`,
+          inline: true
+        });
+      }
+      if (payload?.skipped !== undefined) {
+        fields.push({ name: "Skipped", value: String(payload.skipped), inline: true });
+      }
+      break;
+    }
   }
 
   return {
@@ -196,10 +330,12 @@ function record(
   status: NotificationEvent["status"],
   webhookUrl?: string,
   error?: string,
-  userId: string = "local"
+  userId: string = "local",
+  connectedAccountId?: string
 ): NotificationEvent {
   const event = insertNotificationEvent({
     userId,
+    connectedAccountId,
     type: input.type,
     title: input.title,
     status,
@@ -207,7 +343,7 @@ function record(
     payload: input.payload,
     error
   });
-  audit("notification", event, userId);
+  audit("notification", event, userId, connectedAccountId);
   return event;
 }
 

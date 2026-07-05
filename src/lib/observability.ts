@@ -1,9 +1,12 @@
 import { redactForTelemetry, safeErrorMessage } from "./telemetry-sanitize";
+import { assertWithinLlmBudget } from "./llm-budget";
 
 type LlmGenerationOptions<T> = {
   name: string;
   model: string;
   userId?: string;
+  /** The targeted account, so the budget backstop resolves THAT account's ceiling (not the active one). */
+  connectedAccountId?: string;
   sessionId?: string;
   input?: unknown;
   metadata?: Record<string, unknown>;
@@ -72,6 +75,12 @@ export async function startObservability(): Promise<void> {
 }
 
 export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run: () => Promise<T>): Promise<T> {
+  // Durable budget backstop: EVERY LLM generation flows through here (bull, bear, red-team,
+  // revalidation, reflection, tuning, and any future one), so throwing when the user is over their
+  // daily budget guarantees no model spend slips past the ceiling — even from a call site that forgot
+  // its own gate. No-op when no ceiling is configured (default). Runs BEFORE the Langfuse short-circuit
+  // so it applies whether or not tracing is enabled.
+  if (options.userId) assertWithinLlmBudget(options.userId, options.connectedAccountId);
   if (!langfuseConfigured()) return run();
 
   let attemptedRun = false;
@@ -138,6 +147,47 @@ export async function withLlmGeneration<T>(options: LlmGenerationOptions<T>, run
     if (attemptedRun) throw error;
     warnOnce(`Langfuse manual tracing failed: ${safeErrorMessage(error)}`);
     return run();
+  }
+}
+
+/**
+ * Emit a lightweight, standalone Langfuse observation for a non-LLM decision point (e.g. a Bear
+ * veto or a rationale diversity-collapse) so it's queryable alongside the traced generations. This
+ * is a fire-and-forget span with metadata/tags — no model input/output. It is a hard no-op when
+ * Langfuse is not configured (`langfuseConfigured()` is false), so it never adds runtime cost or a
+ * dependency when Langfuse isn't set up. Errors are swallowed (warn-once) so telemetry can never break a run.
+ */
+export async function recordDecisionObservation(options: {
+  name: string;
+  userId?: string;
+  metadata?: Record<string, unknown>;
+  tags?: string[];
+}): Promise<void> {
+  if (!langfuseConfigured()) return;
+  try {
+    const { propagateAttributes, startObservation } = await runtimeImport<LangfuseTracing>("@langfuse/tracing");
+    await propagateAttributes(
+      {
+        userId: options.userId,
+        traceName: options.name,
+        tags: options.tags,
+        metadata: compactTraceMetadata(options.metadata)
+      },
+      async () => {
+        try {
+          const observation = startObservation(
+            options.name,
+            { metadata: redactForTelemetry(options.metadata) as Record<string, unknown> | undefined },
+            { asType: "event" }
+          );
+          observation.end();
+        } catch (error) {
+          warnOnce(`Langfuse decision observation failed: ${safeErrorMessage(error)}`);
+        }
+      }
+    );
+  } catch (error) {
+    warnOnce(`Langfuse decision observation failed: ${safeErrorMessage(error)}`);
   }
 }
 

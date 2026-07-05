@@ -105,7 +105,7 @@ export function hasDataPoolConsent(userId: string = "local"): boolean {
 // ── Learned-context sharing preferences ──────────────────────────────────────
 // Two independent opt-in/out flags stored as user_settings:
 //   includeShared   (default TRUE)  — the user benefits from the shared fact pool.
-//   contributeShared (default FALSE) — nothing is shared without explicit opt-in.
+//   contributeShared (default TRUE)  — the user contributes their own fact-tier learnings back.
 //
 // Only FACT-tier learned_context rows are ever eligible to become scope='shared'.
 // Risk / strategy-directive rows never reach this path (they go to the pending queue).
@@ -113,7 +113,7 @@ export function hasDataPoolConsent(userId: string = "local"): boolean {
 export interface LearnedContextSharingPrefs {
   /** Read shared facts written by other opted-in users. Default true. */
   includeShared: boolean;
-  /** Contribute this user's own learned facts to the shared pool. Default false. */
+  /** Contribute this user's own learned facts to the shared pool. Default true. */
   contributeShared: boolean;
 }
 
@@ -122,7 +122,7 @@ const LEARNED_CONTEXT_SHARING_KEY = "learned_context_sharing";
 export function getLearnedContextSharing(userId: string): LearnedContextSharingPrefs {
   return getUserSetting<LearnedContextSharingPrefs>(userId, LEARNED_CONTEXT_SHARING_KEY, {
     includeShared: true,
-    contributeShared: false
+    contributeShared: true
   });
 }
 
@@ -239,4 +239,20 @@ export function fulfillMarketDataDemand(input: {
 
 export function clearMarketDataDemandsForTests(): void {
   getDb().prepare("DELETE FROM market_data_demands").run();
+}
+
+// ── Per-user auto-resume-on-boot ─────────────────────────────────────────────
+// Replaces the blunt AUTONOMY_RESUME_ON_BOOT env var with a per-user toggle
+// stored in user_settings. When enabled, the user's accounts auto-resume on
+// server boot; when disabled (default), they stay halted.
+
+const AUTO_RESUME_ON_BOOT_KEY = "auto_resume_on_boot";
+
+export function getAutoResumeOnBoot(userId: string): boolean {
+  return getUserSetting<boolean>(userId, AUTO_RESUME_ON_BOOT_KEY, false);
+}
+
+export function setAutoResumeOnBoot(userId: string, enabled: boolean): void {
+  setUserSetting(userId, AUTO_RESUME_ON_BOOT_KEY, enabled);
+  audit("auto_resume_on_boot", { userId, enabled }, userId);
 }

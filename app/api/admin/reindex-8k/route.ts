@@ -8,9 +8,11 @@ export const dynamic = "force-dynamic";
 
 // Admin/diagnostic route to (re)embed the persisted SEC 8-K dataset into Pinecone and report
 // vector-store stats. This backfills the index after the Voyage-billing 429 that left it empty.
-// Admin-gated: verified ADMIN_USER_EMAILS / primary operator, or x-admin-token, or non-production.
+// Admin-gated via the shared requireAdmin gate. requireTokenInProd: in production the x-admin-token
+// is mandatory (a synthetic/injected admin email from an auth-unconfigured deploy must not trigger a
+// paid Voyage reindex); non-production stays open for dev/ops ergonomics.
 export async function GET(request: Request) {
-  const denied = requireAdmin(request);
+  const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
   const dataset = getEightKDataset();
   const stats = await getVectorStoreStats(resolveRequestUserId(request));
@@ -23,7 +25,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = requireAdmin(request);
+  const denied = requireAdmin(request, { requireTokenInProd: true });
   if (denied) return denied;
   const userId = resolveRequestUserId(request);
   let limit = Number.POSITIVE_INFINITY;

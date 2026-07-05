@@ -4,19 +4,32 @@ import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { evaluateStop, runSyntheticStopMonitor } from "../src/lib/synthetic-stops";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { listFillEvents } from "../src/lib/db";
+import { listFillEvents, upsertConnectedAccount } from "../src/lib/db";
 import type { TradingPolicy } from "../src/lib/types";
 
 const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
   quotes: {} as Record<string, { price?: number }>,
-  placed: [] as Array<{ side: string; quantity: number; symbol: string }>
+  placed: [] as Array<{ side: string; quantity: number; symbol: string }>,
+  orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string }>
 }));
 
 vi.mock("../src/lib/broker", () => ({
   getBrokerGateway: () => ({
+    getPortfolio: async () => ({
+      accountNumber: "TEST",
+      totalMarketValue: 10000,
+      buyingPower: 5000,
+      equityMarketValue: 10000,
+      optionMarketValue: 0,
+      cash: 5000
+    }),
     getEquityPositions: async () => broker.positions,
+    getEquityOrders: async () => broker.orders,
     getEquityQuotes: async () => broker.quotes,
+    getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
+      symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
+    ),
     placeEquityOrder: async (order: { side: string; quantity: number; symbol: string }) => {
       broker.placed.push(order);
       return { orderId: "ord-1" };
@@ -70,21 +83,40 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     return {
       ...DEFAULT_POLICY,
       accountNumber: account,
-      paperMode: true,
+      systemState: "active",
       shortSellingEnabled: true,
+      additionalSymbols: ["AAPL", "TSLA", "NVDA"],
       riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 }
     };
+  }
+
+  // An account is an account: runSyntheticStopMonitor derives its execution mode from the real
+  // connected account's own `environment` (getActiveConnectedAccount) — there is no local-simulation
+  // fallback. getBrokerGateway itself is mocked above, but the account lookup is real DB state, so
+  // every test needs a matching connected TEST-BROKER account (test infrastructure) wired up first.
+  function connectTestAccount(accountNumber: string, environment: "paper" | "live" = "paper"): void {
+    upsertConnectedAccount({
+      id: `acct-${accountNumber}`,
+      userId: "local",
+      broker: "test",
+      environment,
+      accountNumber,
+      label: accountNumber,
+      isActive: true
+    });
   }
 
   beforeEach(() => {
     broker.positions = [];
     broker.quotes = {};
     broker.placed = [];
+    broker.orders = [];
   });
 
   it("auto-registers and fires a SELL to exit a long when the trail breaches (running)", async () => {
     broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
     broker.quotes = { AAPL: { price: 90 } }; // extreme 100, trail 5% → trigger ≤95; 90 breaches
+    connectTestAccount("SYN-LONG");
     const result = await runSyntheticStopMonitor("local", policyFor("SYN-LONG"), true);
     expect(result.exited).toBe(1);
     expect(broker.placed).toHaveLength(1);
@@ -95,6 +127,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
   it("fires a COVER to exit a short when the trail breaches (running)", async () => {
     broker.positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -500 }];
     broker.quotes = { TSLA: { price: 110 } }; // short extreme 100, trail 5% → trigger ≥105; 110 breaches
+    connectTestAccount("SYN-SHORT");
     const result = await runSyntheticStopMonitor("local", policyFor("SYN-SHORT"), true);
     expect(result.exited).toBe(1);
     expect(broker.placed).toHaveLength(1);
@@ -105,16 +138,41 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
   it("suppresses the exit order when not running (would-trigger only)", async () => {
     broker.positions = [{ symbol: "TSLA", quantity: -5, averageCost: 100, marketValue: -500 }];
     broker.quotes = { TSLA: { price: 110 } };
+    connectTestAccount("SYN-SUPPRESS");
     const result = await runSyntheticStopMonitor("local", policyFor("SYN-SUPPRESS"), false);
     expect(result.triggered).toBe(1);
     expect(result.exited).toBe(0);
     expect(broker.placed).toHaveLength(0);
   });
 
+  it("does NOT auto-register a synthetic stop when a broker-held stop already rests for the symbol", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } }; // would breach a 5% trail off extreme 100 IF registered
+    broker.orders = [{ id: "oco-stop-1", symbol: "AAPL", side: "sell", type: "stop", state: "new" }];
+    connectTestAccount("SYN-BRACKET");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-BRACKET"), true);
+    // The broker bracket owns the exit — no synthetic stop registered, so nothing evaluated/fired.
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+  });
+
+  it("still auto-registers when the only broker stop for the symbol is terminal (canceled)", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    broker.orders = [{ id: "dead", symbol: "AAPL", side: "sell", type: "stop", state: "canceled" }];
+    connectTestAccount("SYN-CANCELED");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-CANCELED"), true);
+    // A canceled broker stop no longer protects → the synthetic must take over and fire.
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+  });
+
   it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {
     broker.positions = [{ symbol: "NVDA", quantity: 10, averageCost: 100, marketValue: 1000 }];
     broker.quotes = { NVDA: { price: 90 } }; // breaches a 5% trail off extreme 100
-    const result = await runSyntheticStopMonitor("local", { ...policyFor("SYN-LIVE"), paperMode: false }, true);
+    connectTestAccount("SYN-LIVE", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-LIVE"), true);
     expect(result.exited).toBe(1);
     const fills = listFillEvents("SYN-LIVE", "live", 10, "local");
     expect(fills).toHaveLength(1);

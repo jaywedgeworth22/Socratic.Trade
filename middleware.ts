@@ -1,59 +1,160 @@
-// Edge auth gate (Q3). Runs before every non-static request. It establishes a TRUSTED identity and
-// forwards it as `x-authenticated-user-email`, while stripping any client-supplied identity hints so the
-// old IDOR (spoofable `x-user-id` / `?userId`) is closed. Route handlers read the trusted header via
-// `resolveRequestUserId` (src/lib/request-user.ts).
+// Edge auth gate (Phase-11 M6). Runs before every non-static request.
 //
-// Identity sources (in order):
-//   1. Cloudflare Access — the verified `Cf-Access-Authenticated-User-Email` header (you are behind CF
-//      Access with an email allowlist + OTP; CF sets these headers and strips client-supplied copies).
-//      Enable with CF_ACCESS_TRUST_EMAIL_HEADER=1.
-//   2. (next slice) Auth.js / Google session.
-//   3. Dev/test only (NOT production): fall back to the primary user so local work needs no gateway.
+// Identity sources (first match wins):
+//   1. Cloudflare Access header (when CF_ACCESS_TRUST_EMAIL_HEADER=1).
+//   2. Auth.js v5 session JWT cookie — verified with the same edge-safe HS256
+//      helper configured in src/lib/auth/auth.ts.
+//   3. Dev/local fallback to PRIMARY_USER_EMAIL — ONLY when auth is NOT configured.
 //
-// This file must stay crypto-free / edge-safe — it does string-only allowlist checks and defers the
-// email→userId hashing to the Node runtime (src/lib/auth/identity.ts).
+// Fail-closed signal ("authConfigured"):
+//   authConfigured = !!AUTH_SECRET || !!CF_ACCESS_TRUST_EMAIL_HEADER
+//
+// This deliberately does NOT use `process.env.NODE_ENV === "production"` because
+// Next.js inlines NODE_ENV at BUILD time in the edge runtime — so at runtime in the
+// live deployment isProd is always false, causing every request to fail OPEN to the
+// primary-email fallback (the IDOR bug this rework closes).
+//
+// When authConfigured=true and no verified identity is found → FAIL CLOSED (401 for
+// /api/*, redirect to /login for pages). When authConfigured=false (local dev
+// / tests with no auth env) → fall back to PRIMARY_EMAIL, preserving existing behavior.
+// Cloudflare Tunnel may still front the app, but Cloudflare Access email headers are
+// not trusted as an app login source.
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { stripClientIdentityHeaders } from "./src/lib/auth/strip-identity";
 import { checkSameOrigin } from "./src/lib/auth/csrf";
+import { getSessionEmail } from "./src/lib/auth/session-edge";
 
 const PRIMARY_EMAIL = (process.env.PRIMARY_USER_EMAIL || "mail@jays.services").trim().toLowerCase();
+// The primary operator's aliases — additional addresses that map to the same primary account. Kept in sync
+// with src/lib/auth/identity.ts (which does the email→userId mapping in the Node runtime).
+const PRIMARY_SET = new Set(
+  [PRIMARY_EMAIL, ...(process.env.PRIMARY_USER_EMAIL_ALIASES || "").split(",")]
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
 const ALLOWED = (process.env.ALLOWED_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
 // Paths that never require a user identity.
-const PUBLIC_PREFIXES = ["/api/health", "/api/webhooks", "/access-denied"];
+const PUBLIC_PREFIXES = [
+  "/api/health",
+  "/api/ops",
+  "/api/webhooks",
+  "/access-denied",
+  "/login",
+  "/logout",
+  "/welcome",
+  "/strategy",
+  "/how-it-works",
+  "/design/socratic-trade"
+];
+const AUTHJS_PUBLIC_PATHS = new Set([
+  "/api/auth/csrf",
+  "/api/auth/error",
+  "/api/auth/providers",
+  "/api/auth/robinhood/callback",
+  "/api/auth/session",
+  "/api/auth/signin",
+  "/api/auth/signout"
+]);
 
-function isEmailAllowed(email: string): boolean {
-  if (email === PRIMARY_EMAIL) return true;
-  if (ALLOWED.length === 0) return true; // defer to the upstream gateway (Cloudflare Access)
+function isPublicPath(pathname: string): boolean {
+  if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) return true;
+  if (AUTHJS_PUBLIC_PATHS.has(pathname)) return true;
+  return pathname.startsWith("/api/auth/callback/") || pathname.startsWith("/api/auth/signin/");
+}
+
+// --- Security response headers -------------------------------------------------
+//
+// Applied to EVERY response the middleware returns (allowed, 401, 403, redirects). X-Frame-Options
+// and Referrer-Policy are unconditional and safe. CSP is DEFAULT-OFF: it only emits when CSP_ENABLED
+// is truthy, and defaults to report-only (Content-Security-Policy-Report-Only) unless CSP_REPORT_ONLY
+// is explicitly falsy — so it can never block the dashboard's inline/eval/Next resources by default.
+// A conservative starter policy is used; tighten it once report-only telemetry confirms no breakage.
+function isFlagOn(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function isFlagExplicitlyOff(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === "0" || v === "false" || v === "no" || v === "off";
+}
+
+/** The CSP directive string. Kept intentionally permissive (unsafe-inline/eval, https:) because Next.js
+ *  ships inline bootstrap scripts and styled-jsx; this is a starting point for report-only telemetry,
+ *  NOT a hardened enforcing policy. Override via CSP_POLICY when you have a tightened one. */
+function cspPolicy(): string {
+  const custom = process.env.CSP_POLICY?.trim();
+  if (custom) return custom;
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join("; ");
+}
+
+/** Set the standard security headers on `res` and return it. Mutates in place for convenience.
+ *  Exported so tests can assert the header set without driving the full edge middleware. */
+export function withSecurityHeaders(res: NextResponse): NextResponse {
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (isFlagOn(process.env.CSP_ENABLED)) {
+    // Report-only by default; enforcing only when CSP_REPORT_ONLY is explicitly turned off.
+    const reportOnly = !isFlagExplicitlyOff(process.env.CSP_REPORT_ONLY);
+    const header = reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
+    res.headers.set(header, cspPolicy());
+  }
+  return res;
+}
+
+// Auth is "configured" (armed) when at least one real identity source is active.
+// This is the reliable fail-closed signal — it does not depend on NODE_ENV.
+function isAuthConfigured(): boolean {
+  return !!(process.env.AUTH_SECRET || process.env.CF_ACCESS_TRUST_EMAIL_HEADER);
+}
+
+/** Extract the verified email from a Cloudflare Access request header, if present. */
+function getCfEmail(req: NextRequest): string | null {
+  if (!process.env.CF_ACCESS_TRUST_EMAIL_HEADER) return null;
+  const email = req.headers.get("cf-access-authenticated-user-email");
+  return email ? email.trim().toLowerCase() : null;
+}
+
+function isEmailAllowed(email: string, fromCf: boolean): boolean {
+  if (PRIMARY_SET.has(email)) return true; // primary operator + aliases
+  // Empty ALLOWED_EMAILS defers to the upstream CF Access gate ONLY when CF actually
+  // provided the identity for this request. When the identity came from an Auth.js session
+  // cookie (even if CF_ACCESS_TRUST_EMAIL_HEADER is configured), empty means "only the
+  // primary user" — otherwise any OAuth account bypassing CF can reach the origin.
+  if (ALLOWED.length === 0) return fromCf;
   return ALLOWED.includes(email);
 }
 
-function authenticatedEmail(req: NextRequest): string | null {
-  if (process.env.CF_ACCESS_TRUST_EMAIL_HEADER === "1") {
-    const email = req.headers.get("cf-access-authenticated-user-email");
-    if (email && email.includes("@")) return email.trim().toLowerCase();
-  }
-  return null;
-}
-
-export function middleware(req: NextRequest): NextResponse {
+export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
-  if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    // Public (no auth) — but still strip client-supplied identity headers so an external caller
-    // (e.g. a webhook sender) can never hand a forged identity to a handler that reads it.
+
+  if (isPublicPath(pathname)) {
+    // Public (no auth) — but still strip client-supplied identity headers so a forged
+    // identity can never reach a handler that reads it.
     const headers = stripClientIdentityHeaders(new Headers(req.headers));
-    return NextResponse.next({ request: { headers } });
+    return withSecurityHeaders(NextResponse.next({ request: { headers } }));
   }
 
-  // CSRF: reject cross-site state-changing requests to /api/* (PUBLIC_PREFIXES already returned above, so
-  // webhooks — which use their own shared-secret auth and carry no browser Origin — are unaffected). Uses a
-  // same-origin assertion (Sec-Fetch-Site / Origin / Referer) appropriate for this app's header-based
-  // identity; fail-open for non-browser callers, fail-closed only on a proven cross-origin browser request.
+  // CSRF: reject cross-site state-changing requests to /api/*
+  // (PUBLIC_PREFIXES already returned above, so webhooks are unaffected).
   if (pathname.startsWith("/api/")) {
     const csrf = checkSameOrigin({
       method: req.method,
@@ -65,40 +166,65 @@ export function middleware(req: NextRequest): NextResponse {
       host: req.headers.get("host")
     });
     if (!csrf.ok) {
-      return new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
-        status: 403,
-        headers: { "content-type": "application/json" }
-      });
+      return withSecurityHeaders(
+        new NextResponse(JSON.stringify({ ok: false, error: "Cross-site request blocked (CSRF)." }), {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        })
+      );
     }
   }
 
-  const isProd = process.env.NODE_ENV === "production";
-  const email = authenticatedEmail(req);
+  // --- Identity resolution ---
 
+  // Track the identity source so isEmailAllowed can distinguish CF-provided identities
+  // (where empty ALLOWED_EMAILS defers to CF's own allowlist) from Auth.js session
+  // identities (where empty ALLOWED_EMAILS means "only the primary user").
   let trustedEmail: string | null = null;
-  if (email) {
-    if (!isEmailAllowed(email)) {
-      // Authenticated upstream, but not permitted in this app.
-      return pathname.startsWith("/api/")
-        ? new NextResponse("Forbidden", { status: 403 })
-        : NextResponse.redirect(new URL("/access-denied", req.url));
-    }
-    trustedEmail = email;
-  } else if (!isProd) {
-    trustedEmail = PRIMARY_EMAIL; // dev/local convenience → primary user ("local")
+  let fromCf = false;
+
+  // Source 1: Cloudflare Access header.
+  const cfEmail = getCfEmail(req);
+  if (cfEmail) {
+    trustedEmail = cfEmail;
+    fromCf = true;
   }
 
-  if (!trustedEmail) {
-    // No verified identity in production → fail closed.
-    return pathname.startsWith("/api/")
-      ? new NextResponse("Unauthorized", { status: 401 })
-      : NextResponse.redirect(new URL("/access-denied", req.url));
+  // Source 2: Auth.js v5 session JWT (verified with the shared edge-safe helper).
+  if (!trustedEmail && process.env.AUTH_SECRET) {
+    const cookieHeader = req.headers.get("cookie");
+    trustedEmail = await getSessionEmail(cookieHeader, process.env.AUTH_SECRET);
+  }
+
+  // Source 3: Dev/local fallback — ONLY when auth is NOT configured.
+  if (!trustedEmail && !isAuthConfigured()) {
+    trustedEmail = PRIMARY_EMAIL;
+  }
+
+  // --- Authorization ---
+
+  if (trustedEmail) {
+    if (!isEmailAllowed(trustedEmail, fromCf)) {
+      // Authenticated upstream, but not permitted in this app.
+      return withSecurityHeaders(
+        pathname.startsWith("/api/")
+          ? new NextResponse("Forbidden", { status: 403 })
+          : NextResponse.redirect(new URL("/access-denied", req.url))
+      );
+    }
+  } else {
+    // No verified identity and auth is configured (or armed) → FAIL CLOSED.
+    return withSecurityHeaders(
+      pathname.startsWith("/api/")
+        ? new NextResponse("Unauthorized", { status: 401 })
+        : NextResponse.redirect(new URL("/login", req.url))
+    );
   }
 
   // Strip any spoofable client-supplied identity hints, then forward the VERIFIED identity.
   const headers = stripClientIdentityHeaders(new Headers(req.headers));
   headers.set("x-authenticated-user-email", trustedEmail);
-  return NextResponse.next({ request: { headers } });
+  return withSecurityHeaders(NextResponse.next({ request: { headers } }));
 }
 
 export const config = {

@@ -9,7 +9,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, Send, ShieldCheck, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import type { ExecutionState } from "@/lib/execution-mode";
+import { humanizeLlmError } from "@/lib/llm-errors";
+import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
 import { Button, Card, Chip, EmptyState, inputClass } from "./primitives";
+import { Markdown } from "./markdown";
+import { ModelPicker } from "./model-picker";
+import { CHAT_MODEL_GROUPS, CUSTOM_MODEL_ID_SEED, DEFAULT_LLM_MODEL } from "./llm-model-catalog";
 import { cn } from "./cn";
 
 interface ChatDraft {
@@ -37,11 +42,13 @@ interface ChatReply {
   draft: ChatDraft | null;
   citations: Citation[];
   intent: string;
+  model?: string;
 }
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  model?: string;
   citations?: Citation[];
   draft?: ChatDraft | null;
 }
@@ -49,19 +56,40 @@ interface ChatMessage {
 type DraftPhase = "draft" | "checking" | "checked" | "sending" | "proposed" | "placing" | "done" | "rejecting" | "rejected" | "discarded";
 interface DraftState {
   phase: DraftPhase;
-  decision?: { approved: boolean; reasons: string[] };
+  decision?: { approved: boolean; reasons: string[]; escalatable?: boolean };
   estimatedNotional?: number;
   proposalId?: string;
 }
 
 function destination(state: ExecutionState): { text: string; tone: "info" | "up" | "down"; live: boolean } {
-  if (state.mode === "broker/live") return { text: `BROKERAGE · LIVE${state.accountLabel ? " · " + state.accountLabel : ""}`, tone: "down", live: true };
-  if (state.mode === "broker/paper") return { text: `PAPER${state.accountLabel ? " · " + state.accountLabel : ""}`, tone: "up", live: false };
-  return { text: "TEST (local simulation)", tone: "info", live: false };
+  if (state.mode === "broker/live") return { text: `Brokerage${state.accountLabel ? " · " + state.accountLabel : ""}`, tone: "down", live: true };
+  if (state.mode === "broker/paper") return { text: `Paper${state.accountLabel ? " · " + state.accountLabel : ""} · broker sandbox`, tone: "up", live: false };
+  return { text: "Test · local simulation", tone: "info", live: false };
 }
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+}
+
+async function readPlainError(res: Response, fallback: string): Promise<Error> {
+  const raw = await res.text().catch(() => "");
+  let message = raw.trim();
+  try {
+    const parsed = JSON.parse(message) as { error?: unknown; summary?: unknown; message?: unknown };
+    if (typeof parsed.summary === "string") message = parsed.summary;
+    else if (typeof parsed.message === "string") message = parsed.message;
+    else if (typeof parsed.error === "string") message = parsed.error;
+    else if (parsed.error && typeof parsed.error === "object" && "error" in parsed.error && typeof (parsed.error as { error?: unknown }).error === "string") {
+      message = String((parsed.error as { error: string }).error);
+    }
+  } catch {
+    if (message.startsWith("<")) message = "";
+  }
+  // Turn a raw provider error (e.g. "gemini 401: API key not valid") into a plain-English,
+  // provider-aware sentence. The provider + HTTP status are parsed from the message text itself
+  // (the route's own status is 500, so we don't pass it).
+  if (message) message = humanizeLlmError(message);
+  return new Error(message || `${fallback} (${res.status}).`);
 }
 
 // Router-matched suggested prompts (co-versioned with classifyIntent so a chip never dead-ends).
@@ -76,35 +104,50 @@ const SUGGESTIONS: Array<{ category: string; prompt: string }> = [
   { category: "Draft", prompt: "Draft a buy of 10 AAPL at 200" }
 ];
 
-/** Provider options shown in the model-selector. The env var (CHAT_LLM) sets the initial value;
- *  the selection is sent as a per-request hint to the API (stored client-side only — no DB migration). */
-type ChatProvider = "mock" | "anthropic" | "openai";
-
-const PROVIDER_LABELS: Record<ChatProvider, string> = {
-  mock: "Mock (offline)",
-  anthropic: "Anthropic",
-  openai: "OpenAI"
-};
+// Chat-model selector (custom ModelPicker: provider logos + relative price tiers). The chosen model is
+// sent as a per-request `model` hint to /api/chat, which routes it to the right provider by name
+// (claude-*→Anthropic, grok-*→xAI, gemini-*→Gemini, mistral-*→Mistral, deepseek-*→DeepSeek, else
+// OpenAI). Tiers ($/$$/$$$) are relative blended cost. Selection is sticky via localStorage. Per-
+// provider key availability comes from /api/chat/providers; unkeyed providers show "no key" + disabled.
+const DEFAULT_CHAT_MODEL = DEFAULT_LLM_MODEL;
+const CHAT_MODEL_STORAGE_KEY = "assistant.chatModel";
 
 export function AssistantView({
   executionState,
   approveProposal,
   rejectProposal,
-  defaultProvider
+  defaultModel
 }: {
   executionState: ExecutionState;
   approveProposal: (proposalId: string) => Promise<void>;
   rejectProposal: (proposalId: string) => Promise<void>;
-  /** Initial provider; matches the server-side CHAT_LLM env var. Defaults to "mock". */
-  defaultProvider?: ChatProvider;
+  /** Initial chat model. Overridden by a sticky localStorage choice; defaults to the catalog default. */
+  defaultModel?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [provider, setProvider] = useState<ChatProvider>(defaultProvider ?? "mock");
+  const [model, setModel] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+      if (saved) return saved;
+    }
+    return defaultModel ?? DEFAULT_CHAT_MODEL;
+  });
+  // Per-provider key availability for the picker. undefined = not yet loaded (treat as available so we
+  // never flash "no key" before the check resolves); after load, false = no usable key for that provider.
+  const [providerStatus, setProviderStatus] = useState<Partial<Record<string, boolean>>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const dest = destination(executionState);
+
+  // Gate chat when NO real LLM provider has a usable key (mirrors the /api/chat 412). The offline Mock
+  // model is the only keyless path, so it's never gated. providerStatus is {} until loaded → treat as
+  // available so we don't flash the gate before the check resolves (fail open, like the picker).
+  const isMockModel = model.trim().toLowerCase() === "mock";
+  const providerKeys = Object.keys(providerStatus);
+  const noLlmConfigured = !isMockModel && providerKeys.length > 0 && providerKeys.every((p) => providerStatus[p] === false);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,8 +155,8 @@ export function AssistantView({
       try {
         const res = await fetch("/api/chat-history?limit=50");
         if (!res.ok) return;
-        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string }> };
-        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text })));
+        const body = (await res.json()) as { turns: Array<{ id: string; role: "user" | "assistant"; text: string; model?: string | null }> };
+        if (!cancelled) setMessages(body.turns.map((t) => ({ id: t.id, role: t.role, text: t.text, model: t.model ?? undefined })));
       } catch {
         /* history is best-effort */
       }
@@ -123,9 +166,42 @@ export function AssistantView({
     };
   }, []);
 
+  // Which providers have a usable key (so the picker can mark/disable ones that don't). Fail open:
+  // on error, leave statuses unset → every provider stays selectable. Re-checked on window focus and
+  // tab visibility so that connecting a key in Settings (then returning to this tab) immediately
+  // unlocks chat — otherwise providerStatus would stay stale until a full reload.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const res = await fetch("/api/chat/providers");
+        if (!res.ok) return;
+        const body = (await res.json()) as { providers?: Partial<Record<string, boolean>> };
+        if (!cancelled && body.providers) setProviderStatus(body.providers);
+      } catch {
+        /* availability is best-effort; default to all selectable */
+      }
+    };
+    void refresh();
+    const onFocus = () => void refresh();
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, drafts]);
+
+  // Persist the chat-model choice so it survives reloads (client-side only — no DB migration).
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, model);
+  }, [model]);
 
   const patchDraft = (msgId: string, patch: Partial<DraftState>) =>
     setDrafts((d) => ({ ...d, [msgId]: { ...(d[msgId] ?? { phase: "draft" }), ...patch } as DraftState }));
@@ -133,20 +209,27 @@ export function AssistantView({
   const send = useCallback(async (override?: string) => {
     const message = (typeof override === "string" ? override : input).trim();
     if (!message || sending) return;
+    if (noLlmConfigured) {
+      toast.error(LLM_REQUIRED_CHAT_MESSAGE);
+      return;
+    }
     setInput("");
     const stamp = Date.now();
     setMessages((m) => [...m, { id: `u-${stamp}`, role: "user", text: message }]);
     setSending(true);
     try {
+      // Per-send idempotency key: the server dedupes the recorded user turn on it, so a
+      // double submit (or any future retry of this exact send) can't duplicate the prompt
+      // in the saved transcript.
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message, provider })
+        body: JSON.stringify({ message, model, clientTurnId: crypto.randomUUID() })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await readPlainError(res, "Chat request failed");
       const reply = (await res.json()) as ChatReply;
       const id = `a-${stamp}`;
-      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft }]);
+      setMessages((m) => [...m, { id, role: "assistant", text: reply.text, citations: reply.citations, draft: reply.draft, model: reply.model }]);
       if (reply.draft) setDrafts((d) => ({ ...d, [id]: { phase: "draft" } }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Chat request failed.");
@@ -154,7 +237,7 @@ export function AssistantView({
     } finally {
       setSending(false);
     }
-  }, [input, sending]);
+  }, [input, model, sending, noLlmConfigured]);
 
   async function checkPolicy(msgId: string, draft: ChatDraft) {
     patchDraft(msgId, { phase: "checking" });
@@ -170,9 +253,14 @@ export function AssistantView({
         patchDraft(msgId, { phase: "checked", decision: { approved: false, reasons } });
         return;
       }
+      const checkedDecision = body.decision as { approved: boolean; reasons: string[]; escalatable?: boolean };
+      // Additive server flag: refused ONLY for escalatable reasons (e.g. an "ask"-mode wash-sale
+      // lock) => the draft is still stageable; staging creates a pending card the user approves
+      // with the priced cost on it.
+      if (body.escalatable === true) checkedDecision.escalatable = true;
       patchDraft(msgId, {
         phase: "checked",
-        decision: body.decision as { approved: boolean; reasons: string[] },
+        decision: checkedDecision,
         estimatedNotional: body.estimatedNotional as number | undefined
       });
     } catch (e) {
@@ -232,16 +320,36 @@ export function AssistantView({
           <span className="text-xs text-muted">drafts orders you confirm — it never places on its own</span>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as ChatProvider)}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-            title="Chat LLM provider"
-          >
-            {(Object.keys(PROVIDER_LABELS) as ChatProvider[]).map((p) => (
-              <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
-            ))}
-          </select>
+          {(!CHAT_MODEL_GROUPS.flatMap(g => g.options).some(o => o.value === model) || model === "custom") && (
+            <input
+              type="text"
+              className="h-7 w-[10rem] rounded border border-line bg-surface px-2 text-xs text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+              value={model === "custom" ? "" : model}
+              placeholder="Model ID (e.g. gpt-5.5)"
+              onChange={(e) => {
+                const val = e.target.value;
+                setModel(val || "custom");
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, val || "custom");
+              }}
+            />
+          )}
+          <ModelPicker
+            className="w-[12rem]"
+            value={CHAT_MODEL_GROUPS.flatMap(g => g.options).some(o => o.value === model) ? model : "custom"}
+            groups={CHAT_MODEL_GROUPS}
+            providerStatus={providerStatus}
+            onChange={(m) => {
+              if (m === "custom") {
+                setModel(CUSTOM_MODEL_ID_SEED);
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, CUSTOM_MODEL_ID_SEED);
+              } else {
+                setModel(m);
+                window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, m);
+              }
+              // Move focus straight to the prompt box so the user can type right after picking a model.
+              inputRef.current?.focus();
+            }}
+          />
           <Chip tone={dest.tone}>{dest.text}</Chip>
         </div>
       </div>
@@ -251,7 +359,7 @@ export function AssistantView({
           <div className="grid h-full place-items-center">
             <div className="max-w-xl text-center">
               <EmptyState
-                icon={<Sparkles size={18} />}
+                icon={<Sparkles size={20} />}
                 title="Ask the assistant"
                 hint="Try one of these — orders always come back as a draft you confirm."
               />
@@ -260,7 +368,7 @@ export function AssistantView({
                   <button
                     key={s.prompt}
                     onClick={() => void send(s.prompt)}
-                    disabled={sending}
+                    disabled={sending || noLlmConfigured}
                     className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg transition hover:border-accent hover:bg-surface-2 disabled:opacity-50"
                   >
                     <span className="text-[10px] uppercase tracking-wide text-muted">{s.category}</span>
@@ -273,8 +381,15 @@ export function AssistantView({
         )}
         {messages.map((m) => (
           <div key={m.id} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}>
-              <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+            <div
+              className={cn("max-w-[42rem] rounded-lg px-3 py-2 text-sm", m.role === "user" ? "bg-accent/15 text-fg" : "bg-surface-2 text-fg")}
+              title={m.role === "assistant" && m.model ? `Answered by ${m.model}` : undefined}
+            >
+              {m.role === "assistant" ? (
+                <Markdown>{m.text}</Markdown>
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {m.citations.map((c, i) =>
@@ -315,12 +430,19 @@ export function AssistantView({
       </div>
 
       <div className="border-t border-line p-3">
+        {noLlmConfigured && (
+          <p className="mb-2 flex items-center gap-1.5 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px] text-warn">
+            <AlertTriangle size={14} /> {LLM_REQUIRED_CHAT_MESSAGE}
+          </p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={inputRef}
             className={cn(inputClass, "min-h-[2.5rem] flex-1 resize-none")}
             rows={1}
-            placeholder="Ask a question, or describe an order to draft…"
+            placeholder={noLlmConfigured ? "Connect an LLM provider in Settings to chat…" : "Ask a question, or describe an order to draft…"}
             value={input}
+            disabled={noLlmConfigured}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -329,8 +451,8 @@ export function AssistantView({
               }
             }}
           />
-          <Button onClick={() => void send()} disabled={sending || !input.trim()} size="md">
-            <Send size={15} /> Send
+          <Button onClick={() => void send()} disabled={sending || !input.trim() || noLlmConfigured} size="md">
+            <Send size={16} /> Send
           </Button>
         </div>
       </div>
@@ -367,6 +489,9 @@ function DraftOrderCard({
   const sideUp = draft.side.toUpperCase();
   const orderLine = `${sideUp} ${draft.qty} ${draft.symbol} · ${draft.order_type}${draft.order_type === "limit" && draft.limit_usd != null ? ` @ $${draft.limit_usd}` : ""}`;
   const blocked = state.decision && !state.decision.approved;
+  // An escalatable refusal (ask-mode wash sale) is stageable: staging creates a pending-approval
+  // card that carries the priced reason; the authoritative gate re-runs at confirm time.
+  const escalatable = Boolean(blocked && state.decision?.escalatable);
 
   return (
     <div className="mt-2 rounded-lg border border-line bg-surface p-3">
@@ -377,17 +502,28 @@ function DraftOrderCard({
       {draft.rationale && <p className="mt-1 text-xs text-muted">{draft.rationale}</p>}
 
       {state.decision && (
-        <div className={cn("mt-2 rounded-md px-2.5 py-1.5 text-xs", blocked ? "bg-down/10 text-down" : "bg-up/10 text-up")}>
+        <div
+          className={cn(
+            "mt-2 rounded-md px-2.5 py-1.5 text-xs",
+            escalatable ? "bg-warn/10 text-warn" : blocked ? "bg-down/10 text-down" : "bg-up/10 text-up"
+          )}
+        >
           <div className="flex items-center gap-1.5 font-medium">
-            {blocked ? <AlertTriangle size={13} /> : <ShieldCheck size={13} />}
-            {blocked ? "Blocked by policy" : "Passes policy"} {state.estimatedNotional != null && <span className="text-muted">· est. {money(state.estimatedNotional)}</span>}
+            {blocked ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}
+            {escalatable ? "Needs your call" : blocked ? "Blocked by policy" : "Passes policy"}{" "}
+            {state.estimatedNotional != null && <span className="text-muted">· est. {money(state.estimatedNotional)}</span>}
           </div>
           {blocked && state.decision.reasons.length > 0 && (
-            <ul className="mt-1 list-disc pl-4 text-down/90">
+            <ul className={cn("mt-1 list-disc pl-4", escalatable ? "text-warn/90" : "text-down/90")}>
               {state.decision.reasons.map((r, i) => (
                 <li key={i}>{r}</li>
               ))}
             </ul>
+          )}
+          {escalatable && (
+            <p className="mt-1 text-muted">
+              Staging queues it for your approval with this cost on the card — nothing trades until you confirm.
+            </p>
           )}
         </div>
       )}
@@ -396,32 +532,32 @@ function DraftOrderCard({
         {(state.phase === "draft" || state.phase === "checking" || state.phase === "checked") && (
           <>
             <Button size="sm" variant="subtle" onClick={onCheck} disabled={state.phase === "checking"}>
-              {state.phase === "checking" ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Check policy
+              {state.phase === "checking" ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Check policy
             </Button>
-            {state.phase === "checked" && !blocked && (
+            {state.phase === "checked" && (!blocked || escalatable) && (
               <Button size="sm" onClick={onSend}>
                 Stage for approval
               </Button>
             )}
             <Button size="sm" variant="ghost" onClick={onDiscard}>
-              <X size={13} /> Discard
+              <X size={14} /> Discard
             </Button>
           </>
         )}
 
         {state.phase === "sending" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> staging…
+            <Loader2 size={14} className="animate-spin" /> staging…
           </span>
         )}
 
         {state.phase === "proposed" && state.proposalId && (
           <>
             <Button size="sm" variant={dest.live ? "danger" : "primary"} onClick={() => onConfirm(state.proposalId!)}>
-              <Check size={13} /> {dest.live ? `Confirm — places a REAL order against ${draft.symbol}` : "Confirm & place"}
+              <Check size={14} /> {dest.live ? `Confirm — places a REAL order against ${draft.symbol}` : "Confirm & place"}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => onReject(state.proposalId!)}>
-              <X size={13} /> Reject
+              <X size={14} /> Reject
             </Button>
             <span className="text-[11px] text-muted">also in the Decision tab</span>
           </>
@@ -429,13 +565,13 @@ function DraftOrderCard({
 
         {state.phase === "placing" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> placing…
+            <Loader2 size={14} className="animate-spin" /> placing…
           </span>
         )}
 
         {state.phase === "rejecting" && (
           <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> rejecting…
+            <Loader2 size={14} className="animate-spin" /> rejecting…
           </span>
         )}
 

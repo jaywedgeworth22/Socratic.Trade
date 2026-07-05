@@ -3,7 +3,17 @@
 Forward plan consolidating every still-unimplemented idea, recommendation, and
 consideration from this work stream — the Codex "Stronger Trading Signals And
 Learning Loop" plan, the Codex optimization pass, the Codex review, and Claude's
-brainstorms. Test mode remains the default; **no live-trading behavior changes**.
+brainstorms. As of 2026-07-03, the older paper/Test-mode default framing in this
+document is stale: Socratic Trade treats connected broker account environment as
+the execution source of truth, and no connected account means no order placement.
+The Socratic autonomy implementation adds first-class surfaces and persistence
+for evidence contribution, dissent, outcome learning, coaching, and agent-authored
+framework improvements; `/design/socratic-trade` is now a coded public overview of those
+surfaces rather than a standalone mockup.
+See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
+As of 2026-07-04, `codex/console-ui-swimlane` adds the read-only decision trace inspector,
+coach-on-trace notes, approval receipt provenance/citations, and mobile LIVE phrase parity for
+those Socratic decision surfaces. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
 
 ## Status legend
 `[done]` shipped · `[todo]` not started · `[partial]` partly done.
@@ -21,6 +31,11 @@ horizon; tuning/tax settings; universal received-time tooltips; Smart Money pane
 SEC 8-K coarse bulletins; market breadth and internals; expanded FRED/macro
 derived metrics; a Macro workspace tab; Fama-French, Cboe SKEW/VVIX, and CFTC
 COT market-wide signals; Voyage/Pinecone RAG scaffolding for retrieved context.
+Congress.Trade now has an App B composite score, advisory candidate-promotion
+guardrails, forward evidence persistence, and a strict point-in-time evaluator;
+real historical claims remain gated on an App A PIT export.
+App A PR #96 now marks export readiness explicitly; App B honors those markers and
+refuses historical evaluation while `historicalValidationReady=false`.
 
 Codex review findings P2(attribution), P3(/api/scan merge), P3(shrinkPrior=0), and
 the discovery half of P2 are all **done**. What remains of P2 is the *ranking* half
@@ -55,6 +70,18 @@ add smart-money/catalyst sub-scores instead of leaving the LLM to infer from pro
   `docs/rollouts/2026-06-18-technical-signals-tradingview.md`. Deferred: a dedicated
   `technical` ScoringWeights factor (lighter `momentum`-blend chosen to avoid colliding
   with concurrent scoring edits); a real-time run trigger on high-conviction pushes.
+- **A2.2 `[done]` Congress.Trade advisory composite + PIT evaluator.** App A analytics
+  are collapsed into a confidence-capped, direction-aware Congress composite with component
+  provenance, member-skill/source fallback labeling, and candidate-promotion guardrails:
+  only supported BUY scores can pull below-cutoff names into Market Scan, while SELL/weak
+  signals remain evidence for learning. `signal_snapshot` now persists Congress composite
+  fields and `preCongressScore`; `npm run eval:congress-score` evaluates rank IC,
+  marginal IC, quantile spread, hit rate, and placebo checks from future snapshots or an
+  App A PIT export. App A `validationReadiness` / row `pitValidity` markers now fail
+  closed in App B, so reconstructed exports cannot be treated as validation truth.
+  Still open: real App A PIT export validation once App A marks
+  `historicalValidationReady=true`, plus whole-pipeline ablations before sizing or
+  live-trading trust changes.
 
 ## Phase B — Richer learning + full EvidenceDigest
 Codex: "store full EvidenceDigest for chosen AND skipped … sector/factor-dimensional

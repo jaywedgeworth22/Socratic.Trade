@@ -1,20 +1,23 @@
-import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, resolveLlmCredential, upsertFillExcursionsByKey } from "./db";
+import { getActiveConnectedAccount, getDb, setUserSetting, audit, getInternalSetting, setInternalSetting, getPolicy, upsertFillExcursionsByKey } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { getRegimeScorecard, getThesisScorecard, getClosedLotsDetailed } from "./performance";
 import { ingestLearned } from "./learned-context/store";
 import type { ThesisStat } from "./performance";
 import { getExcursionsByThesis, enrichClosedLotsWithExcursions } from "./learning-loop";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification } from "./execution-mode";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
+import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 
 export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
   const db = getDb();
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
+  const policy = getPolicy(userId);
+  const { url, key: openaiKey, model: resolvedModel, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
   if (!openaiKey) return;
-  const keySource = cred.source === "operator" ? "operator" : "user";
   
   // Fetch latest 50 fill events with their corresponding proposals
   const rows = db.prepare(`
@@ -61,9 +64,18 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
   // timing stats, so the reflection is grounded in what actually made or lost money
   // and how well exits were timed — not just what was traded. Excursions hit the
   // network, but this whole function is gated above, so it runs only on new trades.
-  const policy = getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
-  const source = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
+
+  // Budget guard: when over the daily LLM budget, skip ONLY the LLM reflection call — but still run the
+  // non-LLM excursion enrichment (persistExcursionsBackground: MAE/MFE, no OpenAI key required). A spend
+  // cap suppresses LLM spend, not non-LLM maintenance, so returning here (instead of before) keeps
+  // excursion data current on over-budget days. Default OFF → this branch never taken (runs normally).
+  if (isOverLlmBudget(userId)) {
+    persistExcursionsBackground(accountNumber, source, userId);
+    return;
+  }
+
   const executionMode = llmExecutionMode(executionState);
   const outcomesByThesis = getThesisScorecard(accountNumber, source, {}, userId);
   const outcomesByRegime = getRegimeScorecard(accountNumber, source, {}, userId);
@@ -71,7 +83,7 @@ export async function generateReflectionSummary(accountNumber: string, userId: s
 
   const systemPrompt = `You are the Post-Mortem Reflection Engine.
 Review the recent trades together with:
-- 'executionMode': test/local is the app's local simulator; broker/paper is a broker-hosted sandbox such as Alpaca Paper; broker/live is a production broker account.
+- 'executionMode': broker/paper is a broker-hosted sandbox such as Alpaca Paper; broker/live is a production broker account.
 - 'outcomesByThesis' / 'outcomesByRegime': realized win rate, average return, and total P&L grouped by 'thesisTag' and by 'regime' respectively (these mirror the proposal's tradeThesisTag and entryMarketRegime).
 - 'timingByThesis': average maximum adverse excursion (avgMaePct, pain endured), average maximum favorable excursion (avgMfePct, the move that was available), and capturePct (share of the favorable move actually realized; low => exiting winners too early, large negative avgMaePct => holding losers through deep drawdowns).
 Extract actionable, outcome-grounded lessons: which thesis tags and regimes are profitable vs losing, and whether exits are mistimed.
@@ -86,29 +98,17 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
     timingByThesis
   });
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const model = resolvedModel;
 
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ]
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent }
-        ]
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent,
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.postMortemReflection,
+      reasoningEffort: policy.llmReasoningEffort
+    }
   );
 
   try {
@@ -129,25 +129,20 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         output: (result) => summarizeOpenAiResponseText(result.text)
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${openaiKey}`
-          },
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
           body: JSON.stringify(body)
         });
 
         if (!response.ok) {
-          console.warn("Post-mortem LLM call failed", await response.text());
+          console.warn("Post-mortem LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined };
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "post-mortem", keySource, ...extractLlmUsage(payload) });
-        const text = payload.choices?.[0]?.message?.content ??
-                     payload.output_text ??
-                     payload.output?.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? []).find((item: { text?: string }) => item.text)?.text;
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, ...extractLlmUsage(payload) });
+        const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };
       }

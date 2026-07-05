@@ -69,6 +69,26 @@ describe("getEightKSignals + refresh", () => {
     expect(getSymbolWebSignals(["AAPL"]).AAPL?.bulletins.some((b) => b.includes("8-K"))).toBe(true);
   });
 
+  it("dedupes concurrent cold ticker→CIK map loads into a single company_tickers.json fetch", async () => {
+    const { deleteInternalSetting } = await import("../src/lib/db");
+    deleteInternalSetting("webSource:sec:tickerCikMap");
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("company_tickers.json")) {
+        fetchCount += 1;
+        return new Response(JSON.stringify({ "0": { cik_str: 320193, ticker: "AAPL" } }), { status: 200 });
+      }
+      return new Response("nope", { status: 404 });
+    });
+    const { loadTickerCikMap } = await import("../src/lib/web-sources/sec8k");
+    const now = Date.now();
+    const [a, b] = await Promise.all([loadTickerCikMap(now), loadTickerCikMap(now)]);
+    expect(a.AAPL).toBe("320193");
+    expect(b.AAPL).toBe("320193");
+    expect(fetchCount).toBe(1); // shared in-flight promise — not two duplicate SEC requests
+  });
+
   it("scrapes feed + CIK map and persists", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       const u = String(url);

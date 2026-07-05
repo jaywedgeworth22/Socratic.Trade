@@ -44,10 +44,19 @@ import {
   setTechnicalWatchlist,
   technicalEnabled
 } from "./technical";
+import {
+  congressAnalyticsEnabled,
+  getCongressAnalyticsOverlay,
+  isCongressAnalyticsRefreshDue,
+  refreshCongressAnalytics
+} from "./congress-analytics";
+import { scoreCongressSignal } from "../congress-score";
 import { isFilingIngestDue, refreshFilingBodies } from "./sec-filings";
+import { disclosureRagEnabled, embedDisclosures } from "./disclosure-rag";
 import type { SymbolWebSignal, WebSourceRefreshResult } from "./types";
 
-export type { CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
+export type { CongressAnalytics, CongressSignal, CongressTrade, SymbolWebSignal, WebSourceRefreshResult } from "./types";
+export { getCongressAnalyticsOverlay, refreshCongressAnalytics } from "./congress-analytics";
 export { getCongressDataset, getCongressSignals, refreshCongress } from "./congress";
 export { getInsiderDataset, getInsiderSignals, refreshInsider } from "./sec";
 export { getFinraDataset, getShortVolumeSignals, refreshFinra } from "./finra";
@@ -123,6 +132,15 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "insider", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  // App A (congress.trade) analytics overlay — the Trends composite (dollar net flow, cluster buys,
+  // member track-record). Network pull, so it lives here in the cadence-gated refresh; default off.
+  if (congressAnalyticsEnabled() && isCongressAnalyticsRefreshDue(now)) {
+    try {
+      results.push(await refreshCongressAnalytics(now));
+    } catch (error) {
+      results.push({ id: "congress-analytics", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
+    }
+  }
   if (finraEnabled() && isFinraRefreshDue(now)) {
     try {
       results.push(await refreshFinra(now));
@@ -147,6 +165,17 @@ async function runDueRefreshes(now: number): Promise<WebSourceRefreshResult[]> {
       results.push({ id: "technical", ok: false, recordCount: 0, sources: [], fetchedAt: "", warning: error instanceof Error ? error.message : "refresh threw" });
     }
   }
+  // RAG embed for congressional + insider disclosures (flag-gated, default OFF).
+  // Fire-and-forget: advisory RAG only — never blocks or errors the refresh loop.
+  if (disclosureRagEnabled()) {
+    const congressData = getCongressDataset();
+    const insiderData = getInsiderDataset();
+    const trades = congressData?.trades ?? [];
+    const filings = insiderData?.filings ?? [];
+    embedDisclosures(trades, filings).catch((err) =>
+      console.error("[disclosure-rag] runDueRefreshes embed error:", err)
+    );
+  }
   return results;
 }
 
@@ -161,6 +190,34 @@ export function getSymbolWebSignals(symbols: string[], now: number = Date.now())
     const entry = (out[symbol] ??= { bulletins: [] });
     entry.congress = signal;
     entry.bulletins.push(signal.bulletin);
+  }
+  // App A analytics overlay (dollar net flow / cluster / member quality) — additive to the scraped
+  // signal; only present when CONGRESS_ANALYTICS_ENABLED is on and the refresh has populated it.
+  const analytics = congressAnalyticsEnabled() ? getCongressAnalyticsOverlay(symbols) : {};
+  for (const [symbol, a] of Object.entries(analytics)) {
+    const entry = (out[symbol] ??= { bulletins: [] });
+    entry.congressAnalytics = a;
+    const composite = scoreCongressSignal({ congress: entry.congress, congressAnalytics: a }, now);
+    if (composite.score > 0) {
+      const capped = a.convictionScore != null && composite.score < a.convictionScore ? ", confidence-capped" : "";
+      entry.bulletins.push(
+        `Congress.Trade advisory composite: ${composite.direction} ${composite.score}/100, coverage ${Math.round(composite.confidence * 100)}%${capped}`
+      );
+    }
+    if (a.cluster) {
+      entry.bulletins.push(
+        `Congress cluster buy${a.clusterMemberCount ? ` (${a.clusterMemberCount} members)` : ""}` +
+          (typeof a.netFlowUsd === "number" ? `, net $${Math.round(a.netFlowUsd).toLocaleString()}` : "")
+      );
+    }
+    if (a.convictionScore !== null && a.convictionScore !== undefined && a.convictionDirection) {
+      entry.bulletins.push(
+        `Congress.Trade conviction input/pre-cap: ${a.convictionDirection} ${a.convictionScore}/100${a.convictionFallback ? " (proxy inputs)" : ""}`
+      );
+    }
+    if ((a.conflictCount ?? 0) > 0) {
+      entry.bulletins.push(`Congress committee-sector overlap context: ${a.conflictCount} disclosure${a.conflictCount === 1 ? "" : "s"}, legalConclusion:false`);
+    }
   }
   const insider = insiderEnabled() ? getInsiderSignals(symbols, now) : {};
   for (const [symbol, signal] of Object.entries(insider)) {

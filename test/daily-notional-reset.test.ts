@@ -46,7 +46,7 @@ describe("startOfDayInTimeZone — T13 explicit daily-reset boundary", () => {
 });
 
 describe("daily/hourly notional accounting — T6", () => {
-  it("counts opening (buy/short) notional only, but every order toward the count", () => {
+  it("counts opening (buy/short) notional and opening-order count separately from total orders", () => {
     const a = "T6_SIDES";
     proposal("t6-buy", a, "buy", 1000);
     proposal("t6-short", a, "short", 500);
@@ -55,11 +55,13 @@ describe("daily/hourly notional accounting — T6", () => {
 
     const daily = dailyExecutionStats(a);
     expect(daily.notional).toBeCloseTo(1500); // 1000 buy + 500 short; sell/cover do not add notional
-    expect(daily.orderCount).toBe(4); // every placed order counts toward the order cap
+    expect(daily.orderCount).toBe(4); // every placed order remains visible for audit/display
+    expect(daily.openingOrderCount).toBe(2); // only buy/short consume the opening-order cap
 
     const hourly = notionalInLastMinutes(a, 60);
     expect(hourly.notional).toBeCloseTo(1500); // same side-awareness on the rolling hourly window
     expect(hourly.orderCount).toBe(4);
+    expect(hourly.openingOrderCount).toBe(2);
   });
 
   it("scopes notional by user (tenant isolation)", () => {
@@ -78,6 +80,28 @@ describe("daily/hourly notional accounting — T6", () => {
     proposal("t6-fb-qty", a, "buy", undefined, { quantity: 3, limitPrice: 100 });
 
     expect(dailyExecutionStats(a).notional).toBeCloseTo(1000); // 700 (dollarAmount) + 300 (3 * 100)
+  });
+
+  it("ages opening notional out of both windows when queried with a far-future `now`", () => {
+    // Orders are stamped created_at = now (insertProposal uses the current instant). Counting them
+    // against a window anchored far in the future must find them OUTSIDE that window:
+    //   - dailyExecutionStats: created_at >= startOfDay(2999-01-01 NY) is false → 0 rows → 0 notional.
+    //   - notionalInLastMinutes(...,1,...): created_at >= (2999-01-01 - 1min) is false → 0 rows → 0 notional.
+    // The same orders queried at the DEFAULT now still count: 1000 buy + 500 short = 1500.
+    const a = "T6_CROSS_BOUNDARY";
+    const FAR_FUTURE = new Date("2999-01-01T12:00:00.000Z");
+    proposal("t6-cb-buy", a, "buy", 1000);
+    proposal("t6-cb-short", a, "short", 500);
+
+    // Counted in the current day/hour window.
+    expect(dailyExecutionStats(a).notional).toBeCloseTo(1500); // 1000 buy + 500 short; sell/cover would add 0
+    expect(notionalInLastMinutes(a, 60).notional).toBeCloseTo(1500);
+
+    // Aged out of a far-future window — the daily cap has long since reset past these orders.
+    expect(dailyExecutionStats(a, FAR_FUTURE).notional).toBe(0);
+    expect(dailyExecutionStats(a, FAR_FUTURE).orderCount).toBe(0); // window excludes them entirely
+    expect(notionalInLastMinutes(a, 1, FAR_FUTURE).notional).toBe(0);
+    expect(notionalInLastMinutes(a, 1, FAR_FUTURE).orderCount).toBe(0);
   });
 });
 

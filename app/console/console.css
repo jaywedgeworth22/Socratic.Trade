@@ -1,0 +1,1032 @@
+/* ── Console design tokens ──────────────────────────────────────────────────
+   Ground-up design system for the /console interface, scoped under
+   .console-root so nothing leaks into (or depends on) the legacy UI.
+
+   THEMING MODEL
+   - Semantic tokens only (surface/fg/muted/line/accent/up-down/warn/reality).
+     Components never hardcode raw hex — they reference var(--con-*).
+   - Light is the base set; dark overrides it. Resolution order:
+       1. explicit choice via [data-theme="light"|"dark"] on .console-root
+          (persisted in localStorage under a console-scoped key), else
+       2. prefers-color-scheme.
+     The dark token block therefore appears twice (explicit + media query) —
+     KEEP THE TWO BLOCKS IDENTICAL.
+   - Soft fills and borders are derived from the base palette with color-mix,
+     so they adapt to both themes automatically.
+
+   Money-reality is WORD-FIRST. The three reality tones (none / paper / live)
+   exist to reinforce words, never to replace them. Both palettes aim WCAG AA
+   for text tokens on their surfaces. */
+
+.console-root {
+  /* ── LIGHT (base) ── */
+  --con-bg: #f1f4f6;
+  --con-surface: #ffffff;
+  --con-surface-2: #f4f6fa;
+  --con-surface-3: #e9edf4;
+  --con-line: rgba(23, 32, 46, 0.1);
+  --con-line-strong: rgba(23, 32, 46, 0.2);
+
+  --con-fg: #17202e;
+  --con-muted: #46556b;   /* ≥7:1 on surface */
+  --con-faint: #566478;   /* ≥5.5:1 on surface */
+
+  --con-accent: #12616f;
+  --con-accent-contrast: #ffffff;
+  --con-pos: #157f4e;
+  --con-pos-contrast: #ffffff;
+  --con-neg: #d1332e;
+  --con-neg-contrast: #ffffff;
+  --con-warn: #9a6209;
+  --con-warn-contrast: #ffffff;
+
+  /* Money-reality tones (reinforcement only — the word is load-bearing) */
+  --con-none: #64748b;
+  --con-paper: #4f46e5;
+  --con-live: #d1332e;
+
+  --con-shadow: 0 8px 24px -12px rgba(23, 32, 46, 0.18);
+  --con-shadow-lg: 0 24px 60px -24px rgba(23, 32, 46, 0.28);
+  --con-scrim: rgba(23, 32, 46, 0.4);
+
+  color-scheme: light;
+
+  /* ── Derived tones (theme-agnostic: computed from the palette above) ── */
+  --con-accent-soft: color-mix(in oklab, var(--con-accent) 11%, transparent);
+  --con-accent-border: color-mix(in oklab, var(--con-accent) 45%, transparent);
+  --con-pos-soft: color-mix(in oklab, var(--con-pos) 11%, transparent);
+  --con-pos-border: color-mix(in oklab, var(--con-pos) 45%, transparent);
+  --con-neg-soft: color-mix(in oklab, var(--con-neg) 10%, transparent);
+  --con-neg-border: color-mix(in oklab, var(--con-neg) 50%, transparent);
+  --con-warn-soft: color-mix(in oklab, var(--con-warn) 12%, transparent);
+  --con-warn-border: color-mix(in oklab, var(--con-warn) 45%, transparent);
+  --con-none-soft: color-mix(in oklab, var(--con-none) 10%, transparent);
+  --con-none-border: color-mix(in oklab, var(--con-none) 45%, transparent);
+  --con-paper-soft: color-mix(in oklab, var(--con-paper) 10%, transparent);
+  --con-paper-border: color-mix(in oklab, var(--con-paper) 45%, transparent);
+  --con-live-soft: color-mix(in oklab, var(--con-live) 11%, transparent);
+  --con-live-border: color-mix(in oklab, var(--con-live) 55%, transparent);
+
+  /* Shape */
+  --con-radius: 12px;
+  --con-radius-sm: 8px;
+
+  /* Type scale */
+  --con-fs-xs: 11px;
+  --con-fs-sm: 12.5px;
+  --con-fs-base: 13.5px;
+  --con-fs-md: 15px;
+  --con-fs-lg: 18px;
+  --con-fs-xl: 23px;
+  --con-fs-xxl: 30px;
+
+  /* Font stacks */
+  --con-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --con-font-system: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --con-font-serif: Georgia, "Times New Roman", serif;
+  --con-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --con-control-font: var(--con-font-ui);
+
+  background: var(--con-bg);
+  color: var(--con-fg);
+  font-size: var(--con-fs-base);
+  line-height: 1.5;
+  font-family: var(--con-font-ui);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+.console-root[data-textbox-font="system"] {
+  --con-control-font: var(--con-font-system);
+}
+.console-root[data-textbox-font="serif"] {
+  --con-control-font: var(--con-font-serif);
+}
+.console-root[data-textbox-font="mono"] {
+  --con-control-font: var(--con-font-mono);
+}
+
+/* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */
+.console-root[data-theme="dark"] {
+  --con-bg: #0b1114;
+  --con-surface: #11191d;
+  --con-surface-2: #162127;
+  --con-surface-3: #1c2b31;
+  --con-line: rgba(148, 163, 184, 0.13);
+  --con-line-strong: rgba(148, 163, 184, 0.26);
+
+  --con-fg: #e8edf4;
+  --con-muted: #a5b2c4;
+  --con-faint: #8492a6;
+
+  --con-accent: #58c7d3;
+  --con-accent-contrast: #071316;
+  --con-pos: #37c58c;
+  --con-pos-contrast: #04170e;
+  --con-neg: #f0635e;
+  --con-neg-contrast: #1c0605;
+  --con-warn: #e5aa4b;
+  --con-warn-contrast: #201302;
+
+  --con-none: #94a3b8;
+  --con-paper: #98a3ff;
+  --con-live: #ff5d5d;
+
+  --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
+  --con-scrim: rgba(4, 6, 10, 0.66);
+
+  color-scheme: dark;
+}
+
+/* ── DARK (system preference, unless explicitly light) — keep IDENTICAL to
+      the block above ── */
+@media (prefers-color-scheme: dark) {
+  .console-root:not([data-theme="light"]) {
+    --con-bg: #0b1114;
+    --con-surface: #11191d;
+    --con-surface-2: #162127;
+    --con-surface-3: #1c2b31;
+    --con-line: rgba(148, 163, 184, 0.13);
+    --con-line-strong: rgba(148, 163, 184, 0.26);
+
+    --con-fg: #e8edf4;
+    --con-muted: #a5b2c4;
+    --con-faint: #8492a6;
+
+    --con-accent: #58c7d3;
+    --con-accent-contrast: #071316;
+    --con-pos: #37c58c;
+    --con-pos-contrast: #04170e;
+    --con-neg: #f0635e;
+    --con-neg-contrast: #1c0605;
+    --con-warn: #e5aa4b;
+    --con-warn-contrast: #201302;
+
+    --con-none: #94a3b8;
+    --con-paper: #98a3ff;
+    --con-live: #ff5d5d;
+
+    --con-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+    --con-shadow-lg: 0 28px 70px -20px rgba(0, 0, 0, 0.75);
+    --con-scrim: rgba(4, 6, 10, 0.66);
+
+    color-scheme: dark;
+  }
+}
+
+.console-root ::selection {
+  background: color-mix(in oklab, var(--con-accent) 30%, transparent);
+}
+
+.console-root :focus-visible {
+  outline: 2px solid var(--con-accent);
+  outline-offset: 2px;
+}
+
+/* ── Numerals ── */
+.con-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.con-mono {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Cards ── */
+.con-card {
+  background: var(--con-surface);
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius);
+  box-shadow: var(--con-shadow);
+}
+
+.con-card-title {
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--con-faint);
+}
+
+/* ── Autonomy desk home ── */
+.con-thesis-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius);
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--con-accent) 10%, transparent), transparent 46%),
+    var(--con-surface);
+  box-shadow: var(--con-shadow);
+  padding: 18px;
+}
+.con-thesis-hero h1 {
+  margin-top: 8px;
+  max-width: 760px;
+  font-size: var(--con-fs-xxl);
+  line-height: 1.12;
+  font-weight: 750;
+  color: var(--con-fg);
+}
+.con-thesis-hero p {
+  margin-top: 10px;
+  max-width: 820px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-md);
+  line-height: 1.55;
+}
+.con-autonomy-card {
+  min-width: 0;
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: color-mix(in oklab, var(--con-accent) 8%, var(--con-surface));
+  padding: 14px;
+}
+.con-autonomy-card p {
+  margin-top: 4px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.con-decision-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-decision-row strong {
+  color: var(--con-fg);
+}
+.con-decision-row p {
+  margin-top: 5px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.con-evidence-card {
+  min-width: 0;
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 11px 12px;
+}
+.con-evidence-card strong {
+  color: var(--con-fg);
+  font-size: var(--con-fs-sm);
+}
+.con-evidence-card span {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--con-faint);
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+}
+.con-evidence-card p {
+  margin-top: 7px;
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.45;
+}
+.con-evidence-accent {
+  border-color: var(--con-accent-border);
+  background: var(--con-accent-soft);
+}
+.con-evidence-pos {
+  border-color: var(--con-pos-border);
+  background: var(--con-pos-soft);
+}
+.con-evidence-warn {
+  border-color: var(--con-warn-border);
+  background: var(--con-warn-soft);
+}
+.con-evidence-neg {
+  border-color: var(--con-neg-border);
+  background: var(--con-neg-soft);
+}
+.con-coach-box {
+  border: 1px solid var(--con-accent-border);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-accent-soft);
+  padding: 12px;
+}
+.con-coach-box p {
+  color: var(--con-muted);
+  font-size: var(--con-fs-sm);
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .con-thesis-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .con-thesis-hero {
+    padding: 14px;
+  }
+  .con-thesis-hero h1 {
+    font-size: var(--con-fs-xl);
+  }
+  .con-thesis-hero p {
+    font-size: var(--con-fs-base);
+  }
+  .con-decision-row {
+    grid-template-columns: 1fr;
+  }
+  .con-decision-row > div:last-child {
+    text-align: left;
+  }
+  .con-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+  .con-evidence-card span {
+    max-width: 44%;
+  }
+}
+
+/* ── Buttons ── */
+.con-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--con-radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--con-fs-sm);
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  white-space: nowrap;
+  user-select: none;
+}
+.con-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.con-btn-primary {
+  background: var(--con-accent);
+  color: var(--con-accent-contrast);
+}
+.con-btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--con-accent) 85%, var(--con-fg));
+}
+.con-btn-outline {
+  background: transparent;
+  border-color: var(--con-line-strong);
+  color: var(--con-fg);
+}
+.con-btn-outline:hover:not(:disabled) {
+  border-color: var(--con-accent);
+  color: var(--con-accent);
+}
+.con-btn-ghost {
+  background: transparent;
+  color: var(--con-muted);
+}
+.con-btn-ghost:hover:not(:disabled) {
+  background: var(--con-surface-2);
+  color: var(--con-fg);
+}
+.con-btn-danger {
+  background: var(--con-neg);
+  color: var(--con-neg-contrast);
+}
+.con-btn-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--con-neg) 85%, var(--con-fg));
+}
+.con-btn-danger-outline {
+  background: transparent;
+  border-color: var(--con-neg-border);
+  color: var(--con-neg);
+}
+.con-btn-danger-outline:hover:not(:disabled) {
+  background: var(--con-neg-soft);
+}
+.con-btn-pos {
+  background: var(--con-pos);
+  color: var(--con-pos-contrast);
+}
+.con-btn-pos:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--con-pos) 85%, var(--con-fg));
+}
+.con-btn-sm {
+  padding: 4px 10px;
+  font-size: var(--con-fs-xs);
+}
+
+/* The header run-state control: Start/Resume when paused, STOP when stopping. */
+.con-stop-btn,
+.con-start-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--con-radius-sm);
+  font-weight: 700;
+  font-size: var(--con-fs-sm);
+  letter-spacing: 0;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.con-stop-btn {
+  border: 1.5px solid var(--con-neg-border);
+  background: var(--con-neg-soft);
+  color: var(--con-neg);
+}
+.con-stop-btn:hover {
+  background: color-mix(in oklab, var(--con-neg) 20%, transparent);
+}
+.con-start-btn {
+  border: 1.5px solid var(--con-pos-border);
+  background: var(--con-pos-soft);
+  color: var(--con-pos);
+}
+.con-start-btn:hover {
+  background: color-mix(in oklab, var(--con-pos) 18%, transparent);
+}
+
+/* ── Chips ── */
+.con-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  border: 1px solid var(--con-line-strong);
+  padding: 2px 9px;
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--con-muted);
+  white-space: nowrap;
+}
+.con-chip-accent { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
+.con-chip-pos { border-color: var(--con-pos-border); color: var(--con-pos); background: var(--con-pos-soft); }
+.con-chip-neg { border-color: var(--con-neg-border); color: var(--con-neg); background: var(--con-neg-soft); }
+.con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
+.con-chip-none { border-color: var(--con-none-border); color: var(--con-none); background: var(--con-none-soft); }
+.con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
+.con-chip-live { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
+
+/* Small brokerage-confirmation tag inside neutral primary actions. On soft surfaces
+   it uses the accent tint; inside filled buttons it inverts to the button's
+   contrast color so it stays WCAG-readable in both themes. */
+.con-live-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--con-accent-border);
+  background: var(--con-accent-soft);
+  color: var(--con-accent);
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  line-height: 1.3;
+}
+.con-btn-primary .con-live-tag,
+.con-btn-pos .con-live-tag,
+.con-btn-danger .con-live-tag {
+  border-color: transparent;
+  background: var(--con-accent-contrast);
+  color: var(--con-accent);
+}
+
+/* ── Reality banner ── */
+.con-reality {
+  border-bottom: 1px solid var(--con-line);
+  font-size: var(--con-fs-sm);
+}
+.con-reality-none {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-none) 12%, transparent), color-mix(in oklab, var(--con-none) 3%, transparent));
+}
+.con-reality-paper {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-paper) 12%, transparent), color-mix(in oklab, var(--con-paper) 3%, transparent));
+}
+.con-reality-live {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--con-accent) 12%, transparent), color-mix(in oklab, var(--con-accent) 3%, transparent));
+  border-bottom-color: var(--con-accent-border);
+}
+.con-reality-word { font-weight: 800; letter-spacing: 0.12em; }
+.con-reality-none .con-reality-word { color: var(--con-none); }
+.con-reality-paper .con-reality-word { color: var(--con-paper); }
+.con-reality-live .con-reality-word { color: var(--con-accent); }
+
+/* ── Inputs ── */
+.con-input,
+.con-select,
+.con-textarea {
+  background: var(--con-surface-2);
+  border: 1px solid var(--con-line-strong);
+  border-radius: var(--con-radius-sm);
+  color: var(--con-fg);
+  font-family: var(--con-control-font);
+  font-size: var(--con-fs-sm);
+  padding: 7px 10px;
+  width: 100%;
+  transition: border-color 120ms ease;
+}
+.con-input:focus,
+.con-select:focus,
+.con-textarea:focus {
+  border-color: var(--con-accent);
+  outline: none;
+}
+.con-input::placeholder,
+.con-textarea::placeholder {
+  color: var(--con-faint);
+}
+.con-textarea {
+  line-height: 1.55;
+  resize: vertical;
+}
+.con-input-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .con-input,
+  .con-select,
+  .con-textarea {
+    font-size: 16px;
+  }
+}
+
+.con-label {
+  display: block;
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+  color: var(--con-muted);
+  margin-bottom: 4px;
+}
+
+/* Toggle switch */
+.con-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--con-line-strong);
+  background: var(--con-surface-3);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+  flex: none;
+}
+.con-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--con-muted);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.con-toggle[aria-checked="true"] {
+  background: color-mix(in oklab, var(--con-accent) 35%, transparent);
+  border-color: var(--con-accent);
+}
+.con-toggle[aria-checked="true"]::after {
+  transform: translateX(16px);
+  background: var(--con-accent);
+}
+.con-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Meter (spend / consumption gauges) ── */
+.con-meter {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
+  overflow: hidden;
+}
+.con-meter > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--con-accent);
+  transition: width 300ms ease;
+}
+.con-meter-warn > div { background: var(--con-warn); }
+.con-meter-neg > div { background: var(--con-neg); }
+
+/* ── Tables ── */
+.con-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--con-fs-sm);
+}
+.con-table th {
+  text-align: left;
+  font-size: var(--con-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--con-faint);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--con-line);
+  white-space: nowrap;
+}
+.con-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--con-line);
+  vertical-align: top;
+}
+.con-table tr:last-child td { border-bottom: none; }
+
+/* Row hover/focus highlight — every tabular surface highlights the row under
+   the cursor AND the row containing keyboard focus, in both themes. Applies
+   automatically to .con-table bodies; put .con-row on non-table list rows
+   (feeds, card lists) to opt in. Derived from --con-fg so it stays a subtle
+   neutral wash on light and dark alike. */
+.con-table tbody tr:hover,
+.con-table tbody tr:focus-within,
+.con-row:hover,
+.con-row:focus-within,
+.con-row:focus-visible {
+  background: color-mix(in oklab, var(--con-fg) 6%, transparent);
+}
+.con-table .num,
+.con-table th.num,
+.con-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Navigation ── */
+.con-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--con-radius-sm);
+  padding: 8px 12px;
+  font-size: var(--con-fs-sm);
+  font-weight: 600;
+  color: var(--con-muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+.con-nav-item:hover { background: var(--con-surface-2); color: var(--con-fg); }
+.con-nav-item[data-active="true"] {
+  background: var(--con-accent-soft);
+  color: var(--con-accent);
+}
+
+.con-tab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--con-faint);
+  padding: 6px 0 4px;
+  flex: 1;
+  position: relative;
+}
+.con-tab-item[data-active="true"] { color: var(--con-accent); }
+
+.con-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--con-neg);
+  color: var(--con-neg-contrast);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ── Sheets / dialogs ── */
+.con-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--con-scrim);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+}
+.con-sheet {
+  position: fixed;
+  z-index: 101;
+  background: var(--con-surface);
+  border: 1px solid var(--con-line-strong);
+  box-shadow: var(--con-shadow-lg);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(82dvh, 720px);
+  overflow-y: auto;
+  border-radius: var(--con-radius);
+}
+@media (max-width: 767px) {
+  .con-sheet {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: var(--con-radius) var(--con-radius) 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+.con-sheet-live {
+  border-color: var(--con-accent-border);
+}
+
+/* ── Symbol drawer ── */
+.con-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: var(--con-scrim);
+  backdrop-filter: blur(2px);
+  animation: con-fade-in 140ms ease-out;
+}
+.con-drawer {
+  position: fixed;
+  z-index: 111;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(100vw, 640px);
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--con-line-strong);
+  background: var(--con-surface);
+  box-shadow: var(--con-shadow-lg);
+  animation: con-drawer-in 180ms ease-out;
+}
+.con-drawer-header {
+  display: flex;
+  min-height: 64px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--con-line);
+  padding: 14px 18px;
+}
+.con-drawer-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 22px;
+}
+@keyframes con-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes con-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@media (max-width: 640px) {
+  .con-drawer {
+    width: 100vw;
+  }
+  .con-drawer-header {
+    min-height: 58px;
+    padding: 12px 14px;
+  }
+  .con-drawer-body {
+    padding: 14px;
+  }
+}
+
+/* ── Toasts ── */
+.con-toasts {
+  position: fixed;
+  z-index: 120;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 32px));
+}
+@media (max-width: 767px) {
+  .con-toasts { bottom: 76px; }
+}
+.con-toast {
+  background: var(--con-surface);
+  border: 1px solid var(--con-line-strong);
+  border-radius: var(--con-radius-sm);
+  box-shadow: var(--con-shadow);
+  padding: 10px 12px;
+  font-size: var(--con-fs-sm);
+}
+.con-toast-pos { border-color: var(--con-pos-border); }
+.con-toast-neg { border-color: var(--con-neg-border); }
+.con-toast-warn { border-color: var(--con-warn-border); }
+
+/* ── Status dot ── */
+.con-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  flex: none;
+}
+.con-dot-pulse {
+  animation: con-pulse 1.6s ease-in-out infinite;
+}
+@keyframes con-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ── Logos ── */
+/* Neutral tile behind ticker/company logos so white- or dark-glyph marks stay
+   visible in BOTH themes. Light: a dark slate tile (many marks are white-on-
+   transparent); dark: a translucent raised surface. The monogram fallback
+   reuses the same tile with a readable letter color. */
+.con-logo-tile {
+  border-radius: 6px;
+  border: 1px solid var(--con-line);
+  background: #334155;
+  color: rgba(255, 255, 255, 0.92);
+}
+.console-root[data-theme="dark"] .con-logo-tile {
+  background: color-mix(in oklab, var(--con-surface-3) 85%, transparent);
+  color: var(--con-fg);
+}
+@media (prefers-color-scheme: dark) {
+  .console-root:not([data-theme="light"]) .con-logo-tile {
+    background: color-mix(in oklab, var(--con-surface-3) 85%, transparent);
+    color: var(--con-fg);
+  }
+}
+
+/* ── Model-attribution team blocks (approval cards) ──
+   The proposer (green team / bull) and the adversarial reviewer (red team /
+   bear) each get a faintly tinted block derived from --con-pos / --con-neg, so
+   the tint adapts to both themes and text keeps its normal contrast. */
+.con-team {
+  border-radius: var(--con-radius-sm);
+  padding: 12px;
+}
+.con-team-green {
+  background: color-mix(in oklab, var(--con-pos) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--con-pos) 28%, transparent);
+}
+.con-team-red {
+  background: color-mix(in oklab, var(--con-neg) 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--con-neg) 28%, transparent);
+}
+
+/* The big confidence figure: the one number that carries the decision. Heavier
+   and tighter than the surrounding text, in the positive (bull) hue on the
+   green block. --con-pos meets AA on both themes' surfaces, and the faint tint
+   behind it barely shifts the contrast. */
+.con-confidence-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--con-pos);
+}
+.con-team-red .con-confidence-num {
+  color: var(--con-neg);
+}
+
+/* Details / disclosure groups */
+.con-disclosure > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--con-fs-sm);
+  font-weight: 600;
+  color: var(--con-muted);
+  padding: 10px 0;
+  user-select: none;
+}
+.con-disclosure > summary::-webkit-details-marker { display: none; }
+.con-disclosure > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--con-faint);
+  border-bottom: 1.5px solid var(--con-faint);
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+  flex: none;
+}
+.con-disclosure[open] > summary::before { transform: rotate(45deg); }
+
+.con-hr {
+  border: none;
+  border-top: 1px solid var(--con-line);
+  margin: 0;
+}
+
+/* ── Symbol drilldown ──
+   Additive classes for the company drawer: metric tiles, 0–100 factor bars,
+   the analyst rating distribution bar, and the price-target range bar. All
+   derived from existing tokens so they adapt to light and dark. */
+.con-tile {
+  border: 1px solid var(--con-line);
+  border-radius: var(--con-radius-sm);
+  background: var(--con-surface-2);
+  padding: 8px 10px;
+}
+
+/* 0–100 score bar (factor breakdown). Unlike .con-meter, high is GOOD here,
+   so the fill stays accent-colored at every level. */
+.con-score-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
+  overflow: hidden;
+}
+.con-score-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--con-accent);
+}
+
+/* Analyst rating distribution: stacked horizontal segments (strong buy → strong sell). */
+.con-dist-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--con-line);
+  overflow: hidden;
+  background: var(--con-surface-3);
+}
+.con-dist-bar > div {
+  height: 100%;
+}
+
+/* Price-target range: a track spanning low→high with point markers
+   (current price, mean target) positioned along it. */
+.con-range-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--con-surface-3);
+  border: 1px solid var(--con-line);
+}
+.con-range-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--con-accent-soft);
+  border: 1px solid var(--con-accent-border);
+}
+.con-range-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-root * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

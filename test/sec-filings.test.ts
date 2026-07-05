@@ -254,6 +254,7 @@ describe("ingestFiling", () => {
     // Verify storeDocument was called with scope-friendly args (userId='local')
     expect(mocks.storeDocument).toHaveBeenCalledWith(
       expect.objectContaining({
+        doc_id: `AAPL:${ref.accession}:${ref.docType}`,
         ticker: "AAPL",
         doc_type: "10-k",
         source: "sec-edgar",

@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import { getDb } from "./db";
 import type {
+  ExecutionMode,
   FillEvent,
   FillSource,
   PortfolioSnapshot
@@ -20,6 +21,7 @@ type RawPortfolioSnapshot = {
   positions_value: number;
   positions: string;
   created_at: string;
+  execution_mode: string | null;
 };
 
 type RawFillEvent = {
@@ -36,7 +38,10 @@ type RawFillEvent = {
   status: string;
   broker_order_id: string | null;
   raw: string | null;
+  mae: number | null;
+  mfe: number | null;
   filled_at: string;
+  execution_mode: string | null;
 };
 
 // ── Mapper functions ──────────────────────────────────────────────────────────
@@ -52,7 +57,8 @@ function toPortfolioSnapshot(row: RawPortfolioSnapshot): PortfolioSnapshot {
     buyingPower: row.buying_power,
     positionsValue: row.positions_value,
     positions: JSON.parse(row.positions),
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    executionMode: row.execution_mode ? (row.execution_mode as ExecutionMode) : undefined
   };
 }
 
@@ -71,7 +77,10 @@ function toFillEvent(row: RawFillEvent): FillEvent {
     status: row.status,
     brokerOrderId: row.broker_order_id ?? undefined,
     raw: row.raw ? JSON.parse(row.raw) : undefined,
-    filledAt: row.filled_at
+    mae: row.mae ?? undefined,
+    mfe: row.mfe ?? undefined,
+    filledAt: row.filled_at,
+    executionMode: row.execution_mode ? (row.execution_mode as ExecutionMode) : undefined
   };
 }
 
@@ -83,6 +92,7 @@ export function insertPortfolioSnapshot(input: {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   equity: number;
   cash: number;
   buyingPower: number;
@@ -100,11 +110,12 @@ export function insertPortfolioSnapshot(input: {
     buyingPower: input.buyingPower,
     positionsValue: input.positionsValue,
     positions: input.positions as PortfolioSnapshot["positions"],
-    createdAt: input.createdAt ?? new Date().toISOString()
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    executionMode: input.executionMode
   };
   getDb()
     .prepare(
-      "INSERT INTO portfolio_snapshots (id, user_id, run_id, account_number, source, equity, cash, buying_power, positions_value, positions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO portfolio_snapshots (id, user_id, run_id, account_number, source, execution_mode, equity, cash, buying_power, positions_value, positions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       snapshot.id,
@@ -112,6 +123,7 @@ export function insertPortfolioSnapshot(input: {
       snapshot.runId ?? null,
       snapshot.accountNumber,
       snapshot.source,
+      snapshot.executionMode ?? null,
       snapshot.equity,
       snapshot.cash,
       snapshot.buyingPower,
@@ -143,7 +155,7 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
   };
   getDb()
     .prepare(
-      "INSERT INTO fill_events (id, user_id, proposal_id, run_id, account_number, source, symbol, side, quantity, price, notional, status, broker_order_id, raw, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO fill_events (id, user_id, proposal_id, run_id, account_number, source, execution_mode, symbol, side, quantity, price, notional, status, broker_order_id, raw, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       fill.id,
@@ -152,6 +164,7 @@ export function insertFillEvent(input: Omit<FillEvent, "id" | "filledAt"> & { id
       fill.runId ?? null,
       fill.accountNumber,
       fill.source,
+      fill.executionMode ?? null,
       fill.symbol,
       fill.side,
       fill.quantity,
@@ -173,6 +186,29 @@ export function listFillEvents(accountNumber: string, source?: FillSource, limit
     : (getDb()
         .prepare("SELECT * FROM fill_events WHERE account_number = ? AND user_id = ? ORDER BY filled_at ASC LIMIT ?")
         .all(accountNumber, userId, limit) as RawFillEvent[]);
+  return rows.map(toFillEvent);
+}
+
+/** Fills for one proposal (entry-basis lookup for the outcome engine's placed-decision join). */
+export function listFillEventsByProposalId(proposalId: string, userId: string = "local"): FillEvent[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM fill_events WHERE proposal_id = ? AND user_id = ? ORDER BY filled_at ASC")
+    .all(proposalId, userId) as RawFillEvent[];
+  return rows.map(toFillEvent);
+}
+
+export function listPendingBrokerReconciliationFills(accountNumber: string, userId: string = "local"): FillEvent[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM fill_events
+       WHERE account_number = ?
+         AND user_id = ?
+         AND status = 'pending_reconciliation'
+         AND broker_order_id IS NOT NULL
+         AND (source = 'live' OR execution_mode IN ('broker/paper', 'broker/live'))
+       ORDER BY filled_at ASC`
+    )
+    .all(accountNumber, userId) as RawFillEvent[];
   return rows.map(toFillEvent);
 }
 

@@ -93,6 +93,34 @@ export function pickOwnershipXml(indexJson: unknown): string | undefined {
   );
 }
 
+/**
+ * Validate an ISO filing date, REJECTING data-quality garbage. A Form 4 can't report a transaction
+ * dated after today, so a future date (e.g. a corrupt "2026-12-26") is an unambiguous error — we
+ * reject it rather than surface an impossible date in the UI or skew the recency window.
+ */
+function saneFilingDate(value: string | undefined, now: number = Date.now()): string | undefined {
+  if (!value) return undefined;
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return undefined;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Reject impossible calendar dates that would otherwise roll over to a valid timestamp (e.g.
+  // "2026-02-30" -> Mar 2): build the UTC date from the components and require it to round-trip.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
+  const iso = `${m[1]}-${m[2]}-${m[3]}`;
+  const ts = d.getTime();
+  if (!Number.isFinite(ts)) return undefined;
+  // A Form 4 reports a transaction that already happened, so its date is a timezone-less calendar
+  // date that can't be after today — reject anything strictly future (no ±3-day skew; lexicographic
+  // compare is valid for YYYY-MM-DD).
+  const todayIso = new Date(now).toISOString().slice(0, 10);
+  if (iso > todayIso) return undefined;
+  if (ts < Date.parse("2000-01-01")) return undefined; // absurd past
+  return iso;
+}
+
 /** Parse a Form 4 ownership XML into a normalized insider filing (open-market P/S only). */
 export function parseForm4Xml(xml: string, ctx: { accession: string }): InsiderFiling | null {
   const symbolRaw = xml.match(/<issuerTradingSymbol>([\s\S]*?)<\/issuerTradingSymbol>/)?.[1]?.trim();
@@ -100,10 +128,17 @@ export function parseForm4Xml(xml: string, ctx: { accession: string }): InsiderF
   const symbol = normalizeSymbol(symbolRaw);
   if (!/^[A-Z][A-Z.\-]{0,5}$/.test(symbol)) return null;
   const owner = (xml.match(/<rptOwnerName>([\s\S]*?)<\/rptOwnerName>/)?.[1] ?? "Insider").replace(/\s+/g, " ").trim();
-  const filedAt =
-    xml.match(/<periodOfReport>([\s\S]*?)<\/periodOfReport>/)?.[1]?.trim() ||
-    xml.match(/<signatureDate>[\s\S]*?<value>([\s\S]*?)<\/value>/)?.[1]?.trim() ||
-    new Date().toISOString().slice(0, 10);
+  // A date field that is SUPPLIED but future-dated or otherwise garbage is a data error — DROP the
+  // filing rather than silently re-anchoring it to the signature date or today (which would surface
+  // an impossible future transaction as current insider activity). Fall through only when a field is
+  // simply absent; default to today only when no date was supplied at all.
+  const periodRaw = xml.match(/<periodOfReport>([\s\S]*?)<\/periodOfReport>/)?.[1]?.trim();
+  const sigRaw = xml.match(/<signatureDate>[\s\S]*?<value>([\s\S]*?)<\/value>/)?.[1]?.trim();
+  const period = periodRaw ? saneFilingDate(periodRaw) : undefined;
+  if (periodRaw && !period) return null;
+  const sig = sigRaw ? saneFilingDate(sigRaw) : undefined;
+  if (sigRaw && !sig) return null;
+  const filedAt = period || sig || new Date().toISOString().slice(0, 10);
 
   let buyTx = 0;
   let sellTx = 0;
@@ -229,6 +264,70 @@ export function mergeInsiderFilings(existing: InsiderFiling[], fresh: InsiderFil
     byAccession.set(f.accession, f);
   }
   return Array.from(byAccession.values());
+}
+
+// ── External upsert (push webhook / SSE from App A congress.trade) ────────────
+// App A may push raw Form-4 filings OR a precomputed per-symbol insiderSentiment (0–100). We accept
+// both: raw filings merge straight into the rolling dataset; a scalar is represented as one synthetic
+// "marker" filing whose buy/sell transaction counts reproduce that sentiment when aggregated.
+
+/** Build a synthetic marker filing so a pushed insiderSentiment (0–100) flows through aggregation. */
+export function insiderFilingFromSentiment(symbol: string, sentiment: number, asOf?: string): InsiderFiling | null {
+  const sym = normalizeSymbol(symbol);
+  const s = Math.max(0, Math.min(100, Math.round(sentiment)));
+  if (!sym || !Number.isFinite(sentiment)) return null;
+  const filedAt = asOf && /^\d{4}-\d{2}-\d{2}/.test(asOf) ? asOf.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  // buyTx/sellTx sum to 100 so aggregateInsiderSignals reproduces `s` = buyTx/(buyTx+sellTx)*100.
+  // Accession is stable per symbol+day → re-sends overwrite rather than accumulate.
+  return {
+    symbol: sym,
+    owner: "congress.trade",
+    buyTx: s,
+    sellTx: 100 - s,
+    buyShares: 0,
+    sellShares: 0,
+    filedAt,
+    accession: `appA:insider:${sym}:${filedAt}`
+  };
+}
+
+/** Tolerantly coerce a pushed raw Form-4 row into an InsiderFiling (requires symbol + accession). */
+export function coerceInsiderFiling(raw: unknown): InsiderFiling | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const symbol = normalizeSymbol(typeof o.symbol === "string" ? o.symbol : typeof o.ticker === "string" ? o.ticker : "");
+  const accession = typeof o.accession === "string" ? o.accession : typeof o.id === "string" ? o.id : "";
+  if (!symbol || !accession) return null;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const rawFiled = typeof o.filedAt === "string" ? o.filedAt : typeof o.date === "string" ? o.date : "";
+  const saneFiled = saneFilingDate(rawFiled);
+  // A supplied filing date that is future-dated or otherwise garbage is a data error → drop the row
+  // rather than surface an impossible date. With no date at all, default to today.
+  if (rawFiled && !saneFiled) return null;
+  const filedAt = saneFiled ?? new Date().toISOString().slice(0, 10);
+  return {
+    symbol,
+    // Never store an empty owner (the InsiderFiling contract wants a non-empty string); the
+    // buy/sell counts carry the actual signal, so default a missing owner rather than dropping it.
+    owner: (typeof o.owner === "string" && o.owner.trim()) || "unknown",
+    buyTx: num(o.buyTx),
+    sellTx: num(o.sellTx),
+    buyShares: num(o.buyShares),
+    sellShares: num(o.sellShares),
+    filedAt,
+    accession
+  };
+}
+
+/** Merge externally-received insider filings into the persisted dataset. Returns the new total. */
+export function upsertInsiderFilings(incoming: InsiderFiling[], now: number = Date.now()): { total: number } {
+  const clean = incoming.filter((f): f is InsiderFiling => Boolean(f && f.symbol && f.accession));
+  const prior = getInsiderDataset();
+  if (clean.length === 0) return { total: prior?.recordCount ?? 0 };
+  const merged = mergeInsiderFilings(prior?.filings ?? [], clean, now);
+  const dataset: InsiderDataset = { filings: merged, fetchedAt: new Date(now).toISOString(), recordCount: merged.length };
+  setInternalSetting(DATASET_KEY, dataset);
+  return { total: merged.length };
 }
 
 export async function refreshInsider(now: number = Date.now(), force = false): Promise<WebSourceRefreshResult> {

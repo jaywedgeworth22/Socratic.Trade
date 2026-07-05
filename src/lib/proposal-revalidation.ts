@@ -16,10 +16,13 @@
 // Both are no-ops when there is nothing to act on, and the LLM pass degrades to a skip
 // (deterministic expiry still applies) when OPENAI_API_KEY is not configured.
 
-import { audit, listPendingProposals, markProposalRevalidated, resolveLlmCredential, updateProposalStatus } from "./db";
+import { audit, listPendingProposals, markProposalRevalidated, updateProposalStatus } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
+import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
@@ -140,20 +143,6 @@ function quoteForSymbol(scan: MarketScan | undefined, symbol: string): Record<st
   return undefined;
 }
 
-function extractText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
-}
-
 /**
  * Supplemental run task: ask the LLM whether each old, still-pending proposal still stands
  * against the fresh scan, withdrawing the ones it no longer advises and stamping the rest.
@@ -189,10 +178,8 @@ export async function revalidatePendingProposals(input: {
   );
   if (pending.length === 0) return { checked: 0, reaffirmed: 0, withdrawn: 0, skipped: false };
 
-  const cred = resolveLlmCredential("openai", userId);
-  const openaiKey = cred.key;
+  const { url, key: openaiKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId);
   if (!openaiKey) return { checked: pending.length, reaffirmed: 0, withdrawn: 0, skipped: true };
-  const keySource = cred.source === "operator" ? "operator" : "user";
 
   const currentMarketRegime = determineMarketRegime(await fetchMacroData(userId));
 
@@ -249,31 +236,20 @@ export async function revalidatePendingProposals(input: {
     }
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
-
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          response_format: { type: "json_schema", json_schema: { name: "proposal_revalidation", strict: true, schema } }
-        }
-      : {
-          model,
-          input: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) }
-          ],
-          text: { format: { type: "json_schema", name: "proposal_revalidation", schema } }
-        },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation }
+  const body = buildLlmRequestBody(
+    { provider, transport },
+    {
+      model,
+      systemPrompt,
+      userContent: JSON.stringify(userContent),
+      schema: { name: "proposal_revalidation", schema, description: "Reaffirm-or-withdraw verdicts for each pending proposal." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation,
+      // Pending-proposal revalidation runs first in a strategy run while the per-user lock is held
+      // (strategy.ts), so it must use the SAME interactive-reasoning clamp as the Green/Bear/debate
+      // steps — otherwise a stored gpt-5.5/high policy sends a high-reasoning call here and can hit
+      // the timeout/run-lock this guardrail prevents. (Review: PR #278 follow-up.)
+      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort)
+    }
   );
 
   let assessments: RevalidationAssessment[] = [];
@@ -289,18 +265,18 @@ export async function revalidatePendingProposals(input: {
         output: (result) => ({ ...summarizeOpenAiResponseText(result.text), assessmentCount: result.assessments.length })
       },
       async () => {
-        const response = await fetch(url, {
+        const response = await llmFetch(url, {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${openaiKey}` },
+          headers: llmAuthHeaders({ provider, key: openaiKey }),
           body: JSON.stringify(body)
         });
         if (!response.ok) {
-          console.warn("[revalidation] LLM call failed", await response.text());
+          console.warn("[revalidation] LLM call failed:", humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status }));
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider: "openai", model, context: "proposal-revalidation", keySource, ...extractLlmUsage(payload) });
-        const text = extractText(payload);
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, ...extractLlmUsage(payload) });
+        const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };

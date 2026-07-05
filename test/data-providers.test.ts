@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AlpacaSnapshotEnrichmentProvider,
+  CascadingEnrichmentProvider,
   alpacaDataFeed,
+  alpacaSnapshotTtlMs,
   analystScoreFromCounts,
   analystScoreFromMean,
   getEnrichmentProvider,
@@ -13,14 +15,22 @@ import {
   mockEnrichmentProvider,
   noopProvider,
   parseAlpacaSnapshot,
+  parseRobinhoodFundamentals,
   parseWebullUnofficialQuote,
-  scoreHeadlines
+  scoreHeadlines,
+  type MarketEnrichmentProvider,
+  type EnrichmentContext,
+  type SymbolEnrichment
 } from "../src/lib/data-providers";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-data-providers-${randomUUID()}.db`)}`;
+  // These tests seed provider failures then assert subsequent-call/caching behavior; the per-lane
+  // circuit breaker (default ON) would otherwise trip a lane mid-file (the temp health log accumulates
+  // failures across tests) and skip those follow-up calls. The breaker has its own dedicated test.
+  process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
 });
 
 describe("market enrichment provider", () => {
@@ -236,6 +246,85 @@ describe("enrichment cache consent gate", () => {
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
 
+  it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    const runAndCount = async () => {
+      clearEnrichmentCache();
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string) => {
+        urls.push(String(url));
+        if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+        if (String(url).includes("recommendation")) {
+          return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+        }
+        return new Response(JSON.stringify({}));
+      });
+      const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+      const res = await provider.enrich(["AAPL"]);
+      return { urls, res };
+    };
+
+    // Flag OFF (default) → 5 calls, recommendation IS fetched and yields an analyst score.
+    delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    const off = await runAndCount();
+    expect(off.urls.length).toBe(5);
+    expect(off.urls.some((u) => u.includes("recommendation"))).toBe(true);
+    expect(off.res.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+
+    // Flag ON → 4 calls, recommendation NOT fetched, no fabricated Finnhub analyst rating.
+    process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+    const on = await runAndCount();
+    expect(on.urls.length).toBe(4);
+    expect(on.urls.some((u) => u.includes("recommendation"))).toBe(false);
+    expect(on.res.AAPL?.analystBySource?.finnhub).toBeUndefined();
+    // Non-analyst fields still populate from the remaining calls.
+    expect(on.res.AAPL?.companyName).toBe("Acme Corp");
+
+    if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+    else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+  });
+
+  it("keys the Finnhub cache by FINNHUB_DROP_RECOMMENDATION so flipping the flag refetches (not a stale no-rec row)", async () => {
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
+
+    let recFetches = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("recommendation")) {
+        recFetches++;
+        return new Response(JSON.stringify([{ strongBuy: 5, buy: 3, hold: 1, sell: 0, strongSell: 0 }]));
+      }
+      if (String(url).includes("profile2")) return new Response(JSON.stringify({ name: "Acme Corp" }));
+      return new Response(JSON.stringify({}));
+    });
+
+    try {
+      // Flag ON: recommendation dropped, row cached under the flag-specific namespace.
+      process.env.FINNHUB_DROP_RECOMMENDATION = "1";
+      const onProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const on1 = await onProvider.enrich(["AAPL"]);
+      expect(on1.AAPL?.analystBySource?.finnhub).toBeUndefined();
+      expect(recFetches).toBe(0);
+      // Same flag again → cache hit, still no recommendation fetch.
+      await onProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(0);
+
+      // Flag OFF: distinct cache namespace → MISS → refetch, now including the recommendation, so the
+      // blended analyst rating regains Finnhub's vote instead of serving the stale no-rec row until TTL.
+      delete process.env.FINNHUB_DROP_RECOMMENDATION;
+      const offProvider = new FinnhubEnrichmentProvider("env-key", "env");
+      const off1 = await offProvider.enrich(["AAPL"]);
+      expect(recFetches).toBe(1);
+      expect(off1.AAPL?.analystBySource?.finnhub?.score).toBeGreaterThan(0);
+    } finally {
+      if (originalFlag !== undefined) process.env.FINNHUB_DROP_RECOMMENDATION = originalFlag;
+      else delete process.env.FINNHUB_DROP_RECOMMENDATION;
+    }
+  });
+
   it("user-keyed data is shared via pool to a consenting second user", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const { upsertUserApiKey, setDataPoolConsent } = await import("../src/lib/db");
@@ -392,11 +481,38 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({});
+    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
     expect(fetchCount).toBe(4);
 
     const res2 = await provider.enrich(["AAPL"]);
     expect(res2.AAPL).toEqual({});
     expect(fetchCount).toBe(8);
+  });
+
+  it("logs non-premium optional FMP failures while suppressing expected premium 403s", async () => {
+    const { FmpEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    const { getDb } = await import("../src/lib/db");
+    clearEnrichmentCache();
+    getDb().prepare("DELETE FROM api_health_log WHERE service = ?").run("fmp");
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("insider-trading")) {
+        return new Response("server error", { status: 500 });
+      }
+      if (url.includes("senate-trading")) {
+        return new Response("premium endpoint", { status: 403 });
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const provider = new FmpEnrichmentProvider("test-key");
+    await provider.enrich(["AAPL"]);
+
+    const rows = getDb()
+      .prepare("SELECT ok, error_text FROM api_health_log WHERE service = ? ORDER BY ts")
+      .all("fmp") as Array<{ ok: number; error_text: string | null }>;
+    expect(rows.some((row) => row.ok === 0 && row.error_text === "HTTP 500")).toBe(true);
+    expect(rows.some((row) => row.error_text === "HTTP 403")).toBe(false);
   });
 
   it("caches normally on FMP when all queries succeed", async () => {
@@ -415,6 +531,7 @@ describe("Finnhub & FMP Cache Poisoning Protection", () => {
     const provider = new FmpEnrichmentProvider("test-key");
     const res1 = await provider.enrich(["AAPL"]);
     expect(res1.AAPL).toEqual({ peRatio: 25.5 });
+    // 4 sub-calls: ratios-ttm, grades-consensus, insider-trading, senate-trading.
     expect(fetchCount).toBe(4);
 
     const res2 = await provider.enrich(["AAPL"]);
@@ -545,6 +662,46 @@ describe("Alpha Vantage Warning Detection", () => {
 
 // ── AlpacaSnapshotEnrichmentProvider ─────────────────────────────────────────
 
+describe("parseRobinhoodFundamentals", () => {
+  // Real shape from a live get_equity_fundamentals(["AAPL"]) call (2026-07-01), trimmed to
+  // the fields the parser reads. Robinhood returns numeric fields as strings.
+  const liveAaplRow = {
+    symbol: "AAPL",
+    average_volume: "81911063.910945",
+    average_volume_2_weeks: "81911063.910945",
+    high_52_weeks: "317.400000",
+    low_52_weeks: "201.500000",
+    pe_ratio: "34.082139",
+    sector: "Electronic Technology",
+    industry: "Telecommunications Equipment"
+  };
+
+  it("maps the verified-reliable numeric fields, parsing Robinhood's string-encoded numbers", () => {
+    const result = parseRobinhoodFundamentals(liveAaplRow);
+    expect(result.peRatio).toBeCloseTo(34.082139);
+    expect(result.fiftyTwoWeekHigh).toBe(317.4);
+    expect(result.fiftyTwoWeekLow).toBe(201.5);
+    expect(result.volume).toBeCloseTo(81911063.910945);
+  });
+
+  it("never maps sector/industry — Robinhood's taxonomy doesn't match the app's GICS-style sectorCaps keys", () => {
+    // Regression: Robinhood's own sector taxonomy ("Electronic Technology" for AAPL) differs
+    // from the GICS-style taxonomy used elsewhere (Yahoo/Finnhub, and whatever a user
+    // configures in policy.sectorCaps). SymbolEnrichment.sector feeds real sector-cap risk
+    // enforcement via market.ts -> policy.ts's sectorForSymbol/sectorCapFor, so silently
+    // passing this through would make sector caps stop matching for affected symbols.
+    const result = parseRobinhoodFundamentals(liveAaplRow);
+    expect(result).not.toHaveProperty("sector");
+    expect(result).not.toHaveProperty("industry");
+  });
+
+  it("omits a field entirely when it is missing, zero, or unparseable rather than defaulting to 0", () => {
+    const result = parseRobinhoodFundamentals({ symbol: "ZZZ", pe_ratio: "0", high_52_weeks: null });
+    expect(result).not.toHaveProperty("peRatio");
+    expect(result).not.toHaveProperty("fiftyTwoWeekHigh");
+  });
+});
+
 describe("parseAlpacaSnapshot", () => {
   it("maps a full snapshot to the correct SymbolEnrichment fields", () => {
     const snap = {
@@ -636,6 +793,70 @@ describe("parseAlpacaSnapshot", () => {
   it("returns an empty object for a null/undefined snapshot", () => {
     expect(parseAlpacaSnapshot(null)).toEqual({});
     expect(parseAlpacaSnapshot(undefined)).toEqual({});
+  });
+
+  // Composite review D/high/S: "Per-field freshness (asOf) map on quotes + Alpaca-snapshot asOf" —
+  // parseAlpacaSnapshot never set asOf before, so the maxQuoteAgeSec staleness gate (policy.ts)
+  // could not see that the snapshot was served from a stale cache entry.
+  describe("asOf stamping (staleness-gate visibility)", () => {
+    it("stamps asOf from latestTrade.t when latestTrade.p wins the price", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 205.75, t: "2026-07-04T14:30:00Z" },
+        dailyBar: { c: 205.60, v: 1_000_000, t: "2026-07-04T00:00:00Z" }
+      });
+      expect(result.price).toBe(205.75);
+      expect(result.asOf).toBe("2026-07-04T14:30:00Z");
+    });
+
+    it("stamps asOf from dailyBar.t when latestTrade is absent and dailyBar.c wins the price", () => {
+      const result = parseAlpacaSnapshot({
+        latestQuote: { bp: 100.00, ap: 100.10 },
+        dailyBar: { c: 100.05, v: 500_000, t: "2026-07-04T20:00:00Z" }
+      });
+      expect(result.price).toBe(100.05);
+      expect(result.asOf).toBe("2026-07-04T20:00:00Z");
+    });
+
+    it("omits asOf when no timestamp backs the winning price field (never guesses)", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 50.00 }, // no .t
+        dailyBar: { c: 50.00, v: 10_000 }
+      });
+      expect(result.price).toBe(50.00);
+      expect(result).not.toHaveProperty("asOf");
+    });
+
+    it("omits asOf for an unparsable timestamp string", () => {
+      const result = parseAlpacaSnapshot({
+        latestTrade: { p: 50.00, t: "not-a-timestamp" }
+      });
+      expect(result).not.toHaveProperty("asOf");
+    });
+  });
+});
+
+describe("alpacaSnapshotTtlMs — per-data-class TTL (quote-family, not fundamentals)", () => {
+  const original = process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+    else process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = original;
+  });
+
+  it("defaults to ~30s — far shorter than the 6h fundamentals ttlMs()", () => {
+    delete process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS;
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
+  });
+
+  it("is configurable independently of NEWS_CACHE_TTL_MS", () => {
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "5000";
+    expect(alpacaSnapshotTtlMs()).toBe(5000);
+  });
+
+  it("falls back to the default for a non-finite/negative override", () => {
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "not-a-number";
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
+    process.env.ALPACA_SNAPSHOT_CACHE_TTL_MS = "-5";
+    expect(alpacaSnapshotTtlMs()).toBe(30_000);
   });
 });
 
@@ -800,6 +1021,48 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     expect(fetchCount).toBe(1); // cache hit — no second fetch
   });
 
+  // Composite review D/high/S: the snapshot used to share the blanket 6h fundamentals ttlMs(), so a
+  // real-time price could replay from cache for up to 6h. It now gets its own short (~30s)
+  // alpacaSnapshotTtlMs() — this pins down that a cached snapshot actually expires quickly.
+  it("re-fetches after the short (~30s) quote-family TTL expires, unlike the 6h fundamentals cache", async () => {
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetchCount++;
+      return new Response(
+        JSON.stringify({
+          AAPL: {
+            latestTrade: { p: 200.00 },
+            latestQuote: { bp: 199.90, ap: 200.10 },
+            dailyBar: { c: 200.00, v: 1_000_000 },
+            prevDailyBar: { c: 198.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    vi.useFakeTimers();
+    try {
+      const r1 = await provider.enrich(["AAPL"]);
+      expect(r1.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(1);
+
+      // Still within the ~30s TTL — cache hit.
+      vi.advanceTimersByTime(10_000);
+      const r2 = await provider.enrich(["AAPL"]);
+      expect(r2.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(1);
+
+      // Past the ~30s TTL — must re-fetch (would still be cached under the old 6h ttlMs()).
+      vi.advanceTimersByTime(25_000);
+      const r3 = await provider.enrich(["AAPL"]);
+      expect(r3.AAPL?.price).toBe(200.00);
+      expect(fetchCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns empty objects on HTTP error and does not cache", async () => {
     let fetchCount = 0;
     vi.stubGlobal("fetch", async () => {
@@ -838,6 +1101,82 @@ describe("AlpacaSnapshotEnrichmentProvider", () => {
     expect(result.TSLA).not.toHaveProperty("bid");
     expect(result.TSLA).not.toHaveProperty("ask");
   });
+
+  it("converts a hyphenated share-class symbol (BRK-B) to Alpaca's dot notation in the request and maps the response back", async () => {
+    // Regression: Alpaca's snapshots endpoint 400s an entire batch when it contains an
+    // unconverted hyphenated symbol — confirmed in production (~97% failure rate on batches
+    // that included BRK-B from the S&P 500 scan universe) before this fix.
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          "BRK.B": {
+            latestTrade: { p: 410.00 },
+            dailyBar: { c: 409.50, v: 1_000_000 },
+            prevDailyBar: { c: 408.00 }
+          }
+        })
+      );
+    });
+
+    const provider = new AlpacaSnapshotEnrichmentProvider("k", "s");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.price).toBe(410.00);
+  });
+});
+
+describe("AlpacaNewsEnrichmentProvider", () => {
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("converts a hyphenated share-class symbol to Alpaca's dot notation in the request and maps tagged articles back", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire posts strong quarter", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK-B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(capturedUrl).not.toContain("BRK-B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire posts strong quarter");
+  });
+
+  it("matches Alpaca news tags when the requested share-class symbol is already dot-form", async () => {
+    const { AlpacaNewsEnrichmentProvider } = await import("../src/lib/data-providers");
+    let capturedUrl = "";
+    vi.stubGlobal("fetch", async (url: string) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          news: [{ headline: "Berkshire stays active in markets", symbols: ["BRK.B"] }]
+        })
+      );
+    });
+
+    const provider = new AlpacaNewsEnrichmentProvider("key-id", "key-secret");
+    const result = await provider.enrich(["BRK.B"]);
+
+    expect(capturedUrl).toContain("BRK.B");
+    expect(result["BRK-B"]?.headlines).toContain("Berkshire stays active in markets");
+    expect(result["BRK.B"]?.headlines).toContain("Berkshire stays active in markets");
+  });
 });
 
 // Freshness-tier ordering: the real-time Alpaca snapshot must win the price-family
@@ -854,11 +1193,9 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
     process.env.ALPACA_PAPER_API_KEY = "alpaca-key";
     process.env.ALPACA_PAPER_SECRET_KEY = "alpaca-secret";
     process.env.FINNHUB_API_KEY = "finnhub-key";
-    // Alpaca keys are per-user-only (trade-safe): the operator's env values are migrated into the
-    // `local` primary user's store at boot, so the Alpaca enrichment provider seats for `local`.
-    // (Finnhub is shared-operator-infra — env serves any user, no migration needed.)
-    const { migrateLocalEnvCredentials } = await import("../src/lib/db");
-    migrateLocalEnvCredentials();
+    // Alpaca MARKET DATA uses the operator's env paper key as a shared source for background scans
+    // (no userId) — so the Alpaca enrichment provider seats without any per-user key. (Trading still
+    // resolves Alpaca strictly per-user; this only affects read-only data.)
   });
 
   afterEach(() => {
@@ -872,7 +1209,7 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
   });
 
   it("seats alpaca-snapshot ahead of the delayed finnhub provider in the cascade", () => {
-    const provider = getEnrichmentProvider("local");
+    const provider = getEnrichmentProvider(); // no userId → operator's shared Alpaca data key
     const order = provider.name.split("+");
     expect(order).toContain("alpaca-snapshot");
     expect(order).toContain("finnhub");
@@ -909,7 +1246,7 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
       return new Response(JSON.stringify({}));
     });
 
-    const provider = getEnrichmentProvider("local");
+    const provider = getEnrichmentProvider(); // no userId → operator's shared Alpaca data key
     const result = await provider.enrich(["AAPL"]);
 
     // Real-time Alpaca wins every price-family field…
@@ -924,5 +1261,319 @@ describe("freshness-tier ordering — real-time Alpaca wins price-family fields"
     expect(result.AAPL?.sources?.bid).toBe("alpaca-snapshot");
     expect(result.AAPL?.sources?.ask).toBe("alpaca-snapshot");
     expect(result.AAPL?.sources?.volume).toBe("alpaca-snapshot");
+  });
+});
+
+describe("CascadingEnrichmentProvider.activeSources (honest source attribution)", () => {
+  const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
+    name,
+    configured: true,
+    async enrich() {
+      return data;
+    }
+  });
+
+  it("names only providers that supplied ≥1 accepted field, in registration order", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("alpha", { AAPL: { peRatio: 30 } }), // contributes peRatio
+      stub("beta", {}), // contributes nothing — must NOT appear in the source string
+      stub("gamma", { AAPL: { volume: 1000 } }) // contributes volume
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["alpha", "gamma"]);
+  });
+
+  it("excludes a provider whose every field lost the first-wins race (added nothing new)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("first", { AAPL: { peRatio: 30 } }),
+      stub("second", { AAPL: { peRatio: 99 } }) // peRatio already filled → not accepted → not a contributor
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["first"]);
+  });
+
+  it("counts an analyst-only contribution", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("rater", { AAPL: { analystBySource: { rater: { score: 80, label: "Buy" } } } })
+    ]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["rater"]);
+  });
+
+  it("resets between runs (a provider that contributed before but not now drops out)", async () => {
+    const cascade = new CascadingEnrichmentProvider([stub("only", { AAPL: { peRatio: 30 } })]);
+    await cascade.enrich(["AAPL"]);
+    expect(cascade.activeSources).toEqual(["only"]);
+    await cascade.enrich(["MSFT"]); // no data for MSFT this run
+    expect(cascade.activeSources).toEqual([]);
+  });
+
+  it("does NOT credit a provider whose analyst entry was overwritten by the same source", async () => {
+    // App A surfaces an analyst row keyed under its upstream source ("fmp"); the direct
+    // fmp provider runs later and overwrites that same key, so App A supplied no FINAL
+    // value and must not appear in activeSources.
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { fmp: { score: 80, label: "Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource)).toEqual(["fmp"]);
+    expect(out.AAPL.analystScore).toBe(20); // fmp's surviving value — a single vote, not a 50 blend
+    expect(cascade.activeSources).toEqual(["fmp"]);
+    expect(cascade.activeSources).not.toContain("congress.trade");
+  });
+
+  it("drops the source-less congress.trade aggregate when granular votes exist (no double-count)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "congress.trade": { score: 90, label: "Strong Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } }),
+      stub("finnhub", { AAPL: { analystBySource: { finnhub: { score: 40, label: "Hold" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    // Aggregate dropped → blend is fmp(20)+finnhub(40)=30, NOT (90+20+40)/3=50.
+    expect(out.AAPL.analystScore).toBe(30);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource).sort()).toEqual(["finnhub", "fmp"]);
+    expect(cascade.activeSources).not.toContain("congress.trade");
+  });
+
+  it("keeps the congress.trade aggregate when it is the only analyst signal", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "congress.trade": { score: 90, label: "Strong Buy" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystScore).toBe(90);
+    expect(out.AAPL.analystBySource && Object.keys(out.AAPL.analystBySource)).toEqual(["congress.trade"]);
+    expect(cascade.activeSources).toEqual(["congress.trade"]);
+  });
+
+  it("credits BOTH providers when their analyst entries are distinct sources", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("congress.trade", { AAPL: { analystBySource: { "yahoo-finance": { score: 80, label: "Buy" } } } }),
+      stub("fmp", { AAPL: { analystBySource: { fmp: { score: 20, label: "Sell" } } } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.analystScore).toBe(50); // two distinct votes (80 + 20) blended
+    expect(cascade.activeSources.sort()).toEqual(["congress.trade", "fmp"]);
+  });
+});
+
+describe("enrichment short-circuit (App A coverage hint → paid providers skip redundant sub-calls)", () => {
+  const FLAG = "ENRICHMENT_SHORT_CIRCUIT_ENABLED";
+  // The short-circuit now gates on the fundamentals tier flag, not the price-read flag.
+  const READS = "CONGRESS_TRADE_FUNDAMENTALS_ENABLED";
+  afterEach(() => {
+    delete process.env[FLAG];
+    delete process.env[READS];
+  });
+
+  function appA(fundamentals: Record<string, SymbolEnrichment>): MarketEnrichmentProvider {
+    return { name: "congress.trade", configured: true, costTier: "free", async enrich() { return fundamentals; } };
+  }
+  // Records the symbols it was called with AND the full context it received, faithfully
+  // modelling FMP's source-aware sub-call skipping: P/E skipped when App A covers peRatio
+  // (first-wins); consensus skipped only when App A's analyst source IS this provider.
+  function paidSpy(calls: string[][], contexts: Array<EnrichmentContext | undefined>): MarketEnrichmentProvider {
+    const NAME = "fmp";
+    return {
+      name: NAME,
+      configured: true,
+      costTier: "paid",
+      async enrich(syms: string[], context?: EnrichmentContext) {
+        calls.push(syms);
+        contexts.push(context);
+        const out: Record<string, SymbolEnrichment> = {};
+        for (const s of syms) {
+          const covered = context?.coveredFields?.[s];
+          const skipPe = covered?.has("peRatio") ?? false;
+          const skipConsensus = (covered?.has("analystRating") ?? false) && context?.analystSource?.[s] === NAME;
+          out[s] = {
+            // pe/analyst dropped only when its sub-call was skipped; insider/senate always
+            // supplied — App A never covers them, so nothing FMP uniquely provides is lost.
+            ...(skipPe ? {} : { peRatio: 99 }),
+            ...(skipConsensus ? {} : { analystBySource: { [NAME]: { score: 20, label: "Sell" } } }),
+            insiderSentiment: 70,
+            senateTrades: 3,
+          };
+        }
+        return out;
+      }
+    };
+  }
+
+  it("still runs every paid provider over every symbol, but hands them the coverage hint", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
+    const cascade = new CascadingEnrichmentProvider([
+      // AAA covered; BBB not. App A surfaces analyst as analystBySource (the cascade
+      // derives the displayed rating from that, not the scalar).
+      appA({
+        AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "fmp": { score: 80, label: "Buy" } } },
+      }),
+      paidSpy(calls, contexts)
+    ]);
+    await cascade.enrich(["AAA", "BBB"]);
+    // No whole-provider skip: the paid provider runs over BOTH symbols.
+    expect(calls).toEqual([["AAA", "BBB"]]);
+    // It received a per-symbol coverage hint (fields + analyst source) for AAA only.
+    expect(contexts[0]?.coveredFields?.AAA?.has("peRatio")).toBe(true);
+    expect(contexts[0]?.coveredFields?.AAA?.has("analystRating")).toBe(true);
+    expect(contexts[0]?.analystSource?.AAA).toBe("fmp");
+    expect(contexts[0]?.coveredFields?.BBB).toBeUndefined();
+  });
+
+  it("preserves the paid provider's unique fields for covered symbols (nothing lost)", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
+    const cascade = new CascadingEnrichmentProvider([
+      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "fmp": { score: 80, label: "Buy" } } } }),
+      paidSpy(calls, contexts)
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    // App A's pe/analyst win; the paid provider's unique insider/senate still come through.
+    expect(out.AAA.peRatio).toBe(10);
+    expect(out.AAA.analystRating).toBe("Buy"); // App A (fmp-sourced), de-duped — single vote
+    expect(out.AAA.insiderSentiment).toBe(70);
+    expect(out.AAA.senateTrades).toBe(3);
+  });
+
+  it("still fetches FMP's own consensus when App A's analyst came from a DIFFERENT source", async () => {
+    process.env[FLAG] = "on";
+    process.env[READS] = "on";
+    const calls: string[][] = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
+    const cascade = new CascadingEnrichmentProvider([
+      // App A's analyst is Yahoo-sourced (score 80/"Buy"); FMP must still contribute its
+      // own vote (score 20/"Sell"), so the blended score is the average of the two (~50).
+      appA({ AAA: { peRatio: 10, eps: 2, analystRating: "Buy", analystBySource: { "yahoo-finance": { score: 80, label: "Buy" } } } }),
+      paidSpy(calls, contexts)
+    ]);
+    const out = await cascade.enrich(["AAA"]);
+    expect(contexts[0]?.analystSource?.AAA).toBe("yahoo-finance");
+    // Two distinct votes (yahoo 80 + fmp 20) → blended ~50, NOT App A's 80 alone.
+    expect(out.AAA.analystScore).toBe(50);
+    expect(out.AAA.analystBySource && Object.keys(out.AAA.analystBySource).sort()).toEqual(["fmp", "yahoo-finance"]);
+  });
+
+  it("passes NO coverage hint when the flag is OFF (default)", async () => {
+    process.env[READS] = "on"; // reads on, short-circuit off
+    const calls: string[][] = [];
+    const contexts: Array<EnrichmentContext | undefined> = [];
+    const cascade = new CascadingEnrichmentProvider([
+      appA({ AAA: { peRatio: 10, eps: 2 } }),
+      paidSpy(calls, contexts)
+    ]);
+    await cascade.enrich(["AAA", "BBB"]);
+    expect(calls).toEqual([["AAA", "BBB"]]);
+    expect(contexts[0]).toBeUndefined();
+  });
+});
+
+describe("short-interest second source (Massive) — cross-check + disagreement bulletin", () => {
+  const stub = (name: string, data: Record<string, SymbolEnrichment>): MarketEnrichmentProvider => ({
+    name,
+    configured: true,
+    async enrich() {
+      return data;
+    }
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT;
+  });
+
+  it("flags a disagreement when the primary and Massive second source differ beyond the threshold", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 5 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortPercentOfFloat).toBe(20); // first-wins primary preserved
+    expect(out.AAPL.shortPercentOfFloatSecondary).toBeUndefined(); // carrier never leaves the cascade
+    expect(out.AAPL.shortInterestDisagreement).toBe(
+      "Short interest disagreement: yahoo-finance 20.0% vs massive 5.0% (15.0pp apart)."
+    );
+    expect(cascade.activeSources).toContain("massive");
+  });
+
+  it("does NOT flag when the two sources agree within the threshold (carrier still dropped)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 8 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 6 } }) // 2pp < 5pp default
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+    expect(out.AAPL.shortPercentOfFloatSecondary).toBeUndefined();
+  });
+
+  it("does NOT flag when only one source is present (no second source to compare)", async () => {
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+    expect(out.AAPL.shortPercentOfFloat).toBe(20);
+  });
+
+  it("honors the SHORT_INTEREST_DISAGREEMENT_PCT_PT threshold override", async () => {
+    process.env.SHORT_INTEREST_DISAGREEMENT_PCT_PT = "20"; // now 15pp gap is within tolerance
+    const cascade = new CascadingEnrichmentProvider([
+      stub("yahoo-finance", { AAPL: { shortPercentOfFloat: 20 } }),
+      stub("massive", { AAPL: { shortPercentOfFloatSecondary: 5 } })
+    ]);
+    const out = await cascade.enrich(["AAPL"]);
+    expect(out.AAPL.shortInterestDisagreement).toBeUndefined();
+  });
+
+  it("MassiveEnrichmentProvider computes short % of float = short_interest / free_float and uses Bearer auth", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    const seenAuth: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      if (auth) seenAuth.push(auth);
+      if (String(url).includes("short-interest")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "AAPL", short_interest: 144248476 }] }));
+      }
+      if (String(url).includes("/float")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "AAPL", free_float: 13515457484 }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["AAPL"]);
+    // 144,248,476 / 13,515,457,484 * 100 = 1.0672… → rounded to 1.07
+    expect(res.AAPL?.shortPercentOfFloatSecondary).toBeCloseTo(1.07, 2);
+    expect(seenAuth).toContain("Bearer massive-key");
+  });
+
+  it("MassiveEnrichmentProvider omits the field when float is missing/zero (never fabricates)", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("short-interest")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "ZZZ", short_interest: 1000 }] }));
+      }
+      if (String(url).includes("/float")) {
+        return new Response(JSON.stringify({ status: "OK", results: [{ ticker: "ZZZ", free_float: 0 }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["ZZZ"]);
+    expect(res.ZZZ?.shortPercentOfFloatSecondary).toBeUndefined();
+  });
+
+  it("MassiveEnrichmentProvider tolerates a 404 (no row for the ticker) without throwing", async () => {
+    const { MassiveEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    const provider = new MassiveEnrichmentProvider("massive-key", "env");
+    const res = await provider.enrich(["NONE"]);
+    expect(res.NONE).toEqual({});
   });
 });

@@ -47,7 +47,13 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   : crypto.randomBytes(32); // Fallback to memory-only key if not set (keys will be lost on restart!)
 const ALGORITHM = "aes-256-gcm";
 
-function encryptValue(text: string): string {
+/**
+ * AES-256-GCM encrypt a string to the compact `iv:authTag:ciphertext` (all hex) envelope. Uses the
+ * process `ENCRYPTION_KEY` (or a memory-only key when unset). Exported so other at-rest secrets
+ * (e.g. Robinhood OAuth tokens in mcp-oauth.ts) reuse the SAME field-level encryption + the
+ * legacy-plaintext-tolerant `decryptValue` below, rather than duplicating the crypto.
+ */
+export function encryptValue(text: string): string {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
   let encrypted = cipher.update(text, "utf8", "hex");
@@ -56,7 +62,12 @@ function encryptValue(text: string): string {
   return `${iv.toString("hex")}:${authTag}:${encrypted}`;
 }
 
-function decryptValue(encryptedText: string): string {
+/**
+ * Decrypt a value produced by `encryptValue`. Values that are NOT the 3-part `iv:tag:ct` envelope are
+ * returned unchanged — the legacy-plaintext fallback that lets pre-encryption rows still load. Exported
+ * for reuse by other at-rest secret stores (see encryptValue).
+ */
+export function decryptValue(encryptedText: string): string {
   try {
     const parts = encryptedText.split(":");
     if (parts.length !== 3) return encryptedText; // Legacy unencrypted fallback
@@ -91,6 +102,10 @@ export type ApiKeySource = "user" | "env" | "none";
 const API_KEY_ENV_MAP: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  xai: "XAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
   finnhub: "FINNHUB_API_KEY",
   fmp: "FMP_API_KEY",
   alphavantage: "ALPHAVANTAGE_API_KEY",
@@ -109,7 +124,12 @@ const API_KEY_ENV_MAP: Record<string, string> = {
   alpaca_paper_secret_key: "ALPACA_PAPER_SECRET_KEY",
   apify: "APIFY_API_TOKEN",
   fintechstudios: "FINTECH_STUDIOS_API_KEY",
-  powerintell: "FINTECH_STUDIOS_API_KEY"
+  powerintell: "FINTECH_STUDIOS_API_KEY",
+  tiingo: "TIINGO_API_KEY",
+  intrinio: "INTRINIO_API_KEY",
+  twelvedata: "TWELVEDATA_API_KEY",
+  logodev: "LOGO_DEV_TOKEN",
+  logodev_secret: "LOGO_DEV_SECRET_KEY"
 };
 
 const API_KEY_SERVICE_ALIASES: Record<string, string> = {
@@ -119,6 +139,18 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   fmp_api_key: "fmp",
   openai_api_key: "openai",
   anthropic_api_key: "anthropic",
+  xai_api_key: "xai",
+  grok: "xai",
+  grok_api_key: "xai",
+  xai: "xai",
+  gemini: "gemini",
+  gemini_api_key: "gemini",
+  google_gemini: "gemini",
+  google_gemini_api_key: "gemini",
+  mistral: "mistral",
+  mistral_api_key: "mistral",
+  deepseek: "deepseek",
+  deepseek_api_key: "deepseek",
   marketstack_api_key: "marketstack",
   tradier_api_key: "tradier",
   fred_api_key: "fred",
@@ -134,7 +166,18 @@ const API_KEY_SERVICE_ALIASES: Record<string, string> = {
   voyage_api_key: "voyage",
   alpaca_paper_api_key: "alpaca_paper_api_key",
   alpaca_paper_secret_key: "alpaca_paper_secret_key",
-  apify_api_token: "apify"
+  apify_api_token: "apify",
+  tiingo_api_key: "tiingo",
+  intrinio_api_key: "intrinio",
+  twelve_data: "twelvedata",
+  twelve_data_api_key: "twelvedata",
+  twelvedata_api_key: "twelvedata",
+  logo_dev: "logodev",
+  logo_dev_token: "logodev",
+  logodev_token: "logodev",
+  logo_dev_secret: "logodev_secret",
+  logo_dev_secret_key: "logodev_secret",
+  logodev_secret_key: "logodev_secret"
 };
 
 function keyRowToApiKey(row: {
@@ -240,9 +283,10 @@ export type CredTier = "per-user-only" | "shared-operator-infra";
 
 export const LOCAL_USER = "local";
 
-// Per-user-only (env = `local` operator only): openai, anthropic, alpaca_paper_api_key,
-// alpaca_paper_secret_key — and any UNLISTED service (the fail-closed default). Everything below is
-// operator-funded shared infrastructure where env is a justified global fallback for all users.
+// Per-user-only (env = `local` operator only): the LLM keys (openai, anthropic, xai, gemini,
+// mistral), alpaca_paper_api_key, alpaca_paper_secret_key — and any UNLISTED service (the
+// fail-closed default). Everything below is operator-funded shared infrastructure where env is a
+// justified global fallback for all users.
 const API_KEY_TIER: Record<string, CredTier> = {
   // Market data — public, operator-funded, shared cache (a user's own key still wins + stays private).
   finnhub: "shared-operator-infra",
@@ -261,7 +305,12 @@ const API_KEY_TIER: Record<string, CredTier> = {
   apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
   pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
   voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
-  sec_edgar_user_agent: "shared-operator-infra" // a UA string SEC requires, not a secret; one per app
+  sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
+  tiingo: "shared-operator-infra",
+  intrinio: "shared-operator-infra",
+  twelvedata: "shared-operator-infra",
+  logodev: "shared-operator-infra",
+  logodev_secret: "shared-operator-infra"
 };
 
 export function credTierForService(service: string): CredTier {
@@ -301,6 +350,106 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
+function rankConnectedAlpacaAccounts(
+  accounts: ReturnType<typeof listConnectedAccounts>
+): ReturnType<typeof listConnectedAccounts> {
+  const ranked = [
+    accounts.find((a) => a.isActive && a.environment === "live"),
+    accounts.find((a) => a.isActive),
+    accounts.find((a) => a.environment === "live"),
+    accounts.find((a) => a.environment === "paper"),
+    ...accounts
+  ];
+  const seen = new Set<string>();
+  return ranked.filter((account): account is NonNullable<(typeof ranked)[number]> => {
+    if (!account || seen.has(account.id)) return false;
+    seen.add(account.id);
+    return true;
+  });
+}
+
+function resolveConnectedAlpacaMarketData(userId: string, requireSecret = true): { apiKey: string; secretKey?: string } | undefined {
+  const alpacaAccs = listConnectedAccounts(userId).filter((a) => a.broker === "alpaca");
+  if (alpacaAccs.length === 0) return undefined;
+
+  for (const account of rankConnectedAlpacaAccounts(alpacaAccs)) {
+    const detailed = getConnectedAccount(account.id, userId);
+    if (!detailed?.apiKey || (requireSecret && !detailed.apiSecret)) continue;
+    return { apiKey: detailed.apiKey, secretKey: detailed.apiSecret };
+  }
+  return undefined;
+}
+
+/**
+ * Resolve Alpaca credentials for MARKET DATA (snapshots/news) — NOT trading. A user with their own
+ * Alpaca key gets their individual data (private/pooled, source "user"); otherwise the operator's
+ * paper key (`local` store → env) serves as the SHARED market-data source (source "env" → shared
+ * cache) for background refreshes and tenants without their own key. Alpaca market data is identical
+ * for paper and live accounts, so the operator's paper key is a fine shared source.
+ *
+ * SECURITY: the trading gateway (`alpaca.ts`) does NOT use this — it resolves Alpaca strictly
+ * per-user (`resolveApiKey`, per-user-only tier) so no one ever TRADES on the operator's account.
+ * This helper exposes the operator's key only for read-only market-data endpoints.
+ */
+export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; secretKey?: string; source: ApiKeySource } {
+  let userKeyOnly: { apiKey: string; secretKey?: string; source: ApiKeySource } | undefined;
+
+  if (userId) {
+    const connected = resolveConnectedAlpacaMarketData(userId);
+    if (connected) return { ...connected, source: "user" };
+
+    const connectedKeyOnly = resolveConnectedAlpacaMarketData(userId, false);
+    if (connectedKeyOnly) userKeyOnly = { ...connectedKeyOnly, source: "user" };
+
+    const own = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey;
+    const ownSecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey;
+    if (own && ownSecret) return { apiKey: own, secretKey: ownSecret, source: "user" };
+    if (own && !userKeyOnly) userKeyOnly = { apiKey: own, source: "user" };
+  }
+
+  const localConnected = resolveConnectedAlpacaMarketData(LOCAL_USER);
+  if (localConnected) return { ...localConnected, source: "env" };
+  const localConnectedKeyOnly = resolveConnectedAlpacaMarketData(LOCAL_USER, false);
+
+  const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
+  const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
+  if (userKeyOnly) return userKeyOnly;
+  if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "env" };
+  if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };
+  if (opKey) return { apiKey: opKey, source: "env" };
+  return { source: "none" };
+}
+
+/**
+ * Resolve Alpaca credentials for the process-level background WebSocket stream workers
+ * (news, trade_updates — see src/lib/streams/alpaca-*-stream.ts). These are single
+ * long-lived connections keyed to the `local` operator, not a per-request user, so they need
+ * the environment (paper vs live) alongside the key/secret to pick the right WS host — unlike
+ * resolveAlpacaMarketData, which only serves read-only market-data REST calls where paper vs
+ * live doesn't matter.
+ *
+ * Prefers connected Alpaca accounts (the modern, actively-maintained credential store —
+ * same one Settings -> Accounts writes to) over the legacy standalone
+ * `alpaca_paper_api_key`/`alpaca_paper_secret_key` user-API-key pair, which is not updated by
+ * the connected-accounts UI and can silently go stale (confirmed in production: the legacy
+ * pair was last touched 2026-06-22, while the account's real key was rotated 2026-06-29).
+ */
+export function resolveAlpacaStreamAccount(
+  userId: string = "local"
+): { apiKey: string; apiSecret?: string; environment: "paper" | "live" } | undefined {
+  const alpacaAccounts = rankConnectedAlpacaAccounts(listConnectedAccounts(userId).filter((account) => account.broker === "alpaca"));
+  for (const account of alpacaAccounts) {
+    const detailed = getConnectedAccount(account.id, userId);
+    if (detailed?.apiKey) {
+      return { apiKey: detailed.apiKey, apiSecret: detailed.apiSecret, environment: detailed.environment === "live" ? "live" : "paper" };
+    }
+  }
+  const legacyKey = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_API_KEY?.trim() : undefined);
+  const legacySecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_SECRET_KEY?.trim() : undefined);
+  if (legacyKey) return { apiKey: legacyKey, apiSecret: legacySecret, environment: "paper" };
+  return undefined;
+}
+
 // ── LLM credential resolution (per-user-first, operator-funded failover) ─────
 //
 // LLM keys (openai/anthropic) are per-user-only in the generic resolver above, so `local` keeps
@@ -313,21 +462,35 @@ export type LlmKeySource = "user" | "operator" | "none";
 
 /** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
 export function llmOperatorFallbackEnabled(): boolean {
-  const v = (process.env.LLM_OPERATOR_FALLBACK ?? "on").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "on";
+  const envVal = process.env.LLM_OPERATOR_FALLBACK;
+  if (envVal !== undefined) {
+    const v = envVal.trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  }
+  return process.env.NODE_ENV === "test";
+}
+
+/**
+ * A stable, non-reversible fingerprint of an API key — `sha256(key)` truncated. Lets the usage
+ * ledger measure usage per distinct ATTACHED key without ever storing the secret. Returns undefined
+ * for an empty key.
+ */
+export function keyFingerprint(key: string | undefined): string | undefined {
+  if (!key) return undefined;
+  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
 /**
  * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
- * operator-funded failover so callers can attribute usage/cost. `local` is the operator, so its
- * env key is always "operator" (its own). A non-`local` tenant only reaches the env key when the
- * failover is enabled.
+ * operator-funded failover, and `keyRef` is the non-secret fingerprint of the resolved key so the
+ * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
+ * when the failover is enabled.
  */
-export function resolveLlmCredential(service: "openai" | "anthropic", userId?: string): { key?: string; source: LlmKeySource } {
+export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
   if (userId) {
     const userKey = getUserApiKey(userId, canonical);
-    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user" };
+    if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
   }
   // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
   // per-user store at boot, so `local` resolves "user" above; this serves users without their own
@@ -335,13 +498,27 @@ export function resolveLlmCredential(service: "openai" | "anthropic", userId?: s
   if (!llmOperatorFallbackEnabled()) return { source: "none" };
   const envVar = apiKeyEnvVarForService(canonical);
   const envKey = envVar ? process.env[envVar] : undefined;
-  return envKey ? { key: envKey, source: "operator" } : { source: "none" };
+  return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
+}
+
+/** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
+export const LLM_PROVIDER_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek"] as const;
+export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
+
+/**
+ * True when AT LEAST ONE supported LLM provider resolves a usable credential for this user — their own
+ * per-user key OR the operator-funded failover (see resolveLlmCredential). This is the gate for the two
+ * LLM-driven actions (strategy session + chat): when it returns false the app must error rather than
+ * silently degrade to a rule-based stub. Mirrors the same check the `/api/chat/providers` route exposes.
+ */
+export function userHasAnyLlmCredential(userId?: string): boolean {
+  return LLM_PROVIDER_SERVICES.some((service) => Boolean(resolveLlmCredential(service, userId).key));
 }
 
 // Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
 // migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
 // resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
-const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
 
 /**
  * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
@@ -394,9 +571,14 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-// A "Test" account (local simulator: real quotes, simulated fills) is always available
-// as the safe default. Selecting it = Test mode; selecting a real broker account = that
-// broker's mode. This replaces the old paperMode toggle.
+const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+
+// Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
+// TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
+// the unit-test suite to exercise the normal broker execution path without hitting real Alpaca/
+// Robinhood — call it from test setup. The production app does NOT call this: an account is an
+// account, and with none connected the app correctly reports "no account" rather than defaulting
+// to a fake broker.
 export function ensureTestAccount(userId: string = "local"): void {
   const accounts = listConnectedAccounts(userId);
   if (accounts.some((a) => a.broker === "test")) return;
@@ -406,8 +588,8 @@ export function ensureTestAccount(userId: string = "local"): void {
     broker: "test",
     environment: "paper",
     accountNumber: "TEST",
-    label: "Test",
-    isActive: accounts.every((a) => !a.isActive)
+    label: TEST_ACCOUNT_LABEL,
+    isActive: false
   });
 }
 
@@ -434,6 +616,36 @@ export function getActiveConnectedAccount(userId: string = "local"): ConnectedAc
   };
 }
 
+// Fetch a specific connected account by id (scoped to the owning user), with decrypted
+// keys — used by the scheduler to run a non-active account autonomously.
+export function getConnectedAccount(id: string, userId: string = "local"): ConnectedAccount | undefined {
+  const row = getDb()
+    .prepare("SELECT * FROM connected_accounts WHERE id = ? AND user_id = ? LIMIT 1")
+    .get(id, userId) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    broker: String(row.broker) as "alpaca" | "robinhood" | "test",
+    environment: String(row.environment) as "live" | "paper",
+    accountNumber: row.account_number != null ? String(row.account_number) : undefined,
+    label: String(row.label),
+    taxationType: row.taxation_type != null ? (String(row.taxation_type) as ConnectedAccount["taxationType"]) : undefined,
+    apiKey: row.api_key ? decryptValue(String(row.api_key)) : undefined,
+    apiSecret: row.api_secret ? decryptValue(String(row.api_secret)) : undefined,
+    baseUrl: row.base_url != null ? String(row.base_url) : undefined,
+    capabilities: parseCapabilities(row.capabilities),
+    isActive: row.is_active === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+// Insert or update a connected account. The `ON CONFLICT(id) DO UPDATE ... WHERE user_id = excluded.user_id`
+// guard makes the UPDATE branch a no-op when the existing row belongs to a DIFFERENT user, so a caller
+// who supplies someone else's account `id` (e.g. the deterministic `test-<userId>` id, derivable from a
+// known email) can neither overwrite that row's broker/key fields nor hijack it — the conflicting write
+// silently does nothing. Creates with a fresh id are unaffected; legitimate same-user edits still apply.
 export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdAt" | "updatedAt">): void {
   const now = new Date().toISOString();
   const encryptedApiKey = account.apiKey?.trim() ? encryptValue(account.apiKey.trim()) : null;
@@ -459,7 +671,8 @@ export function upsertConnectedAccount(account: Omit<ConnectedAccount, "createdA
           base_url = COALESCE(excluded.base_url, connected_accounts.base_url),
           capabilities = COALESCE(excluded.capabilities, connected_accounts.capabilities),
           is_active = excluded.is_active,
-          updated_at = excluded.updated_at`
+          updated_at = excluded.updated_at
+         WHERE connected_accounts.user_id = excluded.user_id`
       )
       .run(
         account.id,
@@ -492,8 +705,40 @@ export function setActiveConnectedAccount(id: string, userId: string = "local"):
 }
 
 export function deleteConnectedAccount(id: string, userId: string = "local"): boolean {
-  const result = getDb().prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
-  return result.changes > 0;
+  const database = getDb();
+  const row = database
+    .prepare("SELECT account_number FROM connected_accounts WHERE id = ? AND user_id = ?")
+    .get(id, userId) as { account_number: string | null } | undefined;
+  if (!row) return false;
+  const acct = row.account_number;
+  // Delete the account and purge its trading records in one transaction, so removing an account never
+  // leaves orphaned fills/snapshots/proposals/stops still feeding P&L or exposure for an account that
+  // no longer exists. Account-delete is an explicit user action — its broker-scoped history goes with it.
+  const run = database.transaction(() => {
+    const result = database.prepare("DELETE FROM connected_accounts WHERE id = ? AND user_id = ?").run(id, userId);
+    if (acct) {
+      for (const table of ["fill_events", "portfolio_snapshots", "trade_proposals", "synthetic_trailing_stops", "broker_protective_stops"]) {
+        database.prepare(`DELETE FROM ${table} WHERE account_number = ? AND user_id = ?`).run(acct, userId);
+      }
+    }
+    // Purge the account's per-account isolated state, keyed by connected_account_id (= this id):
+    // live strategy state, run history, performance-learning rows, audit/notification trail.
+    for (const table of [
+      "account_strategy_state",
+      "strategy_runs",
+      "skipped_candidate_counterfactuals",
+      "counterfactual_learning_watermarks",
+      "learning_mutations",
+      "audit_events",
+      "notification_events"
+    ]) {
+      database.prepare(`DELETE FROM ${table} WHERE connected_account_id = ? AND user_id = ?`).run(id, userId);
+    }
+    // Release this account's run lock if held (in-memory scheduler state clears on next restart).
+    database.prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${userId}:${id}`);
+    return result.changes > 0;
+  });
+  return run();
 }
 
 // ── Synthetic trailing stops (R2 scaffolding) ──────────────────────────────────
@@ -596,6 +841,66 @@ export function purgeSyntheticStops(accountNumber: string, liveSymbols: Set<stri
     }
   }
   return purged;
+}
+
+// ── Broker-held protective stops (Robinhood) ──────────────────────────────────
+
+export interface BrokerProtectiveStop {
+  id: string;
+  userId: string;
+  accountNumber: string;
+  symbol: string;
+  brokerOrderId: string;
+  quantity: number;
+  stopPrice: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapBrokerProtectiveStop(r: Record<string, unknown>): BrokerProtectiveStop {
+  return {
+    id: String(r.id),
+    userId: String(r.user_id),
+    accountNumber: String(r.account_number),
+    symbol: String(r.symbol),
+    brokerOrderId: String(r.broker_order_id),
+    quantity: Number(r.quantity),
+    stopPrice: Number(r.stop_price),
+    status: String(r.status),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at)
+  };
+}
+
+export function upsertBrokerProtectiveStop(stop: Omit<BrokerProtectiveStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+  const now = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO broker_protective_stops (id, user_id, account_number, symbol, broker_order_id, quantity, stop_price, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
+        broker_order_id = excluded.broker_order_id,
+        quantity = excluded.quantity,
+        stop_price = excluded.stop_price,
+        status = excluded.status,
+        updated_at = excluded.updated_at`
+    )
+    .run(
+      stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.brokerOrderId,
+      stop.quantity, stop.stopPrice, stop.status, stop.createdAt ?? now, now
+    );
+}
+
+export function listBrokerProtectiveStops(accountNumber: string, userId: string = "local"): BrokerProtectiveStop[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status = 'resting' ORDER BY created_at ASC")
+    .all(userId, accountNumber) as Record<string, unknown>[];
+  return rows.map(mapBrokerProtectiveStop);
+}
+
+export function deleteBrokerProtectiveStop(id: string, userId: string = "local"): void {
+  getDb().prepare("DELETE FROM broker_protective_stops WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 // ── listUsers ────────────────────────────────────────────────────────────────
@@ -811,6 +1116,8 @@ interface RawChatTurnRow {
   citations: string;
   intent: string | null;
   redacted: number;
+  model: string | null;
+  client_turn_id: string | null;
   created_at: string;
 }
 
@@ -831,6 +1138,8 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
     citations,
     intent: row.intent,
     redacted: row.redacted === 1,
+    model: row.model ?? null,
+    clientTurnId: row.client_turn_id ?? null,
     createdAt: row.created_at
   };
 }
@@ -838,10 +1147,18 @@ function mapChatTurn(row: RawChatTurnRow): ChatTurn {
 export function insertChatTurn(turn: ChatTurn): ChatTurn {
   getDb()
     .prepare(
-      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO chat_turns (id, user_id, role, text, citations, intent, redacted, model, client_turn_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.createdAt);
+    .run(turn.id, turn.userId, turn.role, turn.text, JSON.stringify(turn.citations), turn.intent ?? null, turn.redacted ? 1 : 0, turn.model ?? null, turn.clientTurnId ?? null, turn.createdAt);
   return turn;
+}
+
+/** Per-user idempotency lookup: the turn previously recorded with this client-generated id, if any. */
+export function findChatTurnByClientId(userId: string, clientTurnId: string): ChatTurn | null {
+  const row = getDb()
+    .prepare("SELECT * FROM chat_turns WHERE user_id = ? AND client_turn_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 1")
+    .get(userId, clientTurnId) as RawChatTurnRow | undefined;
+  return row ? mapChatTurn(row) : null;
 }
 
 export function listChatTurns(userId: string, limit: number = 100): ChatTurn[] {
@@ -934,4 +1251,53 @@ export function touchMemory(id: string, assertedAt: string, confidence: number):
 
 export function deleteMemory(userId: string, id: string): boolean {
   return getDb().prepare("DELETE FROM user_memory WHERE id = ? AND user_id = ?").run(id, userId).changes > 0;
+}
+
+// ── Take-profit trim ratchet ────────────────────────────────────────────────
+// Monotonic "band" already trimmed per open profitable position, so a partial take-profit trims once
+// per take-profit band instead of laddering out every run. See take_profit_trims (db.ts migrate()).
+
+export interface TakeProfitTrimBand {
+  /** Highest take-profit band already trimmed for the lot. */
+  band: number;
+  /** Position cost basis when the band was recorded — ratchet resets when the live basis differs (rebuy). */
+  avgCost: number;
+}
+
+/** Map of symbol → {band, avgCost} of the highest already-trimmed take-profit band (empty when none). */
+export function getTakeProfitTrimBands(accountNumber: string, userId: string = "local"): Record<string, TakeProfitTrimBand> {
+  const rows = getDb()
+    .prepare("SELECT symbol, band, avg_cost FROM take_profit_trims WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; band: number; avg_cost: number }>;
+  const out: Record<string, TakeProfitTrimBand> = {};
+  for (const r of rows) out[r.symbol] = { band: Number(r.band) || 0, avgCost: Number(r.avg_cost) || 0 };
+  return out;
+}
+
+/** Record (upsert) the highest take-profit band trimmed for a position lot (band + its cost basis). */
+export function recordTakeProfitTrimBand(
+  accountNumber: string,
+  symbol: string,
+  band: number,
+  avgCost: number,
+  userId: string = "local",
+  now: string = new Date().toISOString()
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO take_profit_trims (user_id, account_number, symbol, band, avg_cost, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET band = excluded.band, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at`
+    )
+    .run(userId, accountNumber, symbol, Math.max(0, Math.floor(band)), Number.isFinite(avgCost) ? avgCost : 0, now);
+}
+
+/** Clear ratchet state for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
 }

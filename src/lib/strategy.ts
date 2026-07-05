@@ -6,16 +6,20 @@ import {
   dailyExecutionStats,
   finishStrategyRun,
   getActiveConnectedAccount,
+  getConnectedAccount,
   getPolicy,
   getProposal,
   getStrategyPrompt,
   insertProposal,
   insertStrategyRun,
-  listFillEvents,
+  listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
+  transitionProposalIfPending,
+  upsertSocraticDecisionCase,
+  createSocraticFrameworkProposal,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -25,49 +29,110 @@ import { deriveMetrics } from "./derived-metrics";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals } from "./market-signals";
-import { fetchMacroData, pruneMacro, determineMarketRegime, type MacroData } from "./macro";
+import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
-import { deriveExecutionState, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { LLM_OUTPUT_TOKEN_CAPS, withLlmRequestBounds, type OpenAiTransport } from "./llm-request";
-import { materializeSkippedCandidateCounterfactuals } from "./counterfactual-learning";
+import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
+import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
+import { resolveLlmEndpoint } from "./llm-provider";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
+import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
+import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
+import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
+import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
 import { sendNotification } from "./notifications";
+import { notify } from "./notify";
+import { planFundingSells } from "./sell-to-fund";
+import { isRejectedOrCanceledState } from "./broker-side";
 import {
+  calibratedConviction,
+  getClosedLotCount,
   getConfidenceCalibration,
+  type ConfidenceCalibrationStat,
   getFactorScorecard,
-  getPaperPortfolioProjection,
   getRegimeScorecard,
   getSectorScorecard,
   getSignalEfficacy,
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
+  MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT,
   recordFillFromProposal,
   recordPortfolioSnapshot
 } from "./performance";
-import { allowedSymbolsForPolicy, evaluateTradeProposal } from "./policy";
+import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
+import { resolveCongressGateMultiplier } from "./congress-score-gate";
+import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { DEFAULT_TAX_SETTINGS } from "./defaults";
+import { atr, atrStopPct } from "./indicators";
+import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
-import { getTaxSummary, getUserWashSaleLockedSymbols } from "./tax";
+import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
+import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { checkBudgetAndAlert } from "./usage-budget";
+import { avgReturnCorrelation } from "./correlation";
+import { assertLivePreflight } from "./preflight-live-guard";
+import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+// (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
+// ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
 import { generateReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, resolveLlmCredential, setInternalSetting } from "./db";
+import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
+import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
-import { withLlmGeneration } from "./observability";
+import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
+import { isEscalationRegime } from "./regime-watch";
+import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
-import type { EquityOrder, EquityPosition, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, Portfolio, TradingPolicy, TradeProposal } from "./types";
+import {
+  applySocraticOverrideSizing,
+  buildSocraticDecisionCase,
+  frameworkProposalFromDecision,
+  ragAttributionsFromChunks,
+  resolveSocraticOverride,
+  socraticStatusFromProposalStatus,
+  type SocraticOverrideResolution
+} from "./socratic-runtime";
+import { indexSocraticDecisionMemory } from "./socratic-memory";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import { computeRationaleDiversity } from "./rationale-diversity";
+import { isMarketOpen } from "./market-calendar";
+import { isTradingDay } from "./market-calendar";
 
 /**
  * How many top-ranked-but-skipped candidates to persist with full evidence each run.
- * `scanMarket` already caps the scored universe (~30 names, score >= 40), so this
- * effectively covers the whole skipped set while bounding audit-row growth. This log
+ * `scanMarket` already caps the scored universe by the user's policy, so this
+ * covers the most relevant skipped set while bounding audit-row growth. This log
  * is for learning only (never sent to the LLM), so size affects storage, not tokens.
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+// STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
+// can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
+// so red-team.ts can import it too without a circular dep.
+export { STRATEGY_PROMPT_VERSION };
+type RunnablePolicy = TradingPolicy & { accountNumber: string };
+
+export interface StrategyLlmStep {
+  step: "bull" | "bear";
+  label: string;
+  provider: string;
+  model: string;
+  transport: string;
+  keySource: "operator" | "user";
+  status: "started" | "completed" | "skipped" | "fallback" | "failed";
+  proposalCount?: number;
+  reason?: string;
+}
 
 export interface StrategyResult {
   runId: string;
@@ -76,24 +141,147 @@ export interface StrategyResult {
   proposals: Array<{ proposal: TradeProposal; status: string; reasons: string[]; orderId?: string }>;
   marketScan?: MarketScan;
   accountNumber?: string | null;
+  llmSteps?: StrategyLlmStep[];
+  /** Advisory only — rationale-diversity check result (improvement-program item #8). Never affects proposal generation or selection. */
+  rationaleDiversity?: RationaleDiversity;
 }
 
-export async function runStrategyOnce(userId: string = "local"): Promise<StrategyResult> {
-  // Run lock: prevent overlapping runs from double-counting daily limits.
-  if (!acquireStrategyLock(userId)) {
+export interface LiveApprovalConfirmation {
+  proposalId?: string;
+  accountNumber?: string | null;
+  executionMode?: ExecutionMode | string;
+  estimatedNotional?: number | null;
+  typedText?: string | null;
+}
+
+export class LiveApprovalConfirmationError extends Error {
+  code = "LIVE_CONFIRMATION_REQUIRED";
+  reasons: string[];
+  expectedText: string;
+
+  constructor(reasons: string[], expectedText: string) {
+    super(reasons.join(" "));
+    this.reasons = reasons;
+    this.expectedText = expectedText;
+  }
+}
+
+class StrategyLlmStepFailure extends Error {
+  llmSteps: StrategyLlmStep[];
+
+  constructor(message: string, llmSteps: StrategyLlmStep[], cause: unknown) {
+    super(message);
+    this.name = "StrategyLlmStepFailure";
+    this.llmSteps = llmSteps;
+    this.cause = cause;
+  }
+}
+
+export function liveApprovalText(symbol: string): string {
+  return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
+}
+
+/**
+ * Item 3 (opt-in): return the scan-scoring weights for THIS run, applying a small clamped nudge for a
+ * factor that keeps showing up among matured missed winners. Transient — the nudge affects only this run's
+ * scoring, never the persisted policy weights (that's the item-1 autonomous-apply path). Returns
+ * `policy.scoringWeights` UNCHANGED (byte-identical) when the flag is off, no account is configured, or the
+ * closed-lot sample gate isn't met. Emits a `missed_opportunity_nudge` audit row when a nudge is applied.
+ */
+function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, runId: string, userId: string): ScoringWeights {
+  if (!policy.tuning?.missedOpportunityNudge || !policy.accountNumber) return policy.scoringWeights;
+  const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
+  const closedLotCount = getClosedLotCount(policy.accountNumber, source, userId);
+  if (closedLotCount < minLots) return policy.scoringWeights;
+
+  const benchmarkRelative = policy.tuning?.benchmarkRelativeMisses ?? false;
+  const minRecurringCount = policy.tuning?.recurringFactorMinCount ?? (benchmarkRelative ? 5 : 2);
+  // Realized rows only (empty price map) — no live quotes needed here. Benchmark-relative annotation is
+  // deliberately skipped in this hot path (it would add a SPY fetch to every run); when the operator opts
+  // into benchmarkRelativeMisses without SPY data present the recurring-factor gate simply won't fire,
+  // which is the safe direction (no nudge rather than an unvalidated one).
+  const summary = summarizeMissedOpportunities(
+    getSkippedCandidateReturns({}, userId, { limit: 12, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId }),
+    { limit: 8, benchmarkRelative, minRecurringCount }
+  );
+  if (!summary.recurringFactor) return policy.scoringWeights;
+
+  const nudge = applyMissedOpportunityNudge(policy.scoringWeights, summary);
+  if (!nudge.nudgedFactor) return policy.scoringWeights;
+  audit("missed_opportunity_nudge", {
+    runId,
+    userId,
+    factor: nudge.nudgedFactor,
+    delta: nudge.delta,
+    recurringFactorCount: summary.recurringFactorCount,
+    closedLotCount,
+    benchmarkRelative,
+    note: nudge.note
+  }, userId);
+  return nudge.weights;
+}
+
+export async function runStrategyOnce(
+  userId: string = "local",
+  options: { manual?: boolean; connectedAccountId?: string } = {}
+): Promise<StrategyResult> {
+  // Target account: an explicit override (scheduler running a non-active account) or the active
+  // account. Everything below derives from this account's policy, so a single override here runs
+  // the whole loop against the targeted account.
+  const targetAccountId = options.connectedAccountId;
+  // Per-account run lock: prevent overlapping runs from double-counting daily limits,
+  // scoped to the target account so a different account isn't blocked.
+  const connectedAccountId = targetAccountId ?? getPolicy(userId).connectedAccountId;
+  if (!acquireStrategyLock(userId, connectedAccountId)) {
     return { runId: "", status: "failed", summary: "A strategy run is already in progress.", proposals: [] };
   }
 
   const runId = crypto.randomUUID();
-  insertStrategyRun(runId, userId);
+  insertStrategyRun(runId, userId, connectedAccountId);
   let result: StrategyResult;
+  let llmSteps: StrategyLlmStep[] = [];
+  // Per-USER LLM budget reservation id (set at the budget gate below, released in the finally). Held
+  // for the run so a CONCURRENT same-user account run's reserve sees this hold and skips LLM instead of
+  // both reading "under budget" and overshooting the ceiling (the TOCTOU the ledger read can't close).
+  let llmReservationId: string | undefined;
+  // Fire-and-forget post-mortem reflection promise (set on the success path). The finally holds the LLM
+  // reservation until this settles so the reflection's LLM spend stays inside the reserved headroom.
+  let reflectionPromise: Promise<unknown> | undefined;
+  const manualRun = Boolean(options.manual);
 
   try {
-    const policy = getPolicy(userId);
-    const activeAccount = getActiveConnectedAccount(userId);
+    const savedPolicy = getPolicy(userId, targetAccountId);
+    const accountNumber = savedPolicy.accountNumber;
+    if (!accountNumber) throw new Error("No account selected.");
+    if (savedPolicy.systemState === "halted" && !manualRun) throw new Error("System is halted.");
+    const policy: RunnablePolicy = manualRun
+      ? { ...savedPolicy, accountNumber, systemState: "active" as const, strategyAuthority: "propose" as const }
+      : { ...savedPolicy, accountNumber };
+    const activeAccount = targetAccountId ? getConnectedAccount(targetAccountId, userId) : getActiveConnectedAccount(userId);
     const executionState = deriveExecutionState(policy, activeAccount);
-    if (!policy.accountNumber) throw new Error("No account selected.");
-    if (policy.systemState === "halted") throw new Error("System is halted.");
+    // An account is an account: with none connected there is no broker to trade through, and there
+    // is no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+    if (!executionState.mode) throw new Error("No connected account. Connect a broker account before running the strategy.");
+    const executionMode: ExecutionMode = executionState.mode;
+
+    // Market holiday / closure guard: skip the strategy run when the market is fully closed
+    // (holiday or weekend). Manual runs bypass this check so the operator can always force a run.
+    if (!manualRun && !isTradingDay()) {
+      const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
+      console.log(`[Strategy] ${reason}`);
+      audit("run_skipped_market_closed", { runId, userId, reason }, userId);
+      result = { runId, status: "completed", summary: reason, proposals: [] };
+      finishStrategyRun(runId, "completed", reason, userId);
+      releaseStrategyLock(userId, connectedAccountId);
+      return result;
+    }
+
+    // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
+    // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
+    // Phase 2 (model-downgrade / cycle-skip enforcement) is DEFERRED to a follow-up PR: it must skip
+    // only the LLM proposal step — never the broker reconciliation or the risk-reducing exits below —
+    // and must not persist a temporary downgrade; see docs/usage-monitor-integration.md.
+    void checkBudgetAndAlert(userId, policy).catch(() => {});
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -111,27 +299,57 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     if (!selected.agenticAllowed) throw new Error("Selected account is not agentic_allowed.");
 
     const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const baseMarketScan = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
+    // Item 3 (opt-in): thread a sample-gated, audited per-factor nudge from matured missed-opportunity
+    // evidence into THIS run's scan-scoring weights (transient — not persisted). Default OFF → the scan
+    // uses policy.scoringWeights byte-identically. The recurring-factor bar is raised (>=5) + SPY-relative
+    // only when item-4's benchmarkRelativeMisses is also on; otherwise the historical >0/>=2 test applies.
+    const scanWeights = resolveScanScoringWeights(policy, fillSourceForExecutionMode(executionState), runId, userId);
+    // Item 2 (opt-in): resolve the cached congress go/no-go gate multiplier (1 default / 0 when a fresh
+    // no-go verdict + gating on). Default OFF → multiplier 1 → congress scoring byte-identical.
+    const { multiplier: congressMultiplier, verdict: congressVerdict } = resolveCongressGateMultiplier(
+      userId,
+      policy.tuning?.congressGoNoGoGating ?? false
+    );
+    if (congressMultiplier === 0 && congressVerdict) {
+      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId);
+    }
+    const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+      candidateLimit: policy.marketScanCandidateLimit,
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor,
+      congressMultiplier
+    });
     const quoteSymbols = uniqueSymbols(baseMarketScan.topCandidates.map((quote) => quote.symbol));
     const marketScan = mergeQuoteData(baseMarketScan, await gateway.getEquityQuotes(policy.accountNumber, quoteSymbols));
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const washSaleLockedSymbols = getUserWashSaleLockedSymbols(userId, new Date());
+    // Full lock PROVENANCE (binding account, clear date, summed disallowed lossUsd), not just the
+    // symbol set — the ask/auto wash-sale handling modes price the forfeited deduction from it.
+    const washSaleLocks = getUserWashSaleLockProvenance(userId, new Date());
 
-    // In Test mode, decisions run against the standalone local account
-    // (starting cash + prior simulated fills, marked to live prices).
+    // An account is an account: decisions always run against the real broker-reported portfolio and
+    // positions for the active (paper or live) account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(marketScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
-    const workingPortfolio = account.portfolio;
-    const workingPositions = account.positions;
-    const learningSource: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+    const workingPortfolio = portfolio;
+    const workingPositions = positions;
+    const learningSource = fillSourceForExecutionMode(executionMode);
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
-    // Account-level circuit breaker (drawdown + daily-loss kill-switch). The per-trade gate bounds
-    // any single mistake; this bounds the whole account's bleed. On breach we halt NEW entries
-    // (close_only still lets risk-reducing exits through, so this run's proactive stops still fire)
-    // and fire a kill-switch notification, putting a human back in the loop.
-    if (policy.systemState === "active") {
+    // Pre-run snapshot: record the account state BEFORE any proposals execute so that
+    // post-mortem / reconciliation always has a pre-execution baseline even if the run
+    // crashes mid-loop. The post-run snapshot (below) remains for the final state.
+    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: learningSource, executionMode, portfolio: workingPortfolio, positions: workingPositions });
+
+    // Advisory drawdown context surfaced to the strategist when the breaker breaches in "advisory"
+    // mode (the default) — informs the agent, never seizes control.
+    let drawdownAdvisory: { reason: string; equity: number; highWaterMark: number; drawdownPct: number } | undefined;
+    // Account-level drawdown / daily-loss breaker. The per-trade gate bounds any single mistake; this
+    // bounds the whole account's bleed. Per the governing philosophy ("nothing is hard except which
+    // account to work in; agent decides, logs everything"), the breaker is ADVISORY by default: on a
+    // breach it writes a receipt and surfaces the drawdown to the strategist as decision context (see
+    // `drawdownAdvisory` threading below) so the agent can choose to de-risk — it does NOT seize
+    // control. Hard enforcement (flip to "close_only" or "halt") is available only when the owner
+    // explicitly opts in via `riskRules.drawdownBreakerAction`.
+    if (!manualRun && policy.systemState === "active") {
       const equity = accountEquity(workingPortfolio);
       const breaker = recordAndEvaluateDrawdownBreaker({
         accountNumber: policy.accountNumber,
@@ -141,48 +359,203 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         userId
       });
       if (breaker.breached) {
+        const breakerAction = policy.riskRules.drawdownBreakerAction ?? "advisory";
+        const drawdownPct = breaker.highWaterMark > 0 ? ((breaker.highWaterMark - equity) / breaker.highWaterMark) * 100 : 0;
+        if (breakerAction === "advisory") {
+          // Advisory (default): receipt + prompt context, NO state change. The account boundary is the
+          // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
+          drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId);
+        } else {
+          // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
+          // targeted (read via getPolicy(userId, targetAccountId)); omitting it would resolve the ACTIVE
+          // account, so a scheduler run of a non-active account could halt the wrong account.
+          const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
+          policy.systemState = revertedTo;
+          setPolicy(policy, userId, targetAccountId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
+          await sendNotification(
+            {
+              type: "kill_switch",
+              title:
+                revertedTo === "halted"
+                  ? "Circuit breaker HALTED autonomous trading (manual re-arm required)"
+                  : "Circuit breaker halted new entries (close-only)",
+              payload: { runId, reason: breaker.reason, equity, revertedTo }
+            },
+            { policy, userId }
+          );
+        }
+      }
+    }
+
+    // Volatility panic auto-brake: independent of the drawdown breaker, a rare tail extreme on
+    // VIX / VVIX / SKEW flips an active system to close_only so a market-wide panic stops opening
+    // new risk even when this account hasn't drawn down yet. Risk-reducing exits still flow.
+    // Reads the LIVE (short-TTL) VIX overlay, not the bare 24h-cached fetchMacroData snapshot —
+    // pinning the brake to a day-old VIX would leave it up to a day blind on a crash day.
+    if (!manualRun && policy.systemState === "active") {
+      const [brakeMacro, brakeSignals] = await Promise.all([
+        fetchMacroDataWithLiveVix(userId).catch(() => undefined),
+        getMarketSignals(userId).catch(() => undefined)
+      ]);
+      const volBrake = evaluateVolatilityBrake(brakeMacro, brakeSignals, policy);
+      if (volBrake.brake) {
         policy.systemState = "close_only";
-        setPolicy(policy, userId);
-        audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo: "close_only" }, userId);
+        // Persist to the run's TARGET account (same reason as the drawdown breaker above).
+        setPolicy(policy, userId, targetAccountId);
+        audit(
+          "policy_violation_vol_panic",
+          { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only", vixAsOf: brakeMacro?.vixAsOf },
+          userId
+        );
         await sendNotification(
-          { type: "kill_switch", title: "Circuit breaker halted new entries", payload: { runId, reason: breaker.reason, equity } },
+          { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason, vixAsOf: brakeMacro?.vixAsOf } },
           { policy, userId }
         );
       }
     }
 
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
+    // breakers above) and BEFORE any model call below (proposal REVALIDATION and generation), so a
+    // spend cap NEVER disables risk maintenance — it only skips the LLM work. The single choke point
+    // for EVERY run entry (event trigger, interval scheduler, manual "Run once" API, mobile command,
+    // future). Default OFF unless an operator sets TRIGGER_LLM_DAILY_TOKEN_BUDGET / _COST_BUDGET_USD.
+    //
+    // Two-part admission control. (1) checkLlmDailyBudget is the ledger READ — already over budget?
+    // Then (2) reserveLlmRunBudget is the reservation that closes the TOCTOU the read can't: it CAS-holds
+    // this run's worst-case estimate against today's ledger + other live reservations, so a concurrent
+    // same-user account run's reserve fails and skips LLM rather than both overshooting the ceiling.
+    // A reservation failure (over budget OR fail-closed DB error) degrades to "skip LLM", never a failed
+    // run. No ceiling configured → reserve returns ok with no id (default OFF preserved). See
+    // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
+    const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+    let skipLlmDueToBudget = !budget.ok;
+    if (!skipLlmDueToBudget) {
+      const reservation = reserveLlmRunBudget(userId, connectedAccountId);
+      llmReservationId = reservation.reservationId;
+      if (!reservation.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget_reservation",
+          { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
+          userId
+        );
+      }
+    }
+    if (skipLlmDueToBudget && budget.ok === false) {
+      audit(
+        "strategy_run_suppressed_budget",
+        { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
+        userId
+      );
+    }
+
     // Supplemental tasks before generating new ideas — keep the approval queue honest so a
     // human never mistakes an hours/days-old pending proposal for a fresh recommendation:
-    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes, then
-    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their
-    //       cadence (regular market hours only) against this run's fresh scan — withdrawing
-    //       what no longer holds, stamping the survivors as re-validated.
+    //   (1) deterministic hard-expiry of anything past policy.proposalExpiryMinutes (non-LLM — always
+    //       runs, it's safety hygiene), then
+    //   (2) an LLM re-check ("does this still stand?") of pending proposals due on their cadence —
+    //       SKIPPED when over the LLM budget, since it calls the model (records usage).
     const expiry = await expireStalePendingProposals({ userId, policy, accountNumber: policy.accountNumber })
       .catch((e) => {
         console.error("[expiry] run error:", e);
         return { expired: 0 };
       });
-    const revalidation = await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
-      .catch((e) => {
-        console.error("[revalidation] run error:", e);
-        return null;
-      });
+    const revalidation = skipLlmDueToBudget
+      ? null
+      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+          .catch((e) => {
+            console.error("[revalidation] run error:", e);
+            return null;
+          });
 
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy);
+    const betaBySymbol: Record<string, number> = {};
+    for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
+      if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
+    }
+    // ATR-based stops (opt-in, default off): precompute a per-symbol stop DISTANCE (% of entry) from each
+    // open position's recent daily range so the sync proactive generator can use it (mirrors betaBySymbol).
+    // Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the fixed/beta stop.
+    const atrStopPctBySymbol: Record<string, number> = {};
+    if (policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) {
+      const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
+      const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      await Promise.all(
+        workingPositions
+          .filter((p) => Math.abs(p.quantity) > 0.000001 && p.averageCost > 0)
+          .map(async (p) => {
+            const sym = normalizeSymbol(p.symbol);
+            try {
+              const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+              if (!bars) return;
+              const pct = atrStopPct(atr(bars, period), p.averageCost, multiple);
+              if (typeof pct === "number") atrStopPctBySymbol[sym] = pct;
+            } catch {
+              // best-effort — fall back to the fixed/beta stop for this name
+            }
+          })
+      );
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
+    // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
+    // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
+    // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
+    if (policy.accountNumber) {
+      try {
+        const lastTpBands = getTakeProfitTrimBands(policy.accountNumber, userId);
+        const tpPlan = planTakeProfitTrims(workingPositions, currentPrices, policy, lastTpBands);
+        const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
+        clearTakeProfitTrimBands(policy.accountNumber, Object.keys(lastTpBands).filter((s) => !heldSymbols.has(s)), userId);
+        proactiveProposals.push(...tpPlan.proposals);
+      } catch (err) {
+        console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
+      }
+    }
 
     let ragContext = "";
-    try {
-      const { retrieveContext } = await import("./vector-db");
-      const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
-      const contexts = await Promise.all(topSymbols.map(sym =>
-        retrieveContext(`Significant financial events, SEC filings, and macro catalysts for ${sym}`, sym, 3, userId)
-      ));
-      const validContexts = contexts.flat().filter(Boolean);
-      if (validContexts.length > 0) {
-        ragContext = validContexts.join("\n\n");
+    let socraticRagAttributions: SocraticRagAttribution[] = [];
+    // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
+    // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
+    // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
+    // Voyage/Pinecone budget the other run has claimed (the RAG half of the TOCTOU). It's advisory context
+    // for the (now-skipped) proposal step anyway, so there is nothing to retrieve for.
+    if (!skipLlmDueToBudget) {
+      try {
+        const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
+          await import("./vector-db");
+        const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
+        const contexts = await Promise.all(
+          topSymbols.map(async (sym) => {
+            const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
+              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              minScore: defaultMinScore(),
+              // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
+              // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
+              // them, so neither ever ran). dedupeSimilarity is ON by default for this
+              // socratic-decision retrieval path per the composite review's guidance.
+              minRelevanceScore: defaultRelevanceFloor(),
+              dedupeSimilarity: defaultDedupeSimilarity(),
+              connectedAccountId: policy.connectedAccountId
+            });
+            return { sym, query, chunks };
+          })
+        );
+        const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
+        socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        if (validContexts.length > 0) {
+          // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
+          // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
+          // stale 10-K and reference which chunk it drew from — see formatChunkWithProvenance.
+          ragContext = contexts
+            .flatMap((context) => context.chunks.map((chunk) => formatChunkWithProvenance(chunk, context.sym)))
+            .join("\n\n");
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
       }
-    } catch (e) {
-      console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
     }
 
     // Parallel to RAG: pull advisory learned-context FACTS (private fact-tier only in this slice).
@@ -201,23 +574,179 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
     }
 
-    const llmProposals = await proposeTrades({
-      userId,
-      policyAllowlist: allowedSymbols,
-      prompt: getStrategyPrompt(userId),
-      policy,
-      activeAccount,
-      portfolio: workingPortfolio,
-      positions: workingPositions,
-      recentOrders: compactRecentOrders(orders),
-      marketScan,
-      dailyNotionalUsed: daily.notional,
-      dailyOrderCount: daily.orderCount,
-      ragContext,
-      learnedContext
-    });
+    // ── Episodic decision memory: closest historical analogs + owner coaching ──
+    // (2026-07-04 composite review A1, [Both] — the highest-leverage item.) A SECOND retrieval
+    // pass, distinct from the filings pass above: doc types ['socratic-decision','coach-note',
+    // 'lesson'], queried with a SITUATION SKETCH (regime + candidate factor/evidence summary),
+    // cross-symbol, same-run neighbors excluded, as-of stamped. The resulting labeled blocks are
+    // injected into BOTH the Bull and Bear userContent below (evidence parity). Advisory only —
+    // never threaded into sizing or policy. Same budget gate as the filings pass (retrieval
+    // spends Voyage/Pinecone budget).
+    let experienceAnalogs = "";
+    let ownerCoaching = "";
+    if (!skipLlmDueToBudget) {
+      try {
+        const { retrieveDecisionExperiences } = await import("./experience-memory");
+        // Regime for the sketch: fetchMacroData is cached (6h TTL), so this is effectively free —
+        // the same regime proposeTrades derives later for entryMarketRegime stamping.
+        const macroForSketch = await fetchMacroData(userId).catch(() => undefined);
+        const regimeForSketch = macroForSketch ? determineMarketRegime(macroForSketch) : "Unknown";
+        const situationCandidates = marketScan.topCandidates.slice(0, 3).map((candidate) => {
+          const sym = normalizeSymbol(candidate.symbol);
+          const breakdown = candidate.factorBreakdown;
+          let topFactor: string | undefined;
+          if (breakdown) {
+            let best = -Infinity;
+            for (const [key, value] of Object.entries(breakdown)) {
+              if (key === "weightedTotal" || typeof value !== "number") continue;
+              if (value > best) {
+                best = value;
+                topFactor = key;
+              }
+            }
+          }
+          return {
+            symbol: sym,
+            sector: marketScan.sectorBySymbol[sym] ?? candidate.sector,
+            dominantFactor: topFactor,
+            evidence: candidate.evidenceBulletins
+          };
+        });
+        const episodic = await retrieveDecisionExperiences({
+          userId,
+          runId,
+          regime: regimeForSketch,
+          candidates: situationCandidates,
+          connectedAccountId: policy.connectedAccountId
+        });
+        experienceAnalogs = episodic.analogsBlock ?? "";
+        ownerCoaching = episodic.coachingBlock ?? "";
+        if (episodic.injected.length > 0) {
+          // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
+          // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
+          // later join injected ids to this run's realized outcomes. The ids also ride along on
+          // every decision case via socraticRagAttributions (persisted + re-indexed).
+          audit(
+            "experience_retrieval",
+            {
+              runId,
+              asOf: episodic.asOf,
+              query: episodic.query,
+              analogIds: episodic.injected.filter((ref) => ref.kind === "analog").map((ref) => ref.id),
+              coachingIds: episodic.injected.filter((ref) => ref.kind === "coaching").map((ref) => ref.id),
+              counterexampleIds: episodic.injected.filter((ref) => ref.counterexample).map((ref) => ref.id),
+              ...(typeof episodic.topAnalogSimilarity === "number" ? { topAnalogSimilarity: episodic.topAnalogSimilarity } : {})
+            },
+            userId,
+            connectedAccountId
+          );
+          socraticRagAttributions.push(
+            ...ragAttributionsFromChunks("PORTFOLIO", episodic.query, [...episodic.analogChunks, ...episodic.coachingChunks])
+          );
+        }
+      } catch (e) {
+        console.warn("[Strategy] Skipping episodic decision memory, retrieval unavailable:", e instanceof Error ? e.message : String(e));
+      }
+    }
 
-    const sizedProposals = llmProposals.map((p) => applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions));
+    // ── "Do nothing" threshold (minProposalScoreThreshold) ─────────────────
+    // Filter candidates below the threshold BEFORE they reach the LLM. If none survive,
+    // skip the LLM call entirely — the system sits on its hands rather than proposing
+    // on mediocre candidates. Default 0 = unfiltered (preserves existing behavior).
+    const minScore = policy.tuning?.minProposalScoreThreshold;
+    let skipLlmDueToScoreThreshold = false;
+    if (typeof minScore === "number" && minScore > 0 && marketScan) {
+      const before = marketScan.topCandidates.length;
+      const surviving = marketScan.topCandidates.filter((c) => c.score >= minScore);
+      if (surviving.length === 0 && before > 0) {
+        skipLlmDueToScoreThreshold = true;
+        const reason = `No candidates met minimum score threshold (${minScore}). ${before} candidates all scored below ${minScore}.`;
+        console.log(`[Strategy] ${reason}`);
+        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId);
+        marketScan.topCandidates = [];
+      } else {
+        marketScan.topCandidates = surviving;
+      }
+    }
+
+    // ── Per-user/day LLM budget ceiling ────────────────────────────────────
+    // Gate LLM proposal generation on the daily token/$ budget — the single choke point for EVERY run
+    // LLM proposal generation is skipped when over the daily budget (skipLlmDueToBudget, computed
+    // above before revalidation) or when no candidate cleared the score threshold. Non-LLM safety
+    // work already ran regardless.
+    // Re-read the budget immediately before generation. The initial check above ran BEFORE revalidation
+    // and the RAG retrieval block, both of which record llm_usage/rag_usage — so a run that STARTED just
+    // under the ceiling can be over it by now. Using the stale skipLlmDueToBudget here would let
+    // proposeTrades call the model and the withLlmGeneration backstop would THROW LlmBudgetExceededError,
+    // which the outer catch turns into a FAILED run + failure notification for what is really normal
+    // budget exhaustion. Re-reading degrades to a graceful skip instead. Cheap DB read; default OFF
+    // (no ceiling) → always ok, so no behavior change when budgets are unset.
+    if (!skipLlmDueToBudget) {
+      const budgetNow = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
+      if (!budgetNow.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "strategy_run_suppressed_budget",
+          { runId, userId, reason: budgetNow.reason, tokensToday: budgetNow.tokensToday, costUsdToday: budgetNow.costUsdToday, tokenLimit: budgetNow.tokenLimit, costLimitUsd: budgetNow.costLimitUsd, phase: "pre_generation" },
+          userId
+        );
+      }
+    }
+    let llmProposals: TradeProposal[] = [];
+    // FAIL-CLOSED signal from the inline Bear (Red Team): when its review could not run, these
+    // Bull proposals were NOT critiqued — route them to human review below instead of auto-executing.
+    let bearReviewUnavailable = false;
+    let bearReviewReason: string | undefined;
+    if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
+      const proposed = await proposeTrades({
+        runId,
+        userId,
+        policyAllowlist: allowedSymbols,
+        prompt: getStrategyPrompt(userId),
+        policy,
+        activeAccount,
+        portfolio: workingPortfolio,
+        positions: workingPositions,
+        recentOrders: compactRecentOrders(orders),
+        marketScan,
+        dailyNotionalUsed: daily.notional,
+        dailyOrderCount: daily.openingOrderCount,
+        ragContext,
+        learnedContext,
+        ...(experienceAnalogs ? { experienceAnalogs } : {}),
+        ...(ownerCoaching ? { ownerCoaching } : {}),
+        drawdownAdvisory
+      });
+      llmProposals = proposed.proposals;
+      llmSteps = proposed.llmSteps;
+      bearReviewUnavailable = proposed.bearReviewUnavailable === true;
+      bearReviewReason = proposed.bearReviewReason;
+    }
+
+    // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
+    // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
+    const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
+      policy.tuning?.calibrationSizing && policy.accountNumber
+        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId)
+        : undefined;
+
+    // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
+    // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
+    // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
+    const sizedProposals = llmProposals
+      .filter((p) => {
+        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId);
+        if (gate.skip) {
+          console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
+          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
+        }
+        return !gate.skip;
+      })
+      .map((p) => {
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
+        const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
+        return enrichOpeningProposal(overrideSized, policy, marketScan);
+      });
 
     const debatedProposals: TradeProposal[] = [];
     // Red Team is REQUIRED for high-conviction trades. If it could not run (no key, provider
@@ -225,13 +754,87 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // auto-executing an un-reviewed high-conviction trade with real capital. The live placement
     // path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
+    // Inline Bear review failed → FAIL CLOSED: every un-critiqued opening is routed to human
+    // review. In "propose" mode all proposals already require approval; in "decide" mode this is
+    // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
+    // trades.
+    if (bearReviewUnavailable) {
+      // Route only OPENING proposals (buy/short) to human review. Risk-reducing exits (sell/cover)
+      // must still flow through to placement even when the Red Team is down — blocking a de-risking
+      // trade on a Bear outage is itself unsafe (mirrors the rationale-collapse gate below).
+      const bearGatedOpenings = sizedProposals.filter((p) => p.side === "buy" || p.side === "short");
+      for (const p of bearGatedOpenings) {
+        p.rationale += `\n\nInline Red Team (Bear) review was REQUIRED but unavailable (${bearReviewReason ?? "unknown error"}); routed to human approval.`;
+        requiresHumanReview.add(p);
+      }
+      if (bearGatedOpenings.length > 0) {
+        audit("strategy_bear_review_routed_to_human", { runId, count: bearGatedOpenings.length, reason: bearReviewReason, mode: policy.strategyAuthority }, userId);
+      }
+    }
     for (const proposal of sizedProposals) {
-      if (shouldRunRedTeamDebate(proposal, policy)) {
+      // Stakes-scaled dissent (composite review E/high/S): widen the debate trigger beyond
+      // confidenceScore alone — large-notional and live openings, an escalation-regime entry, or the
+      // proposal itself requesting an owner-preference override all demand a second look regardless
+      // of stated confidence. Advisory routing only: this decides whether a review runs, never a block.
+      const isOpeningSide = proposal.side === "buy" || proposal.side === "short";
+      const dissentContext: RedTeamDissentContext = {
+        notionalPctOfNav:
+          isOpeningSide && workingPortfolio.totalMarketValue > 0
+            ? (estimateNotional(proposal) / workingPortfolio.totalMarketValue) * 100
+            : undefined,
+        isLiveOpening: isOpeningSide && executionState.environment === "live",
+        entryMarketRegime: proposal.entryMarketRegime
+      };
+      if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
         const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
+        // rationale-append text below too for backward compatibility with anything reading the string.
+        proposal.redTeamVerdict = {
+          rejected: redTeamResult.rejected,
+          available: redTeamResult.available,
+          reason: redTeamResult.reason,
+          // The model that actually served the debate (incl. the cross-provider Anthropic path) —
+          // persisted so the approval card's red-team badge doesn't drift with later policy edits.
+          ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
+          // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
+          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {})
+        };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
+          // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
+          // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
+          // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+          // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
+          // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
+          // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
+          // account's vetoes bleed into another account's efficacy scorecard.
+          audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
+          // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
+          // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
+          // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
+          // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
+          // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
+          // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
+          // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
+          // score/sector/factor/bulletin evidence onto this early row — see
+          // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
+          if (proposal.side === "buy" || proposal.side === "short") {
+            try {
+              recordRejectedProposalCounterfactual({
+                userId,
+                connectedAccountId,
+                runId,
+                symbol: proposal.symbol,
+                refPrice: proposal.referencePrice,
+                createdAt: new Date().toISOString(),
+                regime: proposal.entryMarketRegime
+              });
+            } catch (err) {
+              console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+            }
+          }
           // Skip this proposal completely, as the Red Team found a critical flaw
           continue;
         } else if (!redTeamResult.available) {
@@ -245,19 +848,161 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       debatedProposals.push(proposal);
     }
 
-    const proposals = [
-      ...proactiveProposals,
-      ...debatedProposals
-    ];
+    // Rationale-collapse gate (Chat A item 7) — evaluated on the OPENING proposals HERE, BEFORE the
+    // sell-to-fund planner below, so a collapse-gated buy (routed to human review) does NOT drive
+    // automated funding sells: intendedOpeningNotional excludes requiresHumanReview openings, and by
+    // gating first the collapsed buys are already in that set (same hazard the Bear-unavailable gate
+    // avoids). Gates on the openings' OWN diversity; default OFF (=== true). Exits are never gated. The
+    // full-set advisory warning stays below, after the final proposal set is assembled.
+    if (policy.tuning?.gateOnRationaleCollapse === true) {
+      const gatedOpenings = debatedProposals.filter((p) => p.side === "buy" || p.side === "short");
+      const openingDiversity = computeRationaleDiversity(gatedOpenings.map((p) => p.rationale));
+      if (openingDiversity.collapsed) {
+        for (const p of gatedOpenings) {
+          p.rationale += `\n\nRationale-diversity gate: this run's opening proposals collapsed to near-identical reasoning (mean similarity ${openingDiversity.meanPairwiseSimilarity.toFixed(3)} > ${openingDiversity.threshold}); routed to human approval.`;
+          requiresHumanReview.add(p);
+        }
+        if (gatedOpenings.length > 0) {
+          console.warn(`[strategy] Rationale-collapse gate ON — routing ${gatedOpenings.length} opening proposal(s) to human review.`);
+          audit(
+            "strategy_rationale_collapse_gated",
+            { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
+            userId
+          );
+        }
+      }
+    }
+
+    // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
+    // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
+    // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
+    // the funding sells for human approval; "automated" lets them ride the account's existing
+    // authority (auto-placed only when already in "decide"). Funding sells carry tradeThesisTag
+    // "Sell-to-Fund" so the execution loop can route propose-mode ones correctly.
+    const sellToFundMode = policy.sellToFundBuy ?? "off";
+    let fundingSells: TradeProposal[] = [];
+    let sellToFundNote = "";
+    if (sellToFundMode !== "off") {
+      const isOpening = (p: TradeProposal) => p.side === "buy" || p.side === "short";
+      // Only fund openings that will ACTUALLY be placed this run. An opening routed to human review
+      // (e.g. a Bear-unavailable or rationale-collapse-gated buy) must not drive automated funding
+      // sells — otherwise in "decide" mode we'd auto-liquidate holdings to fund buys that are merely
+      // queued for approval and won't execute (potentially leaving the account short on buying power).
+      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p)).reduce((sum, p) => {
+        const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
+        const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
+        return sum + (Number.isFinite(notional) ? notional : 0);
+      }, 0);
+      // Never sell a name we're trading this run (buy targets, or already-proposed exits/trims).
+      const exclude = [
+        ...debatedProposals.filter(isOpening).map((p) => normalizeSymbol(p.symbol)),
+        ...proactiveProposals.map((p) => normalizeSymbol(p.symbol)),
+        ...debatedProposals.filter((p) => p.side === "sell" || p.side === "cover").map((p) => normalizeSymbol(p.symbol))
+      ];
+      const plan = planFundingSells({
+        mode: sellToFundMode,
+        buyingPower: workingPortfolio.buyingPower,
+        intendedOpeningNotional,
+        positions: workingPositions.map((p) => ({ symbol: normalizeSymbol(p.symbol), quantity: p.quantity, marketValue: p.marketValue, averageCost: p.averageCost })),
+        currentPrices,
+        excludeSymbols: exclude
+      });
+      if (plan.sells.length > 0) {
+        audit(
+          "sell_to_fund_plan",
+          { mode: sellToFundMode, shortfall: plan.shortfall, raised: plan.raised, summary: plan.summary, sells: plan.sells.map((s) => ({ symbol: s.symbol, quantity: s.quantity })) },
+          userId,
+          connectedAccountId
+        );
+        sellToFundNote = `Sell-to-fund-buy (${sellToFundMode}): ${plan.summary}`;
+        // suggest = record only; propose/automated = actually emit the sells into the pipeline.
+        if (sellToFundMode === "propose" || sellToFundMode === "automated") fundingSells = plan.sells;
+      }
+    }
+
+    const proposals = await applyCorrelationClusterGate(
+      [...fundingSells, ...proactiveProposals, ...debatedProposals],
+      policy,
+      workingPositions,
+      userId
+    );
+
+    // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
+    // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
+    // runs to human review (Chat A item 7).
+    const rationaleDiversity = computeRationaleDiversity(proposals.map((p) => p.rationale));
+    if (rationaleDiversity.collapsed) {
+      console.warn(
+        `[strategy] Rationale collapse detected: mean pairwise similarity ${rationaleDiversity.meanPairwiseSimilarity.toFixed(3)} > threshold ${rationaleDiversity.threshold} across ${rationaleDiversity.count} proposal(s). LLM may be emitting boilerplate reasoning.`
+      );
+      // Emit the diversity-collapse decision point as a queryable Langfuse observation (no-op when
+      // Langfuse is unconfigured). Advisory only — never blocks/drops/modifies proposals.
+      await recordDecisionObservation({
+        name: "trading.strategy.diversity-collapse",
+        userId,
+        metadata: {
+          promptVersion: STRATEGY_PROMPT_VERSION,
+          meanPairwiseSimilarity: Number(rationaleDiversity.meanPairwiseSimilarity.toFixed(4)),
+          threshold: rationaleDiversity.threshold,
+          proposalCount: rationaleDiversity.count,
+          runId
+        },
+        tags: ["strategy", "diversity-collapse"]
+      });
+    }
+    // (The rationale-collapse GATE that routes collapsed openings to human review runs EARLIER — before
+    // sell-to-fund planning — so a gated buy can't drive automated funding sells. Only the advisory
+    // full-set warning above remains here.)
 
     const results: StrategyResult["proposals"] = [];
+    const recordSocraticDecision = (input: {
+      proposalId: string;
+      proposal: TradeProposal;
+      decision: PolicyDecision;
+      status: string;
+      review?: ReviewedOrder;
+      overrideResolution?: SocraticOverrideResolution;
+    }) => {
+      try {
+        const now = new Date().toISOString();
+        const caseFile = {
+          ...buildSocraticDecisionCase({
+            userId,
+            connectedAccountId,
+            runId,
+            proposalId: input.proposalId,
+            accountNumber: policy.accountNumber,
+            proposal: input.proposal,
+            status: socraticStatusFromProposalStatus(input.status),
+            authority: policy.strategyAuthority,
+            decision: input.decision,
+            review: input.review,
+            marketScan,
+            ragAttributions: socraticRagAttributions,
+            overrideResolution: input.overrideResolution
+          }),
+          createdAt: now,
+          updatedAt: now
+        } satisfies SocraticDecisionCase;
+        upsertSocraticDecisionCase(caseFile);
+        void indexSocraticDecisionMemory(caseFile).catch((err) => {
+          console.warn("[strategy] Socratic memory indexing failed:", err instanceof Error ? err.message : String(err));
+        });
+        const framework = frameworkProposalFromDecision(caseFile);
+        if (framework) createSocraticFrameworkProposal(framework);
+      } catch (err) {
+        console.warn("[strategy] Socratic decision recording failed:", err instanceof Error ? err.message : String(err));
+      }
+    };
+
     for (const proposal of proposals) {
       const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked" });
         await sendNotification(
           {
             type: "block",
@@ -266,7 +1011,7 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -274,17 +1019,21 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-      const isLiveExecution = learningSource === "live";
-      const decision = evaluateTradeProposal(normalizedProposal, {
+      const isLiveExecution = executionMode === "broker/live";
+      let decision = evaluateTradeProposal(normalizedProposal, {
         policy,
         portfolio: workingPortfolio,
         positions: workingPositions,
         dailyNotionalUsed: dailyNow.notional,
         hourlyNotionalUsed: hourlyNow.notional,
-        dailyOrderCount: dailyNow.orderCount,
+        dailyOrderCount: dailyNow.openingOrderCount,
         estimatedNotional: review.estimatedNotional,
         marketScan,
-        washSaleLockedSymbols,
+        washSaleLocks,
+        // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+        // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+        // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+        accountTaxationType: activeAccount?.taxationType,
         accountCapabilities: selected?.capabilities,
         isLiveExecution,
         // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -293,9 +1042,108 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           : 0
       });
 
+      // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
+      // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
+      // NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
+      // sell-to-fund-propose) an approved gate result only becomes a PENDING card — no purchase has
+      // happened yet — so logging "the wash sale was disregarded / the deduction was forfeited" here
+      // would be false if the owner rejects or lets it expire. When such a card is later approved,
+      // executeProposal emits the same trail (gated on decision.approved) as the order actually places.
+      const overrideResolution = resolveSocraticOverride({
+        proposal: normalizedProposal,
+        policy,
+        portfolio: workingPortfolio,
+        estimatedNotional: review.estimatedNotional,
+        decision
+      });
+      decision = overrideResolution.decision;
+      if (overrideResolution.applied) {
+        audit(
+          "socratic_override_applied",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            thesis: normalizedProposal.autonomyOverride?.thesis,
+            routeToHuman: overrideResolution.routeToHuman,
+            mode: policy.socraticOverrideMode
+          },
+          userId,
+          connectedAccountId
+        );
+        if (overrideResolution.routeToHuman) requiresHumanReview.add(proposal);
+      } else if (overrideResolution.requested) {
+        audit(
+          "socratic_override_refused",
+          {
+            runId,
+            symbol: normalizedProposal.symbol,
+            side: normalizedProposal.side,
+            conflicts: overrideResolution.conflicts,
+            hardReasons: overrideResolution.hardReasons,
+            thesis: normalizedProposal.autonomyOverride?.thesis
+          },
+          userId,
+          connectedAccountId
+        );
+      }
+
       if (!decision.approved) {
+        // ── Escalation framework ─────────────────────────────────────────────────────────────
+        // A soft-blocked proposal whose EVERY failure is escalatable (ask-mode wash sale in any
+        // authority; time-context caps/staleness in Decide authority — see shouldEscalateDecision)
+        // becomes a pending-approval card instead of dying as a blocked entry. The card stores the
+        // block reasons plus server-minted override tokens; approval re-runs the FULL policy gate,
+        // where only the wash-sale gate honors its stored token (time-context gates simply
+        // re-evaluate against then-current caps/quotes). policy.ts stays authoritative throughout.
+        if (shouldEscalateDecision(decision, policy)) {
+          const proposalId = crypto.randomUUID();
+          const escalatedDecision: PolicyDecision = {
+            ...decision,
+            // Mint one server-side override token per escalatable failure. The token lives ONLY in
+            // this stored decision row and the audit ledger; the approval path re-reads it from the
+            // DB (approvedEscalationsFromDecision). No client payload can create or alter it.
+            escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+          };
+          insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: escalatedDecision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+          recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: escalatedDecision, status: "proposed", review, overrideResolution });
+          audit(
+            "proposal_escalated",
+            {
+              runId,
+              proposalId,
+              symbol: normalizedProposal.symbol,
+              side: normalizedProposal.side,
+              reasons: decision.reasons,
+              escalations: escalatedDecision.escalations,
+              ...(decision.washSale ? { washSale: decision.washSale } : {})
+            },
+            userId,
+            connectedAccountId
+          );
+          const washAsk = escalatedDecision.escalations?.find((entry) => entry.kind === "wash_sale_ask");
+          const askCost = washAsk?.washSale?.estimatedTaxCostUsd;
+          await sendNotification(
+            {
+              type: "pending_approval",
+              title: washAsk
+                ? `${normalizedProposal.symbol} rebuy needs your call (wash sale${askCost != null ? ` — ~$${askCost.toFixed(2)} deduction at stake` : ""})`
+                : `${normalizedProposal.symbol} awaiting approval (soft-blocked: ${decision.reasons[0]})`,
+              payload: { runId, proposalId, proposal: normalizedProposal, review, decision: escalatedDecision, escalated: true }
+            },
+            { policy, userId }
+          );
+          // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
+          // the account back to Ask-first even though the tripping proposal survives as a card.
+          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+          results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
+          continue;
+        }
+
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review, overrideResolution });
         await sendNotification(
           {
             type: "block",
@@ -304,14 +1152,86 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+        // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
+        // rejection) so its post-block return matures into missed-opportunity analytics — closing the
+        // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked
+        // exit is not a missed opportunity); best-effort + non-fatal.
+        if (normalizedProposal.side === "buy" || normalizedProposal.side === "short") {
+          try {
+            recordRejectedProposalCounterfactual({
+              userId,
+              connectedAccountId,
+              runId,
+              symbol: normalizedProposal.symbol,
+              refPrice: normalizedProposal.referencePrice,
+              createdAt: new Date().toISOString(),
+              regime: normalizedProposal.entryMarketRegime
+            });
+          } catch (err) {
+            console.warn("[strategy] policy-blocked counterfactual failed:", err instanceof Error ? err.message : String(err));
+          }
+        }
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
+        continue;
+      }
+
+      const heldExit = evaluateBrokerHeldExitAvailability(normalizedProposal, workingPositions, orders);
+      if (heldExit) {
+        const heldReason = brokerHeldExitBlockReason(heldExit);
+        const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+        const proposalId = crypto.randomUUID();
+        insertProposal({
+          userId,
+          executionMode,
+          id: proposalId,
+          runId,
+          accountNumber: policy.accountNumber,
+          proposal: normalizedProposal,
+          decision: heldDecision,
+          review,
+          estimatedNotional: review.estimatedNotional,
+          status: "blocked",
+          promptVersion: STRATEGY_PROMPT_VERSION
+        });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: heldDecision, status: "blocked", review, overrideResolution });
+        audit(
+          "proposal_blocked_broker_held_exit",
+          { runId, proposalId, symbol: heldExit.symbol, side: heldExit.side, heldExit },
+          userId,
+          connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "block",
+            title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} blocked`,
+            payload: { runId, proposalId, decision: heldDecision, review, proposal: normalizedProposal }
+          },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: heldDecision.reasons });
+        continue;
+      }
+
+      // Sell-to-fund "propose" mode: funding sells queue for human approval even under "decide"
+      // authority — raising cash by selling is the user's call. (Identified by tradeThesisTag so it's
+      // robust to any reordering by the cluster gate.)
+      if (sellToFundMode === "propose" && normalizedProposal.tradeThesisTag === "Sell-to-Fund") {
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
+        await sendNotification(
+          { type: "pending_approval", title: `${normalizedProposal.symbol} funding sell awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Sell-to-fund-buy: queued for approval."] });
         continue;
       }
 
       if (policy.strategyAuthority === "propose") {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
@@ -320,42 +1240,44 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         continue;
       }
 
-      if (executionState.usesLocalSimulation) {
-        const proposalId = crypto.randomUUID();
-        insertProposal({ userId,  id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "paper" });
-        const fill = recordFillFromProposal({
-          userId,
-          accountNumber: policy.accountNumber,
-          proposalId,
-          runId,
-          source: "paper",
-          proposal: normalizedProposal,
-          review,
-          marketScan,
-          status: "filled"
-        });
-        await sendNotification(
-          {
-            type: "fill",
-            title: `${normalizedProposal.symbol} Test ${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)}`,
-            payload: { runId, proposalId, fill }
-          },
-          { policy, userId }
-        );
-        results.push({ proposal: normalizedProposal, status: "paper", reasons: [] });
-        continue;
-      }
-
       // Fail CLOSED: a high-conviction trade whose REQUIRED Red Team review could not run is
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
-        insertProposal({ userId, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        continue;
+      }
+
+      // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
+      // is placed. No-op on the broker/paper path (submitsBrokerOrders, real-capital-free); on the
+      // broker/live path it throws unless live trading is explicitly enabled (ALLOW_LIVE_TRADING). It
+      // NEVER places or enables a trade.
+      try {
+        assertLivePreflight({
+          mode: executionMode,
+          symbol: normalizedProposal.symbol,
+          side: normalizedProposal.side
+        });
+      } catch (guardError) {
+        const message = guardError instanceof Error ? guardError.message : String(guardError);
+        const proposalId = crypto.randomUUID();
+        // Persist a REJECTED decision, not the earlier approved one — a blocked live order must not
+        // leave an `approved: true` row in the decision/audit ledger.
+        const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+        insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
+        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
+        await sendNotification(
+          { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [message] });
         continue;
       }
 
@@ -377,7 +1299,9 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         review,
         estimatedNotional: review.estimatedNotional,
         refId,
-        status: "placing"
+        status: "placing",
+        executionMode,
+        promptVersion: STRATEGY_PROMPT_VERSION
       });
 
       let execution: Awaited<ReturnType<typeof gateway.placeEquityOrder>>;
@@ -387,7 +1311,8 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         const message = placeError instanceof Error ? placeError.message : String(placeError);
         // The broker may or may not have accepted the order. Keep the durable intent row and
         // flag it loudly for reconciliation rather than aborting the whole run.
-        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+        updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
         audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
@@ -397,13 +1322,43 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
         continue;
       }
 
+      // A broker call that doesn't throw is NOT the same as "the broker accepted the order" —
+      // Alpaca and Robinhood can both return HTTP 200 with a synchronous rejected/canceled state
+      // (e.g. a risk check, PDT block, or unsupported extended-hours order). Recording this as
+      // "placed" would tell the user/dashboard a live order exists when the broker already
+      // declined it — broker-agnostic via isRejectedOrCanceledState (handles both spellings and
+      // known terminal-decline states across brokers).
+      if (isRejectedOrCanceledState(execution.state)) {
+        const message = `Broker declined the order (state: ${execution.state}).`;
+        updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+        recordSocraticDecision({
+          proposalId,
+          proposal: normalizedProposal,
+          decision: { ...decision, approved: false, reasons: [...decision.reasons, message] },
+          status: "rejected_by_broker",
+          review,
+          overrideResolution
+        });
+        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+        await sendNotification(
+          { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
+          { policy, userId }
+        );
+        results.push({ proposal: normalizedProposal, status: "error", reasons: [message] });
+        continue;
+      }
+
       updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
+      recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placed", review, overrideResolution });
+      // Wash-sale proceed trail at the actual live placement — see auditWashSaleProceed.
+      auditWashSaleProceed(decision, { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, userId, connectedAccountId });
       const fill = recordFillFromProposal({
         userId,
         accountNumber: policy.accountNumber,
         proposalId,
         runId,
-        source: "live",
+        source: learningSource,
+        executionMode,
         proposal: normalizedProposal,
         review,
         execution,
@@ -449,9 +1404,10 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
     // only), so post-mortems can compare like-for-like without re-deriving the scan.
     audit("candidates_considered", {
       runId,
+      llmSteps,
       chosen: results.map((r) => ({ symbol: r.proposal.symbol, side: r.proposal.side, status: r.status, thesisTag: r.proposal.tradeThesisTag })),
       topSkipped: skippedEvidence
-    }, userId);
+    }, userId, connectedAccountId);
 
     // SignalSnapshot: the full scored set, each a complete CandidateEvidence digest.
     // getSignalEfficacy joins closed lots → signals by runId|symbol, so skipped entries
@@ -460,83 +1416,204 @@ export async function runStrategyOnce(userId: string = "local"): Promise<Strateg
       runId,
       asOf: new Date().toISOString(),
       signals: [...chosenEvidence, ...skippedEvidence]
-    }, userId);
-    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25 })
+    }, userId, connectedAccountId);
+    void materializeSkippedCandidateCounterfactuals(userId, { auditLimit: 100, pendingLimit: 25, connectedAccountId })
       .catch((e) => console.error("[counterfactual-learning] materialization error:", e));
+    // Outcome engine piggybacks the counterfactual cadence: matures decision-case outcomes
+    // (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), writes the
+    // multi-horizon outcome + receipt, re-indexes decision memory, and runs the budget-gated
+    // post-mortem lesson pass. Fire-and-forget + dynamic import: never blocks or fails the run.
+    void import("./outcome-engine")
+      .then(({ matureSocraticDecisionOutcomes }) => matureSocraticDecisionOutcomes(userId, { connectedAccountId }))
+      .catch((e) => console.error("[outcome-engine] maturation error:", e));
 
     const placed = results.filter((r) => r.status === "placed").length;
-    const paperCount = results.filter((r) => r.status === "paper").length;
     const proposed = results.filter((r) => r.status === "proposed").length;
-    const tradeCount = placed + paperCount + proposed;
-    const tradeNoun = executionState.usesLocalSimulation ? "Test Trade" : "Trade";
+    const tradeCount = placed + proposed;
     const summary = [
       `Evaluated ${results.length} proposal(s).`,
-      `Proposed ${tradeCount} ${tradeNoun}${tradeCount === 1 ? "" : "s"}.`,
+      `${manualRun ? "Manual run" : "Scheduled run"} proposed ${tradeCount} Trade${tradeCount === 1 ? "" : "s"}.`,
       placed > 0 ? `Placed: ${placed}.` : "",
-      paperCount > 0 ? `Test: ${paperCount}.` : "",
       proposed > 0 ? `Awaiting approval: ${proposed}.` : "",
       expiry.expired > 0 ? `Expired ${expiry.expired} stale proposal${expiry.expired === 1 ? "" : "s"}.` : "",
       revalidation && (revalidation.withdrawn > 0 || revalidation.reaffirmed > 0)
         ? `Re-checked ${revalidation.checked} pending: kept ${revalidation.reaffirmed}, withdrew ${revalidation.withdrawn}.`
-        : ""
+        : "",
+      sellToFundNote
     ]
       .filter(Boolean)
       .join(" ");
 
+    // Persist diversity result as an advisory audit event (no schema migration needed).
+    // Account-attributed like strategy_run/signal_snapshot so the Activity feed can say
+    // WHICH account's run this analyzed (#8).
+    audit("rationale_diversity", { runId, llmSteps, ...rationaleDiversity }, userId, connectedAccountId);
     finishStrategyRun(runId, "completed", summary, userId);
-    // Always snapshot the real account; snapshot the local simulation too in Test mode.
-    recordPortfolioSnapshot({ userId, runId, accountNumber: policy.accountNumber, source: "live", portfolio, positions });
-    if (executionState.usesLocalSimulation) {
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: policy.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices,
-        userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId,
-        accountNumber: policy.accountNumber,
-        source: "paper",
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-    }
-    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber };
+    recordPortfolioSnapshot({
+      userId,
+      runId,
+      accountNumber: policy.accountNumber,
+      source: learningSource,
+      executionMode,
+      portfolio,
+      positions
+    });
+    result = { runId, status: "completed", summary, proposals: results, marketScan, accountNumber: policy.accountNumber, llmSteps, rationaleDiversity };
     
-    // Phase 7: Async trigger post-mortem reflection
-    generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
-    
+    // Phase 7: Async trigger post-mortem reflection. Skipped when LLM work was budget/reservation-suppressed
+    // (it spends LLM via withLlmGeneration + semantic gate, whose checks read only the committed ledger, not
+    // the live reservation). The finally holds the reservation until this promise settles so the reflection
+    // spend stays inside the reserved headroom rather than racing a queued same-user run.
+    reflectionPromise = skipLlmDueToBudget
+      ? undefined
+      : generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
+
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
+    if (error instanceof StrategyLlmStepFailure) {
+      llmSteps = error.llmSteps;
+    }
     finishStrategyRun(runId, "failed", summary, userId);
-    const policy = getPolicy(userId);
-    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber };
+    const policy = getPolicy(userId, targetAccountId);
+    result = { runId, status: "failed", summary, proposals: [], accountNumber: policy.accountNumber, ...(llmSteps.length > 0 ? { llmSteps } : {}) };
     if (summary === "Kill switch is active.") {
       await sendNotification({ type: "kill_switch", title: "Kill switch blocked strategy run", payload: { runId, summary } }, { policy, userId });
     } else {
       await sendNotification({ type: "run_failed", title: "Strategy run failed", payload: { runId, summary } }, { policy, userId });
     }
   } finally {
-    releaseStrategyLock(userId);
+    // Release the strategy lock promptly so this account can run again. The LLM reservation is held a bit
+    // longer — until the fire-and-forget post-mortem reflection settles — so that background spend stays
+    // inside the reserved headroom instead of racing a queued same-user run (the TTL is the crash backstop).
+    // We do NOT await here, so runStrategyOnce's return isn't delayed by the reflection.
+    releaseStrategyLock(userId, connectedAccountId);
+    if (llmReservationId) {
+      const rid = llmReservationId;
+      void Promise.resolve(reflectionPromise).finally(() => releaseLlmReservation(userId, rid));
+    }
   }
 
   // Audit is written here (inside the domain fn) so the scheduler path records it too.
-  audit("strategy_run", result, userId);
+  audit("strategy_run", result, userId, connectedAccountId);
   // Push a dashboard event so open clients refresh immediately instead of waiting for their
   // next poll (the SSE bus is in-process; no-op when nothing is subscribed).
   emitDashboardEvent({ type: "run-complete", userId, at: new Date().toISOString(), detail: { runId } });
   return result;
 }
 
-export function shouldRunRedTeamDebate(proposal: TradeProposal, policy: TradingPolicy): boolean {
-  return (proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy);
+/**
+ * Escalation framework — decide whether a policy-refused proposal may become a PENDING-APPROVAL
+ * card (with its block reasons on it) instead of dying as a blocked entry.
+ *
+ * Rules (owner-locked spec):
+ * - "wash_sale_ask" failures escalate under BOTH authorities (propose and decide) — that is the
+ *   entire point of taxSettings.washSaleHandling = "ask".
+ * - Time-context failures (daily/hourly notional caps, daily opening-order cap, quote staleness)
+ *   escalate ONLY under "decide" authority: in propose mode every idea already waits for a human,
+ *   so a time-gated one stays a visible blocked entry rather than a card implying it can be
+ *   approved right now.
+ * - EVERY reason must be covered by an escalatable entry. Anything else — red-team veto,
+ *   negative-EV skip, and below-threshold conviction happen upstream and never reach this path;
+ *   per-order notional caps, shorting disabled, blocklisted/universe symbols, the IRA wash-sale
+ *   hard block, margin minimum, etc. produce NO escalation entry — keeps the proposal blocked.
+ */
+export function shouldEscalateDecision(decision: PolicyDecision, policy: TradingPolicy): boolean {
+  if (decision.approved || decision.reasons.length === 0) return false;
+  const escalations = decision.escalations ?? [];
+  if (escalations.length === 0) return false;
+  return decision.reasons.every((reason) => {
+    const entry = escalations.find((candidate) => candidate.reason === reason);
+    if (!entry) return false;
+    if (entry.kind === "wash_sale_ask") return true;
+    return policy.strategyAuthority === "decide";
+  });
+}
+
+/**
+ * Approval-path override extraction: the ask-mode wash-sale override handles stored on an
+ * escalated proposal row. Reads ONLY the server-written decision JSON (tokens were minted by the
+ * run loop at escalation time) — no client input flows in, so this can never be a client-settable
+ * bypass. Only "wash_sale_ask" entries yield a handle: time-context escalations carry tokens for
+ * audit but are deliberately NOT overridable — their gates simply re-run against current state.
+ */
+export function approvedEscalationsFromDecision(decision: PolicyDecision | undefined): ApprovedEscalation[] {
+  return (decision?.escalations ?? [])
+    .filter((entry) => entry.kind === "wash_sale_ask" && typeof entry.token === "string" && entry.token.length > 0)
+    .map((entry) => ({
+      kind: entry.kind,
+      symbol: entry.symbol,
+      token: entry.token as string,
+      // The cost PRICED ON THE CARD the user approved. The gate honors the token only while the
+      // freshly recomputed cost stays within washSaleOverrideCostTolerance of this (stale-price
+      // guard) — otherwise it re-escalates at the current price instead of executing.
+      ...(entry.washSale?.estimatedTaxCostUsd != null ? { approvedCostUsd: entry.washSale.estimatedTaxCostUsd } : {})
+    }));
+}
+
+export const DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD = 15;
+
+/**
+ * Stakes-scaled dissent context (composite review E/high/S). All fields optional so every existing
+ * 2-arg call site (tests, and any future caller that doesn't have this context yet) is unaffected —
+ * `shouldRunRedTeamDebate` degrades to the original confidence-only gate when omitted.
+ */
+export interface RedTeamDissentContext {
+  /** Estimated order notional as % of portfolio NAV (totalMarketValue). */
+  notionalPctOfNav?: number;
+  /** True for an OPENING (buy/short) proposal on a LIVE (non-paper) account. */
+  isLiveOpening?: boolean;
+  /** The regime label the proposal was scored in (checked via isEscalationRegime). */
+  entryMarketRegime?: string;
+}
+
+/**
+ * Whether the approval-time Red Team debate (debateProposal) is required for this proposal.
+ * Originally gated on confidenceScore ALONE, so a low-confidence but large-notional LIVE trade got
+ * no adversarial review while a high-confidence $50 paper trade did (composite review E/high/S:
+ * "Stakes-scaled dissent"). Now ANY of the following demands the debate: high confidence (existing
+ * behavior, unchanged), notional at/above the policy-tunable %-of-NAV threshold, a LIVE opening, an
+ * escalation-regime entry, or the proposal itself carrying a requested autonomyOverride (the agent is
+ * already asking to deviate from an owner preference — that deserves a second look). Advisory
+ * routing only: this only decides whether a REVIEW runs, never a hard block.
+ */
+export function shouldRunRedTeamDebate(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  context: RedTeamDissentContext = {}
+): boolean {
+  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return true;
+  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return true;
+  if (context.isLiveOpening) return true;
+  if (proposal.autonomyOverride?.requested) return true;
+  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return true;
+  return false;
+}
+
+/** WHICH trigger demanded the debate (for the verdict receipt) — mirrors shouldRunRedTeamDebate's
+ *  checks in the same order so the reported trigger is the first one that actually fired. */
+export function redTeamDebateTrigger(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  context: RedTeamDissentContext = {}
+): "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime" | undefined {
+  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return "confidence";
+  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return "notional";
+  if (context.isLiveOpening) return "live_opening";
+  if (proposal.autonomyOverride?.requested) return "override_requested";
+  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return "escalation_regime";
+  return undefined;
 }
 
 export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): number {
   const threshold = policy.tuning?.redTeamConvictionThreshold;
   if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_CONVICTION_THRESHOLD;
   return Math.max(0, Math.min(100, threshold));
+}
+
+export function redTeamNotionalPctOfNavThresholdForPolicy(policy: TradingPolicy): number {
+  const threshold = policy.tuning?.redTeamNotionalPctOfNavThreshold;
+  if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD;
+  return Math.max(0, threshold);
 }
 
 /**
@@ -556,11 +1633,23 @@ export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): numb
  *      VIX regime is the weakest possible risk-on entry and the Bear LLM is not reliably
  *      calibrated to reject it (same model as Bull, trained to be helpful).
  */
+/**
+ * SHORT_SELLING two-layer gate, expressed as the set of order sides the proposal generator may emit.
+ * short/cover are allowed only when policy.shortSellingEnabled is true AND the connected account
+ * reports shortSelling capability. Otherwise long-only. Mirrors the policy.ts execution-time gate so
+ * the schema can never surface a side the gate would reject.
+ */
+export function allowedProposalSides(policy: TradingPolicy, account?: ExecutionAccount): OrderSide[] {
+  const shortAllowed = policy.shortSellingEnabled === true && account?.capabilities?.shortSelling === true;
+  return shortAllowed ? ["buy", "sell", "short", "cover"] : ["buy", "sell"];
+}
+
 export function deterministicBearFilter(
   proposals: TradeProposal[],
   positions: EquityPosition[],
   topCandidates: MarketQuote[],
-  regime: string
+  regime: string,
+  vetoThresholds?: { fcfYieldFloorPct?: number; debtToEquityCeiling?: number }
 ): { kept: TradeProposal[]; vetoed: Array<{ symbol: string; side: string; reason: string }> } {
   // All EquityPosition entries are long positions (the app is equity-only; short positions
   // are not represented in the live book yet). Cover proposals would require short positions,
@@ -573,7 +1662,15 @@ export function deterministicBearFilter(
   const medianScore = sortedScores.length > 1
     ? sortedScores[Math.floor(sortedScores.length / 2)]
     : -Infinity;
-  const riskOffRegime = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
+  // Typed-enum adoption (risk lane): classify the persisted regime label via the shared
+  // ./market-regime source of truth instead of an ad-hoc startsWith, so a regime relabel can't
+  // silently desync this risk-off veto from the crisis cap / escalation gates. Canonical-label
+  // behavior is unchanged (pinned by test/market-regime.test.ts and test/deterministic-bear.test.ts)
+  // and the veto reason below still quotes the original `regime` label. "Cautious (Inverted Curve)"
+  // deliberately does NOT trip this risk-off veto (it trips only the crisis cap) — the exact
+  // asymmetry the typed matrix documents. Imported from ./market-regime (not ./macro) so a
+  // macro-module test mock can't intercept the classifier.
+  const riskOffRegime = isRiskOffFilterRegime(regimeFromLabel(regime));
 
   const kept: TradeProposal[] = [];
   const vetoed: Array<{ symbol: string; side: string; reason: string }> = [];
@@ -599,6 +1696,23 @@ export function deterministicBearFilter(
       }
     }
 
+    // Rule 4: model-free fundamentals hard-veto on buys (independent of the Bull/Bear LLMs, which
+    // share one model and can rationalize a weak long). Catches cash-burning / over-levered names
+    // regardless of what the LLMs agree on. Skipped when the threshold is unset OR the field is
+    // unavailable, so a missing fundamental never false-vetoes a legitimate name.
+    if (p.side === "buy" && quote) {
+      const fcfFloor = vetoThresholds?.fcfYieldFloorPct;
+      const deCeil = vetoThresholds?.debtToEquityCeiling;
+      if (fcfFloor != null && typeof quote.fcfYield === "number" && Number.isFinite(quote.fcfYield) && quote.fcfYield < fcfFloor) {
+        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)` });
+        continue;
+      }
+      if (deCeil != null && typeof quote.debtToEquity === "number" && Number.isFinite(quote.debtToEquity) && quote.debtToEquity > deCeil) {
+        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)` });
+        continue;
+      }
+    }
+
     // Rule 3: below-median buy in a risk-off/crisis regime → hard veto
     if (p.side === "buy" && riskOffRegime && quote && quote.score < medianScore) {
       vetoed.push({
@@ -615,7 +1729,100 @@ export function deterministicBearFilter(
   return { kept, vetoed };
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = []): TradeProposal {
+/**
+ * Pick the most-specific sufficiently-sampled realized scorecard bucket for a proposal's thesis:
+ * the thesis×regime bucket once it has ≥5 trades, else the thesis bucket. Pure. Shared by the
+ * deterministic sizer and the negative-expectancy gate so both always read the SAME realized edge.
+ */
+export function selectThesisStat(
+  regimeScorecard: ThesisRegimeStat[],
+  thesisScorecard: ThesisStat[],
+  proposal: TradeProposal
+): ThesisStat | ThesisRegimeStat | undefined {
+  // Exact-string join against `entryMarketRegime`, which is stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) at proposal-creation time. Both sides
+  // are typed as plain `string` (older rows may carry a retired label), but the values in
+  // practice are the persisted-contract labels — see that const's doc comment before
+  // touching either side of this comparison.
+  const comboStat = regimeScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
+  const thesisStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
+  return comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+}
+
+/**
+ * OPTIONAL negative-expectancy skip gate (policy.tuning.skipNegativeExpectancy, default OFF). Returns
+ * skip=true for an OPENING proposal whose thesis is PROVEN (≥ minClosedLotsForWeightShift closed
+ * lots) and whose shrunk realized avg edge — already net of the paper cost model — is ≤
+ * skipNegativeExpectancyEdgePct. Exits and unproven theses are never skipped (the sizer's
+ * exploratory floor on unproven theses is intentional). Pure aside from the realized-scorecard read.
+ */
+export function shouldSkipNegativeExpectancy(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  source: FillSource,
+  userId: string = "local"
+): { skip: boolean; reason?: string } {
+  if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
+  if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
+  const account = policy.accountNumber;
+  if (!account) return { skip: false };
+
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
+  const parentTrades = parentStat?.trades ?? 0;
+  const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
+  if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
+
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
+  const sampleTrades = stat?.trades ?? 0;
+  const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
+  const threshold = policy.tuning?.skipNegativeExpectancyEdgePct ?? 0;
+  if (avgReturn <= threshold) {
+    return {
+      skip: true,
+      reason: `Negative-expectancy skip: thesis "${proposal.tradeThesisTag ?? "—"}" has a proven negative post-cost edge (shrunk avg ${avgReturn}% over ${sampleTrades} closed lots ≤ ${threshold}%).`
+    };
+  }
+  return { skip: false };
+}
+
+/**
+ * OPTIONAL correlation cluster gate (policy.maxAvgCorrelation, default off). Returns the proposals to
+ * proceed with, DROPPING any OPENING buy/short whose average daily-return correlation to the current
+ * holdings exceeds the cap — the precise version of what maxPortfolioBeta approximates. Exits and
+ * reductions (sell/cover) always pass; a candidate with too little overlapping bar data is never
+ * rejected (avgReturnCorrelation returns undefined). Async because correlation needs historical bars,
+ * which the synchronous policy gate (evaluateTradeProposal) cannot fetch. Skips are logged + audited.
+ */
+export async function applyCorrelationClusterGate(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  positions: EquityPosition[],
+  userId: string = "local"
+): Promise<TradeProposal[]> {
+  const cap = policy.maxAvgCorrelation;
+  if (cap == null || !(cap > 0) || positions.length === 0) return proposals;
+  const holdings = positions.map((p) => p.symbol);
+  const kept: TradeProposal[] = [];
+  for (const p of proposals) {
+    const isOpening = p.side === "buy" || p.side === "short";
+    if (!isOpening) {
+      kept.push(p);
+      continue;
+    }
+    const corr = await avgReturnCorrelation(p.symbol, holdings, userId);
+    if (corr != null && corr > cap) {
+      console.log(`[Corr] Skipped ${p.symbol} ${p.side}: avg correlation ${corr.toFixed(2)} > cap ${cap}`);
+      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId);
+      continue;
+    }
+    kept.push(p);
+  }
+  return kept;
+}
+
+export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -641,15 +1848,25 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
   const thesisScorecard = getThesisScorecard(account, source, {}, userId);
   
-  const comboStat = regimeScorecard.find(s => s.thesisTag === proposal.tradeThesisTag && s.regime === proposal.entryMarketRegime);
-  const thesisStat = thesisScorecard.find(s => s.thesisTag === proposal.tradeThesisTag);
-
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
-  const stat = comboStat && comboStat.trades >= 5 ? comboStat : thesisStat;
+  const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
   const sampleTrades = stat?.trades ?? 0;
   const winRate = stat?.shrunkWinRate ?? 50;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0; // shrunk realized edge (%)
-  const rawConviction = (proposal.confidenceScore ?? 50) / 100;
+  // Item 6 (opt-in, panel-hardened): remap confidenceScore through the account's realized confidence-
+  // calibration curve BEFORE it becomes the conviction multiplier — a poorly-calibrated high-confidence
+  // band is sized DOWN toward its (isotonic, shrunk) realized win rate, never inflated. Composes as a
+  // reduction fed into the existing conviction-cap MIN below. Default OFF → raw confidenceScore/100 as
+  // today. Only applies to BUYS (getConfidenceCalibration is long-only; shorts fall back to raw). The
+  // per-band sample gate uses minClosedLotsForWeightShift. Calibration is computed once per run and passed
+  // in (precomputedCalibration); falls back to an internal read when a direct caller doesn't supply it.
+  const rawScore = proposal.confidenceScore ?? 50;
+  let rawConviction = rawScore / 100;
+  if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
+    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId);
+    const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
+    rawConviction = calibratedConviction(rawScore, calibration, minLots);
+  }
 
   // Conviction-cap on PROVEN theses (panel finding): the LLM's confidenceScore is a direct linear
   // multiplier on size, and a learned "fact" can inflate it — so AI confidence alone could size up
@@ -677,20 +1894,71 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
   const ceiling = (policy.tuning?.sizingCeilingPct ?? 100) / 100;
 
-  // Evidence floor: an UNPROVEN thesis (fewer than minLots closed lots) has no realized edge to
-  // justify a data-driven size — its shrunk win-rate/avgReturn are dominated by the neutral prior,
-  // so the raw multiplier would still allocate ~28% on AI conviction alone. Hold it at the floor
-  // (exploratory) until it accumulates a real sample, rather than sizing up on faith. Mirrors the
-  // auto-tuner's closed-lot gate so the fast (sizing) path is held to the same bar as weight shifts.
   const minLotsForSizing = policy.tuning?.minClosedLotsForWeightShift ?? 20;
   const unproven = sampleTrades < minLotsForSizing;
-  const boundedMultiplier = unproven ? floor : Math.max(floor, Math.min(ceiling, multiplier));
+  const boundedMultiplier = unproven
+    ? floor
+    : avgReturn < 0
+      ? 0
+      : Math.max(floor, Math.min(ceiling, multiplier));
   
-  const effectiveMaxOrderNotional = Math.min(
-    policy.maxOrderNotional ?? Infinity,
-    policy.maxOrderPctOfNav ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue : Infinity
-  );
-  const targetNotional = Math.floor(effectiveMaxOrderNotional * boundedMultiplier);
+  const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
+  const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
+  const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
+  // When marketable-limit entries are enabled, this deterministic dollar market order is later
+  // converted to a whole-share LIMIT priced through the quote (ask×(1+bufferBps)); that conversion can
+  // push the realized notional slightly above a dollar-routed size. Reserve that buffer in the cap now
+  // so deterministic sizing never produces an order the later policy review rejects for exceeding the
+  // per-order headroom. Only shrinks the cap when the flag is on, so dollar-routed sizing is
+  // unchanged otherwise. (Review: PR #278.)
+  const marketableLimitBufferFactor =
+    policy.marketableLimitEntries === true && (policy.permittedOrderTypes?.includes("limit") ?? true)
+      ? 1 + (policy.tuning?.marketableLimitBufferBps ?? 15) / 10_000
+      : 1;
+  const openingSizingCap = marketableLimitBufferFactor > 1 ? Math.floor(rawOpeningCap / marketableLimitBufferFactor) : rawOpeningCap;
+  const openingSizingReason = Number.isFinite(policyHeadroomCap) && policyHeadroomCap < openingCapacity.cap
+    ? `${proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0 ? "max short order limit" : "per-order cap"}, with 5% execution buffer`
+    : openingCapacity.reason;
+  // The bracket-minimum raise below must respect the SAME buffered/per-order cap, not the raw risk
+  // capacity — otherwise a one-share bracket raise can lift the order above the headroom cap and the
+  // later policy review rejects it instead of skipping the broker bracket. (Review: PR #278.)
+  let effectiveOpeningCap = openingSizingCap;
+  const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
+  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
+  const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
+  let targetNotional = advisedNotional && advisedNotional > 0
+    ? Math.min(Math.floor(advisedNotional), openingSizingCap)
+    : Math.min(fallbackNotional, openingSizingCap);
+
+  // Market-impact (ADV) cap: keep the order from sizing into a name far past what the tape can
+  // absorb. ADV is approximated by the latest scan daily $-volume (price × volume) since the app
+  // ingests no historical bars. Skipped when the gauge is unavailable so it never false-shrinks.
+  let advCapNote = "";
+  if (policy.maxOrderPctOfAdv != null && policy.maxOrderPctOfAdv > 0 && marketScan) {
+    const nSym = normalizeSymbol(proposal.symbol);
+    const full = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === nSym);
+    const dollarVol = full && full.price > 0 && full.volume > 0 ? full.price * full.volume : undefined;
+    if (dollarVol != null) {
+      const advCap = Math.floor((policy.maxOrderPctOfAdv / 100) * dollarVol);
+      if (advCap > 0 && advCap < targetNotional) {
+        advCapNote = `\n\n[Sizing] ADV cap: trimmed ${formatWholeDollars(targetNotional)} → ${formatWholeDollars(advCap)} (${policy.maxOrderPctOfAdv}% of ~$${Math.round(dollarVol).toLocaleString("en-US")} daily $-volume) to bound market impact.`;
+        targetNotional = advCap;
+      }
+      if (advCap > 0) effectiveOpeningCap = Math.min(effectiveOpeningCap, advCap);
+    }
+  }
+
+  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
+  let bracketMinNote = "";
+  if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
+    const minNotional = Math.ceil(bracketMinimum);
+    if (minNotional <= effectiveOpeningCap) {
+      bracketMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(minNotional)} so Alpaca can place a native whole-share bracket at the reference price.`;
+      targetNotional = minNotional;
+    } else {
+      bracketMinNote = `\n\n[Sizing] Native Alpaca bracket requires about ${formatWholeDollars(minNotional)} for one whole share at the reference price, but available opening capacity is ${formatWholeDollars(effectiveOpeningCap)}; broker bracket will be skipped for this sub-share order.`;
+    }
+  }
 
   // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
   // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
@@ -698,44 +1966,283 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const capNote = convictionCapBinds && !unproven
     ? `\n\n[Sizing] Conviction capped to ${convictionCap} — thesis not yet corroborated by realized edge (winRate ${winRate}%, avgReturn ${avgReturn}%); AI confidence alone cannot drive size up.`
     : "";
+  const advisedSizeNote = advisedNotional && advisedNotional > 0
+    ? targetNotional < Math.floor(advisedNotional)
+      ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; risk controls limited it to ${formatWholeDollars(targetNotional)}${openingSizingReason ? ` (${openingSizingReason})` : ""}.`
+      : targetNotional > Math.ceil(advisedNotional)
+        ? `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; raised to ${formatWholeDollars(targetNotional)} for broker/order constraints.`
+        : `\n\n[Sizing] LLM advised ${formatWholeDollars(advisedNotional)}; preserved within risk limits.`
+    : "";
+  const fallbackSizeNote = advisedNotional && advisedNotional > 0
+    ? ""
+    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(boundedMultiplier * 100)}% of max)`;
 
   return {
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + `\n\n[Sizing] Sized to $${targetNotional} (${Math.round(boundedMultiplier * 100)}% of max)` + (unproven
+    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote
   };
+}
+
+function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy, marketScan?: MarketScan): number | undefined {
+  if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
+  if (policy.brokerBracketsEnabled === false) return undefined;
+  if (policy.activeBroker !== "alpaca" && policy.activeBroker !== "alpaca-mcp") return undefined;
+  const stopPct = proposal.side === "short"
+    ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
+    : (policy.riskRules?.stopLossPct ?? 0);
+  const takePct = policy.riskRules?.takeProfitPct ?? 0;
+  if (stopPct <= 0 && takePct <= 0) return undefined;
+  const symbol = normalizeSymbol(proposal.symbol);
+  const referencePrice =
+    proposal.limitPrice ??
+    proposal.stopPrice ??
+    proposal.referencePrice ??
+    marketScan?.quotesBySymbol[symbol]?.price ??
+    marketScan?.topCandidates.find((quote) => normalizeSymbol(quote.symbol) === symbol)?.price;
+  return typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0
+    ? referencePrice
+    : undefined;
+}
+
+function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
+  if (typeof proposal.dollarAmount === "number" && Number.isFinite(proposal.dollarAmount) && proposal.dollarAmount > 0) {
+    return proposal.dollarAmount;
+  }
+  if (typeof proposal.quantity !== "number" || !Number.isFinite(proposal.quantity) || proposal.quantity <= 0) return undefined;
+  const symbol = normalizeSymbol(proposal.symbol);
+  const referencePrice =
+    proposal.limitPrice ??
+    proposal.stopPrice ??
+    marketScan?.quotesBySymbol[symbol]?.price ??
+    marketScan?.topCandidates.find((quote) => normalizeSymbol(quote.symbol) === symbol)?.price;
+  return typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0
+    ? proposal.quantity * referencePrice
+    : undefined;
+}
+
+function openingRiskCapacity(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  portfolio: Portfolio,
+  positions: EquityPosition[],
+  marketScan?: MarketScan
+): { cap: number; reason?: string } {
+  if (portfolio.totalMarketValue <= 0) {
+    return { cap: 0, reason: "Account NAV is zero or negative — entries blocked." };
+  }
+  const symbol = normalizeSymbol(proposal.symbol);
+  const totalValue = portfolio.totalMarketValue;
+  const caps: Array<{ value: number; reason: string }> = [];
+  if (policy.maxOrderNotional != null && policy.maxOrderNotional > 0) {
+    caps.push({ value: policy.maxOrderNotional, reason: "per-order cap" });
+  }
+  if (proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0) {
+    caps.push({ value: policy.maxShortOrderNotional, reason: "max short order limit" });
+  }
+  if (policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && totalValue > 0) {
+    caps.push({ value: (policy.maxOrderPctOfNav / 100) * totalValue, reason: `${policy.maxOrderPctOfNav}% NAV cap` });
+  }
+  if (proposal.side === "buy" && portfolio.buyingPower > 0) {
+    caps.push({ value: portfolio.buyingPower, reason: "buying power" });
+  }
+
+  const currentSymbolValue = Math.abs(positions.find((position) => normalizeSymbol(position.symbol) === symbol)?.marketValue ?? 0);
+  if (policy.maxSymbolExposurePct != null && policy.maxSymbolExposurePct > 0 && totalValue > 0) {
+    const symbolRoom = (policy.maxSymbolExposurePct / 100) * totalValue - currentSymbolValue;
+    caps.push({ value: Math.max(0, symbolRoom), reason: `${policy.maxSymbolExposurePct}% ${symbol} exposure cap` });
+  }
+  if (policy.maxSymbolExposureNotional != null && policy.maxSymbolExposureNotional > 0) {
+    caps.push({ value: Math.max(0, policy.maxSymbolExposureNotional - currentSymbolValue), reason: `${symbol} notional exposure cap` });
+  }
+
+  const sector = sectorForSizing(symbol, positions, marketScan);
+  const sectorCapPct = sector ? sectorCapPctForSizing(policy, sector) : undefined;
+  if (sector && sectorCapPct != null && sectorCapPct > 0 && totalValue > 0) {
+    const currentSectorValue = positions
+      .filter((position) => sectorForSizing(normalizeSymbol(position.symbol), positions, marketScan) === sector)
+      .reduce((sum, position) => sum + Math.abs(position.marketValue), 0);
+    const sectorRoom = (sectorCapPct / 100) * totalValue - currentSectorValue;
+    caps.push({ value: Math.max(0, sectorRoom), reason: `${sector} sector cap` });
+  }
+
+  if (caps.length === 0) return { cap: Infinity };
+  const limitingCap = caps.reduce((min, cap) => cap.value < min.value ? cap : min);
+  return { cap: limitingCap.value, reason: limitingCap.reason };
+}
+
+function openingPolicyNotionalCap(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio): number {
+  return Math.min(
+    policy.maxOrderNotional ?? Infinity,
+    proposal.side === "short" && policy.maxShortOrderNotional != null && policy.maxShortOrderNotional > 0
+      ? policy.maxShortOrderNotional
+      : Infinity,
+    policy.maxOrderPctOfNav != null && policy.maxOrderPctOfNav > 0 && portfolio.totalMarketValue > 0
+      ? (policy.maxOrderPctOfNav / 100) * portfolio.totalMarketValue
+      : Infinity
+  );
+}
+
+function sectorForSizing(symbol: string, positions: EquityPosition[], marketScan?: MarketScan): string | undefined {
+  return (
+    positions.find((position) => normalizeSymbol(position.symbol) === symbol)?.sector ??
+    marketScan?.sectorBySymbol[symbol] ??
+    marketScan?.quotesBySymbol[symbol]?.sector
+  );
+}
+
+function sectorCapPctForSizing(policy: TradingPolicy, sector: string): number | undefined {
+  const exact = policy.sectorCaps[sector];
+  if (exact !== undefined) return exact;
+  const match = Object.entries(policy.sectorCaps).find(([key]) => key.toLowerCase() === sector.toLowerCase());
+  return match?.[1];
+}
+
+function formatWholeDollars(value: number): string {
+  if (Math.abs(value) < 100 && !Number.isInteger(value)) return `$${value.toFixed(2)}`;
+  return `$${Math.round(value).toLocaleString("en-US")}`;
 }
 
 // R1 §1.4.3 — if an autonomous ("decide") run trips a notional/order cap, drop the account back to
 // "propose" so a human is back in the loop before any further orders. Returns true if it reverted.
-const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit"];
-function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string): boolean {
+const CAP_BREACH_REASONS = ["Daily notional limit", "Hourly notional limit", "Daily order count limit", "Daily opening-order count limit"];
+/**
+ * Emit the wash-sale "proceed" trail at the point an order ACTUALLY executes (paper fill or live
+ * placement) — never at gate-eval time, where an approved result may still only become a pending
+ * card. No-op unless the decision carries an auto_proceeded / ira_disregarded outcome, so it is safe
+ * to call on every executed proposal. Keeps the run loop's two execution paths from drifting.
+ */
+function auditWashSaleProceed(
+  decision: PolicyDecision,
+  meta: { runId?: string; proposalId?: string; symbol: string; side: OrderSide; estimatedNotional?: number; userId?: string; connectedAccountId?: string }
+): void {
+  const outcome = decision.washSale?.outcome;
+  if (outcome !== "auto_proceeded" && outcome !== "ira_disregarded") return;
+  audit(
+    outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_auto_proceed",
+    {
+      ...(meta.runId ? { runId: meta.runId } : {}),
+      ...(meta.proposalId ? { proposalId: meta.proposalId } : {}),
+      symbol: meta.symbol,
+      side: meta.side,
+      estimatedNotional: meta.estimatedNotional,
+      washSale: decision.washSale
+    },
+    meta.userId,
+    meta.connectedAccountId
+  );
+}
+
+function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPolicy, userId: string, connectedAccountId?: string): boolean {
   if (policy.strategyAuthority !== "decide" || !reasons) return false;
   if (!reasons.some((r) => CAP_BREACH_REASONS.some((c) => r.includes(c)))) return false;
-  setPolicy({ ...policy, strategyAuthority: "propose" }, userId);
+  // Scope the demotion save to the run's target account. Omitting it resolves the ACTIVE account, so a
+  // scheduler run of a non-active account could demote — and, because the drawdown breaker may have
+  // already mutated this same policy object's systemState to "halted", HALT — the wrong account. The
+  // manual executeProposal path passes no id because it already operates on the active account.
+  setPolicy({ ...policy, strategyAuthority: "propose" }, userId, connectedAccountId);
+  // The demotion must bind the REST of this run, not just the next one: callers keep using this
+  // same policy object for subsequent proposals in the loop, and shouldEscalateDecision treats
+  // decide-mode cap breaches as escalatable — without this in-place update a run that tripped a
+  // cap on proposal N would keep queueing decide-style soft-blocked cards for N+1... even though
+  // the account was just demoted to Ask-first.
+  policy.strategyAuthority = "propose";
   audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
   return true;
 }
 
-export async function executeProposal(proposalId: string, userId: string = "local"): Promise<{
+function assertLiveApprovalConfirmation(input: {
+  executionMode: ExecutionMode;
+  confirmation?: LiveApprovalConfirmation;
+  proposalId: string;
+  accountNumber: string;
+  proposal: TradeProposal;
+  estimatedNotional?: number;
+}): void {
+  if (input.executionMode !== "broker/live") return;
+  const expectedText = liveApprovalText(input.proposal.symbol);
+  const confirmation = input.confirmation;
+  const reasons: string[] = [];
+  const typedText = String(confirmation?.typedText ?? "").trim().toUpperCase();
+  const expectedNotional = input.estimatedNotional;
+
+  if (!confirmation) reasons.push("Live Brokerage approvals require a typed confirmation payload.");
+  if (confirmation?.proposalId !== input.proposalId) reasons.push("Confirmation proposal id did not match.");
+  if (confirmation?.accountNumber !== input.accountNumber) reasons.push("Confirmation account did not match.");
+  if (confirmation?.executionMode !== "broker/live") reasons.push("Confirmation execution mode did not match Brokerage live.");
+  if (typedText !== expectedText) reasons.push(`Type ${expectedText} to approve this live order.`);
+  if (typeof expectedNotional === "number" && Number.isFinite(expectedNotional)) {
+    const confirmedNotional = Number(confirmation?.estimatedNotional);
+    if (!Number.isFinite(confirmedNotional) || Math.abs(confirmedNotional - expectedNotional) > 0.01) {
+      reasons.push("Confirmation estimated notional did not match the reviewed proposal.");
+    }
+  }
+
+  if (reasons.length > 0) throw new LiveApprovalConfirmationError(reasons, expectedText);
+}
+
+export async function executeProposal(proposalId: string, userId?: string): Promise<{
   status: string;
   orderId?: string;
+  brokerState?: string;
+  fillStatus?: string;
+  reasons?: string[];
+}>;
+export async function executeProposal(
+  proposalId: string,
+  userId: string,
+  options: { liveConfirmation?: LiveApprovalConfirmation }
+): Promise<{
+  status: string;
+  orderId?: string;
+  brokerState?: string;
+  fillStatus?: string;
+  reasons?: string[];
+}>;
+export async function executeProposal(
+  proposalId: string,
+  userId: string = "local",
+  options: { liveConfirmation?: LiveApprovalConfirmation } = {}
+): Promise<{
+  status: string;
+  orderId?: string;
+  brokerState?: string;
+  fillStatus?: string;
   reasons?: string[];
 }> {
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const executionState = deriveExecutionState(policy, activeAccount);
   if (!policy.accountNumber) throw new Error("No account selected.");
+  // An account is an account: with none connected there is no broker to trade through, and there is
+  // no local-simulation fallback. Refuse to run rather than synthesize a fake fill.
+  if (!executionState.mode) throw new Error("No connected account. Connect a broker account before approving trades.");
+  const executionMode: ExecutionMode = executionState.mode;
+  const executionSource = fillSourceForExecutionMode(executionMode);
   if (policy.systemState === "halted") throw new Error("System is halted.");
 
   const row = getProposal(proposalId, userId);
   if (!row) throw new Error("Proposal not found.");
   if (row.status !== "proposed") throw new Error(`Proposal is already ${row.status}.`);
+  if (row.accountNumber !== policy.accountNumber) {
+    throw new Error("Proposal account no longer matches the selected account. Re-run the strategy before approving.");
+  }
+  if (row.executionMode && row.executionMode !== executionMode) {
+    throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
+  }
 
   const proposal = row.proposal;
+  assertLiveApprovalConfirmation({
+    executionMode,
+    confirmation: options.liveConfirmation,
+    proposalId,
+    accountNumber: row.accountNumber,
+    proposal,
+    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional
+  });
 
   // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
   // trade_proposals table BEFORE inserting the new row. Without this lock, a
@@ -743,35 +2250,41 @@ export async function executeProposal(proposalId: string, userId: string = "loca
   // Approve can each read the same pre-cap totals and both place — jointly
   // exceeding maxDailyNotional / maxHourlyNotional / maxDailyOrders. Acquiring
   // the same lock here serialises approval execution against the strategy loop.
-  if (!acquireStrategyLock(userId)) {
+  if (!acquireStrategyLock(userId, policy.connectedAccountId)) {
     return { status: "busy", reasons: ["A strategy run is in progress; try again in a moment."] };
   }
 
   try {
     const gateway = getBrokerGateway(policy, userId);
 
-    const [portfolio, positions] = await Promise.all([
+    const [portfolio, positions, orders] = await Promise.all([
       gateway.getPortfolio(policy.accountNumber),
-      gateway.getEquityPositions(policy.accountNumber)
+      gateway.getEquityPositions(policy.accountNumber),
+      gateway.getEquityOrders(policy.accountNumber)
     ]);
     const allowedSymbols = allowedSymbolsForPolicy(policy);
-    const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId);
+    const approvalScanBase = await scanMarket(allowedSymbols, positions, policy.scoringWeights, userId, dynamicIndexUniversesForPolicy(policy), {
+      candidateLimit: policy.marketScanCandidateLimit,
+      outlierReserve: policy.marketScanOutlierReserve,
+      universeFloor: policy.universeFloor
+    });
     const approvalQuoteSymbols = uniqueSymbols([...approvalScanBase.topCandidates.map((quote) => quote.symbol), proposal.symbol]);
     const approvalScan = mergeQuoteData(
       approvalScanBase,
       await gateway.getEquityQuotes(policy.accountNumber, approvalQuoteSymbols)
     );
 
-    // In Test mode, evaluate the approval against the standalone local account.
+    // An account is an account: the approval is always evaluated against the real broker-reported
+    // portfolio and positions for the active account — there is no local-simulation alternative.
     const currentPrices = currentPricesFromScan(approvalScan);
-    const account = executionState.usesLocalSimulation
-      ? getPaperPortfolioProjection({ accountNumber: policy.accountNumber, startingCash: policy.paperStartingCash, currentPrices, userId })
-      : { portfolio, positions };
+    const account = { portfolio, positions };
+    await notifyStaleLimitOrders({ userId, policy, orders });
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
-      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId);
+      const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
+      updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId, undefined, undefined, tradabilityDecision);
       audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
       await sendNotification(
         {
@@ -787,17 +2300,25 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
-    const isLiveExecution = !executionState.usesLocalSimulation && executionState.environment === "live";
+    const isLiveExecution = executionState.environment === "live";
     const decision = evaluateTradeProposal(proposal, {
       policy,
       portfolio: account.portfolio,
       positions: account.positions,
       dailyNotionalUsed: daily.notional,
       hourlyNotionalUsed: hourly.notional,
-      dailyOrderCount: daily.orderCount,
+      dailyOrderCount: daily.openingOrderCount,
       estimatedNotional: review.estimatedNotional,
       marketScan: approvalScan,
-      washSaleLockedSymbols: getUserWashSaleLockedSymbols(userId, new Date()),
+      washSaleLocks: getUserWashSaleLockProvenance(userId, new Date()),
+      // Escalated-card override handles from the STORED row (server-minted at escalation time).
+      // Empty for ordinary proposals. Only the wash-sale gate consults these, and only while
+      // taxSettings.washSaleHandling is ask/auto; every other gate re-runs at full strength.
+      approvedEscalations: approvedEscalationsFromDecision(row.decision),
+      // ConnectedAccount taxationType is the SOURCE OF TRUTH for the buyer's tax regime (wins
+      // over policy taxSettings; capabilities can be absent/"brokerage" on legacy IRA rows) —
+      // required so the IRA-replacement hard block (Rev. Rul. 2008-5) can never miss an IRA.
+      accountTaxationType: activeAccount?.taxationType,
       accountCapabilities: activeAccount?.capabilities,
       isLiveExecution,
       // PDT gate (FINRA Rule 4210): only meaningful for LIVE execution — skip the count entirely otherwise.
@@ -806,8 +2327,112 @@ export async function executeProposal(proposalId: string, userId: string = "loca
         : 0
     });
 
+    // Auditable wash-sale trail on the approval path — never silent. For honored overrides the
+    // token ties this execution back to the exact escalated card the owner approved; for IRA
+    // disregards the record carries the verbatim note + priced provenance.
+    //
+    // Gated on decision.approved: a re-evaluation at approval time can return approved:false while
+    // still carrying an ira_disregarded / auto_proceeded / approved_via_override outcome (the
+    // wash-sale gate itself didn't block, but a later gate — daily cap, buying power, staleness —
+    // did). Logging the proceed-trail then would tell Activity the wash sale was disregarded and the
+    // deduction forfeited even though the order is blocked below and no purchase happens. When
+    // approved, this function proceeds to place/fill the order, so the trail is accurate.
+    if (
+      decision.approved &&
+      decision.washSale &&
+      (decision.washSale.outcome === "approved_via_override" ||
+        decision.washSale.outcome === "auto_proceeded" ||
+        decision.washSale.outcome === "ira_disregarded")
+    ) {
+      audit(
+        decision.washSale.outcome === "ira_disregarded" ? "wash_sale_ira_disregarded" : "wash_sale_override_applied",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          estimatedNotional: review.estimatedNotional,
+          washSale: decision.washSale
+        },
+        userId,
+        policy.connectedAccountId
+      );
+    }
+
     if (!decision.approved) {
-      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId);
+      // Wash-sale re-escalation instead of death: when the ONLY thing standing between this
+      // approval and execution is an ask-mode wash-sale failure (fresh lock discovered at
+      // approval time, or a stale override refused because the priced cost moved past
+      // washSaleOverrideCostTolerance — outcome "reescalated_cost_changed"), keep the card
+      // PENDING with the freshly priced reason and newly minted server-side tokens so the owner
+      // can approve again at the current cost. Every other refusal (still-binding caps, IRA
+      // hard block, universe, ...) retires the card as blocked exactly as before.
+      const washReescalation =
+        (decision.escalations ?? []).some((entry) => entry.kind === "wash_sale_ask") &&
+        shouldEscalateDecision(decision, policy);
+      if (washReescalation) {
+        const reescalated: PolicyDecision = {
+          ...decision,
+          escalations: (decision.escalations ?? []).map((entry) => ({ ...entry, token: crypto.randomUUID() }))
+        };
+        // Guarded re-queue: only while the row is STILL pending. The scan/review above is async,
+        // so the scheduler can expire this proposal — or another tab can reject it — while this
+        // approval was in flight; an unconditional 'proposed' write here would resurrect that
+        // withdrawn card with fresh override tokens. If the row left the pending state, honor
+        // that outcome instead of re-queuing.
+        if (!transitionProposalIfPending(proposalId, "proposed", userId, { review, estimatedNotional: review.estimatedNotional, decision: reescalated })) {
+          const current = getProposal(proposalId, userId);
+          audit(
+            "proposal_reescalation_skipped",
+            {
+              proposalId,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              reasons: decision.reasons,
+              currentStatus: current?.status ?? "missing"
+            },
+            userId,
+            policy.connectedAccountId
+          );
+          return {
+            status: current?.status ?? "unknown",
+            reasons: [
+              `Proposal is no longer pending (now ${current?.status ?? "missing"}); the wash-sale re-escalation was not re-queued.`,
+              ...decision.reasons
+            ]
+          };
+        }
+        audit(
+          "proposal_reescalated",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            action: "approval",
+            result: "reescalated",
+            reasons: decision.reasons,
+            escalations: reescalated.escalations,
+            ...(decision.washSale ? { washSale: decision.washSale } : {})
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title:
+              decision.washSale?.outcome === "reescalated_cost_changed"
+                ? `${proposal.symbol} rebuy needs a fresh call (wash-sale cost changed)`
+                : `${proposal.symbol} rebuy needs your call (wash sale)`,
+            payload: { proposalId, proposal, review, decision: reescalated, escalated: true }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: decision.reasons };
+      }
+
+      // Same in-flight window as the re-escalation above: retire the card as blocked only if it
+      // is still pending — never overwrite a rejection/expiry that landed during the async review.
+      transitionProposalIfPending(proposalId, "blocked", userId, { review, estimatedNotional: review.estimatedNotional, decision });
       audit("proposal_approved", {
         proposalId,
         symbol: proposal.symbol,
@@ -838,49 +2463,48 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
 
-    if (executionState.usesLocalSimulation) {
-      // Atomic claim: only the caller that flips this proposal proposed -> paper records the
-      // fill, so two concurrent approvals can't double-book the same Test trade (defense in depth
-      // alongside the per-user run-lock held for this critical section).
-      if (!claimProposalForExecution(proposalId, "paper", userId, { review, estimatedNotional: review.estimatedNotional })) {
-        const current = getProposal(proposalId, userId)?.status ?? "removed";
-        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
-      }
-      const fill = recordFillFromProposal({
-        userId,
-        accountNumber: row.accountNumber,
-        proposalId,
-        runId: row.runId,
-        source: "paper",
-        proposal,
-        review,
-        marketScan: approvalScan,
-        status: "filled"
-      });
-      const paperProjection = getPaperPortfolioProjection({
-        accountNumber: row.accountNumber,
-        startingCash: policy.paperStartingCash,
-        currentPrices: { ...currentPrices, ...(fill.price > 0 ? { [fill.symbol]: fill.price } : {}) },
+    const heldExit = evaluateBrokerHeldExitAvailability(proposal, account.positions, orders);
+    if (heldExit) {
+      const heldReason = brokerHeldExitBlockReason(heldExit);
+      const heldDecision: PolicyDecision = { approved: false, reasons: [heldReason] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, heldDecision);
+      audit(
+        "proposal_approved",
+        { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
         userId
-      });
-      recordPortfolioSnapshot({
-        userId,
-        runId: row.runId,
-        accountNumber: row.accountNumber,
-        source: "paper",
-        portfolio: paperProjection.portfolio,
-        positions: paperProjection.positions
-      });
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "paper" }, userId);
+      );
       await sendNotification(
         {
-          type: "fill",
-          title: `${proposal.symbol} Test ${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)}`,
-          payload: { proposalId, fill }
+          type: "block",
+          title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} blocked`,
+          payload: { proposalId, decision: heldDecision, review, proposal }
         },
         { policy, userId }
       );
-      return { status: "paper" };
+      return { status: "blocked", reasons: heldDecision.reasons };
+    }
+
+    // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
+    // loop). No-op on broker/paper; on broker/live it refuses unless live trading is explicitly
+    // enabled (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending
+    // proposal must clear the same live invariant as an autonomous one before reaching the broker.
+    try {
+      assertLivePreflight({
+        mode: executionMode,
+        symbol: proposal.symbol,
+        side: proposal.side
+      });
+    } catch (guardError) {
+      const message = guardError instanceof Error ? guardError.message : String(guardError);
+      // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
+      const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
+      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
+      await sendNotification(
+        { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
+        { policy, userId }
+      );
+      return { status: "blocked", reasons: [message] };
     }
 
     // Atomic, crash-recoverable placement (mirrors the autonomous path): persist the
@@ -890,7 +2514,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId })) {
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -899,7 +2523,7 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       execution = await gateway.placeEquityOrder({ accountNumber: policy.accountNumber, ...proposal, refId });
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
-      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId);
+      updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
       audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
@@ -907,18 +2531,35 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       );
       return { status: "error", reasons: [`Order placement failed/uncertain: ${message}`] };
     }
+
+    // See the matching comment in the autonomous run-loop placement path above: a non-throwing
+    // broker response can still be a synchronous rejection/cancellation, and that must not be
+    // recorded as "placed".
+    if (isRejectedOrCanceledState(execution.state)) {
+      const message = `Broker declined the order (state: ${execution.state}).`;
+      updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
+      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+      await sendNotification(
+        { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
+        { policy, userId }
+      );
+      return { status: "error", reasons: [message], orderId: execution.orderId, brokerState: execution.state };
+    }
+
     updateProposalStatus(proposalId, "placed", execution.orderId, review, review.estimatedNotional, userId);
+    const fillStatus = execution.state === "filled" ? "filled" : "pending_reconciliation";
     const fill = recordFillFromProposal({
       userId,
       accountNumber: row.accountNumber,
       proposalId,
       runId: row.runId,
-      source: "live",
+      source: executionSource,
+      executionMode,
       proposal,
       review,
       execution,
       marketScan: approvalScan,
-      status: execution.state === "filled" ? "filled" : "pending_reconciliation"
+      status: fillStatus
     });
     audit("proposal_approved", {
       proposalId,
@@ -926,7 +2567,9 @@ export async function executeProposal(proposalId: string, userId: string = "loca
       side: proposal.side,
       action: "approval",
       result: "placed",
-      orderId: execution.orderId
+      orderId: execution.orderId,
+      brokerState: execution.state,
+      fillStatus
     }, userId);
     await sendNotification(
       {
@@ -939,59 +2582,62 @@ export async function executeProposal(proposalId: string, userId: string = "loca
     // Push so other open dashboards refresh immediately (the approving client refreshes via its
     // own response).
     emitDashboardEvent({ type: "order", userId, at: new Date().toISOString(), detail: { proposalId, orderId: execution.orderId, symbol: proposal.symbol } });
-    return { status: "placed", orderId: execution.orderId };
+    return { status: "placed", orderId: execution.orderId, brokerState: execution.state, fillStatus };
   } finally {
-    releaseStrategyLock(userId);
+    releaseStrategyLock(userId, policy.connectedAccountId);
   }
 }
 
 export function rejectProposal(proposalId: string, userId: string = "local"): void {
   const proposal = getProposal(proposalId, userId);
+  const connectedAccountId = getPolicy(userId).connectedAccountId;
   updateProposalStatus(proposalId, "rejected", undefined, undefined, undefined, userId);
   audit("proposal_rejected", {
     proposalId,
     symbol: proposal?.proposal.symbol,
     side: proposal?.proposal.side,
     action: "rejection"
-  }, userId);
+  }, userId, connectedAccountId);
+  // Feed the rejection into the counterfactual pipeline so its post-rejection return matures and
+  // shows up in missed-opportunity analytics — "the app analyzes it anyway". Best-effort, non-fatal.
+  if (proposal) {
+    try {
+      recordRejectedProposalCounterfactual({
+        userId,
+        connectedAccountId,
+        runId: proposal.runId,
+        symbol: proposal.proposal.symbol,
+        refPrice: proposal.proposal.referencePrice,
+        createdAt: proposal.createdAt,
+        regime: proposal.entryMarketRegime ?? proposal.proposal.entryMarketRegime
+      });
+    } catch (err) {
+      console.warn("[strategy] recordRejectedProposalCounterfactual failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
   emitDashboardEvent({ type: "proposal", userId, at: new Date().toISOString(), detail: { proposalId, status: "rejected" } });
 }
 
-/**
- * Fixed thesis "playbook" the agent must choose from. A bounded vocabulary keeps
- * the thesis × outcome learning loop consistent (free-form tags fragment the
- * scorecards and never accumulate enough samples to learn from).
- */
-export const THESIS_PLAYBOOK = [
-  "Momentum-Breakout",
-  "Mean-Reversion",
-  "Value-Quality",
-  "Earnings-Catalyst",
-  "Analyst-Revision",
-  "Insider-Accumulation",
-  "Short-Squeeze-Risk",
-  "Defensive-Rotation",
-  "Sector-Relative-Strength",
-  "Risk-Exit"
-] as const;
+// THESIS_PLAYBOOK, the prompt guides, and the versioned Bull/Bear system prompts live in the
+// leaf module ./strategy-prompts (Chat A item 2). Re-exported (imported at top) so existing
+// consumers of `import { THESIS_PLAYBOOK } from "./strategy"` keep working.
+export { THESIS_PLAYBOOK };
 
-const THESIS_PLAYBOOK_GUIDE =
-  "You MUST set `tradeThesisTag` to exactly one of the playbook tags: " +
-  THESIS_PLAYBOOK.join(", ") +
-  ". Pick the one that best fits the dominant evidence (e.g. Value-Quality for cheap, low-leverage, FCF-positive names; Momentum-Breakout for strong intraday/volume; Insider-Accumulation when insider/senate signals lead; Risk-Exit for stop-loss/take-profit/de-risking sells).";
-
-const HOLDING_HORIZON_GUIDE: Record<string, string> = {
-  intraday:
-    "Holding horizon = INTRADAY/day-trade. Favor liquid, high-momentum, catalyst-driven setups; use tight stops; avoid illiquid names and multi-day fundamental theses; assume positions are flat or trimmed quickly.",
-  swing:
-    "Holding horizon = SWING (days to a few weeks). Balance momentum/technicals with a near-term catalyst or mean-reversion edge; don't require a multi-quarter fundamental story; size for a days-to-weeks hold.",
-  position:
-    "Holding horizon = POSITION (weeks to months). Lean on fundamentals (FCF, leverage, EPS growth) and sector/regime fit over intraday noise; tolerate normal volatility; let winners run toward the thesis target.",
-  longterm:
-    "Holding horizon = LONG-TERM (months to years). Prioritize durable quality/value and secular trends; ignore short-term noise; strongly prefer holding winners past the 1-year mark for long-term tax treatment; trade infrequently."
-};
+interface ProposeTradesResult {
+  proposals: TradeProposal[];
+  llmSteps: StrategyLlmStep[];
+  /**
+   * Set when the inline Bear (Red Team) review could NOT run — missing key, transport
+   * error/timeout, or an unparseable response. The caller FAILS CLOSED: in autonomous
+   * ("decide") mode these un-critiqued Bull proposals are routed to human review instead of
+   * auto-executed. Absent/false means the Bear review actually ran (approved-or-modified).
+   */
+  bearReviewUnavailable?: boolean;
+  bearReviewReason?: string;
+}
 
 async function proposeTrades(input: {
+  runId: string;
   userId: string;
   policyAllowlist: string[];
   prompt: string;
@@ -1005,11 +2651,23 @@ async function proposeTrades(input: {
   dailyOrderCount: number;
   ragContext?: string;
   learnedContext?: string;
-}): Promise<TradeProposal[]> {
-  const cred = resolveLlmCredential("openai", input.userId);
-  const openaiKey = cred.key;
-  if (!openaiKey) return fallbackProposal(input);
-  const llmKeySource = cred.source === "operator" ? "operator" : "user";
+  /**
+   * Episodic decision memory blocks (2026-07-04 composite review A1). Pre-formatted, labeled,
+   * ADVISORY-ONLY strings injected into BOTH the Bull and Bear userContent (evidence parity):
+   * `experienceAnalogs` = "Closest historical analogs" (k-NN priors incl. labeled
+   * counterexamples with opposite realized sign); `ownerCoaching` = "Owner coaching"
+   * (doc_type coach-note). Never threaded into deterministic sizing or policy.
+   */
+  experienceAnalogs?: string;
+  ownerCoaching?: string;
+  drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
+}): Promise<ProposeTradesResult> {
+  const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
+  // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
+  // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
+  // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
+  // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
+  if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -1045,7 +2703,7 @@ async function proposeTrades(input: {
   const currentPrices = currentPricesFromScan(input.marketScan);
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
-  const source: FillSource = executionState.usesLocalSimulation ? "paper" : "live";
+  const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
@@ -1070,12 +2728,43 @@ async function proposeTrades(input: {
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14 })
+  const skippedCounterfactuals = getSkippedCandidateReturns(currentPrices, input.userId, { limit: 8, maxAgeDays: 14, connectedAccountId: input.policy.connectedAccountId })
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
     ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
     : null;
+  // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
+  // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
+  // locked rebuy honestly instead of just seeing a forbidden list. Only in "block" mode (a
+  // stricter opt-in, no longer the default) does the context stay byte-identical (locked names
+  // remain a hard no).
+  const washSaleHandling = input.policy.taxSettings?.washSaleHandling ?? DEFAULT_TAX_SETTINGS.washSaleHandling ?? "auto";
+  // IRA-disregard: when the buyer is an IRA whose owner is on iraWashSaleHandling "disregard"
+  // (the default), the gate PERMITS locked rebuys (annotated + audited). The prompt must know this
+  // or the model, still told "NEVER propose a locked buy", would never surface the very rebuys the
+  // setting exists to allow. IRA detection uses the SAME source-of-truth precedence as the gate
+  // (isIraTaxRegime).
+  const iraWashSaleDisregard =
+    (input.policy.taxSettings?.iraWashSaleHandling ?? DEFAULT_TAX_SETTINGS.iraWashSaleHandling ?? "disregard") === "disregard" &&
+    isIraTaxRegime(
+      input.activeAccount?.taxationType,
+      input.policy.taxSettings?.taxationType,
+      input.activeAccount?.capabilities?.accountType
+    );
+  const washSaleRebuyCosts = (() => {
+    if (washSaleHandling === "block" || !taxSummary) return undefined;
+    const stRate = input.policy.taxSettings?.shortTermRatePct ?? DEFAULT_TAX_SETTINGS.shortTermRatePct;
+    const locks = getUserWashSaleLockProvenance(input.userId, new Date());
+    if (locks.size === 0) return undefined;
+    return Array.from(locks.entries()).map(([sym, lock]) => ({
+      symbol: sym,
+      lossAccount: lock.account,
+      clearsOn: lock.clearDate.toISOString().slice(0, 10),
+      disallowedLossUsd: Number(lock.lossUsd.toFixed(2)),
+      estimatedTaxCostUsd: Number(((lock.lossUsd * stRate) / 100).toFixed(2))
+    }));
+  })();
   const taxContext = taxSummary
     ? {
         taxYear: taxSummary.taxYear,
@@ -1083,6 +2772,9 @@ async function proposeTrades(input: {
         longTermRealizedYTD: taxSummary.longTermRealized,
         estimatedTaxLiability: taxSummary.estimatedTaxLiability,
         washSaleLockedSymbols: taxSummary.lockedSymbols,
+        ...(washSaleHandling !== "block" ? { washSaleHandling } : {}),
+        ...(iraWashSaleDisregard ? { iraWashSaleDisregard: true } : {}),
+        ...(washSaleRebuyCosts ? { washSaleRebuyCosts } : {}),
         positionsNearLongTerm: taxSummary.openLots
           .filter((lot) => !lot.isLongTerm && lot.daysToLongTerm <= 45)
           .map((lot) => ({
@@ -1095,63 +2787,28 @@ async function proposeTrades(input: {
         harvestableLosses: taxSummary.harvestCandidates.slice(0, 6)
       }
     : null;
-  const executionMode = llmExecutionMode(executionState);
+  const executionMode = llmExecutionMode(executionState) ?? "no-account";
   const executionModeClarification = llmModeClarification(executionState);
-  const systemPrompt = [
-    "You are an autonomous equity trading agent for a Robinhood brokerage account.",
-    "",
-    "Execution Mode:",
-    `Current executionMode is "${executionMode}".`,
+  // SHORT_SELLING: expose short/cover sides to the model ONLY when shorting is enabled in policy AND
+  // the connected account actually supports it (capability-gated). Otherwise the schema is long-only
+  // and the model cannot emit a short/cover. The policy.ts gate enforces the same two-layer check at
+  // execution time as a backstop. Declared here (before the prompt) so both the prompt and schema use it.
+  const allowedSides = allowedProposalSides(input.policy, input.activeAccount);
+  const shortAllowed = allowedSides.includes("short");
+  const systemPrompt = buildBullSystem({
+    shortAllowed,
+    executionMode,
     executionModeClarification,
-    "Do not call test/local mode Paper mode. Paper, including Alpaca Paper, is a separate broker-hosted sandbox account concept.",
-    "",
-    "Investment Strategy:",
-    input.prompt,
-    "",
-    "Historical Reflection & Lessons Learned:",
-    reflection || "No historical reflection available yet.",
-    "",
-    "Your realized track record (in the user message):",
-    "- `thesisOutcomes`: win rate, average return, and total P&L grouped by `tradeThesisTag`. Use `shrunkWinRate`/`shrunkAvgReturnPct` (Bayesian-shrunk toward neutral) over the raw rates when `trades` is small — a thesis with 2 trades is weak evidence. Lean into thesis types with a positive shrunk track record; be skeptical of or downsize ones that have repeatedly lost. Reuse a proven `tradeThesisTag` when the setup matches.",
-    "- `regimeOutcomes`: the same outcomes grouped by `entryMarketRegime`. Compare today's regime (infer it from macroeconomicData, especially VIX and rates) to your history: demand more conviction for thesis/regime combinations that have lost, and size up where this regime has rewarded you.",
-    "- `marketBreadth.advancingPct`: share of the broad market advancing today. >60 = broad risk-on (favor adding exposure/momentum); <40 = broad risk-off (tighten, prefer defensive/quality, wary of longs); ~50 = mixed.",
-    "- `comboOutcomes`: realized outcomes for specific thesis×regime COMBINATIONS (e.g. a thesis that wins in Tech-Bull but loses in High-Vol). When today's inferred regime matches a combination here, weight that conditional record heavily; prefer shrunk rates for thin buckets.",
-    "- `sectorOutcomes`: realized win/return grouped by the SECTOR each position was opened in. Lean toward sectors where your shrunk record is positive; demand more conviction in sectors that have repeatedly lost for you.",
-    "- `factorOutcomes`: realized outcomes grouped by the dominant deterministic factor at entry. Use this to calibrate which scoring dimensions have actually paid off for this account.",
-    "- `skippedCounterfactuals`: high-scoring skipped candidates that subsequently rose from their decision-time `refPrice` to the current scan price. Use these as missed-opportunity evidence, not as automatic buys.",
-    ...(taxContext
-      ? [
-          "",
-          "Tax efficiency (US, in the user message as `taxContext`): you trade in a taxable account, so factor the after-tax cost of churn.",
-          "- NEVER propose a BUY of any symbol in `washSaleLockedSymbols` — it was sold at a loss within 30 days and the policy will block it (wash sale).",
-          "- For winners in `positionsNearLongTerm`, prefer holding past the 1-year mark (long-term rate is much lower than the short-term ordinary rate) unless the thesis has clearly broken.",
-          "- When realized short-term gains are large, you may harvest names in `harvestableLosses` (sell to realize the loss, offsetting gains) — but do not rebuy them within 30 days."
-        ]
-      : []),
-    "",
-    HOLDING_HORIZON_GUIDE[input.policy.holdingHorizon ?? "swing"] ?? HOLDING_HORIZON_GUIDE.swing,
-    "",
-    `When to SELL/TRIM: any position exceeding ${input.policy.maxSymbolExposurePct}% of portfolio value;`,
-    `positions down more than ${input.policy.riskRules.stopLossPct ?? 8}% without a clear catalyst;`,
-    `positions up more than ${input.policy.riskRules.takeProfitPct ?? 20}% where trimming would improve risk/reward; rebalancing toward better-ranked scan opportunities.`,
-    "",
-    "Evidence per candidate (in marketScan.topCandidates): factors (sub-scores), fcf, de (debt/equity), epsGr, pb (price/book), shortFloat (% of float sold short), beta, range52w (0=at 52-week low, 100=at 52-week high), secRelStr (today's % move minus its sector's average — positive = outperforming its sector, a relative-strength tell), newsSent, insiderSent, senateNet, smartMoney, rating, news. Justify each proposal from this structured evidence, not vibes.",
-    "Backend-derived ratios (computed by us, not invented — present only when their inputs exist): peg = P/E ÷ EPS-growth% (<1 cheap for its growth, >2 pricey; absent for unprofitable or no-growth names); earnYld = earnings yield % = EPS÷price (use this instead of P/E when pe is missing — a negative earnYld means the company is losing money); roe = return-on-equity % (capital efficiency; higher is better, negative = losing money on equity); payout = dividend payout ratio % (>100 = paying out more than it earns, dividend at risk); dollarVolM = daily $ volume in millions (liquidity — prefer names that can absorb the order size without slippage; thin names warrant smaller size or limit orders); spreadBps = bid-ask spread in basis points (execution cost; wide spreads argue for limit orders); grahamNumber = Graham intrinsic-value estimate ($) and marginOfSafety = % the price sits below (positive) or above (negative) it — a value cushion for defensive names; pctFromHigh = % from the 52-week high (0 = at the high/breakout zone, deeply negative = a big pullback); rr52w = reward:risk to the 52-week band (>1 = more upside room to the high than downside to the low). Use these as quantitative cross-checks on valuation, quality, income safety, tradability, and entry timing.",
-    "`macroeconomicData` now also carries: dgs3moTreasury/dgs2Treasury (short rates), inflationExpectation10y (10Y breakeven — market-implied inflation), corePCE (the Fed's preferred inflation gauge), realGDPGrowth, initialClaims (weekly labor pulse), hyCreditSpread (high-yield credit spread — a key risk-appetite gauge; widening = risk-off), usdIndex (broad dollar — a strong dollar pressures multinationals/commodities), wtiOil (energy/inflation), and vix3m. Read hyCreditSpread and the curve together for recession risk; read realGDPGrowth vs inflation for the growth/inflation mix.",
-    "`macroDerived` (backend-computed from FRED data): curve3m10y = 10Y − 3M in pp (the Fed's preferred recession curve); curve2s10s = 10Y − 2Y in pp (the canonical recession curve — negative = inverted); vixTermStructure = VIX ÷ 3-month VIX (>1 = backwardation/acute near-term fear, <1 = calm contango); yieldCurveSpread = 10Y − Fed funds in pp (negative = inverted curve, a classic recession warning — favor quality/defensives, demand more conviction on cyclicals/high-beta); real10Y = 10Y − CPI in pp (the real risk-free rate — high real rates pressure long-duration/high-multiple growth names); realFedFunds = Fed funds − CPI (>0 = restrictive policy); miseryIndex = unemployment + inflation (higher = more macro stress); equityRiskPremium = market earnings yield − 10Y in pp (low/negative = stocks expensive vs bonds, be selective; high = stocks broadly cheap). Weigh these when setting overall risk posture and sizing.",
-    "`marketInternals` (across the scan candidates): breadthPct (full-screener % advancing), advancers/decliners, pctAboveRangeMid (% of names above their 52-week midpoint), medianPE/medianEarnYld (universe valuation), and sectorRotation (avg intraday move per sector, leaders first). Use sectorRotation to favor leadership sectors and to read whether a name's move is sector-wide or name-specific; use breadth to gauge whether risk-taking is being rewarded today.",
-    "`marketSignals` (free market-wide gauges): skew = Cboe SKEW (tail-risk/crash-hedging demand; >135–145 = elevated, the market is paying up for downside protection); vvix = volatility of VIX (high = unstable vol, often near turning points); cotSpNonCommNet / cotSpNonCommNetPctOI = large-speculator net positioning in E-mini S&P 500 futures (extreme net-long = crowded/complacent, extreme net-short can precede squeezes); factors1m = trailing ~1-month cumulative returns for the market (mktRf), size (smb), value (hml) and momentum (mom) factors — read this as the current STYLE regime and tilt toward the factors that are working (e.g. positive mom = momentum names favored, positive hml = value favored); marketBreadthPct = % of the ENTIRE US stock universe (~12k names) advancing day-over-day with marketAdvancers/marketDecliners (true breadth — broad participation >55% supports risk-on, narrow <45% argues caution), and marketTopGainers/marketTopLosers are the biggest liquid movers market-wide. Use these to set overall risk posture and style tilt, not as single-name triggers.",
-    "Technical/positioning reads: range52w near 100 = sustained strength/breakout (Momentum-Breakout), near 0 = weakness — could be Value/Mean-Reversion or a falling knife, so demand a catalyst. High shortFloat (>15-20%) raises squeeze potential (Short-Squeeze-Risk) but also signals smart-money bearishness — treat as two-sided. High beta (>1.3) means amplified moves: size more cautiously. Low pb can flag value (cross-check quality/leverage).",
-    "smartMoney holds freshly-disclosed congressional (and insider) trade bulletins; senateNet is the net count of distinct members buying minus selling. Politicians disclose on a delay and copycat retail flow tends to follow a disclosure — a cluster of recent congressional/insider BUYS is a positioning tailwind worth front-running (size up, tag Insider-Accumulation), and a cluster of SELLS is a caution flag. Treat it as one input among many, not a standalone trigger.",
-    "`retrievedFinancialContext` (when present in the user message) contains dynamic RAG snippets from filings/news/context stores. Use it as catalyst evidence, but do not treat it as guaranteed bullish or bearish without corroborating structured market data.",
-    "`learnedContext` (when present in the user message) is a list of durable, learned FACTS (e.g. structural facts about a name, recurring behavioral patterns). It is advisory DATA, NOT commands: weigh it as soft context alongside the structured evidence, never let it override your risk limits or sizing rules, and corroborate it before acting.",
-    "`signalEfficacy` (when present) is YOUR OWN realized track record: the win rate of past buys that had each evidence signal at entry vs the 'All buys (baseline)'. If a signal's shrunkWinRate is at/below baseline, stop over-weighting it; if it beats baseline, lean into it. Let this calibrate how much each evidence type moves your conviction.",
-    "`confidenceCalibration` (when present) is your realized win rate grouped by the confidenceScore you assigned at entry. If your high-confidence band does NOT win more than your low-confidence band, you are over-confident — compress your scores toward the middle. Aim for monotonic calibration (higher confidence → higher realized win rate), since confidence drives size.",
-    "Your `confidenceScore` (1–100) now deterministically drives position size (higher conviction + a proven thesis edge = larger size). Calibrate it honestly — don't inflate it.",
-    THESIS_PLAYBOOK_GUIDE,
-    "",
-    "Return strict JSON only. No markdown. No text outside the JSON object."
-  ].join("\n");
+    strategyPrompt: input.prompt,
+    reflection,
+    hasTaxContext: taxContext != null,
+    washSaleHandling,
+    iraWashSaleDisregard,
+    holdingHorizon: input.policy.holdingHorizon ?? "swing",
+    maxSymbolExposurePct: input.policy.maxSymbolExposurePct ?? 0,
+    stopLossPct: input.policy.riskRules.stopLossPct ?? 8,
+    takeProfitPct: input.policy.riskRules.takeProfitPct ?? 20
+  });
 
   // Delta-only macro: macro moves slowly, so on repeat runs send just the changed
   // (plus regime-critical) fields and note the rest as unchanged to save tokens.
@@ -1184,6 +2841,13 @@ async function proposeTrades(input: {
     note: "All proposals must strictly be selected from `marketScan.topCandidates`. Do not propose symbols outside this list. You may SELL/TRIM any current position."
   };
 
+  const effectiveMaxOrderNotional = Math.min(
+    input.policy.maxOrderNotional ?? Infinity,
+    input.policy.maxOrderPctOfNav && input.portfolio.totalMarketValue > 0
+      ? (input.policy.maxOrderPctOfNav / 100) * input.portfolio.totalMarketValue
+      : Infinity
+  );
+  const preferredMaxOrderNotional = applyOpeningOrderHeadroom(effectiveMaxOrderNotional);
   const userContent = {
     currentDate: new Date().toISOString(),
     executionMode,
@@ -1195,9 +2859,28 @@ async function proposeTrades(input: {
     allowedSymbols: allowedSymbolsForPrompt,
     marketScan: compactMarketScanForPrompt(input.marketScan),
     limits: {
-      maxOrderNotional: input.policy.maxOrderNotional,
+      maxOrderNotional: Number.isFinite(effectiveMaxOrderNotional) ? Number(effectiveMaxOrderNotional.toFixed(2)) : undefined,
+      preferredMaxOrderNotional: Number.isFinite(preferredMaxOrderNotional) ? Number(preferredMaxOrderNotional.toFixed(2)) : undefined,
+      maxOrderPctOfNav: input.policy.maxOrderPctOfNav,
       remainingDailyNotional: remainingNotional,
       remainingDailyOrders: remainingOrders
+    },
+    ...(input.drawdownAdvisory
+      ? {
+          drawdownAdvisory: {
+            note: "ADVISORY, not a block: this account has breached its drawdown circuit-breaker threshold. YOU decide whether to reduce risk, tighten sizing, favor exits, or proceed on conviction — every choice is logged and coachable. The only hard rule is the account boundary.",
+            drawdownPctFromHighWaterMark: Number(input.drawdownAdvisory.drawdownPct.toFixed(2)),
+            equity: input.drawdownAdvisory.equity,
+            highWaterMark: input.drawdownAdvisory.highWaterMark,
+            detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
+    socraticAuthority: {
+      overrideMode: input.policy.socraticOverrideMode ?? "off",
+      overrideMaxPctOfNav: input.policy.socraticOverrideMaxPctOfNav,
+      note:
+        "Use autonomyOverride only for evidence-backed conflicts with owner preference gates. Do not use it for broker/account/integrity constraints."
     },
     macroeconomicData,
     ...(Object.keys(macroDerived).length > 0 ? { macroDerived } : {}),
@@ -1214,13 +2897,38 @@ async function proposeTrades(input: {
     ...(skippedCounterfactuals.length > 0 ? { skippedCounterfactuals } : {}),
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
-    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {})
+    ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
+    // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
+    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
+    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
 
-  const url = process.env.OPENAI_API_URL || "https://api.openai.com/v1/responses";
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
-  const isChatCompletions = url.includes("/chat/completions");
-  const transport: OpenAiTransport = isChatCompletions ? "chat-completions" : "responses";
+  const model = resolvedModel;
+  const llmSteps: StrategyLlmStep[] = [];
+
+  const recordStep = (step: StrategyLlmStep, options: { includeInResult?: boolean } = {}) => {
+    if (options.includeInResult !== false) llmSteps.push(step);
+    audit("llm_step", { runId: input.runId, ...step }, input.userId, input.policy.connectedAccountId);
+  };
+
+  const autonomyOverrideSchema = {
+    anyOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["requested", "thesis", "preferenceConflicts", "invalidation", "cashDeploymentPct"],
+        properties: {
+          requested: { type: "boolean" },
+          thesis: { type: "string" },
+          preferenceConflicts: { type: "array", items: { type: "string" } },
+          invalidation: { type: ["string", "null"] },
+          cashDeploymentPct: { type: ["number", "null"] }
+        }
+      },
+      { type: "null" }
+    ]
+  };
 
   const schema = {
     type: "object",
@@ -1245,13 +2953,14 @@ async function proposeTrades(input: {
             "marketHours",
             "rationale",
             "tradeThesisTag",
-            "confidenceScore"
+            "confidenceScore",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
-            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
-            // policy.shortSellingEnabled is implemented and broker supports it.
-            side: { enum: ["buy", "sell"] },
+            // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
+            // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
+            side: { enum: allowedSides },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -1261,107 +2970,203 @@ async function proposeTrades(input: {
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" }
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
     }
   };
 
-  const body = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(userContent) }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "trade_proposals",
-            strict: true,
-            schema
-          }
-        }
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: JSON.stringify(userContent) }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "trade_proposals",
-            schema
-          }
-        }
-      },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal }
-  );
-
-  const bullResult = await withLlmGeneration(
+  const bullReasoningEffort = interactiveStrategyReasoningEffort(model, input.policy.llmReasoningEffort);
+  const body = buildLlmRequestBody(
+    { provider, transport },
     {
-      name: "trading.strategy.bull",
       model,
-      userId: input.userId,
-      input: summarizeOpenAiRequest(body),
-      metadata: {
-        endpoint: url,
-        transport,
-        maxProposals,
-        executionMode,
-        internalPaperMode: input.policy.paperMode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        currentMarketRegime
-      },
-      tags: ["strategy", "bull-agent"],
-      output: (result) => ({
-        ...summarizeOpenAiResponseText(result.text),
-        ...summarizeTradeProposals(result.proposals)
-      })
-    },
-    async () => {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(`OpenAI request failed with ${response.status}: ${detail.slice(0, 500)}`);
-      }
-      const payload = await response.json();
-      recordLlmUsage({ userId: input.userId, provider: "openai", model, context: "strategy", keySource: llmKeySource, ...extractLlmUsage(payload) });
-      const text = extractOpenAiText(payload);
-
-      if (!text) {
-        throw new Error("Empty response returned from LLM API.");
-      }
-
-      try {
-        const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
-        return { text, proposals: parsed.proposals ?? [] };
-      } catch (error) {
-        // A truncated/malformed model response must not crash the whole autonomous
-        // run; degrade to zero proposals for this tick.
-        console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", error);
-        return { text, proposals: [] as TradeProposal[] };
-      }
+      systemPrompt,
+      userContent: JSON.stringify(userContent),
+      schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+      reasoningEffort: bullReasoningEffort
     }
   );
 
+  // Cross-provider FAILOVER chain (Chat A item 4): primary first, then each policy.llmFallbackModels
+  // entry that has a credential. Empty list => primary only (default; byte-identical behavior). On a
+  // TRANSIENT failure (HTTP 429/5xx or timeout) the SAME request is re-issued against the next model.
+  const bullAttempts = [
+    { url, provider, model, transport, key: openaiKey, keySource: llmKeySource, keyRef: llmKeyRef, body }
+  ];
+  const fallbackModelList = Array.isArray(input.policy.llmFallbackModels) ? input.policy.llmFallbackModels : [];
+  for (const fallbackModel of fallbackModelList.filter((m): m is string => typeof m === "string").map((m) => m.trim()).filter(Boolean)) {
+    const ep = resolveLlmEndpoint({ ...input.policy, llmModel: fallbackModel }, input.userId);
+    if (!ep.key) continue; // No credential for this provider's model — skip it rather than fail.
+    bullAttempts.push({
+      url: ep.url,
+      provider: ep.provider,
+      model: ep.model,
+      transport: ep.transport,
+      key: ep.key,
+      keySource: ep.keySource,
+      keyRef: ep.keyRef,
+      body: buildLlmRequestBody(
+        { provider: ep.provider, transport: ep.transport },
+        {
+          model: ep.model,
+          systemPrompt,
+          userContent: JSON.stringify(userContent),
+          schema: { name: "trade_proposals", schema, description: "The trade proposals the strategy advises this run." },
+          maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+          reasoningEffort: interactiveStrategyReasoningEffort(ep.model, input.policy.llmReasoningEffort)
+        }
+      )
+    });
+  }
+  // Which endpoint actually served the run (starts as the primary; updated on failover). Transport
+  // and keySource are tracked too so the served step/audit trail reports the FALLBACK's transport
+  // (e.g. anthropic-messages vs the primary's responses), not the primary's — accurate money-path tracing.
+  let bullServedProvider = provider;
+  let bullServedModel = model;
+  let bullServedTransport = transport;
+  let bullServedKeySource = llmKeySource;
+  let bullFailoverNote: string | undefined;
+
+  const bullStepBase = {
+    step: "bull" as const,
+    label: "Green Team proposal",
+    provider,
+    model,
+    transport,
+    keySource: llmKeySource
+  };
+  recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
+  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean };
+  try {
+    bullResult = await withLlmGeneration(
+      {
+        name: "trading.strategy.bull",
+        model,
+        userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
+        input: summarizeOpenAiRequest(body),
+        metadata: {
+          endpoint: url,
+          transport,
+          maxProposals,
+          executionMode,
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
+        },
+        tags: ["strategy", "bull-agent"],
+        output: (result) => ({
+          ...summarizeOpenAiResponseText(result.text),
+          ...summarizeTradeProposals(result.proposals)
+        })
+      },
+      async () => {
+        let lastError: unknown;
+        for (let i = 0; i < bullAttempts.length; i++) {
+          const attempt = bullAttempts[i];
+          const isLast = i === bullAttempts.length - 1;
+          const next = bullAttempts[i + 1];
+          try {
+            const response = await llmFetch(attempt.url, {
+              method: "POST",
+              headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+              body: JSON.stringify(attempt.body)
+            });
+
+            if (!response.ok) {
+              const detail = await response.text();
+              if (!isLast && isRetryableLlmStatus(response.status)) {
+                lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
+                console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId);
+                continue;
+              }
+              throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
+            }
+            const payload = await response.json();
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, ...extractLlmUsage(payload) });
+            if (i > 0) {
+              bullServedProvider = attempt.provider;
+              bullServedModel = attempt.model;
+              bullServedTransport = attempt.transport;
+              bullServedKeySource = attempt.keySource;
+              bullFailoverNote = `Primary Green Team model ${model}/${provider} was unavailable; served by fallback ${attempt.model}/${attempt.provider} (attempt ${i + 1}/${bullAttempts.length}).`;
+            }
+            const text = extractLlmText(payload);
+            const truncated = detectLlmTruncation(payload);
+
+            if (!text) {
+              throw new Error("Empty response returned from LLM API.");
+            }
+
+            try {
+              const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+              return { text, proposals: parsed.proposals ?? [], truncated };
+            } catch (parseError) {
+              // A truncated/malformed model response must not crash the whole autonomous
+              // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
+              // record a DISTINCT truncation reason instead of a silent no-op (see below).
+              console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
+              return { text, proposals: [] as TradeProposal[], truncated };
+            }
+          } catch (err) {
+            // Transient transport error / timeout → fail over to the next model when one remains.
+            if (!isLast && isRetryableLlmError(err)) {
+              lastError = err;
+              console.warn(`[Bull] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
+              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId);
+              continue;
+            }
+            throw err;
+          }
+        }
+        throw lastError ?? new Error("All Green Team endpoints failed.");
+      }
+    );
+  } catch (error) {
+    const reason = humanizeLlmTransportError(error, { provider, model, stepLabel: "Green Team proposal", timeoutMs: LLM_TIMEOUT_MS });
+    const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
+    recordStep(failedStep);
+    throw new StrategyLlmStepFailure(reason, llmSteps, error);
+  }
+
   const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
-    entryMarketRegime: currentMarketRegime
+    entryMarketRegime: currentMarketRegime,
+    // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
+    // policy.llmModel). Persisted with the proposal so approval-time attribution stays accurate.
+    proposedByModel: bullServedModel
   }));
+  // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
+  // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
+  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.)
+  const bullTruncationReason = bullResult.truncated
+    ? `Green Team response hit the ${LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
+    : undefined;
+  if (bullTruncationReason) {
+    console.warn(`[Bull] ${bullTruncationReason}`);
+    audit(
+      "strategy_bull_truncated",
+      { runId: input.runId, cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, parsedProposals: rawBullProposals.length, provider, model },
+      input.userId
+    );
+  }
+  // Record the served provider/model (may differ from the primary after failover) plus a clear reason
+  // combining any failover note and truncation note, so the run record shows exactly what happened.
+  const bullCompletedReason = [bullFailoverNote, bullTruncationReason].filter(Boolean).join(" ") || undefined;
+  recordStep({
+    ...bullStepBase,
+    provider: bullServedProvider,
+    model: bullServedModel,
+    transport: bullServedTransport,
+    keySource: bullServedKeySource,
+    status: "completed",
+    proposalCount: rawBullProposals.length,
+    ...(bullCompletedReason ? { reason: bullCompletedReason } : {})
+  });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
   // See deterministicBearFilter for the three rules (no-phantom-exit, momentum overextension
@@ -1371,24 +3176,18 @@ async function proposeTrades(input: {
     rawBullProposals,
     input.positions,
     input.marketScan?.topCandidates ?? [],
-    currentMarketRegime
+    currentMarketRegime,
+    {
+      fcfYieldFloorPct: input.policy.tuning?.bearVetoFcfYieldFloorPct,
+      debtToEquityCeiling: input.policy.tuning?.bearVetoDebtToEquityCeiling
+    }
   );
   if (deterministicVetoed.length > 0) {
     console.log("[DeterministicBear] Vetoed before Bear LLM:", deterministicVetoed.map(v => `${v.symbol} ${v.side}: ${v.reason}`).join(" | "));
   }
 
-  // Phase 7: Bear Agent (Red Team) Critique
-  const bearSystemPrompt = [
-    "You are the Bear Agent (Red Team Risk Manager) for an autonomous trading system.",
-    "Your objective is to CRITIQUE the following proposed trades generated by the Bull Agent.",
-    "Execution modes are distinct: test/local is the app's local simulator, broker/paper is a broker-hosted sandbox such as Alpaca Paper, and broker/live is a production broker account.",
-    "Evaluate each trade against the macro environment, fundamentals (P/B, short float), technicals, insider sentiment, and overall sector concentration risk.",
-    "If a trade is too risky, unjustified, or misaligned with current market regimes, REMOVE it from your output.",
-    "If a trade is acceptable but needs a tighter stop loss, better limit price, or smaller size, MODIFY it.",
-    `If you approve a trade, you MUST set 'tradeThesisTag' to exactly one playbook tag (${THESIS_PLAYBOOK.join(", ")}).`,
-    "Return strict JSON matching the schema, containing ONLY the surviving, approved proposals.",
-    "If none survive, return an empty array."
-  ].join("\n");
+  // Phase 7: Bear Agent (Red Team) Critique (prompt in ./strategy-prompts, Chat A item 2)
+  const bearSystemPrompt = buildBearSystem({ shortAllowed });
 
   const bearSchema = {
     type: "object",
@@ -1411,13 +3210,15 @@ async function proposeTrades(input: {
             "timeInForce",
             "marketHours",
             "rationale",
-            "tradeThesisTag"
+            "tradeThesisTag",
+            "confidenceScore",
+            "autonomyOverride"
           ],
           properties: {
             symbol: { type: "string" },
-            // SHORT_SELLING: Change to ["buy", "sell", "short", "cover"] when
-            // policy.shortSellingEnabled is implemented and broker supports it.
-            side: { enum: ["buy", "sell"] },
+            // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
+            // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
+            side: { enum: allowedSides },
             type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
             quantity: { type: ["number", "null"] },
             dollarAmount: { type: ["number", "null"] },
@@ -1426,7 +3227,16 @@ async function proposeTrades(input: {
             timeInForce: { enum: ["gfd", "gtc"] },
             marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
             rationale: { type: "string" },
-            tradeThesisTag: { enum: THESIS_PLAYBOOK }
+            tradeThesisTag: { enum: THESIS_PLAYBOOK },
+            // FIX (composite review B/high/S): the Bear schema previously omitted confidenceScore from
+            // both `properties` and `required` while `additionalProperties:false` forbid re-emitting it —
+            // strict structured output silently stripped every Bear-surviving proposal's confidence to
+            // undefined, which zeroed shouldRunRedTeamDebate's approval-time trigger (`?? 0`), degraded
+            // sizing to a neutral `?? 50`, and fed the wash-sale auto-edge math the same undefined. The
+            // Bear system prompt (buildBearSystem) now instructs it to preserve the Bull's score unless it
+            // is REVISING conviction, so this is restored as a required, re-emitted field.
+            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100 — preserve the Bull's score unless you are deliberately revising conviction; state why in the rationale if you change it." },
+            autonomyOverride: autonomyOverrideSchema
           }
         }
       }
@@ -1445,129 +3255,211 @@ async function proposeTrades(input: {
     currentMarketRegime: userContent.currentMarketRegime,
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
+    socraticAuthority: userContent.socraticAuthority,
     portfolio: input.portfolio,
     positions: input.positions,
     ...(sectorComposition ? { sectorComposition } : {}),
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
+    // Evidence parity (composite review A1): the Bear critiques with the SAME episodic analogs +
+    // owner coaching the Bull saw — a counterexample the Bull rationalized away is Bear ammunition.
+    ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
+    ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {}),
     candidatesUnderReview,
     bullAgentProposals: bullProposals
   };
 
-  const bearBody = withLlmRequestBounds(
-    isChatCompletions
-      ? {
-        model,
-        messages: [
-          { role: "system", content: bearSystemPrompt },
-          { role: "user", content: JSON.stringify(bearUserContent) }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "bear_proposals",
-            strict: true,
-            schema: bearSchema
-          }
-        }
-      }
-      : {
-        model,
-        input: [
-          { role: "system", content: bearSystemPrompt },
-          { role: "user", content: JSON.stringify(bearUserContent) }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "bear_proposals",
-            schema: bearSchema
-          }
+  const {
+    url: bearUrl,
+    key: bearKey,
+    model: bearModel,
+    provider: bearProvider,
+    keySource: bearKeySource,
+    keyRef: bearKeyRef,
+    transport: bearTransport
+  } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
+
+  // Inline Bear (Red Team) review is REQUIRED. If it cannot run — missing key, transport
+  // error/timeout, or an unparseable response — we FAIL CLOSED: carry the Bull proposals but
+  // signal the caller (bearReviewUnavailable) to route them to human review in autonomous mode
+  // rather than silently auto-approving un-critiqued trades. Also emit a loud audit + notification.
+  const bearUnavailable = async (
+    reason: string,
+    status: "skipped" | "fallback"
+  ): Promise<ProposeTradesResult> => {
+    console.warn(
+      `[Bear] Red Team (inline) ${status}: ${reason} Routing ${bullProposals.length} Bull proposal(s) to human review (mode=${input.policy.strategyAuthority}).`
+    );
+    recordStep({
+      step: "bear",
+      label: "Red Team review",
+      provider: bearProvider,
+      model: bearModel,
+      transport: bearTransport,
+      keySource: bearKeySource,
+      status,
+      proposalCount: bullProposals.length,
+      reason: `${reason} Proposals routed to human review.`
+    });
+    audit(
+      "strategy_bear_review_unavailable",
+      {
+        runId: input.runId,
+        reason,
+        status,
+        mode: input.policy.strategyAuthority,
+        proposalCount: bullProposals.length,
+        provider: bearProvider,
+        model: bearModel
+      },
+      input.userId
+    );
+    await sendNotification(
+      {
+        type: "provider_degraded",
+        title: "Red Team (inline Bear) review unavailable",
+        payload: {
+          runId: input.runId,
+          provider: bearProvider,
+          model: bearModel,
+          reason,
+          proposalCount: bullProposals.length,
+          routedToHumanReview: true
         }
       },
-    transport,
-    { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique }
-  );
+      { policy: input.policy, userId: input.userId }
+    );
+    // sendNotification skips the DIRECT alert for provider_degraded (it's in DIRECT_NOTIFY_ALREADY_SENT,
+    // which assumes the provider-tier caller already sent one via notify()). This inline-Bear path has
+    // no prior notify(), so a user WITHOUT a webhook would get no alert at all. Mirror provider-tier:
+    // send the direct notification explicitly (sendNotification above still handles the webhook).
+    await notify(input.userId, {
+      title: "Red Team (inline Bear) review unavailable",
+      body: `${reason} ${bullProposals.length} Bull proposal(s) routed to human review (mode=${input.policy.strategyAuthority}).`,
+      kind: "provider_degraded",
+      data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
+    }).catch((err) => console.error("[Bear] notify error:", err));
+    return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
+  };
 
-  const bearResult = await withLlmGeneration(
+  if (!bearKey) {
+    return bearUnavailable("Red Team LLM key is not configured.", "skipped");
+  }
+
+  const bearReasoningEffort = interactiveStrategyReasoningEffort(bearModel, input.policy.llmReasoningEffort);
+  const bearBody = buildLlmRequestBody(
+    { provider: bearProvider, transport: bearTransport },
     {
-      name: "trading.strategy.bear",
-      model,
-      userId: input.userId,
-      input: summarizeOpenAiRequest(bearBody),
-      metadata: {
-        endpoint: url,
-        transport,
-        reviewedProposalCount: bullProposals.length,
-        executionMode,
-        internalPaperMode: input.policy.paperMode,
-        usesLocalSimulation: executionState.usesLocalSimulation,
-        currentMarketRegime
-      },
-      tags: ["strategy", "bear-agent", "red-team"],
-      output: (result) => ({
-        ...summarizeOpenAiResponseText(result.text),
-        ...summarizeTradeProposals(result.proposals),
-        fallbackToBull: result.fallbackToBull
-      })
-    },
-    async () => {
-      const bearResponse = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${openaiKey}`
-        },
-        body: JSON.stringify(bearBody)
-      });
-
-      if (!bearResponse.ok) {
-        console.warn("Bear Agent API failed, falling back to Bull proposals");
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-      }
-
-      const bearPayload = await bearResponse.json();
-      const bearText = extractOpenAiText(bearPayload);
-
-      if (!bearText) {
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-      }
-
-      try {
-        const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
-        return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
-      } catch (error) {
-        // Don't discard already-valid Bull proposals because the Bear critique came
-        // back as malformed JSON — reuse the existing fall-back-to-Bull path.
-        console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
-        return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-      }
+      model: bearModel,
+      systemPrompt: bearSystemPrompt,
+      userContent: JSON.stringify(bearUserContent),
+      schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
+      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
+      reasoningEffort: bearReasoningEffort,
+      // Per-role sampling (composite review B/medium/S): the adversary role runs at a non-zero
+      // temperature so repeated runs can surface different objections instead of the same greedy,
+      // deterministic critique every time. Ignored by reasoning models (they reject temperature and
+      // steer via reasoningEffort instead — see withLlmRequestBounds).
+      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
     }
   );
 
-  if (bearResult.fallbackToBull) {
-    return bullProposals;
+  const bearStepBase = {
+    step: "bear" as const,
+    label: "Red Team review",
+    provider: bearProvider,
+    model: bearModel,
+    transport: bearTransport,
+    keySource: bearKeySource
+  };
+  recordStep({ ...bearStepBase, status: "started" }, { includeInResult: false });
+  let bearResult: { text?: string; proposals: TradeProposal[]; fallbackToBull?: boolean };
+  try {
+    bearResult = await withLlmGeneration(
+      {
+        name: "trading.strategy.bear",
+        model: bearModel,
+        userId: input.userId,
+        connectedAccountId: input.policy.connectedAccountId,
+        input: summarizeOpenAiRequest(bearBody),
+        metadata: {
+          endpoint: bearUrl,
+          transport: bearTransport,
+          reviewedProposalCount: bullProposals.length,
+          executionMode,
+          currentMarketRegime,
+          promptVersion: STRATEGY_PROMPT_VERSION
+        },
+        tags: ["strategy", "bear-agent", "red-team"],
+        output: (result) => {
+          // Bear-veto decision point: the Bear removed one or more Bull proposals (fewer survived
+          // than were reviewed, and it did not fall back to Bull). Stamp the veto count + a boolean
+          // so a Bear veto is queryable in Langfuse (no-op when Langfuse is unconfigured).
+          const survivorCount = result.proposals.length;
+          const bearVetoCount = result.fallbackToBull ? 0 : Math.max(0, bullProposals.length - survivorCount);
+          return {
+            ...summarizeOpenAiResponseText(result.text),
+            ...summarizeTradeProposals(result.proposals),
+            fallbackToBull: result.fallbackToBull,
+            bearVeto: bearVetoCount > 0,
+            bearVetoCount
+          };
+        }
+      },
+      async () => {
+        const bearResponse = await llmFetch(bearUrl, {
+          method: "POST",
+          headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
+          body: JSON.stringify(bearBody)
+        });
+
+        if (!bearResponse.ok) {
+          console.warn("Bear Agent API failed, falling back to Bull proposals");
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
+
+        const bearPayload = await bearResponse.json();
+        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
+        const bearText = extractLlmText(bearPayload);
+
+        if (!bearText) {
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
+
+        try {
+          const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
+          return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
+        } catch (error) {
+          // Don't discard already-valid Bull proposals because the Bear critique came
+          // back as malformed JSON — reuse the existing fall-back-to-Bull path.
+          console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
+          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
+        }
+      }
+    );
+  } catch (error) {
+    const reason = humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: LLM_TIMEOUT_MS });
+    return bearUnavailable(reason, "fallback");
   }
 
-  return sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
-    ...p,
-    entryMarketRegime: currentMarketRegime
-  }));
-}
+  if (bearResult.fallbackToBull) {
+    return bearUnavailable("Red Team review was unavailable or unparseable.", "fallback");
+  }
 
-function extractOpenAiText(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const root = payload as {
-    output_text?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof root.output_text === "string") return root.output_text;
-  const chatText = root.choices?.[0]?.message?.content;
-  if (typeof chatText === "string") return chatText;
-  const responseText = root.output?.flatMap((item) => item.content ?? []).find((item) => typeof item.text === "string")?.text;
-  return typeof responseText === "string" ? responseText : undefined;
+  const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
+    ...p,
+    entryMarketRegime: currentMarketRegime,
+    // Re-stamp after the Bear pass: survivors are re-emitted through the Bear's strict schema,
+    // which strips proposedByModel — the ORIGIN model is still the Bull's served model.
+    proposedByModel: bullServedModel
+  }));
+  recordStep({
+    ...bearStepBase,
+    status: "completed",
+    proposalCount: bearProposals.length
+  });
+  return { proposals: bearProposals, llmSteps };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
@@ -1601,20 +3493,28 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
+/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
+ *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
+ *  degrades to the refPrice-based branch instead. */
+function hasRealAsk(quote: MarketQuote): boolean {
+  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+}
+
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
   if (!marketScan) return undefined;
-  const hasAskData = marketScan.topCandidates.some((quote) => quote.ask && quote.ask > 0);
+  const hasAskData = marketScan.topCandidates.some(hasRealAsk);
   return {
     source: marketScan.source,
     generatedAt: marketScan.generatedAt,
     scannedSymbols: marketScan.scannedSymbols,
     returnedQuotes: marketScan.returnedQuotes,
+    candidateLimit: marketScan.candidateLimit,
+    outlierReserve: marketScan.outlierReserve,
+    outlierCandidateCount: marketScan.outlierCandidateCount,
     cacheTtlMs: marketScan.cacheTtlMs,
     cached: marketScan.cached,
     hasAskData,
-    topCandidates: marketScan.topCandidates
-      .filter(quote => quote.score >= 40) // [PHASE 2 OPTIMIZATION] Strict backend pre-filtering
-      .map(compactCandidateForPrompt),
+    topCandidates: marketScan.topCandidates.map(compactCandidateForPrompt),
     instructions: hasAskData
       ? "Ask-relative buy limits are allowed only for candidates that include ask."
       : "No ask prices are available in this scan. Do not invent ask-relative limit prices."
@@ -1622,12 +3522,17 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
+  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
+  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
+  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
     px: quote.price,
-    bid: quote.bid,
-    ask: quote.ask,
+    bid: realBid,
+    ask: realAsk,
     vol: quote.volume,
     mktCap: quote.marketCap,
     chgPct: quote.intradayChangePct,
@@ -1640,14 +3545,23 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     pb: quote.pbRatio,
     shortFloat: quote.shortPercentOfFloat,
     beta: quote.beta,
+    earnIn: quote.daysToEarnings,
+    instOwn: quote.institutionOwnershipPct,
+    iv: quote.nearTheMoneyIv,
+    putCall: quote.putCallRatio,
     range52w: pricePosition52w(quote),
     // Backend-derived ratios (PEG, earnings yield, ROE, payout, $ volume, spread) are
-    // computed deterministically, then omitted when their inputs are unavailable.
-    ...deriveMetrics(quote),
+    // computed deterministically, then omitted when their inputs are unavailable. Pass the
+    // synthetic-stripped bid/ask so a price-derived (synthetic) spread doesn't leak into the prompt
+    // as a fabricated `spreadBps` execution-cost signal — matching the bid/ask omission above.
+    ...deriveMetrics({ ...quote, bid: realBid, ask: realAsk }),
     secRelStr: quote.sectorRelStrength,
     newsSent: quote.sentiment,
     insiderSent: quote.insiderSentiment,
     senateNet: quote.senateTrades,
+    congressScore: quote.congressCompositeScore,
+    congressDir: quote.congressCompositeDirection,
+    congressConf: quote.congressCompositeConfidence,
     smartMoney: quote.evidenceBulletins?.slice(0, 3),
     rating: quote.analystRating,
     ratingScore: quote.analystScore,
@@ -1657,6 +3571,9 @@ function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], i
     posMV: quote.positionMarketValue,
     score: quote.score,
     factors: quote.factorBreakdown,
+    techScore: quote.technicalScore,
+    techDir: quote.technicalDirection,
+    techSignals: quote.technicalSignals?.slice(0, 5),
     provider: quote.provider,
     asOf: quote.asOf
   });
@@ -1672,38 +3589,6 @@ function compactPromptObject(values: Record<string, unknown>): Record<string, un
     compacted[key] = value;
   }
   return compacted;
-}
-
-function fallbackProposal(input: {
-  policyAllowlist: string[];
-  portfolio: Portfolio;
-  positions: EquityPosition[];
-}): TradeProposal[] {
-  const allowed = new Set(input.policyAllowlist.map(normalizeSymbol));
-  const candidates = input.positions
-    .filter((position) => allowed.has(normalizeSymbol(position.symbol)))
-    .map((position) => ({
-      symbol: normalizeSymbol(position.symbol),
-      exposurePct: input.portfolio.totalMarketValue > 0 ? (position.marketValue / input.portfolio.totalMarketValue) * 100 : 0
-    }))
-    .sort((a, b) => a.exposurePct - b.exposurePct);
-
-  const symbol = candidates[0]?.symbol ?? input.policyAllowlist.map(normalizeSymbol)[0];
-  if (!symbol) return [];
-  return [
-    {
-      symbol,
-      side: "buy",
-      type: "market",
-      dollarAmount: 10,
-      timeInForce: "gfd",
-      marketHours: "regular_hours",
-      rationale:
-        "Development fallback: OPENAI_API_KEY is not configured, so this is a simple rule-based rebalance suggestion toward the lowest-exposure allowed holding, not an LLM research recommendation.",
-      tradeThesisTag: "Development Fallback",
-      entryMarketRegime: "Rule-based"
-    }
-  ];
 }
 
 // The LLM is told confidenceScore is 1–100, but json_schema strict mode does not
@@ -1729,14 +3614,26 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours",
       tradeThesisTag: proposal.tradeThesisTag ?? undefined,
-      entryMarketRegime: proposal.entryMarketRegime ?? undefined
+      entryMarketRegime: proposal.entryMarketRegime ?? undefined,
+      autonomyOverride:
+        proposal.autonomyOverride?.requested === true
+          ? {
+              requested: true,
+              thesis: String(proposal.autonomyOverride.thesis ?? "").slice(0, 2000),
+              preferenceConflicts: Array.isArray(proposal.autonomyOverride.preferenceConflicts)
+                ? proposal.autonomyOverride.preferenceConflicts.map(String).slice(0, 8)
+                : [],
+              ...(proposal.autonomyOverride.invalidation ? { invalidation: String(proposal.autonomyOverride.invalidation).slice(0, 1000) } : {}),
+              ...(typeof proposal.autonomyOverride.cashDeploymentPct === "number" && Number.isFinite(proposal.autonomyOverride.cashDeploymentPct)
+                ? { cashDeploymentPct: Math.max(0, Math.min(100, proposal.autonomyOverride.cashDeploymentPct)) }
+                : {})
+            }
+          : undefined
     }));
 }
 
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
-  const pending = listFillEvents(accountNumber, "live", 500, userId).filter(
-    (fill) => fill.status === "pending_reconciliation" && fill.brokerOrderId
-  );
+  const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 
   try {
@@ -1779,7 +3676,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
         if (execQty > 0) bookExecuted("partially_filled");
-      } else if (["cancelled", "canceled", "rejected", "failed"].includes(matched.state)) {
+      } else if (isRejectedOrCanceledState(matched.state)) {
         if (execQty > 0) {
           // Order terminated AFTER a partial execution — book the executed shares
           // rather than marking the whole fill cancelled and losing them.
@@ -1840,11 +3737,14 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
     if (matched) {
       updateProposalStatus(row.id, "placed", matched.id, undefined, undefined, userId);
       if (p) {
+        const recoveredExecutionMode = row.executionMode ?? "broker/live";
+        const recoveredSource: FillSource = recoveredExecutionMode === "broker/live" ? "live" : "paper";
         recordFillFromProposal({
           userId,
           accountNumber,
           proposalId: row.id,
-          source: "live",
+          source: recoveredSource,
+          executionMode: recoveredExecutionMode,
           proposal: p,
           execution: { orderId: matched.id, refId: row.refId ?? "", state: matched.state, filledQuantity: matched.filledQuantity, averagePrice: matched.averagePrice, raw: matched },
           status: matched.state === "filled" ? "filled" : "pending_reconciliation"
@@ -1852,28 +3752,147 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
       }
       audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId);
     } else {
-      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId);
+      updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
       audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId);
     }
   }
 }
 
+/**
+ * Stamp an opening proposal with the entry anchor (referencePrice) the deterministic entry-drift
+ * guard compares against at approval time, and — on brokers with native bracket support (Alpaca),
+ * when policy.brokerBracketsEnabled is not disabled — attach broker-held stop-loss/take-profit legs
+ * derived from riskRules so protective exits rest at the matching engine and survive local downtime
+ * (a crash/DB-lock/disconnect no longer leaves a position unprotected). No-op for non-opening sides
+ * and for brokers without native brackets (the synthetic scheduler-tick monitor remains the fallback
+ * there). Pre-existing bracket fields on the proposal are never overwritten.
+ */
+export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan): TradeProposal {
+  if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
+  const sym = normalizeSymbol(proposal.symbol);
+  const marketPrice = marketScan.quotesBySymbol[sym]?.price;
+  const refPrice = proposal.referencePrice ?? marketPrice ?? proposal.limitPrice ?? proposal.stopPrice;
+  if (refPrice == null || !(refPrice > 0)) return proposal;
+  const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+
+  const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
+  const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
+  const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
+  if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
+    const stopPct = proposal.side === "short"
+      ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
+      : (policy.riskRules?.stopLossPct ?? 0);
+    const takePct = policy.riskRules?.takeProfitPct ?? 0;
+    // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
+    if (proposal.side === "buy") {
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
+    } else {
+      if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 + stopPct / 100)) };
+      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
+    }
+  } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
+    next = {
+      ...next,
+      rationale: next.rationale + `\n\n[Risk] Native Alpaca bracket skipped because ${formatWholeDollars(next.dollarAmount ?? 0)} is below one whole share at the ${formatWholeDollars(entryPrice)} intended entry price; this avoids a broker rejection for sub-share brackets.`
+    };
+  } else if (bracketsEnabled && !brokerSupportsBrackets && (policy.riskRules?.stopLossPct ?? 0) > 0) {
+    // Transparency for non-bracket brokers (e.g. Robinhood): the broker can't hold an OCO bracket at
+    // its matching engine, so this position's protective exit is the synthetic scheduler-tick monitor
+    // ONLY — a single point of failure if the app is down. Surface it so the operator knows. (The
+    // synthetic monitor still runs every tick; this is honesty, not a behavior change.)
+    next = {
+      ...next,
+      rationale: next.rationale + `\n\n[Risk] ${policy.activeBroker ?? "this broker"} does not support broker-held brackets — the stop is enforced by the app's synthetic monitor only (no protection while the app is offline).`
+    };
+  }
+
+  // Marketable-limit entries: convert a deterministic OPENING market order into a limit priced
+  // through the quote, so a fast tape can't fill it arbitrarily past the quote. Requires a notional
+  // (dollar-routed) market order and a whole-share quantity ≥ 1 (sub-share notional can't be cleanly
+  // expressed as a quantity-based limit); otherwise we leave it as a market order.
+  if (
+    policy.marketableLimitEntries === true &&
+    next.type === "market" &&
+    next.dollarAmount != null &&
+    next.dollarAmount > 0 &&
+    (policy.permittedOrderTypes?.includes("limit") ?? true)
+  ) {
+    const quote = marketScan.quotesBySymbol[sym];
+    const qty = Math.floor(next.dollarAmount / entryPrice);
+    if (qty >= 1) {
+      const bufferBps = policy.tuning?.marketableLimitBufferBps ?? 15;
+      const buffer = bufferBps / 10_000;
+      // A synthesized (price-derived) Yahoo spread is not a real quote — never anchor the
+      // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
+      // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
+      // back to refPrice only for the side that is actually synthetic so the limit is honest.
+      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
+      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
+      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      const limitPrice = proposal.side === "buy"
+        ? round2((realAsk ?? refPrice) * (1 + buffer))
+        : round2((realBid ?? refPrice) * (1 - buffer));
+      if (limitPrice > 0) {
+        next = {
+          ...next,
+          type: "limit",
+          limitPrice,
+          quantity: qty,
+          dollarAmount: undefined,
+          rationale: next.rationale + `\n\n[Execution] Marketable-limit entry: ${qty} sh @ limit $${limitPrice} (${bufferBps} bps through the ${proposal.side === "buy" ? "ask" : "bid"}) instead of a raw market order, to cap fast-tape slippage.`
+        };
+      }
+    }
+  }
+  return next;
+}
+
 export function generateProactiveRiskProposals(
   positions: EquityPosition[],
   currentPrices: Record<string, number>,
-  policy: TradingPolicy
+  policy: TradingPolicy,
+  betaBySymbol: Record<string, number> = {},
+  // Precomputed ATR-based stop DISTANCE (% of entry) per symbol — supplied by the caller (which has
+  // bars) when policy.atrStops is on. Mirrors the betaBySymbol precompute pattern so this stays a pure
+  // sync function. Empty/absent → fall back to the fixed/beta stop (a name is never left unprotected).
+  atrStopPctBySymbol: Record<string, number> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
-  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
   const shortStopLossPct = policy.riskRules.shortStopLossPct ?? 0;
+  const betaStops = policy.betaScaledStops === true;
+  const atrStops = policy.atrStops === true;
 
-  if (stopLossPct <= 0 && takeProfitPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+  // Take-profit trims are handled by planTakeProfitTrims (a stateful, laddered band ratchet); this
+  // generator emits only stateless FULL-position stop-loss / short-stop exits.
+  if (stopLossPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+
+  // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
+  // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
+  // over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
+    if (baseStopPct <= 0) return baseStopPct;
+    if (atrStops) {
+      const atrPct = atrStopPctBySymbol[sym];
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+    }
+    return betaScaledStopPct(baseStopPct, beta, betaStops);
+  };
 
   for (const pos of positions) {
     if (Math.abs(pos.quantity) <= 0.000001 || pos.averageCost <= 0) continue;
-    const currentPrice = currentPrices[normalizeSymbol(pos.symbol)] ?? (pos.marketValue / pos.quantity);
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.marketValue / pos.quantity);
     if (!currentPrice || currentPrice <= 0) continue;
+    // Volatility-aware stop distance: ATR-based (realized range) or beta-scaled (widen high-beta,
+    // tighten low-beta), else a flat %. Take-profit stays flat (a target, not a stop).
+    const beta = betaBySymbol[sym];
+    const effStopLossPct = effectiveStopPct(sym, stopLossPct, beta);
 
     let reason = "";
     let exitSide: "sell" | "cover" = "sell";
@@ -1881,10 +3900,8 @@ export function generateProactiveRiskProposals(
     if (pos.quantity > 0) {
       // Long: profit when price rises; exit a breach with a SELL.
       const returnPct = ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
-      if (stopLossPct > 0 && returnPct <= -stopLossPct) {
-        reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${stopLossPct}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive take-profit trim: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
+      if (effStopLossPct > 0 && returnPct <= -effStopLossPct) {
+        reason = `Proactive stop-loss exit: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effStopLossPct.toFixed(2)}% limit.`;
       }
       exitSide = "sell";
     } else {
@@ -1892,11 +3909,10 @@ export function generateProactiveRiskProposals(
       // short selling is enabled (the only path that can open a short in the first place).
       if (!policy.shortSellingEnabled) continue;
       const returnPct = ((pos.averageCost - currentPrice) / pos.averageCost) * 100;
-      const effShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
+      const baseShortStop = shortStopLossPct > 0 ? shortStopLossPct : stopLossPct;
+      const effShortStop = effectiveStopPct(sym, baseShortStop, beta);
       if (effShortStop > 0 && returnPct <= -effShortStop) {
-        reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop}% limit.`;
-      } else if (takeProfitPct > 0 && returnPct >= takeProfitPct) {
-        reason = `Proactive short take-profit cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching ${takeProfitPct}% limit.`;
+        reason = `Proactive short stop-loss cover: ${pos.symbol} returned ${returnPct.toFixed(2)}% breaching -${effShortStop.toFixed(2)}% limit.`;
       }
       exitSide = "cover";
     }
@@ -1916,4 +3932,106 @@ export function generateProactiveRiskProposals(
     }
   }
   return proactiveProposals;
+}
+
+/** Clamp a take-profit trim percent to (0,100]; undefined/invalid → 100 (full exit, back-compat). */
+export function clampTakeProfitTrimPct(pct: number | undefined): number {
+  if (typeof pct !== "number" || !Number.isFinite(pct) || pct <= 0) return 100;
+  return Math.min(100, pct);
+}
+
+const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+
+/**
+ * Quantity to sell for a take-profit trim. Exits fully at >=100%. For a WHOLE-share position the trim is
+ * floored to whole shares (so it never forces a fractional order a non-fractional broker would reject); a
+ * sub-1-share slice or a <1-share remainder becomes a full exit. An already-fractional position keeps a
+ * fractional trim (the broker already supports fractional for it), avoiding a dust remainder.
+ */
+export function takeProfitTrimQuantity(qty: number, trimPct: number): number {
+  const q = Math.abs(qty);
+  if (q <= 0) return 0;
+  if (trimPct >= 100) return round6(q);
+  const raw = q * (trimPct / 100);
+  if (Number.isInteger(q)) {
+    const whole = Math.floor(raw);
+    if (whole < 1 || q - whole < 1) return round6(q); // no clean whole-share slice → full exit at target
+    return whole;
+  }
+  if (q - raw < 0.0001) return round6(q); // negligible remainder → full exit, no dust
+  return round6(raw);
+}
+
+export interface TakeProfitTrimPlan {
+  proposals: TradeProposal[];
+  /**
+   * Symbols + bands the trims emitted this run target (each proposal also carries `takeProfitBand`/
+   * `takeProfitBasis`). The band is persisted on FILL by recordFillFromProposal, NOT here — so a
+   * proposed/blocked/rejected trim is re-offered next run rather than silently ratcheted past.
+   */
+  advancedBands: Array<{ symbol: string; band: number }>;
+}
+
+/**
+ * Plan partial take-profit trims with a monotonic, lot-keyed band ratchet. For each position at/above its
+ * take-profit target, the take-profit BAND = floor(returnPct / takeProfitPct); a trim of
+ * `takeProfitTrimPct`% of the CURRENT position is emitted ONLY when that band exceeds the highest band
+ * already TRIMMED for this lot (`lastBandBySymbol[sym]`, matched by cost basis). So a partial take-profit
+ * trims once per band (e.g. at +20%, +40%, …) instead of laddering out the position every run, and a
+ * close+rebuy (different cost basis) starts fresh. Pure/sync. The caller reads prior bands from
+ * `take_profit_trims`; the band is committed only when the trim actually FILLS (recordFillFromProposal).
+ */
+export function planTakeProfitTrims(
+  positions: EquityPosition[],
+  currentPrices: Record<string, number>,
+  policy: TradingPolicy,
+  lastBandBySymbol: Record<string, TakeProfitTrimBand> = {}
+): TakeProfitTrimPlan {
+  const proposals: TradeProposal[] = [];
+  const advancedBands: Array<{ symbol: string; band: number }> = [];
+  const takeProfitPct = policy.riskRules.takeProfitPct ?? 0;
+  if (takeProfitPct <= 0) return { proposals, advancedBands };
+  const trimPct = clampTakeProfitTrimPct(policy.riskRules.takeProfitTrimPct);
+
+  for (const pos of positions) {
+    const qty = Math.abs(pos.quantity);
+    if (qty <= 0.000001 || pos.averageCost <= 0) continue;
+    const sym = normalizeSymbol(pos.symbol);
+    const currentPrice = currentPrices[sym] ?? (pos.quantity !== 0 ? pos.marketValue / pos.quantity : 0);
+    if (!currentPrice || currentPrice <= 0) continue;
+
+    const isShort = pos.quantity < 0;
+    if (isShort && !policy.shortSellingEnabled) continue; // only manage shorts the app could have opened
+    const returnPct = isShort
+      ? ((pos.averageCost - currentPrice) / pos.averageCost) * 100
+      : ((currentPrice - pos.averageCost) / pos.averageCost) * 100;
+    if (returnPct < takeProfitPct) continue;
+
+    const band = Math.floor(returnPct / takeProfitPct);
+    // Ratchet keyed to THIS lot: a stored band only counts if its cost basis still matches the live
+    // position (otherwise it's a new lot from a close+rebuy → start fresh at band 0).
+    const prior = lastBandBySymbol[sym];
+    const lastBand = prior && Math.abs(prior.avgCost - pos.averageCost) < 0.005 ? prior.band : 0;
+    if (band <= lastBand) continue; // already trimmed at/above this band for this lot (monotonic)
+
+    const trimQty = takeProfitTrimQuantity(qty, trimPct);
+    if (trimQty <= 0) continue;
+    const side: "sell" | "cover" = isShort ? "cover" : "sell";
+    const label = trimPct >= 100 ? "full exit" : `${trimPct}% trim`;
+    proposals.push({
+      symbol: sym,
+      side,
+      type: "market",
+      quantity: trimQty,
+      timeInForce: "gfd",
+      marketHours: "regular_hours",
+      rationale: `Proactive take-profit ${label}: ${pos.symbol} +${returnPct.toFixed(2)}% (band ${band} @ ${takeProfitPct}% step) — ${side === "cover" ? "covering" : "selling"} ${trimQty}, letting the rest ride.`,
+      tradeThesisTag: "Risk-Exit",
+      entryMarketRegime: "Active Risk Check",
+      takeProfitBand: band,
+      takeProfitBasis: pos.averageCost
+    });
+    advancedBands.push({ symbol: sym, band });
+  }
+  return { proposals, advancedBands };
 }

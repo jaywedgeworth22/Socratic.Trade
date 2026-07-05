@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { allowedSymbolsForPolicy, evaluateTradeProposal } from "../src/lib/policy";
-import type { AccountCapabilities, EquityPosition, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
-import { getUserWashSaleLockedSymbols } from "../src/lib/tax";
+import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, evaluateTradeProposal } from "../src/lib/policy";
+import type { AccountCapabilities, EquityPosition, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
+import { getUserWashSaleLockProvenance } from "../src/lib/tax";
+import type { WashSaleLockMap } from "../src/lib/tax";
 
 // Mock the tax module so the authoritative wash-sale gate tests don't need a DB.
 vi.mock("../src/lib/tax", () => ({
   getUserWashSaleLockedSymbols: vi.fn((_userId: string) => new Set<string>()),
+  getUserWashSaleLockProvenance: vi.fn((_userId: string): WashSaleLockMap => new Map()),
 }));
 
 // Minimal AccountCapabilities that grants short-selling for tests that verify the enabled path.
@@ -34,7 +36,6 @@ const positions: EquityPosition[] = [{ symbol: "AAPL", quantity: 5, averageCost:
 const enabledPolicy: TradingPolicy = {
   ...DEFAULT_POLICY,
   systemState: "active",
-  paperMode: false,
   strategyAuthority: "decide",
   accountNumber: "A1",
   includedIndices: [],
@@ -66,9 +67,41 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
-  it("blocks a buy of a wash-sale-locked symbol when the guard is on", () => {
+  it("blocks an opening order that exceeds the maxOrderPctOfAdv market-impact cap", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    // daily $-vol = 10 × 100 = $1,000; 5% ADV cap = $50; order $100 > $50 → reject.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: 5 },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("daily $-volume"))).toBe(true);
+  });
+
+  it("allows the same order when the ADV cap is disabled", () => {
+    const tslaQuote = { symbol: "TSLA", price: 10, volume: 100, intradayChangePct: 0, positionMarketValue: 0, score: 1 } as MarketQuote;
+    const marketScan = {
+      source: "test", generatedAt: "2026-06-22T00:00:00.000Z", scannedSymbols: 1, returnedQuotes: 1,
+      topCandidates: [tslaQuote], sectorBySymbol: {}, quotesBySymbol: {}, warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, maxOrderPctOfNav: undefined, maxOrderNotional: 10_000, maxOrderPctOfAdv: undefined },
+      portfolio, positions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 100,
+      washSaleLockedSymbols: new Set(), marketScan
+    });
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks a buy of a wash-sale-locked symbol when the guard is on and handling is explicitly 'block'", () => {
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
+    const decision = evaluateTradeProposal(proposal, {
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,
@@ -94,29 +127,35 @@ describe("evaluateTradeProposal", () => {
   });
 
   // Authoritative cross-account wash-sale gate (architecture-blueprint §3.3):
-  // the gate must block the buy even when the caller omits washSaleLockedSymbols,
-  // resolving the set via getUserWashSaleLockedSymbols(userId) itself.
+  // the gate must block the buy even when the caller omits the locked set/map,
+  // resolving the provenance via getUserWashSaleLockProvenance(userId) itself.
   it("blocks a buy of a wash-sale-locked symbol at the gate even when washSaleLockedSymbols is omitted", () => {
-    vi.mocked(getUserWashSaleLockedSymbols).mockReturnValueOnce(new Set(["TSLA"]));
+    vi.mocked(getUserWashSaleLockProvenance).mockReturnValueOnce(
+      new Map([["TSLA", { account: "ACC1", clearDate: new Date("2026-07-20T00:00:00.000Z"), lossUsd: 100 }]])
+    );
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,
       dailyOrderCount: 0,
       estimatedNotional: 10,
       userId: "user-test",
-      // intentionally omitting washSaleLockedSymbols — gate must resolve it itself
+      // intentionally omitting washSaleLocks/washSaleLockedSymbols — gate must resolve it itself
     });
-    expect(getUserWashSaleLockedSymbols).toHaveBeenCalledWith("user-test", expect.any(Date));
+    expect(getUserWashSaleLockProvenance).toHaveBeenCalledWith("user-test", expect.any(Date));
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
   });
 
-  it("does not call getUserWashSaleLockedSymbols when washSaleLockedSymbols is pre-populated", () => {
-    vi.mocked(getUserWashSaleLockedSymbols).mockClear();
+  it("does not call getUserWashSaleLockProvenance when washSaleLockedSymbols is pre-populated", () => {
+    vi.mocked(getUserWashSaleLockProvenance).mockClear();
+    // "auto" (the default since 2026-07-03) always proceeds — explicitly opt into "block" to
+    // exercise the hard-stop path this test is about.
     const decision = evaluateTradeProposal(proposal, {
-      policy: enabledPolicy,
+      policy: { ...enabledPolicy, taxSettings: { washSaleGuard: true, washSaleHandling: "block" as const, shortTermRatePct: 24, longTermRatePct: 15 } },
       portfolio,
       positions,
       dailyNotionalUsed: 0,
@@ -126,13 +165,45 @@ describe("evaluateTradeProposal", () => {
       userId: "user-test",
     });
     // Pre-populated set is used directly; no extra DB call.
-    expect(getUserWashSaleLockedSymbols).not.toHaveBeenCalled();
+    expect(getUserWashSaleLockProvenance).not.toHaveBeenCalled();
     expect(decision.approved).toBe(false);
     expect(decision.reasons.some((r) => r.includes("wash-sale"))).toBe(true);
   });
 
   it("blocks symbols outside the allowed universe", () => {
     const decision = evaluateTradeProposal({ ...proposal, symbol: "MSFT" }, context());
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
+  });
+
+  it("allows a dynamic-universe symbol when it is present in the latest market scan", () => {
+    const marketScan = {
+      source: "test",
+      generatedAt: "2026-06-23T00:00:00.000Z",
+      scannedSymbols: 1,
+      returnedQuotes: 1,
+      topCandidates: [],
+      sectorBySymbol: {},
+      quotesBySymbol: { XYZ: { symbol: "XYZ", price: 25, score: 62 } },
+      warnings: []
+    } as MarketScan;
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10,
+      marketScan
+    });
+
+    expect(decision.approved).toBe(true);
+  });
+
+  it("blocks a dynamic-universe symbol when no scan proves membership", () => {
+    const decision = evaluateTradeProposal({ ...proposal, symbol: "XYZ" }, {
+      ...context(),
+      policy: { ...enabledPolicy, includedIndices: ["russell2000"], additionalSymbols: [] },
+      estimatedNotional: 10
+    });
+
     expect(decision.approved).toBe(false);
     expect(decision.reasons.join(" ")).toContain("not in the allowed universe");
   });
@@ -180,6 +251,17 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain("exceeds the maximum order limit");
   });
 
+  it("blocks opening orders that sit inside the max but leave no execution buffer", () => {
+    expect(applyOpeningOrderHeadroom(4.99)).toBe(4.74);
+    const decision = evaluateTradeProposal({ ...proposal, dollarAmount: 4.95 }, {
+      ...context(4.95),
+      policy: { ...enabledPolicy, maxOrderNotional: 4.99, maxOrderPctOfNav: undefined, maxDailyNotional: 100 }
+    });
+    expect(decision.approved).toBe(false);
+    expect(decision.reasons.join(" ")).toContain("less than 5% buffer");
+    expect(decision.reasons.join(" ")).toContain("$4.74");
+  });
+
   it("blocks daily notional overflow", () => {
     const decision = evaluateTradeProposal(proposal, {
       ...context(),
@@ -195,7 +277,7 @@ describe("evaluateTradeProposal", () => {
       dailyOrderCount: 10
     });
     expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain("Daily order count");
+    expect(decision.reasons.join(" ")).toContain("Daily opening-order count");
   });
 
   it("blocks hourly notional overflow independently of the daily cap (R1)", () => {
@@ -269,7 +351,8 @@ describe("evaluateTradeProposal", () => {
       { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 2000 },
       {
         ...context(2000),
-        dailyNotionalUsed: 2000
+        dailyNotionalUsed: 2000,
+        dailyOrderCount: 10
       }
     );
     expect(decision.approved).toBe(true);
@@ -314,6 +397,28 @@ describe("evaluateTradeProposal", () => {
   it("does not apply the crisis exposure cap in normal regimes", () => {
     const decision = evaluateTradeProposal(
       { ...proposal, entryMarketRegime: "Neutral (Normal Volatility)", dollarAmount: 1200 },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        }
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
+  it("does not apply the crisis cap to a non-canonical free-text regime label (typed-enum hardening)", () => {
+    // Same over-cap opening exposure as the blocking case above, but with a bare non-canonical
+    // "Crisis" label. The old substring rule (includes("crisis")) would have capped it; the typed
+    // adoption maps any non-canonical string to `unknown`, so a stray label can never silently trip
+    // the crisis cap. Production always persists a canonical label via determineMarketRegime.
+    const decision = evaluateTradeProposal(
+      { ...proposal, entryMarketRegime: "Crisis", dollarAmount: 1200 },
       {
         ...context(1200),
         policy: {
@@ -387,13 +492,16 @@ describe("evaluateTradeProposal", () => {
     expect(decision.reasons.join(" ")).toContain('Order side "short" rejected');
   });
 
-  it("rejects cover proposals", () => {
+  it("allows risk-reducing cover proposals even when opening shorting is disabled", () => {
     const decision = evaluateTradeProposal(
-      { ...proposal, side: "cover" },
-      context()
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined },
+      {
+        ...context(),
+        policy: { ...enabledPolicy, shortSellingEnabled: false, additionalSymbols: ["AAPL", "TSLA"] },
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 100, marketValue: -200, sector: "Auto" }]
+      }
     );
-    expect(decision.approved).toBe(false);
-    expect(decision.reasons.join(" ")).toContain('Order side "cover" rejected');
+    expect(decision.approved).toBe(true);
   });
 
   // T1 — maxSymbolExposureNotional must be side-aware (regression for the side-blind cap
@@ -490,6 +598,21 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
+  it("does not charge risk-reducing covers against the daily opening-order cap", () => {
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "TSLA", side: "cover", quantity: 1, dollarAmount: undefined, type: "market" },
+      {
+        ...context(1000),
+        dailyOrderCount: enabledPolicy.maxDailyOrders,
+        policy: { ...enabledPolicy, shortSellingEnabled: true, additionalSymbols: ["AAPL", "MSFT", "TSLA"] },
+        accountCapabilities: shortCapableAccount,
+        positions: [...positions, { symbol: "TSLA", quantity: -2, averageCost: 1000, marketValue: -2000, sector: "Consumer Cyclical" }]
+      }
+    );
+    expect(decision.approved).toBe(true);
+    expect(decision.reasons.join(" ")).not.toContain("Daily opening-order count");
+  });
+
   // T10 — whole-portfolio gross/net exposure gates (previously silent no-ops).
   it("maxGrossExposurePct blocks an opening buy that pushes gross over the cap", () => {
     const decision = evaluateTradeProposal(
@@ -515,6 +638,51 @@ describe("evaluateTradeProposal", () => {
     );
     expect(decision.reasons.join(" ")).not.toContain("gross exposure");
     expect(decision.reasons.join(" ")).not.toContain("net exposure");
+  });
+
+  it("net cap does NOT block a risk-exit sell whose notional is the 'price unavailable' sentinel", () => {
+    // Regression: a risk-exit SELL with no live quote carried estimatedNotional = MAX_SAFE_INTEGER
+    // (the over-cap sentinel). netDelta = -MAX overshot net through zero to ~-9e15, so
+    // |netProjected| > cap AND > |netNow| → the risk-reducing exit was BLOCKED with
+    // "Projected net exposure $-9,007,199,254,740,800 exceeds net cap". Closes are now exempt.
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, type: "market" },
+      { ...context(Number.MAX_SAFE_INTEGER), policy: { ...enabledPolicy, maxNetExposurePct: 100, maxGrossExposurePct: 100 } }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("net exposure");
+    expect(decision.reasons.join(" ")).not.toContain("gross exposure");
+    expect(decision.approved).toBe(true);
+  });
+
+  it("per-symbol % cap does NOT block a SELL of an already-over-cap position (the risk-exit trigger)", () => {
+    // maxSymbolExposurePct is ON by default (25%). An over-cap position is precisely what triggers a
+    // risk-exit (strategy prompts "SELL/TRIM any position exceeding maxSymbolExposurePct%"), so the cap
+    // must never block the exit it demanded. Covers BOTH the un-priced exit (estimatedNotional 0, the
+    // alpaca fix's fallback) AND a normally-priced partial exit (a pre-existing latent block the
+    // MAX_SAFE_INTEGER sentinel used to mask).
+    const overCapPositions: EquityPosition[] = [
+      { symbol: "AAPL", quantity: 5, averageCost: 200, marketValue: 4000, sector: "Technology" } // 40% of $10k
+    ];
+    for (const est of [0, 1000]) {
+      const decision = evaluateTradeProposal(
+        { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+        { policy: { ...enabledPolicy, maxSymbolExposurePct: 25 }, portfolio, positions: overCapPositions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: est }
+      );
+      expect(decision.reasons.join(" ")).not.toContain("exposure");
+      expect(decision.approved).toBe(true);
+    }
+  });
+
+  it("sector % cap does NOT block a SELL of a name in an already-over-cap sector", () => {
+    const techPositions: EquityPosition[] = [
+      { symbol: "AAPL", quantity: 5, averageCost: 200, marketValue: 4000, sector: "Technology" } // 40% tech in $10k book
+    ];
+    const decision = evaluateTradeProposal(
+      { ...proposal, symbol: "AAPL", side: "sell", quantity: 5, dollarAmount: undefined, type: "market" },
+      { policy: { ...enabledPolicy, sectorCaps: { Technology: 25 } }, portfolio, positions: techPositions, dailyNotionalUsed: 0, dailyOrderCount: 0, estimatedNotional: 0 }
+    );
+    expect(decision.reasons.join(" ")).not.toContain("sector exposure");
+    expect(decision.approved).toBe(true);
   });
 
   it("default 100% gross/net caps do not block a small in-policy order", () => {

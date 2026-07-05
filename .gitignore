@@ -3,8 +3,11 @@
 .claude/
 .agents/
 .tools/
+# Secrets come from Infisical (see docs/secrets.md). .env / .env*.local are NEVER a secret
+# source and must never be committed, in any directory.
 .env
 .env*.local
+**/.env.local
 .next/
 node_modules/
 .npm-cache/
@@ -27,6 +30,7 @@ did.bin
 
 # Root-level one-off local debugging artifacts from manual browser/SQL probes.
 /screenshot*.png
+/artifacts/
 /test-run.ts
 /test-ui.cjs
 /test-ui.js
@@ -43,5 +47,15 @@ did.bin
 * [0-9].json
 * [0-9].css
 
+# GCP service account key — must never be committed.
+gcp-sa-key.json
+
 # Agent decision-note scratch written to the repo root — not app code; keep out of git.
 /memory/
+
+# GCP service-account key for Secret Manager — a credential, never commit it.
+gcp-sa-key.json
+
+# Editor / IDE workspace + scratch files — local only.
+.kiro/
+*.code-workspace

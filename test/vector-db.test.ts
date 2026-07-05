@@ -34,7 +34,9 @@ vi.mock("voyageai", () => ({
 vi.mock("../src/lib/db", () => ({
   resolveApiKey: mocks.resolveApiKey,
   audit: vi.fn(),
-  setInternalSetting: vi.fn()
+  setInternalSetting: vi.fn(),
+  filterNewDocumentChunks: vi.fn((chunks) => chunks),
+  insertDocumentChunks: vi.fn()
 }));
 
 beforeEach(() => {
@@ -90,7 +92,7 @@ describe("vector-db", () => {
   });
 
   it("does not let document metadata spoof reserved tenant or text fields", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -116,10 +118,71 @@ describe("vector-db", () => {
     });
   });
 
+  // 2026-07-04 RAG quick-wins: embedding-model / representation version tag on vectors. A mixed
+  // population (pre-tag legacy vectors vs post-tag) can now be detected/filtered/migrated, and the
+  // stamped fields are NOT spoofable via a caller-supplied metadata key of the same name.
+  it("stamps every new vector with embed_model + embed_rev, and a caller cannot override them", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      {
+        text: "AAPL context",
+        metadata: {
+          symbol: "AAPL",
+          source: "sec-8k",
+          timestamp: "2026-06-18",
+          embed_model: "spoofed-model",
+          embed_rev: 999
+        }
+      }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.embed_model).toBe("voyage-finance-2");
+    expect(records[0].metadata.embed_rev).toBe(1);
+  });
+
+  // Item 6 (2026-07-01 RAG workstream): doc_type is now normalized to lowercase AT WRITE TIME
+  // (cleanMetadata) regardless of what casing the caller passes in — some ingesters historically
+  // passed "10-K"/"10-Q" (upper), others "8-k" (lower). buildExtraFilters still expands both
+  // casings at query time so pre-existing mixed-case vectors stay matchable (see
+  // test/vector-db-retrieval.test.ts "matches doc_type across casings").
+  it("normalizes doc_type to lowercase at write time regardless of caller casing", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      { text: "AAPL 10-K body", metadata: { symbol: "AAPL", source: "sec-edgar", timestamp: "2026-06-20", doc_type: "10-K" } },
+      { text: "AAPL 8-K catalyst", metadata: { symbol: "AAPL", source: "sec-8k", timestamp: "2026-06-20", doc_type: "8-k" } }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.doc_type).toBe("10-k");
+    expect(records[1].metadata.doc_type).toBe("8-k"); // already-lowercase input is unaffected
+  });
+
+  it("leaves other metadata fields' casing untouched (only doc_type is normalized)", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const { storeContexts } = await import("../src/lib/vector-db");
+
+    await storeContexts([
+      { text: "AAPL 10-K body", metadata: { symbol: "AAPL", source: "SEC-EDGAR", timestamp: "2026-06-20", doc_type: "10-K", section: "Risk Factors" } }
+    ]);
+
+    const records = mocks.upsert.mock.calls[0][0].records;
+    expect(records[0].metadata.doc_type).toBe("10-k");
+    expect(records[0].metadata.source).toBe("SEC-EDGAR"); // unrelated field: casing untouched
+    expect(records[0].metadata.section).toBe("Risk Factors"); // unrelated field: casing untouched
+  });
+
   it("honors the configured embedding batch size", async () => {
     process.env.VECTOR_EMBED_BATCH_SIZE = "1";
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     const { storeContexts } = await import("../src/lib/vector-db");
 
@@ -137,7 +200,7 @@ describe("vector-db", () => {
     process.env.VECTOR_EMBED_RETRY_ATTEMPTS = "1";
     process.env.VECTOR_EMBED_RETRY_DELAY_MS = "0";
     process.env.VECTOR_EMBED_BATCH_DELAY_MS = "0";
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed
       .mockRejectedValueOnce(Object.assign(new Error("Status code: 429 Rate Limit Exceeded"), { status: 429 }))
       .mockResolvedValueOnce({ data: [{ embedding: [0.1, 0.2] }] });
@@ -167,7 +230,7 @@ describe("vector-db", () => {
   });
 
   it("retrieves matching text with query embeddings and tenant-safe public/user filters", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     mocks.query.mockResolvedValue({ matches: [{ metadata: { text: "AAPL retrieved filing context" } }, { metadata: {} }] });
     const { retrieveContext } = await import("../src/lib/vector-db");
@@ -178,7 +241,10 @@ describe("vector-db", () => {
     expect(mocks.embed).toHaveBeenCalledWith(expect.objectContaining({ input: ["AAPL catalysts"], inputType: "query" }));
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
-      topK: 2,
+      // Reranking is on by default, so Pinecone over-fetches on the rerank-path cap
+      // (rerankOverFetchK(2), default VECTOR_RERANK_OVERFETCH_K=150) and Voyage reranks back down
+      // to the requested limit. The filter is the tenant-isolation contract under test.
+      topK: 150,
       filter: {
         symbol: { $eq: "AAPL" },
         userId: { $eq: "user-1" }
@@ -207,21 +273,21 @@ describe("vector-db", () => {
     expect(sanitizeUserId("!!!")).toBe("local");
   });
 
-  it("uses sanitized user IDs for key lookup and Pinecone filters", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+  it("uses raw user IDs for key lookup and sanitized user IDs for Pinecone filters", async () => {
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     mocks.query.mockResolvedValue({ matches: [] });
     const { retrieveContext } = await import("../src/lib/vector-db");
 
     await retrieveContext("query", "AAPL", 2, "auth0|user 1");
 
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0user1");
-    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0user1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("pinecone", "auth0|user 1");
+    expect(mocks.resolveApiKey).toHaveBeenCalledWith("voyage", "auth0|user 1");
     expect(mocks.query.mock.calls[0][0].filter.userId).toEqual({ $eq: "auth0user1" });
   });
 
   it("applies deduplication, score sorting, and slicing in retrieveContext", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     
     // First query returns records with IDs and scores
@@ -272,7 +338,7 @@ describe("vector-db", () => {
   });
 
   it("prepends publication date for string, number, and Date object timestamps", async () => {
-    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "robinhood-agentic" }] });
+    mocks.listIndexes.mockResolvedValue({ indexes: [{ name: "socratic-trade" }] });
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
     const { storeContexts } = await import("../src/lib/vector-db");
 

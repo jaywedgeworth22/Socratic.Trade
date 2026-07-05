@@ -16,10 +16,12 @@ type RawNotificationEvent = {
   webhook_url: string | null;
   payload: string;
   error: string | null;
+  connected_account_id: string | null;
 };
 
 export function insertNotificationEvent(input: {
   userId?: string;
+  connectedAccountId?: string;
   type: NotificationEventType;
   title: string;
   status: NotificationStatus;
@@ -35,17 +37,18 @@ export function insertNotificationEvent(input: {
     status: input.status,
     webhookUrl: input.webhookUrl,
     payload: input.payload,
-    error: input.error
+    error: input.error,
+    connectedAccountId: input.connectedAccountId
   };
   getDb()
-    .prepare("INSERT INTO notification_events (id, user_id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(event.id, input.userId ?? "local", event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
+    .prepare("INSERT INTO notification_events (id, user_id, connected_account_id, created_at, type, title, status, webhook_url, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(event.id, input.userId ?? "local", input.connectedAccountId ?? null, event.createdAt, event.type, event.title, event.status, event.webhookUrl ?? null, JSON.stringify(event.payload), event.error ?? null);
   return event;
 }
 
 export function listNotificationEvents(userId: string = "local", limit: number = 50): NotificationEvent[] {
   const rows = getDb()
-    .prepare("SELECT id, created_at, type, title, status, webhook_url, payload, error FROM notification_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .prepare("SELECT id, created_at, type, title, status, webhook_url, payload, error, connected_account_id FROM notification_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
     .all(userId, limit) as RawNotificationEvent[];
   return rows.map((row) => ({
     id: row.id,
@@ -55,6 +58,7 @@ export function listNotificationEvents(userId: string = "local", limit: number =
     status: row.status as NotificationStatus,
     webhookUrl: row.webhook_url ?? undefined,
     payload: JSON.parse(row.payload),
-    error: row.error ?? undefined
+    error: row.error ?? undefined,
+    connectedAccountId: row.connected_account_id ?? undefined
   }));
 }

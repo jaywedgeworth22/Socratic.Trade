@@ -1,9 +1,10 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots } from "./db";
+import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
   EquityPosition,
   ExecutedOrder,
+  ExecutionMode,
   FillEvent,
   FillSource,
   MarketFactor,
@@ -13,8 +14,30 @@ import type {
   Portfolio,
   ReviewedOrder,
   RunAttribution,
+  OrderSide,
   TradeProposal
 } from "./types";
+
+/**
+ * Side-adjusted % move from a proposal's entry anchor to a current price. Positive means the
+ * proposed direction worked (a long that rose / a short that fell). For a REJECTED proposal this is
+ * the realized counterfactual ("what it did since we passed"). Returns undefined when either price is
+ * missing/non-positive so callers can omit the figure rather than show a misleading 0.
+ */
+export function returnSinceProposalPct(
+  referencePrice: number | undefined,
+  currentPrice: number | undefined,
+  side: OrderSide
+): number | undefined {
+  if (referencePrice == null || !(referencePrice > 0) || currentPrice == null || !(currentPrice > 0)) return undefined;
+  const raw = ((currentPrice - referencePrice) / referencePrice) * 100;
+  // Sign convention by intended benefit direction, not just open/close:
+  //   price-up-is-good   = { buy (open long), cover (close short) } -> keep raw
+  //   price-down-is-good = { short (open short), sell (close long) } -> negate raw
+  // So a proposed sell followed by a price drop reads as "the call worked" (positive).
+  const adjusted = side === "sell" || side === "short" ? -raw : raw;
+  return Math.round(adjusted * 100) / 100;
+}
 
 export interface ClosedLot {
   pnl: number;
@@ -32,6 +55,9 @@ export interface ClosedLot {
   confidence?: number;
   /** Sector the position was opened in (stamped at fill time), for the sector dimension. */
   sector?: string;
+  /** Dominant scan factor at entry (stamped at fill time). Preferred by getFactorScorecard over the
+   * signal_snapshot lookup, so per-factor attribution survives after the entry snapshot ages out. */
+  dominantFactor?: MarketFactor;
   /** Max Adverse Excursion (% from entry price, typically negative for longs) persisted after post-mortem. */
   mae?: number;
   /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
@@ -47,6 +73,10 @@ export interface ThesisStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held; undefined when lots lack entryAt/exitAt timestamps. */
+  avgDaysHeld?: number;
+  /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
+  shortTermPct?: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -58,6 +88,8 @@ export interface RegimeStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 /** An open (unclosed) tax lot with its entry date, for holding-period / tax analysis. */
@@ -82,6 +114,7 @@ export function recordPortfolioSnapshot(input: {
   runId?: string;
   accountNumber: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   portfolio: Portfolio;
   positions: EquityPosition[];
 }) {
@@ -90,6 +123,7 @@ export function recordPortfolioSnapshot(input: {
     runId: input.runId,
     accountNumber: input.accountNumber,
     source: input.source,
+    executionMode: input.executionMode,
     equity: input.portfolio.totalMarketValue,
     cash: input.portfolio.cash,
     buyingPower: input.portfolio.buyingPower,
@@ -104,6 +138,7 @@ export function recordFillFromProposal(input: {
   proposalId?: string;
   runId?: string;
   source: FillSource;
+  executionMode?: ExecutionMode;
   proposal: TradeProposal;
   review?: ReviewedOrder;
   execution?: ExecutedOrder;
@@ -125,11 +160,10 @@ export function recordFillFromProposal(input: {
     positiveNumber(reviewPrice) ??
     positiveNumber(impliedPrice) ??
     0;
-  // Deterministic execution-cost model for SIMULATED fills (default OFF). Real broker (live) fills
-  // already carry their realized price, so only frictionless paper fills are adjusted — this makes
-  // the learning loop net-of-cost rather than certifying a frictionless edge that won't survive a
-  // live fill. With no env configured this is a no-op (price === basePrice), so existing P&L is
-  // untouched.
+  // Deterministic execution-cost model for SIMULATED fills (default ON). Real broker (live) fills
+  // already carry their realized price, so only paper fills are adjusted — this makes the learning
+  // loop net-of-cost rather than certifying a frictionless edge that won't survive a live fill.
+  // Disable by setting PAPER_EXECUTION_COST_MODEL=off.
   const costCfg = executionCostConfig();
   let price = basePrice;
   if (costCfg.enabled && input.source === "paper" && basePrice > 0) {
@@ -162,12 +196,16 @@ export function recordFillFromProposal(input: {
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
-  return insertFillEvent({
+  // The symbol's full scan candidate at fill time (factor breakdown source for the entry stamps below).
+  const entryCandidate = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+
+  const fill = insertFillEvent({
     userId: input.userId,
     proposalId: input.proposalId,
     runId: input.runId,
     accountNumber: input.accountNumber,
     source: input.source,
+    executionMode: input.executionMode,
     symbol,
     side: input.proposal.side,
     quantity,
@@ -177,13 +215,101 @@ export function recordFillFromProposal(input: {
     brokerOrderId: input.execution?.orderId,
     // Stamp the symbol's sector at fill time so closed lots can be grouped by sector
     // for the sector learning dimension (sector isn't on the proposal itself).
-    raw: { proposal: input.proposal, review: input.review, execution: input.execution, sector: input.marketScan?.quotesBySymbol[symbol]?.sector }
+    // B5: also stamp the dominant scan factor at ENTRY (opening sides only), mirroring the sector stamp.
+    // getFactorScorecard prefers this persisted value so per-factor attribution survives even after the
+    // entry's signal_snapshot ages out of the 500-row listAudit window — the real coverage-decay hazard.
+    raw: {
+      proposal: input.proposal,
+      review: input.review,
+      execution: input.execution,
+      sector: input.marketScan?.quotesBySymbol[symbol]?.sector,
+      ...((input.proposal.side === "buy" || input.proposal.side === "short")
+        ? {
+            dominantFactor: dominantFactor(entryCandidate?.factorBreakdown),
+            // Episodic experience memory (2026-07-04 composite review A1): also stamp the FULL
+            // 8-factor breakdown + scan breadth at ENTRY, so the closed-lot experience vector can
+            // embed the entry-time state instead of a lookahead reconstruction at exit. Additive
+            // raw fields only — existing readers (thesisMetaFromFill) are unaffected.
+            ...(entryCandidate?.factorBreakdown ? { factorBreakdown: entryCandidate.factorBreakdown } : {}),
+            ...(typeof input.marketScan?.breadthPct === "number" ? { scanBreadthPct: input.marketScan.breadthPct } : {})
+          }
+        : {})
+    }
   });
+
+  // Advance the take-profit trim ratchet ONLY now that the trim has actually been placed/filled — a
+  // proposed / policy-blocked / rejected trim never reaches recordFillFromProposal, so it's re-offered next
+  // run instead of silently ratcheting past its band. Keyed to the lot's cost basis for close+rebuy resets.
+  if (typeof input.proposal.takeProfitBand === "number") {
+    try {
+      recordTakeProfitTrimBand(input.accountNumber, symbol, input.proposal.takeProfitBand, input.proposal.takeProfitBasis ?? 0, input.userId);
+    } catch {
+      // ratchet bookkeeping must never break fill recording
+    }
+  }
+
+  // Episodic experience memory write hook (2026-07-04 composite review A1): a sell/cover fill may
+  // have just CLOSED one or more lots — embed each closed lot's entry state + realized outcome into
+  // the experience-memory vector namespace, keyed by the entry proposalId. Strictly fire-and-forget:
+  // the dynamic import + async body keep this sync function's signature and money-path behavior
+  // untouched, and any failure (no vector keys, no matched lot, provider error) degrades to a
+  // console warning inside recordClosedLotExperience (which never throws).
+  if (input.proposal.side === "sell" || input.proposal.side === "cover") {
+    void import("./experience-memory")
+      .then((experienceMemory) =>
+        experienceMemory.recordClosedLotExperience({
+          userId: input.userId,
+          accountNumber: input.accountNumber,
+          source: input.source,
+          closingFill: fill,
+          closingProposal: input.proposal
+        })
+      )
+      .catch((err) => {
+        console.warn("[performance] experience-memory hook failed:", err instanceof Error ? err.message : String(err));
+      });
+  }
+  return fill;
 }
 
-export function getPerformanceSummary(accountNumber: string, currentPrices: Record<string, number> = {}, userId: string = "local"): PerformanceSummary {
-  const liveFills = listFillEvents(accountNumber, "live", 500, userId);
-  const paperFills = listFillEvents(accountNumber, "paper", 500, userId);
+/**
+ * Optional pre-fetched fill arrays so a single request (e.g. the dashboard snapshot) can fetch
+ * live + paper fills ONCE and thread them into every consumer instead of each function re-issuing
+ * its own `listFillEvents` SELECT + JSON.parse + FIFO replay. When omitted, each function fetches
+ * internally exactly as before — so every other caller keeps working unchanged.
+ */
+export interface PrefetchedFills {
+  liveFills?: FillEvent[];
+  paperFills?: FillEvent[];
+}
+
+/** Resolve the fills for a single `FillSource`, preferring pre-fetched arrays when supplied. */
+function fillsForSource(
+  accountNumber: string,
+  source: FillSource | undefined,
+  userId: string,
+  prefetched?: PrefetchedFills
+): FillEvent[] {
+  if (prefetched) {
+    if (source === "live") return prefetched.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
+    if (source === "paper") return prefetched.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
+    // No source filter: combine both pre-fetched arrays only when BOTH are present, so the result
+    // is identical to the unfiltered SELECT for the common (well under 500 rows per source) case.
+    if (prefetched.liveFills && prefetched.paperFills) {
+      return [...prefetched.liveFills, ...prefetched.paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
+    }
+  }
+  return listFillEvents(accountNumber, source, 500, userId);
+}
+
+export function getPerformanceSummary(
+  accountNumber: string,
+  currentPrices: Record<string, number> = {},
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): PerformanceSummary {
+  const liveFills = prefetched?.liveFills ?? listFillEvents(accountNumber, "live", 500, userId);
+  const paperFills = prefetched?.paperFills ?? listFillEvents(accountNumber, "paper", 500, userId);
   const allFills = [...liveFills, ...paperFills].sort((a, b) => a.filledAt.localeCompare(b.filledAt));
   const livePnl = calculatePnl(liveFills, currentPrices);
   const paperPnl = calculatePnl(paperFills, currentPrices);
@@ -194,11 +320,14 @@ export function getPerformanceSummary(accountNumber: string, currentPrices: Reco
     liveEquityCurve: liveSnapshots.map((snapshot) => ({
       timestamp: snapshot.createdAt,
       equity: snapshot.equity,
-      source: "live"
+      source: "live",
+      // Cash rides along so the SPY benchmark can infer external deposits/withdrawals
+      // (time-weighted return) instead of counting a transfer as a gain/loss.
+      cash: snapshot.cash
     })),
     paperEquityCurve:
       paperSnapshots.length > 0
-        ? paperSnapshots.map((snapshot) => ({ timestamp: snapshot.createdAt, equity: snapshot.equity, source: "paper" }))
+        ? paperSnapshots.map((snapshot) => ({ timestamp: snapshot.createdAt, equity: snapshot.equity, source: "paper", cash: snapshot.cash }))
         : syntheticPaperCurve(paperFills),
     liveRealizedPnl: livePnl.realized,
     paperRealizedPnl: paperPnl.realized,
@@ -210,89 +339,6 @@ export function getPerformanceSummary(accountNumber: string, currentPrices: Reco
     paperAverageReturnPct: averageReturn(paperPnl.closedLots),
     attribution: combineAttribution(livePnl.attribution, paperPnl.attribution),
     fills: allFills.slice(-100)
-  };
-}
-
-// Standalone paper account: starts from a fixed paper cash balance (independent of the
-// real brokerage account), applies all paper fills, and marks open positions to the
-// supplied live prices so unrealized P&L and equity reflect the real market.
-export function getPaperPortfolioProjection(input: {
-  accountNumber: string;
-  startingCash: number;
-  currentPrices?: Record<string, number>;
-  userId?: string;
-}): { portfolio: Portfolio; positions: EquityPosition[] } {
-  const paperFills = listFillEvents(input.accountNumber, "paper", 500, input.userId ?? "local").filter(isAccountingFill);
-  const prices = input.currentPrices ?? {};
-  const positions = new Map<string, EquityPosition>();
-  let cash = input.startingCash;
-
-  for (const fill of paperFills.sort((a, b) => a.filledAt.localeCompare(b.filledAt))) {
-    if (fill.quantity <= 0 || fill.price <= 0) continue;
-    const symbol = normalizeSymbol(fill.symbol);
-    const current = positions.get(symbol) ?? { symbol, quantity: 0, averageCost: 0, marketValue: 0 };
-    const q = current.quantity;
-    if (fill.side === "buy" || fill.side === "short") {
-      // Opening side: a `buy` increases quantity (+), a `short` decreases it (-). When the fill
-      // lands on an OPPOSITE-side position it closes that position first (and may flip past zero);
-      // it must NOT blend opposite-side cost into averageCost — averageCost is only re-weighted on
-      // a same-side increase, left intact on a partial opposite-side close, and re-based to the fill
-      // price on a flip. (T5: opposite-side averaging guard.)
-      const isShort = fill.side === "short";
-      const dir = isShort ? -1 : 1;
-      const fillCost = fill.quantity * fill.price;
-      const nextQuantity = q + dir * fill.quantity;
-      const nextAbsQuantity = Math.abs(nextQuantity);
-      const sameSide = q === 0 || Math.sign(q) === dir;
-      let nextAverageCost: number;
-      if (sameSide) {
-        const currentCost = current.averageCost * Math.abs(q);
-        nextAverageCost = nextAbsQuantity > 0.000001 ? (currentCost + fillCost) / nextAbsQuantity : fill.price;
-      } else if (nextAbsQuantity <= 0.000001) {
-        nextAverageCost = 0; // fully closed the opposite-side position
-      } else if (Math.sign(nextQuantity) === Math.sign(q)) {
-        nextAverageCost = current.averageCost; // partial close of the opposite side; remaining basis unchanged
-      } else {
-        nextAverageCost = fill.price; // flipped: the excess opens a fresh position at the fill price
-      }
-      if (nextAbsQuantity <= 0.000001) positions.delete(symbol);
-      else positions.set(symbol, { ...current, quantity: nextQuantity, averageCost: nextAverageCost, marketValue: 0 });
-      cash += isShort ? fillCost : -fillCost;
-    } else {
-      // Closing side: a `sell` may only reduce a LONG, a `cover` only a SHORT. A wrong-sign or flat
-      // close (sell with no long / cover with no short) matches nothing and is skipped — never deepen
-      // the opposite-side position. (T5: wrong-sign/flat close guard.)
-      const isCover = fill.side === "cover";
-      const sameSide = isCover ? q < 0 : q > 0;
-      if (!sameSide) continue;
-      const matchedQuantity = Math.min(Math.abs(q), fill.quantity);
-      const nextQuantity = q + (isCover ? matchedQuantity : -matchedQuantity);
-      if (Math.abs(nextQuantity) <= 0.000001) positions.delete(symbol);
-      else positions.set(symbol, { ...current, quantity: nextQuantity });
-      cash += isCover ? -matchedQuantity * fill.price : matchedQuantity * fill.price;
-    }
-  }
-
-  // Mark open positions to live prices (fall back to average cost when a price is missing).
-  const projectedPositions = Array.from(positions.values())
-    .filter((position) => Math.abs(position.quantity) > 0.000001)
-    .map((position) => {
-      const mark = prices[normalizeSymbol(position.symbol)] ?? position.averageCost;
-      return { ...position, marketValue: position.quantity * mark };
-    });
-  const equityMarketValue = projectedPositions.reduce((sum, position) => sum + position.marketValue, 0);
-  const totalMarketValue = cash + equityMarketValue;
-
-  return {
-    positions: projectedPositions,
-    portfolio: {
-      accountNumber: input.accountNumber,
-      cash,
-      buyingPower: Math.max(0, cash),
-      equityMarketValue,
-      optionMarketValue: 0,
-      totalMarketValue
-    }
   };
 }
 
@@ -308,6 +354,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       regime?: string;
       confidence?: number;
       sector?: string;
+      dominantFactor?: MarketFactor;
       entryAt?: string;
     }>
   >();
@@ -330,6 +377,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         regime: meta.regime,
         confidence: meta.confidence,
         sector: meta.sector,
+        dominantFactor: meta.dominantFactor,
         entryAt: fill.filledAt
       });
       addAttribution(attribution, fill, 0);
@@ -369,9 +417,18 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         exitAt: fill.filledAt,
         entryRunId: lot.runId,
         confidence: lot.confidence,
-        sector: lot.sector
+        sector: lot.sector,
+        dominantFactor: lot.dominantFactor,
+        mae: fill.mae,
+        mfe: fill.mfe
       });
       addAttribution(attribution, fill, pnl);
+      // Change A: dual-sided credit — also credit the ENTRY run (the run that opened this lot).
+      // Guard prevents double-counting when the same run opened and closed (that run already
+      // gets the realized P&L via realizedPnl/realizedPnlAsExit from the addAttribution call).
+      if (lot.runId && lot.runId !== (fill.runId ?? "manual")) {
+        addEntryAttribution(attribution, lot.runId, pnl);
+      }
       lot.quantity -= matched;
       remaining -= matched;
       if (lot.quantity <= 0.000001) symbolLots.splice(idx, 1);
@@ -416,9 +473,10 @@ export function getThesisScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ThesisStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.thesisTag && lot.thesisTag.trim() ? lot.thesisTag.trim() : "Untagged"),
@@ -430,9 +488,10 @@ export function getRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): RegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.regime && lot.regime.trim() ? lot.regime.trim() : "Unspecified"),
@@ -449,6 +508,8 @@ export interface SectorStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 export function getSectorScorecard(
@@ -466,8 +527,13 @@ export function getSectorScorecard(
 }
 
 /** Closed lots with entry/exit context, oldest-first, for excursion (MAE/MFE) analysis. */
-export function getClosedLotsDetailed(accountNumber: string, source?: FillSource, userId: string = "local"): ClosedLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots;
+export function getClosedLotsDetailed(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): ClosedLot[] {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots;
 }
 
 /**
@@ -486,6 +552,8 @@ export interface ThesisRegimeStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  avgDaysHeld?: number;
+  shortTermPct?: number;
 }
 
 const THESIS_REGIME_SEP = " @ ";
@@ -539,14 +607,19 @@ export function getSignalEfficacy(
   // now records the full scored set (chosen + skipped); only CHOSEN entries can have a
   // matching closed lot, so skip the rest (older snapshots predate the flag → undefined,
   // which we keep, preserving the chosen-only behavior they had).
-  const signalByKey = new Map<string, { congressNet?: number; insiderSentiment?: number }>();
+  const signalByKey = new Map<string, { congressNet?: number; congressCompositeScore?: number; congressCompositeDirection?: string; insiderSentiment?: number }>();
   for (const event of listAudit(500, userId)) {
     if (event.kind !== "signal_snapshot") continue;
-    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; insiderSentiment?: number }> };
+    const payload = event.payload as { runId?: string; signals?: Array<{ symbol?: string; chosen?: boolean; congressNet?: number; congressCompositeScore?: number; congressCompositeDirection?: string; insiderSentiment?: number }> };
     if (!payload?.runId || !Array.isArray(payload.signals)) continue;
     for (const s of payload.signals) {
       if (!s.symbol || s.chosen === false) continue;
-      signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, { congressNet: s.congressNet, insiderSentiment: s.insiderSentiment });
+      signalByKey.set(`${payload.runId}|${normalizeSymbol(s.symbol)}`, {
+        congressNet: s.congressNet,
+        congressCompositeScore: s.congressCompositeScore,
+        congressCompositeDirection: s.congressCompositeDirection,
+        insiderSentiment: s.insiderSentiment
+      });
     }
   }
 
@@ -565,6 +638,13 @@ export function getSignalEfficacy(
     const sig = lot.entryRunId && lot.symbol ? signalByKey.get(`${lot.entryRunId}|${normalizeSymbol(lot.symbol)}`) : undefined;
     if (!sig) continue;
     if (typeof sig.congressNet === "number" && sig.congressNet > 0) bump("Congressional buying tailwind", lot);
+    if (
+      sig.congressCompositeDirection === "BUY" &&
+      typeof sig.congressCompositeScore === "number" &&
+      sig.congressCompositeScore >= 60
+    ) {
+      bump("Congress.Trade BUY signal at entry", lot);
+    }
     if (typeof sig.insiderSentiment === "number" && sig.insiderSentiment >= 60) bump("Insider buying tailwind", lot);
   }
 
@@ -589,15 +669,37 @@ export interface FactorScorecardStat {
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held; undefined when lots lack entryAt/exitAt timestamps. */
+  avgDaysHeld?: number;
+  /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
+  shortTermPct?: number;
+}
+
+/**
+ * Options for `getFactorScorecard`.
+ * When `regime` is supplied, only closed lots whose `regime` field matches it are aggregated.
+ * Default (no option / undefined regime): aggregate ALL closed lots regardless of regime
+ * (backward-compatible behavior unchanged).
+ */
+export interface FactorScorecardOptions {
+  regime?: string;
 }
 
 export function getFactorScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  options?: FactorScorecardOptions
 ): FactorScorecardStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  // Optional regime filter — default (no option) preserves the original all-lots behavior.
+  // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
+  // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
+  // doc comment before renaming a label; existing rows would silently stop matching.
+  const closedLots = options?.regime
+    ? allLots.filter((lot) => lot.regime?.trim() === options.regime?.trim())
+    : allLots;
   if (closedLots.length === 0) return [];
 
   const factorByKey = new Map<string, MarketFactor>();
@@ -615,15 +717,21 @@ export function getFactorScorecard(
   const factorKey = (lot: ClosedLot) =>
     lot.entryRunId && lot.symbol ? `${lot.entryRunId}|${normalizeSymbol(lot.symbol)}` : undefined;
 
+  // Resolve each lot's dominant entry factor. B5: prefer the value PERSISTED at entry on the fill raw
+  // (`lot.dominantFactor`) — it survives even after the entry's signal_snapshot ages out of the 500-row
+  // listAudit window (the real coverage-decay hazard). Fall back to the signal_snapshot lookup for legacy
+  // lots that predate the stamp. A lot whose factor can't be resolved by EITHER path is DROPPED — never
+  // silently attributed to "momentum" (mislabeling would corrupt the per-factor stats the tuner learns from).
+  const resolveFactor = (lot: ClosedLot): MarketFactor | undefined => {
+    if (lot.dominantFactor) return lot.dominantFactor;
+    const key = factorKey(lot);
+    return key ? factorByKey.get(key) : undefined;
+  };
+
   return aggregateClosedLots(
-    closedLots.filter((lot) => {
-      const key = factorKey(lot);
-      return Boolean(key && factorByKey.has(key));
-    }),
-    (lot) => {
-      const key = factorKey(lot);
-      return key ? factorByKey.get(key) ?? "momentum" : "momentum";
-    },
+    closedLots.filter((lot) => resolveFactor(lot) !== undefined),
+    // Safe: the filter above guarantees a resolved factor here.
+    (lot) => resolveFactor(lot) as MarketFactor,
     userId
   ).map(({ key, ...rest }) => ({ factor: key as MarketFactor, ...rest }));
 }
@@ -641,18 +749,29 @@ export interface SkippedCandidateReturn {
   regime?: string;
   dominantFactor?: MarketFactor;
   bulletins?: string[];
+  /** SPY % return (item 4) over this row's OWN entry→now window, from the injected per-date SPY map.
+   * Present only when `benchmarkReturnBySnapshotDate` was supplied AND had a value for this row's date. */
+  benchmarkReturnPct?: number;
 }
 
 export function getSkippedCandidateReturns(
   currentPrices: Record<string, number>,
   userId: string = "local",
-  options: { limit?: number; maxAgeDays?: number } = {}
+  options: { limit?: number; maxAgeDays?: number; connectedAccountId?: string; benchmarkReturnBySnapshotDate?: Map<string, number> } = {}
 ): SkippedCandidateReturn[] {
   const limit = options.limit ?? 12;
   const maxAgeDays = options.maxAgeDays ?? 14;
   const now = Date.now();
+  // B4: SPY return (as a %) for a row's snapshot date, over the same entry→now window. Injected by the
+  // caller (built once from the reused backtest SPY fetch); undefined when no SPY value for that date.
+  const benchmarkPctFor = (asOf?: string): number | undefined => {
+    if (!options.benchmarkReturnBySnapshotDate || !asOf) return undefined;
+    const dateKey = asOf.slice(0, 10);
+    const frac = options.benchmarkReturnBySnapshotDate.get(dateKey);
+    return typeof frac === "number" ? Number((frac * 100).toFixed(2)) : undefined;
+  };
   const seen = new Set<string>();
-  const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3)
+  const returns: SkippedCandidateReturn[] = listMaturedSkippedCounterfactuals(userId, limit * 3, options.connectedAccountId)
     .map((row): SkippedCandidateReturn | undefined => {
       if (!row.exitPrice || row.returnPct === undefined) return undefined;
       const asOfTime = new Date(row.snapshotAt).getTime();
@@ -671,7 +790,8 @@ export function getSkippedCandidateReturns(
         sector: row.sector,
         regime: row.regime,
         dominantFactor: row.dominantFactor as MarketFactor | undefined,
-        bulletins: row.bulletins
+        bulletins: row.bulletins,
+        ...(benchmarkPctFor(row.snapshotAt) !== undefined ? { benchmarkReturnPct: benchmarkPctFor(row.snapshotAt) } : {})
       };
     })
     .filter((row): row is SkippedCandidateReturn => Boolean(row));
@@ -718,12 +838,206 @@ export function getSkippedCandidateReturns(
         sector: signal.sector,
         regime: signal.regime,
         dominantFactor: dominantFactor(signal.factorBreakdown),
-        bulletins: signal.bulletins
+        bulletins: signal.bulletins,
+        ...(benchmarkPctFor(asOf) !== undefined ? { benchmarkReturnPct: benchmarkPctFor(asOf) } : {})
       });
     }
   }
 
   return returns.sort((a, b) => b.returnPct - a.returnPct).slice(0, limit);
+}
+
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
+}
+
+/**
+ * Red Team (Bear) efficacy scorecard — advisory-only measurement of the adversary that can veto any
+ * high-conviction proposal. Joins `proposal_rejected_by_red_team` audit events (the veto decision;
+ * stamped with runId + model since 2026-07) to their matured counterfactual return in
+ * `skipped_candidate_counterfactuals` (written by `recordRejectedProposalCounterfactual` at veto time,
+ * same pipeline as policy blocks / human rejections) via the shared `(runId, symbol)` key. A veto whose
+ * counterfactual return is NEGATIVE means the vetoed trade would have lost money — the Bear "added
+ * value" by keeping the proposal out. A veto whose counterfactual return is POSITIVE means the vetoed
+ * trade would have made money — the Bear's rejection MISSED a winner. Never gates anything; this is a
+ * read-only scorecard for the approval-time debate prompt and the Results page (console wiring left for
+ * the console lane — see docs/rollouts/2026-07-04-w1-learning-loops.md).
+ */
+export interface RedTeamEfficacy {
+  /** Total Bear-veto audit events observed in the scanned window (matured or not). */
+  totalVetoes: number;
+  /** Vetoes whose post-veto counterfactual return has matured (resolvable — never fabricated). */
+  maturedVetoes: number;
+  /** Vetoes whose counterfactual terminally failed to resolve (delisted/renamed — kill-survivorship:
+   *  counted in the denominator instead of silently dropping out of the scorecard). */
+  unresolvableVetoes: number;
+  /** maturedVetoes / totalVetoes (0 when no vetoes observed). Coverage, not a rejection rate. */
+  maturedCoveragePct: number;
+  /** Human coverage disclosure, e.g. "4/6 vetoes resolved (66.7%) — 1 unresolvable; may be survivor-biased". */
+  coverage: string;
+  /** Share of MATURED vetoes where the counterfactual return was negative (the veto avoided a loser). */
+  vetoValueAddRate: number;
+  /** Share of MATURED vetoes where the counterfactual return was positive (the veto missed a winner —
+   *  the survivor-risk the Bear itself introduced by rejecting a trade that would have worked). */
+  survivorRiskHitRate: number;
+  /** Mean counterfactual return (%) across matured vetoes; negative is good (vetoes avoided losses). */
+  avgReturnPct: number;
+  /** Per red-team model breakdown (present only for models that stamped ≥1 matured veto). */
+  byModel: Array<{
+    model: string;
+    maturedVetoes: number;
+    vetoValueAddRate: number;
+    survivorRiskHitRate: number;
+    avgReturnPct: number;
+  }>;
+  /** The individual matured veto records, most recent counterfactual maturation first — bounded by `limit`. */
+  records: RedTeamVetoRecord[];
+}
+
+export function getRedTeamEfficacy(
+  userId: string = "local",
+  options: { auditLimit?: number; limit?: number; connectedAccountId?: string } = {}
+): RedTeamEfficacy {
+  const auditLimit = options.auditLimit ?? 500;
+  const limit = options.limit ?? 50;
+
+  const vetoesByKey = new Map<string, { runId: string; symbol: string; side?: string; thesisTag?: string; reason?: string; model?: string }>();
+  // Kind-scoped audit query (Codex review on PR #365): the LIMIT applies AFTER the kind
+  // filter, so newer audit rows of other kinds can never push older Bear vetoes out of the
+  // scanned window and zero the scorecard's history.
+  for (const event of listAuditByKind("proposal_rejected_by_red_team", auditLimit, userId, options.connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; thesisTag?: string; reason?: string; model?: string } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    // Opening sides only: the strategy audits EVERY Bear veto but records counterfactual
+    // candidates only for vetoed buy/short OPENINGS (a vetoed exit is not a missed
+    // opportunity), so counting exit vetoes here would permanently depress maturation
+    // coverage with rows that can never mature. Legacy audits without a side are kept
+    // (the writer has always been opening-scoped downstream).
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    const symbol = normalizeSymbol(payload.symbol);
+    vetoesByKey.set(`${payload.runId}:${symbol}`, {
+      runId: payload.runId,
+      symbol,
+      side: payload.side,
+      thesisTag: payload.thesisTag,
+      reason: payload.reason,
+      model: payload.model
+    });
+  }
+
+  const totalVetoes = vetoesByKey.size;
+  // Keyed (runId, symbol) lookups rather than a return_pct-DESC top slice of all matured
+  // rows: the top-return slice could drop exactly the low/negative-return vetoes (the
+  // avoided losers) that vetoValueAddRate exists to count (Codex review on PR #365).
+  const maturedPairs: Array<{ record: RedTeamVetoRecord; maturedAt: string }> = [];
+  for (const veto of vetoesByKey.values()) {
+    const row = getMaturedSkippedCounterfactualByRunSymbol(userId, veto.runId, veto.symbol);
+    if (!row || row.returnPct === undefined) continue;
+    const returnPct = veto.side === "short" ? -row.returnPct : row.returnPct;
+    maturedPairs.push({
+      record: {
+        runId: veto.runId,
+        symbol: veto.symbol,
+        side: veto.side,
+        thesisTag: veto.thesisTag,
+        reason: veto.reason,
+        model: veto.model,
+        returnPct
+      },
+      maturedAt: row.updatedAt
+    });
+  }
+  // Most recent counterfactual maturation first (the documented `records` ordering contract).
+  maturedPairs.sort((a, b) => b.maturedAt.localeCompare(a.maturedAt));
+  const records: RedTeamVetoRecord[] = maturedPairs.map((pair) => pair.record);
+
+  // Kill-survivorship (Wave-2 outcome engine): terminally-unresolvable counterfactuals
+  // (delisted/renamed vetoed names) stay in the denominator and in the disclosure instead
+  // of vanishing from the scorecard.
+  let unresolvableVetoes = 0;
+  if (totalVetoes > 0) {
+    for (const row of listSkippedCounterfactualsByStatus(userId, "unresolvable", Math.max(auditLimit, totalVetoes * 2))) {
+      if (vetoesByKey.has(`${row.runId}:${normalizeSymbol(row.symbol)}`)) unresolvableVetoes += 1;
+    }
+  }
+
+  const maturedVetoes = records.length;
+  const valueAdds = records.filter((r) => r.returnPct < 0).length;
+  const survivorHits = records.filter((r) => r.returnPct > 0).length;
+  const avgReturnPct = maturedVetoes > 0 ? records.reduce((sum, r) => sum + r.returnPct, 0) / maturedVetoes : 0;
+
+  const byModelMap = new Map<string, RedTeamVetoRecord[]>();
+  for (const record of records) {
+    if (!record.model) continue;
+    const bucket = byModelMap.get(record.model);
+    if (bucket) bucket.push(record);
+    else byModelMap.set(record.model, [record]);
+  }
+
+  const resolvedDenominator = maturedVetoes + unresolvableVetoes;
+  const coverage =
+    totalVetoes > 0
+      ? `${maturedVetoes}/${totalVetoes} vetoes resolved (${Number(((maturedVetoes / totalVetoes) * 100).toFixed(1))}%)${
+          unresolvableVetoes > 0 ? ` — ${unresolvableVetoes} unresolvable; may be survivor-biased` : ""
+        }${totalVetoes - resolvedDenominator > 0 ? `; ${totalVetoes - resolvedDenominator} still maturing` : ""}`
+      : "no vetoes observed";
+
+  return {
+    totalVetoes,
+    maturedVetoes,
+    unresolvableVetoes,
+    maturedCoveragePct: totalVetoes > 0 ? Number(((maturedVetoes / totalVetoes) * 100).toFixed(1)) : 0,
+    coverage,
+    vetoValueAddRate: maturedVetoes > 0 ? Number(((valueAdds / maturedVetoes) * 100).toFixed(1)) : 0,
+    survivorRiskHitRate: maturedVetoes > 0 ? Number(((survivorHits / maturedVetoes) * 100).toFixed(1)) : 0,
+    avgReturnPct: Number(avgReturnPct.toFixed(2)),
+    byModel: Array.from(byModelMap.entries()).map(([model, modelRecords]) => {
+      const modelValueAdds = modelRecords.filter((r) => r.returnPct < 0).length;
+      const modelSurvivorHits = modelRecords.filter((r) => r.returnPct > 0).length;
+      const modelAvg = modelRecords.reduce((sum, r) => sum + r.returnPct, 0) / modelRecords.length;
+      return {
+        model,
+        maturedVetoes: modelRecords.length,
+        vetoValueAddRate: Number(((modelValueAdds / modelRecords.length) * 100).toFixed(1)),
+        survivorRiskHitRate: Number(((modelSurvivorHits / modelRecords.length) * 100).toFixed(1)),
+        avgReturnPct: Number(modelAvg.toFixed(2))
+      };
+    }),
+    records: records.slice(0, limit)
+  };
+}
+
+/**
+ * Coverage disclosure for the missed-opportunity readouts built on `getSkippedCandidateReturns` /
+ * `summarizeMissedOpportunities`: how many skipped-candidate counterfactuals actually resolved vs
+ * terminally failed ('unresolvable' — delisted/renamed names that would otherwise silently drop out
+ * of the matured set, i.e. survivorship bias in the "what we missed" evidence). Render as
+ * "N/M resolved (X%)" next to any missed-opportunity number.
+ */
+export function getMissedOpportunityCoverage(userId: string = "local", connectedAccountId?: string): SkippedCounterfactualCoverage {
+  return getSkippedCounterfactualCoverage(userId, connectedAccountId);
+}
+
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
 }
 
 /**
@@ -747,6 +1061,86 @@ export interface ConfidenceCalibrationStat {
   avgReturnPct: number;
 }
 
+/** The confidence-calibration band label a confidenceScore (1–100) falls into. Exported so the sizer
+ * can look up a proposal's realized band without duplicating the boundaries. */
+export function confidenceBandOf(c: number): string {
+  return c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)";
+}
+
+/** Confidence bands from LOWEST to HIGHEST confidence — the order calibration must be monotonic in. */
+const CONFIDENCE_BANDS_ASC = ["1-49 (low)", "50-69", "70-84", "85-100 (high)"] as const;
+
+/**
+ * Remap a proposal's raw conviction (confidenceScore/100) toward the account's REALIZED win rate for its
+ * confidence band (item 6, panel-hardened). Properties:
+ *  - Uses `shrunkWinRate` (Bayesian-shrunk toward 50%), never the raw win rate.
+ *  - DOWNWARD-ONLY: never inflates conviction on the learner's say-so (a well-calibrated or under-confident
+ *    band is left at raw).
+ *  - ISOTONIC: realized rates are made non-decreasing across bands (low→high) via a pooled-adjacent-violators
+ *    pass, so a low-N mid band whose realized rate dips can't invert the ordering and size a mid call above
+ *    a high call.
+ *  - Per-band SAMPLE-GATED: a band with fewer than `minTrades` closed lots is ignored (raw conviction).
+ * Pure over (confidenceScore, calibration). Shorts have no long-only calibration and should not call this —
+ * the sizer falls back to raw for them.
+ */
+export function calibratedConviction(
+  confidenceScore: number,
+  calibration: ConfidenceCalibrationStat[],
+  minTrades = 5
+): number {
+  const raw = Math.max(0, Math.min(1, confidenceScore / 100));
+  const band = confidenceBandOf(confidenceScore);
+  const stat = calibration.find((c) => c.band === band);
+  if (!stat || stat.trades < minTrades) return raw;
+
+  // Build an isotonic (non-decreasing by band, low→high) realized-rate curve from sufficiently-sampled
+  // bands, then read this band's isotonic value. Bands below the sample gate are skipped (not fabricated).
+  const points = CONFIDENCE_BANDS_ASC
+    .map((b) => calibration.find((c) => c.band === b))
+    .map((c) => (c && c.trades >= minTrades ? Math.max(0, Math.min(1, c.shrunkWinRate / 100)) : undefined));
+  const isotonic = poolAdjacentViolators(points);
+  const bandIdx = CONFIDENCE_BANDS_ASC.indexOf(band as (typeof CONFIDENCE_BANDS_ASC)[number]);
+  const realized = bandIdx >= 0 ? isotonic[bandIdx] : undefined;
+  if (realized === undefined || realized >= raw) return raw;
+  // Blend 50/50 toward realized so a single unlucky window can't zero out sizing, but persistent
+  // over-confidence is meaningfully de-risked.
+  return Number(((raw + realized) / 2).toFixed(4));
+}
+
+/**
+ * Pool-adjacent-violators (isotonic regression, non-decreasing) over an ordered series with optional gaps.
+ * `undefined` entries are treated as unknown and passed through unchanged (they are sample-gated-out bands);
+ * the monotonic constraint is enforced only across the KNOWN entries. Pure.
+ */
+function poolAdjacentViolators(values: Array<number | undefined>): Array<number | undefined> {
+  const idx = values.map((v, i) => (v === undefined ? -1 : i)).filter((i) => i >= 0);
+  if (idx.length <= 1) return values.slice();
+  // Collect known values with unit weights, then merge adjacent decreasing blocks by averaging.
+  const blocks = idx.map((i) => ({ sum: values[i] as number, count: 1, indices: [i] }));
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < blocks.length - 1; i++) {
+      if (blocks[i].sum / blocks[i].count > blocks[i + 1].sum / blocks[i + 1].count) {
+        blocks[i] = {
+          sum: blocks[i].sum + blocks[i + 1].sum,
+          count: blocks[i].count + blocks[i + 1].count,
+          indices: [...blocks[i].indices, ...blocks[i + 1].indices]
+        };
+        blocks.splice(i + 1, 1);
+        merged = true;
+        break;
+      }
+    }
+  }
+  const out = values.slice();
+  for (const block of blocks) {
+    const avg = block.sum / block.count;
+    for (const i of block.indices) out[i] = avg;
+  }
+  return out;
+}
+
 export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
@@ -754,10 +1148,9 @@ export function getConfidenceCalibration(
   userId: string = "local"
 ): ConfidenceCalibrationStat[] {
   const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
-  const bandOf = (c: number): string => (c >= 85 ? "85-100 (high)" : c >= 70 ? "70-84" : c >= 50 ? "50-69" : "1-49 (low)");
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
-    (lot) => bandOf(lot.confidence as number),
+    (lot) => confidenceBandOf(lot.confidence as number),
     userId
   )
     .map(({ key, trades, winRate, shrunkWinRate, avgReturnPct }) => ({ band: key, trades, winRate, shrunkWinRate, avgReturnPct }))
@@ -765,8 +1158,13 @@ export function getConfidenceCalibration(
 }
 
 /** Open (unclosed) lots with entry dates, for holding-period and tax analysis. */
-export function getOpenLots(accountNumber: string, source?: FillSource, userId: string = "local"): OpenLot[] {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).openLots;
+export function getOpenLots(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): OpenLot[] {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).openLots;
 }
 
 /**
@@ -799,16 +1197,39 @@ function aggregateClosedLots(
   totalPnl: number;
   shrunkWinRate: number;
   shrunkAvgReturnPct: number;
+  /** Average calendar days held across closed lots in this bucket (undefined when no entryAt/exitAt data). */
+  avgDaysHeld: number | undefined;
+  /** Percentage of lots held < 365 days (short-term for tax purposes). */
+  shortTermPct: number | undefined;
 }> {
   const prior = resolveShrinkPrior(userId);
-  const byKey = new Map<string, { pnl: number; returnSum: number; wins: number; trades: number }>();
+  const byKey = new Map<string, {
+    pnl: number;
+    returnSum: number;
+    wins: number;
+    trades: number;
+    daysHeldSum: number;
+    daysHeldCount: number;
+    shortTermCount: number;
+  }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
-    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0 };
+    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0 };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
     cur.wins += lot.pnl > 0 ? 1 : 0;
     cur.trades += 1;
+    // Holding-period derived fields (read-only; not used in any weight-nudge math).
+    if (lot.entryAt && lot.exitAt) {
+      const entryMs = new Date(lot.entryAt).getTime();
+      const exitMs = new Date(lot.exitAt).getTime();
+      if (Number.isFinite(entryMs) && Number.isFinite(exitMs) && exitMs >= entryMs) {
+        const daysHeld = (exitMs - entryMs) / (1000 * 60 * 60 * 24);
+        cur.daysHeldSum += daysHeld;
+        cur.daysHeldCount += 1;
+        if (daysHeld < 365) cur.shortTermCount += 1;
+      }
+    }
     byKey.set(key, cur);
   }
   return Array.from(byKey.entries())
@@ -820,7 +1241,10 @@ function aggregateClosedLots(
       totalPnl: Number(s.pnl.toFixed(2)),
       // Shrink toward neutral (0.5 win, 0% return) with `prior` pseudo-trades.
       shrunkWinRate: Math.round(((s.wins + 0.5 * prior) / (s.trades + prior)) * 100),
-      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2))
+      shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2)),
+      // Holding-period fields: undefined when no lots in this bucket have entryAt/exitAt data.
+      avgDaysHeld: s.daysHeldCount > 0 ? Number((s.daysHeldSum / s.daysHeldCount).toFixed(1)) : undefined,
+      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
@@ -837,24 +1261,42 @@ function dominantFactor(breakdown?: MarketFactorBreakdown): MarketFactor | undef
   return best?.factor;
 }
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string } {
+const MARKET_FACTOR_KEYS = new Set<string>([
+  "liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"
+]);
+
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
   const proposal = r.proposal;
   const sector = typeof r.sector === "string" ? r.sector : undefined;
-  if (!proposal || typeof proposal !== "object") return { sector };
+  // B5: dominant scan factor persisted at entry (mirrors the sector stamp). Validated against the known
+  // factor keys so a malformed value never becomes a bogus bucket.
+  const dominantFactor = typeof r.dominantFactor === "string" && MARKET_FACTOR_KEYS.has(r.dominantFactor)
+    ? (r.dominantFactor as MarketFactor)
+    : undefined;
+  if (!proposal || typeof proposal !== "object") return { sector, dominantFactor };
   const p = proposal as Record<string, unknown>;
   return {
     thesisTag: typeof p.tradeThesisTag === "string" ? p.tradeThesisTag : undefined,
     regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
-    sector
+    sector,
+    dominantFactor
   };
 }
 
 function isAccountingFill(fill: FillEvent): boolean {
-  return fill.status === "filled" || fill.source === "paper";
+  if (fill.status === "filled") return true;
+  if (fill.source !== "paper") return false;
+  // Legacy/local Test rows used source=paper before executionMode existed, or carried the now-removed
+  // "test/local" executionMode value (the local-simulation execution path was deleted; the string can
+  // still appear on old persisted rows). They have no broker order id and were already simulated fills.
+  // Broker-paper rows must wait for a filled broker state. Cast: "test/local" predates the ExecutionMode
+  // type narrowing to "broker/paper" | "broker/live", so it's compared as a plain string here.
+  const legacyMode = fill.executionMode as string | undefined;
+  return !fill.brokerOrderId && (legacyMode === undefined || legacyMode === "test/local");
 }
 
 function syntheticPaperCurve(fills: FillEvent[]) {
@@ -873,7 +1315,21 @@ function addAttribution(map: Map<string, RunAttribution>, fill: FillEvent, reali
   current.fillCount += 1;
   current.notional += fill.notional;
   current.realizedPnl += realizedPnl;
+  // Mirror realized P&L as exit-run credit (new additive field; existing realizedPnl unchanged).
+  if (realizedPnl !== 0) current.realizedPnlAsExit = (current.realizedPnlAsExit ?? 0) + realizedPnl;
   map.set(runId, current);
+}
+
+/**
+ * Dual-sided credit: ALSO credit the run whose ENTRY decision opened a now-closed lot, via a NEW
+ * optional field (realizedPnlAsEntry). Does NOT touch realizedPnl / fillCount / notional — the
+ * entry run's open fill already counted those at open time (see addAttribution on the buy/short
+ * fill). Additive: leaves every existing field exactly as the exit-keyed path set it.
+ */
+function addEntryAttribution(map: Map<string, RunAttribution>, entryRunId: string, realizedPnl: number): void {
+  const current = map.get(entryRunId) ?? { runId: entryRunId, fillCount: 0, notional: 0, realizedPnl: 0 };
+  current.realizedPnlAsEntry = (current.realizedPnlAsEntry ?? 0) + realizedPnl;
+  map.set(entryRunId, current);
 }
 
 function combineAttribution(...groups: RunAttribution[][]): RunAttribution[] {
@@ -884,6 +1340,8 @@ function combineAttribution(...groups: RunAttribution[][]): RunAttribution[] {
       current.fillCount += item.fillCount;
       current.notional += item.notional;
       current.realizedPnl += item.realizedPnl;
+      if (item.realizedPnlAsEntry != null) current.realizedPnlAsEntry = (current.realizedPnlAsEntry ?? 0) + item.realizedPnlAsEntry;
+      if (item.realizedPnlAsExit != null) current.realizedPnlAsExit = (current.realizedPnlAsExit ?? 0) + item.realizedPnlAsExit;
       map.set(item.runId, current);
     }
   }

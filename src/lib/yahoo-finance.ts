@@ -1,0 +1,134 @@
+export interface YahooFinanceQuote {
+  price: number;
+  bid: number;
+  ask: number;
+  prevClose: number;
+  volume: number;
+  /** ISO timestamp of the quote (from meta.regularMarketTime) — the real "as of", not a daily-bar date. */
+  asOf?: string;
+  /** true when bid/ask were SYNTHESIZED from price (the chart endpoint has no real quote spread) rather
+   *  than reported by Yahoo. Consumers must not treat a synthetic ask as a real quoted ask (e.g. for
+   *  ask-relative limit pricing) — it is only a rough placeholder derived from the last price.
+   *  `syntheticSpread` stays true only when BOTH sides were derived (for back-compat); the side-specific
+   *  flags below tell you exactly which side is synthetic, so the REAL side of a one-sided quote is
+   *  preserved rather than being blanket-tagged synthetic. */
+  syntheticSpread?: boolean;
+  /** true when the BID was derived from price (Yahoo reported no real bid). */
+  syntheticBid?: boolean;
+  /** true when the ASK was derived from price (Yahoo reported no real ask). */
+  syntheticAsk?: boolean;
+}
+
+export async function fetchYahooFinanceQuote(symbol: string): Promise<YahooFinanceQuote | undefined> {
+  const clean = encodeURIComponent(symbol.toUpperCase());
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${clean}?interval=1d&range=1d`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) return undefined;
+    const payload = await response.json() as { chart?: { result?: Array<{ meta?: Record<string, unknown>, indicators?: { quote?: Array<{ volume?: unknown[] }> } }> } };
+    const meta = payload?.chart?.result?.[0]?.meta;
+    if (!meta) return undefined;
+    const price = Number(meta.regularMarketPrice);
+    if (!Number.isFinite(price) || price <= 0) return undefined;
+    const prevClose = meta.chartPreviousClose ? Number(meta.chartPreviousClose) : price;
+    const quote = payload?.chart?.result?.[0]?.indicators?.quote?.[0];
+    const volume = Number(meta.regularMarketVolume ?? quote?.volume?.[0] ?? 0);
+    // regularMarketTime is Unix seconds; convert to ISO for a real "as of" timestamp.
+    const t = Number(meta.regularMarketTime);
+    const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+    // The chart endpoint returns NO real bid/ask. We derive a rough spread from price ONLY so
+    // downstream code has a placeholder, and mark it synthetic so it is never mistaken for a real
+    // quoted ask (which would wrongly anchor ask-relative limit-price math).
+    return {
+      price,
+      bid: price * 0.999,
+      ask: price * 1.001,
+      prevClose,
+      volume,
+      asOf,
+      // Fully synthetic single-quote fallback: both sides derived from price.
+      syntheticBid: true,
+      syntheticAsk: true,
+      syntheticSpread: true
+    };
+  } catch {
+    clearTimeout(timeout);
+    return undefined;
+  }
+}
+
+export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<Map<string, YahooFinanceQuote>> {
+  const result = new Map<string, YahooFinanceQuote>();
+  if (symbols.length === 0) return result;
+
+  // Chunk symbols into groups of 50
+  const chunkSize = 50;
+  for (let i = 0; i < symbols.length; i += chunkSize) {
+    const chunk = symbols.slice(i, i + chunkSize);
+    const cleanSymbols = chunk.map((s) => encodeURIComponent(s.toUpperCase().trim())).join(",");
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${cleanSymbols}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) continue;
+      const payload = await response.json() as {
+        quoteResponse?: {
+          result?: Array<{
+            symbol: string;
+            regularMarketPrice?: number;
+            bid?: number;
+            ask?: number;
+            regularMarketPreviousClose?: number;
+            regularMarketVolume?: number;
+            regularMarketTime?: number;
+          }>;
+        };
+      };
+
+      const items = payload?.quoteResponse?.result;
+      if (!items) continue;
+
+      for (const item of items) {
+        if (!item.symbol) continue;
+        const price = Number(item.regularMarketPrice);
+        if (!Number.isFinite(price) || price <= 0) continue;
+        const prevClose = item.regularMarketPreviousClose ? Number(item.regularMarketPreviousClose) : price;
+        // Track each side independently so a one-sided quote keeps its REAL side (a real bid must not
+        // be blanket-tagged synthetic just because the ask had to be derived, and vice versa).
+        const syntheticBid = !(item.bid && item.bid > 0);
+        const syntheticAsk = !(item.ask && item.ask > 0);
+        const hasRealSpread = !syntheticBid && !syntheticAsk;
+        const bid = syntheticBid ? price * 0.999 : Number(item.bid);
+        const ask = syntheticAsk ? price * 1.001 : Number(item.ask);
+        const volume = Number(item.regularMarketVolume ?? 0);
+        const t = Number(item.regularMarketTime);
+        const asOf = Number.isFinite(t) && t > 0 ? new Date(t * 1000).toISOString() : undefined;
+
+        result.set(item.symbol.toUpperCase().trim(), {
+          price,
+          bid,
+          ask,
+          prevClose,
+          volume,
+          asOf,
+          // Side-specific synthetic flags; syntheticSpread stays true only when BOTH sides were derived.
+          ...(syntheticBid ? { syntheticBid: true } : {}),
+          ...(syntheticAsk ? { syntheticAsk: true } : {}),
+          ...(hasRealSpread ? {} : { syntheticSpread: true })
+        });
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      console.error("[yahoo-finance] batch fetch failed for chunk:", chunk, err);
+    }
+  }
+
+  return result;
+}
+

@@ -48,7 +48,7 @@ export function dailyExecutionStats(
   now = new Date(),
   userId: string = "local",
   timeZone: string = DAILY_RESET_TIME_ZONE
-): { orderCount: number; notional: number } {
+): { orderCount: number; openingOrderCount: number; notional: number } {
   const dayStart = startOfDayInTimeZone(now, timeZone);
   // Phase 2 fix: use persisted estimated_notional so share-qty market orders
   // (which have no limitPrice) count correctly against the daily cap.
@@ -61,17 +61,22 @@ export function dailyExecutionStats(
   return rows.reduce(
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
-      const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
       // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
       // Prefer the persisted estimated_notional; fall back to proposal fields for old rows.
-      const notional = isBuy
+      const notional = isOpening
         ? (row.estimated_notional != null
             ? row.estimated_notional
             : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 
@@ -79,7 +84,7 @@ export function dailyExecutionStats(
  * Order notional executed within a rolling window of `minutes` (R1 hourly cap). Mirrors
  * dailyExecutionStats but on an arbitrary lookback rather than the calendar day.
  */
-export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; notional: number } {
+export function notionalInLastMinutes(accountNumber: string, minutes: number, now = new Date(), userId: string = "local"): { orderCount: number; openingOrderCount: number; notional: number } {
   const cutoff = new Date(now.getTime() - minutes * 60_000);
   const rows = getDb()
     .prepare(
@@ -90,14 +95,19 @@ export function notionalInLastMinutes(accountNumber: string, minutes: number, no
   return rows.reduce(
     (acc, row) => {
       const proposal = JSON.parse(row.proposal) as { side?: string; dollarAmount?: number; quantity?: number; limitPrice?: number };
-      const isBuy = proposal.side === "buy" || proposal.side === "short";
+      // NB: "opening" = buy OR short. (Named isBuy historically; it always included short.)
+      const isOpening = proposal.side === "buy" || proposal.side === "short";
       // Notional caps intentionally count only OPENING trades (buy/short); closing trades (sell/cover) are risk-reducing and exempt (notional = 0).
-      const notional = isBuy
+      const notional = isOpening
         ? (row.estimated_notional != null ? row.estimated_notional : (proposal.dollarAmount ?? (proposal.quantity ?? 0) * (proposal.limitPrice ?? 0)))
         : 0;
-      return { orderCount: acc.orderCount + 1, notional: acc.notional + notional };
+      return {
+        orderCount: acc.orderCount + 1,
+        openingOrderCount: acc.openingOrderCount + (isOpening ? 1 : 0),
+        notional: acc.notional + notional
+      };
     },
-    { orderCount: 0, notional: 0 }
+    { orderCount: 0, openingOrderCount: 0, notional: 0 }
   );
 }
 
@@ -169,9 +179,14 @@ export function countDayTradesInLastBusinessDays(
 // Uses a direct prepared statement (not setSetting) to avoid noisy policy_change
 // audit events.
 
-export function acquireStrategyLock(userId: string = "local", staleMs = 5 * 60_000, now = new Date()): boolean {
+/** Lock key — per-account when an account id is given, else the legacy user-wide key. */
+function strategyLockKey(userId: string, connectedAccountId?: string): string {
+  return connectedAccountId ? `strategy_run_lock:${userId}:${connectedAccountId}` : `strategy_run_lock:${userId}`;
+}
+
+export function acquireStrategyLock(userId: string = "local", connectedAccountId?: string, staleMs = 5 * 60_000, now = new Date()): boolean {
   const database = getDb();
-  const key = `strategy_run_lock:${userId}`;
+  const key = strategyLockKey(userId, connectedAccountId);
   const acquire = database.transaction(() => {
     const row = database
       .prepare("SELECT value FROM settings WHERE key = ?")
@@ -196,17 +211,24 @@ export function acquireStrategyLock(userId: string = "local", staleMs = 5 * 60_0
     return true;
   });
 
-  return acquire() as boolean;
+  return acquire.immediate() as boolean;
 }
 
-export function releaseStrategyLock(userId: string = "local"): void {
-  getDb().prepare("DELETE FROM settings WHERE key = ?").run(`strategy_run_lock:${userId}`);
-}
-
-export function insertStrategyRun(id: string, userId: string = "local"): void {
+export function releaseStrategyLock(userId: string = "local", connectedAccountId?: string): void {
+  if (connectedAccountId) {
+    getDb().prepare("DELETE FROM settings WHERE key = ?").run(strategyLockKey(userId, connectedAccountId));
+    return;
+  }
+  // No account given: release the user's base lock AND any per-account locks (teardown/back-compat).
   getDb()
-    .prepare("INSERT INTO strategy_runs (id, user_id, started_at, status) VALUES (?, ?, ?, 'running')")
-    .run(id, userId, new Date().toISOString());
+    .prepare("DELETE FROM settings WHERE key = ? OR key LIKE ?")
+    .run(`strategy_run_lock:${userId}`, `strategy_run_lock:${userId}:%`);
+}
+
+export function insertStrategyRun(id: string, userId: string = "local", connectedAccountId?: string): void {
+  getDb()
+    .prepare("INSERT INTO strategy_runs (id, user_id, connected_account_id, started_at, status) VALUES (?, ?, ?, ?, 'running')")
+    .run(id, userId, connectedAccountId ?? null, new Date().toISOString());
 }
 
 export function finishStrategyRun(id: string, status: "completed" | "failed", summary: string, userId: string = "local"): void {
@@ -215,13 +237,30 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
     .run(new Date().toISOString(), status, summary, id, userId);
 }
 
-export function listStrategyRuns(limit = 20, userId: string = "local"): StrategyRunRow[] {
+/**
+ * Most recent strategy-run start time for a user (ISO string), or null if none. The scheduler
+ * rehydrates its in-memory cadence clock from this on boot so a restart/HMR/deploy doesn't fire an
+ * immediate run regardless of the configured cadence (userSchedules starts empty each process).
+ */
+export function getLastStrategyRunStartedAt(userId: string = "local", connectedAccountId?: string): string | null {
+  const row = (connectedAccountId
+    ? getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ? AND connected_account_id = ?")
+        .get(userId, connectedAccountId)
+    : getDb()
+        .prepare("SELECT MAX(started_at) AS last FROM strategy_runs WHERE user_id = ?")
+        .get(userId)) as { last: string | null } | undefined;
+  return row?.last ?? null;
+}
+
+export function listStrategyRuns(limit = 20, userId: string = "local", connectedAccountId?: string): StrategyRunRow[] {
   type RawRow = {
     id: string;
     started_at: string;
     finished_at: string | null;
     status: string;
     summary: string | null;
+    connected_account_id: string | null;
     placed_count: number;
     paper_count: number;
     blocked_count: number;
@@ -229,14 +268,13 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
     total_count: number;
   };
 
-  const rows = getDb()
-    .prepare(
-      `SELECT
+  const selectSql = `SELECT
         sr.id,
         sr.started_at,
         sr.finished_at,
         sr.status,
         sr.summary,
+        sr.connected_account_id,
         COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
         COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
         COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
@@ -244,12 +282,13 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
         COUNT(tp.id)                                        AS total_count
        FROM strategy_runs sr
        LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
-       WHERE sr.user_id = ?
+       WHERE sr.user_id = ?${connectedAccountId ? " AND sr.connected_account_id = ?" : ""}
        GROUP BY sr.id
        ORDER BY sr.started_at DESC
-       LIMIT ?`
-    )
-    .all(userId, limit) as RawRow[];
+       LIMIT ?`;
+  const rows = getDb()
+    .prepare(selectSql)
+    .all(...(connectedAccountId ? [userId, connectedAccountId, limit] : [userId, limit])) as RawRow[];
 
   return rows.map((r) => ({
     id: r.id,
@@ -257,6 +296,7 @@ export function listStrategyRuns(limit = 20, userId: string = "local"): Strategy
     finishedAt: r.finished_at ?? undefined,
     status: r.status as StrategyRunRow["status"],
     summary: r.summary ?? undefined,
+    connectedAccountId: r.connected_account_id ?? undefined,
     placedCount: r.placed_count,
     paperCount: r.paper_count,
     blockedCount: r.blocked_count,
