@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-04 - Shared public dependency hardening (Codex).** No roadmap scope change. Socratic
+> now consumes `congress-trading-shared` from the public HTTPS git tag instead of GitHub Packages,
+> and CI/deploy setup returns to plain `npm ci`. This removes package-read token requirements for
+> the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
+> deployed to production at `1e1a15bc`.
+
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"
@@ -34,6 +40,15 @@ filling the missing pieces.
 > below this line is STALE** and does not describe target behavior —
 > do not follow it. See `docs/EFFORT-LOG.md` +
 > `docs/rollouts/2026-07-03-remove-paper-default-test-mode.md`.
+
+> **2026-07-04 - Codex console/UI swimlane.** Branch `codex/console-ui-swimlane` executes the sync-21
+> console assignment without using the sovereign review branch: approval receipt provenance
+> (served model/failover, red-team trigger, sizing inputs, R:R geometry, linked citations), mobile
+> LIVE phrase-gate parity, Sheet focus trap, read-only `/console/decisions/[id]` trace inspector with
+> coach notes/framework `ownerResponse`, high-signal ticker drawer affordances, and Strategy custom
+> model select parity. No roadmap scope change; this hardens the existing Autonomy Desk/console
+> parity track. Merged as PR #442 and live in production HEAD `1e1a15bc`. See
+> `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
 
 > **2026-07-03 - Socratic admin/RAG/settings parity pass (Codex).** The
 > branch `codex/live-thesis-portfolio-framing` is the current broad follow-up
@@ -82,6 +97,20 @@ filling the missing pieces.
 > `doc_id` values generated UUID-based vector ids, so a timed-out partial ingest could leave duplicate
 > vectors on retry. SEC filing ingestion now passes `ticker:accession:docType` as `doc_id`; preserve
 > that invariant before any larger RAG backfill.
+
+> **2026-07-04 - RAG quick-wins Wave-1 lane: wire dormant stages (Claude).**
+> Branch `claude/w1-rag-quickwins` (one of four Wave-1 quick-win lanes off the 2026-07-04 composite
+> expert review, section C). Wired `retrieveContextDetailed`'s already-built-but-never-called
+> `minRelevanceScore`/`dedupeSimilarity` into both real call sites (`strategy.ts`,
+> `chat/orchestrator.ts`); added `formatChunkWithProvenance()` so `strategy.ts` prefixes each
+> retrieved chunk with a `[doc_type · section · symbol · date · rel N.NN]` header before joining
+> into the prompt (chunk ids were already stable/real, left unchanged); confirmed
+> `VECTOR_STORECONTEXTS_DEDUP` was already default-on from an earlier commit (the source review's
+> "default OFF" was stale) and widened `hashContent` from 64-bit to 128-bit; stamped
+> `embed_model`/`embed_rev` on every new vector in `cleanMetadata`; raised the rerank-path
+> over-fetch cap to an env-tunable 150 (`VECTOR_RERANK_OVERFETCH_K`), non-rerank paths unchanged.
+> All five items are env-tunable/opt-in-consistent, no hard gates. Verify green: lint 0 errors, tsc
+> clean, 2388/2388 tests, build green. See `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
 
 > **2026-07-03 - Console polish + RAG quota/usage safeguards (Codex).**
 > Branch `codex/console-actions-evidence-live` merged as PR #351. It extended the Socratic console polish pass and

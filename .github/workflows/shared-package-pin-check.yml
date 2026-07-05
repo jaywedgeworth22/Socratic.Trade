@@ -12,12 +12,9 @@ name: Shared package pin check
 #   2. Fetches the PEER repo's spec (Congress.Trade app/package.json) via the GitHub API.
 #   3. FAILS (exit 1) when the two normalized versions differ -- the divergence guard. Run it
 #      on demand (workflow_dispatch) for a dry-run, or let it run on PRs / weekly.
-#   4. (Legacy) If this repo git-commit-pins the package, also warns when the pin is behind main.
-#
 # Requires the GH_PACKAGES_TOKEN repo secret: a PAT with read access to the private
-# jaywedgeworth22/congress-trading-shared AND jaywedgeworth22/Congress.Trade repos. Without it the
-# peer comparison is skipped with a notice (the default GITHUB_TOKEN cannot read other private
-# repos), so an unauthenticated run never hard-fails.
+# peer repo. Without it the peer comparison is skipped with a notice (the default
+# GITHUB_TOKEN cannot read other private repos), so an unauthenticated run never hard-fails.
 #
 # NOTE: this workflow is intentionally NOT part of the branch-protection ruleset, so a red result
 # flags divergence loudly without hard-blocking a coordinated two-repo bump (bump one repo, open
@@ -55,8 +52,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Strip a leading range operator (^ ~ >= <= > < =) and whitespace, leaving the version core.
-          norm() { printf '%s' "$1" | sed -E 's/^[[:space:]]*[~^><=]+//; s/[[:space:]]//g'; }
+          # Git dependencies compare by ref after '#'; registry ranges compare by version core.
+          # Normalize tag refs like v1.2.0 and semver refs like semver:^1.2.x.
+          norm() {
+            local spec="$1"
+            case "$1" in
+              github:*|git+*|*"#"*)
+                spec=$(printf '%s' "$spec" | sed -E 's/^.*#//')
+                ;;
+            esac
+            printf '%s' "$spec" | sed -E 's/^semver://; s/^[[:space:]]*[~^><=]+//; s/^v//; s/[[:space:]]//g'
+          }
 
           LOCAL_SPEC=$(node -p "require('./${LOCAL_PACKAGE_JSON_PATH}').dependencies['${PKG}'] ?? ''")
           if [ -z "$LOCAL_SPEC" ]; then

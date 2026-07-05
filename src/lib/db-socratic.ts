@@ -263,7 +263,156 @@ export function appendSocraticDecisionCoachNote(id: string, note: string, userId
   const coachNotes = [...existing.coachNotes, note.trim()].filter(Boolean).slice(-20);
   upsertSocraticDecisionCase({ ...existing, userId, coachNotes });
   audit("socratic_decision_coached", { decisionId: id, note }, userId, existing.connectedAccountId);
-  return getSocraticDecisionCase(id, userId);
+  const updated = getSocraticDecisionCase(id, userId);
+  // Re-index the vector-memory case doc so the appended note is actually retrievable at decision
+  // time, not frozen at "coach_notes: none" the way it was written at creation
+  // (indexSocraticDecisionMemory previously ran exactly once, at strategy.ts's original upsert).
+  // The doc's dedupKeyPrefix ("socratic-decision") + stable id/contextId make this an in-place
+  // upsert, not a duplicate vector. Dynamic import avoids a module cycle: socratic-memory ->
+  // vector-db -> ./db (this barrel) -> db-socratic. Fire-and-forget + non-fatal, matching every
+  // other indexSocraticDecisionMemory call site.
+  if (updated) {
+    void import("./socratic-memory")
+      .then(({ indexSocraticDecisionMemory }) => indexSocraticDecisionMemory(updated))
+      .catch((err) => {
+        console.warn("[db-socratic] re-index after coach note failed:", err instanceof Error ? err.message : String(err));
+      });
+  }
+  return updated;
+}
+
+/**
+ * Decision cases the outcome engine still owes an outcome: statuses that map to a measurable
+ * forward path (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), whose
+ * outcome is absent or still 'open', and which were not re-measured more recently than
+ * `measuredBefore` (bounded recheck cadence). Oldest first so long-owed cases mature first.
+ */
+export function listSocraticDecisionCasesNeedingOutcome(
+  userId: string = "local",
+  opts: { limit?: number; measuredBefore?: string; connectedAccountId?: string } = {}
+): SocraticDecisionCase[] {
+  const limit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 25)));
+  const measuredBefore = opts.measuredBefore ?? new Date().toISOString();
+  const clauses = [
+    "user_id = ?",
+    "status IN ('placed', 'blocked', 'rejected')",
+    "(outcome IS NULL OR (json_extract(outcome, '$.status') = 'open' AND COALESCE(json_extract(outcome, '$.measuredAt'), '') <= ?))"
+  ];
+  const args: unknown[] = [userId, measuredBefore];
+  if (opts.connectedAccountId) {
+    clauses.push("connected_account_id = ?");
+    args.push(opts.connectedAccountId);
+  }
+  args.push(limit);
+  const rows = getDb()
+    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at ASC LIMIT ?`)
+    .all(...args) as DecisionRow[];
+  return rows.map(rowToDecision);
+}
+
+/**
+ * Outcome-engine write path: persist a case's (possibly still-'open') outcome, emit the per-case
+ * receipt, and re-index the vector-memory doc so retrieval sees the matured outcome instead of
+ * "outcome: pending" frozen at creation. Same fire-and-forget/lifecycle-hook pattern as
+ * appendSocraticDecisionCoachNote. Returns the updated case, or undefined when the id is unknown.
+ */
+export async function writeSocraticDecisionOutcome(
+  id: string,
+  outcome: NonNullable<SocraticDecisionCase["outcome"]>,
+  userId: string = "local"
+): Promise<SocraticDecisionCase | undefined> {
+  const existing = getSocraticDecisionCase(id, userId);
+  if (!existing) return undefined;
+  upsertSocraticDecisionCase({ ...existing, userId, outcome });
+  const resolvedHorizons = outcome.outcomes.filter((row) => row.resolution === "ok").length;
+  audit(
+    "socratic_outcome_recorded",
+    {
+      decisionId: id,
+      status: outcome.status,
+      returnPct: outcome.returnPct,
+      pnlUsd: outcome.pnlUsd,
+      horizons: outcome.outcomes,
+      coverage: `${resolvedHorizons}/${outcome.outcomes.length} horizons resolved`
+    },
+    userId,
+    existing.connectedAccountId
+  );
+  const updated = getSocraticDecisionCase(id, userId);
+  if (updated) {
+    // AWAITED (unlike the interactive coach-note append): the caller is a background job, so a
+    // deterministic re-index costs nothing and guarantees retrieval sees the matured outcome.
+    // Still non-fatal — an indexing failure never loses the persisted outcome row.
+    try {
+      const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+      await indexSocraticDecisionMemory(updated);
+    } catch (err) {
+      console.warn("[db-socratic] re-index after outcome write failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return updated;
+}
+
+/**
+ * Outcome-engine lessons write path: replace the creation-time template lessons with the real
+ * post-mortem lessons, receipt it, and re-index (lifecycle hook) so the lessons are retrievable.
+ */
+export async function writeSocraticDecisionLessons(id: string, lessons: string[], userId: string = "local"): Promise<SocraticDecisionCase | undefined> {
+  const existing = getSocraticDecisionCase(id, userId);
+  if (!existing) return undefined;
+  const cleaned = lessons.map((lesson) => lesson.trim()).filter(Boolean).slice(0, 8);
+  if (cleaned.length === 0) return existing;
+  upsertSocraticDecisionCase({ ...existing, userId, lessons: cleaned });
+  audit("socratic_decision_lessons_written", { decisionId: id, lessons: cleaned }, userId, existing.connectedAccountId);
+  const updated = getSocraticDecisionCase(id, userId);
+  if (updated) {
+    // AWAITED for the same reason as writeSocraticDecisionOutcome; non-fatal on failure.
+    try {
+      const { indexSocraticDecisionMemory } = await import("./socratic-memory");
+      await indexSocraticDecisionMemory(updated);
+    } catch (err) {
+      console.warn("[db-socratic] re-index after lessons write failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return updated;
+}
+
+/** Outcome coverage across measurable decision cases (kill-survivorship disclosure): unresolvable
+ * cases stay in the denominator, and the disclosure string is stamped on maturation receipts. */
+export interface SocraticOutcomeCoverage {
+  totalMeasurable: number;
+  resolved: number;
+  open: number;
+  unresolvable: number;
+  /** resolved / (resolved + unresolvable) as a %, 0 when nothing terminal yet. */
+  resolvedPct: number;
+  disclosure: string;
+}
+
+export function getSocraticOutcomeCoverage(userId: string = "local", connectedAccountId?: string): SocraticOutcomeCoverage {
+  const clauses = ["user_id = ?", "status IN ('placed', 'blocked', 'rejected')"];
+  const args: unknown[] = [userId];
+  if (connectedAccountId) {
+    clauses.push("connected_account_id = ?");
+    args.push(connectedAccountId);
+  }
+  const rows = getDb()
+    .prepare(
+      `SELECT COALESCE(json_extract(outcome, '$.status'), 'unmeasured') AS outcome_status, COUNT(*) AS n
+       FROM socratic_decisions WHERE ${clauses.join(" AND ")} GROUP BY outcome_status`
+    )
+    .all(...args) as Array<{ outcome_status: string; n: number }>;
+  const count = (...statuses: string[]) => rows.filter((r) => statuses.includes(r.outcome_status)).reduce((sum, r) => sum + r.n, 0);
+  const resolved = count("won", "lost", "flat", "unknown");
+  const open = count("open", "unmeasured");
+  const unresolvable = count("unresolvable");
+  const terminal = resolved + unresolvable;
+  const resolvedPct = terminal > 0 ? Number(((resolved / terminal) * 100).toFixed(1)) : 0;
+  const disclosure =
+    terminal > 0
+      ? `${resolved}/${terminal} resolved (${resolvedPct}%)${unresolvable > 0 ? ` — ${unresolvable} unresolvable; may be survivor-biased` : ""}${open > 0 ? `; ${open} still maturing` : ""}`
+      : `0 resolved${open > 0 ? `; ${open} still maturing` : ""}`;
+  return { totalMeasurable: resolved + open + unresolvable, resolved, open, unresolvable, resolvedPct, disclosure };
 }
 
 export function createSocraticFrameworkProposal(input: {

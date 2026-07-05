@@ -32,6 +32,428 @@ the bot (scopes `channels:history` + `channels:read` + `chat:write`); run
 `bash scripts/setup-slack-sync.sh` once per machine. Rotate any raw token pasted earlier.
 **Next:** open PR + squash auto-merge; once the token secret exists, post the setup how-to to Fable.
 
+## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
+The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
+itemization pass) tripped GitHub's secondary rate limit — 403 "secondary rate limit ...
+temporarily blocked from content creation" — and the workflow hard-failed mid-sync. Hardened
+the script: (a) 2.5s throttle after every issue creation; (b) on a rate-limit response
+(403/429 with a rate-limit/abuse message or `Retry-After`), retry honoring `Retry-After`
+else exponential backoff (15s base, 120s cap), all retry sleeps drawn from a bounded 300s
+per-run budget; (c) when the budget is exhausted, exit 0 with an explicit "PARTIAL SYNC —
+resume on next run" summary instead of exit 1 (the sync is idempotent; the daily cron +
+next push re-run resume cleanly, and a red run for an expected partial pass is noise).
+Verified with an offline monkeypatched harness (15 checks: detection, Retry-After
+vs. backoff, budget accounting, both partial-exit paths) plus a live `--dry-run`. Next
+action: propagate the identical file to congress-trading-shared, api-usage-monitor, and
+Congress.Trade via their own PRs (fleet protocol: the file is copied verbatim). See
+`docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+
+## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
+Owner-directed: promoted every still-open item from the review docs
+(`docs/reviews/2026-06-30-improvement-audit.md`, both 2026-07-04 expert/composite reviews,
+`2026-07-03-console-parity-open-items.md`), `PLAN.md`, and a code sweep into individually
+tracked `docs/EFFORT-LOG.md` Planned rows with assigned lanes — CURSOR/DeepSeek v4 Pro
+(17 rows), CODEX (6 + 5 annotated parity rows), AG/Antigravity (7 + 2 annotated), MONET
+(5, risk lane — a drafted 6th, regime-enum gate adoption, was already shipped by Monet as
+PR #449 mid-pass), CLAUDE (6, memory/RAG), plus a 15-row unassigned owner-decision bucket.
+Pre-existing Planned rows got assignment annotations in their bodies (first lines untouched
+to preserve issues-mirror identity keys). Deduped the twice-logged "Wave-1 quick wins"
+In Progress row. The same pass seeded populated boards + issue mirrors for Congress.Trade,
+congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Congress.Trade
+also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
+GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
+See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+**2026-07-05 follow-up (full itemization):** the owner flagged the pass as still non-exhaustive —
+three enumeration agents then classified EVERY finding in the two 2026-07-04 panels, the full
+2026-06-30 audit, the 2026-07-01 learning-loop/RAG expansion backlogs, and June residual docs;
+~220 further untracked findings are now individual Planned rows (repo-mirror subsections
+"2026-07-05 full itemization" + "Deep-sweep additions"), each lane-tagged. Includes two live bugs
+(partial-day ADV in the impact model; checkRegimeFlip 'local' non-atomic RMW) and the
+safety-critical prerequisites of the factor-weight auto-apply lane.
+
+## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
+Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
+The three deterministic risk gates now classify the persisted regime label through the shared
+typed `MarketRegime` source of truth (`src/lib/market-regime.ts`) instead of three independent
+substring/`startsWith` rules: the crisis/inverted opening-exposure cap (`policy.ts`), the bear
+filter's risk-off veto (`strategy.ts` `deterministicBearFilter` — the site whose comment reserved
+the conversion for the risk lane), and the escalation gate (`regime-watch.ts` `isEscalationRegime`,
+also feeding `strategy.ts`'s dissent trigger). This is the "one-line adoption" the w1-regime-data
+lane (#368) exported the typed predicates and pinned `test/market-regime.test.ts` for. Correctness
+hardening only — canonical-label behavior is byte-identical (a regime relabel can no longer silently
+desync one gate from another); the one intended change is that a non-canonical free-text label now
+reads non-escalating instead of accidentally substring-matching. Gate green: tsc clean, lint 0
+errors, 254 files/2465 tests, build ok. See
+`docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
+
+## 2026-07-04 — Production deployed: Codex #442 and shared-dep #444
+Production `trading-live` is at `1e1a15bc` (`origin/main`), which includes both
+`94669873` / PR #442 (`feat(console): add swimlane approval and decision trace UI`) and
+PR #444 (`chore(deps): pin shared package to public HTTPS tag`). GitHub Actions `Deploy`
+completed successfully for the current `main`, PM2 `trading` is online from
+`/Users/jay/apps/trading-live`, `https://socratictrade.com/api/health` returns 200, and the
+new decision trace API/page artifacts exist in the production `.next/server/app` build.
+
+Preview caveat: beta/Codex preview worktrees were not force-synced because the local
+worktrees have generated `next-env.d.ts` diffs; per preview freshness policy, leave them
+untouched until their owners clean/sync them. Source of truth for deployed behavior is
+production `socratictrade.com`.
+
+## 2026-07-04 — Shared public dependency HTTPS hardening (Codex)
+Branch `codex/shared-dep-https-hardening`, worktree
+`/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`. Follow-up to the public
+`congress-trading-shared` migration: Socratic now pins the shared package to the exact public
+HTTPS git tag `git+https://github.com/jaywedgeworth22/congress-trading-shared.git#v1.2.0`,
+removes the old GitHub Packages `.npmrc` and `scripts/npm-ci-with-shared-deps.sh`, and changes
+CI/deploy/e2e/cloud setup install paths back to plain `npm ci`. This pairs with the Congress.Trade
+Codex branch of the same name, which tightens its app lockfile from `git+ssh` to `git+https`.
+
+Verification: tokenless/no-SSH `npm ci` passed with `NPM_TOKEN`, `NODE_AUTH_TOKEN`,
+`GITHUB_TOKEN`, and `GH_TOKEN` unset and `GIT_SSH_COMMAND='sh -c "exit 255"'`; `npm run lint`
+passed with 0 errors / 308 existing warnings; `npx tsc --noEmit`; `npm test` (253 files / 2457
+tests); `npm run build` passed with existing Next middleware/Sentry Edge warnings. `npm audit`
+still reports the pre-existing `tsx` -> `esbuild` moderate dev-server advisory.
+PR #444 merged and deployed to production at `1e1a15bc`; see
+`docs/rollouts/2026-07-04-shared-dep-https-hardening.md`.
+
+## 2026-07-04 — Codex console/UI swimlane: approvals receipt, trace inspector, a11y/parity
+Branch `codex/console-ui-swimlane`, worktree `/Users/jay/apps/trading-codex-ui-swimlane`, claimed
+from `#agent-sync` sync-21 (not the sovereign review branch). Implemented the assigned console/UI
+pack: approval cards now show persisted served-model/failover provenance, red-team trigger chips,
+sizing provenance, reward:risk geometry, and proposal-linked RAG citations; live mobile approvals
+now require the same `APPROVE LIVE <SYMBOL>` phrase; `Sheet` has a focus trap and opener focus
+restore; `/api/socratic/decisions/[id]` + `/console/decisions/[id]` expose a read-only decision
+trace with coach notes and linked framework `ownerResponse`; console decision rows link to Trace;
+high-signal ticker surfaces now use the shared drawer affordance; Strategy model selects keep
+stored custom IDs visible instead of collapsing to an anonymous custom input.
+
+Verification green after merge-forward to `origin/main`: `npm run lint` (0 errors, 308 existing
+warnings), `npx tsc --noEmit`, `npm test` (253 files / 2457 tests), `npm run build` (passes with
+existing Next middleware deprecation + webpack cache warnings).
+PR #442 merged and is live in current production HEAD `1e1a15bc`; see
+`docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+
+## 2026-07-04 — Landing-operator merge-forward + dedup fix (Wave-2 Outcome Engine)
+Picked up `claude/w2-outcome-engine` mid-merge (prior operator restart left conflict markers
+uncommitted in `~/apps/trading-wt-w2-outcome`). Resolved `docs/EFFORT-LOG.md` /
+`docs/phase-7-strategy.md` / `docs/rollouts/2026-07-04-w1-learning-loops.md` (add/add,
+keep-both-newest-first), `src/lib/strategy.ts` (took `origin/main`'s newer
+`connectedAccountId`-scoped audit call — this branch never touched those lines itself),
+`src/lib/db-socratic.ts` (kept HEAD's 4 new outcome-engine functions, main had nothing there),
+`test/performance.test.ts` (kept both sides' new tests, no overlap). `tsc` then caught a REAL
+semantic conflict git's line-merge missed silently: two full duplicate copies of
+`RedTeamEfficacy`/`getRedTeamEfficacy` in `src/lib/performance.ts` (TS2323/TS2393) — removed the
+older pre-Codex-review duplicate, kept the newer account-scoped/keyed-lookup version (separate
+commit `e28db55`). Full quartet green post-fix: lint 0 errors, tsc clean, 252 files / 2455 tests,
+build green. See addendum in `docs/rollouts/2026-07-04-w2-outcome-engine.md`. Landing next.
+
+## 2026-07-04 — Wave-2: the Outcome Engine lane (Claude)
+Branch `claude/w2-outcome-engine`, based on `origin/claude/w1-learning-loops` (worktree
+`~/apps/trading-wt-w2-outcome`); lands via the landing train AFTER the base lands — push only,
+no PR from this lane. Four composite-review §A items: (1) **the outcome writer** — new scheduled
+job `src/lib/outcome-engine.ts` piggybacking the counterfactual cadence; joins placed decisions
+to fill_events/closed lots and blocked/rejected (incl. Bear-vetoed) decisions to counterfactual
+refPrice; writes `outcome`+`measuredAt`, per-case `socratic_outcome_recorded` receipt, awaited
+lifecycle re-index. (2) **multi-horizon schema** — `outcomes[] {15m|1h|1d|1w, returnPct,
+spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+skipped-counterfactual rows (new `outcomes`/`resolution_reason` columns); 1d/1w from the daily
+cascade SPY-relative on trading-day arithmetic; 15m/1h only from an actually-sampled live quote,
+else honest `unresolvable(no_intraday_source)`. (3) **kill survivorship** — terminal
+`unresolvable` after a bounded 10-trading-day recheck window; coverage disclosures
+("N/M resolved (X%)") on job receipts, `getRedTeamEfficacy`, missed-opportunity summary, and
+`certifyForwardResolution`. (4) **real per-decision lessons** — budget-gated, batch-capped LLM
+post-mortem at maturation → 1-3 direction-tagged lessons + `{verdictOnBelief,
+whichDissentMattered}`, replacing the template strings, re-indexed, routed through
+`ingestLearned` (origin `autonomous`); every skip is receipted (`socratic_lessons_skipped`).
+Verification green: lint 0 errors, tsc clean, 2383 tests / 246 files, build green. See
+`docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
+Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
+provenance headers + stable chunk ids). Implements the composite expert review's single
+highest-leverage item (section A item 1, [Both]): close the write-only episodic memory loop so the
+agent retrieves its own past decisions + owner coaching AT DECISION TIME.
+1. **New `src/lib/experience-memory.ts`.** WRITE half: `recordClosedLotExperience` — hooked
+   fire-and-forget from `performance.recordFillFromProposal` on every sell/cover fill — replays the
+   account's fills through the same FIFO accounting the scorecards use (`calculatePnl`), finds the
+   lots THAT fill closed, and embeds one experience document per closed lot: entry state (8 factor
+   sub-scores, `entryMarketRegime`, breadth snapshot, thesisTag, sector, entry rationale) +
+   realized outcome metadata `{return_pct, holding_days, risk_exit, mae?, mfe?}`, into the
+   `source="experience-memory"` namespace keyed by the ENTRY proposalId (`doc_type=
+   "socratic-decision"` so it shares the episodic retrieval surface). Entry fills now also stamp
+   the FULL `factorBreakdown` + `scanBreadthPct` into `raw` (additive) so the state vector is the
+   entry-time state, not a lookahead reconstruction.
+2. **Decision-time retrieval (READ half).** `retrieveDecisionExperiences`: a SECOND retrieval pass
+   per run in `strategy.ts` over doc types `['socratic-decision','coach-note','lesson']`
+   (coach-note/lesson writers land via parallel lanes; consumed here), queried with a SITUATION
+   SKETCH (regime + candidate dominant-factor/sector/evidence bulletins — NOT the generic filings
+   query), cross-symbol (`RetrieveOptions.matchAllSymbols`, additive), k-NN 5-10 (default 8),
+   same-run neighbors excluded (entry OR exit run id), as-of stamped (no lookahead).
+3. **Injection with evidence parity.** Labeled `closestHistoricalAnalogs` ("CLOSEST HISTORICAL
+   ANALOGS", top-analog similarity shown, opposite-realized-sign priors labeled
+   `[COUNTEREXAMPLE — opposite realized sign]`) + `ownerCoaching` blocks injected into BOTH Bull
+   and Bear userContent. Advisory only — never threaded into sizing/policy.
+4. **Per-run injected-id persistence.** Audit kind `experience_retrieval` records
+   `{runId, asOf, query, analogIds, coachingIds, counterexampleIds, topAnalogSimilarity}`; the
+   chunks also ride onto `socraticRagAttributions` (persisted + re-indexed per decision case) —
+   the run-input side of retrieval-usefulness scoring (full scoring is a later item).
+   Additive `RetrievedChunk.metadata` passthrough (text omitted) supports the exclusion/labeling.
+   Opt-out: `EXPERIENCE_MEMORY=off`. Known v1 gap: live (broker) closing fills are
+   `pending_reconciliation` at hook time, so their experience write no-ops until a later hook on
+   the reconciliation path (documented in the rollout note).
+   Verification: lint 0 errors; tsc clean; 2395 tests / 249 files green (7 new across
+   `test/experience-memory.test.ts` + `test/strategy-episodic-injection.test.ts`); build green.
+   See `docs/rollouts/2026-07-04-w2-episodic-retrieval.md`. Pushed, no PR — lands via the
+   landing train after its base branch lands.
+## 2026-07-04 — Add the `agent/monet` preview lane (Monet, cloud)
+Branch `claude/register-monet-lane` (off `origin/main` @ `d8e1bdf`). Registers a fourth per-agent
+lane, **Monet**, analogous to `agent/claude`: `scripts/setup-agent-previews.sh` gains `monet` +
+port `4103` (appended, no renumbering of 4100-4102); `AGENTS.md` worktree table + launch-dir list
+gain the Monet row (`~/apps/trading-monet`, `agent/monet`, pm2 `trading-monet`,
+`monet.jays.services`). The `agent/monet` branch was created on the remote from `main` (via the
+GitHub API — git-over-HTTP push was 503-ing). Running `setup-agent-previews.sh` on the Mac
+materializes the worktree + PM2 preview; the `monet.jays.services` Cloudflare tunnel is host-local
+and left to the owner. See `docs/rollouts/2026-07-04-agent-monet-preview-lane.md`.
+
+## 2026-07-04 — Wave-1 quick wins: memory & learning-loop lane (Claude)
+Branch `claude/w1-learning-loops`, off `origin/main`, one of four Wave-1 lanes from the composite
+expert review (§A, lines 37-161). Three items: (1) Bear-veto counterfactuals now feed the same
+`recordRejectedProposalCounterfactual` pipeline as policy blocks/human rejections, stamped with
+`runId`+`model`; new `getRedTeamEfficacy()` in `performance.ts` scores rejection rate / veto
+value-add / survivor-risk hit rate / per-model — API/db-level only, no console/Results UI wiring
+(left for the console lane). (2) `appendSocraticDecisionCoachNote` now re-calls
+`indexSocraticDecisionMemory` after the append (dynamic import avoids a `db-socratic ->
+socratic-memory -> vector-db -> ./db` cycle) so a coach note is actually retrievable, not frozen
+at "coach_notes: none"; outcome/lesson writers don't exist yet in this codebase (separate,
+unassigned effort) so only the coach-note path was wired. (3) New `addTradingDays()` in
+`market-calendar.ts` (honors `isTradingDay`) replaces calendar-ms arithmetic in
+`counterfactual-learning.ts`/`backtest.ts`'s `targetBusinessDate` — fixes weekday-dependent
+horizon noise; historical target dates shift for Thu/Fri snapshots (one-time discontinuity,
+documented, not backfilled). Verification green: lint 0 errors, tsc clean, 2377 tests / 245 files,
+build green. PR pending (push-only; lands via the active landing train). See
+`docs/rollouts/2026-07-04-w1-learning-loops.md`.
+## 2026-07-04 — GitHub Issues mirror of the effort board (Claude)
+ADDITIVE, read-only owner-visibility layer over `docs/EFFORT-LOG.md` — the board stays the single
+source of truth; agents never write issues, only a workflow does.
+`scripts/sync-effort-issues.py` (python3 stdlib, no third-party deps) parses `docs/EFFORT-LOG.md`
+at HEAD: top-level `##` section headings are classified by keyword (tolerating wording/emoji
+variation across repos — "Planned / Reserved Before Implementation" vs "Planned / Reserved" both
+map to `planned`), top-level `- `/`* ` bullets become items with indented continuation lines
+folded into the body, and `(none)`/`(seeded empty ...)`-style placeholders are skipped. Each item's
+identity is a SHA1 of its normalized first line, embedded in the issue body as
+`<!-- effort-key: <hash> -->` so re-runs are idempotent and state transitions (Planned -> In
+Progress -> Completed) update the same issue in place rather than creating a new one, as long as
+the first line's wording doesn't change. Planned/In Progress -> issue open (labels `effort-board` +
+`state:planned`/`state:in-progress`, assigned to `jaywedgeworth22` so GitHub pushes mobile
+notifications); Completed/Deployed -> issue closed (`state:completed`/`state:deployed`). Never
+deletes issues; a board row that disappears leaves its mirrored issue untouched. Hand-made issues
+without the marker are ignored entirely. Missing labels are created on first run. Duplicate board
+rows (same normalized first line appearing twice — found for real in this repo's own board, "Wave-1
+quick wins..." logged twice under In Progress) are deduped within a run so they don't multiply
+issues.
+Workflow `.github/workflows/effort-issues-sync.yml` (new, additive): triggers on push to `main`
+touching `docs/EFFORT-LOG.md`, a daily off-minute cron (`12 6 * * *`, drift catch), and
+`workflow_dispatch`. Uses the Actions-provided `GITHUB_TOKEN` (`issues: write`) via plain REST +
+stdlib `urllib`, no GraphQL.
+Rolled out to `Socratic.Trade` (this repo), `congress-trading-shared`, and `API-usage-monitor` —
+identical script/workflow in all three; the script reads `GITHUB_REPOSITORY` from the Actions
+environment so no repo-specific edits were needed. Canonical pattern documented as a new "Issues
+mirror (standard)" subsection in `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`, and the new-app bootstrap
+checklist there now includes copying the two files.
+Caveat: the source is each repo's **committed** `docs/EFFORT-LOG.md` mirror, not the machine-local
+live board (`/Users/jay/apps/TRADING-EFFORT-LOG.md`) — GitHub Actions has no access to the
+operator's Mac filesystem. This means the Issues view reflects state as of the last landing, not
+every live-board edit; documented in the script's own docstring and in the protocol doc.
+**Merged and verified live:** Socratic.Trade PR #374, congress-trading-shared PR #4,
+API-usage-monitor PR #9 — all squash-merged. First sync (auto-fired by the `main` push trigger in
+Socratic.Trade; manually triggered once via `gh workflow run` in the other two) produced:
+Socratic.Trade 58 issues (32 `state:completed` + 6 `state:deployed`, closed; 9 `state:in-progress`
++ 11 `state:planned`, open), congress-trading-shared 2 open `state:in-progress` issues,
+API-usage-monitor 3 open `state:in-progress` issues — all confirmed via the Issues API with correct
+labels, assignee, and body content.
+See `docs/rollouts/2026-07-04-effort-issues-mirror.md` for full detail, verification, and file list.
+
+## 2026-07-04 — Fleet-wide Sentry observability: host monitor (pm2) + additive CI failure reporter (Claude)
+New Sentry project `fleet-infra` (org jays-services), DSN in
+`/Users/jay/apps/fleet-sentry-monitor/.env` as `SENTRY_FLEET_DSN` (never printed/logged).
+**Part A — host monitor (machine-side, no repo dependency):**
+`/Users/jay/apps/fleet-sentry-monitor/monitor.py`, a single-pass Python script whose ~120s cadence
+comes from pm2 restarting it after each pass sleeps and exits (registered as pm2 app
+`fleet-sentry-monitor`, `pm2 save`d — confirmed running, `status: online`). Each pass: `pm2 jlist`
+crash-loop detection (restart delta >= 5 within one interval -> error, fingerprinted per
+app+condition with hourly dedup via a local `state.json`), down detection (`trading`/`trading-main`
+non-online -> error, any other app -> warning); Claude desktop presence/RSS as breadcrumb only
+(not-running is not an error); disk free on `/` (<20GB warn, <8GB error) plus known SQLite WAL
+files >512MB warning; `gh api rate_limit` core/graphql <300 remaining -> warning with reset time;
+self-hosted Actions runner status as context only (offline is expected/normal); and a Sentry Crons
+self check-in (monitor slug `fleet-host-monitor`, upsert config: interval 2min, margin 5,
+max_runtime 2, America/Chicago) so a dead monitor alerts by absence. Verified live, not just
+locally: two real pm2-driven passes completed check-ins ("ok"), a synthetic restart-delta mutation
+correctly fired the "pm2 crash loop: trading-codex" error at delta=7, and the `gh` rate-limit
+warning fired for real mid-session (fleet-wide testing burned graphql to 0 remaining).
+**Part B — CI failure reporter (repo-side, additive only):** new worktree
+`~/apps/trading-wt-sentry-ci` on branch `claude/sentry-ci-observability`, cut from `origin/main`
+(81c707c2). Two brand-new files, zero edits to any existing workflow:
+`.github/workflows/sentry-ci-report.yml` (listens on `workflow_run: types:[completed]` for all 7
+existing workflows — CI, Codex Autofix, Deploy, Sync Preview Lanes, Shared package pin check,
+Playwright Smoke, Security) and `scripts/sentry-ci-report.py` (raw Sentry envelope HTTP via
+`urllib`, no `sentry-sdk`/action-marketplace dependency). On failure conclusion: a Sentry error
+event tagged `{workflow, branch, actor}` with the run URL, fingerprinted `[workflow, branch]`. On a
+schedule-triggered run: an additional Sentry Crons check-in (`ci-<workflow-slug>`, e.g.
+`ci-security`) whose `monitor_config.schedule` mirrors that workflow's own cron (Security
+`41 10 * * 1`, Playwright Smoke `17 9 * * 1`, Shared package pin check `0 13 * * 1`) — so a
+nightly/weekly job that silently stops running (not "fails" but "never fires again") raises a
+missed-check-in alert. Repo secret `SENTRY_FLEET_DSN` set via `gh secret set` reading the value
+mechanically from the `.env` file (never echoed to any log/transcript). Locally dry-ran the
+reporter script against the real DSN: both the failure-event and check-in envelope POSTs returned
+HTTP 200 before this went live in CI. See
+`docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail, verification commands,
+and follow-ups.
+## 2026-07-04 — CI Actions efficiency: docs-only fast path + `.next/cache` + cache hygiene (Claude)
+Branch `claude/ci-actions-efficiency`, worktree `~/apps/trading-wt-ci-efficiency`, PR #370.
+Personal Actions Pro-plan quota (3,000 min/mo) was exhausted; goal was to cut hosted-runner
+minutes with zero weakening of the merge gate. `.github/workflows/ci.yml`: added a cheap
+`classify` job that computes (on `pull_request` events, via `git diff --name-only base...head`)
+whether every changed file is documentation-class (`*.md` anywhere or `docs/**`); the existing
+`verify` job (same name, still the sole required status check — confirmed live via
+`gh api .../rulesets/17945518`, context `["verify"]` only) now gates its expensive steps
+(checkout/setup-node/.next-cache/install/lint/tsc/test/build) behind
+`needs.classify.outputs.docs-only != 'true'` and logs "docs-only diff — gate skipped by path
+filter" + succeeds immediately when true. Any non-PR event, or any ambiguity in the diff
+computation, falls back to the full gate — deliberately conservative. `smoke`/`gitleaks`/
+`check-pin` are NOT required checks today (contrary to the AGENTS.md fallback list, which is
+explicitly only for if the ruleset API 404s — it didn't).
+
+**Mid-review addition (cache hygiene):** the repo hit its 10 GB Actions-cache cap. Root cause: a
+plain `actions/cache@v4` save on every run (source-hash-keyed, so it changes almost every commit)
+meant every PR push wrote its own ~340 MB `.next` entry scoped to that PR's ref, with no cleanup
+on PR close, plus `main` itself accumulating a new entry per push without removing the old one.
+Fixed by splitting to `actions/cache/restore@v4` (any event) + `actions/cache/save@v4` (gated to
+`main` pushes only), so PR runs get a warm cache but never write their own; added new
+`.github/workflows/cleanup-caches.yml` (not a required check) with a `delete-pr-caches` job
+(`pull_request: closed` → `gh cache delete --all --ref refs/pull/<n>/merge
+--succeed-on-no-caches`) and a daily-cron `prune-stale-caches` backstop job using new
+`scripts/prune-stale-actions-caches.py` to keep only the newest cache entry per (key-prefix, ref)
+lineage.
+
+**Scope guardrails + evolved decisions during review:** two further additions were proposed
+mid-task — (a) hybrid self-hosted/hosted runner routing for `verify` onto the production
+`trading-live-mac` box, and (b) a cross-repo `workflow_call` reusable entry point. Both were
+escalated back rather than built silently, since (a) reverses the repo's own documented
+2026-07-01 decision to move `verify` OFF that runner (queue bottleneck) and makes the required
+check's result depend on which OS/toolchain executed it. **The owner then re-confirmed (a) after
+seeing the tradeoff, with a resource-aware design answering each objection** (Mac-side
+availability publisher w/ load+RAM+hysteresis gating, instant hosted fallback on busy/stale
+state, hosted-Linux as arbiter on any self failure via exactly-one automatic hosted re-run,
+nightly hosted canary, per-run environment annotation) — to be built as its OWN clearly-labeled
+PR after PR #370 lands, never bundled. (b) stays deferred until that hybrid PR proves itself;
+hosted-only default when built. Full evolution recorded in
+`docs/rollouts/2026-07-04-ci-actions-efficiency.md`.
+
+**Codex review round (PR #370):** two genuine fail-open holes flagged and fixed — (1)
+`git diff --name-only` hides rename sources (a `git mv src/foo.ts docs/foo.md` would classify
+docs-only while deleting code); fixed with `--no-renames`, locally reproduced + re-verified. (2)
+a classify-job failure would SKIP the required `verify` job (skipped required checks can fail
+open); fixed with `if: ${{ !cancelled() }}` + an explicit fail-closed first step when
+`needs.classify.result != 'success'`.
+
+Verification: full local quartet green (lint 0 errors/308 pre-existing warnings, tsc clean,
+2436/2436 tests, build succeeded) plus `yaml-lint` on all workflow files, live ruleset API
+confirmation, a dry-run of the PR-cache-delete command against a nonexistent ref, and a
+synthetic-inventory test of the prune script's grouping logic. PR #370 CI/Smoke/Security were
+observed actually running live during this branch's review, so the Actions quota is not currently
+blocking runs (contrary to the initial task assumption).
+
+## 2026-07-04 — RAG quick-wins Wave 1 lane: wire dormant stages + provenance + hash/embed-tag/rerank-cap (Claude)
+Branch `claude/w1-rag-quickwins`, off `origin/main`. One of four Wave-1 quick-win lanes from the
+2026-07-04 composite expert review (section C, lines 233-310). S-effort wiring of already-built RAG
+stages — no new ingestion sources. Five items:
+1. **Wired the dormant relevance-floor + near-dup dedupe.** `retrieveContextDetailed`'s
+   `minRelevanceScore`/`dedupeSimilarity` (built 2026-07-01, never called) are now passed at both
+   real call sites (`src/lib/strategy.ts`'s advisory RAG context, `src/lib/chat/orchestrator.ts`'s
+   `searchKnowledge`) via two new tunables: `defaultRelevanceFloor()` (`VECTOR_MIN_RELEVANCE_SCORE`,
+   default 0.3) and `defaultDedupeSimilarity()` (`VECTOR_DEDUPE_SIMILARITY`, default 0.6, returns
+   `undefined` — not `0` — when tuned to 0, since a literal 0 Jaccard threshold would flag every
+   chunk as a duplicate rather than disabling the pass).
+2. **Provenance headers + stable chunk ids.** New `formatChunkWithProvenance()` in `vector-db.ts`
+   prefixes each retrieved chunk with `[DOC_TYPE · section · SYMBOL · date · rel N.NN]` before
+   `strategy.ts` joins chunks into the prompt's `ragContext`. Chunk ids were already stable/real
+   (`RetrievedChunk.id` = the Pinecone vector id, already flowing into
+   `SocraticRagAttribution.chunkId`) — left unchanged, ready for a future `evidenceRefs` citation
+   mechanism. `orchestrator.ts`'s `searchKnowledge` tool result already exposes `doc_type`/
+   `section`/`as_of`/`score` as discrete JSON fields, so it was NOT given a text header (would be
+   redundant / risk conflicting with `chunk_id`).
+3. **Content-hash dedup default-on + widen to 128-bit.** `VECTOR_STORECONTEXTS_DEDUP` was already
+   default-on (flipped in an earlier pass, PR #3392b13/e2ea389 — the composite review's "default
+   OFF" description was stale by the time this branch started). Widened `hashContent()`
+   (`src/lib/rag/chunk.ts`) from 16 to 32 hex chars (64-bit → 128-bit) to remove the collision risk;
+   `document_chunks.content_hash` is a plain `TEXT` primary key, no schema change needed.
+4. **Embedding-model version tag on vectors.** `cleanMetadata()` now stamps every new vector with
+   `embed_model: "voyage-finance-2"` + `embed_rev: 1` (bump `EMBED_REV` on any future
+   model/representation change); a caller-supplied `embed_model`/`embed_rev` metadata key can't
+   override the stamped values. Did NOT add a `rag-coverage` per-model-count surface — no such route
+   exists yet (that's the separate, bigger "persist chunk text" item); flagged as a follow-up.
+5. **Raised the rerank candidate-pool cap.** New `rerankOverFetchK()` (env-tunable via
+   `VECTOR_RERANK_OVERFETCH_K`, default 150) widens the pool actually handed to the Voyage
+   cross-encoder when reranking will run; the original modest `overFetchK` (≤50) is unchanged for
+   non-rerank over-fetch paths (as-of-only, hybrid-without-rerank).
+
+Verification: `npm run lint` (0 errors, pre-existing warning backlog only), `npx tsc --noEmit`
+(clean), `npm test` (2388/2388 passing, up from the pre-existing 2375 baseline), `npm run build`
+(green). Full detail: `docs/rollouts/2026-07-04-rag-quickwins-wiring.md`.
+## 2026-07-04 — Inter-agent coordination protocol (short pointer in AGENTS.md, canonical at /Users/jay/apps/AGENT-SYNC.md)
+Branch `claude/agent-sync-protocol-docs` (docs-only). Added short `## Inter-agent coordination` pointer
+section to AGENTS.md (3-4 lines) linking to the canonical `/Users/jay/apps/AGENT-SYNC.md` protocol reference
+(full protocol: sender tags, terse format, message structure, access/bot mechanics, realtime watcher, conflict resolution,
+effort-board integration, examples). Canonical file is branch-neutral (not in worktree); lives at `/Users/jay/apps/`.
+Rollout note updated at `docs/rollouts/2026-07-04-agent-sync-protocol-docs.md`.
+
+## 2026-07-04 — Wave-1 quick wins: LLM fixes lane (claude/w1-llm-fixes)
+Branch `claude/w1-llm-fixes` (off `origin/main`), one of four parallel Wave-1 lanes from the
+2026-07-04 composite expert review. Implemented the 5 assigned items (composite review sections B
+lines 163-232, E ~391-484): (1) fixed the Bear schema silently stripping `confidenceScore` — a live
+money-path bug where a Bear-surviving proposal's conviction score degraded to `undefined`, zeroing
+the approval-time debate trigger and sizing; (2) added per-provider reasoning-token headroom for
+xAI/Gemini/Mistral/DeepSeek chat-completions (previously OpenAI-only); (3) cross-family Bear default
+(only when a cross-family credential is configured, else same-family fallback — see deviation note
+in the rollout) + non-zero (0.7) adversary sampling temperature for Bear/debate via
+`withLlmRequestBounds`; (4) reward-abstention line in the Bull system prompt; (5) stakes-scaled Red
+Team dissent trigger — notional %-of-NAV, live opening, escalation regime, or a requested
+autonomyOverride now also demand the debate, not confidence alone. `STRATEGY_PROMPT_VERSION` bumped
+to `agentic-strategy@1.4.0`. Advisory-only; no new hard gates. Verification green: `npm run lint`
+(0 errors), `npx tsc --noEmit` (clean), `npm test` (245 files / 2385 tests), `npm run build` (exit
+0). Details in `docs/rollouts/2026-07-04-w1-llm-fixes.md`. **PR pending** (push-only branch; a
+landing train picks it up per the coordinator's instructions).
+## 2026-07-04 — Wave-1 quick win: typed regime enum + live VIX overlay + Alpaca snapshot asOf (Claude)
+Branch `claude/w1-regime-data` (pushed, not yet landed — a landing train will pick it up; no
+PR opened per this lane's instructions). Three composite-review items (D+E, high/S each):
+1. **Typed regime enum + numeric severity** — new dependency-free `src/lib/market-regime.ts`
+   (`MarketRegime` enum, `MARKET_REGIME_LABELS`, `MARKET_REGIME_SEVERITY`, `classifyMarketRegime`,
+   `regimeFromLabel`, `isCrisisOrInvertedMarketRegime`, `isEscalationMarketRegime`,
+   `isRiskOffFilterRegime`). `src/lib/macro.ts` re-exports it; `determineMarketRegime` is now a thin
+   label-projection wrapper — byte-identical persisted label strings, unchanged. the risk-gate call
+   sites (`policy.ts` crisis cap, `strategy.ts` `deterministicBearFilter`) deliberately keep their
+   substring checks — enum adoption inside risk gates is the risk lane's (Monet, PR #360) per the
+   owner-assigned swimlane split; the console Macro regime card (`app/console/macro/indicators.ts`)
+   uses the enum (client-safe since `market-regime.ts` has zero server-only imports).
+   `regime-watch.ts`'s `isEscalationRegime` intentionally stays a plain substring check — its test
+   file fully mocks `./macro` with test-local labels, so importing the typed helpers there would
+   break under that mock (documented inline).
+2. **Live ^VIX overlay** — `fetchLiveVix`/`fetchMacroDataWithLiveVix` in `macro.ts`: a separate
+   short-TTL (10 min) cache entry off the same key-free Yahoo `^VIX` chart call, independent of the
+   24h `fetchMacroData` cache. The volatility panic brake (`strategy.ts`) and the regime-flip
+   detector (`regime-watch.ts`) now read the live overlay instead of the day-cached snapshot;
+   `vixAsOf` is stamped on the vol-brake audit/notification payload.
+3. **Per-data-class TTL + asOf on the Alpaca snapshot** — new `alpacaSnapshotTtlMs()` (~30s default,
+   `ALPACA_SNAPSHOT_CACHE_TTL_MS`-overridable) replaces the blanket 6h `ttlMs()` for the
+   `AlpacaSnapshotEnrichmentProvider` cache write; `parseAlpacaSnapshot` now stamps `asOf` from
+   `latestTrade.t`/`dailyBar.t` (whichever backs the winning price field) so the `maxQuoteAgeSec`
+   staleness gate in `policy.ts` can actually see the quote's true age.
+Verification: `npm run lint` 0 errors (pre-existing warning backlog unchanged), `npx tsc --noEmit`
+clean, `npm test` 247 files / 2401 tests green, `npm run build` succeeds (`/console/macro` compiles,
+confirming the client-bundle import of `market-regime.ts`). New tests:
+`test/market-regime.test.ts`, `test/macro-live-vix.test.ts`, plus additions to
+`test/data-providers.test.ts` and `test/regime-watch.test.ts`. Full detail:
+`docs/rollouts/2026-07-04-regime-enum-live-vix-alpaca-asof.md`.
 ## 2026-07-03 — Wash-sale gate: non-blocking defaults, "auto" is now advisory not a veto (Claude, cloud)
 Branch `claude/washsale-advisory-defaults` (isolated worktree off `origin/main` @ `eae514be`).
 Owner decision, settled: the wash-sale gate must not hard-block by default. Two changes, landed

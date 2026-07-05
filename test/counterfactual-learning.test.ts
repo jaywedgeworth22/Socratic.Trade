@@ -25,9 +25,12 @@ const momentumBreakdown = {
 describe("counterfactual skipped-candidate learning", () => {
   it("materializes mature skipped returns idempotently from signal_snapshot evidence", async () => {
     const userId = `cf-idem-${randomUUID()}`;
+    // 2026-06-10 is a Wednesday; 5 TRADING days later (Thu/Fri/Mon/Tue/Wed, no holidays in
+    // between) lands on 2026-06-17 — NOT the calendar-day "2026-06-15" this fixture used
+    // before the trading-day-horizon fix (see docs/rollouts/2026-07-04-w1-learning-loops.md).
     const fetchOHLC: CounterfactualOHLCFetcher = async () => [
       { time: "2026-06-10", close: 100 },
-      { time: "2026-06-15", close: 115 }
+      { time: "2026-06-17", close: 115 }
     ];
 
     audit("signal_snapshot", {
@@ -68,7 +71,7 @@ describe("counterfactual skipped-candidate learning", () => {
       runId: "run-cf-idem",
       symbol: "AAPL",
       refPrice: 100,
-      exitDate: "2026-06-15",
+      exitDate: "2026-06-17",
       exitPrice: 115,
       returnPct: 15,
       dominantFactor: "momentum"
@@ -83,11 +86,12 @@ describe("counterfactual skipped-candidate learning", () => {
     const userA = `cf-user-a-${randomUUID()}`;
     const userB = `cf-user-b-${randomUUID()}`;
     const calls: string[] = [];
+    // 5 TRADING days after Wed 2026-06-10 lands on 2026-06-17 (see the fixture above).
     const fetchOHLC: CounterfactualOHLCFetcher = async (symbol, _now, userId) => {
       calls.push(`${userId}:${symbol}`);
       return [
         { time: "2026-06-10", close: 70 },
-        { time: "2026-06-15", close: 80 }
+        { time: "2026-06-17", close: 80 }
       ];
     };
 
@@ -121,6 +125,8 @@ describe("counterfactual skipped-candidate learning", () => {
     const rowB = listMaturedSkippedCounterfactuals(userB)[0];
     expect(rowA.returnPct).toBe(-20);
     expect(rowB.returnPct).toBe(60);
-    expect(calls).toEqual([`${userA}:NVDA`, `${userB}:NVDA`]);
+    // The materializer now also fetches one SPY series per run (for the multi-horizon rows'
+    // SPY-relative excess) before the per-candidate fetches.
+    expect(calls).toEqual([`${userA}:SPY`, `${userA}:NVDA`, `${userB}:SPY`, `${userB}:NVDA`]);
   });
 });

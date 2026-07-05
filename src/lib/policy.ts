@@ -19,6 +19,7 @@ import { dynamicIndexUniversesForPolicy, symbolsForPolicyUniverse } from "./inde
 import { getUserWashSaleLockProvenance, type WashSaleLockMap } from "./tax";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { getDb } from "./db";
+import { isCrisisOrInvertedMarketRegime, regimeFromLabel } from "./market-regime";
 
 export interface PolicyContext {
   policy: TradingPolicy;
@@ -841,9 +842,15 @@ function deRiskInCrisisReason(
   return `Opening ${normalizeSymbol(proposal.symbol)} exposure ${openingExposurePct.toFixed(2)}% exceeds crisis/inverted-regime cap ${cap}%.`;
 }
 
+// Typed-enum adoption (risk lane): classify the persisted regime label once via the shared source
+// of truth in ./market-regime instead of an ad-hoc substring match, so a regime relabel can't
+// silently desync this crisis/inverted opening-exposure cap from the bear filter and escalation
+// gates. Canonical-label behavior is unchanged (pinned by test/market-regime.test.ts and the
+// crisis-cap cases in test/policy.test.ts): "Crisis (Extreme Volatility)" and "Cautious (Inverted
+// Curve)" trip the cap, "Risk-Off (High Volatility)"/"Neutral"/"Risk-On" do not. A non-canonical
+// free-text label now reads non-crisis/inverted rather than accidentally matching a substring.
 function isCrisisOrInvertedRegime(regime?: string): boolean {
-  const normalized = regime?.toLowerCase() ?? "";
-  return normalized.includes("crisis") || normalized.includes("inverted");
+  return isCrisisOrInvertedMarketRegime(regimeFromLabel(regime));
 }
 
 function projectedExposurePct(

@@ -189,6 +189,14 @@ export function listFillEvents(accountNumber: string, source?: FillSource, limit
   return rows.map(toFillEvent);
 }
 
+/** Fills for one proposal (entry-basis lookup for the outcome engine's placed-decision join). */
+export function listFillEventsByProposalId(proposalId: string, userId: string = "local"): FillEvent[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM fill_events WHERE proposal_id = ? AND user_id = ? ORDER BY filled_at ASC")
+    .all(proposalId, userId) as RawFillEvent[];
+  return rows.map(toFillEvent);
+}
+
 export function listPendingBrokerReconciliationFills(accountNumber: string, userId: string = "local"): FillEvent[] {
   const rows = getDb()
     .prepare(

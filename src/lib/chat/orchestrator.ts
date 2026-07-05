@@ -13,7 +13,7 @@ import { getBrokerGateway } from "../broker";
 import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard } from "../performance";
 import { fetchDailyOHLC } from "../history";
 import { fetchYahooFinanceQuote } from "../yahoo-finance";
-import { citationStalenessEnabled, defaultMinScore, isStale, retrieveContextDetailed } from "../vector-db";
+import { citationStalenessEnabled, defaultDedupeSimilarity, defaultMinScore, defaultRelevanceFloor, isStale, retrieveContextDetailed } from "../vector-db";
 import type { RetrieveOptions } from "../vector-db";
 import { createAlert as alertsCreateAlert, listAlerts as alertsListAlerts } from "../alerts";
 import { getEnrichmentProvider } from "../data-providers";
@@ -187,7 +187,11 @@ export function buildProductionDeps(): ToolDeps {
       const options: RetrieveOptions = {
         ...(args.as_of ? { asOf: args.as_of } : {}),
         ...(args.doc_type ? { docType: [args.doc_type] } : {}),
-        minScore: defaultMinScore()
+        minScore: defaultMinScore(),
+        // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor +
+        // near-duplicate suppression (both existed since 2026-07-01 but no caller passed them).
+        minRelevanceScore: defaultRelevanceFloor(),
+        dedupeSimilarity: defaultDedupeSimilarity()
       };
       const chunks = await retrieveContextDetailed(args.query, symbol, args.k ?? 5, userId, options);
       // Real provenance — chunk_id is the actual vector id; as_of is the chunk's own date (not the query's).

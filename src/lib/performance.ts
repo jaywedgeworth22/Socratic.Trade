@@ -1,4 +1,4 @@
-import { getPolicy, insertFillEvent, insertPortfolioSnapshot, listAudit, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, recordTakeProfitTrimBand } from "./db";
+import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -196,6 +196,9 @@ export function recordFillFromProposal(input: {
       ? quantity * price
       : input.proposal.dollarAmount ?? (notional > 0 ? notional : 0);
 
+  // The symbol's full scan candidate at fill time (factor breakdown source for the entry stamps below).
+  const entryCandidate = input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol);
+
   const fill = insertFillEvent({
     userId: input.userId,
     proposalId: input.proposalId,
@@ -221,7 +224,15 @@ export function recordFillFromProposal(input: {
       execution: input.execution,
       sector: input.marketScan?.quotesBySymbol[symbol]?.sector,
       ...((input.proposal.side === "buy" || input.proposal.side === "short")
-        ? { dominantFactor: dominantFactor(input.marketScan?.topCandidates.find((c) => normalizeSymbol(c.symbol) === symbol)?.factorBreakdown) }
+        ? {
+            dominantFactor: dominantFactor(entryCandidate?.factorBreakdown),
+            // Episodic experience memory (2026-07-04 composite review A1): also stamp the FULL
+            // 8-factor breakdown + scan breadth at ENTRY, so the closed-lot experience vector can
+            // embed the entry-time state instead of a lookahead reconstruction at exit. Additive
+            // raw fields only — existing readers (thesisMetaFromFill) are unaffected.
+            ...(entryCandidate?.factorBreakdown ? { factorBreakdown: entryCandidate.factorBreakdown } : {}),
+            ...(typeof input.marketScan?.breadthPct === "number" ? { scanBreadthPct: input.marketScan.breadthPct } : {})
+          }
         : {})
     }
   });
@@ -235,6 +246,28 @@ export function recordFillFromProposal(input: {
     } catch {
       // ratchet bookkeeping must never break fill recording
     }
+  }
+
+  // Episodic experience memory write hook (2026-07-04 composite review A1): a sell/cover fill may
+  // have just CLOSED one or more lots — embed each closed lot's entry state + realized outcome into
+  // the experience-memory vector namespace, keyed by the entry proposalId. Strictly fire-and-forget:
+  // the dynamic import + async body keep this sync function's signature and money-path behavior
+  // untouched, and any failure (no vector keys, no matched lot, provider error) degrades to a
+  // console warning inside recordClosedLotExperience (which never throws).
+  if (input.proposal.side === "sell" || input.proposal.side === "cover") {
+    void import("./experience-memory")
+      .then((experienceMemory) =>
+        experienceMemory.recordClosedLotExperience({
+          userId: input.userId,
+          accountNumber: input.accountNumber,
+          source: input.source,
+          closingFill: fill,
+          closingProposal: input.proposal
+        })
+      )
+      .catch((err) => {
+        console.warn("[performance] experience-memory hook failed:", err instanceof Error ? err.message : String(err));
+      });
   }
   return fill;
 }
@@ -812,6 +845,199 @@ export function getSkippedCandidateReturns(
   }
 
   return returns.sort((a, b) => b.returnPct - a.returnPct).slice(0, limit);
+}
+
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
+}
+
+/**
+ * Red Team (Bear) efficacy scorecard — advisory-only measurement of the adversary that can veto any
+ * high-conviction proposal. Joins `proposal_rejected_by_red_team` audit events (the veto decision;
+ * stamped with runId + model since 2026-07) to their matured counterfactual return in
+ * `skipped_candidate_counterfactuals` (written by `recordRejectedProposalCounterfactual` at veto time,
+ * same pipeline as policy blocks / human rejections) via the shared `(runId, symbol)` key. A veto whose
+ * counterfactual return is NEGATIVE means the vetoed trade would have lost money — the Bear "added
+ * value" by keeping the proposal out. A veto whose counterfactual return is POSITIVE means the vetoed
+ * trade would have made money — the Bear's rejection MISSED a winner. Never gates anything; this is a
+ * read-only scorecard for the approval-time debate prompt and the Results page (console wiring left for
+ * the console lane — see docs/rollouts/2026-07-04-w1-learning-loops.md).
+ */
+export interface RedTeamEfficacy {
+  /** Total Bear-veto audit events observed in the scanned window (matured or not). */
+  totalVetoes: number;
+  /** Vetoes whose post-veto counterfactual return has matured (resolvable — never fabricated). */
+  maturedVetoes: number;
+  /** Vetoes whose counterfactual terminally failed to resolve (delisted/renamed — kill-survivorship:
+   *  counted in the denominator instead of silently dropping out of the scorecard). */
+  unresolvableVetoes: number;
+  /** maturedVetoes / totalVetoes (0 when no vetoes observed). Coverage, not a rejection rate. */
+  maturedCoveragePct: number;
+  /** Human coverage disclosure, e.g. "4/6 vetoes resolved (66.7%) — 1 unresolvable; may be survivor-biased". */
+  coverage: string;
+  /** Share of MATURED vetoes where the counterfactual return was negative (the veto avoided a loser). */
+  vetoValueAddRate: number;
+  /** Share of MATURED vetoes where the counterfactual return was positive (the veto missed a winner —
+   *  the survivor-risk the Bear itself introduced by rejecting a trade that would have worked). */
+  survivorRiskHitRate: number;
+  /** Mean counterfactual return (%) across matured vetoes; negative is good (vetoes avoided losses). */
+  avgReturnPct: number;
+  /** Per red-team model breakdown (present only for models that stamped ≥1 matured veto). */
+  byModel: Array<{
+    model: string;
+    maturedVetoes: number;
+    vetoValueAddRate: number;
+    survivorRiskHitRate: number;
+    avgReturnPct: number;
+  }>;
+  /** The individual matured veto records, most recent counterfactual maturation first — bounded by `limit`. */
+  records: RedTeamVetoRecord[];
+}
+
+export function getRedTeamEfficacy(
+  userId: string = "local",
+  options: { auditLimit?: number; limit?: number; connectedAccountId?: string } = {}
+): RedTeamEfficacy {
+  const auditLimit = options.auditLimit ?? 500;
+  const limit = options.limit ?? 50;
+
+  const vetoesByKey = new Map<string, { runId: string; symbol: string; side?: string; thesisTag?: string; reason?: string; model?: string }>();
+  // Kind-scoped audit query (Codex review on PR #365): the LIMIT applies AFTER the kind
+  // filter, so newer audit rows of other kinds can never push older Bear vetoes out of the
+  // scanned window and zero the scorecard's history.
+  for (const event of listAuditByKind("proposal_rejected_by_red_team", auditLimit, userId, options.connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; thesisTag?: string; reason?: string; model?: string } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    // Opening sides only: the strategy audits EVERY Bear veto but records counterfactual
+    // candidates only for vetoed buy/short OPENINGS (a vetoed exit is not a missed
+    // opportunity), so counting exit vetoes here would permanently depress maturation
+    // coverage with rows that can never mature. Legacy audits without a side are kept
+    // (the writer has always been opening-scoped downstream).
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    const symbol = normalizeSymbol(payload.symbol);
+    vetoesByKey.set(`${payload.runId}:${symbol}`, {
+      runId: payload.runId,
+      symbol,
+      side: payload.side,
+      thesisTag: payload.thesisTag,
+      reason: payload.reason,
+      model: payload.model
+    });
+  }
+
+  const totalVetoes = vetoesByKey.size;
+  // Keyed (runId, symbol) lookups rather than a return_pct-DESC top slice of all matured
+  // rows: the top-return slice could drop exactly the low/negative-return vetoes (the
+  // avoided losers) that vetoValueAddRate exists to count (Codex review on PR #365).
+  const maturedPairs: Array<{ record: RedTeamVetoRecord; maturedAt: string }> = [];
+  for (const veto of vetoesByKey.values()) {
+    const row = getMaturedSkippedCounterfactualByRunSymbol(userId, veto.runId, veto.symbol);
+    if (!row || row.returnPct === undefined) continue;
+    const returnPct = veto.side === "short" ? -row.returnPct : row.returnPct;
+    maturedPairs.push({
+      record: {
+        runId: veto.runId,
+        symbol: veto.symbol,
+        side: veto.side,
+        thesisTag: veto.thesisTag,
+        reason: veto.reason,
+        model: veto.model,
+        returnPct
+      },
+      maturedAt: row.updatedAt
+    });
+  }
+  // Most recent counterfactual maturation first (the documented `records` ordering contract).
+  maturedPairs.sort((a, b) => b.maturedAt.localeCompare(a.maturedAt));
+  const records: RedTeamVetoRecord[] = maturedPairs.map((pair) => pair.record);
+
+  // Kill-survivorship (Wave-2 outcome engine): terminally-unresolvable counterfactuals
+  // (delisted/renamed vetoed names) stay in the denominator and in the disclosure instead
+  // of vanishing from the scorecard.
+  let unresolvableVetoes = 0;
+  if (totalVetoes > 0) {
+    for (const row of listSkippedCounterfactualsByStatus(userId, "unresolvable", Math.max(auditLimit, totalVetoes * 2))) {
+      if (vetoesByKey.has(`${row.runId}:${normalizeSymbol(row.symbol)}`)) unresolvableVetoes += 1;
+    }
+  }
+
+  const maturedVetoes = records.length;
+  const valueAdds = records.filter((r) => r.returnPct < 0).length;
+  const survivorHits = records.filter((r) => r.returnPct > 0).length;
+  const avgReturnPct = maturedVetoes > 0 ? records.reduce((sum, r) => sum + r.returnPct, 0) / maturedVetoes : 0;
+
+  const byModelMap = new Map<string, RedTeamVetoRecord[]>();
+  for (const record of records) {
+    if (!record.model) continue;
+    const bucket = byModelMap.get(record.model);
+    if (bucket) bucket.push(record);
+    else byModelMap.set(record.model, [record]);
+  }
+
+  const resolvedDenominator = maturedVetoes + unresolvableVetoes;
+  const coverage =
+    totalVetoes > 0
+      ? `${maturedVetoes}/${totalVetoes} vetoes resolved (${Number(((maturedVetoes / totalVetoes) * 100).toFixed(1))}%)${
+          unresolvableVetoes > 0 ? ` — ${unresolvableVetoes} unresolvable; may be survivor-biased` : ""
+        }${totalVetoes - resolvedDenominator > 0 ? `; ${totalVetoes - resolvedDenominator} still maturing` : ""}`
+      : "no vetoes observed";
+
+  return {
+    totalVetoes,
+    maturedVetoes,
+    unresolvableVetoes,
+    maturedCoveragePct: totalVetoes > 0 ? Number(((maturedVetoes / totalVetoes) * 100).toFixed(1)) : 0,
+    coverage,
+    vetoValueAddRate: maturedVetoes > 0 ? Number(((valueAdds / maturedVetoes) * 100).toFixed(1)) : 0,
+    survivorRiskHitRate: maturedVetoes > 0 ? Number(((survivorHits / maturedVetoes) * 100).toFixed(1)) : 0,
+    avgReturnPct: Number(avgReturnPct.toFixed(2)),
+    byModel: Array.from(byModelMap.entries()).map(([model, modelRecords]) => {
+      const modelValueAdds = modelRecords.filter((r) => r.returnPct < 0).length;
+      const modelSurvivorHits = modelRecords.filter((r) => r.returnPct > 0).length;
+      const modelAvg = modelRecords.reduce((sum, r) => sum + r.returnPct, 0) / modelRecords.length;
+      return {
+        model,
+        maturedVetoes: modelRecords.length,
+        vetoValueAddRate: Number(((modelValueAdds / modelRecords.length) * 100).toFixed(1)),
+        survivorRiskHitRate: Number(((modelSurvivorHits / modelRecords.length) * 100).toFixed(1)),
+        avgReturnPct: Number(modelAvg.toFixed(2))
+      };
+    }),
+    records: records.slice(0, limit)
+  };
+}
+
+/**
+ * Coverage disclosure for the missed-opportunity readouts built on `getSkippedCandidateReturns` /
+ * `summarizeMissedOpportunities`: how many skipped-candidate counterfactuals actually resolved vs
+ * terminally failed ('unresolvable' — delisted/renamed names that would otherwise silently drop out
+ * of the matured set, i.e. survivorship bias in the "what we missed" evidence). Render as
+ * "N/M resolved (X%)" next to any missed-opportunity number.
+ */
+export function getMissedOpportunityCoverage(userId: string = "local", connectedAccountId?: string): SkippedCounterfactualCoverage {
+  return getSkippedCounterfactualCoverage(userId, connectedAccountId);
+}
+
+/** One matured Red Team veto joined to its post-veto counterfactual return. */
+export interface RedTeamVetoRecord {
+  runId: string;
+  symbol: string;
+  side?: string;
+  thesisTag?: string;
+  reason?: string;
+  model?: string;
+  /** Realized % move since the veto, side-adjusted so positive = the veto avoided a loss / missed a gain
+   *  is negative (mirrors returnSinceProposalPct's sign convention). */
+  returnPct: number;
 }
 
 /**

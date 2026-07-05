@@ -212,6 +212,15 @@ export interface TuningSettings {
   sizingCeilingPct?: number;
   /** Minimum proposal confidenceScore that triggers Red Team review. Default 80. */
   redTeamConvictionThreshold?: number;
+  /**
+   * Stakes-scaled dissent (composite review E/high/S): notional-as-%-of-NAV threshold that also
+   * triggers the approval-time Red Team debate for an OPENING (buy/short) proposal, independent of
+   * confidenceScore. Without this, `shouldRunRedTeamDebate` gated on confidence ONLY, so a
+   * low-confidence but large-notional LIVE trade got no adversarial review while a high-confidence
+   * $50 paper trade did. Default 15 (%). Advisory routing only — widens which trades get a second
+   * look; never blocks anything.
+   */
+  redTeamNotionalPctOfNavThreshold?: number;
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
   /**
@@ -898,8 +907,20 @@ export interface TradeProposal {
    *   - `model`: the model that actually served the debate (per-proposal Red Team resolution,
    *     including the cross-provider Anthropic path). Optional: legacy persisted verdicts predate
    *     it — readers fall back to the snapshot policy's configured red-team model.
+   *   - `trigger`: WHICH stakes-scaled-dissent condition demanded this debate (composite review
+   *     E/high/S) — "confidence" (the original threshold), "notional" (large %-of-NAV order),
+   *     "live_opening" (a live, non-paper opening), "override_requested" (the proposal itself asks to
+   *     override an owner preference), or "escalation_regime" (entered during a Risk-Off/Crisis/
+   *     Inverted regime). Optional: legacy persisted verdicts predate stakes-scaled dissent and
+   *     always meant "confidence".
    */
-  redTeamVerdict?: { rejected: boolean; available: boolean; reason: string; model?: string };
+  redTeamVerdict?: {
+    rejected: boolean;
+    available: boolean;
+    reason: string;
+    model?: string;
+    trigger?: "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
+  };
   /**
    * Explicit agent-authored request to override owner preference gates for this decision.
    * This is not a client-side bypass token and does not override broker/account/integrity gates.
@@ -926,6 +947,41 @@ export type SocraticDecisionStatus =
   | "rejected"
   | "error"
   | "observed";
+
+/** Forward-return measurement horizons for decision outcomes. 15m/1h resolve only when a live-quote
+ * sampling window was actually hit (no intraday history source exists); 1d/1w resolve from daily
+ * closes via the provider cascade. Horizon arithmetic is TRADING days (market-calendar), never
+ * calendar-ms. */
+export type SocraticOutcomeHorizon = "15m" | "1h" | "1d" | "1w";
+
+/** Terminal resolution of one outcome horizon. 'unresolvable' is a first-class, HONEST terminal
+ * state (delisted symbol, no intraday source, series ends before target) — never fabricated data,
+ * and it stays in every denominator so coverage disclosure can say "N/M resolved". */
+export type SocraticOutcomeResolution = "ok" | "unresolvable";
+
+/** One measured (or terminally unmeasurable) forward-return row for a single horizon. */
+export interface SocraticOutcomeHorizonRow {
+  horizon: SocraticOutcomeHorizon;
+  /** Side-adjusted % return over this horizon (positive = the decided/considered direction worked;
+   * mirrors returnSinceProposalPct's sign convention). Present only when resolution === 'ok'. */
+  returnPct?: number;
+  /** returnPct minus the same-window SPY return under the same side convention (long: vs holding
+   * SPY; short: vs shorting SPY). Undefined when no SPY series covered the window (15m/1h have no
+   * intraday SPY basis). */
+  spyExcessPct?: number;
+  /** Optional % return of the alternative actually taken instead (reserved; populated when an
+   * alternative join exists — never fabricated). */
+  altReturnPct?: number;
+  /** When this horizon's outcome was measured (or declared unresolvable). */
+  maturedAt?: string;
+  /** Honest provenance of the entry->exit prices, e.g. "fill->daily_close",
+   * "ref_price->daily_close", "fill->live_quote(+22m)". */
+  priceBasis?: string;
+  resolution: SocraticOutcomeResolution;
+  /** Why the horizon could not be resolved, e.g. "no_intraday_source", "no_price_series",
+   * "no_bar_at_or_after_target". Present only when resolution === 'unresolvable'. */
+  reason?: string;
+}
 
 export interface SocraticRagAttribution {
   symbol: string;
@@ -989,12 +1045,18 @@ export interface SocraticDecisionCase {
   evidence: SocraticEvidenceItem[];
   ragAttributions: SocraticRagAttribution[];
   dissent: SocraticEvidenceItem[];
+  /** Matured outcome written by the outcome engine (src/lib/outcome-engine.ts) — the closure of
+   * loop step 5. `outcomes[]` is the multi-horizon truth (15m/1h/1d/1w, each individually ok or
+   * honestly 'unresolvable'); the top-level fields are the headline: realized P&L for placed
+   * decisions whose lot closed, otherwise the longest resolved counterfactual horizon. status
+   * 'open' = still maturing (job revisits); 'unresolvable' = terminal, no horizon could resolve. */
   outcome?: {
-    status: "open" | "won" | "lost" | "flat" | "unknown";
+    status: "open" | "won" | "lost" | "flat" | "unknown" | "unresolvable";
     returnPct?: number;
     pnlUsd?: number;
     note?: string;
     measuredAt?: string;
+    outcomes: SocraticOutcomeHorizonRow[];
   };
   autonomyOverride?: TradeProposal["autonomyOverride"] & {
     applied: boolean;

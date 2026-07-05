@@ -19,7 +19,7 @@ import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
 import { withLlmGeneration } from "./observability";
-import { calculatePnl, getClosedLotCount, getFactorScorecard, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
+import { calculatePnl, getClosedLotCount, getFactorScorecard, getMissedOpportunityCoverage, getPerformanceSummary, getSkippedCandidateReturns, MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT, type FactorScorecardStat } from "./performance";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import { runWalkForwardOOS, buildSpyReturnToNowMap } from "./backtest";
 import { validateTuningInvariants } from "./tuning-invariants";
@@ -124,6 +124,9 @@ export interface SummarizeMissedOpportunitiesOptions {
   minHitRateDenominator?: number;
   /** P2-1: Bayesian shrinkage pseudo-count pulling a factor's hit rate toward the overall base rate. Default 5. */
   hitRateShrinkPrior?: number;
+  /** Kill-survivorship disclosure ("N/M resolved (X%)") from getMissedOpportunityCoverage, threaded
+   *  through untouched so every consumer of the summary can render how survivor-thinned it is. */
+  coverageDisclosure?: string;
 }
 
 export interface MissedOpportunitySummary {
@@ -137,6 +140,8 @@ export interface MissedOpportunitySummary {
   recurringFactorHitRate?: number;
   /** P2-1: the overall skipped-candidate base hit rate (0–1), present only when requireHitRate is on. */
   baseHitRate?: number;
+  /** Kill-survivorship coverage disclosure ("N/M resolved (X%) — may be survivor-biased"), when supplied. */
+  coverageDisclosure?: string;
 }
 
 /**
@@ -241,14 +246,16 @@ export function summarizeMissedOpportunities(
       baseHitRate: Number(baseHitRate.toFixed(4)),
       ...(bestFactor
         ? { recurringFactor: bestFactor, recurringFactorCount: bestWins, recurringFactorHitRate: Number(bestHitRate.toFixed(4)) }
-        : {})
+        : {}),
+      ...(options.coverageDisclosure ? { coverageDisclosure: options.coverageDisclosure } : {})
     };
   }
 
   return {
     items,
     count: winners.length,
-    ...(recurringFactor && recurringFactorCount >= minRecurringCount ? { recurringFactor, recurringFactorCount } : {})
+    ...(recurringFactor && recurringFactorCount >= minRecurringCount ? { recurringFactor, recurringFactorCount } : {}),
+    ...(options.coverageDisclosure ? { coverageDisclosure: options.coverageDisclosure } : {})
   };
 }
 
@@ -357,7 +364,10 @@ export async function proposeStrategyTuning(
     benchmarkReturnBySnapshotDate = await buildSpyReturnToNowMap(dates).catch(() => new Map<string, number>());
   }
   const skippedRows = getSkippedCandidateReturns({}, userId, { limit: skippedLimit, maxAgeDays: 30, connectedAccountId: policy.connectedAccountId, benchmarkReturnBySnapshotDate });
-  const missedOpportunities = summarizeMissedOpportunities(skippedRows, { limit: 8, benchmarkRelative, minRecurringCount, requireHitRate });
+  // Kill-survivorship disclosure: the tuner (and anything rendering this summary) sees how many
+  // counterfactuals actually resolved vs terminally failed, instead of a silently survivor-thinned list.
+  const missedOpportunityCoverage = getMissedOpportunityCoverage(userId, policy.connectedAccountId);
+  const missedOpportunities = summarizeMissedOpportunities(skippedRows, { limit: 8, benchmarkRelative, minRecurringCount, requireHitRate, coverageDisclosure: missedOpportunityCoverage.disclosure });
   // Factor-outcome history: realized win-rate and avg-return grouped by dominant entry factor.
   // Gated by the same closed-lot minimum — below the gate the sample is too thin to trust
   // per-factor attribution.

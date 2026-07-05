@@ -20,6 +20,9 @@ vi.mock("../src/lib/vector-db", () => ({
   retrieveContext: async () => [],
   retrieveContextDetailed: async () => [],
   defaultMinScore: () => 0.3,
+  defaultRelevanceFloor: () => 0.3,
+  defaultDedupeSimilarity: () => 0.6,
+  formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
@@ -155,18 +158,24 @@ describe("strategy money-path (broker/paper via the Test-broker gateway) — G7 
     expect(aaplProposal?.status).toBe("placed");
 
     // F1: the redTeamVerdict field round-trips through the persisted JSON payload (no migration),
-    // including the served red-team model attribution (t3).
+    // including the served red-team model attribution (t3) and the stakes-scaled-dissent trigger
+    // (E/high/S) — this proposal's confidenceScore (90) alone clears the threshold.
     expect(aaplProposal?.proposal.redTeamVerdict).toEqual({
       rejected: false,
       available: true,
       reason: "No fatal flaw found.",
-      model: "gpt-4.1-mini"
+      model: "gpt-4.1-mini",
+      trigger: "confidence"
     });
     // t3: the persisted proposal carries the FAILOVER-AWARE served Green model (here the primary),
     // so approval-time attribution doesn't drift with later policy edits.
     expect(aaplProposal?.proposal.proposedByModel).toBe("gpt-4.1-mini");
     // Backward-compat rationale text is still appended.
     expect(aaplProposal?.proposal.rationale).toContain("Red Team Debate Survived");
+    // Regression (composite review B/high/S): the Bear schema now round-trips confidenceScore — a
+    // Bear-surviving proposal must retain the Bull's numeric conviction score, not degrade to
+    // undefined (which previously zeroed shouldRunRedTeamDebate/sizing downstream).
+    expect(aaplProposal?.proposal.confidenceScore).toBe(90);
   }, 30_000);
 });
 
@@ -223,18 +232,32 @@ describe("strategy Red Team rejection — F2 audit", () => {
     const rejectionAudits = listAudit(500).filter((e) => e.kind === "proposal_rejected_by_red_team");
     expect(rejectionAudits.length).toBeGreaterThanOrEqual(1);
     const payload = rejectionAudits[0].payload as {
+      runId?: string;
       symbol?: string;
       side?: string;
       thesisTag?: string;
       reason?: string;
+      model?: string;
     };
     expect(payload.symbol).toBe("AAPL");
     expect(payload.side).toBe("buy");
     expect(payload.thesisTag).toBe("Quality-Compounder");
     expect(payload.reason).toContain("Overbought");
+    // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+    // counterfactual return.
+    expect(payload.runId).toBe(result.runId);
+    expect(payload.model).toBe("gpt-4.1-mini");
 
     // A rejected proposal never reaches execution → no AAPL fill was booked.
     const fills = listFillEvents("TEST", undefined, 100, "local");
     expect(fills.find((f) => f.symbol === "AAPL")).toBeUndefined();
+
+    // A Bear veto now feeds the SAME counterfactual pipeline as a policy block / human rejection
+    // (recordRejectedProposalCounterfactual), so its post-veto return can mature into
+    // getRedTeamEfficacy() below — previously the Red Team's own vetoes were the one rejection path
+    // with zero downstream measurement.
+    const { getRedTeamEfficacy } = await import("../src/lib/performance");
+    const efficacy = getRedTeamEfficacy("local");
+    expect(efficacy.totalVetoes).toBeGreaterThanOrEqual(1);
   }, 30_000);
 });

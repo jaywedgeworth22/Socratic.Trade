@@ -15,6 +15,7 @@
 import { listSignalSnapshotAuditAfter, type SignalSnapshotAuditRow } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import type { OHLCBar } from "./indicators";
+import { addTradingDays, marketDateOf } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import { DEFAULT_SCORING_WEIGHTS } from "./defaults";
 import type { MarketFactor, MarketFactorBreakdown, ScoringWeights } from "./types";
@@ -159,6 +160,9 @@ export interface ForwardResolutionCertification {
   pointInTimeExits: number;
   /** True when every resolved exit satisfied the point-in-time invariant (no look-ahead detected). */
   pointInTimeClean: boolean;
+  /** Human coverage disclosure ("N/M resolved (X%) — may be survivor-biased"): unresolved candidates
+   *  stay in the denominator so the reader sees exactly how survivor-thinned the learner's join is. */
+  coverageDisclosure: string;
   note: string;
 }
 
@@ -216,12 +220,17 @@ export async function certifyForwardResolution(
     }
   }
 
+  const coveragePct = totalCandidates > 0 ? Number(((resolvedForward / totalCandidates) * 100).toFixed(1)) : 0;
   return {
     totalCandidates,
     resolvedForward,
     forwardCoveragePct: totalCandidates > 0 ? Number((resolvedForward / totalCandidates).toFixed(4)) : 0,
     pointInTimeExits,
     pointInTimeClean: resolvedForward === pointInTimeExits,
+    coverageDisclosure:
+      totalCandidates > 0
+        ? `${resolvedForward}/${totalCandidates} resolved (${coveragePct}%) — may be survivor-biased`
+        : "0 candidates — nothing to resolve",
     note: "SURVIVORSHIP PROXY — forwardCoveragePct measures resolvable forward prices, NOT absence of survivorship bias (the signal_snapshot log may itself be survivor-only). Diagnostic only; gates nothing."
   };
 }
@@ -426,8 +435,14 @@ export function deriveWeightsFromICs(
 function parseSnapshot(row: SignalSnapshotAuditRow): { snapshotDate: string; signals: NonNullable<SignalSnapshotPayload["signals"]> } | undefined {
   const payload = row.payload as SignalSnapshotPayload | undefined;
   if (!payload || !Array.isArray(payload.signals)) return undefined;
-  // Prefer the snapshot's own asOf; fall back to the audit row's createdAt.
-  const snapshotDate = toBusinessDay(payload.asOf) ?? toBusinessDay(row.createdAt);
+  // Prefer the snapshot's own asOf; fall back to the audit row's createdAt. The date is
+  // derived in America/New_York (marketDateOf), NOT the UTC day: an after-hours ET snapshot
+  // (e.g. Mon 19:30 ET = Tue 00:30 UTC) belongs to Monday's market day — slicing the UTC ISO
+  // string shifted those snapshots one session forward (same fix as counterfactual-learning's
+  // targetBusinessDate; Codex review on PR #365). Bar dates elsewhere keep toBusinessDay:
+  // daily-OHLC bar times at UTC midnight ARE the date and must not be timezone-shifted.
+  const snapshotDate =
+    (typeof payload.asOf === "string" ? marketDateOf(payload.asOf) : undefined) ?? marketDateOf(row.createdAt);
   if (!snapshotDate) return undefined;
   return { snapshotDate, signals: payload.signals };
 }
@@ -447,11 +462,19 @@ function extractSubScores(breakdown?: MarketFactorBreakdown): Record<MarketFacto
   return any ? out : undefined;
 }
 
-/** Mirror of counterfactual-learning's convention: snapshot day + N calendar days, ISO date. */
+/**
+ * Shared with counterfactual-learning's `targetBusinessDate`: snapshot day + N TRADING
+ * days (see `market-calendar.addTradingDays`), not N calendar days. Prior to 2026-07 this
+ * added `horizonDays * 86_400_000` ms of calendar time under a "business date" name, so a
+ * Friday snapshot matured after only 3 trading sessions while a Monday one matured after
+ * the full 5 — see docs/rollouts/2026-07-04-w1-learning-loops.md for the discontinuity note.
+ * The anchor date resolves via `marketDateOf` (America/New_York for timestamps, passthrough
+ * for date-only strings) so after-hours snapshots stay on their market day.
+ */
 function targetBusinessDate(snapshotDate: string, horizonDays: number): string {
-  const time = Date.parse(snapshotDate);
-  if (!Number.isFinite(time)) return snapshotDate;
-  return new Date(time + horizonDays * DAY_MS).toISOString().slice(0, 10);
+  const normalized = marketDateOf(snapshotDate);
+  if (!normalized) return snapshotDate;
+  return addTradingDays(normalized, horizonDays);
 }
 
 /** First daily close on/after `targetDate`. Undefined → not matured (never fabricate). */
