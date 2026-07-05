@@ -80,6 +80,24 @@ any GitHub Release.
 - Issue creation verified post-merge via the Issues API (counts in the PR/board
   changelog); other repos' verification recorded by their PR agents.
 
+## 2026-07-05 addendum — full itemization
+
+The owner reviewed the pass and flagged it as still non-exhaustive ("why aren't all tasks from
+the composite review added"). Correct: the 56 rows were a curated promotion. A second pass ran
+three enumeration agents over the expert design review (147 findings), the composite review, the
+FULL 2026-06-30 audit (all §6 per-domain tables + completeness appendix), the 2026-07-01
+learning-loop-expansion (B/P0/P1/P2/D backlog) and rag-knowledge-expansion (R1-R17) docs, and the
+June residual reviews, classifying every finding as DONE / IN-FLIGHT / TRACKED / UNTRACKED
+(uncertain → UNTRACKED). Result: ~220 additional individually-tracked Planned rows in
+`docs/EFFORT-LOG.md` (subsections "2026-07-05 full itemization" and "Deep-sweep additions"),
+each with lane tag, size, one-line description, and source ID. Notable: two live bugs
+(partial-day ADV in the impact model; `checkRegimeFlip` non-atomic RMW hardcoded to user
+'local'), the safety-critical P0 prerequisites of the factor-weight auto-apply lane, and a
+Wave-3-coverage correction (the repo mirror previously omitted the Wave-3 In Progress lanes, so
+their in-scope items were nearly double-promoted). Basket caveats recorded in the section header
+(auto-apply must land with its P0 rows; the RAG eval harness's lint/regression-net prerequisites;
+approvals-triage includes portfolio-impact preview; omnibox means search-anywhere).
+
 ## Follow-ups
 
 - Agents pick up their lanes (announced on #agent-sync; assignments are reservations,
