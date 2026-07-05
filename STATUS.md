@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Guardrails → overridable preferences (denylist) (Monet risk lane)
+Worktree `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`, PR open.
+Owner directive: only the account boundary (+ physical/broker/regulatory/accounting impossibilities)
+stays hard; every other policy block is a light preference the agent may self-override with a logged
+`autonomyOverride` thesis. Inverted the Socratic override classifier from an allowlist to a **denylist**:
+new `HARD_GATE_REASON_PATTERNS` + `isHardGateReason` source-of-truth in `policy.ts` (risk engine); the
+`socratic-runtime.ts` `overrideableReason` is now `!isHardGateReason`. Reclassified short-stop-required,
+bracket-required, and policy-level short-disabled from hard → overridable; any unlisted/new gate now
+defaults overridable instead of silently hard. Advisory-only (nothing auto-overrides; broker / account /
+regulatory hard gates untouched). New `test/hard-gate-classification.test.ts` pins the full matrix; the
+one cross-lane touch (`socratic-runtime.ts`, Claude's file) was coordinated on `#agent-sync`. Follow-ups:
+extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. Gate: tsc clean,
+2504 tests green (the earlier "4 failed" were flakes; clean on re-run). See
+`docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+
 ## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
 The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
 itemization pass) tripped GitHub's secondary rate limit — 403 "secondary rate limit ...

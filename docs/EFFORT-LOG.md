@@ -221,8 +221,21 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
+  `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
+  only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
+  policy block is a light preference the agent may self-override with a logged `autonomyOverride` thesis.
+  Inverted the Socratic override classifier allowlist → **denylist**: new `HARD_GATE_REASON_PATTERNS` +
+  `isHardGateReason` source-of-truth in `policy.ts` (risk engine); `socratic-runtime.ts` `overrideableReason`
+  = `!isHardGateReason`. Reclassified short-stop-required / bracket-required / policy-level short-disabled
+  from hard → overridable; unlisted/new gates now default overridable. Advisory-only (nothing
+  auto-overrides; broker/account/regulatory hard gates untouched). New `test/hard-gate-classification.test.ts`
+  pins the matrix. Cross-lane touch to `socratic-runtime.ts` (Claude's file) coordinated on `#agent-sync`.
+  Follow-ups: extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. See
+  `docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
-  `claude/regime-enum-risk-gates`, isolated worktree `nice-heyrovsky-b9d0bd`) — **PR open**. The
+  `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
   `MarketRegime` source of truth (`market-regime.ts`) instead of three independent
   substring/`startsWith` rules: crisis/inverted opening-exposure cap (`policy.ts`
