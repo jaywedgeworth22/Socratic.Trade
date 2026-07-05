@@ -237,6 +237,19 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Durable due-jobs substrate for 15m/1h intraday outcome sampling** (CLAUDE, worktree
+  `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`) — **IN PROGRESS 2026-07-05, verified
+  locally, awaiting sequential landing.** New `due_jobs` table (migration v11, `src/lib/db.ts`) +
+  `src/lib/db-jobs.ts` (lease/reclaim claimable queue — fixes the crashed-row-stuck-forever gap
+  `mobile_commands` has). `counterfactual-learning.ts` + `outcome-engine.ts`'s `measureCase` enqueue
+  `sample_intraday_horizon` jobs once a case's basis (fill or ref price) resolves; new
+  `drainDueIntradaySampleJobs` worker in `outcome-engine.ts` drains them through the SAME
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows — documented in `mergeHorizonRows`'s doc comment). One fire-and-forget call
+  added to `scheduler.ts` `tick()`. Tests: `test/db-jobs.test.ts` (10) +
+  `test/outcome-engine-due-jobs.test.ts` (5), tsc clean. See
+  `docs/rollouts/2026-07-05-durable-due-jobs.md`.
+
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
   Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +

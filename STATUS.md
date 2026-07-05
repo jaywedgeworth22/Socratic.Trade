@@ -8,6 +8,33 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE, worktree `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`)
+Built the generic claimable due-jobs queue `outcome-horizons.ts:22-29` called out as the missing
+piece: 15m/1h intraday horizon samples previously only happened if a `runStrategyOnce` call
+coincidentally landed inside the narrow sampling window (piggybacked on the strategy cadence via
+`matureSocraticDecisionOutcomes`, `strategy.ts:1420-1428`). Now a `due_jobs` table (new migration
+v11 in `src/lib/db.ts`) plus `src/lib/db-jobs.ts` gives lease/reclaim claimable jobs (the
+`mobile_commands` queue's crashed-`running`-row-stuck-forever gap does NOT exist here — a stale
+`claimed` row past its lease is atomically reclaimed). `counterfactual-learning.ts` (at
+`insertSkippedCounterfactualCandidate` insert time) and `outcome-engine.ts`'s `measureCase` (once a
+decision case's fill/ref-price basis resolves) enqueue `sample_intraday_horizon` jobs at
+basisAt+15m/+1h with `not_after` = the existing tolerance-window close. New
+`drainDueIntradaySampleJobs` worker (outcome-engine.ts) claims due jobs, samples a live quote,
+writes through the exact same `mergeHorizonRows` + `writeSocraticDecisionOutcome` /
+`updateSkippedCounterfactualOutcomes` path the inline `samplableNow` path uses — so whichever side
+(inline or worker) resolves a horizon first wins, and the other is a documented no-op merge, never
+a duplicate row. `scheduler.ts` `tick()` gets one fire-and-forget drain call next to
+`processPendingMobileCommands`. The inline path is left fully intact (belt-and-suspenders).
+New tests: `test/db-jobs.test.ts` (10, queue mechanics: idempotent enqueue, due-only claim, race
+lost-claim, stale-lease reclaim, retry backoff, attempts-exhausted, not_after-expiry, complete,
+markUnresolvable, payload/scoping round-trip) + `test/outcome-engine-due-jobs.test.ts` (5:
+enqueue-at-basis-establishment dedupe keys for both the placed-decision and counterfactual paths,
+worker sampling parity with the inline path's row shape, lease-expiry retry, no double horizon row
+across both paths). tsc clean; focused suite green (see rollout note for exact commands). Full
+`npm test`/`npm run build` deferred to the central landing operator per this branch's rules. See
+`docs/rollouts/2026-07-05-durable-due-jobs.md`.
+**Next:** land via the sequential landing operator.
+
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
 Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
 `executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;

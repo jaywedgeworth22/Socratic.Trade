@@ -297,10 +297,17 @@ function toSkippedCounterfactualRow(row: RawSkippedCounterfactualRow): SkippedCo
   };
 }
 
+/** Deterministic skipped-candidate-counterfactual row id — single-sourced here so callers that need
+ * to reference the row before/without re-reading it (e.g. enqueueing its intraday sample due-jobs
+ * right after insert) can derive the same id rather than duplicating the format. */
+export function skippedCounterfactualId(userId: string, runId: string, symbol: string, horizonDays: number): string {
+  return `${userId}:${runId}:${symbol}:${horizonDays}`;
+}
+
 export function insertSkippedCounterfactualCandidate(input: SkippedCounterfactualCandidateInput): boolean {
   const userId = input.userId ?? "local";
   const now = input.now ?? new Date().toISOString();
-  const id = `${userId}:${input.runId}:${input.symbol}:${input.horizonDays}`;
+  const id = skippedCounterfactualId(userId, input.runId, input.symbol, input.horizonDays);
   const db = getDb();
   const existing = db
     .prepare("SELECT id FROM skipped_candidate_counterfactuals WHERE id = ? AND user_id = ?")
@@ -531,6 +538,31 @@ export function getSkippedCounterfactualCoverage(
       ? `${matured}/${terminal} resolved (${resolvedPct}%)${unresolvable > 0 ? ` — ${unresolvable} unresolvable; may be survivor-biased` : ""}${pending > 0 ? `; ${pending} still maturing` : ""}`
       : `0 resolved${pending > 0 ? `; ${pending} still maturing` : ""}`;
   return { total: matured + pending + unresolvable, matured, pending, unresolvable, resolvedPct, disclosure };
+}
+
+/**
+ * Merge freshly-sampled intraday (15m/1h) horizon rows into a still-'pending' counterfactual's
+ * `outcomes` column WITHOUT touching status/exit fields — used by the due-jobs intraday sampler
+ * (outcome-engine.ts's drainDueIntradaySampleJobs), which resolves one horizon at a time and is not
+ * the pipeline that closes the whole counterfactual (that's markSkippedCounterfactualMatured /
+ * markSkippedCounterfactualUnresolvable, both status='pending'-gated same as this). A no-op once the
+ * row has already gone terminal (matured/unresolvable) — those rows' outcomes are owned by their own
+ * terminal writer, not by a late-arriving intraday sample.
+ */
+export function updateSkippedCounterfactualOutcomes(
+  id: string,
+  userId: string,
+  outcomes: SocraticOutcomeHorizonRow[],
+  updatedAt: string = new Date().toISOString()
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE skipped_candidate_counterfactuals
+       SET outcomes = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'pending'`
+    )
+    .run(JSON.stringify(outcomes), updatedAt, id, userId);
+  return result.changes > 0;
 }
 
 /** One counterfactual row by its natural join key (runId, symbol) — the outcome engine joins
