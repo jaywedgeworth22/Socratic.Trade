@@ -209,6 +209,16 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Effort-issues sync secondary-rate-limit hardening** (CLAUDE, branch `agent/claude`) —
+  **in progress 2026-07-04**. Harden `scripts/sync-effort-issues.py` against GitHub secondary
+  rate limits (bulk-creating ~100 issues 403'd with "secondary rate limit ... temporarily
+  blocked from content creation" and the workflow hard-failed): throttle between issue
+  creations, honor `Retry-After` / exponential backoff under a bounded total retry budget, and
+  when the budget is exhausted exit 0 with a "partial sync, resume on next run" summary instead
+  of exit 1 (the sync is idempotent, so the next run resumes cleanly — a red run for an
+  expected partial pass is noise). Per fleet protocol the same file is copied verbatim to
+  congress-trading-shared, api-usage-monitor, and Congress.Trade — propagate the identical file
+  there via their own PRs after landing here.
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`, isolated worktree `nice-heyrovsky-b9d0bd`) — **PR open**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
