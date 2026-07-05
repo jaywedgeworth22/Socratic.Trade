@@ -425,10 +425,15 @@ async function tick(): Promise<void> {
           }
         }
 
-        // Due for a run
+        // Due for a run. Record the pre-mutation cadence state so a run suppressed by the monthly
+        // operator ceiling below can be ROLLED BACK — otherwise advancing lastRunAt/nextRunAt here
+        // makes a never-executed run look completed, so the account waits a full cadence and the UI
+        // shows a next-run for a skipped run (see the monthly-ceiling rollback below).
+        const prevLastRunAt = schedule.lastRunAt;
+        const prevNextRunAt = schedule.nextRunAt;
         schedule.lastRunAt = new Date(now).toISOString();
         schedule.nextRunAt = new Date(now + cadenceMs).toISOString();
-        dueRuns.push({ userId, accountId });
+        dueRuns.push({ userId, accountId, key, prevLastRunAt, prevNextRunAt });
       }
     }
 

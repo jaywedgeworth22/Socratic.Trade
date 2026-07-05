@@ -47,13 +47,19 @@ describe("Connection Health & Failure Routing", () => {
     // Call global failure alert (keySource: "env")
     await health.alertConnectionFailure("pinecone", "env", "u_tenant", "API Key Invalid");
 
-    // Expect notify was called to send email to the admin/operator email fallback
+    // notify() is ALWAYS called with the operator's own configured prefs (so local direct channels
+    // like push/SMS fire even with no Resend fallback), and — because the default prefs carry no email
+    // channel here — the operator fallback email is forced as an EXTRA notify call.
     expect(notifySpy).toHaveBeenCalled();
-    const notifyArgs = notifySpy.mock.calls[0];
-    expect(notifyArgs[0]).toBe("local"); // Routed to local for admin fallback
-    expect(notifyArgs[1].title).toContain("pinecone connection failed");
-    expect(notifyArgs[1].body).toContain("API Key Invalid");
-    expect(notifyArgs[2]?.prefs?.email).toBe("admin@socratic.trade"); // Resends to fallback email
+    // Every global notify routes to "local" with the right title/body.
+    for (const call of notifySpy.mock.calls) {
+      expect(call[0]).toBe("local");
+      expect(call[1].title).toContain("pinecone connection failed");
+      expect(call[1].body).toContain("API Key Invalid");
+    }
+    // At least one call must carry the forced fallback email as an extra channel.
+    const forcedEmailCall = notifySpy.mock.calls.find((call) => call[2]?.prefs?.email === "admin@socratic.trade");
+    expect(forcedEmailCall).toBeDefined();
 
     // Expect sendNotification was called for the global alert
     expect(sendNotificationSpy).toHaveBeenCalledWith(

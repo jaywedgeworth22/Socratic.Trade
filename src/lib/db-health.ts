@@ -17,22 +17,29 @@ export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all 
  */
 export function getLaneHealth(
   service: string,
-  keySource: string | null
+  keySource: string | null,
+  userId?: string | null
 ): { stoppedWorking: boolean; reason: string | null; lastFailureTs: string | null } {
   try {
     const db = getDb();
     const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // For a per-USER credential lane (keySource "user"), scope the failure streak to THIS user's own
+    // history — otherwise one tenant's 5 failures would trip a provider-degraded alert for every other
+    // user sharing the (service, "user") lane. Global/env/none lanes stay aggregate (no user predicate).
+    const scopeUser = keySource === "user" && userId != null;
+    const userClause = scopeUser ? " AND user_id IS ?" : "";
+    const withUser = (params: unknown[]): unknown[] => (scopeUser ? [...params, userId] : params);
     const last5 = db
-      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ? ORDER BY ts DESC LIMIT 5`)
-      .all(service, keySource) as Array<{ ok: number }>;
+      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC LIMIT 5`)
+      .all(...withUser([service, keySource])) as Array<{ ok: number }>;
     const lastSuccess = db
-      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ? AND ok = 1 ORDER BY ts DESC LIMIT 1`)
-      .get(service, keySource) as { ts: string } | undefined;
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC LIMIT 1`)
+      .get(...withUser([service, keySource])) as { ts: string } | undefined;
     const lastFailure = db
-      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ? AND ok = 0 ORDER BY ts DESC LIMIT 1`)
-      .get(service, keySource) as { ts: string } | undefined;
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 0 ORDER BY ts DESC LIMIT 1`)
+      .get(...withUser([service, keySource])) as { ts: string } | undefined;
     const callsLastHour = (
-      db.prepare(`SELECT COUNT(*) as cnt FROM api_health_log WHERE service = ? AND key_source IS ? AND ts >= ?`).get(service, keySource, hourAgo) as { cnt: number }
+      db.prepare(`SELECT COUNT(*) as cnt FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ts >= ?`).get(...withUser([service, keySource]), hourAgo) as { cnt: number }
     ).cnt;
 
     let stoppedWorking = false;
@@ -148,7 +155,9 @@ export function logApiHealth(opts: {
 
     if (!opts.ok && opts.errorText) {
       const keySource = opts.keySource ?? null;
-      const lane = getLaneHealth(opts.service, keySource);
+      // Scope the streak that gates the alert to this user's own history for user-key lanes, so
+      // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.
+      const lane = getLaneHealth(opts.service, keySource, opts.userId ?? null);
       if (lane.stoppedWorking) {
         void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText);
       }
@@ -407,7 +416,14 @@ export async function alertConnectionFailure(
   try {
     const targetUserId = userId || "local";
     const actualKeySource = keySource || "none";
-    const key = `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`;
+    // Cool down GLOBAL lanes (env/none) by service+source only — NOT per-user. In a multi-user outage
+    // each tenant's failure hits the SAME global dependency, so a userId-scoped cooldown key would let
+    // every tenant mint its own cooldown row and re-alert the admin every 6h for the one shared outage.
+    // Only per-USER credential lanes ("user") key the cooldown by userId (each user's own key/alert).
+    const key =
+      actualKeySource === "user"
+        ? `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`
+        : `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}`;
 
     // Cooldown check
     const { getInternalSetting, setInternalSetting, audit } = await import("./db");
@@ -439,7 +455,7 @@ export async function alertConnectionFailure(
     });
 
     if (isGlobal) {
-      // Global failures: Route to admin email and health
+      // Global failures: Route to admin email and health.
       const { getNotifyPrefs } = await import("./db");
       const prefs = getNotifyPrefs("local");
       const { loadNotifyConfig, notify } = await import("./notify");
@@ -447,18 +463,22 @@ export async function alertConnectionFailure(
       const fallbackEmail = operatorAlertEmail();
       const config = loadNotifyConfig();
 
-      if (fallbackEmail && config.email.resendKey && config.email.from) {
-        if (!prefs.channels.includes("email") || !prefs.email.trim()) {
-          const forcedPrefs = {
-            ...prefs,
-            channels: ["email" as any],
-            email: fallbackEmail,
-            updatedAt: prefs.updatedAt
-          };
-          await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
-        } else {
-          await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
-        }
+      // ALWAYS notify via the operator's own configured prefs (push/SMS/email/etc.) — the fallback
+      // email is an EXTRA channel, never the gate. Previously the whole notify() was skipped when no
+      // Resend fallback was configured, and sendNotification below treats provider_degraded as
+      // already-direct-sent, so an install relying on local direct channels got NO alert at all.
+      await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
+
+      // Additionally force the operator fallback email when it's configured AND the operator's own
+      // prefs don't already carry an email channel (so we don't double-send to the same address).
+      if (fallbackEmail && config.email.resendKey && config.email.from && (!prefs.channels.includes("email") || !prefs.email.trim())) {
+        const forcedPrefs = {
+          ...prefs,
+          channels: ["email" as any],
+          email: fallbackEmail,
+          updatedAt: prefs.updatedAt
+        };
+        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
       }
 
       // Also send standard notification

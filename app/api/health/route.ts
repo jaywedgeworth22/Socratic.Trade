@@ -1,4 +1,5 @@
 import { getInternalSetting, getServiceHealthSummaries, databasePath, resolveApiKeyWithSource, alertStorageWarning } from "@/lib/db";
+import { HEALTH_REASON_CONSECUTIVE_FAILURES } from "@/lib/db-health";
 import { getProviderTierStatus } from "@/lib/provider-tier";
 import { getLease } from "@/lib/scheduler-lease";
 import { statSync, statfsSync, readdirSync } from "fs";
@@ -6,29 +7,33 @@ import { dirname, join } from "path";
 
 export const dynamic = "force-dynamic";
 
-function getLitestreamLastSyncAge(dbPath: string): number | null {
-  const litestreamDir = `${dbPath}-litestream`;
+// Litestream replication freshness. Prod runs `litestream replicate` to R2 (see docs/litestream.md),
+// so there is NO local `<dbPath>-litestream` sidecar dir — the age must be read from a state source
+// that the litestream launcher actually writes. LITESTREAM_STATE_PATH points at that source (a dir or
+// a file whose mtime advances on each successful sync). It falls back to the legacy `<dbPath>-litestream`
+// sidecar only when the env is unset (0.4.x-style local replicas / dev).
+//
+// Returns:
+//   { ageSeconds: number }  — freshness known (state source found).
+//   { unknown: true }       — state source unreadable/absent: freshness is NOT confirmed healthy.
+// The old behavior (silent null) let a stale R2 replica read as healthy; "unknown" is honest instead.
+function getLitestreamFreshness(dbPath: string): { ageSeconds: number } | { unknown: true } {
+  const statePath = process.env.LITESTREAM_STATE_PATH?.trim() || `${dbPath}-litestream`;
   try {
     let newestMs = 0;
-    const findNewest = (dir: string) => {
-      const files = readdirSync(dir);
-      for (const file of files) {
-        const fullPath = join(dir, file);
-        const stat = statSync(fullPath);
-        if (stat.isDirectory()) {
-          findNewest(fullPath);
-        } else {
-          if (stat.mtimeMs > newestMs) {
-            newestMs = stat.mtimeMs;
-          }
-        }
+    const scan = (target: string) => {
+      const stat = statSync(target);
+      if (stat.isDirectory()) {
+        for (const file of readdirSync(target)) scan(join(target, file));
+      } else if (stat.mtimeMs > newestMs) {
+        newestMs = stat.mtimeMs;
       }
     };
-    findNewest(litestreamDir);
-    if (newestMs === 0) return null;
-    return Math.round((Date.now() - newestMs) / 1000);
+    scan(statePath);
+    if (newestMs === 0) return { unknown: true };
+    return { ageSeconds: Math.round((Date.now() - newestMs) / 1000) };
   } catch {
-    return null;
+    return { unknown: true };
   }
 }
 
@@ -109,24 +114,53 @@ export function GET() {
     // do not break health check on key resolution
   }
 
-  // Surface every backend dependency from health summaries
+  // Surface every backend dependency from health summaries.
+  //
+  // PUBLIC route (no requireAdmin): expose ONLY boolean/degraded status — never the raw
+  // `lastFailureError` provider string (that detailed payload stays on the admin
+  // connections-health route). A `degraded` flag captures the soft/cold-start case without
+  // failing liveness; the detailed reason text is deliberately omitted here.
   try {
     const summaries = getServiceHealthSummaries();
-    const dependencies: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }> = {};
+    const dependencies: Record<string, { ok: boolean; degraded?: boolean }> = {};
+    // Collapse (service, keySource) lanes to one entry per service. Prefer a CONFIGURED lane
+    // (env/user) over a stale keySource:"none" lane so a service that later got a working key isn't
+    // pinned failed forever by an old missing-key "none" lane (no future success is logged to "none").
+    const configuredService = new Set<string>();
+    for (const summary of summaries) {
+      if (summary.keySource === "env" || summary.keySource === "user") configuredService.add(summary.service);
+    }
     for (const summary of summaries) {
       const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
-      if (isGlobal) {
-        dependencies[summary.service] = {
-          ok: !summary.stoppedWorking,
-          reason: summary.stoppedReason,
-          lastFailure: summary.lastFailureError
-        };
+      if (!isGlobal) continue;
+      // Ignore a stale "none"/null lane once the service has a real configured lane — otherwise it
+      // would overwrite the healthy env lane and pin the service failed indefinitely.
+      const isNoneLane = summary.keySource === "none" || summary.keySource === null;
+      if (isNoneLane && configuredService.has(summary.service)) continue;
 
-        // Critical dependencies fail the health check if they are stopped
-        const isCritical = ["pinecone", "voyage", "voyage-rerank", "fmp", "massive", "alpaca-broker"].includes(summary.service);
-        if (isCritical && summary.stoppedWorking) {
-          ok = false;
-        }
+      // Only the HARD reason (>=5 consecutive failures) fails liveness. The SOFT heuristics
+      // ("active this hour but no success yet") that a single cold-start 500 can trip mark the
+      // service degraded but must NOT 503.
+      const hardStopped = summary.stoppedWorking && summary.stoppedReason === HEALTH_REASON_CONSECUTIVE_FAILURES;
+      const existing = dependencies[summary.service];
+      const nextOk = !hardStopped;
+      const nextDegraded = summary.stoppedWorking && !hardStopped;
+      if (existing) {
+        // Merge lanes for the same service: any hard-stopped lane wins ok=false; degraded is sticky.
+        dependencies[summary.service] = {
+          ok: existing.ok && nextOk,
+          degraded: existing.degraded || nextDegraded || undefined
+        };
+      } else {
+        dependencies[summary.service] = { ok: nextOk, degraded: nextDegraded || undefined };
+      }
+
+      // Hard-liveness deps: only app-unsafe/unusable dependencies 503 the public probe. Paid
+      // market-data lanes (fmp/massive) degrade to Yahoo/others (the provider-tier section already
+      // reports data-provider degradation), so they mark degraded but never fail liveness.
+      const isCritical = ["pinecone", "voyage", "voyage-rerank", "alpaca-broker"].includes(summary.service);
+      if (isCritical && hardStopped) {
+        ok = false;
       }
     }
     checks.dependencies = dependencies;
@@ -158,14 +192,19 @@ export function GET() {
       totalBytes = stats.blocks * stats.bsize;
     } catch {}
 
-    const litestreamAgeSeconds = getLitestreamLastSyncAge(dbPath);
+    const freshness = getLitestreamFreshness(dbPath);
+    const litestreamAgeSeconds = "ageSeconds" in freshness ? freshness.ageSeconds : null;
+    // "unknown" means the state source couldn't be read — freshness is NOT confirmed healthy
+    // (distinct from a real, fresh age). Surface it honestly rather than as a healthy null.
+    const litestreamState: "known" | "unknown" = "ageSeconds" in freshness ? "known" : "unknown";
 
     checks.storage = {
       dbSizeBytes,
       walSizeBytes,
       freeBytes,
       totalBytes,
-      litestreamAgeSeconds
+      litestreamAgeSeconds,
+      litestreamState
     };
 
     // Thresholds:
@@ -173,14 +212,20 @@ export function GET() {
     const diskLow = freeBytes > 0 && freeBytes < 1024 * 1024 * 1024;
     const walLarge = walSizeBytes > 500 * 1024 * 1024;
     const litestreamStale = litestreamAgeSeconds !== null && litestreamAgeSeconds > 3600;
+    // Only alert on unknown freshness when a state path was explicitly configured — an operator who
+    // pointed us at the real source expects it to be readable, so an unreadable one is a real signal.
+    // Without LITESTREAM_STATE_PATH set, "unknown" is the expected default (R2 replicas leave no local
+    // state file) and must not spam alerts.
+    const litestreamUnknownConfigured = litestreamState === "unknown" && !!process.env.LITESTREAM_STATE_PATH?.trim();
 
-    if (diskLow || walLarge || litestreamStale) {
+    if (diskLow || walLarge || litestreamStale || litestreamUnknownConfigured) {
       checks.storageDegraded = true;
 
       // Send a one-shot needs-attention notification/alert via the notifier if not sent recently
       if (diskLow) void alertStorageWarning("disk_space_low", `Free disk space is low: ${(freeBytes / 1024 / 1024).toFixed(2)} MB remaining.`);
       if (walLarge) void alertStorageWarning("wal_size_large", `SQLite WAL file size is large: ${(walSizeBytes / 1024 / 1024).toFixed(2)} MB.`);
       if (litestreamStale) void alertStorageWarning("litestream_replication_stale", `Litestream WAL replication has not synced in ${Math.round(litestreamAgeSeconds! / 60)} minutes.`);
+      if (litestreamUnknownConfigured) void alertStorageWarning("litestream_state_unreadable", `Litestream state source at ${process.env.LITESTREAM_STATE_PATH?.trim()} is unreadable — replication freshness cannot be confirmed.`);
     }
   } catch {
     // never let storage monitoring break the health probe
