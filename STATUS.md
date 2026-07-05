@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)
+Branch `claude/veto-advisory-overridable` (isolated worktree), PR pending. Completes the
+"everything overridable except the account boundary" philosophy: the deterministic bear filter
+(Rules 3/4) and the approval-time Red Team veto now TAG a candidate with `preVetoReasons` instead of
+dropping it; those fold into the single sized `PolicyDecision` and flow through #799's existing
+`resolveSocraticOverride` (openings, subject to `socraticOverrideMode` + the override cap). Rule 1
+(phantom sell/cover) stays a hard drop; Rule 4 is overridable but flagged in-code for owner
+ratification. An independent 3-lens adversarial verify caught 2 money-path bugs the green suite
+missed — a severe phantom-funding-sell (`preVetoTaggedOpeningWillPlace` now gates the funding
+notional) and a free-text hard-gate misclassification (`isHardGateReason` prefix short-circuit) —
+both fixed + regression-tested. Gate: tsc clean, lint 0 errors, 258 files/2540 tests, build ok.
+Overlaps the unlanded `claude/redteam-policy-aware-routing` (coordinated on #agent-sync; rebase at
+land). See `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
+
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
 Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
 `executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;
