@@ -76,7 +76,7 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -555,6 +555,23 @@ export async function runStrategyOnce(
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
+    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
+    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
+    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
+    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
+    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
+    if (!skipLlmDueToBudget) {
+      const monthly = checkMonthlyLlmSpendCeiling();
+      if (!monthly.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "usage_budget_enforced",
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          userId,
+          connectedAccountId
+        );
+      }
+    }
     if (!skipLlmDueToBudget) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;
@@ -3925,11 +3942,10 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
-/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
- *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
- *  degrades to the refPrice-based branch instead. */
+/** A real, quoted ask — excludes a synthesized (price-derived) spread. A synthetic ask must
+ *  NEVER anchor ask-relative limit-price math; it degrades to the refPrice-based branch instead. */
 function hasRealAsk(quote: MarketQuote): boolean {
-  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+  return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
@@ -3954,11 +3970,11 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
-  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
-  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
-  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
-  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
-  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
+  // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
+  // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = !quote.syntheticBid ? quote.bid : undefined;
+  const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -4262,10 +4278,8 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
       // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
       // back to refPrice only for the side that is actually synthetic so the limit is honest.
-      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
-      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
-      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
         ? round2((realAsk ?? refPrice) * (1 + buffer))
         : round2((realBid ?? refPrice) * (1 - buffer));

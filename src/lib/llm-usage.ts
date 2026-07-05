@@ -33,7 +33,9 @@ export interface LlmTokenUsage {
   totalTokens?: number;
 }
 
-// USD per 1M tokens, [input, output]. Best-effort; unknown models record null cost.
+// USD per 1M tokens, [input, output]. Best-effort; unknown models fall back to a
+// conservative env-configurable default (LLM_UNPRICED_MODEL_COST_PER_M) so unpriced
+// models count against budgets rather than flying under as $0.
 const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "gpt-4o": [2.5, 10],
   "gpt-4o-mini": [0.15, 0.6],
@@ -74,19 +76,28 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "deepseek-reasoner": [0.14, 0.28]
 };
 
-function priceForModel(model: string | undefined): [number, number] | undefined {
-  if (!model) return undefined;
+/** Conservative default: $15/1M tokens total ($7.50 input, $7.50 output). Env-configurable. */
+function defaultModelPricePerM(): [number, number] {
+  const v = Number(process.env.LLM_UNPRICED_MODEL_COST_PER_M);
+  const perM = Number.isFinite(v) && v > 0 ? v : 15;
+  return [perM / 2, perM / 2];
+}
+
+function priceForModel(model: string | undefined): [number, number] {
+  if (!model) return defaultModelPricePerM();
   const m = model.toLowerCase();
   if (MODEL_PRICE_PER_M[m]) return MODEL_PRICE_PER_M[m];
   // Prefix match (e.g. dated suffixes like claude-haiku-4-5-20251001).
   const hit = Object.keys(MODEL_PRICE_PER_M).find((k) => m.startsWith(k));
-  return hit ? MODEL_PRICE_PER_M[hit] : undefined;
+  return hit ? MODEL_PRICE_PER_M[hit] : defaultModelPricePerM();
 }
 
-/** Best-effort cost in USD, or undefined when the model is unpriced or tokens are unknown. */
+/** Best-effort cost in USD. Unpriced models fall back to a conservative default
+ *  (env LLM_UNPRICED_MODEL_COST_PER_M as a single USD-per-1M-tokens number, split 50/50
+ *  between input/output; default 15 → $7.50/$7.50 per 1M). Returns undefined only when
+ *  token counts are both zero/unknown. */
 export function estimateLlmCostUsd(model: string | undefined, promptTokens?: number, completionTokens?: number): number | undefined {
   const price = priceForModel(model);
-  if (!price) return undefined;
   const inTok = promptTokens ?? 0;
   const outTok = completionTokens ?? 0;
   if (inTok === 0 && outTok === 0) return undefined;
