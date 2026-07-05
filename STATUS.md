@@ -24,6 +24,16 @@ steps materially change.
 
 ## Active Focus
 
+- 2026-07-05 (`claude/logo-ideas-c5n61b`): **Logo concept exploration — 12 marks.** First brand
+  exploration for Socratic.Trade: twelve logo concepts (Socratic question/dialogue/Greek-antiquity ×
+  candlestick/trend/delta) delivered as a theme-aware showcase `docs/branding/logo-ideas.html`
+  (source of truth — marks are SVG `<symbol>`s, previewed on light+dark chips w/ favicon-scale
+  copies + lockups), 12 extracted standalone SVGs in `docs/branding/logo-ideas/`, and a concept
+  index `docs/branding/logo-ideas.md`. Single ink + existing emerald `#0e9f6e` discipline so any
+  pick drops into current UI tokens. Recommendation: **Phi** (app icon/favicon), The Inquiry
+  (storytelling), The Examined Trade (reports). Docs/assets only — no code. Owner picks a
+  direction next; then real exports (favicon.ico, app icons, OG) + `app/layout.tsx` wiring. See
+  `docs/rollouts/2026-07-05-logo-ideas.md`.
 - 2026-06-21 (`safety/persistence-hardening`): **Migration framework + money/data-loss fixes.**
   From the post-fix "what's left" re-audit; rebuilt onto the split `db.ts` + next16/zod4. Adds a
   `PRAGMA user_version` migration framework (`runMigrations`/`getSchemaVersion`; `migrate()` stays the
