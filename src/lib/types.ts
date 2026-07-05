@@ -928,6 +928,13 @@ export interface TradeProposal {
      * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
      */
     overridden?: boolean;
+    /**
+     * Structured reason the debate was unavailable (`available: false`) — mirrors
+     * `RedTeamDebateResult.failureKind` (src/lib/red-team.ts), persisted onto the decision case so
+     * the "RED TEAM FAILED" signal survives beyond the run (dashboard badge, audit correlation).
+     * Absent when `available: true`.
+     */
+    failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
   };
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
