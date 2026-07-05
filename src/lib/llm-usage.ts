@@ -54,6 +54,7 @@ const MODEL_PRICE_PER_M: Record<string, [number, number]> = {
   "grok-4.3": [1.25, 2.5],
   "claude-fable-5": [10, 50],
   "claude-opus-4-8": [5, 25],
+  "claude-sonnet-5": [3, 15],
   "claude-sonnet-4-6": [3, 15],
   "claude-haiku-4-5": [1, 5],
   // Gemini (lite listed first so the prefix match prefers it over the base flash key).
