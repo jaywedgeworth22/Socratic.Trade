@@ -24,8 +24,10 @@ directly), so the promotion happened on the boards.
 ## What changed (this repo)
 
 - `docs/EFFORT-LOG.md`:
-  - New Planned subsection "2026-07-04 backlog exhaustiveness pass" — 57 promoted rows:
-    CURSOR 17, CODEX 6, AG 7, MONET 6, CLAUDE 6, unassigned owner-decision bucket 15.
+  - New Planned subsection "2026-07-04 backlog exhaustiveness pass" — 56 promoted rows:
+    CURSOR 17, CODEX 6, AG 7, MONET 5, CLAUDE 6, unassigned owner-decision bucket 15.
+    (A drafted 6th MONET row — regime-enum adoption in the risk gates — was dropped mid-pass
+    because Monet shipped it as PR #449 while this branch was being written.)
     Sources cited per row (improvement-audit sections, expert reviews, console-parity
     open items, PLAN.md, code sweep).
   - Assignment annotations added to the bodies (never the first lines, which are the

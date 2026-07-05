@@ -226,6 +226,8 @@ to `socratictrade.com`, record the release commit + date here._
   `test/regime-gate-adoption.test.ts` (+ a `policy.test.ts` hardening case). Gate green: tsc clean,
   lint 0 errors, 254 files/2465 tests, build ok. See
   `docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
+  _2026-07-04 (CLAUDE): PR #449 merged to `main` (`c3553ebb`) — row ready to move to Completed on
+  Monet's next pass; noted here rather than moved, per never-move-another-agent's-row etiquette._
 
 - **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
   worktree `~/apps/trading-wt-w2-outcome`, based on `claude/w1-learning-loops`) — four §A items:
@@ -582,6 +584,8 @@ locks — re-negotiate in #agent-sync._
   Integrations + improvement-audit §6.8)
 
 #### MONET (Opus, risk lane)
+_(A sixth row — typed regime-enum adoption in the risk gates — was drafted here but Monet already
+shipped it as PR #449 while this pass was being written; see its In Progress row above.)_
 - **Bear/Red-Team unavailable → policy-aware routing for ALL failure modes (MONET, M)** — complete
   the mode-aware policy (propose→human-approval; autonomous→de-risk-only + "RED TEAM FAILED" flag)
   across timeout/429/malformed-JSON, replacing the remaining fail-open paths. (improvement-audit
@@ -596,8 +600,6 @@ locks — re-negotiate in #agent-sync._
   sizing with realized edge. (expert reviews cross-cutting)
 - **Multi-signal regime scorer (MONET, M)** — credit spreads, VIX term structure, breadth →
   severity feeding caps/learning. (expert reviews critical-path)
-- **Typed regime enum adoption in risk gates (MONET, S)** — crisis cap (`policy.ts`) + bear filter
-  (`strategy.ts`) one-line adoption of the pinned predicates. (w1-regime-data follow-on)
 
 #### CLAUDE lane (memory/RAG + already-reserved infra)
 - **Wire `usage-budget` Phase-2 enforcement into `runStrategyOnce` (CLAUDE, M)** —

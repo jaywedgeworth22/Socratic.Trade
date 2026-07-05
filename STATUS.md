@@ -14,7 +14,8 @@ Owner-directed: promoted every still-open item from the review docs
 `2026-07-03-console-parity-open-items.md`), `PLAN.md`, and a code sweep into individually
 tracked `docs/EFFORT-LOG.md` Planned rows with assigned lanes — CURSOR/DeepSeek v4 Pro
 (17 rows), CODEX (6 + 5 annotated parity rows), AG/Antigravity (7 + 2 annotated), MONET
-(6, risk lane), CLAUDE (6, memory/RAG), plus a 15-row unassigned owner-decision bucket.
+(5, risk lane — a drafted 6th, regime-enum gate adoption, was already shipped by Monet as
+PR #449 mid-pass), CLAUDE (6, memory/RAG), plus a 15-row unassigned owner-decision bucket.
 Pre-existing Planned rows got assignment annotations in their bodies (first lines untouched
 to preserve issues-mirror identity keys). Deduped the twice-logged "Wave-1 quick wins"
 In Progress row. The same pass seeded populated boards + issue mirrors for Congress.Trade,
@@ -22,6 +23,7 @@ congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Con
 also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
 GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
 See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+
 ## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
 Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
 The three deterministic risk gates now classify the persisted regime label through the shared
