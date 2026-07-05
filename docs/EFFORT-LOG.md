@@ -420,7 +420,7 @@ to `socratictrade.com`, record the release commit + date here._
   _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
   container — owner/next local agent should mirror this row there._
 
-- **Eliminate redundant fill-history fetch/replay (AG, M) — IN PROGRESS 2026-07-05, PR open.** Worktree `~/apps/trading-antigravity`, branch `agent/antigravity/model-recommendations` (PR #849). Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
+- **Eliminate redundant fill-history fetch/replay (AG, M) — IN PROGRESS 2026-07-05, PR open.** Worktree `~/apps/trading-antigravity`, branch `agent/antigravity/fill-history-dedupe` (PR #850). Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
 
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
