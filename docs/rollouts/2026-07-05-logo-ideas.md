@@ -1,5 +1,27 @@
 # 2026-07-05 — Logo concept exploration (12 marks)
 
+## Update 2 — owner shortlist + Dialectic v2 (same day)
+
+- Owner reviewed the twelve and shortlisted **The Examined Trade**,
+  **Dialectic**, and **The Stoa** ("save those ideas").
+- Owner feedback on Dialectic: "the triangular part of the chat bubbles looks
+  odd or needs refinement" → **v2 redraw**: both speech-bubble tails are now
+  integrated into each bubble's single outline path (outline bubble:
+  `...H17l-7 8 3-8...`; filled bubble mirrored) instead of the previous
+  separate stroke/triangle tail shapes. Standalone `dialectic.svg`
+  regenerated; re-verified via headless-Chromium screenshot on both grounds.
+- Showcase updated: shortlist cards moved to the top with a "Shortlist"
+  badge + accent border, lockups now feature the three shortlisted marks,
+  closing note records the owner decision (old studio recommendation kept
+  for the record). `docs/branding/logo-ideas.md` gained an
+  "Owner shortlist (2026-07-05)" section.
+- Touched: `docs/branding/logo-ideas.html`, `docs/branding/logo-ideas.md`,
+  `docs/branding/logo-ideas/dialectic.svg`, `STATUS.md`, this note.
+- Verification: SVG extraction re-run (12 files); showcase screenshot
+  re-checked (shortlist badges, reordering, Dialectic v2 tails); docs-only
+  change on top of the already-verified tree (tsc/test/build unchanged from
+  Update 1 — no code touched).
+
 ## Summary
 
 First brand exploration for Socratic.Trade: twelve logo concepts crossing the

@@ -41,9 +41,25 @@ lines, delta). First brand exploration for the app (dashboard title today:
 | `torch.svg` | The Torch | Pictogram | Torch whose flame doubles as a candle body. |
 | `wordmark.svg` | The Wordmark | Wordmark | Serif caps; the period of "Socratic.Trade" re-cut as a candlestick. |
 
-**Studio recommendation:** Phi for app icon/favicon (crisp at 16 px, ownable
-letter), The Inquiry for README/landing storytelling, The Examined Trade for
-reports where showing a red candle is honest.
+## Owner shortlist (2026-07-05)
+
+The owner reviewed all twelve and shortlisted three — keep these; the rest
+remain as archive/reference:
+
+1. **The Examined Trade** (`examined.svg`)
+2. **Dialectic** (`dialectic.svg`) — bubble tails redrawn in v2 after owner
+   feedback ("the triangular part of the chat bubbles looks odd"): tails are
+   now integrated into each bubble's outline path instead of separate
+   triangle/stroke shapes.
+3. **The Stoa** (`stoa.svg`)
+
+Next: pick a primary of the three → cut real exports (favicon.ico, app-icon
+sizes, OG image) → wire into `app/layout.tsx` metadata.
+
+Earlier studio recommendation, for the record: Phi for app icon/favicon
+(crisp at 16 px, ownable letter), The Inquiry for README/landing
+storytelling, The Examined Trade for reports where showing a red candle is
+honest. Of the shortlist, The Examined Trade is the most 16 px-durable.
 
 ## Regenerating the standalone SVGs
 

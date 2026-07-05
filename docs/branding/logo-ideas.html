@@ -138,6 +138,19 @@
     display: block;
     margin-bottom: 5px;
   }
+  .badge {
+    float: right;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 2px 9px;
+    margin-left: 8px;
+  }
+  .card.picked { border-color: var(--accent); }
   .card p { margin: 0; color: var(--muted); font-size: 14px; }
 
   .lockups { display: flex; flex-direction: column; gap: 22px; }
@@ -214,12 +227,10 @@
     </symbol>
 
     <symbol id="dialectic" viewBox="0 0 64 64">
-      <rect x="6" y="8" width="30" height="22" rx="7" fill="none" stroke="currentColor" stroke-width="4"/>
-      <path d="M14 30l-4 8 10-5" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M13 8h16a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7H17l-7 8 3-8a7 7 0 0 1-7-7v-8a7 7 0 0 1 7-7z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
       <path d="M17 16a4 4 0 0 1 8 0c0 3-4 2.8-4 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
       <circle cx="21" cy="26" r="1.8" fill="currentColor"/>
-      <rect x="28" y="34" width="30" height="22" rx="7" fill="#0e9f6e"/>
-      <path d="M46 55l5 7-12-4z" fill="#0e9f6e"/>
+      <path d="M35 34h16a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7l3 7-7-7H35a7 7 0 0 1-7-7v-8a7 7 0 0 1 7-7z" fill="#0e9f6e"/>
       <polyline points="34,49 40,43 44,46 52,39" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
 
@@ -298,9 +309,49 @@
 
   <section>
     <h2>The marks</h2>
-    <p class="section-note">Ordered roughly from most literal to most abstract. The favicon-scale
-    copy in each corner is the honest test — a mark that survives 18&nbsp;px earns app-icon duty.</p>
+    <p class="section-note">Owner shortlist first (picked 2026-07-05), then the rest roughly from most
+    literal to most abstract. The favicon-scale copy in each corner is the honest test — a mark
+    that survives 18&nbsp;px earns app-icon duty.</p>
     <div class="grid">
+
+      <div class="card picked">
+        <div class="chips">
+          <div class="chip light"><svg class="mark"><use href="#examined"/></svg><svg class="mini"><use href="#examined"/></svg></div>
+          <div class="chip dark"><svg class="mark"><use href="#examined"/></svg><svg class="mini"><use href="#examined"/></svg></div>
+        </div>
+        <div>
+          <span class="badge">Shortlist</span>
+          <span class="kind">Pictogram</span>
+          <h3>The Examined Trade</h3>
+          <p>"The unexamined trade is not worth making." A lens held over one green and one red candle — the only mark that admits losses exist.</p>
+        </div>
+      </div>
+
+      <div class="card picked">
+        <div class="chips">
+          <div class="chip light"><svg class="mark"><use href="#dialectic"/></svg><svg class="mini"><use href="#dialectic"/></svg></div>
+          <div class="chip dark"><svg class="mark"><use href="#dialectic"/></svg><svg class="mini"><use href="#dialectic"/></svg></div>
+        </div>
+        <div>
+          <span class="badge">Shortlist</span>
+          <span class="kind">Pictogram</span>
+          <h3>Dialectic</h3>
+          <p>Thesis and antithesis: the agent asks, the market answers with a trend. Tails redrawn as part of each bubble's outline (v2) after owner feedback on the first pass.</p>
+        </div>
+      </div>
+
+      <div class="card picked">
+        <div class="chips">
+          <div class="chip light"><svg class="mark"><use href="#stoa"/></svg><svg class="mini"><use href="#stoa"/></svg></div>
+          <div class="chip dark"><svg class="mark"><use href="#stoa"/></svg><svg class="mini"><use href="#stoa"/></svg></div>
+        </div>
+        <div>
+          <span class="badge">Shortlist</span>
+          <span class="kind">Emblem</span>
+          <h3>The Stoa</h3>
+          <p>A temple whose middle column is a live candle — the market literally holds up the house. Institutional weight with a wink.</p>
+        </div>
+      </div>
 
       <div class="card">
         <div class="chips">
@@ -328,18 +379,6 @@
 
       <div class="card">
         <div class="chips">
-          <div class="chip light"><svg class="mark"><use href="#examined"/></svg><svg class="mini"><use href="#examined"/></svg></div>
-          <div class="chip dark"><svg class="mark"><use href="#examined"/></svg><svg class="mini"><use href="#examined"/></svg></div>
-        </div>
-        <div>
-          <span class="kind">Pictogram</span>
-          <h3>The Examined Trade</h3>
-          <p>"The unexamined trade is not worth making." A lens held over one green and one red candle — the only mark that admits losses exist.</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="chips">
           <div class="chip light"><svg class="mark"><use href="#meander"/></svg><svg class="mini"><use href="#meander"/></svg></div>
           <div class="chip dark"><svg class="mark"><use href="#meander"/></svg><svg class="mini"><use href="#meander"/></svg></div>
         </div>
@@ -347,30 +386,6 @@
           <span class="kind">Pattern mark</span>
           <h3>Meander</h3>
           <p>The Greek key fret read literally: a staircase of higher highs, topped with a candle. Antiquity and an uptrend in the same stroke.</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="chips">
-          <div class="chip light"><svg class="mark"><use href="#dialectic"/></svg><svg class="mini"><use href="#dialectic"/></svg></div>
-          <div class="chip dark"><svg class="mark"><use href="#dialectic"/></svg><svg class="mini"><use href="#dialectic"/></svg></div>
-        </div>
-        <div>
-          <span class="kind">Pictogram</span>
-          <h3>Dialectic</h3>
-          <p>Thesis and antithesis: the agent asks, the market answers with a trend. The most honest picture of what the app actually does all day.</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="chips">
-          <div class="chip light"><svg class="mark"><use href="#stoa"/></svg><svg class="mini"><use href="#stoa"/></svg></div>
-          <div class="chip dark"><svg class="mark"><use href="#stoa"/></svg><svg class="mini"><use href="#stoa"/></svg></div>
-        </div>
-        <div>
-          <span class="kind">Emblem</span>
-          <h3>The Stoa</h3>
-          <p>A temple whose middle column is a live candle — the market literally holds up the house. Institutional weight with a wink.</p>
         </div>
       </div>
 
@@ -451,25 +466,30 @@
 
   <section>
     <h2>Lockups</h2>
-    <p class="section-note">How the two strongest marks sit next to type — the serif carries the Greek register so the mark doesn't have to.</p>
+    <p class="section-note">How the shortlisted marks sit next to type — the serif carries the Greek register so the mark doesn't have to.</p>
     <div class="lockups">
       <div class="lockup-pair">
-        <div class="lockup chip light"><svg><use href="#phi"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
-        <div class="lockup chip dark"><svg><use href="#phi"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
+        <div class="lockup chip light"><svg><use href="#stoa"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
+        <div class="lockup chip dark"><svg><use href="#stoa"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
       </div>
       <div class="lockup-pair">
-        <div class="lockup chip light"><svg><use href="#inquiry"/></svg><span class="name caps">SOCRATIC<span class="dot">·</span>TRADE</span></div>
-        <div class="lockup chip dark"><svg><use href="#inquiry"/></svg><span class="name caps">SOCRATIC<span class="dot">·</span>TRADE</span></div>
+        <div class="lockup chip light"><svg><use href="#examined"/></svg><span class="name caps">SOCRATIC<span class="dot">·</span>TRADE</span></div>
+        <div class="lockup chip dark"><svg><use href="#examined"/></svg><span class="name caps">SOCRATIC<span class="dot">·</span>TRADE</span></div>
+      </div>
+      <div class="lockup-pair">
+        <div class="lockup chip light"><svg><use href="#dialectic"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
+        <div class="lockup chip dark"><svg><use href="#dialectic"/></svg><span class="name">Socratic<span class="dot">.</span>Trade</span></div>
       </div>
     </div>
   </section>
 
   <p class="verdict">
-    <strong>Studio recommendation:</strong> <strong>Phi</strong> for the app icon and favicon —
-    it is the only mark that stays crisp at 16&nbsp;px, it owns a letter no fintech competitor can
-    claim, and the candle-through-circle reads at a glance. <strong>The Inquiry</strong> is the
-    strongest storytelling mark for the README and landing page, and <strong>The Examined
-    Trade</strong> is the best fit for reports, where showing a red candle is a feature, not a
-    flaw. All SVG sources live in <code>docs/branding/logo-ideas/</code>.
+    <strong>Owner shortlist (2026-07-05):</strong> <strong>The Examined Trade</strong>,
+    <strong>Dialectic</strong> (bubble tails redrawn as part of each outline after feedback on
+    the first pass), and <strong>The Stoa</strong>. Next: pick a primary of the three, then cut
+    real exports (favicon.ico, app-icon sizes, OG image) and wire them into the app metadata.
+    Earlier studio note, for the record: Phi was the favicon-strength pick; The Examined Trade
+    from the shortlist is the most 16&nbsp;px-durable. All SVG sources live in
+    <code>docs/branding/logo-ideas/</code>.
   </p>
 </div>

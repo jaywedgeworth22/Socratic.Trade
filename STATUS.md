@@ -33,7 +33,11 @@ steps materially change.
   pick drops into current UI tokens. Recommendation: **Phi** (app icon/favicon), The Inquiry
   (storytelling), The Examined Trade (reports). Docs/assets only — no code. Owner picks a
   direction next; then real exports (favicon.ico, app icons, OG) + `app/layout.tsx` wiring. See
-  `docs/rollouts/2026-07-05-logo-ideas.md`.
+  `docs/rollouts/2026-07-05-logo-ideas.md`. **Update: owner shortlisted The Examined Trade,
+  Dialectic (bubble tails redrawn as integrated outline paths in v2 per feedback), and The Stoa;**
+  showcase reordered w/ shortlist badges; next = pick a primary of the three → exports → metadata
+  wiring. Note: PR #801 (another session, same day) carries a separate 14-concept exploration —
+  owner may want to reconcile the two boards.
 - 2026-06-21 (`safety/persistence-hardening`): **Migration framework + money/data-loss fixes.**
   From the post-fix "what's left" re-audit; rebuilt onto the split `db.ts` + next16/zod4. Adds a
   `PRAGMA user_version` migration framework (`runMigrations`/`getSchemaVersion`; `migrate()` stays the
