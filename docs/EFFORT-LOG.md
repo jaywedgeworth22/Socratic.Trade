@@ -237,6 +237,28 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Durable due-jobs substrate for 15m/1h intraday outcome sampling** (CLAUDE, worktree
+  `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`) — **IN PROGRESS 2026-07-05, review
+  fixes applied (2nd commit) + account-deletion coverage fix (3rd commit), verified locally,
+  landing now.** New `due_jobs` table (migration v11, `src/lib/db.ts`) + `src/lib/db-jobs.ts`
+  (lease/reclaim claimable queue — fixes the crashed-row-stuck-forever gap `mobile_commands` has).
+  `counterfactual-learning.ts` + `outcome-engine.ts`'s `measureCase` enqueue
+  `sample_intraday_horizon` jobs once a case's basis (fill or ref price) resolves; new
+  `drainDueIntradaySampleJobs` worker in `outcome-engine.ts` drains them through the SAME
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows — documented in `mergeHorizonRows`'s doc comment). One fire-and-forget call
+  added to `scheduler.ts` `tick()`. Tests: `test/db-jobs.test.ts` (10) +
+  `test/outcome-engine-due-jobs.test.ts` (5), tsc clean. **Review-fix pass (2nd commit, same
+  branch):** fixed a lost-update race (write-time re-merge in `writeSocraticDecisionOutcome` /
+  `markSkippedCounterfactualMatured` / `markSkippedCounterfactualUnresolvable`), claimant-fenced
+  the three terminal-transition functions in `db-jobs.ts`, renamed the drain receipt's `failed`
+  counter to `erroredRetried` + removed the dead `'failed'` `DueJobStatus` value, and replaced the
+  worker's `caseId.split(":")` counterfactual lookup with an exact `runId`/`horizonDays`-keyed
+  lookup. 33/33 targeted tests green, tsc clean, lint 0 errors, build succeeds; full suite
+  2529/2530 (1 pre-existing unrelated failure re: `due_jobs` missing from account-deletion
+  coverage, flagged separately). **Account-deletion coverage pass (3rd commit):** added `due_jobs`
+  to the account-deletion drift guard + dedicated coverage test. See
+  `docs/rollouts/2026-07-05-durable-due-jobs.md` (including its "Review fixes" section).
 - **Wire `usage-budget` Phase-2 (advisory-first, owner-overridable enforcement) into
   `runStrategyOnce`** (CLAUDE, worktree `~/apps/trading-wt-budget-advisory`, branch
   `claude/usage-budget-advisory-wiring`) — **IN PROGRESS 2026-07-05.** Moved from Planned (see the
