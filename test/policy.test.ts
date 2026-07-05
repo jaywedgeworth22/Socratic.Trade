@@ -412,6 +412,28 @@ describe("evaluateTradeProposal", () => {
     expect(decision.approved).toBe(true);
   });
 
+  it("does not apply the crisis cap to a non-canonical free-text regime label (typed-enum hardening)", () => {
+    // Same over-cap opening exposure as the blocking case above, but with a bare non-canonical
+    // "Crisis" label. The old substring rule (includes("crisis")) would have capped it; the typed
+    // adoption maps any non-canonical string to `unknown`, so a stray label can never silently trip
+    // the crisis cap. Production always persists a canonical label via determineMarketRegime.
+    const decision = evaluateTradeProposal(
+      { ...proposal, entryMarketRegime: "Crisis", dollarAmount: 1200 },
+      {
+        ...context(1200),
+        policy: {
+          ...enabledPolicy,
+          maxOrderNotional: 2000,
+          maxOrderPctOfNav: 100,
+          maxDailyNotional: 5000,
+          maxSymbolExposurePct: 50,
+          tuning: { crisisMaxOpeningExposurePct: 5 }
+        }
+      }
+    );
+    expect(decision.approved).toBe(true);
+  });
+
   it("does not block risk-reducing sells or covers with the crisis exposure cap", () => {
     const sell = evaluateTradeProposal(
       { ...proposal, symbol: "AAPL", side: "sell", quantity: 1, dollarAmount: undefined, limitPrice: 1200, entryMarketRegime: "Crisis (Extreme Volatility)" },

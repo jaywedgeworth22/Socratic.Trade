@@ -209,6 +209,24 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
+  `claude/regime-enum-risk-gates`, isolated worktree `nice-heyrovsky-b9d0bd`) — **PR open**. The
+  three deterministic risk gates now classify the persisted regime label through the shared typed
+  `MarketRegime` source of truth (`market-regime.ts`) instead of three independent
+  substring/`startsWith` rules: crisis/inverted opening-exposure cap (`policy.ts`
+  `isCrisisOrInvertedRegime`), bear-filter risk-off veto (`strategy.ts` `deterministicBearFilter` —
+  the site whose in-code comment reserved the conversion for the risk lane), and the escalation gate
+  (`regime-watch.ts` `isEscalationRegime`, also feeding `strategy.ts`'s dissent trigger). This is the
+  "one-line adoption" the w1-regime-data lane (#368) exported the typed predicates and pinned
+  `test/market-regime.test.ts` for. Correctness hardening only — canonical-label behavior is
+  byte-identical (a relabel can no longer silently desync one gate from another); the one intended
+  change is that a non-canonical free-text label now reads non-escalating rather than accidentally
+  substring-matching. Imports from `./market-regime` (not `./macro`) so the whole-module macro mock
+  in `test/regime-watch.test.ts` still exercises the real classifier. New gate-level regression
+  `test/regime-gate-adoption.test.ts` (+ a `policy.test.ts` hardening case). Gate green: tsc clean,
+  lint 0 errors, 254 files/2465 tests, build ok. See
+  `docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
+
 - **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
   worktree `~/apps/trading-wt-w2-outcome`, based on `claude/w1-learning-loops`) — four §A items:
   (1) THE OUTCOME WRITER: new scheduled job `src/lib/outcome-engine.ts` on the counterfactual

@@ -22,6 +22,20 @@ congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Con
 also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
 GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
 See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
+Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
+The three deterministic risk gates now classify the persisted regime label through the shared
+typed `MarketRegime` source of truth (`src/lib/market-regime.ts`) instead of three independent
+substring/`startsWith` rules: the crisis/inverted opening-exposure cap (`policy.ts`), the bear
+filter's risk-off veto (`strategy.ts` `deterministicBearFilter` — the site whose comment reserved
+the conversion for the risk lane), and the escalation gate (`regime-watch.ts` `isEscalationRegime`,
+also feeding `strategy.ts`'s dissent trigger). This is the "one-line adoption" the w1-regime-data
+lane (#368) exported the typed predicates and pinned `test/market-regime.test.ts` for. Correctness
+hardening only — canonical-label behavior is byte-identical (a regime relabel can no longer silently
+desync one gate from another); the one intended change is that a non-canonical free-text label now
+reads non-escalating instead of accidentally substring-matching. Gate green: tsc clean, lint 0
+errors, 254 files/2465 tests, build ok. See
+`docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
 
 ## 2026-07-04 — Production deployed: Codex #442 and shared-dep #444
 Production `trading-live` is at `1e1a15bc` (`origin/main`), which includes both

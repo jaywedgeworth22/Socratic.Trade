@@ -90,6 +90,7 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContext } from "./learned-context/store";
 import { debateProposal } from "./red-team";
 import { isEscalationRegime } from "./regime-watch";
+import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import {
   applySocraticOverrideSizing,
@@ -1661,9 +1662,15 @@ export function deterministicBearFilter(
   const medianScore = sortedScores.length > 1
     ? sortedScores[Math.floor(sortedScores.length / 2)]
     : -Infinity;
-  // Substring match retained deliberately: this gate site is owned by the risk lane (Monet);
-  // it adopts the typed enum from ./market-regime inside #360. Do not convert here.
-  const riskOffRegime = regime.startsWith("Crisis") || regime.startsWith("Risk-Off");
+  // Typed-enum adoption (risk lane): classify the persisted regime label via the shared
+  // ./market-regime source of truth instead of an ad-hoc startsWith, so a regime relabel can't
+  // silently desync this risk-off veto from the crisis cap / escalation gates. Canonical-label
+  // behavior is unchanged (pinned by test/market-regime.test.ts and test/deterministic-bear.test.ts)
+  // and the veto reason below still quotes the original `regime` label. "Cautious (Inverted Curve)"
+  // deliberately does NOT trip this risk-off veto (it trips only the crisis cap) — the exact
+  // asymmetry the typed matrix documents. Imported from ./market-regime (not ./macro) so a
+  // macro-module test mock can't intercept the classifier.
+  const riskOffRegime = isRiskOffFilterRegime(regimeFromLabel(regime));
 
   const kept: TradeProposal[] = [];
   const vetoed: Array<{ symbol: string; side: string; reason: string }> = [];
