@@ -74,7 +74,8 @@ import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert } from "./usage-budget";
-import { avgReturnCorrelation } from "./correlation";
+import { avgReturnCorrelation, correlationProfile } from "./correlation";
+import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
@@ -1081,12 +1082,16 @@ export async function runStrategyOnce(
       }
     }
 
-    const proposals = await applyCorrelationClusterGate(
+    const gatedProposals = await applyCorrelationClusterGate(
       [...fundingSells, ...proactiveProposals, ...debatedProposals],
       policy,
       workingPositions,
       userId
     );
+
+    // Advisory correlation/stress/earnings-proximity receipts on the final opening proposal set —
+    // receipts only, never a gate. See applyRiskReceipts's doc comment for the flag semantics.
+    const proposals = await applyRiskReceipts(gatedProposals, policy, workingPositions, workingPortfolio, marketScan, userId);
 
     // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
     // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
@@ -2023,6 +2028,139 @@ export async function applyCorrelationClusterGate(
     kept.push(p);
   }
   return kept;
+}
+
+/**
+ * Advisory-only per-candidate risk receipts for OPENING (buy/short) proposals: a correlation profile
+ * (pearson/EWMA/downside vs current holdings) + a pre-trade parametric stress scenario, both appended
+ * to `proposal.rationale` as `\n\n[Risk] …` notes with a matching `audit(...)` event — plus a
+ * separate, ALWAYS-ON (independent of any flag) earnings-proximity note when `daysToEarnings` is
+ * known and small, optionally escalated to an overridable `preVetoReasons` tag.
+ *
+ * Correlation + stress receipts are gated behind `policy.tuning.riskReceipts` (default off/undefined):
+ * when off, this function returns `proposals` UNCHANGED and performs zero extra bar fetches — the
+ * rationale/prompt/audit trail stays byte-identical to today. The earnings note/tag is independent
+ * (per the board row: earnings blackout is its own opt-in via `policy.tuning.earningsBlackout`) and
+ * runs regardless of `riskReceipts`, but only ever touches proposals whose `daysToEarnings` is known
+ * (never fabricated) — most runs with neither flag on see NO change at all.
+ *
+ * Never blocks, drops, or resizes a proposal: `preVetoReasons` tagging follows the exact "tag, fold
+ * into the sized PolicyDecision, remain overridable" pattern PR #814 established (see the fold-in at
+ * the `preVetoReasons?.length` check before `resolveSocraticOverride`) — it is not a new blocking gate.
+ */
+export async function applyRiskReceipts(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  positions: EquityPosition[],
+  portfolio: Portfolio,
+  marketScan: MarketScan,
+  userId: string = "local"
+): Promise<TradeProposal[]> {
+  const riskReceiptsOn = policy.tuning?.riskReceipts === true;
+  const earningsBlackoutOn = policy.tuning?.earningsBlackout === true;
+  const earningsWindow = policy.tuning?.earningsBlackoutDays != null && policy.tuning.earningsBlackoutDays > 0
+    ? policy.tuning.earningsBlackoutDays
+    : 3;
+
+  const equity = accountEquity(portfolio);
+  const holdingsForCorrelation = positions.map((p) => ({ symbol: p.symbol, marketValue: p.marketValue }));
+  const stressPositions: StressPositionInput[] = positions.map((p) => ({
+    symbol: p.symbol,
+    marketValue: p.marketValue,
+    beta: marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.beta
+  }));
+
+  const out: TradeProposal[] = [];
+  for (const p of proposals) {
+    const isOpening = p.side === "buy" || p.side === "short";
+    if (!isOpening) {
+      out.push(p);
+      continue;
+    }
+
+    let proposal = p;
+    const quote = marketScan.quotesBySymbol[normalizeSymbol(p.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(p.symbol));
+
+    // Part 2 — correlation receipt (gated on riskReceipts; costs extra fetchDailyOHLC calls).
+    if (riskReceiptsOn && equity > 0) {
+      const profile = await correlationProfile(proposal.symbol, holdingsForCorrelation, equity, userId);
+      if (profile) {
+        const max = profile.maxPairwise;
+        const maxIsDownsideDriven = profile.holdings.some(
+          (h) => h.symbol === max.symbol && h.downside != null && h.pearson != null && h.downside > h.pearson
+        );
+        const downsideNote = maxIsDownsideDriven
+          ? `; downside corr ${(profile.holdings.find((h) => h.symbol === max.symbol)!.downside! * 100).toFixed(0)}% — diversification weakens in drawdowns`
+          : "";
+        const avgEwmaText = profile.avgEwma != null ? `${(profile.avgEwma * 100).toFixed(0)}%` : "n/a";
+        const correlationNote = `\n\n[Risk] Correlation: max ${(max.corr * 100).toFixed(0)}% w/ ${max.symbol} (${max.weightPct.toFixed(1)}% of book), avg EWMA ${avgEwmaText} across ${profile.holdings.length} holdings${downsideNote}`;
+        proposal = { ...proposal, rationale: proposal.rationale + correlationNote };
+        audit(
+          "correlation_receipt",
+          { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
+          userId
+        );
+      }
+    }
+
+    // Part 4 — pre-trade stress scenario receipt (gated on riskReceipts; free — betas come from the scan).
+    if (riskReceiptsOn && equity > 0) {
+      const candidateBeta = quote?.beta;
+      // No run-level VIX is plumbed into MarketScan today (see macro.ts's separate MacroData for the
+      // live VIX read) — omitting `vix` here falls back to stressScenario's own default (20, long-run
+      // average), which is the documented, tested behavior when a live level isn't available.
+      const stress = stressScenario({
+        positions: stressPositions,
+        candidate: { symbol: proposal.symbol, notional: estimateNotional(proposal), side: proposal.side, beta: candidateBeta },
+        equity
+      });
+      if (stress) {
+        const estimatedNote = stress.betasEstimated
+          ? ` (betas estimated for ${stress.betaEstimatedCount} of ${stress.betaTotalCount} positions)`
+          : "";
+        const topText = stress.topContributors.map((c) => `${c.symbol} ${formatWholeDollars(c.impactUsd)}`).join(", ");
+        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%; top: ${topText}${estimatedNote}`;
+        proposal = { ...proposal, rationale: proposal.rationale + stressNote };
+        audit(
+          "stress_receipt",
+          {
+            symbol: proposal.symbol,
+            shockPct: stress.shockPct,
+            bookImpactPctOfEquity: stress.bookImpactPctOfEquity,
+            withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
+            candidateMarginalUsd: stress.candidateMarginalUsd
+          },
+          userId
+        );
+      }
+    }
+
+    // Part 3 — earnings-proximity advisory. The INFORMATIONAL note is unconditional whenever
+    // daysToEarnings is known (per spec: "Receipt (always when daysToEarnings known and <= 7)");
+    // only the preVetoReasons TAG depends on `earningsBlackout` being on. Unknown daysToEarnings
+    // (Yahoo returned no future earnings date) is skipped silently — never fabricated.
+    const daysToEarnings = quote?.daysToEarnings;
+    if (typeof daysToEarnings === "number" && Number.isFinite(daysToEarnings) && daysToEarnings <= 7) {
+      const insideWindow = earningsBlackoutOn && daysToEarnings <= earningsWindow;
+      const windowSuffix = insideWindow ? " — inside advisory blackout window" : "";
+      const earningsNote = `\n\n[Risk] Earnings in ${daysToEarnings} trading day(s)${windowSuffix}`;
+      proposal = { ...proposal, rationale: proposal.rationale + earningsNote };
+      if (insideWindow) {
+        proposal.preVetoReasons = [
+          ...(proposal.preVetoReasons ?? []),
+          `earnings_blackout: opening within ${daysToEarnings} day(s) of earnings (window ${earningsWindow})`
+        ];
+        audit(
+          "proposal_tagged_earnings_blackout",
+          { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
+          userId
+        );
+      }
+    }
+
+    out.push(proposal);
+  }
+  return out;
 }
 
 export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
