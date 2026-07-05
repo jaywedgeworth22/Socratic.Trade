@@ -129,13 +129,15 @@ function ModelSelect({
   value,
   onChange,
   allowBlank,
-  blankLabel
+  blankLabel,
+  role
 }: {
   id: string;
   value: string | undefined;
   onChange: (model: string) => void;
   allowBlank?: boolean;
   blankLabel?: string;
+  role: "proposer" | "red-team";
 }) {
   const selectValue = modelSelectValue(value);
   const custom = selectValue === CUSTOM_MODEL_OPTION;
@@ -158,11 +160,18 @@ function ModelSelect({
         )}
         {CURATED_LLM_MODEL_GROUPS.map((group) => (
           <optgroup key={group.provider} label={group.label}>
-            {group.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+            {group.options.map((option) => {
+              const label = role === "proposer" && option.recommendedGreen
+                ? `${option.label} (Rec Proposer)`
+                : role === "red-team" && option.recommendedRed
+                ? `${option.label} (Rec Reviewer)`
+                : option.label;
+              return (
+                <option key={option.value} value={option.value}>
+                  {label}
+                </option>
+              );
+            })}
           </optgroup>
         ))}
         <option value={CUSTOM_MODEL_OPTION}>Custom Model ID...</option>
@@ -202,6 +211,7 @@ export default function StrategyPage() {
   const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
   const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
+  const showCustomModelWarning = (proposerModel && !isCuratedModel(proposerModel)) || (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel));
   const reasoningModels = [proposerModel, effectiveRedTeamModel];
   const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
@@ -287,6 +297,7 @@ export default function StrategyPage() {
             <ModelSelect
               id="llm-model"
               value={proposerModel}
+              role="proposer"
               onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
             />
           </Field>
@@ -300,10 +311,21 @@ export default function StrategyPage() {
               value={redTeamModel}
               allowBlank
               blankLabel="Same As Proposer"
+              role="red-team"
               onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
             />
           </Field>
         </div>
+        {showCustomModelWarning && (
+          <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">
+            <svg className="h-4 w-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            <div>
+              Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
+            </div>
+          </div>
+        )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
           Proposer: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(effectiveRedTeamModel)}.
           {" "}
