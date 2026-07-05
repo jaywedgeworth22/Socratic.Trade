@@ -23,6 +23,13 @@ congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Con
 also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
 GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
 See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+**2026-07-05 follow-up (full itemization):** the owner flagged the pass as still non-exhaustive —
+three enumeration agents then classified EVERY finding in the two 2026-07-04 panels, the full
+2026-06-30 audit, the 2026-07-01 learning-loop/RAG expansion backlogs, and June residual docs;
+~220 further untracked findings are now individual Planned rows (repo-mirror subsections
+"2026-07-05 full itemization" + "Deep-sweep additions"), each lane-tagged. Includes two live bugs
+(partial-day ADV in the impact model; checkRegimeFlip 'local' non-atomic RMW) and the
+safety-critical prerequisites of the factor-weight auto-apply lane.
 
 ## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
 Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
