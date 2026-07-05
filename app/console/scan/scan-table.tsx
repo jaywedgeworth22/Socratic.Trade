@@ -49,8 +49,7 @@ export function sanitizeVisibleScanColumns(saved: unknown): string[] {
   const valid = new Set(SCAN_COLUMNS.map((column) => column.id));
   const deduped = saved.filter((id): id is string => typeof id === "string" && valid.has(id)).filter((id, i, arr) => arr.indexOf(id) === i);
   if (deduped.length === 0) return DEFAULT_VISIBLE_SCAN_COLUMN_IDS;
-  if (!deduped.includes(SYMBOL_COLUMN_ID)) deduped.unshift(SYMBOL_COLUMN_ID);
-  return deduped;
+  return [SYMBOL_COLUMN_ID, ...deduped.filter((id) => id !== SYMBOL_COLUMN_ID)];
 }
 
 export function toggleVisibleScanColumn(visible: string[], id: string): string[] {
@@ -59,9 +58,11 @@ export function toggleVisibleScanColumn(visible: string[], id: string): string[]
 }
 
 export function moveVisibleScanColumn(visible: string[], id: string, delta: -1 | 1): string[] {
+  if (id === SYMBOL_COLUMN_ID) return visible;
   const from = visible.indexOf(id);
   if (from === -1) return visible;
-  const to = Math.max(0, Math.min(visible.length - 1, from + delta));
+  const minIndex = visible[0] === SYMBOL_COLUMN_ID ? 1 : 0;
+  const to = Math.max(minIndex, Math.min(visible.length - 1, from + delta));
   if (from === to) return visible;
   const next = visible.slice();
   const [item] = next.splice(from, 1);

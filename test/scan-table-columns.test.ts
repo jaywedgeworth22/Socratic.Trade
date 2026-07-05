@@ -11,6 +11,7 @@ describe("scan-table column state", () => {
 
   it("keeps only valid unique ids and restores symbol if a saved payload dropped it", () => {
     expect(sanitizeVisibleScanColumns(["price", "bogus", "price", "score"])).toEqual(["symbol", "price", "score"]);
+    expect(sanitizeVisibleScanColumns(["price", "symbol", "score"])).toEqual(["symbol", "price", "score"]);
   });
 
   it("toggles non-symbol columns without allowing symbol to disappear", () => {
@@ -21,6 +22,7 @@ describe("scan-table column state", () => {
 
   it("moves visible columns earlier or later while clamping at the edges", () => {
     expect(moveVisibleScanColumn(["symbol", "score", "price"], "price", -1)).toEqual(["symbol", "price", "score"]);
+    expect(moveVisibleScanColumn(["symbol", "score", "price"], "score", -1)).toEqual(["symbol", "score", "price"]);
     expect(moveVisibleScanColumn(["symbol", "score", "price"], "symbol", -1)).toEqual(["symbol", "score", "price"]);
     expect(moveVisibleScanColumn(["symbol", "score", "price"], "price", 1)).toEqual(["symbol", "score", "price"]);
   });

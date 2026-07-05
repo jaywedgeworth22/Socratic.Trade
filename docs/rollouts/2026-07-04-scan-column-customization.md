@@ -44,6 +44,8 @@ without turning this lane into a broader settings/live-data conversion.
 - Added focused pure-helper regression coverage in `test/scan-table-columns.test.ts`.
 - Updated status/plan/review docs plus both effort boards to reflect that this parity item is now
   in progress and implemented in this worktree.
+- Addressed Codex PR review on PR #806 by pinning `symbol` as the first/sticky column during both
+  saved-state sanitization and visible-column reordering.
 
 ## Verification
 
@@ -76,6 +78,18 @@ Results:
 - TypeScript passed.
 - full test suite passed: 255 files / 2469 tests.
 - production build passed with the existing Sentry Edge runtime warning.
+
+Review-thread follow-up on 2026-07-05:
+
+```bash
+npx vitest run test/scan-table-columns.test.ts
+NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc --noEmit --pretty false
+```
+
+- pending rerun after the symbol-pinning patch.
+- focused scan-column helper suite passed: 1 file / 4 tests.
+- TypeScript passed.
+- `git diff --check` passed.
 
 ## Follow-ups
 

@@ -24,7 +24,9 @@ Verification green in this isolated worktree: focused
 `npm test -- --run test/scan-table-columns.test.ts` (4 tests), `npm run lint` (0 errors /
 308 existing warnings), and `scripts/land.sh` (`npx tsc --noEmit`, full `npm test` 256 files /
 2508 tests, `npm run build`). PR #806 is open with auto-merge enabled; after PR #807 merged, this
-branch is being merge-forwarded to resolve the effort-log conflict.
+branch was merge-forwarded and pushed. 2026-07-05 Codex PR review follow-up pins `symbol` as the
+first/sticky column during saved-state sanitization and column reordering; focused regression rerun
+passed and TypeScript is clean.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
