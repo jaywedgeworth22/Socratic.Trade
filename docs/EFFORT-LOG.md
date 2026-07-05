@@ -237,6 +237,31 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Wire `usage-budget` Phase-2 (advisory-first, owner-overridable enforcement) into
+  `runStrategyOnce`** (CLAUDE, worktree `~/apps/trading-wt-budget-advisory`, branch
+  `claude/usage-budget-advisory-wiring`) — **IN PROGRESS 2026-07-05.** Moved from Planned (see the
+  "Unassigned/CLAUDE lane" row below, now marked moved). ADVISORY (always on when the monitor is
+  configured): `usage_budget_status` audit receipt every run + a `formatBudgetAdvisory` line
+  injected into the Bull userContent next to `drawdownAdvisory`. ENFORCEMENT (opt-in,
+  `USAGE_BUDGET_ENFORCE`, default off) at the per-user/day LLM budget choke point: skip ends the run
+  before any LLM call (audit + `notifyBudgetSkip`); downgrade swaps `policy.llmModel`/
+  `redTeamLlmModel` on the in-memory run policy only. `debateProposal` gained an optional
+  `policyOverride` param so the Bear picks up the same transient downgrade. New
+  `test/usage-budget-strategy-integration.test.ts` (4 e2e tests) + 4 new `formatBudgetAdvisory` unit
+  tests. Verification: `tsc --noEmit` clean; focused vitest (usage-budget + strategy + red-team +
+  budget-adjacent files) 175/175 green. **Review-fix commit (same day):** fixed a BLOCKER — the
+  enforcement block was mutating the shared `policy` object in place, so a same-run cap-breach
+  demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would have persisted the
+  downgraded models permanently; replaced with a separately-carried `runLlmOverride`/`runPolicy`
+  never passed to `setPolicy`/`autoRevertOnCapBreach`. Also: scoped the enforcement try/catch so a
+  post-audit throw in the skip path can't be swallowed into the full LLM path; threaded the
+  downgrade into `generateReflectionSummary` (with the outcome-engine lesson pass left as a
+  documented intentional exemption — it's fire-and-forget and outlives the run); reused the
+  already-fetched budget status instead of double-fetching; extended the downgrade test to also
+  assert the Red Team request body's model. `tsc --noEmit` clean; targeted vitest 36/36 green; full
+  `npm test` 2521/2521 green; `npm run build` clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md` ("Review fixes" section).
+
 - **Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path prompts**
   (CLAUDE backlog lane, worktree `~/apps/trading-wt-prompt-safety`, branch
   `claude/prompt-safety-fencing`) — **IN PROGRESS 2026-07-05, committed locally, awaiting central
@@ -712,7 +737,8 @@ shipped it as PR #449 while this pass was being written; see its In Progress row
 #### CLAUDE lane (memory/RAG + already-reserved infra)
 - **Wire `usage-budget` Phase-2 enforcement into `runStrategyOnce` (CLAUDE, M)** —
   `evaluateBudgetForRun`/`cheaperModel` are built and tested but never called; flagship
-  "built-but-unwired" item. (code sweep)
+  "built-but-unwired" item. (code sweep) **MOVED to In Progress 2026-07-05** — see the
+  In Progress section above (branch `claude/usage-budget-advisory-wiring`).
 - **RAG retrieval-quality eval harness (CLAUDE, M)** — 25-40 golden query→expected-chunk tuples +
   vitest recall@k/MRR scorer. (improvement-audit §3.4)
 - **Bull/Bear prompt eval + versioning harness (CLAUDE, L)** — offline eval + PROMPT_VERSION

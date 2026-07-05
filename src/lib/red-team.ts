@@ -8,7 +8,7 @@ import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { STRATEGY_PROMPT_VERSION } from "./strategy-prompt-version";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
-import type { MarketQuoteSummary, TradeProposal } from "./types";
+import type { MarketQuoteSummary, TradeProposal, TradingPolicy } from "./types";
 
 export interface RedTeamDebateResult {
   rejected: boolean;
@@ -49,9 +49,17 @@ export async function debateProposal(
   proposal: TradeProposal,
   quote: MarketQuoteSummary | undefined,
   isBullish: boolean,
-  userId: string = "local"
+  userId: string = "local",
+  /**
+   * Optional pre-resolved policy to use INSTEAD OF re-reading `getPolicy(userId)`. Lets a caller
+   * thread a transient, run-scoped override (e.g. usage-budget's Phase 2 model downgrade, which is
+   * applied to an in-memory policy clone and never persisted via `setPolicy`) through to the model
+   * this debate actually resolves. Falls back to the persisted policy when omitted — no behavior
+   * change for existing callers.
+   */
+  policyOverride?: TradingPolicy
 ): Promise<RedTeamDebateResult> {
-  const policy = getPolicy(userId);
+  const policy = policyOverride ?? getPolicy(userId);
   const executionState = deriveExecutionState(policy, getActiveConnectedAccount(userId));
   const basePrompt = getStrategyPrompt(userId);
   const { url, key: llmKey, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions", "red");
