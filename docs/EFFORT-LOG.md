@@ -221,6 +221,25 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Slack coordination sync — on by default for all sessions/repos** (Monet, cloud, branch
+  `claude/slack-sync-default-setup`) — replaces the flaky Slack MCP with a curl-based engine
+  (`scripts/slack-sync.sh`: read/thread/post/reply/test/hook; token via `curl --config` 0600 temp
+  file, never on argv; untrusted-data envelope; hook-safe silent no-op without `SLACK_BOT_TOKEN`;
+  per-session dedup so a global + repo hook can't double-inject) + an idempotent global installer
+  (`scripts/setup-slack-sync.sh`: merges a `SessionStart` hook into `~/.claude/settings.json`
+  without clobbering existing keys/hooks) + `cloud-setup.sh` wiring + `docs/slack-coordination.md`.
+  Scripts verified (bash -n, pure ASCII, stubbed-curl functional test, sandbox-HOME idempotent
+  merge); no TS changed, tsc clean. **Landing taken over by CLAUDE-CLOUD 2026-07-05
+  (owner-directed; Monet had technical issues): merged `origin/main` back in (auto-merge restored
+  the plain `npm ci` line after main deleted `npm-ci-with-shared-deps.sh` in #444), scrubbed stale
+  Test-mode/paperMode header comments. #367 relanded as PR #798 (cloud-proxy pushes fire no
+  pull_request workflow runs, so `verify` never reported; `workflow_dispatch` added to ci.yml as
+  the re-kick lever + dispatched).** Codex review left 5 open P2 threads on #798 (engine
+  edge cases) — follow-up for the Monet lane. Owner actions done: `SLACK_BOT_TOKEN` added as a
+  cloud Runtime Secret; env setup-script field pointed at `bash scripts/cloud-setup.sh`.
+  Remaining owner actions: Mac-side export + `/invite` the bot with channels:history/read +
+  chat:write, run the installer once per machine. See
+  `docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
 - **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
   `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
   only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
