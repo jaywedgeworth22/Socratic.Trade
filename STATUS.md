@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
+Owner-directed: promoted every still-open item from the review docs
+(`docs/reviews/2026-06-30-improvement-audit.md`, both 2026-07-04 expert/composite reviews,
+`2026-07-03-console-parity-open-items.md`), `PLAN.md`, and a code sweep into individually
+tracked `docs/EFFORT-LOG.md` Planned rows with assigned lanes — CURSOR/DeepSeek v4 Pro
+(17 rows), CODEX (6 + 5 annotated parity rows), AG/Antigravity (7 + 2 annotated), MONET
+(6, risk lane), CLAUDE (6, memory/RAG), plus a 15-row unassigned owner-decision bucket.
+Pre-existing Planned rows got assignment annotations in their bodies (first lines untouched
+to preserve issues-mirror identity keys). Deduped the twice-logged "Wave-1 quick wins"
+In Progress row. The same pass seeded populated boards + issue mirrors for Congress.Trade,
+congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Congress.Trade
+also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
+GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
+See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+
 ## 2026-07-04 — Production deployed: Codex #442 and shared-dep #444
 Production `trading-live` is at `1e1a15bc` (`origin/main`), which includes both
 `94669873` / PR #442 (`feat(console): add swimlane approval and decision trace UI`) and
