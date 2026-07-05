@@ -72,6 +72,7 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
 - **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
   2026-07-05 as squash `0bfa4f1e`. Focused slice for issue #470: `/console/approvals`
   sort/filter, visible-row multi-select, bulk reject, safe non-LIVE bulk approve through existing
@@ -298,7 +299,7 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
-- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — IN PROGRESS 2026-07-05.** Worktree `~/Code/Socratic.Trade`, branch `antigravity/socratic-webhooks`. Validate `X-Signature` for webhooks and ensure persistent idempotency store.
+
 - **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
   `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
   fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
