@@ -98,6 +98,25 @@ folded back into the canonical file and re-propagated: the initial issue listing
 inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
 our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
 `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+## 2026-07-05 — Console live-data build-out slice (Codex subagent, issue #471)
+Branch `codex/console-live-data`, worktree `/Users/jay/.codex/worktrees/socratic-console-live-data`.
+Merged current `origin/main` (`0bfa4f1e`) into the branch, resolved only the effort-log overlap,
+and kept the implementation scoped to console live-data files. The branch now implements the
+narrow live-data slice without touching settings/approvals/risk lanes:
+`ConsoleDataProvider` now consumes `/api/events/stream` for push refreshes (with poll fallback),
+tracks stream connection state, dispatches `market-data-filled` for existing chart listeners, and
+surfaces stream/freshness state in the global freshness strip. The console overview now adds an
+open mark-to-market card, a live risk-utilization board, reuses the existing equity chart for an
+intraday-or-recent equity window, and promotes the existing positions table into the home-page
+blotter with a weight column. Added focused derivation tests.
+
+Verification on the merged branch: `npm run lint -- --quiet` passed; `npx vitest run
+test/console-live-data-derive.test.ts` passed (4 tests); `npm test` passed (257 files / 2510
+tests); `npm run build` passed on webpack/TypeScript/static-page generation with the repo's
+existing middleware deprecation + webpack cache warnings; `npx tsc --noEmit` initially failed
+immediately after the merge because `tsconfig.json` still referenced stale `.next/types/**`
+entries, then passed cleanly after the successful build regenerated `.next/types`. See
+`docs/rollouts/2026-07-04-console-live-data-build-out.md`.
 
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
 Owner-directed: promoted every still-open item from the review docs

@@ -54,7 +54,7 @@ function ThemeToggle({ theme, cycle }: { theme: ConsoleTheme; cycle: () => void 
 }
 
 function ShellFrame({ children }: { children: ReactNode }) {
-  const { snapshot, fetchedAt, loading, error } = useConsoleData();
+  const { snapshot, fetchedAt, loading, error, stream } = useConsoleData();
   const { theme, dataTheme, cycle } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
 
@@ -116,7 +116,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
             <DesktopRail pendingCount={snapshot.pendingProposals.length} />
             <main className="min-w-0 flex-1 px-4 pb-24 pt-4 lg:px-6 lg:pb-8">{children}</main>
           </div>
-          <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} />
+          <FreshnessStrip snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
           <MobileTabBar pendingCount={snapshot.pendingProposals.length} />
           {/* Blocking shared-data-pool consent gate — same semantics as the
               legacy dashboard gate; renders nothing once answered. */}
