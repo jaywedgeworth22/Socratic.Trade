@@ -403,6 +403,23 @@ to `socratictrade.com`, record the release commit + date here._
   verification: focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration
   follow-up verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check` clean.
 
+- **Logo concept exploration (branding, docs-only)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **PR open**. Owner-requested logo ideas for
+  Socratic Trade / Socratic.Trade: ten concept comps (five wordmark-led where the name fills the
+  logo, five mark-led with a favicon-capable symbol), built on the existing product palette (ink
+  `#0f1722`, green `#0e9f6e`, mint `#63e6be`) — new `docs/branding/` (README + `logo-concepts.html`
+  board + standalone SVGs). No app code touched; `public/icon.svg` unchanged. Round 2 same-day:
+  owner shared four Adobe Firefly comps (candlestick letterforms, owl, red/green) and asked for a
+  more professional take — added concepts K–N (candlestick-owl lockup, owl seal, candle-I wordmark,
+  three-candle cluster), 14 SVGs total. Round 3: owner saved B/E/H/I + the parallel session's three
+  picks (Examined/Dialectic/Stoa from `claude/logo-ideas-c5n61b`) + the four Firefly comps
+  (backgrounds removed for light/dark use) into one combined board `docs/branding/shortlist.html`
+  with assets in `docs/branding/firefly/`. Next: owner narrows the combined shortlist to a final
+  direction, then redraw with outlined letterforms + favicon/app-icon variants. Round 4: upright vector remake of the candle-letters wordmark (F5, `docs/branding/firefly/candle-wordmark-upright.svg`). Round 5: 18s SVG+CSS morph animation - same candles alternate SOCRATIC/TRADE (F6, `docs/branding/firefly/candle-morph.svg`). Round 6: portable exports of the morph - MP4, GIF, and Live-Photo-ready MOV+JPG (`docs/branding/firefly/candle-morph.{mp4,gif}`, `candle-morph-livephoto.{mov,jpg}`). Round 7: transparent video exports (VP9-alpha WebM + animated WebP committed; ProRes 4444 delivered off-repo). Round 8: console-intro animation - chart candles fly up into the header logo (`docs/branding/firefly/console-intro.svg`, shortlist card F7).
+  See `docs/rollouts/2026-07-05-logo-concepts.md`.
+  _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
+  container — owner/next local agent should mirror this row there._
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed

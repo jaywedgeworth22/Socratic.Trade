@@ -8,6 +8,38 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Logo concept exploration (Claude cloud, docs-only)
+Owner asked for a set of logo ideas for Socratic Trade / Socratic.Trade, favoring options that
+aren't busy and where the words carry the logo. Round 2 (same day): owner shared four Adobe
+Firefly comps (letters made of candlesticks, an owl, market red/green) and asked for a more
+professional version — added four refined concepts K–N that keep those motifs but use the
+candlestick exactly once each: K candlestick-owl lockup (suggested primary), L circular owl seal,
+M candle-as-the-I wordmark, N three-candle up/down/up cluster (only concept keeping red).
+Round 3 (same day): owner saved B/E/H/I, combined with the parallel session's three picks
+(Examined Trade, Dialectic, Stoa — copied from branch `claude/logo-ideas-c5n61b`), plus the four
+Firefly comps processed into light/dark-ready transparent assets — all in one board at
+`docs/branding/shortlist.html` (assets in `docs/branding/firefly/`).
+Round 4 (same day): upright vector remake of the candlestick wordmark — SOCRATIC TRADE with every
+letter built from red/green candles, vertically normal (not tilted) — generated via
+Pillow glyph masks → SVG; on the shortlist board as F5 with light/dark PNG exports in
+`docs/branding/firefly/`.
+Round 5 (same day): animated morph — the same 110 candlesticks spell SOCRATIC (3s), drift
+semi-naturally (6s) into TRADE (3s), and morph back (18s loop); pure SVG+CSS at
+`docs/branding/firefly/candle-morph.svg`, card F6 on the shortlist board.
+Round 6 (same day): morph exports — MP4 (18s loop), palette-optimized GIF, and a 3s one-way
+Live-Photo-ready MOV+JPG pair (bounce-friendly) in `docs/branding/firefly/`; site keeps SVG+CSS.
+Rounds 7-8 (same day): transparent video exports (VP9-alpha WebM + animated WebP in
+`docs/branding/firefly/`; ProRes 4444 delivered off-repo, 113 MB) and the console-intro
+animation - an unnamed-asset candlestick chart whose 182 candles fly up-left and settle as the
+SOCRATIC TRADE header wordmark (`console-intro.svg`, one-shot SVG+CSS, shortlist card F7).
+Round 1 remains: ten concept comps — five
+wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
+mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the
+existing favicon) — as `logo-concepts.html` (side-by-side light/dark board with rationale) plus 10
+standalone SVGs and a README. Palette derives from existing tokens (`#0f1722`/`#0e9f6e`/`#63e6be`);
+no app code touched, `public/icon.svg` unchanged. Blocker: none. Next action: owner picks a
+direction (suggested shortlist A/D/F/G); winner gets redrawn with outlined letterforms + favicon/
+app-icon/mono variants. See `docs/rollouts/2026-07-05-logo-concepts.md`.
 ## 2026-07-04 — Scan table column customization parity (Codex subagent)
 Worktree `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
 `codex/scan-column-customization`. `/console/scan` now mirrors the legacy dashboard's
