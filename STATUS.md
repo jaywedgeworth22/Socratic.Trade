@@ -8,6 +8,27 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Scan table column customization parity (Codex subagent)
+Worktree `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+`codex/scan-column-customization`. `/console/scan` now mirrors the legacy dashboard's
+browser-local column behavior for the existing console scan columns: visible-column order is
+persisted in `localStorage`, columns can be shown/hidden from a chooser popover, visible
+columns can be moved earlier/later, Reset restores the default set/order, and sort falls back
+to a visible column if a saved/hidden state removes the active sort key. Scope stayed tight:
+`app/console/scan/{scan-table,columns}.tsx` plus the pure-helper regression
+`test/scan-table-columns.test.ts`; no broader settings/live-data/tooltip conversions. Board
+state mirrored to `/Users/jay/apps/TRADING-EFFORT-LOG.md` + `docs/EFFORT-LOG.md`, and
+`#agent-sync` claim posted as `[CODEX->FLEET] sync-1`.
+
+Verification green in this isolated worktree: focused
+`npm test -- --run test/scan-table-columns.test.ts` (4 tests), `npm run lint` (0 errors /
+308 existing warnings), and `scripts/land.sh` (`npx tsc --noEmit`, full `npm test` 256 files /
+2508 tests, `npm run build`). PR #806 is open with auto-merge enabled; after PR #807 merged, this
+branch was merge-forwarded and pushed. 2026-07-05 Codex PR review follow-up pins `symbol` as the
+first/sticky column during saved-state sanitization and column reordering; focused regression rerun
+passed and TypeScript is clean. A second Codex review follow-up defers saved `localStorage` column
+state until after mount to keep the server render and first client render identical; verification
+rerun passed (focused scan-column test, TypeScript, lint, diff check).
 ## 2026-07-05 — Board next-wave cycle 2: stale-row corrections (incl. phantom #808) + new Planned rows (CLAUDE)
 Cross-agent audit of `docs/EFFORT-LOG.md` and `/Users/jay/apps/TRADING-EFFORT-LOG.md` against live
 PR/git state, applying stale-row corrections from the socratic-trade and fleet-infra next-wave

@@ -17,6 +17,9 @@ Socratic Trade reframe.
 - Strategy Green/Red models use curated dropdowns instead of raw text boxes.
 - Strategy and AI Review model controls now expose provider-specific
   reasoning/thinking options for OpenAI, Anthropic, Gemini, xAI, and Mistral.
+- `/console/scan` matches the legacy dashboard's browser-local column behavior
+  for the current console columns: visibility toggles, reorder controls, Reset,
+  and saved visible-column order/state.
 - Pinecone/Voyage health and RAG ingest state are surfaced in admin RAG/health
   responses instead of being hidden only in activity logs.
 - User-scoped LLM usage is available outside admin; admins still see all users.
@@ -37,8 +40,6 @@ Socratic Trade reframe.
 - Only two absolute-vs-percent setting pairs have been converted to polished
   mode switches. Remaining duplicated constraints need the same treatment where
   the pair is semantically either/or.
-- Scan table parity is still short of the legacy dashboard in column
-  customization: visibility, ordering, reset, and richer saved column state.
 - The shared symbol drawer is restored for many ticker surfaces, but full
   app-wide coverage still needs a grep-driven pass for every remaining ticker
   render in the console, legacy dashboard, mobile, and admin surfaces.
