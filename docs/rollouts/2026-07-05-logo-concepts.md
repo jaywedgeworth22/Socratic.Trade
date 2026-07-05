@@ -115,6 +115,12 @@ with ffmpeg (imageio-ffmpeg binary):
   cannot create maker notes), so final Live Photo pairing happens on-device
   (intoLive app or Shortcuts "Make Live Photo" with the MOV) in seconds.
 
+Fix (same day): the first encode flashed white every ~2s — headless-Chromium
+batch captures corrupt the bottom row of each page, so every 40th frame
+(t = odd .95s) was white. Re-rendered those 9 frames on a page with a
+sacrificial dummy bottom row, re-encoded all three outputs, and verified by
+decoding the final MP4 back to frames (zero bright outliers).
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
