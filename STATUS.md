@@ -28,6 +28,19 @@ high-relevance RAG chunks + same-day facts → one aggregated `audit("evidence_a
 extension; tsc clean; adjacent strategy/chat/socratic suites green. Committed locally on
 `claude/prompt-safety-fencing`; central landing operator merges/lands sequentially.
 **Next:** land via the central operator; follow-up = first-seen timestamps for headlines.
+## 2026-07-05 — Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)
+Branch `claude/veto-advisory-overridable` (isolated worktree), PR pending. Completes the
+"everything overridable except the account boundary" philosophy: the deterministic bear filter
+(Rules 3/4) and the approval-time Red Team veto now TAG a candidate with `preVetoReasons` instead of
+dropping it; those fold into the single sized `PolicyDecision` and flow through #799's existing
+`resolveSocraticOverride` (openings, subject to `socraticOverrideMode` + the override cap). Rule 1
+(phantom sell/cover) stays a hard drop; Rule 4 is overridable but flagged in-code for owner
+ratification. An independent 3-lens adversarial verify caught 2 money-path bugs the green suite
+missed — a severe phantom-funding-sell (`preVetoTaggedOpeningWillPlace` now gates the funding
+notional) and a free-text hard-gate misclassification (`isHardGateReason` prefix short-circuit) —
+both fixed + regression-tested. Gate: tsc clean, lint 0 errors, 258 files/2540 tests, build ok.
+Overlaps the unlanded `claude/redteam-policy-aware-routing` (coordinated on #agent-sync; rebase at
+land). See `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
 
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
 Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
@@ -4139,6 +4152,22 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-07-05 (`claude/logo-ideas-c5n61b`): **Logo concept exploration — 12 marks.** First brand
+  exploration for Socratic.Trade: twelve logo concepts (Socratic question/dialogue/Greek-antiquity ×
+  candlestick/trend/delta) delivered as a theme-aware showcase `docs/branding/logo-ideas.html`
+  (source of truth — marks are SVG `<symbol>`s, previewed on light+dark chips w/ favicon-scale
+  copies + lockups), 12 extracted standalone SVGs in `docs/branding/logo-ideas/`, and a concept
+  index `docs/branding/logo-ideas.md`. Single ink + existing emerald `#0e9f6e` discipline so any
+  pick drops into current UI tokens. Recommendation: **Phi** (app icon/favicon), The Inquiry
+  (storytelling), The Examined Trade (reports). Docs/assets only — no code. Owner picks a
+  direction next; then real exports (favicon.ico, app icons, OG) + `app/layout.tsx` wiring. See
+  `docs/rollouts/2026-07-05-logo-ideas.md`. **Final: owner selected Dialectic** (bubble tails
+  redrawn as integrated outline paths in v2 per feedback), saved as `dialectic.svg` + new
+  `dialectic-lockup.svg` (mark + `Socratic.Trade` name beside it); Examined Trade + Stoa were
+  shortlist runners-up, kept in archive. Next = cut exports (favicon/app-icon/OG) from the two
+  saved assets, outline the lockup serif to paths, wire `app/layout.tsx` metadata. Note: PR #801
+  (another session, same day) carries a separate 14-concept exploration — owner may want to
+  reconcile the two boards.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**

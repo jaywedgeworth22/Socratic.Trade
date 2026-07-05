@@ -920,7 +920,26 @@ export interface TradeProposal {
     reason: string;
     model?: string;
     trigger?: "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
+    /**
+     * True when the Bear REJECTED this opening but an agent-authored `autonomyOverride` thesis made
+     * the veto advisory (folded into the sized PolicyDecision as an overridable reason and then
+     * applied at resolveSocraticOverride). Lets the decision card distinguish "Bear rejected AND
+     * blocked" from "Bear rejected but overridden & executed". See the pre-veto override flow in
+     * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
+     */
+    overridden?: boolean;
   };
+  /**
+   * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
+   * TAGGED-not-dropped candidate. They are folded into the single sized PolicyDecision as OVERRIDABLE
+   * reasons immediately before the one resolveSocraticOverride call, so `isHardGateReason` classifies
+   * them as preferences (both `deterministic_bear_veto: …` and `red_team_veto: …` are non-hard) and an
+   * `autonomyOverride` thesis can pass them — on OPENINGS only, subject to socraticOverrideMode and the
+   * override cap. With no override thesis (or mode "off") the reason keeps the candidate blocked exactly
+   * as the old hard-drop did. Each entry is prefixed with its veto kind (`deterministic_bear_veto: …`
+   * or `red_team_veto: …`).
+   */
+  preVetoReasons?: string[];
   /**
    * Explicit agent-authored request to override owner preference gates for this decision.
    * This is not a client-side bypass token and does not override broker/account/integrity gates.

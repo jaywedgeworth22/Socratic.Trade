@@ -239,13 +239,23 @@ function evidenceForDecision(input: {
 function dissentForDecision(proposal: TradeProposal, decision: PolicyDecision, overrideResolution?: SocraticOverrideResolution): SocraticEvidenceItem[] {
   const rows: SocraticEvidenceItem[] = [];
   if (proposal.redTeamVerdict?.available) {
+    // Distinguish "Bear rejected AND blocked" from "Bear rejected but OVERRIDDEN & executed": an
+    // overridden veto is advisory (a logged rationale let the opening proceed), so it reads as a
+    // warning, not a hard negative, and the title says so.
+    const overridden = proposal.redTeamVerdict.overridden === true;
     rows.push({
       kind: "red_team",
-      title: proposal.redTeamVerdict.rejected ? "Red Team rejection" : "Red Team objection",
-      summary: proposal.redTeamVerdict.reason,
+      title: proposal.redTeamVerdict.rejected
+        ? overridden
+          ? "Red Team rejection (overridden)"
+          : "Red Team rejection"
+        : "Red Team objection",
+      summary: overridden
+        ? `${proposal.redTeamVerdict.reason} — overridden by a logged autonomy thesis; trade allowed to proceed.`
+        : proposal.redTeamVerdict.reason,
       source: proposal.redTeamVerdict.model,
       symbol: normalizeSymbol(proposal.symbol),
-      tone: proposal.redTeamVerdict.rejected ? "negative" : "warning",
+      tone: proposal.redTeamVerdict.rejected && !overridden ? "negative" : "warning",
       data: proposal.redTeamVerdict
     });
   }
