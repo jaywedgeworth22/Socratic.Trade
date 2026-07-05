@@ -237,6 +237,19 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)** — branch
+  `claude/veto-advisory-overridable`, isolated worktree — **IN PROGRESS 2026-07-05, PR pending.**
+  Deterministic bear filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with
+  `preVetoReasons` instead of dropping; folded into the single sized PolicyDecision → #799's
+  `resolveSocraticOverride` (openings, subject to socraticOverrideMode + cap). Rule 1 stays hard; Rule 4
+  overridable-but-flagged for owner ratification. FIX #1 (no counterfactual on override path — protects
+  getRedTeamEfficacy), FIX #2b (durable deterministic_bear_veto audit), FIX #3 (propose-mode pre-route
+  before sell-to-fund). An independent 3-lens adversarial verify caught + fixed 2 money-path bugs the
+  green suite missed: severe phantom-funding-sell (new `preVetoTaggedOpeningWillPlace` gates the funding
+  notional) + free-text hard-gate misclassification (`isHardGateReason` prefix short-circuit); both
+  regression-tested. Gate: tsc/lint-0/258 files-2540 tests/build. Overlaps unlanded
+  `claude/redteam-policy-aware-routing` (coordinated on #agent-sync; rebase at land). See
+  `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
   Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +
