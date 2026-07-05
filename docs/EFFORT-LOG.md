@@ -72,6 +72,12 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
+  2026-07-05 as squash `0bfa4f1e`. Focused slice for issue #470: `/console/approvals`
+  sort/filter, visible-row multi-select, bulk reject, safe non-LIVE bulk approve through existing
+  per-item proposal endpoints, and a reusable alert-center surface backed by existing
+  notifications/activity data. CI green: classify, smoke, gitleaks, verify. See
+  `docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
 - **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
   landing by CLAUDE-CLOUD, owner-directed).** Merged to `main` 2026-07-05 as squash `546c451`
   (verify x2/smoke/gitleaks green; relands #367, whose branch heads never received CI runs from
@@ -255,9 +261,10 @@ to `socratictrade.com`, record the release commit + date here._
   `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
   column visibility, ordering, reset, and saved browser-local state; allow only tightly related
   ticker-drawer parity if the scan surface needs it. Keepout: no broad
-  settings/approvals/live-data/coach/tooltip conversions in this lane. Verification green:
-  focused scan-column test (4), lint 0 errors / 308 existing warnings, tsc clean, full suite
-  2469 tests / 255 files, build green.
+  settings/approvals/live-data/coach/tooltip conversions in this lane. PR #806 open with
+  auto-merge enabled; merge-forward after PR #807 in progress. Verification green: focused
+  scan-column test (4), lint 0 errors / 308 existing warnings, land.sh tsc clean, full suite
+  2508 tests / 256 files, build green.
 
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
@@ -612,8 +619,6 @@ locks — re-negotiate in #agent-sync._
   make the retention window configurable. (completeness §F + quick-wins)
 
 #### CODEX lane (adds to the annotated parity rows above)
-- **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
-  console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
   streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
   the SSE learned-context-inbox row above. (expert reviews)

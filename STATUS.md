@@ -22,8 +22,10 @@ state mirrored to `/Users/jay/apps/TRADING-EFFORT-LOG.md` + `docs/EFFORT-LOG.md`
 
 Verification green in this isolated worktree: focused
 `npm test -- --run test/scan-table-columns.test.ts` (4 tests), `npm run lint` (0 errors /
-308 existing warnings), `npx tsc --noEmit`, full `npm test` (255 files / 2469 tests), and
-`npm run build`. Next action: land the branch via `scripts/land.sh`.
+308 existing warnings), and `scripts/land.sh` (`npx tsc --noEmit`, full `npm test` 256 files /
+2508 tests, `npm run build`). PR #806 is open with auto-merge enabled; after PR #807 merged, this
+branch is being merge-forwarded to resolve the effort-log conflict.
+
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
 Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
@@ -124,6 +126,24 @@ three enumeration agents then classified EVERY finding in the two 2026-07-04 pan
 "2026-07-05 full itemization" + "Deep-sweep additions"), each lane-tagged. Includes two live bugs
 (partial-day ADV in the impact model; checkRegimeFlip 'local' non-atomic RMW) and the
 safety-critical prerequisites of the factor-weight auto-apply lane.
+
+## 2026-07-04 — Approvals triage upgrades + alert center focused slice (Codex)
+Branch `codex/approvals-alert-center`, worktree
+`/Users/jay/.codex/worktrees/socratic-approvals-alert-center`. Implemented the narrow issue #470
+slice only: `/console/approvals` now has client-side triage controls (search, opening-vs-exit,
+paper-vs-live, sort by newest/confidence/notional/drift), visible-row multi-select, bulk reject,
+and bulk approve for safe non-LIVE proposals by reusing the existing per-item proposal endpoints.
+LIVE proposals stay single-item only and keep the typed-confirm broker path unchanged. The console
+also now has a reusable alert-center surface backed by existing `notification_events` snapshot data:
+summary buckets (attention / deliveries / approvals / all), search, account scoping, better
+notification titles/details via the existing formatter, and a compact version on Approvals plus the
+full version on `Activity -> Alert center`. Snapshot notification history was widened from 50 to 100
+rows for the alert view. Verification in this worktree after `npm ci`: `npm run lint` (0 errors,
+311 existing warnings), `./node_modules/.bin/tsc --noEmit`, `npm test` (255 files / 2467 tests),
+`npm run build` (passes with the existing Next middleware deprecation + Edge-runtime warning from
+Sentry/Next internals). Remaining follow-up inside the broader row: no bulk LIVE typed-confirm flow,
+no unified trade+learned-context+framework inbox yet, and no keyboard triage shortcuts. See
+`docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
 
 ## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
 Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
