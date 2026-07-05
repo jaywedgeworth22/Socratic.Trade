@@ -11,6 +11,16 @@ filling the missing pieces.
 > the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
 > deployed to production at `1e1a15bc`.
 
+> **2026-07-04 - Approvals triage + alert center focused slice (Codex).** No roadmap scope change.
+> `/console/approvals` now covers the first operational triage layer from issue #470: sort/filter,
+> visible-row multi-select, bulk reject, and safe non-LIVE bulk approve through the existing
+> proposal endpoints; LIVE typed-confirm remains per-item only. The console's alert history also
+> graduates into a reusable alert-center surface (summary buckets + search + better notification
+> labeling) backed by existing notification/activity data, shown compactly on Approvals and fully on
+> `Activity -> Alert center`. Remaining scope for the larger backlog row stays separate: unified
+> owner inbox across more object types, keyboard triage, and any broader console/live-data/settings
+> work.
+
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"
