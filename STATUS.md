@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Logo concept exploration (Claude cloud, docs-only)
+Owner asked for a set of logo ideas for Socratic Trade / Socratic.Trade, favoring options that
+aren't busy and where the words carry the logo. Added `docs/branding/`: ten concept comps — five
+wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
+mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the
+existing favicon) — as `logo-concepts.html` (side-by-side light/dark board with rationale) plus 10
+standalone SVGs and a README. Palette derives from existing tokens (`#0f1722`/`#0e9f6e`/`#63e6be`);
+no app code touched, `public/icon.svg` unchanged. Blocker: none. Next action: owner picks a
+direction (suggested shortlist A/D/F/G); winner gets redrawn with outlined letterforms + favicon/
+app-icon/mono variants. See `docs/rollouts/2026-07-05-logo-concepts.md`.
+
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
 Owner-directed: promoted every still-open item from the review docs
 (`docs/reviews/2026-06-30-improvement-audit.md`, both 2026-07-04 expert/composite reviews,
