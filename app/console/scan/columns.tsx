@@ -267,3 +267,5 @@ export const SCAN_COLUMNS: ScanColumn[] = [
         : "Sector wasn't available from any provider for this symbol."
   }
 ];
+
+export const DEFAULT_VISIBLE_SCAN_COLUMN_IDS = SCAN_COLUMNS.map((column) => column.id);
