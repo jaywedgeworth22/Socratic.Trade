@@ -237,6 +237,22 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path prompts**
+  (CLAUDE backlog lane, worktree `~/apps/trading-wt-prompt-safety`, branch
+  `claude/prompt-safety-fencing`) — **IN PROGRESS 2026-07-05, committed locally, awaiting central
+  landing.** Advisory ONLY (owner philosophy: receipts, never blocks). Slice: (1) fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt enumerating all
+  untrusted blocks (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent;
+  STRATEGY_PROMPT_VERSION 1.4.0→1.5.0; (2) reflection_summary MOVED out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; (3) new leaf `src/lib/prompt-safety.ts`
+  deterministic scanner → `audit('prompt_injection_suspected')` + kind-'safety' decision-case
+  evidence; (4) learned-context lines carry inline provenance `[origin= source= asserted= conf=]`;
+  (5) same-day high-relevance RAG chunk / same-day fact → one aggregated
+  `audit('evidence_age_anomaly')` + 'safety' evidence item; (6) post-mortem reflection WRITER fenced
+  at source. Tests: `test/prompt-safety.test.ts` (25), `test/strategy-prompt-safety.test.ts` (4 incl.
+  outcome-engine 'safety'-kind tolerance), learned-context provenance extension. tsc clean; focused +
+  adjacent strategy/chat/socratic suites green. See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
   Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +

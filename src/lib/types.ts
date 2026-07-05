@@ -1009,7 +1009,10 @@ export interface SocraticEvidenceItem {
     | "learning"
     | "coaching"
     | "framework"
-    | "override";
+    | "override"
+    /** Advisory prompt-safety receipts (injection-pattern scan, evidence-age anomalies) — see
+     * src/lib/prompt-safety.ts. Never a block; purely a surfaced receipt. */
+    | "safety";
   title: string;
   summary: string;
   source?: string;

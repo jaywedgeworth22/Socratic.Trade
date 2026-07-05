@@ -286,6 +286,9 @@ export function buildSocraticDecisionCase(input: {
   marketScan?: MarketScan;
   ragAttributions?: SocraticRagAttribution[];
   overrideResolution?: SocraticOverrideResolution;
+  /** Run-level advisory receipts appended to the evidence list (e.g. kind 'safety'
+   * prompt-injection / evidence-age items from src/lib/prompt-safety.ts). */
+  extraEvidence?: SocraticEvidenceItem[];
 }): Omit<SocraticDecisionCase, "createdAt" | "updatedAt"> {
   const ragAttributions = input.ragAttributions ?? [];
   const notional = input.review?.estimatedNotional ?? input.proposal.dollarAmount;
@@ -317,15 +320,20 @@ export function buildSocraticDecisionCase(input: {
     ...(input.proposal.proposedByModel ? { model: input.proposal.proposedByModel } : {}),
     ...(input.proposal.redTeamVerdict ? { redTeamVerdict: input.proposal.redTeamVerdict } : {}),
     policyDecision: input.decision,
-    evidence: evidenceForDecision({
-      proposal: input.proposal,
-      status: input.status,
-      decision: input.decision,
-      marketScan: input.marketScan,
-      ragAttributions,
-      notional,
-      overrideResolution: input.overrideResolution
-    }),
+    evidence: [
+      ...evidenceForDecision({
+        proposal: input.proposal,
+        status: input.status,
+        decision: input.decision,
+        marketScan: input.marketScan,
+        ragAttributions,
+        notional,
+        overrideResolution: input.overrideResolution
+      }),
+      // Appended AFTER the per-proposal evidence (which is capped at 8) so safety receipts are
+      // never crowded out by candidate/market rows.
+      ...(input.extraEvidence ?? [])
+    ],
     ragAttributions: ragAttributions.filter((row) => normalizeSymbol(row.symbol) === normalizeSymbol(input.proposal.symbol)),
     dissent: dissentForDecision(input.proposal, input.decision, input.overrideResolution),
     ...(override ? { autonomyOverride: override } : {}),
