@@ -654,10 +654,45 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
           await import("./vector-db");
+        // hyde-multiquery-retrieval (2026-07-05): both flag-gated, default OFF — when off, `variants`
+        // is always `[]` below and `retrieveContextDetailed` gets no `queries` option, so this pass is
+        // byte-for-byte the single-query call it was before this item.
+        const { multiQueryEnabled, hydeEnabled, deriveQueryVariants, generateHydePassages } = await import("./rag/multi-query");
+        const { shouldDegradeForBudget } = await import("./rag/run-budget");
+        const wantMultiQuery = multiQueryEnabled() && !shouldDegradeForBudget();
+        const wantHyde = hydeEnabled() && !shouldDegradeForBudget();
         const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
         const contexts = await Promise.all(
           topSymbols.map(async (sym) => {
             const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            let variants: string[] = [];
+            if (wantMultiQuery) {
+              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+              const breakdown = candidate?.factorBreakdown;
+              let dominantFactor: string | undefined;
+              if (breakdown) {
+                let best = -Infinity;
+                for (const [key, value] of Object.entries(breakdown)) {
+                  if (key === "weightedTotal" || typeof value !== "number") continue;
+                  if (value > best) {
+                    best = value;
+                    dominantFactor = key;
+                  }
+                }
+              }
+              variants = deriveQueryVariants({
+                symbol: sym,
+                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                dominantFactor,
+                evidenceBulletins: candidate?.evidenceBulletins
+              });
+              if (wantHyde && variants.length > 0) {
+                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
+                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
+                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                variants = [...variants, ...hydePassages];
+              }
+            }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
               docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
               minScore: defaultMinScore(),
@@ -667,7 +702,8 @@ export async function runStrategyOnce(
               // socratic-decision retrieval path per the composite review's guidance.
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId
+              connectedAccountId: policy.connectedAccountId,
+              ...(variants.length > 0 ? { queries: variants } : {})
             });
             return { sym, query, chunks };
           })
