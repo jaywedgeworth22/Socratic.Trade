@@ -8,6 +8,48 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
+Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
+Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
+without the flaky Slack MCP. Three committed scripts + a doc:
+- `scripts/slack-sync.sh` — curl engine: `read`/`thread`/`post`/`reply`/`test`/`hook`. Token via
+  `curl --config` 0600 temp file (never on argv/`ps`, never logged); fetched content in an
+  UNTRUSTED-EXTERNAL-DATA envelope; **silent no-op + exit 0 without `SLACK_BOT_TOKEN`** (safe in
+  any repo); `hook` self-dedupes per session so global + repo hooks can't double-inject.
+- `scripts/setup-slack-sync.sh` — idempotent global installer: copies the engine to
+  `~/.claude/slack-sync.sh` and merges a `SessionStart` hook into `~/.claude/settings.json`
+  (python3 JSON merge; preserves existing keys/hooks; upgrades in place on re-run).
+- `scripts/cloud-setup.sh` — now runs the installer (non-fatal) so any cloud env pointed at it
+  gets the hook. `docs/slack-coordination.md` — full owner/Fable guide + FAQ.
+
+Verified: bash -n + pure-ASCII on all three; stubbed-curl functional test (dedup, envelope, post);
+sandbox-HOME idempotent-merge test (preserves unrelated model/hooks; one slack entry on re-run);
+tsc clean (no TS changed).
+
+**Blocker / owner actions:** this cloud container has **no `SLACK_BOT_TOKEN`**, so Monet cannot
+post to Slack from here yet. Add it as a cloud **Runtime Secret**; `export` it on the Mac; `/invite`
+the bot (scopes `channels:history` + `channels:read` + `chat:write`); run
+`bash scripts/setup-slack-sync.sh` once per machine. Rotate any raw token pasted earlier.
+**Next:** open PR + squash auto-merge; once the token secret exists, post the setup how-to to Fable.
+
+**Update 2026-07-05 (CLAUDE-CLOUD takeover, owner-directed):** PR #367 sat unmerged because
+`verify` never ran on head `fb14f10` (zero check runs, so the armed auto-merge could not fire) and
+the branch fell behind `main`. Monet hit technical issues, so the owner asked CLAUDE-CLOUD to land
+it: merged `origin/main` back in (the merge restored plain `npm ci` in `cloud-setup.sh` — `main`
+deleted `scripts/npm-ci-with-shared-deps.sh` when the shared dep went public git+https in #444),
+scrubbed the stale Test-mode/`paperMode` header comments (removed from the product 2026-07-03),
+resolved keep-both conflicts in `AGENTS.md`/`docs/EFFORT-LOG.md`, and pushed to re-kick `verify`.
+Owner actions now done: `SLACK_BOT_TOKEN` added as a cloud Runtime Secret; the cloud env
+setup-script field points at `bash scripts/cloud-setup.sh`. See
+`docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+
+**MERGED 2026-07-05:** relanded as **PR #798** → squash `546c451` on `main` (verify x2 + smoke +
+gitleaks green; #367 closed superseded — cloud-proxy pushes were generating no pull_request
+workflow runs, so a fresh PR + a new `workflow_dispatch` re-kick lever on ci.yml were needed).
+`cloud-setup.sh` verified end-to-end in a cloud container (npm ci, `.env.local` seed, hook
+install valid-JSON). Follow-up for the Monet lane: 8 resolved-to-land Codex P2 threads on #798
+(engine edge cases; list in the effort-log row and the #798 summary comment).
+
 ## 2026-07-05 — Guardrails → overridable preferences (denylist) (Monet risk lane)
 Worktree `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`, PR open.
 Owner directive: only the account boundary (+ physical/broker/regulatory/accounting impossibilities)

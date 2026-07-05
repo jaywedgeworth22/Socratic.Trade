@@ -72,6 +72,23 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
+  landing by CLAUDE-CLOUD, owner-directed).** Merged to `main` 2026-07-05 as squash `546c451`
+  (verify x2/smoke/gitleaks green; relands #367, whose branch heads never received CI runs from
+  cloud-proxy pushes). Ships `scripts/slack-sync.sh` (curl engine: read/thread/post/reply/test/
+  hook; 0600 `curl --config` token handling; untrusted-data envelope; silent no-op without
+  `SLACK_BOT_TOKEN`; per-session hook dedup), `scripts/setup-slack-sync.sh` (idempotent global
+  installer), `cloud-setup.sh` wiring (verified end-to-end in a cloud container: npm ci +
+  `.env.local` seed + hook install with valid JSON), `docs/slack-coordination.md`, and a
+  `workflow_dispatch` re-kick lever on ci.yml (cloud-proxy pushes were firing no pull_request
+  workflow runs, stranding the required `verify` check). Owner state: `SLACK_BOT_TOKEN` set as a
+  cloud Runtime Secret; env setup-script field points at `bash scripts/cloud-setup.sh`.
+  **Follow-ups (Monet lane): 8 resolved-to-land Codex P2 threads on #798** (no-python3 JSON
+  fallback escaping, unrelated-hook preservation, cross-repo hook help path, non-zero exit for
+  token-less writes, envelope-delimiter escaping, thread visibility/order/pagination in reads) +
+  Mac-side installer run + bot `/invite`. Rollouts:
+  `docs/rollouts/2026-07-04-slack-sync-default-setup.md`,
+  `docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
 - **PR #694 - Effort-issues sync secondary-rate-limit hardening (CLAUDE).** Merged to `main`
   2026-07-05 (verify/smoke/gitleaks green, auto-merge). `scripts/sync-effort-issues.py` now
   survives GitHub secondary rate limits: 2.5s creation throttle, Retry-After/exponential-backoff
@@ -220,7 +237,6 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
-
 - **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
   `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
   only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
