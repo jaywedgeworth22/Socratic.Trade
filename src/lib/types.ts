@@ -1088,6 +1088,7 @@ export interface SocraticDecisionCase {
   coachNotes: string[];
 }
 
+export type SocraticFrameworkOwnerVerb = "accept" | "reject" | "rewrite";
 export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
 
 export interface SocraticFrameworkProposal {
@@ -1105,7 +1106,13 @@ export interface SocraticFrameworkProposal {
   rationale: string;
   proposedChange: string;
   evidence: SocraticEvidenceItem[];
+  ownerVerb?: SocraticFrameworkOwnerVerb;
   ownerResponse?: string;
+}
+
+export interface SocraticDecisionTrace {
+  decision: SocraticDecisionCase;
+  run?: StrategyRunRow;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the

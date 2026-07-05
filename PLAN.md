@@ -33,6 +33,15 @@ filling the missing pieces.
 > `Activity -> Alert center`. Remaining scope for the larger backlog row stays separate: unified
 > owner inbox across more object types, keyboard triage, and any broader console/live-data/settings
 > work.
+> **2026-07-04 - Coach/framework primitives slice (Codex, issue #473).** No roadmap scope change.
+> This branch is a focused primitive-wiring pass: the decision-trace coach flow can now attach a
+> note while optionally promoting it into a lesson or linked framework proposal, framework review
+> persists explicit owner rewrite/accept/reject verb semantics plus `ownerResponse`, and the trace
+> surfaces linked run metadata when the originating run exists. 2026-07-05 update: the branch is
+> now merge-forwarded to `origin/main` @ `0bfa4f1e` and fully green on focused + full verification
+> (`test/socratic-db`, `tsc`, quiet lint, full `npm test`, full build`). This closes a narrow part of the
+> console/coaching loop without touching live-data, settings IA, tooltip, Monet risk, or Claude
+> memory/RAG lanes.
 
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
