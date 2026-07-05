@@ -514,15 +514,24 @@ export function mergeQuoteData(
   const normalize = (quote: MarketQuote): MarketQuote => {
     const extra = quoteData[quote.symbol];
     if (!extra) return quote;
+    const usedBid = positiveNumber(extra.bid);
+    const usedAsk = positiveNumber(extra.ask);
+    const bidSynthetic = extra.syntheticBid ?? extra.syntheticSpread ?? false;
+    const askSynthetic = extra.syntheticAsk ?? extra.syntheticSpread ?? false;
     return {
       ...quote,
-      bid: positiveNumber(extra.bid) ?? quote.bid,
-      ask: positiveNumber(extra.ask) ?? quote.ask,
+      bid: usedBid ?? quote.bid,
+      ask: usedAsk ?? quote.ask,
       price: positiveNumber(extra.price) ?? quote.price,
       // Use broker/Yahoo volume if the screener didn't supply it (NASDAQ tableonly has no volume field).
       volume: (extra.volume && extra.volume > 0 ? extra.volume : undefined) ?? (quote.volume > 0 ? quote.volume : undefined) ?? 0,
       asOf: extra.asOf ?? quote.asOf,
       provider: extra.provider ?? quote.provider,
+      // Carry synthetic bid/ask flags through from the broker/Yahoo quote. When a side had a real value
+      // (usedBid/usedAsk), the flag reflects whether THAT value was synthetic. When the side wasn't
+      // provided, the original quote's flag is preserved by the spread operator above.
+      syntheticBid: usedBid ? bidSynthetic : quote.syntheticBid,
+      syntheticAsk: usedAsk ? askSynthetic : quote.syntheticAsk,
       sources: refreshSideProvenance(quote.sources, extra)
     };
   };
@@ -530,13 +539,19 @@ export function mergeQuoteData(
   const quoteMap = Object.fromEntries(
     Object.values(scan.quotesBySymbol).map((quote) => {
       const extra = quoteData[quote.symbol];
+      const usedBid = positiveNumber(extra?.bid);
+      const usedAsk = positiveNumber(extra?.ask);
+      const bidSynthetic = extra?.syntheticBid ?? extra?.syntheticSpread ?? false;
+      const askSynthetic = extra?.syntheticAsk ?? extra?.syntheticSpread ?? false;
       const merged: MarketQuoteSummary = {
         ...quote,
-        bid: positiveNumber(extra?.bid) ?? quote.bid,
-        ask: positiveNumber(extra?.ask) ?? quote.ask,
+        bid: usedBid ?? quote.bid,
+        ask: usedAsk ?? quote.ask,
         price: positiveNumber(extra?.price) ?? quote.price,
         provider: extra?.provider ?? quote.provider,
         asOf: extra?.asOf ?? quote.asOf,
+        syntheticBid: usedBid ? bidSynthetic : quote.syntheticBid,
+        syntheticAsk: usedAsk ? askSynthetic : quote.syntheticAsk,
         sources: extra ? refreshSideProvenance(quote.sources, extra) : quote.sources
       };
       return [quote.symbol, merged] as const;
@@ -555,6 +570,8 @@ export function mergeQuoteData(
       score: 0,
       provider: quote.provider,
       asOf: quote.asOf,
+      syntheticBid: quote.syntheticBid ?? quote.syntheticSpread ?? false,
+      syntheticAsk: quote.syntheticAsk ?? quote.syntheticSpread ?? false,
       // Seed per-side provenance for a NEWLY-added quote too — otherwise a synthetic bid/ask on an
       // added row carries no sources and reads as a real quoted spread downstream (hasRealAsk etc.).
       sources: refreshSideProvenance(undefined, quote)
@@ -783,6 +800,8 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
   // marketable-limit pricing) never treat it as a real quoted ask. Real batch-quote spreads keep
   // the plain "yahoo-finance" attribution.
   const spreadSource = quote.syntheticSpread ? "yahoo-finance-synthetic" : "yahoo-finance";
+  const syntheticBid = quote.syntheticBid ?? quote.syntheticSpread ?? false;
+  const syntheticAsk = quote.syntheticAsk ?? quote.syntheticSpread ?? false;
   return {
     symbol,
     price: quote.price,
@@ -797,6 +816,8 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
     score: 0,
     provider: "yahoo-finance",
     asOf: new Date().toISOString(),
+    syntheticBid,
+    syntheticAsk,
     sources: {
       price: "yahoo-finance",
       bid: spreadSource,
@@ -814,11 +835,17 @@ function toQuoteOnlyMarketQuote(symbol: string, quote: YahooFinanceQuote, positi
 // the dashboard, scoring, and the agent prompt all read these off MarketQuote. This is the
 // "merge in market.ts" half of the cross-file enrichment trap documented in CLAUDE.md.
 export function applyEnrichment(quote: MarketQuote, extra: SymbolEnrichment): MarketQuote {
+  const enrichmentBid = extra.bid && extra.bid > 0;
+  const enrichmentAsk = extra.ask && extra.ask > 0;
   return {
     ...quote,
     price: extra.price && extra.price > 0 ? extra.price : quote.price,
-    bid: extra.bid && extra.bid > 0 ? extra.bid : quote.bid,
-    ask: extra.ask && extra.ask > 0 ? extra.ask : quote.ask,
+    bid: enrichmentBid ? extra.bid : quote.bid,
+    ask: enrichmentAsk ? extra.ask : quote.ask,
+    // Enrichment providers supply REAL bid/ask (exchange/broker); clear the synthetic flag when they
+    // override a side. When enrichment doesn't provide bid/ask, the original flag is preserved by spread.
+    syntheticBid: enrichmentBid ? false : quote.syntheticBid,
+    syntheticAsk: enrichmentAsk ? false : quote.syntheticAsk,
     intradayChangePct: typeof extra.intradayChangePct === "number" ? extra.intradayChangePct : quote.intradayChangePct,
     vwap: extra.vwap && extra.vwap > 0 ? extra.vwap : quote.vwap,
     asOf: extra.asOf ?? quote.asOf,
@@ -1091,6 +1118,8 @@ function quotesBySymbol(quotes: MarketQuote[]): Record<string, MarketQuoteSummar
         debtToEquity: quote.debtToEquity,
         epsGrowth: quote.epsGrowth,
         senateTrades: quote.senateTrades,
+        syntheticBid: quote.syntheticBid,
+        syntheticAsk: quote.syntheticAsk,
         daysToEarnings: quote.daysToEarnings,
         institutionOwnershipPct: quote.institutionOwnershipPct,
         nearTheMoneyIv: quote.nearTheMoneyIv,
