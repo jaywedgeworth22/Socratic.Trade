@@ -61,6 +61,14 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **PR #808 — Cursor session: P0 checkRegimeFlip RMW fix + P1 backlog exhaustiveness (CURSOR).**
+  Branch `cursor/session-2026-07-05`, committed `b88981c4`. **P0:** removed `"local"` default from
+  `checkRegimeFlip`, per-user regime keys, per-user scheduler iteration. **P1 (17 rows):** 9 already
+  done, 7 implemented (security headers, unpriced-model default, synthetic bid/ask provenance,
+  scheduler health threshold, monthly LLM spend ceiling, effort-mirror orphan report, Litestream
+  PITR retention), 1 blocked by Codex keepout (global symbol omnibox). Verification: lint/tsc/test/
+  build all green. See `docs/rollouts/2026-07-05-cursor-session.md`.
+
 ### Console parity port — legacy `app/ui/*` rebuilt as `/console` (2026-07-02)
 - **#321** — parity-port foundation: logo/model/drilldown primitives, nav scaffolding, model-attribution approval card.
 - **#322** — Settings expansions: brokers, API keys, LLM model picker, delivery channels, glossary.

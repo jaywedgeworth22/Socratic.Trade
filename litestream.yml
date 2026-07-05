@@ -8,3 +8,10 @@ dbs:
         endpoint: ${LITESTREAM_S3_ENDPOINT}
         access-key-id: ${LITESTREAM_S3_ACCESS_KEY_ID}
         secret-access-key: ${LITESTREAM_S3_SECRET_ACCESS_KEY}
+        # PITR retention: keep 30 days of full-snapshot coverage plus an
+        # additional 7 days of WAL (point-in-time rollback window).
+        # Litestream 0.5.x stores LTX files (not generations/snapshots from 0.4.x);
+        # these settings control how long old LTX segments are retained before GC.
+        retention: 720h       # 30 days of snapshot history
+        retention-check-interval: 24h
+        snapshot-interval: 24h

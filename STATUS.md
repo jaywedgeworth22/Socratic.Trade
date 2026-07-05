@@ -8,6 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Cursor session: P0 checkRegimeFlip RMW fix + P1 backlog (CURSOR)
+Branch `cursor/session-2026-07-05`, committed at `b88981c4`.
+1. **P0 fix:** Removed `"local"` default from `checkRegimeFlip`, made per-user regime
+   keys (`regime:current:${userId}`), updated scheduler to iterate users. Fixes the
+   multi-user read-modify-write race on a single shared `regime:current` settings row.
+2. **P1 backlog exhaustiveness pass (17 rows):** Investigated all 17 CURSOR-assigned
+   rows. 9 were already complete (rate-limit, RH OAuth encrypt, constant-time admin
+   compare, strategy code-split, Litestream restore, account-deletion drift guard,
+   daysToEarnings/institutionOwnership fields, EmptyState/skeleton, LLM daily ceiling).
+   7 implemented this session: security headers (HSTS, X-Content-Type-Options,
+   Permissions-Policy), unpriced-model default cost, synthetic bid/ask boolean
+   provenance, scheduler health threshold, operator monthly LLM spend ceiling,
+   effort-mirror orphan report, Litestream PITR retention. 1 blocked by Codex keepout
+   (global symbol omnibox).
+3. **P2 (~45 itemized rows):** Not started — deferred to next session.
+4. **Verification:** lint exit 0 (16 pre-existing errors), tsc clean, 2455 tests pass,
+   build green. Full rollout note: `docs/rollouts/2026-07-05-cursor-session.md`.
+
 ## 2026-07-05 — Admin connection health and backend-failure notification pass (Antigravity)
 Branch `cursor/session-2026-07-05` (representing AG/Antigravity session). Implements the composite expert review's connection health and backend-failure notification pass:
 1. **API Dependency Health & Key Resolution:** `/api/health` now queries the database and surfaces the status of all global dependencies (Database, Pinecone, Voyage, etc.). Degraded RAG status is flagged if Pinecone or Voyage keys are not configured.
