@@ -146,6 +146,129 @@ deliberately NOT run in this session — only `tsc --noEmit` + the focused
 vitest runs above. `scripts/land.sh` was not run either (no push/PR from this
 session).
 
+## Review fixes
+
+A follow-up review of this same branch (HEAD `98123f3c`) found one blocker and
+several minor issues in the wiring above. All are fixed in a second commit on
+this branch (no amend):
+
+- **FINDING 1 (BLOCKER) — the in-memory downgrade was not actually in-memory-only.**
+  The enforcement block mutated the run's shared `policy` object directly
+  (`policy.llmModel = ...` / `policy.redTeamLlmModel = ...`). Later in the SAME
+  run, `autoRevertOnCapBreach` (a cap-breach demotion under `strategyAuthority:
+  "decide"`) calls `setPolicy({ ...policy, strategyAuthority: "propose" })` —
+  because `policy` was the mutated object, that spread would persist the
+  downgraded models to the DB **permanently**, directly contradicting the "never
+  persisted" contract and the audit trail (which claims `after` reflects only
+  an in-run change). Fixed by no longer mutating `policy` at all: the decision
+  now produces a small `runLlmOverride` object, and a derived
+  `runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride }` is constructed
+  once, right after the enforcement block. `runPolicy` is now the ONLY object
+  passed to the three LLM-model-resolution call sites (`proposeTrades`'s
+  `policy` field, `debateProposal`'s `policyOverride` argument, and
+  `revalidatePendingProposals`'s `policy` field) and to
+  `generateReflectionSummary`'s new override parameter (see Finding 2). Every
+  persistence-adjacent site — the two existing `setPolicy` calls (drawdown
+  breaker, vol brake) and all three `autoRevertOnCapBreach(...)` call sites —
+  continues to receive the pristine `policy` object untouched, so a
+  `setPolicy` call can never see the downgraded fields. Verified by grep
+  (`setPolicy(` in `strategy.ts` — all 3 call sites pass `policy`, never
+  `runPolicy`) and by a new regression test (see Verification) that trips a
+  downgrade AND a cap-breach demotion in the same run, then asserts the
+  persisted policy has the demoted `strategyAuthority` but the ORIGINAL
+  `llmModel`/`redTeamLlmModel`.
+
+- **FINDING 3 (MINOR) — skip bookkeeping lived inside the fail-open try/catch.**
+  The enforced-skip sequence (audit → `notifyBudgetSkip` → `finishStrategyRun`
+  → `releaseStrategyLock` → `return`) was inside the same `try` as
+  `evaluateBudgetForRun`, so a transient throw from `finishStrategyRun` or
+  `releaseStrategyLock` — AFTER the skip audit was already written — would be
+  silently swallowed by the catch-all, and the run would fall through into the
+  full LLM/trade path even though the audit trail says "skipped." Fixed by
+  narrowing the `try` to wrap ONLY the `evaluateBudgetForRun` call (result
+  defaults to the no-op decision on any throw); the skip sequence now runs
+  unconditionally outside the catch when `enforceDecision.skip` is true,
+  mirroring the market-closed early-return's shape a few dozen lines above it.
+
+- **FINDING 2 (MINOR) — reflection/lesson passes could ignore the downgrade.**
+  `generateReflectionSummary` (called at the end of `runStrategyOnce`) and the
+  outcome-engine's per-decision lesson pass (`callLessonLlm`, invoked from a
+  fire-and-forget `matureSocraticDecisionOutcomes` call) both independently
+  called `getPolicy(userId)`, so neither would see a same-run downgrade.
+  - `generateReflectionSummary` (`src/lib/post-mortem.ts`) gained an optional
+    3rd parameter `policyOverride?: TradingPolicy` (backward compatible —
+    falls back to `getPolicy(userId)` when omitted); `strategy.ts`'s call site
+    now passes `runPolicy`.
+  - The outcome-engine's lesson pass runs detached from any single
+    `runStrategyOnce` invocation's lifetime (fire-and-forget, matures cases
+    across accounts/runs, can still be in flight after the triggering run
+    returns) — there is no single well-defined "this run's downgrade" to hand
+    it. Per the finding's own guidance, this one is left as an explicit,
+    documented exemption rather than threaded: both the `strategy.ts` call
+    site and `callLessonLlm` in `src/lib/outcome-engine.ts` now carry an
+    "INTENTIONALLY EXEMPT" comment explaining why.
+
+- **FINDING 4 (MINOR) — duplicate budget-status fetch.** The advisory block
+  already fetched budget status once via `getBudgetStatusCached()`
+  (`budgetStatus`); the enforcement block below it called
+  `evaluateBudgetForRun(userId, policy)` with no `deps.status`, causing a
+  second (cache-hit, so cheap, but still redundant) call into
+  `getBudgetStatusCached`. Fixed by hoisting `budgetStatus` to an outer `let`
+  and passing it through: `evaluateBudgetForRun(userId, policy, { status:
+  budgetStatus })` — the same `deps.status` hook `previewBudgetDecision`
+  already used. In-flight fetch dedup inside `getBudgetStatusCached` itself
+  was left alone (optional per the finding, and not needed once the caller
+  reuses the same fetched value).
+
+- **FINDING 6 (NIT) — extend the downgrade test to cover the Red Team body too.**
+  The existing "enforcement ON + downgrade" test in
+  `test/usage-budget-strategy-integration.test.ts` only captured the Bull
+  (`proposeTrades`) request body's `model` field. Extended the stub's
+  `onOpenAiBody` callback to also capture the Red Team ("Bear") request body
+  and assert `redTeamModelUsed === "gpt-4o-mini"`, proving `debateProposal`'s
+  `policyOverride` threading carries the downgraded `redTeamLlmModel`
+  end-to-end, not just the Bull path.
+
+### Files touched (review-fix commit)
+
+- `src/lib/strategy.ts` — stopped mutating `policy` in the enforcement block;
+  introduced `runLlmOverride` + `runPolicy`; narrowed the enforcement try/catch
+  to just the evaluator call with the skip sequence outside it; hoisted
+  `budgetStatus` and passed it via `deps.status` to `evaluateBudgetForRun`;
+  swapped `proposeTrades`/`debateProposal`/`revalidatePendingProposals`/
+  `generateReflectionSummary` call sites to use `runPolicy`; added an
+  "INTENTIONALLY EXEMPT" comment on the outcome-engine fire-and-forget call.
+- `src/lib/post-mortem.ts` — `generateReflectionSummary` gained an optional
+  `policyOverride?: TradingPolicy` 3rd parameter (backward compatible).
+- `src/lib/outcome-engine.ts` — added an "INTENTIONALLY EXEMPT" doc comment on
+  `callLessonLlm` explaining why it is not threaded a run-scoped override.
+- `test/usage-budget-strategy-integration.test.ts` — extended the downgrade
+  test to also assert the Red Team request body's model (Finding 6); added a
+  new regression test ("FINDING 1 regression...") that trips both a downgrade
+  and a cap-breach demotion in the same run and asserts the persisted policy
+  has the demotion but NOT the downgrade.
+
+### Verification (review-fix commit)
+
+```
+npx tsc --noEmit
+# clean
+
+npx vitest run test/usage-budget.test.ts test/usage-budget-strategy-integration.test.ts \
+  test/red-team.test.ts test/strategy-money-path-f-g.test.ts test/post-mortem.test.ts \
+  test/outcome-engine.test.ts
+# 6 test files, 36 tests, all passed
+
+npm run lint
+# 0 errors, pre-existing grandfathered warnings only (no new warnings introduced)
+
+npm test
+# 258 test files, 2521 tests, all passed (full suite)
+
+npm run build
+# clean production build, no errors
+```
+
 ## Follow-ups
 
 - No dashboard surfacing of the new `usage_budget_status` / `usage_budget_enforced`

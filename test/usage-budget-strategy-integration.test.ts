@@ -225,6 +225,7 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     process.env.USAGE_BUDGET_ENFORCE = "on";
     let bullModelUsed: string | undefined;
+    let redTeamModelUsed: string | undefined;
     vi.stubGlobal(
       "fetch",
       makeFetchStub({
@@ -232,7 +233,14 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
         budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }],
         onOpenAiBody: (body) => {
           const content = JSON.stringify(body);
-          if (!content.includes("Red Team Risk Agent") && typeof body.model === "string" && !bullModelUsed) {
+          if (content.includes("Red Team Risk Agent")) {
+            // Finding 6: capture the Red Team (Bear) request body too, proving debateProposal's
+            // policyOverride threading carries the downgraded redTeamLlmModel end-to-end (not just
+            // the Bull/proposeTrades path).
+            if (typeof body.model === "string" && !redTeamModelUsed) redTeamModelUsed = body.model;
+            return;
+          }
+          if (typeof body.model === "string" && !bullModelUsed) {
             bullModelUsed = body.model;
           }
         }
@@ -256,6 +264,8 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
 
     // The model actually used for the Bull call was the downgraded one.
     expect(bullModelUsed).toBe("gpt-4o-mini");
+    // Finding 6: the Bear (Red Team) request also carried the downgraded model.
+    expect(redTeamModelUsed).toBe("gpt-4o-mini");
 
     // The persisted proposal reflects the served (downgraded) model.
     const proposals = listRecentProposals("TEST", 100, "local");
@@ -265,6 +275,57 @@ describe("usage-budget Phase 2: enforcement ON + downgrade", () => {
     // The downgrade was NOT persisted — the saved policy still has the owner's original model.
     const savedPolicy = getPolicy("local");
     expect(savedPolicy.llmModel).toBe("gpt-4o");
+    expect(savedPolicy.redTeamLlmModel).toBe("gpt-4o");
+  }, 30_000);
+
+  it("FINDING 1 regression: a cap-breach demotion in the SAME run persists strategyAuthority only — never the in-run model downgrade", async () => {
+    // This run BOTH downgrades (over-budget openai) AND trips a cap-breach demotion
+    // (maxDailyOrders: 0 under strategyAuthority "decide" escalates and demotes to "propose").
+    // Before the fix, autoRevertOnCapBreach's `setPolicy({ ...policy, strategyAuthority: "propose" })`
+    // would persist the mutated policy.llmModel/redTeamLlmModel too, since strategy.ts mutated the
+    // shared `policy` object in place. After the fix, the downgrade lives only on a separate
+    // `runPolicy` never passed to setPolicy, so the persisted row must show the downgrade GONE but
+    // the demotion applied.
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.USAGE_BUDGET_ENFORCE = "on";
+    vi.stubGlobal(
+      "fetch",
+      makeFetchStub({
+        redTeamVerdict: { rejected: false, reason: "No fatal flaw found." },
+        budgetProviders: [{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]
+      })
+    );
+
+    // gpt-4o has a known cheaper tier (gpt-4o-mini) in CHEAPER_MODEL.
+    await seedTestAccountAndPolicy({
+      llmModel: "gpt-4o",
+      redTeamLlmModel: "gpt-4o",
+      strategyAuthority: "decide",
+      maxDailyOrders: 0
+    });
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listAudit, getPolicy } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+
+    // The downgrade actually happened this run.
+    const enforcedAudits = listAudit(500).filter((e) => e.kind === "usage_budget_enforced");
+    expect(enforcedAudits.some((e) => (e.payload as { action?: string }).action === "downgrade")).toBe(true);
+
+    // The cap-breach demotion also happened this run.
+    const capBreachAudits = listAudit(500).filter((e) => e.kind === "policy_violation_cap_exceeded");
+    expect(capBreachAudits.length).toBeGreaterThanOrEqual(1);
+    const capPayload = capBreachAudits[0].payload as { from?: string; revertedTo?: string };
+    expect(capPayload.from).toBe("decide");
+    expect(capPayload.revertedTo).toBe("propose");
+
+    // The persisted policy reflects BOTH correctly: strategyAuthority demoted, but llmModel/
+    // redTeamLlmModel are the ORIGINAL owner-configured models — the downgrade never persisted.
+    const savedPolicy = getPolicy("local");
+    expect(savedPolicy.strategyAuthority).toBe("propose");
+    expect(savedPolicy.llmModel).toBe("gpt-4o");
+    expect(savedPolicy.redTeamLlmModel).toBe("gpt-4o");
   }, 30_000);
 });
 

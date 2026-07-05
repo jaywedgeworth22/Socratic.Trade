@@ -249,8 +249,18 @@ to `socratictrade.com`, record the release commit + date here._
   `policyOverride` param so the Bear picks up the same transient downgrade. New
   `test/usage-budget-strategy-integration.test.ts` (4 e2e tests) + 4 new `formatBudgetAdvisory` unit
   tests. Verification: `tsc --noEmit` clean; focused vitest (usage-budget + strategy + red-team +
-  budget-adjacent files) 175/175 green. See
-  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+  budget-adjacent files) 175/175 green. **Review-fix commit (same day):** fixed a BLOCKER — the
+  enforcement block was mutating the shared `policy` object in place, so a same-run cap-breach
+  demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would have persisted the
+  downgraded models permanently; replaced with a separately-carried `runLlmOverride`/`runPolicy`
+  never passed to `setPolicy`/`autoRevertOnCapBreach`. Also: scoped the enforcement try/catch so a
+  post-audit throw in the skip path can't be swallowed into the full LLM path; threaded the
+  downgrade into `generateReflectionSummary` (with the outcome-engine lesson pass left as a
+  documented intentional exemption — it's fire-and-forget and outlives the run); reused the
+  already-fetched budget status instead of double-fetching; extended the downgrade test to also
+  assert the Red Team request body's model. `tsc --noEmit` clean; targeted vitest 36/36 green; full
+  `npm test` 2521/2521 green; `npm run build` clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md` ("Review fixes" section).
 
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**

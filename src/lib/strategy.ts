@@ -286,10 +286,12 @@ export async function runStrategyOnce(
     // below (see `budgetAdvisory` on proposeTrades' input) — DATA for the agent, never a command; the
     // agent decides whether a cheaper model or skipping is worth it. Enforcement (Phase 2, below at
     // the LLM budget choke point) is the owner's opt-in override of that same decision via
-    // USAGE_BUDGET_ENFORCE. Best-effort: never blocks or fails a run.
+    // USAGE_BUDGET_ENFORCE. Best-effort: never blocks or fails a run. The fetched status is cached
+    // (see `budgetStatus` below) and reused at the enforcement choke point instead of re-fetching.
     let budgetAdvisory: string | undefined;
+    let budgetStatus: Awaited<ReturnType<typeof getBudgetStatusCached>> = null;
     try {
-      const budgetStatus = await getBudgetStatusCached();
+      budgetStatus = await getBudgetStatusCached();
       if (budgetStatus) {
         const enforceOn = usageBudgetEnforceEnabled();
         const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
@@ -452,45 +454,61 @@ export async function runStrategyOnce(
     // Owner's off-by-default switch on top of the ADVISORY computed above. Placed at this same
     // choke point — AFTER the risk-reducing breakers, BEFORE any LLM call — so it can only ever skip
     // the LLM proposal step, never risk maintenance. skip ends the run gracefully right here (audit +
-    // notifyBudgetSkip, no LLM call, no reservation taken); downgrade swaps the model fields on THIS
-    // run's in-memory `policy` object only (never persisted — the next run reads the owner's
-    // configured model again) and is picked up by both `resolveLlmEndpoint(policy, ...)` in
-    // `proposeTrades` and by `debateProposal`'s explicit `policy` argument above. Fail-open on any
+    // notifyBudgetSkip, no LLM call, no reservation taken); downgrade is carried as a RUN-SCOPED
+    // `runLlmOverride`/`runPolicy` (below) — NEVER written onto `policy` itself — so every
+    // persistence-adjacent site (autoRevertOnCapBreach, setPolicy) keeps seeing the owner's pristine,
+    // configured models and can never persist the downgrade. `runPolicy` (the derived clone with the
+    // override merged in) is what actually reaches `resolveLlmEndpoint` in `proposeTrades`,
+    // `debateProposal`'s explicit policy argument, and proposal revalidation. Fail-open on any
     // evaluator error (evaluateBudgetForRun never throws, but this is the same posture as everything
-    // else in this file's budget handling).
+    // else in this file's budget handling). The `try` is scoped to ONLY the evaluator call — the skip
+    // sequence (audit + notify + finish + release + return) runs OUTSIDE the catch so a transient
+    // throw from finishStrategyRun/releaseStrategyLock can't be swallowed and silently fall through
+    // into the full LLM/trade path while the audit trail still says "skipped" (mirrors the
+    // market-closed early-return above).
+    let enforceDecision: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
     try {
-      const enforceDecision = await evaluateBudgetForRun(userId, policy);
-      if (enforceDecision.skip) {
-        const reason = enforceDecision.reason ?? "Over budget.";
-        audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);
-        await notifyBudgetSkip(userId, policy, runId, reason);
-        const summary = `Strategy run skipped — over usage budget. ${reason}`;
-        result = { runId, status: "completed", summary, proposals: [] };
-        finishStrategyRun(runId, "completed", summary, userId);
-        releaseStrategyLock(userId, connectedAccountId);
-        return result;
-      }
-      if (enforceDecision.downgraded) {
-        const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
-        if (enforceDecision.llmModel) policy.llmModel = enforceDecision.llmModel;
-        if (enforceDecision.redTeamLlmModel) policy.redTeamLlmModel = enforceDecision.redTeamLlmModel;
-        audit(
-          "usage_budget_enforced",
-          {
-            runId,
-            userId,
-            action: "downgrade",
-            reason: enforceDecision.reason,
-            before,
-            after: { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel }
-          },
-          userId,
-          connectedAccountId
-        );
-      }
+      enforceDecision = await evaluateBudgetForRun(userId, policy, { status: budgetStatus });
     } catch {
       /* fail-open — never let usage-budget enforcement break a run */
     }
+    if (enforceDecision.skip) {
+      const reason = enforceDecision.reason ?? "Over budget.";
+      audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);
+      await notifyBudgetSkip(userId, policy, runId, reason);
+      const summary = `Strategy run skipped — over usage budget. ${reason}`;
+      result = { runId, status: "completed", summary, proposals: [] };
+      finishStrategyRun(runId, "completed", summary, userId);
+      releaseStrategyLock(userId, connectedAccountId);
+      return result;
+    }
+    // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
+    // autoRevertOnCapBreach) can ever see or write the downgraded models. `runPolicy` below is the ONLY
+    // object threaded into LLM-model-resolution call sites for this run.
+    const runLlmOverride: { llmModel?: string; redTeamLlmModel?: string } = {};
+    if (enforceDecision.downgraded) {
+      const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+      if (enforceDecision.llmModel) runLlmOverride.llmModel = enforceDecision.llmModel;
+      if (enforceDecision.redTeamLlmModel) runLlmOverride.redTeamLlmModel = enforceDecision.redTeamLlmModel;
+      audit(
+        "usage_budget_enforced",
+        {
+          runId,
+          userId,
+          action: "downgrade",
+          reason: enforceDecision.reason,
+          before,
+          after: { llmModel: runLlmOverride.llmModel ?? before.llmModel, redTeamLlmModel: runLlmOverride.redTeamLlmModel ?? before.redTeamLlmModel }
+        },
+        userId,
+        connectedAccountId
+      );
+    }
+    // Derived, run-scoped policy used ONLY for LLM-model resolution (proposeTrades, debateProposal,
+    // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
+    // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
+    // persists ONLY `strategyAuthority`, never the in-run model downgrade.
+    const runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride };
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
@@ -541,7 +559,8 @@ export async function runStrategyOnce(
       });
     const revalidation = skipLlmDueToBudget
       ? null
-      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+      // runPolicy (not policy): this LLM re-check must see the run-scoped usage-budget downgrade too.
+      : await revalidatePendingProposals({ userId, policy: runPolicy, accountNumber: policy.accountNumber, marketScan })
           .catch((e) => {
             console.error("[revalidation] run error:", e);
             return null;
@@ -779,7 +798,9 @@ export async function runStrategyOnce(
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId),
-        policy,
+        // runPolicy (not policy): carries the run-scoped usage-budget model downgrade (if any) into
+        // resolveLlmEndpoint without ever mutating/persisting the owner's configured policy.
+        policy: runPolicy,
         activeAccount,
         portfolio: workingPortfolio,
         positions: workingPositions,
@@ -865,10 +886,10 @@ export async function runStrategyOnce(
       if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        // Pass the run's in-memory `policy` explicitly (rather than letting debateProposal re-read
-        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of policy.redTeamLlmModel — applied
-        // to this run-scoped object only, never persisted — actually reaches the Bear's model choice.
-        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, policy);
+        // Pass the run-scoped `runPolicy` explicitly (rather than letting debateProposal re-read
+        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of redTeamLlmModel — carried on this
+        // run-scoped object only, never persisted onto `policy` — actually reaches the Bear's model choice.
+        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, runPolicy);
         // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
         proposal.redTeamVerdict = {
@@ -1503,6 +1524,11 @@ export async function runStrategyOnce(
     // (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), writes the
     // multi-horizon outcome + receipt, re-indexes decision memory, and runs the budget-gated
     // post-mortem lesson pass. Fire-and-forget + dynamic import: never blocks or fails the run.
+    // INTENTIONALLY EXEMPT from the run-scoped usage-budget model downgrade (`runPolicy` above):
+    // this runs detached from THIS run's lifetime/lock (it matures cases across accounts and can
+    // still be in flight after `runStrategyOnce` returns), so there is no single well-defined
+    // "this run's downgrade" to hand it — `callLessonLlm` in outcome-engine.ts re-reads the owner's
+    // persisted (undowngraded) policy via getPolicy(), same as before this branch.
     void import("./outcome-engine")
       .then(({ matureSocraticDecisionOutcomes }) => matureSocraticDecisionOutcomes(userId, { connectedAccountId }))
       .catch((e) => console.error("[outcome-engine] maturation error:", e));
@@ -1546,7 +1572,9 @@ export async function runStrategyOnce(
     // spend stays inside the reserved headroom rather than racing a queued same-user run.
     reflectionPromise = skipLlmDueToBudget
       ? undefined
-      : generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
+      // runPolicy (not policy): the reflection LLM call must see the run-scoped usage-budget
+      // downgrade too, rather than re-reading the owner's persisted (undowngraded) policy.
+      : generateReflectionSummary(policy.accountNumber, userId, runPolicy).catch((e) => console.error("Post-mortem error:", e));
 
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";

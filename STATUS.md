@@ -37,6 +37,24 @@ owner's "advisory-first, owner-overridable" guardrail philosophy:
 Verification: `npx tsc --noEmit` clean; focused vitest run across usage-budget + strategy +
 red-team + budget-adjacent test files — 175/175 passed (see rollout note for the exact list).
 See `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+
+**Review fixes (second commit, same day, HEAD after `98123f3c`):** a review found a BLOCKER — the
+enforcement block mutated the shared `policy` object in place (`policy.llmModel = ...`), so a
+same-run cap-breach demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` (in
+`autoRevertOnCapBreach`) would have persisted the "in-memory only" downgrade to the DB permanently.
+Fixed by carrying the downgrade as a separate `runLlmOverride`, merged into a new `runPolicy`
+(`{ ...policy, ...runLlmOverride }`) that is now the ONLY object passed to
+`proposeTrades`/`debateProposal`/`revalidatePendingProposals`/`generateReflectionSummary` for model
+resolution — `policy` itself (used by every `setPolicy`/`autoRevertOnCapBreach` call) is never
+mutated. Also fixed: the skip sequence now runs outside the enforcement try/catch (a post-audit
+throw could previously fall through into the full LLM path); `generateReflectionSummary` gained an
+optional `policyOverride` param so the post-mortem reflection sees the downgrade too (outcome-engine's
+fire-and-forget lesson pass is a documented intentional exemption — it outlives the run); the
+already-fetched budget status is now reused instead of double-fetched; the downgrade test now also
+asserts the Red Team request body's model. Verification: `tsc --noEmit` clean; 6 targeted test files
+/ 36 tests green; full `npm test` 258 files / 2521 tests green; `npm run build` clean. See
+`docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`'s "Review fixes" section.
+
 **Next:** land via `land.sh` once this lane is picked up for landing (not run in this session per
 instructions) → PR → squash auto-merge once `verify` is green. Consider a follow-up to add
 `redTeamLlmModel` visibility into the dashboard's budget-status admin view.

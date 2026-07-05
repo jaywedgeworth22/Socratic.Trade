@@ -12,10 +12,18 @@ import { humanizeLlmError } from "./llm-errors";
 import { withLlmGeneration } from "./observability";
 import { isOverLlmBudget } from "./llm-budget";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
+import type { TradingPolicy } from "./types";
 
-export async function generateReflectionSummary(accountNumber: string, userId: string = "local"): Promise<void> {
+/**
+ * @param policyOverride Optional pre-resolved policy to use INSTEAD OF re-reading `getPolicy(userId)`.
+ * Lets a caller thread a transient, run-scoped override (e.g. usage-budget's Phase 2 model downgrade,
+ * applied to an in-memory policy clone and never persisted via `setPolicy`) through to the model this
+ * reflection pass actually resolves. Falls back to the persisted policy when omitted — no behavior
+ * change for existing callers.
+ */
+export async function generateReflectionSummary(accountNumber: string, userId: string = "local", policyOverride?: TradingPolicy): Promise<void> {
   const db = getDb();
-  const policy = getPolicy(userId);
+  const policy = policyOverride ?? getPolicy(userId);
   const { url, key: openaiKey, model: resolvedModel, provider, keySource, keyRef, transport } = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions");
   if (!openaiKey) return;
   
