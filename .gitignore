@@ -59,3 +59,10 @@ gcp-sa-key.json
 # Editor / IDE workspace + scratch files — local only.
 .kiro/
 *.code-workspace
+
+# design-sync (claude.ai/design system sync) — staged scripts, build output, machine state
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

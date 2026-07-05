@@ -70,6 +70,17 @@ to `socratictrade.com`, record the release commit + date here._
 
 ---
 
+## 🚧 In Progress
+
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
 ## ✅ Completed (merged to `main`, on beta/integration)
 
 - **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
