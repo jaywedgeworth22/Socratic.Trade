@@ -22,7 +22,12 @@ on:
   push:
     branches:
       - main
-      - "agent/**"
+  # Cost note (2026-07-05): dropped the `agent/**` push trigger. Every agent branch
+  # that lands has an open PR, so the `pull_request` trigger already runs `verify`
+  # on it — the extra `push` run was a duplicate of the PR run (different ref, so
+  # concurrency never deduped them). `push: main` still covers merges/merge_group.
+  # (Cloud-proxy pushes that generate no pull_request event use the workflow_dispatch
+  # re-kick lever below, exactly as documented for that edge.)
   # Manual re-kick lever. Pushes/PRs made through the Claude cloud git proxy
   # generate NO pull_request/synchronize workflow runs (observed on PR #367/#798:
   # zero check runs on any head after the proxy pushed), which strands the
