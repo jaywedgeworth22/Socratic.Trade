@@ -222,7 +222,9 @@ export async function materializeSkippedCandidateCounterfactuals(
  */
 function enqueueIntradaySampleJobs(input: {
   caseId: string;
+  runId: string;
   symbol: string;
+  horizonDays: number;
   refPrice: number;
   snapshotAt: string;
   regime?: string;
@@ -233,7 +235,9 @@ function enqueueIntradaySampleJobs(input: {
     const specs = buildIntradaySampleJobSpecs({
       caseKind: "counterfactual",
       caseId: input.caseId,
+      runId: input.runId,
       symbol: input.symbol,
+      horizonDays: input.horizonDays,
       basisPrice: input.refPrice,
       basisAtMs: Date.parse(input.snapshotAt),
       priceBasisPrefix: "ref_price"
@@ -289,7 +293,9 @@ export function recordRejectedProposalCounterfactual(input: {
   if (inserted) {
     enqueueIntradaySampleJobs({
       caseId: skippedCounterfactualId(userId, input.runId, symbol, horizonDays),
+      runId: input.runId,
       symbol,
+      horizonDays,
       refPrice,
       snapshotAt,
       userId,
@@ -337,7 +343,9 @@ function ingestSignalSnapshot(
       inserted += 1;
       enqueueIntradaySampleJobs({
         caseId: skippedCounterfactualId(context.userId, snapshot.runId, symbol, context.horizonDays),
+        runId: snapshot.runId,
         symbol,
+        horizonDays: context.horizonDays,
         refPrice,
         snapshotAt,
         userId: context.userId,

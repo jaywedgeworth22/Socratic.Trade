@@ -30,6 +30,7 @@ import {
   getDueJobStats,
   getPolicy,
   getSkippedCounterfactualByRunSymbol,
+  getSkippedCounterfactualByRunSymbolHorizon,
   getSkippedCounterfactualCoverage,
   getSocraticDecisionCase,
   getSocraticOutcomeCoverage,
@@ -433,6 +434,7 @@ function enqueueIntradayDecisionSampleJobs(
     const specs = buildIntradaySampleJobSpecs({
       caseKind: "decision",
       caseId: decisionCase.id,
+      runId: decisionCase.runId,
       symbol,
       basisPrice,
       basisAtMs,
@@ -465,7 +467,13 @@ function enqueueIntradayDecisionSampleJobs(
 interface IntradaySampleJobPayload {
   caseKind: "decision" | "counterfactual";
   caseId: string;
+  /** The owning decision/signal-snapshot run, carried explicitly from enqueue time. Required for
+   * caseKind 'counterfactual' (the exact-match lookup key); optional/informational for 'decision'
+   * (which is looked up directly by caseId). */
+  runId?: string;
   symbol: string;
+  /** Only present for caseKind === 'counterfactual' — the exact horizon_days of the owning row. */
+  horizonDays?: number;
   horizon: "15m" | "1h";
   basisPrice: number;
   basisAtMs: number;
@@ -476,7 +484,9 @@ interface IntradaySampleJobPayload {
 function parseIntradaySampleJobPayload(raw: Record<string, unknown>): IntradaySampleJobPayload | undefined {
   const caseKind = raw.caseKind === "decision" || raw.caseKind === "counterfactual" ? raw.caseKind : undefined;
   const caseId = typeof raw.caseId === "string" ? raw.caseId : undefined;
+  const runId = typeof raw.runId === "string" ? raw.runId : undefined;
   const symbol = typeof raw.symbol === "string" ? raw.symbol : undefined;
+  const horizonDays = typeof raw.horizonDays === "number" && Number.isFinite(raw.horizonDays) ? raw.horizonDays : undefined;
   const horizon = raw.horizon === "15m" || raw.horizon === "1h" ? raw.horizon : undefined;
   const basisPrice = typeof raw.basisPrice === "number" && Number.isFinite(raw.basisPrice) ? raw.basisPrice : undefined;
   const basisAtMs = typeof raw.basisAtMs === "number" && Number.isFinite(raw.basisAtMs) ? raw.basisAtMs : undefined;
@@ -485,14 +495,26 @@ function parseIntradaySampleJobPayload(raw: Record<string, unknown>): IntradaySa
   if (!caseKind || !caseId || !symbol || !horizon || basisPrice === undefined || basisAtMs === undefined || !priceBasisPrefix) {
     return undefined;
   }
-  return { caseKind, caseId, symbol, horizon, basisPrice, basisAtMs, side, priceBasisPrefix };
+  // For 'counterfactual' jobs, runId + horizonDays are required for the exact-match lookup — a
+  // payload missing either (e.g. a pre-fix enqueued job surviving a deploy) cannot be resolved
+  // precisely and is treated as malformed rather than silently falling back to a fuzzy match.
+  if (caseKind === "counterfactual" && (!runId || horizonDays === undefined)) {
+    return undefined;
+  }
+  return { caseKind, caseId, runId, symbol, horizonDays, horizon, basisPrice, basisAtMs, side, priceBasisPrefix };
 }
 
 export interface DrainDueIntradaySampleJobsResult {
   drained: number;
   completed: number;
   unresolvable: number;
-  failed: number;
+  /** Jobs that hit a caught error this pass (owning case not found, quote fetch/exception, etc.) and
+   * were routed through failDueJob — MOST of these are retried (pushed-out due_at, back to
+   * 'pending'), not terminally failed (db-jobs.ts has no 'failed' status; failDueJob only ever
+   * yields 'pending' or 'unresolvable'). Named to avoid implying a persisted "failed" job state —
+   * see review finding #3: this used to be called `failed`, which collided in meaning with
+   * getDueJobStats().failed, a status value nothing ever produces. */
+  erroredRetried: number;
 }
 
 /**
@@ -519,13 +541,13 @@ export async function drainDueIntradaySampleJobs(
 
   let completed = 0;
   let unresolvable = 0;
-  let failed = 0;
+  let erroredRetried = 0;
 
   for (const job of jobs) {
     try {
       const payload = parseIntradaySampleJobPayload(job.payload);
       if (!payload) {
-        markDueJobUnresolvable(job.id, "malformed_payload");
+        markDueJobUnresolvable(job.id, claimant, "malformed_payload");
         unresolvable += 1;
         continue;
       }
@@ -538,7 +560,7 @@ export async function drainDueIntradaySampleJobs(
       const existingOutcomes = readExistingOutcomes(payload, job.userId ?? "local");
       if (existingOutcomes?.some((row) => row.horizon === payload.horizon && row.resolution === "ok")) {
         // The inline path (or an earlier worker pass) already resolved this horizon — nothing to do.
-        completeDueJob(job.id, { skipped: "already_resolved" }, nowIso);
+        completeDueJob(job.id, claimant, { skipped: "already_resolved" }, nowIso);
         completed += 1;
         continue;
       }
@@ -563,21 +585,21 @@ export async function drainDueIntradaySampleJobs(
 
       const wrote = await writeIntradaySampleRow(payload, row, job.userId ?? "local");
       if (!wrote) {
-        failDueJob(job.id, "owning_case_not_found");
-        failed += 1;
+        failDueJob(job.id, claimant, "owning_case_not_found");
+        erroredRetried += 1;
         continue;
       }
 
       if (row.resolution === "unresolvable") {
-        completeDueJob(job.id, { resolution: "unresolvable", reason: row.reason }, nowIso);
+        completeDueJob(job.id, claimant, { resolution: "unresolvable", reason: row.reason }, nowIso);
         unresolvable += 1;
       } else {
-        completeDueJob(job.id, { resolution: "ok", returnPct: row.returnPct }, nowIso);
+        completeDueJob(job.id, claimant, { resolution: "ok", returnPct: row.returnPct }, nowIso);
         completed += 1;
       }
     } catch (err) {
-      failDueJob(job.id, err instanceof Error ? err.message : String(err));
-      failed += 1;
+      failDueJob(job.id, claimant, err instanceof Error ? err.message : String(err));
+      erroredRetried += 1;
     }
   }
 
@@ -586,22 +608,26 @@ export async function drainDueIntradaySampleJobs(
       drained: jobs.length,
       completed,
       unresolvable,
-      failed,
+      erroredRetried,
       stats: getDueJobStats("sample_intraday_horizon")
     });
   }
 
-  return { drained: jobs.length, completed, unresolvable, failed };
+  return { drained: jobs.length, completed, unresolvable, erroredRetried };
 }
 
 /** Existing persisted outcome rows for the job's owning case, read fresh so the "already resolved
- * by the inline path" check can't race a stale in-payload snapshot. */
+ * by the inline path" check can't race a stale in-payload snapshot. Looks up the counterfactual by
+ * its exact natural key (runId + symbol + horizonDays, all carried explicitly in the job payload
+ * since the enqueue-time fix) rather than parsing caseId — a caseId is an opaque identifier, not a
+ * format contract, so string-splitting it was fragile and (worse) ignored horizonDays entirely,
+ * silently matching the wrong row whenever a run/symbol pair had more than one horizon. */
 function readExistingOutcomes(payload: IntradaySampleJobPayload, userId: string): SocraticOutcomeHorizonRow[] | undefined {
   if (payload.caseKind === "decision") {
     return getSocraticDecisionCase(payload.caseId, userId)?.outcome?.outcomes;
   }
-  const [ownerUserId, runId, symbol] = payload.caseId.split(":");
-  const counterfactual = getSkippedCounterfactualByRunSymbol(ownerUserId, runId, symbol);
+  if (!payload.runId || payload.horizonDays === undefined) return undefined;
+  const counterfactual = getSkippedCounterfactualByRunSymbolHorizon(userId, payload.runId, payload.symbol, payload.horizonDays);
   return counterfactual?.outcomes;
 }
 
@@ -626,8 +652,8 @@ async function writeIntradaySampleRow(
     return true;
   }
 
-  const [ownerUserId, runId, symbol] = payload.caseId.split(":");
-  const counterfactual = getSkippedCounterfactualByRunSymbol(ownerUserId, runId, symbol);
+  if (!payload.runId || payload.horizonDays === undefined) return false;
+  const counterfactual = getSkippedCounterfactualByRunSymbolHorizon(userId, payload.runId, payload.symbol, payload.horizonDays);
   if (!counterfactual) return false;
   const outcomes = mergeHorizonRows(counterfactual.outcomes, [row]);
   // The counterfactual pipeline's own writer (markSkippedCounterfactualMatured /
@@ -635,7 +661,7 @@ async function writeIntradaySampleRow(
   // worker doesn't have — an intraday sample alone doesn't close the whole counterfactual, only one
   // horizon row within it. Persist via the shared low-level updater instead (no-ops harmlessly once
   // the row has already gone terminal, since that writer is also status='pending'-gated).
-  updateSkippedCounterfactualOutcomes(counterfactual.id, ownerUserId, outcomes);
+  updateSkippedCounterfactualOutcomes(counterfactual.id, userId, outcomes);
   return true;
 }
 

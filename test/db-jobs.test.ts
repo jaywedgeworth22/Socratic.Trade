@@ -72,7 +72,7 @@ describe("db-jobs — durable due-jobs substrate", () => {
     enqueueDueJob({ jobType, dedupeKey: "retry-me", dueAt: new Date(now.getTime() - 1000).toISOString() });
     const [job] = claimDueJobs(jobType, { claimant: "worker-1", now });
 
-    const nextStatus = failDueJob(job.id, "quote fetch failed", { maxAttempts: 5, retryBackoffMs: 10 * 60_000, now });
+    const nextStatus = failDueJob(job.id, "worker-1", "quote fetch failed", { maxAttempts: 5, retryBackoffMs: 10 * 60_000, now });
     expect(nextStatus).toBe("pending");
     expect(getDueJobStats(jobType).pending).toBe(1);
     expect(getDueJobStats(jobType).claimed).toBe(0);
@@ -97,7 +97,7 @@ describe("db-jobs — durable due-jobs substrate", () => {
     // attempts is bumped on claim; drive it to the max via repeated claim+fail cycles.
     let status: string = "pending";
     for (let i = 0; i < 5; i += 1) {
-      status = failDueJob(job.id, `attempt ${i} failed`, { maxAttempts: 5, retryBackoffMs: 1000, now });
+      status = failDueJob(job.id, "worker-1", `attempt ${i} failed`, { maxAttempts: 5, retryBackoffMs: 1000, now });
       if (status === "unresolvable") break;
       const reclaimNow = new Date(now.getTime() + (i + 1) * 2000);
       const reclaimed = claimDueJobs(jobType, { claimant: "worker-1", now: reclaimNow });
@@ -120,7 +120,7 @@ describe("db-jobs — durable due-jobs substrate", () => {
     });
     const [job] = claimDueJobs(jobType, { claimant: "worker-1", now });
 
-    const status = failDueJob(job.id, "window closed with no sample", { maxAttempts: 5, retryBackoffMs: 1000, now });
+    const status = failDueJob(job.id, "worker-1", "window closed with no sample", { maxAttempts: 5, retryBackoffMs: 1000, now });
     expect(status).toBe("unresolvable");
   });
 
@@ -131,7 +131,8 @@ describe("db-jobs — durable due-jobs substrate", () => {
     enqueueDueJob({ jobType, dedupeKey: "done-me", dueAt: new Date(now.getTime() - 1000).toISOString() });
     const [job] = claimDueJobs(jobType, { claimant: "worker-1", now });
 
-    completeDueJob(job.id, { resolution: "ok", returnPct: 1.23 });
+    const wrote = completeDueJob(job.id, "worker-1", { resolution: "ok", returnPct: 1.23 });
+    expect(wrote).toBe(true);
     expect(getDueJobStats(jobType).done).toBe(1);
   });
 
@@ -142,8 +143,48 @@ describe("db-jobs — durable due-jobs substrate", () => {
     enqueueDueJob({ jobType, dedupeKey: "malformed", dueAt: new Date(now.getTime() - 1000).toISOString() });
     const [job] = claimDueJobs(jobType, { claimant: "worker-1", now });
 
-    markDueJobUnresolvable(job.id, "malformed_payload");
+    const wrote = markDueJobUnresolvable(job.id, "worker-1", "malformed_payload");
+    expect(wrote).toBe(true);
     expect(getDueJobStats(jobType).unresolvable).toBe(1);
+  });
+
+  it("a done job cannot be resurrected by a non-claimant calling failDueJob/completeDueJob/markDueJobUnresolvable", async () => {
+    const {
+      enqueueDueJob,
+      claimDueJobs,
+      completeDueJob,
+      failDueJob,
+      markDueJobUnresolvable,
+      getDueJobStats
+    } = await import("../src/lib/db");
+    const jobType = `test_job_${randomUUID()}`;
+    const now = new Date("2026-07-05T12:00:00.000Z");
+    enqueueDueJob({ jobType, dedupeKey: "fenced", dueAt: new Date(now.getTime() - 1000).toISOString() });
+    const [job] = claimDueJobs(jobType, { claimant: "worker-1", now });
+
+    // worker-1 legitimately completes the job.
+    const completedByOwner = completeDueJob(job.id, "worker-1", { resolution: "ok" }, now.toISOString());
+    expect(completedByOwner).toBe(true);
+    expect(getDueJobStats(jobType).done).toBe(1);
+
+    // A stale/lease-expired claimant (or any non-owning caller) can no longer mutate the now-'done'
+    // row through any of the three terminal-transition functions — each is fenced to
+    // status='claimed' AND claimed_by=?, so a 'done' row (or one owned by someone else) never
+    // matches and every call is a silent no-op (Finding 2: lost-update-by-stale-worker fix).
+    const resurrectedByFail = failDueJob(job.id, "worker-1", "trying to resurrect", { now });
+    expect(resurrectedByFail).toBe("done"); // reports the row's actual (unchanged) status
+    expect(getDueJobStats(jobType).done).toBe(1);
+    expect(getDueJobStats(jobType).pending).toBe(0);
+    expect(getDueJobStats(jobType).unresolvable).toBe(0);
+
+    const resurrectedByComplete = completeDueJob(job.id, "worker-2", { resolution: "different" }, now.toISOString());
+    expect(resurrectedByComplete).toBe(false);
+    expect(getDueJobStats(jobType).done).toBe(1);
+
+    const resurrectedByUnresolvable = markDueJobUnresolvable(job.id, "worker-2", "trying to resurrect");
+    expect(resurrectedByUnresolvable).toBe(false);
+    expect(getDueJobStats(jobType).done).toBe(1);
+    expect(getDueJobStats(jobType).unresolvable).toBe(0);
   });
 
   it("payload round-trips through JSON exactly, and carries user/account scoping", async () => {

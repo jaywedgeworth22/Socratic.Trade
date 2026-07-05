@@ -8,6 +8,36 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Review fixes for the durable due-jobs substrate (CLAUDE, worktree `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`, second commit)
+Fixed 7 previously-diagnosed review findings on top of the durable-due-jobs commit below (HEAD
+`4b105e5a` untouched, second commit on the same branch). **Blocker:** a lost-update race —
+`measureCase`'s pass-start `outcomes` snapshot, held across awaits, could wholesale-replace and
+erase a worker-sampled 15m/1h row written mid-pass by `drainDueIntradaySampleJobs`. Fixed by
+re-merging against a fresh DB read immediately before every terminal/partial write in
+`writeSocraticDecisionOutcome` (`db-socratic.ts`), `markSkippedCounterfactualMatured`, and
+`markSkippedCounterfactualUnresolvable` (`db-learning.ts`) — `mergeHorizonRows`'s
+existing-terminal-wins semantics make this idempotent regardless of write order. **Minor:**
+claimant-fenced `completeDueJob`/`failDueJob`/`markDueJobUnresolvable` (`db-jobs.ts`) so a stale
+lease-expired worker can no longer resurrect a job another worker already reclaimed/completed;
+renamed the drain receipt's `failed` counter to `erroredRetried` and removed the dead `'failed'`
+`DueJobStatus` value + CHECK constraint (nothing ever produced it). **Nits:** the intraday-sample
+worker now carries `runId`/`horizonDays` explicitly in the job payload and looks up the exact
+counterfactual row via a new `getSkippedCounterfactualByRunSymbolHorizon`, deleting the
+`caseId.split(":")` parsing that silently picked `min(horizon_days)` and ignored the horizon baked
+into the job; `enqueueDueJob`'s docstring now says idempotent ONLY when `dedupeKey` is provided
+(SQLite `UNIQUE` treats `NULL`s as distinct). New/updated tests: `test/socratic-db.test.ts` +
+`test/counterfactual-learning.test.ts` (write-time re-merge regressions), `test/db-jobs.test.ts`
+(claimant-fencing regression + updated call sites), `test/outcome-engine-due-jobs.test.ts` (rename
+follow-through). `npx tsc --noEmit` clean; `npx vitest run test/db-jobs.test.ts
+test/outcome-engine-due-jobs.test.ts test/outcome-engine.test.ts
+test/counterfactual-learning.test.ts test/socratic-db.test.ts test/rejected-counterfactual.test.ts`
+— 33/33 passed; `npm run lint` 0 errors; `npm run build` succeeds; full `npm test` 2529/2530 (the 1
+failure, `test/account-deletion-coverage.test.ts` re: the `due_jobs` table missing from account
+deletion coverage, is pre-existing at `4b105e5a` — confirmed via `git stash` — and unrelated to
+these findings; flagged separately, not fixed here to keep this pass precise/no-scope-creep). See
+`docs/rollouts/2026-07-05-durable-due-jobs.md`'s new "Review fixes" section.
+**Next:** land via the sequential landing operator (same as the base commit below).
+
 ## 2026-07-05 — Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE, worktree `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`)
 Built the generic claimable due-jobs queue `outcome-horizons.ts:22-29` called out as the missing
 piece: 15m/1h intraday horizon samples previously only happened if a `runStrategyOnce` call

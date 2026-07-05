@@ -160,7 +160,7 @@ describe("durable due-jobs: intraday horizon sampling", () => {
     const drainNow = fillMs + 16 * 60_000;
     const result = await drainDueIntradaySampleJobs(drainNow, { fetchQuote: async () => 103 });
     expect(result.drained).toBeGreaterThanOrEqual(1);
-    expect(result.failed).toBe(0);
+    expect(result.erroredRetried).toBe(0);
 
     const updated = getSocraticDecisionCase("prop-drain", userId);
     const row15m = updated?.outcome?.outcomes.find((r) => r.horizon === "15m");

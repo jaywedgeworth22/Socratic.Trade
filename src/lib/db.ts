@@ -294,7 +294,7 @@ const MIGRATIONS: Migration[] = [
           dedupe_key TEXT,
           due_at TEXT NOT NULL,
           not_after TEXT,
-          status TEXT NOT NULL CHECK(status IN ('pending','claimed','done','failed','unresolvable')),
+          status TEXT NOT NULL CHECK(status IN ('pending','claimed','done','unresolvable')),
           payload TEXT NOT NULL DEFAULT '{}',
           claimed_by TEXT,
           claimed_at TEXT,

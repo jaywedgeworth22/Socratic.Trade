@@ -125,3 +125,102 @@ already used by `acquireStrategyLock` (`db-execution.ts`) and the scheduler leas
   design (the terminal row's `outcomes` are owned by whichever writer closed it) — this mirrors the
   existing `markSkippedCounterfactualChecked`/`markSkippedCounterfactualMatured` gating and was not
   treated as a bug to fix in this pass.
+- **Pre-existing, unrelated to this change:** `test/account-deletion-coverage.test.ts` currently
+  fails on this branch because the `due_jobs` table (added by this same commit) is not yet wired
+  into `DELETE_TABLES_BY_USER_ID` / the account-deletion coverage allowlist. Confirmed via
+  `git stash` that the failure exists at `4b105e5a` before any review-fix commit — it is not caused
+  by the fixes below. Flagged as a separate follow-up task rather than folded into this PR's
+  otherwise-precise fix list.
+
+## Review fixes
+
+A second pass (still on this branch, second commit — HEAD `4b105e5a` untouched/not amended) applied
+7 previously-diagnosed review findings, no other scope:
+
+1. **Lost-update race (BLOCKER).** `measureCase` builds `outcome.outcomes` from a pass-start
+   snapshot and holds it across awaits; `processDueOutcomes`'s wholesale write could erase a
+   worker-sampled 15m/1h row written concurrently by `drainDueIntradaySampleJobs`, even though the
+   job had already reported done. Fixed by re-merging against a FRESH read of the persisted row
+   immediately before every terminal/partial write:
+   - `writeSocraticDecisionOutcome` (`db-socratic.ts`) now re-reads `existing` (already did, for the
+     upsert) and sets `outcome.outcomes = mergeHorizonRows(existing.outcome?.outcomes,
+     outcome.outcomes)` before persisting.
+   - `markSkippedCounterfactualMatured` and `markSkippedCounterfactualUnresolvable`
+     (`db-learning.ts`) now do a fresh `SELECT outcomes` (new helper
+     `readPersistedCounterfactualOutcomes`) and re-merge the same way before their UPDATEs.
+   - `mergeHorizonRows`'s existing-terminal-row-wins semantics make this idempotent regardless of
+     write order (first persisted terminal row always survives).
+   - Regression tests: `test/socratic-db.test.ts` (writer-level, decision case) and
+     `test/counterfactual-learning.test.ts` (writer-level, both matured and unresolvable paths) —
+     each persists a worker-written 15m row, then calls the writer with a stale `outcomes` array
+     missing that row, and asserts the row survives alongside the caller's own new row.
+2. **Claimant-fenced terminal transitions.** `completeDueJob`/`failDueJob`/`markDueJobUnresolvable`
+   (`db-jobs.ts`) previously updated `WHERE id = ?` only, so a stale/lease-expired worker could
+   resurrect a job another worker had already reclaimed/completed/failed. All three now require
+   `AND status = 'claimed' AND claimed_by = ?claimant`, take an explicit `claimant` parameter, and
+   return a boolean/status reflecting whether THIS call's row actually transitioned (silently
+   ignorable by callers when the fence holds and nothing happened). Call sites in
+   `drainDueIntradaySampleJobs` (`outcome-engine.ts`) thread the worker's own `claimant` id through.
+   New test in `test/db-jobs.test.ts`: a `done` job cannot be mutated back to pending/done/
+   unresolvable by a different claimant through any of the three functions.
+3. **Receipt honesty.** The drain receipt's `failed` counter (really "errored this pass, mostly
+   retried") collided in name with `getDueJobStats().failed` — a status value nothing ever
+   produces. Renamed the drain counter to `erroredRetried`
+   (`DrainDueIntradaySampleJobsResult.erroredRetried`), removed the dead `'failed'` value from
+   `DueJobStatus` (`db-jobs.ts`) and the v11 `CHECK` constraint (`db.ts`; migration is unreleased on
+   this branch so editing in place is safe), and updated `DueJobStats` to drop the `failed` field.
+   `failDueJob`'s unknown-id fallback (previously `return "failed"`) now returns `"unresolvable"`
+   since `"failed"` is no longer a valid `DueJobStatus`. Updated the one test assertion that read
+   `result.failed`.
+4. **+5. Exact counterfactual lookup, no more `caseId.split(":")`.** The due-jobs worker
+   (`drainDueIntradaySampleJobs`'s `readExistingOutcomes`/`writeIntradaySampleRow`) previously
+   parsed `caseId.split(":")` to recover `(ownerUserId, runId, symbol)` and joined via
+   `getSkippedCounterfactualByRunSymbol`, which always picks `min(horizon_days)` — silently matching
+   the wrong row whenever a run/symbol pair has more than one horizon-day config. Fixed by carrying
+   `runId` and (for counterfactual jobs) `horizonDays` as explicit fields in the job payload from
+   both enqueue sites (`outcome-engine.ts`'s `enqueueIntradayDecisionSampleJobs`,
+   `counterfactual-learning.ts`'s `enqueueIntradaySampleJobs`, threaded through
+   `buildIntradaySampleJobSpecs` in `outcome-horizons.ts`), adding a new exact-match lookup
+   `getSkippedCounterfactualByRunSymbolHorizon(userId, runId, symbol, horizonDays)`
+   (`db-learning.ts`), and deleting the string-splitting entirely. A counterfactual job payload
+   missing `runId`/`horizonDays` (e.g. a pre-fix job surviving a deploy) is now treated as malformed
+   in `parseIntradaySampleJobPayload` rather than silently falling back to a fuzzy match.
+5. **Doc-only.** `enqueueDueJob`'s docstring now says "idempotent ONLY when `dedupeKey` is
+   provided" — SQLite's `UNIQUE` constraint treats every `NULL` as distinct, so repeated calls with
+   no `dedupeKey` insert a new row each time.
+
+### Files (review-fixes commit)
+
+- `src/lib/db-socratic.ts` — write-time re-merge in `writeSocraticDecisionOutcome`.
+- `src/lib/db-learning.ts` — write-time re-merge in `markSkippedCounterfactualMatured` /
+  `markSkippedCounterfactualUnresolvable` (+ new `readPersistedCounterfactualOutcomes` helper); new
+  `getSkippedCounterfactualByRunSymbolHorizon` exact-match lookup.
+- `src/lib/db-jobs.ts` — claimant-fenced `completeDueJob`/`failDueJob`/`markDueJobUnresolvable`;
+  `DueJobStatus` union and `DueJobStats` drop `'failed'`; `enqueueDueJob` docstring qualifier.
+- `src/lib/db.ts` — v11 `CHECK` constraint drops `'failed'`.
+- `src/lib/outcome-engine.ts` — `drainDueIntradaySampleJobs` threads `claimant` through all three
+  terminal-transition calls; `erroredRetried` rename; `IntradaySampleJobPayload` carries
+  `runId`/`horizonDays`; `readExistingOutcomes`/`writeIntradaySampleRow` use the exact-match lookup
+  instead of `caseId.split(":")`.
+- `src/lib/outcome-horizons.ts` — `IntradaySampleJobSpec`/`buildIntradaySampleJobSpecs` carry
+  `runId`/`horizonDays` through to the payload.
+- `src/lib/counterfactual-learning.ts` — `enqueueIntradaySampleJobs` and both call sites
+  (`recordRejectedProposalCounterfactual`, `ingestSignalSnapshot`) pass `runId`/`horizonDays`.
+- `test/db-jobs.test.ts` — updated all `failDueJob`/`completeDueJob`/`markDueJobUnresolvable` calls
+  for the new `claimant` parameter; new claimant-fencing regression test.
+- `test/outcome-engine-due-jobs.test.ts` — updated the one `result.failed` assertion to
+  `result.erroredRetried`.
+- `test/socratic-db.test.ts`, `test/counterfactual-learning.test.ts` — new Finding-1 write-time
+  re-merge regression tests.
+
+### Verification (review-fixes commit)
+
+- `npx tsc --noEmit` — clean, no errors.
+- `npx vitest run test/db-jobs.test.ts test/outcome-engine-due-jobs.test.ts
+  test/outcome-engine.test.ts test/counterfactual-learning.test.ts test/socratic-db.test.ts
+  test/rejected-counterfactual.test.ts` — 6 files, 33/33 passed.
+- `npm run lint` — 0 errors (pre-existing grandfathered warnings only, none new from these files).
+- `npm run build` — succeeds.
+- `npm test` (full suite) — 2529/2530 passed; the 1 failure
+  (`test/account-deletion-coverage.test.ts`) is pre-existing at `4b105e5a` (confirmed via
+  `git stash`), unrelated to these 7 findings, and tracked as a separate follow-up above.

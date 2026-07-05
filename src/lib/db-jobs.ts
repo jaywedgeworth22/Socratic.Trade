@@ -15,7 +15,13 @@
 import crypto from "crypto";
 import { getDb } from "./db";
 
-export type DueJobStatus = "pending" | "claimed" | "done" | "failed" | "unresolvable";
+// NOTE: no 'failed' status — a job never sits permanently "failed". failDueJob only ever
+// transitions a claimed row to 'pending' (retry) or terminally 'unresolvable' (exhausted/deadline);
+// nothing in this substrate persists a 'failed' row, so the CHECK constraint (db.ts's due_jobs v11
+// migration) and this union both omit it. Review finding #3: the drain receipt's separate
+// "erroredRetried" counter (outcome-engine.ts) is a per-pass count of caught exceptions, not a
+// per-job terminal status — do not conflate the two.
+export type DueJobStatus = "pending" | "claimed" | "done" | "unresolvable";
 
 export interface DueJobRecord {
   id: string;
@@ -94,9 +100,11 @@ function rowToRecord(row: RawDueJobRow): DueJobRecord {
 }
 
 /**
- * Idempotent enqueue: INSERT OR IGNORE on (job_type, dedupe_key). Returns true only when a new
- * row was actually inserted (false when the dedupe key already existed — not an error, the caller
- * asked for a job that's already scheduled/claimed/done).
+ * Idempotent enqueue ONLY when a `dedupeKey` is provided: INSERT OR IGNORE on (job_type,
+ * dedupe_key), and SQLite's UNIQUE constraint treats every NULL as distinct from every other NULL —
+ * so calling this repeatedly with no `dedupeKey` inserts a new row every time, not one deduped row.
+ * Returns true only when a new row was actually inserted (false when the dedupe key already
+ * existed — not an error, the caller asked for a job that's already scheduled/claimed/done).
  */
 export function enqueueDueJob(input: {
   id?: string;
@@ -197,11 +205,18 @@ export function claimDueJobs(
   }
 }
 
-/** Mark a claimed job done, storing an optional JSON-serializable result. */
-export function completeDueJob(id: string, result?: unknown, now: string = new Date().toISOString()): void {
-  getDb()
-    .prepare("UPDATE due_jobs SET status = 'done', result = ?, updated_at = ? WHERE id = ?")
-    .run(result === undefined ? null : JSON.stringify(result), now, id);
+/**
+ * Mark a claimed job done, storing an optional JSON-serializable result. Fenced to the claimant: the
+ * UPDATE only applies `WHERE status = 'claimed' AND claimed_by = ?claimant`, so a worker whose lease
+ * already expired (and whose job was reclaimed by a different worker, or completed/failed by it)
+ * cannot resurrect/overwrite a job it no longer owns. Returns true only when this call's row actually
+ * transitioned — false means the fence held and the caller should treat its own completion as moot.
+ */
+export function completeDueJob(id: string, claimant: string, result?: unknown, now: string = new Date().toISOString()): boolean {
+  const info = getDb()
+    .prepare("UPDATE due_jobs SET status = 'done', result = ?, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?")
+    .run(result === undefined ? null : JSON.stringify(result), now, id, claimant);
+  return info.changes === 1;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5;
@@ -211,9 +226,15 @@ const DEFAULT_RETRY_BACKOFF_MS = 10 * 60_000;
  * Mark a claimed job failed. Retries with pushed-out due_at (back to 'pending') unless the job
  * has exhausted its attempt budget OR is already past its `not_after` deadline — either of which
  * makes it terminally 'unresolvable' (kill-survivorship: never left pending forever).
+ *
+ * Fenced to the claimant: both the retry-to-pending and the terminal-unresolvable UPDATE require
+ * `status = 'claimed' AND claimed_by = ?claimant`, so a lease-expired worker calling this after
+ * another worker already reclaimed (or completed/failed) the row is a silent no-op rather than a
+ * resurrection of a job it no longer owns.
  */
 export function failDueJob(
   id: string,
+  claimant: string,
   error: string,
   options: { maxAttempts?: number; retryBackoffMs?: number; now?: Date } = {}
 ): DueJobStatus {
@@ -224,46 +245,52 @@ export function failDueJob(
   const retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
 
   const row = database.prepare("SELECT * FROM due_jobs WHERE id = ?").get(id) as RawDueJobRow | undefined;
-  if (!row) return "failed";
+  // Unknown id: nothing to transition. There is no 'failed' status to fall back to (see the
+  // DueJobStatus note above) — report the nearest honest terminal state instead of inventing one.
+  if (!row) return "unresolvable";
 
   const pastDeadline = row.not_after ? row.not_after < nowIso : false;
   const exhausted = row.attempts >= maxAttempts;
 
   if (pastDeadline || exhausted) {
-    database
-      .prepare("UPDATE due_jobs SET status = 'unresolvable', last_error = ?, updated_at = ? WHERE id = ?")
-      .run(error, nowIso, id);
-    return "unresolvable";
+    const info = database
+      .prepare(
+        "UPDATE due_jobs SET status = 'unresolvable', last_error = ?, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?"
+      )
+      .run(error, nowIso, id, claimant);
+    return info.changes === 1 ? "unresolvable" : row.status;
   }
 
   const nextDueAt = new Date(now.getTime() + retryBackoffMs).toISOString();
-  database
+  const info = database
     .prepare(
-      "UPDATE due_jobs SET status = 'pending', due_at = ?, last_error = ?, claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?"
+      "UPDATE due_jobs SET status = 'pending', due_at = ?, last_error = ?, claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?"
     )
-    .run(nextDueAt, error, nowIso, id);
-  return "pending";
+    .run(nextDueAt, error, nowIso, id, claimant);
+  return info.changes === 1 ? "pending" : row.status;
 }
 
 /** Directly mark a job terminally unresolvable (e.g. the worker decides upfront a job can never
- * be completed — no live-quote source, window already closed at claim time). */
-export function markDueJobUnresolvable(id: string, reason: string, now: string = new Date().toISOString()): void {
-  getDb()
-    .prepare("UPDATE due_jobs SET status = 'unresolvable', last_error = ?, updated_at = ? WHERE id = ?")
-    .run(reason, now, id);
+ * be completed — no live-quote source, window already closed at claim time). Fenced to the
+ * claimant: only transitions a row this claimant currently holds a live claim on. Returns true only
+ * when this call's row actually transitioned. */
+export function markDueJobUnresolvable(id: string, claimant: string, reason: string, now: string = new Date().toISOString()): boolean {
+  const info = getDb()
+    .prepare("UPDATE due_jobs SET status = 'unresolvable', last_error = ?, updated_at = ? WHERE id = ? AND status = 'claimed' AND claimed_by = ?")
+    .run(reason, now, id, claimant);
+  return info.changes === 1;
 }
 
 export interface DueJobStats {
   pending: number;
   claimed: number;
   done: number;
-  failed: number;
   unresolvable: number;
 }
 
 /** Small per-job-type receipt: counts by status. Never throws — returns all-zero on error. */
 export function getDueJobStats(jobType?: string): DueJobStats {
-  const stats: DueJobStats = { pending: 0, claimed: 0, done: 0, failed: 0, unresolvable: 0 };
+  const stats: DueJobStats = { pending: 0, claimed: 0, done: 0, unresolvable: 0 };
   try {
     const rows = jobType
       ? (getDb()

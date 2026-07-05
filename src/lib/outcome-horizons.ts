@@ -42,8 +42,16 @@ export interface IntradaySampleJobSpec {
   payload: {
     caseKind: IntradaySampleJobCaseKind;
     caseId: string;
+    /** The decision/signal-snapshot run this case belongs to. Carried explicitly (rather than
+     * parsed back out of caseId) so the worker can look up the exact owning row without any
+     * string-splitting assumption about caseId's shape. */
+    runId?: string;
     symbol: string;
     horizon: "15m" | "1h";
+    /** Only present for caseKind === 'counterfactual': the exact horizon_days the owning
+     * skipped_candidate_counterfactuals row was inserted with (a run+symbol pair can have more than
+     * one row across different horizons — this disambiguates instead of picking min(horizon_days)). */
+    horizonDays?: number;
     basisPrice: number;
     basisAtMs: number;
     side?: OrderSide;
@@ -61,7 +69,9 @@ export interface IntradaySampleJobSpec {
 export function buildIntradaySampleJobSpecs(input: {
   caseKind: IntradaySampleJobCaseKind;
   caseId: string;
+  runId?: string;
   symbol: string;
+  horizonDays?: number;
   basisPrice: number;
   basisAtMs: number;
   side?: OrderSide;
@@ -75,7 +85,9 @@ export function buildIntradaySampleJobSpecs(input: {
     payload: {
       caseKind: input.caseKind,
       caseId: input.caseId,
+      ...(input.runId ? { runId: input.runId } : {}),
       symbol: input.symbol,
+      ...(input.horizonDays !== undefined ? { horizonDays: input.horizonDays } : {}),
       horizon,
       basisPrice: input.basisPrice,
       basisAtMs: input.basisAtMs,
