@@ -861,6 +861,14 @@ export interface TradeProposal {
   rationale: string;
   tradeThesisTag: string;
   entryMarketRegime: string;
+  /**
+   * Multi-signal regime severity ([0,1], rounded 2dp) from `computeMultiSignalSeverity`
+   * (src/lib/regime-severity.ts), stamped alongside `entryMarketRegime` when the scorer's inputs
+   * were available at proposal time. Additive/optional: legacy persisted proposals predate it.
+   * Not consumed by any gate or sizer today — a receipt for future regime-conditioned scorecards
+   * to bucket by (do NOT build the scorecard now; see the lane-5 rollout doc).
+   */
+  entryRegimeSeverity?: number;
   confidenceScore?: number;
   /**
    * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served

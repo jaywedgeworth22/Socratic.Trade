@@ -6,10 +6,32 @@
 // (which only triggers a run when TRIGGER_ENGINE is on — otherwise a free, observable signal).
 
 import { audit, getInternalSetting, setInternalSetting } from "./db";
-import { determineMarketRegime, fetchMacroDataWithLiveVix } from "./macro";
-import { isEscalationMarketRegime, regimeFromLabel } from "./market-regime";
+import { determineMarketRegime, fetchMacroDataWithLiveVix, type MacroData } from "./macro";
+import { classifyMarketRegime, isEscalationMarketRegime, regimeFromLabel } from "./market-regime";
+import { deriveMacroMetrics } from "./macro-metrics";
+import { computeMultiSignalSeverity } from "./regime-severity";
 import { emitDashboardEvent } from "./events";
 import { broadcastMaterialEvent } from "./triggers";
+
+// Macro-only severity (no signals fetch here — checkRegimeFlip only has `macro` in scope).
+// Best-effort: a scorer failure must never affect flip detection/notification. Logged as
+// `severityMacroOnly` in the regime_flip audit payload to distinguish it from the fuller
+// (macro + signals) `regimeSeverity` computed at strategy-run time (strategy.ts).
+function macroOnlySeverity(macro: MacroData): number | undefined {
+  try {
+    const derived = deriveMacroMetrics(macro);
+    const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
+    const result = computeMultiSignalSeverity({
+      regime: classifyMarketRegime(macro).regime,
+      vix: macro.vix ? parseFloat(macro.vix) : undefined,
+      vixTermStructure: derived.vixTermStructure,
+      hyCreditSpreadPct: Number.isFinite(hyCreditSpreadPct) ? hyCreditSpreadPct : undefined
+    });
+    return Number(result.severity.toFixed(2));
+  } catch {
+    return undefined;
+  }
+}
 
 const REGIME_KEY = "regime:current";
 
@@ -52,7 +74,7 @@ export async function checkRegimeFlip(userId: string = "local"): Promise<void> {
   setInternalSetting(REGIME_KEY, next);
   audit(
     "regime_flip",
-    { from: prev, to: next, vix: macro.vix, vixAsOf: macro.vixAsOf, fedFunds: macro.fedFundsRate, dgs10: macro.dgs10Treasury, escalation: isEscalationRegime(next) },
+    { from: prev, to: next, vix: macro.vix, vixAsOf: macro.vixAsOf, fedFunds: macro.fedFundsRate, dgs10: macro.dgs10Treasury, escalation: isEscalationRegime(next), severityMacroOnly: macroOnlySeverity(macro) },
     userId
   );
   // Immediate dashboard refresh even when the trigger engine is off.

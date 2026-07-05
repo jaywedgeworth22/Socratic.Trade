@@ -97,7 +97,8 @@ import {
 } from "./prompt-safety";
 import { debateProposal } from "./red-team";
 import { isEscalationRegime } from "./regime-watch";
-import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
+import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
+import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import {
   applySocraticOverrideSizing,
@@ -3046,6 +3047,29 @@ async function proposeTrades(input: {
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
   const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
 
+  // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
+  // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
+  // continuous [0,1] severity reading, floored by the classified enum's own severity so it can
+  // only ADD caution vs. today's boolean-gate channel. Data-only receipt (prompt context +
+  // proposal stamp) — does NOT change any cap/gate behavior. Best-effort: a scorer failure must
+  // never fail the run.
+  const regimeSeverity = (() => {
+    try {
+      const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
+      return computeMultiSignalSeverity({
+        regime: classifyMarketRegime(macro).regime,
+        vix: macro.vix ? parseFloat(macro.vix) : undefined,
+        vixTermStructure: macroDerived.vixTermStructure,
+        hyCreditSpreadPct: Number.isFinite(hyCreditSpreadPct) ? hyCreditSpreadPct : undefined,
+        breadthPct: marketSignals?.marketBreadthPct ?? input.marketScan?.breadthPct,
+        vvix: marketSignals?.vvix,
+        skew: marketSignals?.skew
+      });
+    } catch {
+      return undefined;
+    }
+  })();
+
   // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
   // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade
   // from the provided topCandidates (which the backend pre-filters). We enforce this at the gateway.
@@ -3065,6 +3089,19 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     currentMarketRegime,
+    ...(regimeSeverity
+      ? {
+          regimeSeverity: {
+            severity: Number(regimeSeverity.severity.toFixed(2)),
+            topComponents: [...regimeSeverity.components]
+              .sort((a, b) => b.normalized * b.weight - a.normalized * a.weight)
+              .slice(0, 3)
+              .map((c) => ({ signal: c.signal, normalized: Number(c.normalized.toFixed(2)), weight: Number(c.weight.toFixed(2)) })),
+            inputsUsed: regimeSeverity.inputsUsed,
+            inputsAvailable: regimeSeverity.inputsAvailable
+          }
+        }
+      : {}),
     portfolio: input.portfolio,
     positions: input.positions,
     recentOrders: input.recentOrders,
@@ -3389,6 +3426,7 @@ async function proposeTrades(input: {
   const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime,
+    ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
     // policy.llmModel). Persisted with the proposal so approval-time attribution stays accurate.
     proposedByModel: bullServedModel
@@ -3520,6 +3558,7 @@ async function proposeTrades(input: {
     executionMode: userContent.executionMode,
     executionModeClarification: userContent.executionModeClarification,
     currentMarketRegime: userContent.currentMarketRegime,
+    ...(userContent.regimeSeverity ? { regimeSeverity: userContent.regimeSeverity } : {}),
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
     socraticAuthority: userContent.socraticAuthority,
@@ -3723,6 +3762,7 @@ async function proposeTrades(input: {
   const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime,
+    ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // Re-stamp after the Bear pass: survivors are re-emitted through the Bear's strict schema,
     // which strips proposedByModel — the ORIGIN model is still the Bull's served model.
     proposedByModel: bullServedModel
