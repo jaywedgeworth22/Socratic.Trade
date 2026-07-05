@@ -32,6 +32,17 @@ the bot (scopes `channels:history` + `channels:read` + `chat:write`); run
 `bash scripts/setup-slack-sync.sh` once per machine. Rotate any raw token pasted earlier.
 **Next:** open PR + squash auto-merge; once the token secret exists, post the setup how-to to Fable.
 
+**Update 2026-07-05 (CLAUDE-CLOUD takeover, owner-directed):** PR #367 sat unmerged because
+`verify` never ran on head `fb14f10` (zero check runs, so the armed auto-merge could not fire) and
+the branch fell behind `main`. Monet hit technical issues, so the owner asked CLAUDE-CLOUD to land
+it: merged `origin/main` back in (the merge restored plain `npm ci` in `cloud-setup.sh` — `main`
+deleted `scripts/npm-ci-with-shared-deps.sh` when the shared dep went public git+https in #444),
+scrubbed the stale Test-mode/`paperMode` header comments (removed from the product 2026-07-03),
+resolved keep-both conflicts in `AGENTS.md`/`docs/EFFORT-LOG.md`, and pushed to re-kick `verify`.
+Owner actions now done: `SLACK_BOT_TOKEN` added as a cloud Runtime Secret; the cloud env
+setup-script field points at `bash scripts/cloud-setup.sh`. See
+`docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+
 ## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
 The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
 itemization pass) tripped GitHub's secondary rate limit — 403 "secondary rate limit ...

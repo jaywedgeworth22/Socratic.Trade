@@ -5,9 +5,11 @@
 # Point your environment's "setup script" field at this file:
 #   bash scripts/cloud-setup.sh
 #
-# The app runs keyless in Test mode (local SQLite at data/app.db). No secrets are
-# required to boot. Inject OPENAI_API_KEY only if you want the LLM "Run once" /
-# decide loop. NEVER set paperMode: false here.
+# The app boots keyless: local SQLite at data/app.db is infrastructure (settings,
+# proposals, users), not an execution mode. No secrets are required for the UI,
+# Market Scan, or watchlist/policy/account configuration. Inject OPENAI_API_KEY
+# only if you want the LLM "Run once" / decide loop; placing orders requires a
+# connected broker account (paper or live) - there is no local-simulation fallback.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -21,7 +23,7 @@ npm ci
 # Give the sandbox explicit, safe defaults + a place for injected secrets.
 # Non-destructive: never clobber an existing .env.local.
 if [ ! -f .env.local ] && [ -f .env.example ]; then
-  echo "==> Seeding .env.local from .env.example (Test-mode defaults; keys blank)"
+  echo "==> Seeding .env.local from .env.example (keys blank)"
   cp .env.example .env.local
 fi
 
