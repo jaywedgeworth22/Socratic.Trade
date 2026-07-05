@@ -273,6 +273,43 @@ describe("PHASE 4 — extractLearnedCandidates lights up dormant pattern/decisio
   });
 });
 
+// ── inline provenance (CR-H prompt-safety lane, 2026-07-05) ─────────────────────
+// The line formatter now carries origin/source/assertedAt/confidence inline so the strategy
+// prompt can weigh a fresh chat-origin assertion differently from an old ingested fact. The
+// selection semantics (per-contributor cap, shared/private isolation) are untouched —
+// retrieveLearnedContext delegates to retrieveLearnedContextDetailed.
+describe("retrieveLearnedContext inline provenance", () => {
+  it("formatted lines carry [origin= source= asserted= conf=] from the row", () => {
+    insertLearnedContext(
+      makeRow({
+        userId: "prov-user",
+        contributorUserId: "prov-user",
+        subject: "fact:AMD",
+        symbol: "AMD",
+        value: "AMD competes with NVDA in AI accelerators.",
+        source: "owner-chat",
+        origin: "chat",
+        confidence: 0.8,
+        assertedAt: "2026-07-01T09:00:00.000Z"
+      })
+    );
+    const lines = retrieveLearnedContext("prov-user", ["AMD"]);
+    const line = lines.find((l) => l.includes("fact:AMD"));
+    expect(line).toBeTruthy();
+    expect(line).toContain("- [AMD] fact:AMD: AMD competes with NVDA in AI accelerators.");
+    expect(line).toContain("[origin=chat source=owner-chat asserted=2026-07-01 conf=0.8]");
+  });
+
+  it("retrieveLearnedContextDetailed returns the same lines plus the underlying rows", async () => {
+    const { retrieveLearnedContextDetailed } = await import("../src/lib/learned-context/store");
+    const detailed = retrieveLearnedContextDetailed("prov-user", ["AMD"]);
+    expect(detailed.lines).toEqual(retrieveLearnedContext("prov-user", ["AMD"]));
+    const row = detailed.rows.find((r) => r.subject === "fact:AMD");
+    expect(row?.assertedAt).toBe("2026-07-01T09:00:00.000Z");
+    expect(row?.origin).toBe("chat");
+  });
+});
+
 // ── retrieval relevance ─────────────────────────────────────────────────────────
 describe("retrieveLearnedContext relevance", () => {
   it("returns symbol-matched and symbol-less facts, formatted as advisory bullets", async () => {

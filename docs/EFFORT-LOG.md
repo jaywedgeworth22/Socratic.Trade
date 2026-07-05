@@ -265,6 +265,35 @@ to `socratictrade.com`, record the release commit + date here._
   landing operator handles integration with `origin/main` (7 commits ahead incl. sibling lanes
   `claude/due-jobs-substrate`, `claude/prompt-safety-fencing`).
 
+- **Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path prompts**
+  (CLAUDE backlog lane, worktree `~/apps/trading-wt-prompt-safety`, branch
+  `claude/prompt-safety-fencing`) — **IN PROGRESS 2026-07-05, committed locally, awaiting central
+  landing.** Advisory ONLY (owner philosophy: receipts, never blocks). Slice: (1) fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt enumerating all
+  untrusted blocks (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent;
+  STRATEGY_PROMPT_VERSION 1.4.0→1.5.0; (2) reflection_summary MOVED out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; (3) new leaf `src/lib/prompt-safety.ts`
+  deterministic scanner → `audit('prompt_injection_suspected')` + kind-'safety' decision-case
+  evidence; (4) learned-context lines carry inline provenance `[origin= source= asserted= conf=]`;
+  (5) same-day high-relevance RAG chunk / same-day fact → one aggregated
+  `audit('evidence_age_anomaly')` + 'safety' evidence item; (6) post-mortem reflection WRITER fenced
+  at source. Tests: `test/prompt-safety.test.ts` (25), `test/strategy-prompt-safety.test.ts` (4 incl.
+  outcome-engine 'safety'-kind tolerance), learned-context provenance extension. tsc clean; focused +
+  adjacent strategy/chat/socratic suites green. See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+
+- **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)** — branch
+  `claude/veto-advisory-overridable`, isolated worktree — **IN PROGRESS 2026-07-05, PR pending.**
+  Deterministic bear filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with
+  `preVetoReasons` instead of dropping; folded into the single sized PolicyDecision → #799's
+  `resolveSocraticOverride` (openings, subject to socraticOverrideMode + cap). Rule 1 stays hard; Rule 4
+  overridable-but-flagged for owner ratification. FIX #1 (no counterfactual on override path — protects
+  getRedTeamEfficacy), FIX #2b (durable deterministic_bear_veto audit), FIX #3 (propose-mode pre-route
+  before sell-to-fund). An independent 3-lens adversarial verify caught + fixed 2 money-path bugs the
+  green suite missed: severe phantom-funding-sell (new `preVetoTaggedOpeningWillPlace` gates the funding
+  notional) + free-text hard-gate misclassification (`isHardGateReason` prefix short-circuit); both
+  regression-tested. Gate: tsc/lint-0/258 files-2540 tests/build. Overlaps unlanded
+  `claude/redteam-policy-aware-routing` (coordinated on #agent-sync; rebase at land). See
+  `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
   Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +
