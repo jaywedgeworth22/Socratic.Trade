@@ -26,7 +26,6 @@ import {
   setStrategyPrompt,
   supersedeLearnedContext
 } from "../db";
-import { emitDashboardEvent } from "../events";
 import { getLearnedContextSharing } from "../db-settings";
 import type {
   LearnedContextCandidate,
@@ -115,9 +114,6 @@ export async function ingestLearned(
       { userId, origin, tier, pendingId: pending.id, subject: candidate.subject, value: candidate.value },
       userId
     );
-    // Push a lightweight SSE event so the dashboard badge refreshes immediately
-    // instead of waiting for the next poll cycle.
-    emitDashboardEvent({ type: "pending-learned-change", userId, at: new Date().toISOString(), detail: { pendingId: pending.id } });
     return { written: null, dropped: null, pending, pendingId: pending.id, tier };
   }
 

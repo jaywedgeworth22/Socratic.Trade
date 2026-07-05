@@ -55,6 +55,22 @@ with the trading half (candlesticks, trend lines, delta). Delivered as:
   Incidental `package-lock.json` libc-field churn from older npm was reverted,
   not committed.)
 
+## Branch-base correction (post-PR)
+
+- The session branch `claude/logo-ideas-c5n61b` was cut from the unmerged
+  `agent/claude-fix-dashboard-quickwins` tip (`57922ee`, dashboard quick-wins),
+  not from `origin/main` — so PR #809's diff accidentally included that lane's
+  code (`app/dashboard-client.tsx`, `src/lib/events.ts`,
+  `src/lib/learned-context/store.ts`), which Codex review flagged.
+- Fixed non-destructively with `git revert 57922ee` on this branch (no
+  force-push, per repo rules). The PR diff vs `main` is now docs/assets-only
+  again; the repo's `--squash` merge convention means `main` receives exactly
+  the docs change. The quick-wins work is untouched on its own branch
+  `agent/claude-fix-dashboard-quickwins` and should land via its own PR —
+  including Codex's P1 finding there (Strategy Studio apply path can merge
+  `strategyAuthority: "decide"` via `updatePolicy` without the decide-mode
+  confirmation gate), which belongs to that lane, not this one.
+
 ## Follow-ups
 
 - Owner to pick a direction (or ask for iterations on a shortlist); then cut
