@@ -46,7 +46,9 @@ Rounds 7-8 (same day): transparent video exports (VP9-alpha WebM + animated WebP
 `docs/branding/firefly/`; ProRes 4444 delivered off-repo, 113 MB) and the console-intro
 animation - an unnamed-asset candlestick chart whose 182 candles fly up-left and settle as the
 SOCRATIC TRADE header wordmark (`console-intro.svg`, one-shot SVG+CSS, shortlist card F7).
-Round 1 remains: ten concept comps — five
+Round 9 (same day): candle realism fix - word/logo candles now have a fat middle body with
+wicks above/below (matching the chart candles) instead of solid bars; all three generators +
+every derived export regenerated. Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the
 existing favicon) — as `logo-concepts.html` (side-by-side light/dark board with rationale) plus 10
