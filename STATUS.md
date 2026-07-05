@@ -8,6 +8,26 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Prompt-safety fencing + injection receipts (CLAUDE, `claude/prompt-safety-fencing`)
+CR-H prompt-safety slice for the money-path prompts — ADVISORY ONLY (receipts + owner-visible
+evidence, never a block; deterministicBearFilter/policy/regime-watch untouched). (1) Bull system
+prompt now fences the owner strategy text in `<owner_strategy_prompt>` and adds ONE
+data-not-command clause enumerating every untrusted block (candidate `news`/`smartMoney`,
+`retrievedFinancialContext`, `learnedContext`, `closestHistoricalAnalogs`, `ownerCoaching`,
+`reflectionSummary`); Bear gets the equivalent clause; `STRATEGY_PROMPT_VERSION` bumped
+1.4.0→1.5.0. (2) `reflection_summary` (raw LLM output persisted by post-mortem) MOVED out of the
+SYSTEM prompt into Bull userContent as a fenced `<reflection_summary>` DATA field — closes the
+laundering path into the system role; the writer's own prompt is also fenced. (3) New leaf
+`src/lib/prompt-safety.ts`: curated-regex `scanForInjectionAttempts` over all untrusted fields →
+`audit("prompt_injection_suspected")` + kind-`safety` evidence on decision cases (union widened in
+types.ts; outcome-engine tolerance covered). (4) `retrieveLearnedContext` lines now carry inline
+provenance `[origin= source= asserted= conf=]` (cap/isolation logic untouched). (5) Same-day
+high-relevance RAG chunks + same-day facts → one aggregated `audit("evidence_age_anomaly")` +
+`safety` evidence item (headlines have no first-seen timestamp — deferred). Tests:
+`test/prompt-safety.test.ts` (25), `test/strategy-prompt-safety.test.ts` (4), learned-context
+extension; tsc clean; adjacent strategy/chat/socratic suites green. Committed locally on
+`claude/prompt-safety-fencing`; central landing operator merges/lands sequentially.
+**Next:** land via the central operator; follow-up = first-seen timestamps for headlines.
 ## 2026-07-05 — Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)
 Branch `claude/veto-advisory-overridable` (isolated worktree), PR pending. Completes the
 "everything overridable except the account boundary" philosophy: the deterministic bear filter
