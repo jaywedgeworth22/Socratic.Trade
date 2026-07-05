@@ -6,7 +6,7 @@
 
 import { useMemo } from "react";
 import type { EquityCurvePoint } from "@/lib/types";
-import { fmtExact, fmtMoney } from "../lib/format";
+import { fmtExact, fmtMoney, fmtPct, fmtSignedMoney } from "../lib/format";
 
 const W = 640;
 const H = 140;
@@ -42,6 +42,13 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
   const path = data.map((d, i) => `${i === 0 ? "M" : "L"}${x(d.t).toFixed(1)},${y(d.v).toFixed(1)}`).join(" ");
   const rising = data[data.length - 1].v >= data[0].v;
   const stroke = rising ? "var(--con-pos)" : "var(--con-neg)";
+  const sameDay = new Date(tMin).toDateString() === new Date(tMax).toDateString();
+  const move = data[data.length - 1].v - data[0].v;
+  const movePct = data[0].v !== 0 ? (move / data[0].v) * 100 : undefined;
+  const tickLabel = (timestamp: number) =>
+    sameDay
+      ? new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : new Date(timestamp).toLocaleDateString();
 
   return (
     <figure>
@@ -55,13 +62,14 @@ export function EquityChart({ points, label }: { points: EquityCurvePoint[]; lab
       </svg>
       <figcaption className="con-num mt-1 flex justify-between text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         <span title={fmtExact(points[0]?.timestamp)}>
-          {new Date(tMin).toLocaleDateString()} · {fmtMoney(data[0].v)}
+          {tickLabel(tMin)} · {fmtMoney(data[0].v)}
         </span>
-        <span>
-          low {fmtMoney(vMin)} · high {fmtMoney(vMax)}
+        <span title={`${label} move over the visible window`}>
+          {fmtSignedMoney(move)}
+          {movePct !== undefined ? ` · ${fmtPct(movePct, 2, true)}` : ""}
         </span>
         <span title={fmtExact(points[points.length - 1]?.timestamp)}>
-          {new Date(tMax).toLocaleDateString()} · {fmtMoney(data[data.length - 1].v)}
+          {tickLabel(tMax)} · {fmtMoney(data[data.length - 1].v)}
         </span>
       </figcaption>
     </figure>

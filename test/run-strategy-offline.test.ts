@@ -75,7 +75,7 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
     expect(typeof STRATEGY_PROMPT_VERSION).toBe("string");
     expect(STRATEGY_PROMPT_VERSION.length).toBeGreaterThan(0);
 
-    const base = { executionMode: "broker/paper", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: false, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    const base = { executionMode: "broker/paper", executionModeClarification: "x", strategyPrompt: "s", hasTaxContext: false, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
     expect(buildBullSystem({ ...base, shortAllowed: false })).toContain("SHORT SELLING IS DISABLED");
     expect(buildBullSystem({ ...base, shortAllowed: true })).toContain("SHORT SELLING IS ENABLED");
     expect(buildBearSystem({ shortAllowed: false })).toContain("Bear Agent");
@@ -84,7 +84,7 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
 
   it("wash-sale prompt guidance: IRA-disregard PERMITS locked rebuys, taking precedence over washSaleHandling", async () => {
     const { buildBullSystem } = await import("../src/lib/strategy-prompts");
-    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
     // "block" (an explicit stricter opt-in, no longer the default): absolute prohibition.
     expect(buildBullSystem({ ...taxBase, washSaleHandling: "block" })).toContain("NEVER propose a BUY of any symbol in `washSaleLockedSymbols`");
     // IRA-disregard PERMITS the rebuy and takes precedence even when washSaleHandling is "block".
@@ -96,7 +96,7 @@ describe("strategy offline eval — versioned prompts build (Chat A item 2)", ()
 
   it("wash-sale prompt guidance: 'auto' (the default) tells the model the buy always proceeds and to weigh the priced tax cost itself", async () => {
     const { buildBullSystem } = await import("../src/lib/strategy-prompts");
-    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", reflection: "", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
+    const taxBase = { shortAllowed: false, executionMode: "test/local", executionModeClarification: "x", strategyPrompt: "s", hasTaxContext: true, holdingHorizon: "swing", maxSymbolExposurePct: 25, stopLossPct: 8, takeProfitPct: 20 };
     const autoPrompt = buildBullSystem({ ...taxBase, washSaleHandling: "auto" });
     // Owner decision 2026-07-03: no deterministic edge-vs-cost threshold language remains — the
     // model is told this is its own judgment call, referencing the priced cost in taxContext.

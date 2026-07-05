@@ -54,7 +54,8 @@ alpaca.trackHealth / robinhood   ─┘   call-volume aggregate; debounced batch
 
 runStrategyOnce entry ──► usage-budget.ts ──GET /api/budget-status──► monitor
    (Phase 1) over-budget → notify(budget_alert)
-   (Phase 2, USAGE_BUDGET_ENFORCE) → downgrade model / skip cycle
+   (Phase 1.5, always on) → audit(usage_budget_status) + Bull prompt advisory line
+   (Phase 2, USAGE_BUDGET_ENFORCE) → downgrade model / skip cycle (+ audit(usage_budget_enforced))
 ```
 
 ### What gets pushed
@@ -106,24 +107,41 @@ cost even if App B also pushes some events for them. Budget alerts reuse
   run entry, `checkBudgetAndAlert` fires a `budget_alert` notification (through the
   existing `sendNotification` pipe) for any provider at `warning`/`exceeded`,
   throttled per (user, provider, level).
-- **Phase 2 — enforcement (default-off, `USAGE_BUDGET_ENFORCE`) — DEFERRED to a
-  follow-up.** `evaluateBudgetForRun` + `cheaperModel` are implemented and tested in
-  `usage-budget.ts` (given the effective served model — resolving `policy.llmModel`
-  through the same default as `resolveLlmEndpoint` — it downgrades the LLM/red model
-  to a cheaper tier, or skips when the green model is already cheapest), but they are
-  **not yet wired into `runStrategyOnce`**. The strategy-loop integration is deferred
-  so it can be done safely, because a naive wiring is dangerous:
-  - the cycle-skip must skip **only the LLM proposal step** — never the broker
-    reconciliation (`reconcilePendingFills`/`flagStalePlacingIntents`) or the
-    risk-reducing exits (drawdown breaker, volatility brake, protective stops);
-  - the downgrade must apply to a **clone** of the policy, never the object
-    `setPolicy` may persist on a breaker trip (else a temporary downgrade becomes
-    permanent);
-  - the override must be threaded into `debateProposal`, which re-loads the
-    persisted policy.
+- **Phase 1.5 — advisory (on whenever the monitor is configured, independent of the
+  enforce flag) — wired 2026-07-05.** Every run reads budget status once and:
+  - stamps a `usage_budget_status` audit receipt with the raw per-provider
+    spend/status plus a **preview** of what enforcement would do
+    (`previewBudgetDecision` — same decision logic as Phase 2 below, but ungated
+    on `USAGE_BUDGET_ENFORCE`, so the owner can see the counterfactual before
+    opting in);
+  - injects a compact `formatBudgetAdvisory()` line into the Bull `userContent`
+    next to `drawdownAdvisory` whenever a provider is at `warning`/`exceeded` —
+    explicitly framed as data for the agent ("YOU decide..."), never a command.
+- **Phase 2 — enforcement (default-off, `USAGE_BUDGET_ENFORCE`) — wired
+  2026-07-05** into `runStrategyOnce` at the existing per-user/day LLM budget
+  choke point (after the drawdown breaker + volatility brake, before any LLM
+  call). `evaluateBudgetForRun` + `cheaperModel` (given the effective served
+  model — resolving `policy.llmModel` through the same default as
+  `resolveLlmEndpoint`) downgrade the LLM/red model to a cheaper tier, or skip
+  the LLM step when the green model is already cheapest. The safety
+  requirements from the original deferral (2026-07-01 Codex PR review) hold:
+  - the cycle-skip skips **only the LLM proposal step** — the run still
+    completes; broker reconciliation (`reconcilePendingFills`/
+    `flagStalePlacingIntents`) and the risk-reducing exits (drawdown breaker,
+    volatility brake, protective stops) already ran before this choke point;
+  - the downgrade applies to the run's **in-memory** `RunnablePolicy` object
+    only, never the object `setPolicy` may persist on a breaker trip — a
+    temporary downgrade never becomes permanent;
+  - the override is threaded into `debateProposal` via its optional 5th
+    `policyOverride` parameter (added alongside this wiring) — the caller in
+    `strategy.ts` passes the same in-memory `policy` object explicitly instead
+    of letting `debateProposal` re-read `getPolicy(userId)` from the DB, so the
+    Bear review picks up the downgraded `redTeamLlmModel` too.
 
-  These requirements came out of the 2026-07-01 Codex PR review (see the rollout
-  note). Phase 1 (alerts) is what's live in this build.
+  See `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md` for the full
+  change (including the new `test/usage-budget-strategy-integration.test.ts`
+  e2e coverage of advisory-only / enforced-downgrade / enforced-skip /
+  evaluator-failure-fail-open).
 
 ## Migration to the shared client
 

@@ -12,6 +12,7 @@ import { SymbolButton } from "../ui/symbol-drilldown";
 
 export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
   const positions = snapshot.positions ?? [];
+  const equity = snapshot.portfolio?.totalMarketValue;
   return (
     <Card title={`Positions (${positions.length})`} padded={false}>
       {positions.length === 0 ? (
@@ -25,6 +26,7 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                 <th className="num" title="Shares held; negative means a short position.">Qty</th>
                 <th className="num" title="Average price paid per share.">Avg cost</th>
                 <th className="num" title="Current market value of the position.">Value</th>
+                <th className="num" title="Share of the account's total market value currently tied to this position.">Weight</th>
                 <th className="num" title="Market value minus cost basis — the gain or loss if you closed now.">Unrealized</th>
                 <th title="What protects this position: a resting broker stop order, an app-managed stop rule, or nothing (—).">Protection</th>
               </tr>
@@ -37,6 +39,7 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                   Number.isFinite(p.marketValue) && Number.isFinite(costBasis) ? p.marketValue - costBasis : undefined;
                 const unrealizedPct =
                   unrealized !== undefined && costBasis !== 0 ? (unrealized / Math.abs(costBasis)) * 100 : undefined;
+                const weightPct = equity && equity !== 0 ? (p.marketValue / equity) * 100 : undefined;
                 const protection = deriveProtection(p, snapshot.orders ?? [], snapshot.policy);
                 const meta = snapshot.symbolMetaBySymbol?.[p.symbol];
                 return (
@@ -55,6 +58,7 @@ export function PositionsCard({ snapshot }: { snapshot: DashboardSnapshot }) {
                     <td className="num con-num">{fmtQty(p.quantity)}</td>
                     <td className="num con-num">{fmtMoney(p.averageCost)}</td>
                     <td className="num con-num">{fmtMoney(p.marketValue)}</td>
+                    <td className="num con-num">{weightPct !== undefined ? fmtPct(weightPct, 1, true) : <Dash />}</td>
                     <td className="num">
                       {unrealized === undefined ? (
                         <Dash />

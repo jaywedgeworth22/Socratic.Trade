@@ -20,7 +20,9 @@ import {
 import type { DashboardSnapshot, StrategyDecision } from "../dashboard-types";
 import { formatSourceList, friendlySource } from "@/lib/dashboard-ui";
 import type { MarketQuote, PendingProposal, SocraticDecisionCase, SocraticFrameworkProposal, TradeProposal } from "@/lib/types";
-import { deriveDayPnl, deriveReality, deriveSpend, deriveStateInfo } from "./lib/derive";
+import { EquityChart } from "./components/equity-chart";
+import { PositionsCard } from "./components/positions";
+import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
 import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
@@ -38,6 +40,13 @@ export default function ConsoleHomePage() {
   const spend = deriveSpend(snapshot);
   const portfolio = snapshot.portfolio;
   const dayPnl = deriveDayPnl(snapshot.performance, reality.mode, portfolio?.totalMarketValue);
+  const markToMarket = deriveMarkToMarket(snapshot);
+  const risk = deriveRiskUtilization(snapshot);
+  const equityWindow = selectEquityWindow(
+    reality.mode === "broker/live"
+      ? snapshot.performance?.liveEquityCurve ?? []
+      : snapshot.performance?.paperEquityCurve ?? []
+  );
   const latest = snapshot.latestStrategyRun;
   const latestRow = snapshot.strategyRuns?.[0];
   const nextRun = snapshot.scheduler?.nextRunAt;
@@ -191,9 +200,14 @@ export default function ConsoleHomePage() {
               />
             </div>
           </Card>
+
+          <MarkToMarketCard markToMarket={markToMarket} equityWindow={equityWindow} />
+          <PositionsCard snapshot={snapshot} />
         </div>
 
         <aside className="flex flex-col gap-4">
+          <RiskUtilizationCard risk={risk} />
+
           <Card
             title={
               <span className="flex items-center gap-1.5">
@@ -290,6 +304,106 @@ export default function ConsoleHomePage() {
   );
 }
 
+function MarkToMarketCard({
+  markToMarket,
+  equityWindow
+}: {
+  markToMarket: ReturnType<typeof deriveMarkToMarket>;
+  equityWindow: ReturnType<typeof selectEquityWindow>;
+}) {
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-1.5">
+          <TrendingUp size={13} /> Mark to market
+        </span>
+      }
+    >
+      {!markToMarket ? (
+        <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+          No open positions are marked yet for this account.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat label="Open market value" value={fmtMoney(markToMarket.marketValue)} />
+            <div>
+              <div className="con-card-title">Open P&amp;L</div>
+              <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight">
+                <SignedText value={markToMarket.unrealizedPnl}>
+                  {fmtSignedMoney(markToMarket.unrealizedPnl)}
+                  {markToMarket.unrealizedPct !== undefined ? ` (${fmtPct(markToMarket.unrealizedPct, 2, true)})` : ""}
+                </SignedText>
+              </div>
+              <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                vs open cost basis {fmtMoney(markToMarket.costBasis)}
+              </div>
+            </div>
+            <Stat label="Cash" value={fmtMoney(markToMarket.cash)} />
+            <Stat label="Buying power" value={fmtMoney(markToMarket.buyingPower)} />
+          </div>
+          <div className="mt-4 border-t border-[color:var(--con-line)] pt-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="con-card-title">{equityWindow.label}</div>
+              <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                persisted account snapshots only
+              </span>
+            </div>
+            <EquityChart points={equityWindow.points} label={equityWindow.label.toLowerCase()} />
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtilization> }) {
+  const rows = [
+    {
+      label: "Daily notional",
+      used: fmtMoney(risk.dailyNotional.used),
+      limit: typeof risk.dailyNotional.limit === "number" ? fmtMoneyWhole(risk.dailyNotional.limit) : "no cap",
+      pct: risk.dailyNotional.pct
+    },
+    {
+      label: "Opening orders",
+      used: String(risk.dailyOrders.used),
+      limit: String(risk.dailyOrders.limit ?? 0),
+      pct: risk.dailyOrders.pct
+    },
+    {
+      label: "Capital deployed",
+      used: fmtMoney(risk.investedCapital.used),
+      limit: typeof risk.investedCapital.limit === "number" ? fmtMoney(risk.investedCapital.limit) : "n/a",
+      pct: risk.investedCapital.pct
+    }
+  ];
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-1.5">
+          <Database size={13} /> Risk utilization
+        </span>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="mb-1 flex items-center justify-between gap-3 text-[length:var(--con-fs-sm)]">
+              <span className="font-semibold">{row.label}</span>
+              <span className="con-num text-[color:var(--con-muted)]">
+                {row.used} of {row.limit}
+                {row.pct !== undefined ? ` · ${fmtPct(row.pct, 1)}` : ""}
+              </span>
+            </div>
+            <Meter value={row.pct !== undefined ? Math.min(row.pct, 100) : 0} max={100} />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 type DecisionRowData = {
   id: string;
   symbol: string;
@@ -297,6 +411,7 @@ type DecisionRowData = {
   size: string;
   status: string;
   rationale: string;
+  href?: string;
   title?: string;
   confidence?: number;
 };
@@ -366,6 +481,7 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
     size: decision.notional ? fmtMoney(decision.notional) : EM_DASH,
     status: decision.status,
     rationale: withBlockReasons(rationale, decision.status, reasons),
+    href: `/console/decisions/${encodeURIComponent(decision.id)}`,
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
     confidence: decision.confidenceScore
   };
@@ -557,6 +673,11 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
       <div className="text-right">
         <div className="con-num font-semibold">{row.size}</div>
         {typeof row.confidence === "number" && <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">conf {row.confidence}</div>}
+        {row.href && (
+          <Link href={row.href} className="mt-1 inline-flex text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
+            Trace
+          </Link>
+        )}
       </div>
     </article>
   );
