@@ -28,6 +28,7 @@ import {
   stopEverything
 } from "../lib/api";
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
+import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
@@ -714,16 +715,49 @@ export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 // ── Freshness strip ──────────────────────────────────────────────────────────
 
-export function FreshnessStrip({ snapshot, fetchedAt, error }: { snapshot: DashboardSnapshot; fetchedAt: Date | null; error: string | null }) {
+export function FreshnessStrip({
+  snapshot,
+  fetchedAt,
+  error,
+  stream
+}: {
+  snapshot: DashboardSnapshot;
+  fetchedAt: Date | null;
+  error: string | null;
+  stream: ConsoleStreamHealth;
+}) {
   const spend = deriveSpend(snapshot);
   const scanAt = snapshot.latestStrategyRun?.marketScan?.generatedAt;
   const nextRun = snapshot.scheduler?.nextRunAt;
+  const freshnessLabel =
+    error ? "delayed"
+    : fetchedAt == null ? "loading"
+    : stream.status === "reconnecting" ? "aging"
+    : "fresh";
+  const streamLabel =
+    stream.status === "live"
+      ? "stream live"
+      : stream.status === "connecting"
+        ? "stream connecting"
+        : stream.status === "reconnecting"
+          ? "stream reconnecting"
+          : "polling only";
+  const streamTitle =
+    stream.status === "live"
+      ? `Connected ${stream.connectedAt ? fmtExact(stream.connectedAt.toISOString()) : "recently"}${stream.lastEventType ? `; last push ${stream.lastEventType}${stream.lastEventAt ? ` at ${fmtExact(stream.lastEventAt.toISOString())}` : ""}` : ""}.`
+      : stream.status === "reconnecting"
+        ? `The push stream hit an error${stream.lastErrorAt ? ` at ${fmtExact(stream.lastErrorAt.toISOString())}` : ""}; EventSource will retry automatically while polling continues.`
+        : stream.status === "connecting"
+          ? "Opening the push stream now."
+          : "This browser does not expose EventSource, so the console is using polling only.";
   return (
     <div className="border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5">
         <span title="When this console last fetched data. It refreshes about every 15 seconds.">
-          Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · quotes may be delayed
+          Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · {freshnessLabel} · quotes may be delayed
         </span>
+        <span title={streamTitle}>{streamLabel}</span>
+        {stream.lastEventAt && stream.lastEventType && <span title={fmtExact(stream.lastEventAt.toISOString())}>Push {stream.lastEventType} {timeAgo(stream.lastEventAt.toISOString())}</span>}
         {scanAt && <span title={fmtExact(scanAt)}>Scan {timeAgo(scanAt)}</span>}
         {snapshot.marketSession && <span>Market: {snapshot.marketSession}</span>}
         {nextRun && snapshot.policy.systemState === "active" && <span title={fmtExact(nextRun)}>Next run {timeUntil(nextRun)}</span>}
