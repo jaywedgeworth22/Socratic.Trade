@@ -34,6 +34,19 @@ standalone SVGs and a README. Palette derives from existing tokens (`#0f1722`/`#
 no app code touched, `public/icon.svg` unchanged. Blocker: none. Next action: owner picks a
 direction (suggested shortlist A/D/F/G); winner gets redrawn with outlined letterforms + favicon/
 app-icon/mono variants. See `docs/rollouts/2026-07-05-logo-concepts.md`.
+## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
+Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
+`executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;
+~12–13s/test solo → >30s under 4-worker load); the chat-orchestrator file paid the ~15s
+orchestrator module-graph import inside the first test's 20s `testTimeout`. Fix: partial-mock
+`scanMarket` (importOriginal; everything else real) in `test/order-confirmation-status.test.ts`
+AND `test/approval-lock.test.ts` (same class — its 2026-06-21 fix only padded timeouts), and
+hoist the orchestrator import into `beforeAll(…, 120_000)` in
+`test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
+green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
+`docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+**Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
+
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
 Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
@@ -4131,6 +4144,22 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-07-05 (`claude/logo-ideas-c5n61b`): **Logo concept exploration — 12 marks.** First brand
+  exploration for Socratic.Trade: twelve logo concepts (Socratic question/dialogue/Greek-antiquity ×
+  candlestick/trend/delta) delivered as a theme-aware showcase `docs/branding/logo-ideas.html`
+  (source of truth — marks are SVG `<symbol>`s, previewed on light+dark chips w/ favicon-scale
+  copies + lockups), 12 extracted standalone SVGs in `docs/branding/logo-ideas/`, and a concept
+  index `docs/branding/logo-ideas.md`. Single ink + existing emerald `#0e9f6e` discipline so any
+  pick drops into current UI tokens. Recommendation: **Phi** (app icon/favicon), The Inquiry
+  (storytelling), The Examined Trade (reports). Docs/assets only — no code. Owner picks a
+  direction next; then real exports (favicon.ico, app icons, OG) + `app/layout.tsx` wiring. See
+  `docs/rollouts/2026-07-05-logo-ideas.md`. **Final: owner selected Dialectic** (bubble tails
+  redrawn as integrated outline paths in v2 per feedback), saved as `dialectic.svg` + new
+  `dialectic-lockup.svg` (mark + `Socratic.Trade` name beside it); Examined Trade + Stoa were
+  shortlist runners-up, kept in archive. Next = cut exports (favicon/app-icon/OG) from the two
+  saved assets, outline the lockup serif to paths, wire `app/layout.tsx` metadata. Note: PR #801
+  (another session, same day) carries a separate 14-concept exploration — owner may want to
+  reconcile the two boards.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**
