@@ -240,9 +240,13 @@ async function tick(): Promise<void> {
     console.error("[scheduler] congress-share daily batch error:", err)
   );
 
-  // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
-  // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
-  void checkRegimeFlip().catch((err) => console.error("[scheduler] regime check error:", err));
+  // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded. Runs per-user so
+  // each user's stored regime label is independent; multi-user setups can't share one KV row.
+  for (const userId of listUsers()) {
+    void checkRegimeFlip(userId).catch((err) =>
+      console.error(`[scheduler] regime check error for ${userId}:`, err)
+    );
+  }
 
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));

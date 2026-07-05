@@ -13,7 +13,7 @@ import type { TradingPolicy } from "./types";
 let db: Database.Database | undefined;
 const SP500_DEFAULT_UNIVERSE_MIGRATION_KEY = "migration:sp500_default_universe:2026-06-19";
 
-function databasePath(): string {
+export function databasePath(): string {
   const value = process.env.DATABASE_URL ?? "file:./data/app.db";
   return resolve(value.replace(/^file:/, ""));
 }

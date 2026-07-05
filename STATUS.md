@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Admin connection health and backend-failure notification pass (Antigravity)
+Branch `cursor/session-2026-07-05` (representing AG/Antigravity session). Implements the composite expert review's connection health and backend-failure notification pass:
+1. **API Dependency Health & Key Resolution:** `/api/health` now queries the database and surfaces the status of all global dependencies (Database, Pinecone, Voyage, etc.). Degraded RAG status is flagged if Pinecone or Voyage keys are not configured.
+2. **Fail-Closed Critical Outages:** `/api/health` returns `503` (instead of `200`) if any critical global dependency (Database, Pinecone, or Voyage) is in a `stoppedWorking` state (5 consecutive failures).
+3. **Global vs User Failure Routing:** Added `alertConnectionFailure` in `src/lib/db-health.ts` hooked into `logApiHealth`. If a global dependency stops working, it sends a Sentry alert, logs an audit event, and routes an email to the admin (`process.env.PRIMARY_USER_EMAIL` via Resend). User-specific key failures are routed strictly to user in-app notifications.
+4. **Storage & Headroom Monitoring:** `/api/health` and the `ops-snapshot` now query and report disk free space, SQLite database and WAL file sizes, and Litestream last-sync age (by checking the mtime of files in `<dbPath>-litestream`). Degraded state triggers cooldown-controlled email warnings.
+5. **Verification:** Added `test/connection-health-routing.test.ts`. 2454 unit tests pass green, `npx tsc --noEmit` clean, and Next.js production build succeeded completely.
+
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single

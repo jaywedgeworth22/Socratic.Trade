@@ -1,7 +1,35 @@
 import { getInternalSetting } from "./db-settings";
-import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy } from "./db";
+import { getDb, getLastStrategyRunStartedAt, listConnectedAccounts, listUsers, peekPolicy, getServiceHealthSummaries, databasePath } from "./db";
 import { userHasAnyLlmCredential } from "./db-api-keys";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { statSync, statfsSync, readdirSync } from "fs";
+import { dirname, join } from "path";
+
+function getLitestreamLastSyncAge(dbPath: string): number | null {
+  const litestreamDir = `${dbPath}-litestream`;
+  try {
+    let newestMs = 0;
+    const findNewest = (dir: string) => {
+      const files = readdirSync(dir);
+      for (const file of files) {
+        const fullPath = join(dir, file);
+        const stat = statSync(fullPath);
+        if (stat.isDirectory()) {
+          findNewest(fullPath);
+        } else {
+          if (stat.mtimeMs > newestMs) {
+            newestMs = stat.mtimeMs;
+          }
+        }
+      }
+    };
+    findNewest(litestreamDir);
+    if (newestMs === 0) return null;
+    return Math.round((Date.now() - newestMs) / 1000);
+  } catch {
+    return null;
+  }
+}
 
 const OPS_AUDIT_KINDS = new Set([
   "strategy_run",
@@ -69,6 +97,8 @@ export interface OpsSnapshot {
   asOf: string;
   schedulerLastTick: string | null;
   schedulerAgeSeconds: number | null;
+  dependencies?: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }>;
+  storage?: Record<string, any> | null;
   users: OpsUserSnapshot[];
 }
 
@@ -249,10 +279,62 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
     });
   }
 
+  const dependencies: Record<string, { ok: boolean; reason?: string | null; lastFailure?: string | null }> = {};
+  try {
+    const summaries = getServiceHealthSummaries();
+    for (const summary of summaries) {
+      const isGlobal = summary.keySource === "env" || summary.keySource === "none" || summary.keySource === null;
+      if (isGlobal) {
+        dependencies[summary.service] = {
+          ok: !summary.stoppedWorking,
+          reason: summary.stoppedReason,
+          lastFailure: summary.lastFailureError
+        };
+      }
+    }
+  } catch {}
+
+  let storage: Record<string, unknown> | null = null;
+  try {
+    const dbPath = databasePath();
+    const walPath = `${dbPath}-wal`;
+    const dbDir = dirname(dbPath);
+
+    let dbSizeBytes = 0;
+    try {
+      dbSizeBytes = statSync(dbPath).size;
+    } catch {}
+
+    let walSizeBytes = 0;
+    try {
+      walSizeBytes = statSync(walPath).size;
+    } catch {}
+
+    let freeBytes = 0;
+    let totalBytes = 0;
+    try {
+      const stats = statfsSync(dbDir);
+      freeBytes = stats.bavail * stats.bsize;
+      totalBytes = stats.blocks * stats.bsize;
+    } catch {}
+
+    const litestreamAgeSeconds = getLitestreamLastSyncAge(dbPath);
+
+    storage = {
+      dbSizeBytes,
+      walSizeBytes,
+      freeBytes,
+      totalBytes,
+      litestreamAgeSeconds
+    };
+  } catch {}
+
   return {
     asOf: new Date().toISOString(),
     schedulerLastTick: lastTick ?? null,
     schedulerAgeSeconds: Number.isFinite(tickMs) ? Math.round((Date.now() - tickMs) / 1000) : null,
+    dependencies,
+    storage,
     users
   };
 }

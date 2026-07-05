@@ -198,6 +198,8 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Admin connection health and backend-failure notification pass (AG, L) — COMPLETED 2026-07-05 — ready to land.** Branch `cursor/session-2026-07-05`. Surfaces every backend dependency in `/api/health` and the `ops-snapshot` payload (Database, Pinecone, Voyage, FMP, Massive, etc.); fails the health check (503 status) on critical global outages (5 consecutive failures on Database, Pinecone, or Voyage). Routes global connection failures (Sentry, audit log) and degradation warning emails to the admin (`process.env.PRIMARY_USER_EMAIL` via Resend), while user-key failures remain strictly on user in-app notifications. Also integrates disk headroom, database + WAL size, and Litestream last-sync age monitoring into `/api/health` and the snapshot, with cooldown-controlled alerts on degradation. Verification: Added `test/connection-health-routing.test.ts`. 2454 unit tests pass green, tsc clean, Next.js build green.
+
 - **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
   GitHub Actions minutes efficiency pass — personal Pro-plan quota (3,000 min/mo) was exhausted.
   `.github/workflows/ci.yml`: new cheap `classify` job computes on `pull_request` events whether

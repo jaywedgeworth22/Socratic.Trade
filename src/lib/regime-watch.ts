@@ -10,7 +10,9 @@ import { determineMarketRegime, fetchMacroDataWithLiveVix } from "./macro";
 import { emitDashboardEvent } from "./events";
 import { broadcastMaterialEvent } from "./triggers";
 
-const REGIME_KEY = "regime:current";
+function regimeKey(userId: string): string {
+  return `regime:current:${userId}`;
+}
 
 /**
  * Regimes the expert panel flagged for escalation (kept here for downstream consumers).
@@ -34,18 +36,19 @@ export function isEscalationRegime(label: string): boolean {
  * the bare 24h-cached fetchMacroData snapshot — flip detection off a day-old VIX could miss an
  * intraday regime change (and the panic brake above it) for up to a day.
  */
-export async function checkRegimeFlip(userId: string = "local"): Promise<void> {
+export async function checkRegimeFlip(userId: string): Promise<void> {
   const macro = await fetchMacroDataWithLiveVix(userId);
   const next = determineMarketRegime(macro);
-  const prev = getInternalSetting<string>(REGIME_KEY);
+  const key = regimeKey(userId);
+  const prev = getInternalSetting<string>(key);
 
   if (!prev) {
-    setInternalSetting(REGIME_KEY, next); // seed; don't announce a "flip" from nothing
+    setInternalSetting(key, next); // seed; don't announce a "flip" from nothing
     return;
   }
   if (prev === next) return;
 
-  setInternalSetting(REGIME_KEY, next);
+  setInternalSetting(key, next);
   audit(
     "regime_flip",
     { from: prev, to: next, vix: macro.vix, vixAsOf: macro.vixAsOf, fedFunds: macro.fedFundsRate, dgs10: macro.dgs10Treasury, escalation: isEscalationRegime(next) },

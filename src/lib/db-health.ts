@@ -145,6 +145,14 @@ export function logApiHealth(opts: {
         ).run(patternId, opts.service, fingerprint, opts.errorText, now, now, patternKeySource);
       }
     })();
+
+    if (!opts.ok && opts.errorText) {
+      const keySource = opts.keySource ?? null;
+      const lane = getLaneHealth(opts.service, keySource);
+      if (lane.stoppedWorking) {
+        void alertConnectionFailure(opts.service, keySource, opts.userId ?? null, opts.errorText);
+      }
+    }
   } catch {
     // Health logging must never throw — swallow all errors
   }
@@ -344,5 +352,198 @@ export function getAllErrorPatterns(): Record<string, ErrorPatternRow[]> {
     return result;
   } catch {
     return {};
+  }
+}
+
+// ── Connection Health & Storage Alerts ────────────────────────────────────────
+
+const HEALTH_ALERT_COOLDOWN_PREFIX = "healthAlertSent";
+const HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // 6 hours
+
+const STORAGE_ALERT_COOLDOWN_PREFIX = "storageAlertSent";
+const STORAGE_ALERT_COOLDOWN_MS = 12 * 60 * 60_000; // 12 hours
+
+function operatorAlertEmail(): string | undefined {
+  return (
+    process.env.USAGE_LIMIT_ALERT_EMAIL?.trim() ||
+    process.env.ADMIN_ALERT_EMAIL?.trim() ||
+    process.env.PRIMARY_USER_EMAIL?.trim() ||
+    undefined
+  );
+}
+
+async function captureHealthSentryMessage(
+  level: "warning" | "error",
+  message: string,
+  context: Record<string, string | number | boolean | null | undefined>
+): Promise<void> {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    const mod = (await import("@sentry/nextjs")) as typeof import("@sentry/nextjs") & {
+      default?: typeof import("@sentry/nextjs");
+    };
+    const captureMessage = mod.captureMessage ?? mod.default?.captureMessage;
+    const withScope = mod.withScope ?? mod.default?.withScope;
+    if (typeof captureMessage !== "function" || typeof withScope !== "function") return;
+    withScope((scope) => {
+      scope.setLevel(level);
+      scope.setTag("component", "api-health");
+      if (context.service) scope.setTag("health.service", String(context.service));
+      if (context.keySource) scope.setTag("health.key_source", String(context.keySource));
+      scope.setContext("api-health", context);
+      captureMessage(message);
+    });
+  } catch {
+    // Observability must not affect trading control flow.
+  }
+}
+
+export async function alertConnectionFailure(
+  service: string,
+  keySource: string | null,
+  userId: string | null,
+  errorText: string
+): Promise<void> {
+  try {
+    const targetUserId = userId || "local";
+    const actualKeySource = keySource || "none";
+    const key = `${HEALTH_ALERT_COOLDOWN_PREFIX}:${service}:${actualKeySource}:${targetUserId}`;
+
+    // Cooldown check
+    const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    const last = getInternalSetting<string>(key);
+    if (last && Date.now() - Date.parse(last) < HEALTH_ALERT_COOLDOWN_MS) return;
+    setInternalSetting(key, new Date().toISOString());
+
+    const isGlobal = actualKeySource !== "user";
+    const title = `${service} connection failed`;
+    const body = `Connection to ${service} (${actualKeySource} lane) failed: ${errorText}`;
+
+    const payload = {
+      service,
+      keySource: actualKeySource,
+      userId: targetUserId,
+      errorText,
+      global: isGlobal
+    };
+
+    // Log audit event
+    audit("connection_health_alert", payload, targetUserId);
+
+    // Send Sentry event
+    await captureHealthSentryMessage(isGlobal ? "error" : "warning", title, {
+      service,
+      keySource: actualKeySource,
+      userSpecific: !isGlobal,
+      reason: errorText
+    });
+
+    if (isGlobal) {
+      // Global failures: Route to admin email and health
+      const { getNotifyPrefs } = await import("./db");
+      const prefs = getNotifyPrefs("local");
+      const { loadNotifyConfig, notify } = await import("./notify");
+
+      const fallbackEmail = operatorAlertEmail();
+      const config = loadNotifyConfig();
+
+      if (fallbackEmail && config.email.resendKey && config.email.from) {
+        if (!prefs.channels.includes("email") || !prefs.email.trim()) {
+          const forcedPrefs = {
+            ...prefs,
+            channels: ["email" as any],
+            email: fallbackEmail,
+            updatedAt: prefs.updatedAt
+          };
+          await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
+        } else {
+          await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
+        }
+      }
+
+      // Also send standard notification
+      const { sendNotification } = await import("./notifications");
+      const { getPolicy } = await import("./db");
+      const policy = getPolicy("local");
+      const forcedPolicy = {
+        ...policy,
+        notificationSettings: {
+          ...policy.notificationSettings,
+          enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        }
+      };
+      await sendNotification({ type: "provider_degraded", title, payload }, { userId: "local", policy: forcedPolicy as any }).catch(() => {});
+    } else {
+      // User-key failures: Route to user notifications only
+      const { sendNotification } = await import("./notifications");
+      const { getPolicy } = await import("./db");
+      const policy = getPolicy(targetUserId);
+      const forcedPolicy = {
+        ...policy,
+        notificationSettings: {
+          ...policy.notificationSettings,
+          enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+        }
+      };
+      await sendNotification({ type: "provider_degraded", title, payload }, { userId: targetUserId, policy: forcedPolicy as any }).catch(() => {});
+
+      const { notify } = await import("./notify");
+      await notify(targetUserId, { title, body, kind: "provider_degraded", data: payload }).catch(() => {});
+    }
+  } catch {
+    // Health alerts must never throw
+  }
+}
+
+export async function alertStorageWarning(warningType: string, message: string): Promise<void> {
+  try {
+    const key = `${STORAGE_ALERT_COOLDOWN_PREFIX}:${warningType}`;
+    const { getInternalSetting, setInternalSetting, audit } = await import("./db");
+    const last = getInternalSetting<string>(key);
+    if (last && Date.now() - Date.parse(last) < STORAGE_ALERT_COOLDOWN_MS) return;
+    setInternalSetting(key, new Date().toISOString());
+
+    const title = `Storage Warning: ${warningType.replace(/_/g, " ")}`;
+    const body = message;
+    const payload = { warningType, message };
+
+    audit("storage_warning_alert", payload, "local");
+
+    // Route to admin email
+    const { getNotifyPrefs } = await import("./db");
+    const prefs = getNotifyPrefs("local");
+    const { loadNotifyConfig, notify } = await import("./notify");
+
+    const fallbackEmail = operatorAlertEmail();
+    const config = loadNotifyConfig();
+
+    if (fallbackEmail && config.email.resendKey && config.email.from) {
+      if (!prefs.channels.includes("email") || !prefs.email.trim()) {
+        const forcedPrefs = {
+          ...prefs,
+          channels: ["email" as any],
+          email: fallbackEmail,
+          updatedAt: prefs.updatedAt
+        };
+        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config, prefs: forcedPrefs }).catch(() => {});
+      } else {
+        await notify("local", { title, body, kind: "provider_degraded", data: payload }, { config }).catch(() => {});
+      }
+    }
+
+    // Also send standard notification
+    const { sendNotification } = await import("./notifications");
+    const { getPolicy } = await import("./db");
+    const policy = getPolicy("local");
+    const forcedPolicy = {
+      ...policy,
+      notificationSettings: {
+        ...policy.notificationSettings,
+        enabledEvents: Array.from(new Set([...policy.notificationSettings.enabledEvents, "provider_degraded" as const])) as any
+      }
+    };
+    await sendNotification({ type: "provider_degraded", title, payload }, { userId: "local", policy: forcedPolicy as any }).catch(() => {});
+  } catch {
+    // never throw on warnings
   }
 }
