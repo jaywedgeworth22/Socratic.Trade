@@ -7,24 +7,28 @@
 
 import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { determineMarketRegime, fetchMacroDataWithLiveVix } from "./macro";
+import { isEscalationMarketRegime, regimeFromLabel } from "./market-regime";
 import { emitDashboardEvent } from "./events";
 import { broadcastMaterialEvent } from "./triggers";
 
 const REGIME_KEY = "regime:current";
 
 /**
- * Regimes the expert panel flagged for escalation (kept here for downstream consumers).
- * Kept as a plain substring check (not `regimeFromLabel`/`isEscalationMarketRegime` from
- * ./macro) deliberately: test/regime-watch.test.ts mocks the ENTIRE `./macro` module
- * (`vi.doMock("../src/lib/macro", ...)`) supplying only `fetchMacroData`/`determineMarketRegime`
- * with test-local label strings ("Neutral (Moderate)", not the real "Neutral (Normal
- * Volatility)"), so importing the typed helpers here would break under that mock. The
- * canonical typed path is `isEscalationMarketRegime`/`regimeFromLabel` in ./macro — use those
- * from any NEW consumer that doesn't need to tolerate a fully-mocked macro module.
+ * Regimes the expert panel flagged for escalation. Delegates to the shared typed source of truth
+ * (`isEscalationMarketRegime` ∘ `regimeFromLabel`) so this consumer, the crisis cap (policy.ts),
+ * and the bear filter (strategy.ts) can never silently desync on a regime relabel — the
+ * string-coupling the typed `MarketRegime` enum was introduced to kill.
+ *
+ * Imported from ./market-regime (a dependency-free module), NOT ./macro: test/regime-watch.test.ts
+ * mocks the ENTIRE `./macro` module (`vi.doMock("../src/lib/macro", ...)`), so importing the typed
+ * helpers from ./macro would return `undefined` under that mock. ./market-regime is unmocked, so the
+ * real classifier runs. Behavior is unchanged on every canonical persisted label (crisis / risk-off /
+ * cautious-inverted → escalation; neutral / risk-on → not) AND on the test's non-canonical
+ * "Neutral (Moderate)" (→ unknown → not); a non-canonical free-text label now reads non-escalating
+ * rather than accidentally matching a substring.
  */
 export function isEscalationRegime(label: string): boolean {
-  const l = label.toLowerCase();
-  return l.includes("crisis") || l.includes("inverted") || l.includes("risk-off");
+  return isEscalationMarketRegime(regimeFromLabel(label));
 }
 
 /**
