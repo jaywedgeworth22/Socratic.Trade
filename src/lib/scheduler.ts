@@ -254,6 +254,13 @@ async function tick(): Promise<void> {
     .then(({ processPendingMobileCommands }) => processPendingMobileCommands({ limit: 5 }))
     .catch((err) => console.error("[scheduler] mobile-command worker error:", err));
 
+  // Durable due-jobs: drain due 15m/1h intraday outcome-sampling jobs (db-jobs.ts + outcome-engine's
+  // drainDueIntradaySampleJobs) so sampling survives process downtime instead of depending on a
+  // strategy run coincidentally landing inside the narrow tolerance window.
+  void import("./outcome-engine")
+    .then(({ drainDueIntradaySampleJobs }) => drainDueIntradaySampleJobs())
+    .catch((err) => console.error("[scheduler] due-jobs intraday sample drain error:", err));
+
   try {
 
     // --- Per-Account Scheduling ---

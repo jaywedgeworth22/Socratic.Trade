@@ -1,4 +1,5 @@
 import {
+  enqueueDueJob,
   getCounterfactualLearningWatermark,
   insertSkippedCounterfactualCandidate,
   listPendingSkippedCounterfactuals,
@@ -6,13 +7,15 @@ import {
   markSkippedCounterfactualChecked,
   markSkippedCounterfactualMatured,
   markSkippedCounterfactualUnresolvable,
-  setCounterfactualLearningWatermark
+  setCounterfactualLearningWatermark,
+  skippedCounterfactualId
 } from "./db";
 import { fetchDailyOHLC, toBusinessDay } from "./history";
 import type { OHLCBar } from "./indicators";
 import { addTradingDays, marketDateOf } from "./market-calendar";
 import { normalizeSymbol } from "./money";
 import {
+  buildIntradaySampleJobSpecs,
   computeDailyHorizonRows,
   computeIntradayHorizonRows,
   mergeHorizonRows,
@@ -211,6 +214,50 @@ export async function materializeSkippedCandidateCounterfactuals(
  * propose but a human/policy then rejected. Additive: reuses insertSkippedCounterfactualCandidate
  * (INSERT OR IGNORE) so it never double-counts and writes no fills/orders. Returns true if inserted.
  */
+/**
+ * Enqueue the pair of 'sample_intraday_horizon' due-jobs (15m/1h) for a skipped-candidate
+ * counterfactual whose (refPrice, snapshotAt) basis is known immediately at insert time. Fire-safe
+ * by construction — enqueueDueJob is a plain INSERT OR IGNORE and never throws; wrapped anyway so a
+ * future change to that guarantee can't take the counterfactual pipeline down with it.
+ */
+function enqueueIntradaySampleJobs(input: {
+  caseId: string;
+  runId: string;
+  symbol: string;
+  horizonDays: number;
+  refPrice: number;
+  snapshotAt: string;
+  regime?: string;
+  userId: string;
+  connectedAccountId?: string;
+}): void {
+  try {
+    const specs = buildIntradaySampleJobSpecs({
+      caseKind: "counterfactual",
+      caseId: input.caseId,
+      runId: input.runId,
+      symbol: input.symbol,
+      horizonDays: input.horizonDays,
+      basisPrice: input.refPrice,
+      basisAtMs: Date.parse(input.snapshotAt),
+      priceBasisPrefix: "ref_price"
+    });
+    for (const spec of specs) {
+      enqueueDueJob({
+        jobType: "sample_intraday_horizon",
+        dedupeKey: spec.dedupeKey,
+        dueAt: spec.dueAt,
+        notAfter: spec.notAfter,
+        payload: spec.payload,
+        userId: input.userId,
+        connectedAccountId: input.connectedAccountId
+      });
+    }
+  } catch (err) {
+    console.warn("[counterfactual-learning] intraday sample job enqueue failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function recordRejectedProposalCounterfactual(input: {
   userId?: string;
   connectedAccountId?: string;
@@ -231,7 +278,7 @@ export function recordRejectedProposalCounterfactual(input: {
   const horizonDays = boundedInteger(input.horizonDays ?? envHorizonDays(), 1, 252, DEFAULT_HORIZON_DAYS);
   const targetDate = targetBusinessDate(snapshotAt, horizonDays);
   if (!targetDate) return false;
-  return insertSkippedCounterfactualCandidate({
+  const inserted = insertSkippedCounterfactualCandidate({
     userId,
     connectedAccountId: input.connectedAccountId,
     runId: input.runId,
@@ -243,6 +290,19 @@ export function recordRejectedProposalCounterfactual(input: {
     regime: nonEmpty(input.regime),
     now: new Date(nowMs).toISOString()
   });
+  if (inserted) {
+    enqueueIntradaySampleJobs({
+      caseId: skippedCounterfactualId(userId, input.runId, symbol, horizonDays),
+      runId: input.runId,
+      symbol,
+      horizonDays,
+      refPrice,
+      snapshotAt,
+      userId,
+      connectedAccountId: input.connectedAccountId
+    });
+  }
+  return inserted;
 }
 
 function ingestSignalSnapshot(
@@ -281,6 +341,16 @@ function ingestSignalSnapshot(
       })
     ) {
       inserted += 1;
+      enqueueIntradaySampleJobs({
+        caseId: skippedCounterfactualId(context.userId, snapshot.runId, symbol, context.horizonDays),
+        runId: snapshot.runId,
+        symbol,
+        horizonDays: context.horizonDays,
+        refPrice,
+        snapshotAt,
+        userId: context.userId,
+        connectedAccountId: context.connectedAccountId
+      });
     }
   }
   return inserted;

@@ -45,6 +45,62 @@ strategy-rag-quickwins-wiring/run-strategy-offline/strategy-episodic-injection/s
 strategy-money-path-f-g) 33 files, 384 tests, all green. See
 `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
 **Next:** land via the central operator (not this session — HARD RULE: no push/PR from this lane).
+## 2026-07-05 — Review fixes for the durable due-jobs substrate (CLAUDE, worktree `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`, second commit)
+Fixed 7 previously-diagnosed review findings on top of the durable-due-jobs commit below (HEAD
+`4b105e5a` untouched, second commit on the same branch). **Blocker:** a lost-update race —
+`measureCase`'s pass-start `outcomes` snapshot, held across awaits, could wholesale-replace and
+erase a worker-sampled 15m/1h row written mid-pass by `drainDueIntradaySampleJobs`. Fixed by
+re-merging against a fresh DB read immediately before every terminal/partial write in
+`writeSocraticDecisionOutcome` (`db-socratic.ts`), `markSkippedCounterfactualMatured`, and
+`markSkippedCounterfactualUnresolvable` (`db-learning.ts`) — `mergeHorizonRows`'s
+existing-terminal-wins semantics make this idempotent regardless of write order. **Minor:**
+claimant-fenced `completeDueJob`/`failDueJob`/`markDueJobUnresolvable` (`db-jobs.ts`) so a stale
+lease-expired worker can no longer resurrect a job another worker already reclaimed/completed;
+renamed the drain receipt's `failed` counter to `erroredRetried` and removed the dead `'failed'`
+`DueJobStatus` value + CHECK constraint (nothing ever produced it). **Nits:** the intraday-sample
+worker now carries `runId`/`horizonDays` explicitly in the job payload and looks up the exact
+counterfactual row via a new `getSkippedCounterfactualByRunSymbolHorizon`, deleting the
+`caseId.split(":")` parsing that silently picked `min(horizon_days)` and ignored the horizon baked
+into the job; `enqueueDueJob`'s docstring now says idempotent ONLY when `dedupeKey` is provided
+(SQLite `UNIQUE` treats `NULL`s as distinct). New/updated tests: `test/socratic-db.test.ts` +
+`test/counterfactual-learning.test.ts` (write-time re-merge regressions), `test/db-jobs.test.ts`
+(claimant-fencing regression + updated call sites), `test/outcome-engine-due-jobs.test.ts` (rename
+follow-through). `npx tsc --noEmit` clean; `npx vitest run test/db-jobs.test.ts
+test/outcome-engine-due-jobs.test.ts test/outcome-engine.test.ts
+test/counterfactual-learning.test.ts test/socratic-db.test.ts test/rejected-counterfactual.test.ts`
+— 33/33 passed; `npm run lint` 0 errors; `npm run build` succeeds; full `npm test` 2529/2530 (the 1
+failure, `test/account-deletion-coverage.test.ts` re: the `due_jobs` table missing from account
+deletion coverage, is pre-existing at `4b105e5a` — confirmed via `git stash` — and unrelated to
+these findings; flagged separately, not fixed here to keep this pass precise/no-scope-creep). See
+`docs/rollouts/2026-07-05-durable-due-jobs.md`'s new "Review fixes" section.
+**Next:** land via the sequential landing operator (same as the base commit below).
+
+## 2026-07-05 — Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE, worktree `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`)
+Built the generic claimable due-jobs queue `outcome-horizons.ts:22-29` called out as the missing
+piece: 15m/1h intraday horizon samples previously only happened if a `runStrategyOnce` call
+coincidentally landed inside the narrow sampling window (piggybacked on the strategy cadence via
+`matureSocraticDecisionOutcomes`, `strategy.ts:1420-1428`). Now a `due_jobs` table (new migration
+v11 in `src/lib/db.ts`) plus `src/lib/db-jobs.ts` gives lease/reclaim claimable jobs (the
+`mobile_commands` queue's crashed-`running`-row-stuck-forever gap does NOT exist here — a stale
+`claimed` row past its lease is atomically reclaimed). `counterfactual-learning.ts` (at
+`insertSkippedCounterfactualCandidate` insert time) and `outcome-engine.ts`'s `measureCase` (once a
+decision case's fill/ref-price basis resolves) enqueue `sample_intraday_horizon` jobs at
+basisAt+15m/+1h with `not_after` = the existing tolerance-window close. New
+`drainDueIntradaySampleJobs` worker (outcome-engine.ts) claims due jobs, samples a live quote,
+writes through the exact same `mergeHorizonRows` + `writeSocraticDecisionOutcome` /
+`updateSkippedCounterfactualOutcomes` path the inline `samplableNow` path uses — so whichever side
+(inline or worker) resolves a horizon first wins, and the other is a documented no-op merge, never
+a duplicate row. `scheduler.ts` `tick()` gets one fire-and-forget drain call next to
+`processPendingMobileCommands`. The inline path is left fully intact (belt-and-suspenders).
+New tests: `test/db-jobs.test.ts` (10, queue mechanics: idempotent enqueue, due-only claim, race
+lost-claim, stale-lease reclaim, retry backoff, attempts-exhausted, not_after-expiry, complete,
+markUnresolvable, payload/scoping round-trip) + `test/outcome-engine-due-jobs.test.ts` (5:
+enqueue-at-basis-establishment dedupe keys for both the placed-decision and counterfactual paths,
+worker sampling parity with the inline path's row shape, lease-expiry retry, no double horizon row
+across both paths). tsc clean; focused suite green (see rollout note for exact commands). Full
+`npm test`/`npm run build` deferred to the central landing operator per this branch's rules. See
+`docs/rollouts/2026-07-05-durable-due-jobs.md`.
+**Next:** land via the sequential landing operator.
 ## 2026-07-05 — Usage-budget Phase 2 wired into runStrategyOnce (advisory-first) (CLAUDE, `claude/usage-budget-advisory-wiring`)
 Wired the previously-dormant usage-budget Phase 2 (`evaluateBudgetForRun`/`cheaperModel` in
 `src/lib/usage-budget.ts` — zero production callers before this) into `runStrategyOnce`, per the
