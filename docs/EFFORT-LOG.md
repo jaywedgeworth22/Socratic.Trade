@@ -259,6 +259,16 @@ to `socratictrade.com`, record the release commit + date here._
   green: tsc clean, focused approvals/dashboard tests 24, full suite 2467 tests / 255 files, lint
   0 errors, build green.
 
+- **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
+  streaming, live risk-utilization board, intraday charts (existing component slice first; no
+  lightweight-charts dependency in this pass). **2026-07-05 status:** merged current `origin/main`
+  into `codex/console-live-data` in `/Users/jay/.codex/worktrees/socratic-console-live-data`;
+  console snapshot refresh now consumes `/api/events/stream`, surfaces stream/freshness state, and
+  adds overview mark-to-market / risk / blotter upgrades with scoped tests. Verification on the
+  merged branch is green: `npm run lint -- --quiet`, focused live-data vitest (`4`), full `npm test`
+  (`257` files / `2510` tests), `npm run build`, then `npx tsc --noEmit` after build regenerated
+  `.next/types`. Subsumes the SSE learned-context-inbox row above. (expert reviews)
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
@@ -614,6 +624,8 @@ locks — re-negotiate in #agent-sync._
 #### CODEX lane (adds to the annotated parity rows above)
 - **Scan table column customization parity (CODEX, M)** — visibility/ordering/reset/saved state vs
   the legacy dashboard. (console-parity-open-items)
+- **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
+  console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
   streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
   the SSE learned-context-inbox row above. (expert reviews)
