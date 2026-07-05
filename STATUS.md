@@ -42,6 +42,14 @@ resolved keep-both conflicts in `AGENTS.md`/`docs/EFFORT-LOG.md`, and pushed to 
 Owner actions now done: `SLACK_BOT_TOKEN` added as a cloud Runtime Secret; the cloud env
 setup-script field points at `bash scripts/cloud-setup.sh`. See
 `docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+
+**MERGED 2026-07-05:** relanded as **PR #798** → squash `546c451` on `main` (verify x2 + smoke +
+gitleaks green; #367 closed superseded — cloud-proxy pushes were generating no pull_request
+workflow runs, so a fresh PR + a new `workflow_dispatch` re-kick lever on ci.yml were needed).
+`cloud-setup.sh` verified end-to-end in a cloud container (npm ci, `.env.local` seed, hook
+install valid-JSON). Follow-up for the Monet lane: 8 resolved-to-land Codex P2 threads on #798
+(engine edge cases; list in the effort-log row and the #798 summary comment).
+
 ## 2026-07-05 — Guardrails → overridable preferences (denylist) (Monet risk lane)
 Worktree `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`, PR open.
 Owner directive: only the account boundary (+ physical/broker/regulatory/accounting impossibilities)
