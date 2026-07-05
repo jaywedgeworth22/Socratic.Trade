@@ -1,5 +1,25 @@
 # 2026-07-05 — Logo concept exploration (12 marks)
 
+## Update 3 — final selection: Dialectic + named lockup (same day)
+
+- Owner narrowed the shortlist to **Dialectic only**, saved in two forms:
+  the standalone mark (`dialectic.svg`, v2 tails) and a new
+  **`dialectic-lockup.svg`** — the mark with `Socratic.Trade` set beside it
+  (serif, emerald period, viewBox 292×64), added as a new
+  `<symbol id="dialectic-lockup">` in the showcase.
+- Showcase updated: Dialectic first with a "Selected" badge; Examined
+  Trade/Stoa unbadged (archive); lockups section replaced by "The saved
+  lockup" showing `dialectic-lockup` on both grounds; closing note records
+  the selection. `logo-ideas.md` shortlist section replaced by
+  "Selected mark (2026-07-05): Dialectic".
+- Touched: `docs/branding/logo-ideas.html`, `docs/branding/logo-ideas.md`,
+  `docs/branding/logo-ideas/dialectic-lockup.svg` (new),
+  `STATUS.md`, this note. (Extraction script now writes 13 SVGs.)
+- Verification: extraction re-run (13 files); full-page headless-Chromium
+  screenshot re-checked (Selected badge, lockup rendering on both grounds).
+  Docs/assets-only on an already-verified tree; the lockup keeps live serif
+  text — outline to paths when cutting final exports.
+
 ## Update 2 — owner shortlist + Dialectic v2 (same day)
 
 - Owner reviewed the twelve and shortlisted **The Examined Trade**,

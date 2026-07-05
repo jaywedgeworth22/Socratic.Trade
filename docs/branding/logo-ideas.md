@@ -32,7 +32,8 @@ lines, delta). First brand exploration for the app (dashboard title today:
 | `phi.svg` | Phi | Letterform | Φ (philosophy) with a candlestick spine; wick runs through the circle. |
 | `examined.svg` | The Examined Trade | Pictogram | Magnifier over one green + one red candle — "the unexamined trade is not worth making." |
 | `meander.svg` | Meander | Pattern mark | Greek key fret read literally as a staircase of higher highs, topped with a candle. |
-| `dialectic.svg` | Dialectic | Pictogram | Two speech bubbles: a question asked, a trend answered. |
+| `dialectic.svg` | Dialectic | Pictogram | **SELECTED.** Two speech bubbles: a question asked, a trend answered. |
+| `dialectic-lockup.svg` | Dialectic lockup | Lockup | **SELECTED.** The Dialectic mark with `Socratic.Trade` set beside it. |
 | `stoa.svg` | The Stoa | Emblem | Temple whose middle column is a live candle. |
 | `noctua.svg` | Noctua | Mascot | Athena's owl re-minted as a coin; chest feather is a small candle. |
 | `delta.svg` | Delta | Letterform | Δ (change) framing a single candle. |
@@ -41,25 +42,29 @@ lines, delta). First brand exploration for the app (dashboard title today:
 | `torch.svg` | The Torch | Pictogram | Torch whose flame doubles as a candle body. |
 | `wordmark.svg` | The Wordmark | Wordmark | Serif caps; the period of "Socratic.Trade" re-cut as a candlestick. |
 
-## Owner shortlist (2026-07-05)
+## Selected mark (2026-07-05): Dialectic
 
-The owner reviewed all twelve and shortlisted three — keep these; the rest
-remain as archive/reference:
+After an initial shortlist (The Examined Trade, Dialectic, The Stoa), the
+owner selected **Dialectic** and asked to save it in two forms:
 
-1. **The Examined Trade** (`examined.svg`)
-2. **Dialectic** (`dialectic.svg`) — bubble tails redrawn in v2 after owner
-   feedback ("the triangular part of the chat bubbles looks odd"): tails are
-   now integrated into each bubble's outline path instead of separate
-   triangle/stroke shapes.
-3. **The Stoa** (`stoa.svg`)
+- **`dialectic.svg`** — the standalone mark. Bubble tails were redrawn in v2
+  after owner feedback ("the triangular part of the chat bubbles looks
+  odd"): tails are now integrated into each bubble's outline path instead of
+  separate triangle/stroke shapes.
+- **`dialectic-lockup.svg`** — the mark with the name beside it
+  (`Socratic.Trade`, serif, emerald period), viewBox 292×64.
 
-Next: pick a primary of the three → cut real exports (favicon.ico, app-icon
-sizes, OG image) → wire into `app/layout.tsx` metadata.
+The other eleven marks (including the two shortlist runners-up) stay in this
+directory as archive/reference.
+
+Next: cut real exports from the two saved assets (favicon.ico, app-icon
+sizes, OG image) → outline the lockup's serif text to paths → wire into
+`app/layout.tsx` metadata.
 
 Earlier studio recommendation, for the record: Phi for app icon/favicon
 (crisp at 16 px, ownable letter), The Inquiry for README/landing
 storytelling, The Examined Trade for reports where showing a red candle is
-honest. Of the shortlist, The Examined Trade is the most 16 px-durable.
+honest.
 
 ## Regenerating the standalone SVGs
 
