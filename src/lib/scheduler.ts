@@ -267,7 +267,10 @@ async function tick(): Promise<void> {
   // Collects the union of all user watchlists + policy universes so the shared
   // corpus covers every symbol any active user is monitoring. Fire-and-forget;
   // errors are captured inside refreshFilingBodies and audited there.
-  if (isFilingIngestDue()) {
+  // Gated on the operator monthly spend ceiling too: RAG (Voyage/Pinecone) spend counts toward
+  // LLM_SPEND_CEILING, and this refresh runs BEFORE the strategy-run ceiling check below, so without
+  // this guard a breached ceiling would still let the weekly filing-body ingest spend.
+  if (isFilingIngestDue() && checkMonthlyLlmSpendCeiling().ok) {
     const symbolSet = new Set<string>();
     for (const userId of listUsers()) {
       try {
@@ -335,7 +338,13 @@ async function tick(): Promise<void> {
     // Each connected account is scheduled independently: its own per-account policy
     // (systemState, cadence, broker) drives whether/when it runs. Autonomy is opt-in per
     // account — only accounts whose own systemState is "active" trade.
-    const dueRuns: Array<{ userId: string; accountId: string }> = [];
+    const dueRuns: Array<{
+      userId: string;
+      accountId: string;
+      key: string;
+      prevLastRunAt: string | null;
+      prevNextRunAt: string | null;
+    }> = [];
 
     for (const userId of listUsers()) {
       for (const account of listConnectedAccounts(userId)) {
@@ -447,6 +456,16 @@ async function tick(): Promise<void> {
     if (!monthlyCeiling.ok) {
       if (dueRuns.length > 0) {
         console.warn(`[scheduler] monthly ceiling: suppressing ${dueRuns.length} due strategy run(s)`);
+        // Roll back the cadence state advanced in the due-detection loop above: a run that never
+        // executed must NOT look completed, or the account waits a full cadence and the UI shows a
+        // next-run for a skipped run. Restore each suppressed account's pre-mutation lastRunAt/nextRunAt.
+        for (const { key, prevLastRunAt, prevNextRunAt } of dueRuns) {
+          const s = accountSchedules[key];
+          if (s) {
+            s.lastRunAt = prevLastRunAt;
+            s.nextRunAt = prevNextRunAt;
+          }
+        }
       }
       return;
     }

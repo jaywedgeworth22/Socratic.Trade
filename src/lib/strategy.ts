@@ -76,7 +76,7 @@ import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
 import { avgReturnCorrelation } from "./correlation";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -555,6 +555,23 @@ export async function runStrategyOnce(
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
+    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
+    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
+    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
+    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
+    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
+    if (!skipLlmDueToBudget) {
+      const monthly = checkMonthlyLlmSpendCeiling();
+      if (!monthly.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "usage_budget_enforced",
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          userId,
+          connectedAccountId
+        );
+      }
+    }
     if (!skipLlmDueToBudget) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;

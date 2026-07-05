@@ -30,8 +30,10 @@ echo "--- Rows with no GitHub issue marker ---"
 ORPHANS=0
 IN_SECTION=0
 while IFS= read -r LINE; do
-  # Track heading sections
-  if [[ "$LINE" =~ ^#[[:space:]] ]]; then
+  # Track heading sections. Match one-or-more '#' + whitespace: a single '#' matched only H1
+  # ('# Title'), so '## Section' failed the outer test and the inner '##' branch was never reached,
+  # leaving IN_SECTION stuck at 0 and every row skipped (the scan always reported zero orphans).
+  if [[ "$LINE" =~ ^#+[[:space:]] ]]; then
     IN_SECTION=0
     if [[ "$LINE" =~ ^##[[:space:]] ]]; then
       IN_SECTION=1

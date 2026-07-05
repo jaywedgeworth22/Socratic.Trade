@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Litestream restore drill — tests end-to-end restore from the R2 replica.
+# Litestream restore drill - tests end-to-end restore from the R2 replica.
 #
 # This script performs a full restore from the remote replica to a scratch file,
 # runs integrity checks, and compares row counts against the live database.
-# It does NOT modify the live app.db — it only verifies that the restore path works.
+# It does NOT modify the live app.db - it only verifies that the restore path works.
 #
 # Run quarterly (recommended) or after any Litestream/litestream.yml version bump.
 # Record the outcome in a docs/rollouts/YYYY-MM-DD-litestream-restore-drill.md note.
@@ -19,7 +19,7 @@
 #   LITESTREAM_S3_REGION     (default: auto, for Cloudflare R2)
 set -euo pipefail
 
-# ── Config ──────────────────────────────────────────────────────────────────────
+# -- Config ----------------------------------------------------------------------
 LIVE_DB="${LIVE_DB:-/Users/jay/apps/trading-live/data/app.db}"
 LITESTREAM_CONFIG="${LITESTREAM_CONFIG:-/Users/jay/apps/trading-live/litestream.yml}"
 SCRATCH_DIR="${SCRATCH_DIR:-/tmp}"
@@ -31,7 +31,7 @@ if [[ -n "${RESTORE_PITR_TIMESTAMP:-}" ]]; then
   echo "PITR mode: restoring to ${RESTORE_PITR_TIMESTAMP}"
 fi
 
-# ── Load credentials ───────────────────────────────────────────────────────────
+# -- Load credentials -----------------------------------------------------------
 if [[ -z "${LITESTREAM_S3_BUCKET:-}" && -f /Users/jay/apps/trading-live/.env.local ]]; then
   set -a
   eval "$(grep -E '^LITESTREAM_' /Users/jay/apps/trading-live/.env.local)"
@@ -42,7 +42,7 @@ fi
 : "${LITESTREAM_S3_ACCESS_KEY_ID?Required: LITESTREAM_S3_ACCESS_KEY_ID}"
 : "${LITESTREAM_S3_SECRET_ACCESS_KEY?Required: LITESTREAM_S3_SECRET_ACCESS_KEY}"
 
-# ── Pre-flight ─────────────────────────────────────────────────────────────────
+# -- Pre-flight -----------------------------------------------------------------
 echo "=== Litestream Restore Drill ==="
 echo "Date:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 echo "Live DB:   ${LIVE_DB}"
@@ -58,7 +58,7 @@ fi
 LITESTREAM_VERSION=$(litestream version 2>&1 || echo "unknown")
 echo "Litestream: ${LITESTREAM_VERSION}"
 
-# ── Step 1: Verify replication is healthy ──────────────────────────────────────
+# -- Step 1: Verify replication is healthy --------------------------------------
 echo ""
 echo "--- Step 1: Replication health ---"
 litestream databases -config "${LITESTREAM_CONFIG}" 2>&1 || true
@@ -67,14 +67,14 @@ echo ""
 echo "--- Step 2: Latest LTX generations (last 5) ---"
 litestream ltx -config "${LITESTREAM_CONFIG}" "${LIVE_DB}" 2>&1 | tail -5 || true
 
-# ── Step 2: Restore ────────────────────────────────────────────────────────────
+# -- Step 2: Restore ------------------------------------------------------------
 echo ""
 echo "--- Step 3: Restoring to scratch file ---"
 # shellcheck disable=SC2086
 litestream restore -config "${LITESTREAM_CONFIG}" -o "${SCRATCH_DB}" ${TIMESTAMP_FLAG} "${LIVE_DB}"
 echo "Restore complete: ${SCRATCH_DB}"
 
-# ── Step 3: Integrity check ────────────────────────────────────────────────────
+# -- Step 3: Integrity check ----------------------------------------------------
 echo ""
 echo "--- Step 4: Integrity check ---"
 INTEGRITY=$(sqlite3 "${SCRATCH_DB}" 'PRAGMA integrity_check;')
@@ -85,7 +85,7 @@ if [[ "${INTEGRITY}" != "ok" ]]; then
   exit 1
 fi
 
-# ── Step 4: Row-count comparison ───────────────────────────────────────────────
+# -- Step 4: Row-count comparison -----------------------------------------------
 echo ""
 echo "--- Step 5: Row-count comparison (restored vs live) ---"
 TABLES=("audit_events" "llm_usage" "trade_proposals" "chat_turns" "settings")
@@ -100,24 +100,24 @@ for table in "${TABLES[@]}"; do
   fi
   DELTA=$((LIVE_COUNT - RESTORED_COUNT))
   if [[ ${DELTA} -lt 0 ]]; then
-    echo "  ${table}: restored=${RESTORED_COUNT} live=${LIVE_COUNT} delta=${DELTA} ⚠️ (restored > live — check replication)"
+    echo "  ${table}: restored=${RESTORED_COUNT} live=${LIVE_COUNT} delta=${DELTA} WARNING (restored > live - check replication)"
     PASS=false
   else
     echo "  ${table}: restored=${RESTORED_COUNT} live=${LIVE_COUNT} delta=+${DELTA} (expected: live has writes since last replication)"
   fi
 done
 
-# ── Step 5: Cleanup ────────────────────────────────────────────────────────────
+# -- Step 5: Cleanup ------------------------------------------------------------
 echo ""
 echo "--- Step 6: Cleanup ---"
 rm -f "${SCRATCH_DB}"
 echo "  Removed: ${SCRATCH_DB}"
 
-# ── Summary ─────────────────────────────────────────────────────────────────────
+# -- Summary ---------------------------------------------------------------------
 echo ""
 echo "=== Drill Complete ==="
 if [[ "${PASS}" == "true" ]]; then
-  echo "Result: PASS — restore verified successfully."
+  echo "Result: PASS - restore verified successfully."
   echo ""
   echo "Record this result:"
   echo "  Create: docs/rollouts/$(date +%Y-%m-%d)-litestream-restore-drill.md"
@@ -128,5 +128,5 @@ if [[ "${PASS}" == "true" ]]; then
   echo "    - Row-count deltas: within expected range"
   echo "    - Verified: restore from R2 replica works end-to-end"
 else
-  echo "Result: WARNING — row-count discrepancies found. Review the delta above."
+  echo "Result: WARNING - row-count discrepancies found. Review the delta above."
 fi
