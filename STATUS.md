@@ -8,6 +8,9 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Push account status metrics to Usage Monitor (AG)
+Implemented telemetry for tech account balances and limits. Socratic.Trade now pushes metricTypes `"balance"` and `"limit"` via `pushBrokerBalance` in `src/lib/usage-monitor-push.ts`. This allows tracking caps and credits for the API Usage Monitor. The hooks were wired into Alpaca and Robinhood `getPortfolio` calls. All tests passed and code was verified locally.
+
 ## 2026-07-05 — Coach/framework primitives slice ready to land (Codex, issue #473)
 Branch `codex/coach-framework-primitives`, worktree
 `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, now merge-forwarded to

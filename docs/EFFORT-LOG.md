@@ -71,6 +71,7 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## ✅ Completed (merged to `main`, on beta/integration)
+- **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
 
 - **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
 - **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
