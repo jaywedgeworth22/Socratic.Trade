@@ -267,8 +267,11 @@ to `socratictrade.com`, record the release commit + date here._
   board + standalone SVGs). No app code touched; `public/icon.svg` unchanged. Round 2 same-day:
   owner shared four Adobe Firefly comps (candlestick letterforms, owl, red/green) and asked for a
   more professional take — added concepts K–N (candlestick-owl lockup, owl seal, candle-I wordmark,
-  three-candle cluster), 14 SVGs total. Next: owner picks a direction (suggested: K owl primary,
-  M type-led alternative), then redraw with outlined letterforms + favicon/app-icon variants.
+  three-candle cluster), 14 SVGs total. Round 3: owner saved B/E/H/I + the parallel session's three
+  picks (Examined/Dialectic/Stoa from `claude/logo-ideas-c5n61b`) + the four Firefly comps
+  (backgrounds removed for light/dark use) into one combined board `docs/branding/shortlist.html`
+  with assets in `docs/branding/firefly/`. Next: owner narrows the combined shortlist to a final
+  direction, then redraw with outlined letterforms + favicon/app-icon variants.
   See `docs/rollouts/2026-07-05-logo-concepts.md`.
   _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
   container — owner/next local agent should mirror this row there._

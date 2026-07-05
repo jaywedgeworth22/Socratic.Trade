@@ -1,5 +1,11 @@
 # Branding — logo concepts (2026-07-05)
 
+> **Start here: `shortlist.html`** — the owner's combined keepers in one page:
+> Inscription, Delta, Argument, Monogram (this board), Examined Trade,
+> Dialectic, Stoa (the earlier `logo-ideas` board, copied into `logo-ideas/`),
+> and the four Adobe Firefly comps with backgrounds removed for light/dark use
+> (full-res transparent PNGs + pre-composited versions in `firefly/`).
+
 Fourteen logo directions for Socratic Trade, produced as concept comps across
 two rounds (Round 2 refines the owner's Adobe Firefly comps). Open
 `logo-concepts.html` in a browser to see every concept side by side on light

@@ -15,6 +15,10 @@ Firefly comps (letters made of candlesticks, an owl, market red/green) and asked
 professional version — added four refined concepts K–N that keep those motifs but use the
 candlestick exactly once each: K candlestick-owl lockup (suggested primary), L circular owl seal,
 M candle-as-the-I wordmark, N three-candle up/down/up cluster (only concept keeping red).
+Round 3 (same day): owner saved B/E/H/I, combined with the parallel session's three picks
+(Examined Trade, Dialectic, Stoa — copied from branch `claude/logo-ideas-c5n61b`), plus the four
+Firefly comps processed into light/dark-ready transparent assets — all in one board at
+`docs/branding/shortlist.html` (assets in `docs/branding/firefly/`).
 Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the

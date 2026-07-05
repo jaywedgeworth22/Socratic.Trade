@@ -48,6 +48,27 @@ knockouts via a `--tbg` tile variable). Verification: same headless-Chromium
 screenshot pass (owl variants iterated once — bubble-style beak/eye geometry
 tuned; seal bottom-arc text switched from a clipped tagline to TRADE).
 
+## Round 3 (same day) — combined shortlist + Firefly light/dark assets
+
+Owner asked to save Inscription (B), Delta (E), Argument (H), and Monogram (I),
+combine them with the three picks from the parallel logo session (branch
+`claude/logo-ideas-c5n61b`, commit `a9c275a`: The Examined Trade, Dialectic v2,
+The Stoa), add the four Adobe Firefly comps, and produce light + dark versions
+of the Firefly images.
+
+- New `docs/branding/shortlist.html` — single combined board (4 kept concepts +
+  3 other-session marks + 4 Firefly images, each on light and dark tiles;
+  Firefly images embedded as data URIs so the file is self-contained).
+- New `docs/branding/firefly/` — background-removed transparent PNGs (white
+  page removed from the two owl badges; baked-in transparency checkerboard
+  removed from the candle-letters image, including inside closed letter
+  counters via a two-pass edge-connected + interior-patch flood fill in
+  Pillow/numpy), plus pre-composited `-on-light.jpg`/`-on-dark.jpg` versions
+  and the dark-native chart scene as-is.
+- New `docs/branding/logo-ideas/{examined,dialectic,stoa}.svg` — byte-exact
+  copies of the other branch's shortlisted marks (same paths, so a future merge
+  of that branch is conflict-free).
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
