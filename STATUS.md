@@ -8,6 +8,43 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Board next-wave cycle 2: stale-row corrections (incl. phantom #808) + new Planned rows (CLAUDE)
+Cross-agent audit of `docs/EFFORT-LOG.md` and `/Users/jay/apps/TRADING-EFFORT-LOG.md` against live
+PR/git state, applying stale-row corrections from the socratic-trade and fleet-infra next-wave
+specs. Key findings:
+
+- **The 2026-07-05 merge batch (#799, #807, #811, #812, #814, #816, #819, #820, plus #694/#449/
+  #374/#371/#370 from the prior day) is merged to `main` and live on beta/integration
+  (`trading-beta.jays.services`) — it is NOT yet in production.** Nothing from this batch has been
+  released via the owner-run `~/apps/trading-live` step, and the board's Deployed section still
+  stops at 2026-07-04. Production release + post-deploy money-path verification of this batch is
+  now a tracked Planned row (owner action).
+- **Phantom "PR #808 merged" correction:** the live board previously recorded "PR #808 - Cursor
+  session: P0 checkRegimeFlip RMW fix + P1 backlog exhaustiveness" as Completed/merged to `main`.
+  **PR #808 does not exist** (`gh pr view 808` returns "Could not resolve to a PullRequest"). The
+  real work is commit `0ce39474` on branch `cursor/session-2026-07-05`, entangled inside **open PR
+  #805** ("Admin connection health...", AG's row) whose mergeable state is **CONFLICTING**.
+  `0ce39474` is confirmed NOT an ancestor of `origin/main`. **The P0 multi-user `regime:current`
+  read-modify-write race described in that commit is still live on `main` today** — it has not
+  landed, nor have the claimed P1 items (security response headers, unpriced-model cost fallback,
+  synthetic bid/ask provenance, scheduler health threshold, operator LLM spend ceiling,
+  effort-mirror orphan report, Litestream PITR retention). Both boards now carry this row under
+  In Progress with the honest correction; a new Planned row tracks disentangling PR #805 into two
+  separate, honestly-described merges.
+- Several other rows were mis-filed as In Progress despite already being merged (PR #811 console
+  live-data, PR #812 full-suite test determinism, PR #814 pre-policy-vetoes, PR #799
+  guardrails-denylist, PR #360 drawdown-advisory-rescope, PR #437 w2-episodic-retrieval, and the
+  w2-outcome-engine landing) — all relocated to Completed with merge timestamps. The AG
+  connection-health row was similarly corrected the other direction: it was marked Completed but is
+  actually open PR #805, CONFLICTING, not landed.
+- The next-wave cycle-2 Planned rows (11 new items, e.g. disentangling #805, Rule-4 fundamentals-veto
+  owner ratification from #814, wiring the new advisory audit kinds into the console, landing the
+  stalled w2-coaching-durable/w2-reflection-decompose branches) were added to both boards under a
+  "### 2026-07-05 next-wave (cycle 2)" subsection.
+
+Full detail: `/Users/jay/apps/TRADING-EFFORT-LOG.md` and `docs/EFFORT-LOG.md` (this pass's edits),
+plus `docs/rollouts/2026-07-05-board-nextwave-cycle2.md`.
+
 ## 2026-07-05 — HyDE + evidence-derived multi-query retrieval for filings RAG (CLAUDE, worktree `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`)
 New `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 evidence/sector/dominant-factor
 facet sub-queries — risk/guidance/litigation/supply-chain — deterministic, no I/O, `[]` on a bare
