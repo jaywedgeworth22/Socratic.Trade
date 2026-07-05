@@ -87,7 +87,14 @@ import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
-import { retrieveLearnedContext } from "./learned-context/store";
+import { retrieveLearnedContextDetailed } from "./learned-context/store";
+import {
+  collectEvidenceAgeAnomalies,
+  scanForInjectionAttempts,
+  type EvidenceAgeInput,
+  type InjectionFinding,
+  type UntrustedPromptField
+} from "./prompt-safety";
 import { debateProposal } from "./red-team";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
@@ -102,7 +109,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -538,6 +545,11 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
+    // decision case this run records. Populated by the evidence-age check below and the
+    // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
+    const promptSafetyEvidence: SocraticEvidenceItem[] = [];
+    const evidenceAgeInputs: EvidenceAgeInput[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -567,6 +579,21 @@ export async function runStrategyOnce(
         );
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
+        // (fresh text steering a same-day decision). Aggregated + audited once below.
+        const relevanceFloor = defaultRelevanceFloor();
+        for (const context of contexts) {
+          for (const chunk of context.chunks) {
+            evidenceAgeInputs.push({
+              kind: "rag_chunk",
+              id: chunk.id,
+              label: `${context.sym} ${chunk.doc_type ?? "chunk"}${chunk.as_of ? ` ${String(chunk.as_of).slice(0, 10)}` : ""}`,
+              timestamp: chunk.as_of,
+              relevanceScore: chunk.relevanceScore ?? chunk.score,
+              relevanceFloor
+            });
+          }
+        }
         if (validContexts.length > 0) {
           // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
           // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
@@ -588,12 +615,41 @@ export async function runStrategyOnce(
     try {
       const learnedSymbols = marketScan.topCandidates.slice(0, 8).map((c) => c.symbol);
       // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContext(userId, learnedSymbols);
-      if (learnedFacts.length > 0) {
-        learnedContext = learnedFacts.join("\n");
+      const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
+      if (learnedFacts.lines.length > 0) {
+        learnedContext = learnedFacts.lines.join("\n");
+      }
+      // Evidence-age receipt inputs: a fact FIRST ASSERTED <24h ago entering today's prompt.
+      for (const row of learnedFacts.rows) {
+        evidenceAgeInputs.push({
+          kind: "learned_fact",
+          id: row.id,
+          label: `${row.symbol ?? "GENERAL"} ${row.subject}`,
+          timestamp: row.assertedAt
+        });
       }
     } catch (e) {
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
+    }
+
+    // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
+    // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
+    // changed, nothing is dropped or blocked — the receipt IS the control.
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    if (evidenceAgeAnomalies.length > 0) {
+      audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+      promptSafetyEvidence.push({
+        kind: "safety",
+        tone: "warning",
+        title: "Same-day evidence entered this run",
+        summary:
+          `${evidenceAgeAnomalies.length} evidence item(s) first seen <24h before this run: ` +
+          `${evidenceAgeAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
+          "Advisory receipt only — nothing was altered or blocked.",
+        source: "prompt-safety",
+        data: evidenceAgeAnomalies
+      });
     }
 
     // ── Episodic decision memory: closest historical analogs + owner coaching ──
@@ -743,6 +799,27 @@ export async function runStrategyOnce(
       llmSteps = proposed.llmSteps;
       bearReviewUnavailable = proposed.bearReviewUnavailable === true;
       bearReviewReason = proposed.bearReviewReason;
+      // Advisory injection receipts from the prompt-assembly scan (audited inside proposeTrades):
+      // fold into kind-'safety' evidence, one item per flagged field, so every decision case this
+      // run records carries the receipt. Never alters proposals or routing.
+      if (proposed.promptSafetyFindings && proposed.promptSafetyFindings.length > 0) {
+        const byField = new Map<string, InjectionFinding[]>();
+        for (const finding of proposed.promptSafetyFindings) {
+          byField.set(finding.name, [...(byField.get(finding.name) ?? []), finding]);
+        }
+        for (const [field, findings] of Array.from(byField.entries()).slice(0, 4)) {
+          promptSafetyEvidence.push({
+            kind: "safety",
+            tone: "warning",
+            title: `Possible prompt-injection pattern in ${field}`,
+            summary:
+              `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
+              "The text was passed through unmodified — advisory receipt, generation was not blocked.",
+            source: "prompt-safety",
+            data: findings
+          });
+        }
+      }
     }
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
@@ -1063,7 +1140,9 @@ export async function runStrategyOnce(
             review: input.review,
             marketScan,
             ragAttributions: socraticRagAttributions,
-            overrideResolution: input.overrideResolution
+            overrideResolution: input.overrideResolution,
+            // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
+            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {})
           }),
           createdAt: now,
           updatedAt: now
@@ -2758,6 +2837,13 @@ interface ProposeTradesResult {
    */
   bearReviewUnavailable?: boolean;
   bearReviewReason?: string;
+  /**
+   * Advisory findings from the deterministic prompt-injection scan over the untrusted text
+   * blocks assembled into the Bull/Bear prompts (see src/lib/prompt-safety.ts). Already audited
+   * (kind 'prompt_injection_suspected') inside proposeTrades; the caller folds them into
+   * decision-case evidence. NEVER affects the proposals themselves.
+   */
+  promptSafetyFindings?: InjectionFinding[];
 }
 
 async function proposeTrades(input: {
@@ -2924,7 +3010,9 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     strategyPrompt: input.prompt,
-    reflection,
+    // reflection deliberately NOT interpolated into the SYSTEM prompt anymore (prompt-safety
+    // lane, agentic-strategy@1.5.0): the post-mortem writer persists raw LLM output, so it rides
+    // in userContent as the fenced `reflectionSummary` DATA field below instead.
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
@@ -3022,11 +3110,52 @@ async function proposeTrades(input: {
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
     ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    // Historical reflection RELOCATED here from the Bull SYSTEM prompt (prompt-safety lane): it is
+    // persisted raw LLM output, so it enters as fenced, labeled user-role DATA — the system prompt
+    // references it by name and the data-not-command clause covers it.
+    ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
     // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
     ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
     ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
+
+  // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
+  // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
+  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
+  // headlines, smartMoney = first 3 bulletins). Detection IS the control: on a hit we audit and
+  // surface evidence — the text is NEVER altered or dropped, and generation always proceeds.
+  const untrustedPromptFields: UntrustedPromptField[] = [
+    { name: "owner_strategy_prompt", text: input.prompt },
+    { name: "reflection_summary", text: reflection },
+    { name: "retrievedFinancialContext", text: input.ragContext ?? "" },
+    { name: "learnedContext", text: input.learnedContext ?? "" },
+    { name: "closestHistoricalAnalogs", text: input.experienceAnalogs ?? "" },
+    { name: "ownerCoaching", text: input.ownerCoaching ?? "" },
+    ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
+      const sym = normalizeSymbol(candidate.symbol);
+      const fields: UntrustedPromptField[] = [];
+      const news = candidate.headlines?.slice(0, 2) ?? [];
+      if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
+      const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
+      if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
+      return fields;
+    })
+  ];
+  const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  if (promptSafetyFindings.length > 0) {
+    audit(
+      "prompt_injection_suspected",
+      {
+        runId: input.runId,
+        fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
+        patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
+        findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
 
   const model = resolvedModel;
   const llmSteps: StrategyLlmStep[] = [];
@@ -3478,7 +3607,13 @@ async function proposeTrades(input: {
       kind: "provider_degraded",
       data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
     }).catch((err) => console.error("[Bear] notify error:", err));
-    return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
+    return {
+      proposals: bullProposals,
+      llmSteps,
+      bearReviewUnavailable: true,
+      bearReviewReason: reason,
+      ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
+    };
   };
 
   if (!bearKey) {
@@ -3597,7 +3732,7 @@ async function proposeTrades(input: {
     status: "completed",
     proposalCount: bearProposals.length
   });
-  return { proposals: bearProposals, llmSteps };
+  return { proposals: bearProposals, llmSteps, ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}) };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
