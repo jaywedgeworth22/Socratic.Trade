@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
+import type { MarketQuote, MarketScan } from "../src/lib/types";
 
 vi.mock("../src/lib/vector-db", () => ({
   findRelevantExperiences: async () => [],
@@ -19,6 +20,45 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContext: async () => {},
   storeContexts: async () => {}
 }));
+
+// The market scan inside executeProposal is incidental to what this file verifies (broker
+// order-state confirmation). Left unmocked it fans out to REAL Nasdaq-screener/Yahoo fetches
+// (6-8s abort timeouts, 429-retry backoff): ~12s per test solo, and the direct cause of the
+// full-suite flake — 4 workers' worth of shared network/rate-limit contention pushed these
+// tests past even a 30s timeout. Stub ONLY scanMarket (importOriginal keeps mergeQuoteData
+// and the other exports real) with a minimal fresh AAPL scan so the price/staleness gates in
+// policy.ts still see a quote.
+vi.mock("../src/lib/market", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/market")>();
+  return {
+    ...actual,
+    scanMarket: async (): Promise<MarketScan> => {
+      const asOf = new Date().toISOString();
+      const aapl: MarketQuote = {
+        symbol: "AAPL",
+        price: 200,
+        bid: 199,
+        ask: 200,
+        volume: 1_000_000,
+        intradayChangePct: 0,
+        positionMarketValue: 0,
+        score: 1,
+        provider: "test-scan",
+        asOf
+      };
+      return {
+        source: "test-scan",
+        generatedAt: asOf,
+        scannedSymbols: 1,
+        returnedQuotes: 1,
+        topCandidates: [aapl],
+        sectorBySymbol: {},
+        quotesBySymbol: { AAPL: aapl },
+        warnings: []
+      };
+    }
+  };
+});
 
 let mockOrderStatus = "accepted";
 let lastCreateOrderOpts: Record<string, unknown> | null = null;
@@ -130,8 +170,8 @@ describe("executeProposal — broker-agnostic order-placement confirmation", () 
     const row = getProposal(proposalId, userId);
     expect(row?.status).toBe("rejected_by_broker");
     expect(row?.status).not.toBe("placed");
-  }, 30000); // executeProposal's broker-review retry path is slow under full-suite parallel load
-  // (same pre-existing flake pattern as approval-lock.test.ts) — pad past the 20s global default.
+  }, 30000); // Network is stubbed (scanMarket mock above); the pad now only covers the
+  // vi.resetModules() re-import of the strategy module graph under full-suite CPU contention.
 
   it("marks the proposal 'placed' when the broker accepts the order", async () => {
     mockOrderStatus = "accepted";

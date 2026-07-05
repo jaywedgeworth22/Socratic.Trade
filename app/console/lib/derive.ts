@@ -6,6 +6,7 @@
 import type { DashboardSnapshot } from "../../dashboard-types";
 import type {
   ConnectedAccount,
+  EquityCurvePoint,
   EquityOrder,
   EquityPosition,
   ExecutionMode,
@@ -375,4 +376,82 @@ export function deriveSpend(snapshot: DashboardSnapshot): SpendInfo {
     usedOrders: snapshot.dailyStats?.openingOrderCount ?? snapshot.dailyStats?.orderCount ?? 0,
     capOrders: snapshot.policy.maxDailyOrders
   };
+}
+
+export interface MarkToMarketInfo {
+  costBasis: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPct?: number;
+  positionsValue: number;
+  cash?: number;
+  buyingPower?: number;
+}
+
+export function deriveMarkToMarket(snapshot: DashboardSnapshot): MarkToMarketInfo | null {
+  const positions = snapshot.positions ?? [];
+  if (positions.length === 0 && !snapshot.portfolio) return null;
+  const costBasis = positions.reduce((sum, position) => sum + position.averageCost * position.quantity, 0);
+  const marketValue = positions.reduce((sum, position) => sum + (Number.isFinite(position.marketValue) ? position.marketValue : 0), 0);
+  const unrealizedPnl = marketValue - costBasis;
+  return {
+    costBasis,
+    marketValue,
+    unrealizedPnl,
+    unrealizedPct: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : undefined,
+    positionsValue: snapshot.portfolio?.equityMarketValue ?? marketValue,
+    cash: snapshot.portfolio?.cash,
+    buyingPower: snapshot.portfolio?.buyingPower
+  };
+}
+
+export interface UtilizationMeter {
+  used: number;
+  limit?: number;
+  pct?: number;
+}
+
+export interface RiskUtilizationInfo {
+  dailyNotional: UtilizationMeter;
+  dailyOrders: UtilizationMeter;
+  investedCapital: UtilizationMeter;
+}
+
+export function deriveRiskUtilization(snapshot: DashboardSnapshot): RiskUtilizationInfo {
+  const spend = deriveSpend(snapshot);
+  const equity = snapshot.portfolio?.totalMarketValue;
+  const positions = snapshot.positions ?? [];
+  const invested = snapshot.portfolio?.equityMarketValue ?? positions.reduce((sum, position) => sum + Math.abs(position.marketValue), 0);
+  return {
+    dailyNotional: {
+      used: spend.usedNotional,
+      limit: spend.capNotional,
+      pct: spend.capNotional && spend.capNotional > 0 ? (spend.usedNotional / spend.capNotional) * 100 : undefined
+    },
+    dailyOrders: {
+      used: spend.usedOrders,
+      limit: spend.capOrders,
+      pct: spend.capOrders > 0 ? (spend.usedOrders / spend.capOrders) * 100 : undefined
+    },
+    investedCapital: {
+      used: invested,
+      limit: equity,
+      pct: equity && equity > 0 ? (invested / equity) * 100 : undefined
+    }
+  };
+}
+
+export function selectEquityWindow(points: EquityCurvePoint[], now = new Date()): { points: EquityCurvePoint[]; label: string } {
+  if (points.length < 2) return { points, label: "Equity" };
+  const sameDay = (iso: string) => {
+    const date = new Date(iso);
+    return (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    );
+  };
+  const intraday = points.filter((point) => sameDay(point.timestamp));
+  if (intraday.length >= 2) return { points: intraday, label: "Intraday mark-to-market" };
+  return { points: points.slice(-24), label: "Recent equity" };
 }

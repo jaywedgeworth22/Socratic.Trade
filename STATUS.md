@@ -34,6 +34,253 @@ Branch `cursor/session-2026-07-05` (representing AG/Antigravity session). Implem
 4. **Storage & Headroom Monitoring:** `/api/health` and the `ops-snapshot` now query and report disk free space, SQLite database and WAL file sizes, and Litestream last-sync age (by checking the mtime of files in `<dbPath>-litestream`). Degraded state triggers cooldown-controlled email warnings.
 5. **Verification:** Added `test/connection-health-routing.test.ts`. 2454 unit tests pass green, `npx tsc --noEmit` clean, and Next.js production build succeeded completely.
 
+## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
+Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
+`executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;
+~12–13s/test solo → >30s under 4-worker load); the chat-orchestrator file paid the ~15s
+orchestrator module-graph import inside the first test's 20s `testTimeout`. Fix: partial-mock
+`scanMarket` (importOriginal; everything else real) in `test/order-confirmation-status.test.ts`
+AND `test/approval-lock.test.ts` (same class — its 2026-06-21 fix only padded timeouts), and
+hoist the orchestrator import into `beforeAll(…, 120_000)` in
+`test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
+green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
+`docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+**Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
+
+## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
+Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
+Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo
+without the flaky Slack MCP. Three committed scripts + a doc:
+- `scripts/slack-sync.sh` — curl engine: `read`/`thread`/`post`/`reply`/`test`/`hook`. Token via
+  `curl --config` 0600 temp file (never on argv/`ps`, never logged); fetched content in an
+  UNTRUSTED-EXTERNAL-DATA envelope; **silent no-op + exit 0 without `SLACK_BOT_TOKEN`** (safe in
+  any repo); `hook` self-dedupes per session so global + repo hooks can't double-inject.
+- `scripts/setup-slack-sync.sh` — idempotent global installer: copies the engine to
+  `~/.claude/slack-sync.sh` and merges a `SessionStart` hook into `~/.claude/settings.json`
+  (python3 JSON merge; preserves existing keys/hooks; upgrades in place on re-run).
+- `scripts/cloud-setup.sh` — now runs the installer (non-fatal) so any cloud env pointed at it
+  gets the hook. `docs/slack-coordination.md` — full owner/Fable guide + FAQ.
+
+Verified: bash -n + pure-ASCII on all three; stubbed-curl functional test (dedup, envelope, post);
+sandbox-HOME idempotent-merge test (preserves unrelated model/hooks; one slack entry on re-run);
+tsc clean (no TS changed).
+
+**Blocker / owner actions:** this cloud container has **no `SLACK_BOT_TOKEN`**, so Monet cannot
+post to Slack from here yet. Add it as a cloud **Runtime Secret**; `export` it on the Mac; `/invite`
+the bot (scopes `channels:history` + `channels:read` + `chat:write`); run
+`bash scripts/setup-slack-sync.sh` once per machine. Rotate any raw token pasted earlier.
+**Next:** open PR + squash auto-merge; once the token secret exists, post the setup how-to to Fable.
+
+**Update 2026-07-05 (CLAUDE-CLOUD takeover, owner-directed):** PR #367 sat unmerged because
+`verify` never ran on head `fb14f10` (zero check runs, so the armed auto-merge could not fire) and
+the branch fell behind `main`. Monet hit technical issues, so the owner asked CLAUDE-CLOUD to land
+it: merged `origin/main` back in (the merge restored plain `npm ci` in `cloud-setup.sh` — `main`
+deleted `scripts/npm-ci-with-shared-deps.sh` when the shared dep went public git+https in #444),
+scrubbed the stale Test-mode/`paperMode` header comments (removed from the product 2026-07-03),
+resolved keep-both conflicts in `AGENTS.md`/`docs/EFFORT-LOG.md`, and pushed to re-kick `verify`.
+Owner actions now done: `SLACK_BOT_TOKEN` added as a cloud Runtime Secret; the cloud env
+setup-script field points at `bash scripts/cloud-setup.sh`. See
+`docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+
+**MERGED 2026-07-05:** relanded as **PR #798** → squash `546c451` on `main` (verify x2 + smoke +
+gitleaks green; #367 closed superseded — cloud-proxy pushes were generating no pull_request
+workflow runs, so a fresh PR + a new `workflow_dispatch` re-kick lever on ci.yml were needed).
+`cloud-setup.sh` verified end-to-end in a cloud container (npm ci, `.env.local` seed, hook
+install valid-JSON). Follow-up for the Monet lane: 8 resolved-to-land Codex P2 threads on #798
+(engine edge cases; list in the effort-log row and the #798 summary comment).
+
+## 2026-07-05 — Guardrails → overridable preferences (denylist) (Monet risk lane)
+Worktree `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`, PR open.
+Owner directive: only the account boundary (+ physical/broker/regulatory/accounting impossibilities)
+stays hard; every other policy block is a light preference the agent may self-override with a logged
+`autonomyOverride` thesis. Inverted the Socratic override classifier from an allowlist to a **denylist**:
+new `HARD_GATE_REASON_PATTERNS` + `isHardGateReason` source-of-truth in `policy.ts` (risk engine); the
+`socratic-runtime.ts` `overrideableReason` is now `!isHardGateReason`. Reclassified short-stop-required,
+bracket-required, and policy-level short-disabled from hard → overridable; any unlisted/new gate now
+defaults overridable instead of silently hard. Advisory-only (nothing auto-overrides; broker / account /
+regulatory hard gates untouched). New `test/hard-gate-classification.test.ts` pins the full matrix; the
+one cross-lane touch (`socratic-runtime.ts`, Claude's file) was coordinated on `#agent-sync`. Follow-ups:
+extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. Gate: tsc clean,
+2504 tests green (the earlier "4 failed" were flakes; clean on re-run). See
+`docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+
+## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
+The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
+itemization pass) tripped GitHub's secondary rate limit — 403 "secondary rate limit ...
+temporarily blocked from content creation" — and the workflow hard-failed mid-sync. Hardened
+the script: (a) 2.5s throttle after every issue creation; (b) on a rate-limit response
+(403/429 with a rate-limit/abuse message or `Retry-After`), retry honoring `Retry-After`
+else exponential backoff (15s base, 120s cap), all retry sleeps drawn from a bounded 300s
+per-run budget; (c) when the budget is exhausted, exit 0 with an explicit "PARTIAL SYNC —
+resume on next run" summary instead of exit 1 (the sync is idempotent; the daily cron +
+next push re-run resume cleanly, and a red run for an expected partial pass is noise).
+Verified with an offline monkeypatched harness (19 checks: detection, Retry-After
+vs. backoff, budget accounting, all partial-exit paths) plus a live `--dry-run`.
+**Done 2026-07-05:** merged as PR #694 and validated live on `main` — the previously
+hard-failing bulk run completed green (created=101 updated=305, exit 0). Propagated
+verbatim to congress-trading-shared (PR #27, merged), api-usage-monitor (PR #38, merged),
+and Congress.Trade (PR #162). Codex's PR-review pass on #162 produced three refinements,
+folded back into the canonical file and re-propagated: the initial issue listing is now
+inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
+our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
+`docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+## 2026-07-05 — Console live-data build-out slice (Codex subagent, issue #471)
+Branch `codex/console-live-data`, worktree `/Users/jay/.codex/worktrees/socratic-console-live-data`.
+Merged current `origin/main` (`0bfa4f1e`) into the branch, resolved only the effort-log overlap,
+and kept the implementation scoped to console live-data files. The branch now implements the
+narrow live-data slice without touching settings/approvals/risk lanes:
+`ConsoleDataProvider` now consumes `/api/events/stream` for push refreshes (with poll fallback),
+tracks stream connection state, dispatches `market-data-filled` for existing chart listeners, and
+surfaces stream/freshness state in the global freshness strip. The console overview now adds an
+open mark-to-market card, a live risk-utilization board, reuses the existing equity chart for an
+intraday-or-recent equity window, and promotes the existing positions table into the home-page
+blotter with a weight column. Added focused derivation tests.
+
+Verification on the merged branch: `npm run lint -- --quiet` passed; `npx vitest run
+test/console-live-data-derive.test.ts` passed (4 tests); `npm test` passed (257 files / 2510
+tests); `npm run build` passed on webpack/TypeScript/static-page generation with the repo's
+existing middleware deprecation + webpack cache warnings; `npx tsc --noEmit` initially failed
+immediately after the merge because `tsconfig.json` still referenced stale `.next/types/**`
+entries, then passed cleanly after the successful build regenerated `.next/types`. See
+`docs/rollouts/2026-07-04-console-live-data-build-out.md`.
+
+## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
+Owner-directed: promoted every still-open item from the review docs
+(`docs/reviews/2026-06-30-improvement-audit.md`, both 2026-07-04 expert/composite reviews,
+`2026-07-03-console-parity-open-items.md`), `PLAN.md`, and a code sweep into individually
+tracked `docs/EFFORT-LOG.md` Planned rows with assigned lanes — CURSOR/DeepSeek v4 Pro
+(17 rows), CODEX (6 + 5 annotated parity rows), AG/Antigravity (7 + 2 annotated), MONET
+(5, risk lane — a drafted 6th, regime-enum gate adoption, was already shipped by Monet as
+PR #449 mid-pass), CLAUDE (6, memory/RAG), plus a 15-row unassigned owner-decision bucket.
+Pre-existing Planned rows got assignment annotations in their bodies (first lines untouched
+to preserve issues-mirror identity keys). Deduped the twice-logged "Wave-1 quick wins"
+In Progress row. The same pass seeded populated boards + issue mirrors for Congress.Trade,
+congress-trading-shared, and API-usage-monitor (separate PRs in those repos; Congress.Trade
+also gets the fleet-standard sync script + workflow, building on Codex PR #137). Next action:
+GitHub issues auto-create on merge via `effort-issues-sync.yml`; agents pick up their lanes.
+See `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+**2026-07-05 follow-up (full itemization):** the owner flagged the pass as still non-exhaustive —
+three enumeration agents then classified EVERY finding in the two 2026-07-04 panels, the full
+2026-06-30 audit, the 2026-07-01 learning-loop/RAG expansion backlogs, and June residual docs;
+~220 further untracked findings are now individual Planned rows (repo-mirror subsections
+"2026-07-05 full itemization" + "Deep-sweep additions"), each lane-tagged. Includes two live bugs
+(partial-day ADV in the impact model; checkRegimeFlip 'local' non-atomic RMW) and the
+safety-critical prerequisites of the factor-weight auto-apply lane.
+
+## 2026-07-04 — Approvals triage upgrades + alert center focused slice (Codex)
+Branch `codex/approvals-alert-center`, worktree
+`/Users/jay/.codex/worktrees/socratic-approvals-alert-center`. Implemented the narrow issue #470
+slice only: `/console/approvals` now has client-side triage controls (search, opening-vs-exit,
+paper-vs-live, sort by newest/confidence/notional/drift), visible-row multi-select, bulk reject,
+and bulk approve for safe non-LIVE proposals by reusing the existing per-item proposal endpoints.
+LIVE proposals stay single-item only and keep the typed-confirm broker path unchanged. The console
+also now has a reusable alert-center surface backed by existing `notification_events` snapshot data:
+summary buckets (attention / deliveries / approvals / all), search, account scoping, better
+notification titles/details via the existing formatter, and a compact version on Approvals plus the
+full version on `Activity -> Alert center`. Snapshot notification history was widened from 50 to 100
+rows for the alert view. Verification in this worktree after `npm ci`: `npm run lint` (0 errors,
+311 existing warnings), `./node_modules/.bin/tsc --noEmit`, `npm test` (255 files / 2467 tests),
+`npm run build` (passes with the existing Next middleware deprecation + Edge-runtime warning from
+Sentry/Next internals). Remaining follow-up inside the broader row: no bulk LIVE typed-confirm flow,
+no unified trade+learned-context+framework inbox yet, and no keyboard triage shortcuts. See
+`docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
+
+## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
+Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
+The three deterministic risk gates now classify the persisted regime label through the shared
+typed `MarketRegime` source of truth (`src/lib/market-regime.ts`) instead of three independent
+substring/`startsWith` rules: the crisis/inverted opening-exposure cap (`policy.ts`), the bear
+filter's risk-off veto (`strategy.ts` `deterministicBearFilter` — the site whose comment reserved
+the conversion for the risk lane), and the escalation gate (`regime-watch.ts` `isEscalationRegime`,
+also feeding `strategy.ts`'s dissent trigger). This is the "one-line adoption" the w1-regime-data
+lane (#368) exported the typed predicates and pinned `test/market-regime.test.ts` for. Correctness
+hardening only — canonical-label behavior is byte-identical (a regime relabel can no longer silently
+desync one gate from another); the one intended change is that a non-canonical free-text label now
+reads non-escalating instead of accidentally substring-matching. Gate green: tsc clean, lint 0
+errors, 254 files/2465 tests, build ok. See
+`docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
+
+## 2026-07-04 — Production deployed: Codex #442 and shared-dep #444
+Production `trading-live` is at `1e1a15bc` (`origin/main`), which includes both
+`94669873` / PR #442 (`feat(console): add swimlane approval and decision trace UI`) and
+PR #444 (`chore(deps): pin shared package to public HTTPS tag`). GitHub Actions `Deploy`
+completed successfully for the current `main`, PM2 `trading` is online from
+`/Users/jay/apps/trading-live`, `https://socratictrade.com/api/health` returns 200, and the
+new decision trace API/page artifacts exist in the production `.next/server/app` build.
+
+Preview caveat: beta/Codex preview worktrees were not force-synced because the local
+worktrees have generated `next-env.d.ts` diffs; per preview freshness policy, leave them
+untouched until their owners clean/sync them. Source of truth for deployed behavior is
+production `socratictrade.com`.
+
+## 2026-07-04 — Shared public dependency HTTPS hardening (Codex)
+Branch `codex/shared-dep-https-hardening`, worktree
+`/Users/jay/.codex/worktrees/socratic-shared-dep-https-hardening`. Follow-up to the public
+`congress-trading-shared` migration: Socratic now pins the shared package to the exact public
+HTTPS git tag `git+https://github.com/jaywedgeworth22/congress-trading-shared.git#v1.2.0`,
+removes the old GitHub Packages `.npmrc` and `scripts/npm-ci-with-shared-deps.sh`, and changes
+CI/deploy/e2e/cloud setup install paths back to plain `npm ci`. This pairs with the Congress.Trade
+Codex branch of the same name, which tightens its app lockfile from `git+ssh` to `git+https`.
+
+Verification: tokenless/no-SSH `npm ci` passed with `NPM_TOKEN`, `NODE_AUTH_TOKEN`,
+`GITHUB_TOKEN`, and `GH_TOKEN` unset and `GIT_SSH_COMMAND='sh -c "exit 255"'`; `npm run lint`
+passed with 0 errors / 308 existing warnings; `npx tsc --noEmit`; `npm test` (253 files / 2457
+tests); `npm run build` passed with existing Next middleware/Sentry Edge warnings. `npm audit`
+still reports the pre-existing `tsx` -> `esbuild` moderate dev-server advisory.
+PR #444 merged and deployed to production at `1e1a15bc`; see
+`docs/rollouts/2026-07-04-shared-dep-https-hardening.md`.
+
+## 2026-07-04 — Codex console/UI swimlane: approvals receipt, trace inspector, a11y/parity
+Branch `codex/console-ui-swimlane`, worktree `/Users/jay/apps/trading-codex-ui-swimlane`, claimed
+from `#agent-sync` sync-21 (not the sovereign review branch). Implemented the assigned console/UI
+pack: approval cards now show persisted served-model/failover provenance, red-team trigger chips,
+sizing provenance, reward:risk geometry, and proposal-linked RAG citations; live mobile approvals
+now require the same `APPROVE LIVE <SYMBOL>` phrase; `Sheet` has a focus trap and opener focus
+restore; `/api/socratic/decisions/[id]` + `/console/decisions/[id]` expose a read-only decision
+trace with coach notes and linked framework `ownerResponse`; console decision rows link to Trace;
+high-signal ticker surfaces now use the shared drawer affordance; Strategy model selects keep
+stored custom IDs visible instead of collapsing to an anonymous custom input.
+
+Verification green after merge-forward to `origin/main`: `npm run lint` (0 errors, 308 existing
+warnings), `npx tsc --noEmit`, `npm test` (253 files / 2457 tests), `npm run build` (passes with
+existing Next middleware deprecation + webpack cache warnings).
+PR #442 merged and is live in current production HEAD `1e1a15bc`; see
+`docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+
+## 2026-07-04 — Landing-operator merge-forward + dedup fix (Wave-2 Outcome Engine)
+Picked up `claude/w2-outcome-engine` mid-merge (prior operator restart left conflict markers
+uncommitted in `~/apps/trading-wt-w2-outcome`). Resolved `docs/EFFORT-LOG.md` /
+`docs/phase-7-strategy.md` / `docs/rollouts/2026-07-04-w1-learning-loops.md` (add/add,
+keep-both-newest-first), `src/lib/strategy.ts` (took `origin/main`'s newer
+`connectedAccountId`-scoped audit call — this branch never touched those lines itself),
+`src/lib/db-socratic.ts` (kept HEAD's 4 new outcome-engine functions, main had nothing there),
+`test/performance.test.ts` (kept both sides' new tests, no overlap). `tsc` then caught a REAL
+semantic conflict git's line-merge missed silently: two full duplicate copies of
+`RedTeamEfficacy`/`getRedTeamEfficacy` in `src/lib/performance.ts` (TS2323/TS2393) — removed the
+older pre-Codex-review duplicate, kept the newer account-scoped/keyed-lookup version (separate
+commit `e28db55`). Full quartet green post-fix: lint 0 errors, tsc clean, 252 files / 2455 tests,
+build green. See addendum in `docs/rollouts/2026-07-04-w2-outcome-engine.md`. Landing next.
+
+## 2026-07-04 — Wave-2: the Outcome Engine lane (Claude)
+Branch `claude/w2-outcome-engine`, based on `origin/claude/w1-learning-loops` (worktree
+`~/apps/trading-wt-w2-outcome`); lands via the landing train AFTER the base lands — push only,
+no PR from this lane. Four composite-review §A items: (1) **the outcome writer** — new scheduled
+job `src/lib/outcome-engine.ts` piggybacking the counterfactual cadence; joins placed decisions
+to fill_events/closed lots and blocked/rejected (incl. Bear-vetoed) decisions to counterfactual
+refPrice; writes `outcome`+`measuredAt`, per-case `socratic_outcome_recorded` receipt, awaited
+lifecycle re-index. (2) **multi-horizon schema** — `outcomes[] {15m|1h|1d|1w, returnPct,
+spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+skipped-counterfactual rows (new `outcomes`/`resolution_reason` columns); 1d/1w from the daily
+cascade SPY-relative on trading-day arithmetic; 15m/1h only from an actually-sampled live quote,
+else honest `unresolvable(no_intraday_source)`. (3) **kill survivorship** — terminal
+`unresolvable` after a bounded 10-trading-day recheck window; coverage disclosures
+("N/M resolved (X%)") on job receipts, `getRedTeamEfficacy`, missed-opportunity summary, and
+`certifyForwardResolution`. (4) **real per-decision lessons** — budget-gated, batch-capped LLM
+post-mortem at maturation → 1-3 direction-tagged lessons + `{verdictOnBelief,
+whichDissentMattered}`, replacing the template strings, re-indexed, routed through
+`ingestLearned` (origin `autonomous`); every skip is receipted (`socratic_lessons_skipped`).
+Verification green: lint 0 errors, tsc clean, 2383 tests / 246 files, build green. See
+`docs/rollouts/2026-07-04-w2-outcome-engine.md`.
 ## 2026-07-04 — Wave-2 episodic-retrieval lane: experience memory + decision-time analogs (Claude)
 Branch `claude/w2-episodic-retrieval`, off `origin/claude/w1-rag-quickwins` (builds on that lane's
 provenance headers + stable chunk ids). Implements the composite expert review's single
@@ -3897,6 +4144,22 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Active Focus
 
+- 2026-07-05 (`claude/logo-ideas-c5n61b`): **Logo concept exploration — 12 marks.** First brand
+  exploration for Socratic.Trade: twelve logo concepts (Socratic question/dialogue/Greek-antiquity ×
+  candlestick/trend/delta) delivered as a theme-aware showcase `docs/branding/logo-ideas.html`
+  (source of truth — marks are SVG `<symbol>`s, previewed on light+dark chips w/ favicon-scale
+  copies + lockups), 12 extracted standalone SVGs in `docs/branding/logo-ideas/`, and a concept
+  index `docs/branding/logo-ideas.md`. Single ink + existing emerald `#0e9f6e` discipline so any
+  pick drops into current UI tokens. Recommendation: **Phi** (app icon/favicon), The Inquiry
+  (storytelling), The Examined Trade (reports). Docs/assets only — no code. Owner picks a
+  direction next; then real exports (favicon.ico, app icons, OG) + `app/layout.tsx` wiring. See
+  `docs/rollouts/2026-07-05-logo-ideas.md`. **Final: owner selected Dialectic** (bubble tails
+  redrawn as integrated outline paths in v2 per feedback), saved as `dialectic.svg` + new
+  `dialectic-lockup.svg` (mark + `Socratic.Trade` name beside it); Examined Trade + Stoa were
+  shortlist runners-up, kept in archive. Next = cut exports (favicon/app-icon/OG) from the two
+  saved assets, outline the lockup serif to paths, wire `app/layout.tsx` metadata. Note: PR #801
+  (another session, same day) carries a separate 14-concept exploration — owner may want to
+  reconcile the two boards.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Assistant ignores lowercase ticker queries.** `classifyIntent` extracted symbols with uppercase-only regex so "how much is aapl" returned the canned intro instead of a quote. Added phrase-pattern fallback pass for lowercase input (e.g. "how much is X", "X price") without false-positives on English words. All 37 chat tests pass.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **Robinhood agenticAllowed default fix.** Robinhood MCP `get_accounts` does not return `agentic_allowed`/`agenticAllowed`, causing all accounts to show "not available for agentic execution." Fix: default `agenticAllowed` to `accountType === "brokerage"` (not `true` for all) so standard brokerage accounts work while IRA/Roth accounts stay correctly excluded. See `docs/rollouts/2026-06-25-robinhood-agentic-default.md`.
 - 2026-06-25 (`claude/magical-faraday-uce1uy`): **API Connections Health Panel + Credential-Scoped Lanes (Codex P2 fixes) + Trade error persistence.**

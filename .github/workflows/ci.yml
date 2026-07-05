@@ -23,6 +23,15 @@ on:
     branches:
       - main
       - "agent/**"
+  # Manual re-kick lever. Pushes/PRs made through the Claude cloud git proxy
+  # generate NO pull_request/synchronize workflow runs (observed on PR #367/#798:
+  # zero check runs on any head after the proxy pushed), which strands the
+  # required `verify` check as "expected" forever and auto-merge never fires.
+  # Dispatching this workflow on the PR branch attaches a `verify` check run to
+  # the branch-head SHA, which satisfies the ruleset. Trigger from a cloud
+  # session with the GitHub MCP actions_run_trigger tool, or:
+  #   gh workflow run ci.yml --ref <branch>
+  workflow_dispatch:
 
 # Cancel a superseded run for the same branch/PR instead of letting it queue
 # behind newer pushes — the single trading-live-mac runner was serializing a
@@ -172,14 +181,7 @@ jobs:
             ${{ runner.os }}-nextjs-
       - name: Install dependencies
         if: needs.classify.outputs.docs-only != 'true'
-        shell: bash
-        env:
-          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          # Drop GH_PAT from this chain: it is the Codex-Autofix PAT (repo + workflow scope, no
-          # read:packages), so preferring it over the packages-scoped job GITHUB_TOKEN makes the
-          # private-package install 403 when only GH_PAT is configured. (Review: PR #279.)
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: bash scripts/npm-ci-with-shared-deps.sh
+        run: npm ci
       - if: needs.classify.outputs.docs-only != 'true'
         run: npm run lint
       - if: needs.classify.outputs.docs-only != 'true'

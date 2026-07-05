@@ -41,8 +41,20 @@ export function buildSocraticMemoryDocument(decision: SocraticDecisionCase): Con
   const override = decision.autonomyOverride
     ? `requested=${decision.autonomyOverride.requested === true}; applied=${decision.autonomyOverride.applied}; thesis=${compact(decision.autonomyOverride.thesis)}; conflicts=${decision.autonomyOverride.conflicts.join(" | ") || "n/a"}`
     : "none";
+  // Multi-horizon outcome ladder (15m/1h/1d/1w). Each row is either a measured, SPY-relative
+  // return or an HONEST 'unresolvable(reason)' — rendered so retrieval-time readers see coverage,
+  // not just the survivors. Re-indexed by the outcome engine on every lifecycle update.
+  const horizonText = (decision.outcome?.outcomes ?? [])
+    .map((row) =>
+      row.resolution === "ok"
+        ? `${row.horizon} ${typeof row.returnPct === "number" ? `${row.returnPct >= 0 ? "+" : ""}${row.returnPct}%` : "n/a"}${
+            typeof row.spyExcessPct === "number" ? ` (vs SPY ${row.spyExcessPct >= 0 ? "+" : ""}${row.spyExcessPct}%)` : ""
+          }`
+        : `${row.horizon} unresolvable(${row.reason ?? "unknown"})`
+    )
+    .join(", ");
   const outcome = decision.outcome
-    ? `${decision.outcome.status}${typeof decision.outcome.returnPct === "number" ? `; return_pct=${decision.outcome.returnPct}` : ""}${typeof decision.outcome.pnlUsd === "number" ? `; pnl_usd=${decision.outcome.pnlUsd}` : ""}${decision.outcome.note ? `; note=${compact(decision.outcome.note)}` : ""}`
+    ? `${decision.outcome.status}${typeof decision.outcome.returnPct === "number" ? `; return_pct=${decision.outcome.returnPct}` : ""}${typeof decision.outcome.pnlUsd === "number" ? `; pnl_usd=${decision.outcome.pnlUsd}` : ""}${horizonText ? `; horizons: ${horizonText}` : ""}${decision.outcome.note ? `; note=${compact(decision.outcome.note)}` : ""}`
     : "pending";
 
   const text = [
