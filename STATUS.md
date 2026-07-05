@@ -20,8 +20,8 @@ tests now cover coach promotion and rewrite validation.
 Verification in this worktree is fully green: `npm test -- test/socratic-db.test.ts` (1 file,
 3 tests), `./node_modules/.bin/tsc --noEmit --pretty false`, `./node_modules/.bin/eslint .
 --quiet`, `npm test` (256 files / 2507 tests), and `npm run build` (passes; `/api/socratic/*`,
-`/console`, and `/console/decisions/[id]` all present in the build output). Next action: update
-handoff docs, commit, push, open READY PR, and arm squash auto-merge if CI is still pending.
+`/console`, and `/console/decisions/[id]` all present in the build output). PR #810 is open as
+READY with squash auto-merge armed; next action is just letting GitHub `verify` go green and land it.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude

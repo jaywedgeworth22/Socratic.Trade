@@ -55,5 +55,5 @@ real instead of implied, and surface run context where the backend already has i
 - If the owner wants future-run "consumed this lesson" receipts rather than just linked source-run
   metadata, that needs a separate retrieval-usefulness / consumption-ledger slice; this branch only
   surfaces data already locally available.
-- Remaining landing work is mechanical: commit this branch state, push, open the ready PR, and
-  enable squash auto-merge if GitHub `verify` is still pending.
+- PR #810 is now open as READY and `gh pr merge --squash --auto` is armed; remaining work is
+  waiting for GitHub `verify` to go green and land it.

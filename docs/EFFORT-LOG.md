@@ -267,7 +267,8 @@ to `socratictrade.com`, record the release commit + date here._
   Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
   AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
   verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
-  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. Ready to commit/push/PR.
+  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
+  squash auto-merge is armed pending `verify`.
 
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
