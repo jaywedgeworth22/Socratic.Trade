@@ -8,6 +8,27 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — HyDE + evidence-derived multi-query retrieval for filings RAG (CLAUDE, worktree `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`)
+New `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 evidence/sector/dominant-factor
+facet sub-queries — risk/guidance/litigation/supply-chain — deterministic, no I/O, `[]` on a bare
+symbol with no context) and `generateHydePassages()` (one cheap fail-open LLM call drafting 1-3
+short hypothetical filing passages, salience-llm.ts pattern, records usage under context
+`"rag-hyde"`, `[]` on any error). Two independent flags, both `envFlagOn`, both **default OFF**:
+`RAG_MULTIQUERY`, `RAG_HYDE` (+ `RAG_HYDE_MODEL` override). `vector-db.ts`: `RetrieveOptions` gains
+optional `queries?: string[]` — when supplied, `retrieveContextDetailed` embeds+matches EACH query
+independently (same query-embed cache) and RRF-fuses (`rag/hybrid.ts` `rrfFuse`, already
+N-list-generic) the per-query pools into one candidate pool feeding the existing `rankPool`
+pipeline UNCHANGED. `strategy.ts` filings-RAG block (the per-top-candidate 10-K/10-Q/8-K/earnings
+retrieval) wires both flags behind `!shouldDegradeForBudget()`; flags-off is byte-identical (one
+embed, one Pinecone query call) — pinned by a dedicated regression test. New tests:
+`test/rag-multi-query.test.ts` (14, pure variant derivation), `test/rag-hyde.test.ts` (10, mocked
+LLM), `test/rag-multi-query-retrieval.test.ts` (5, vector-db.ts wiring incl. flags-off
+byte-identical call-count regression + RRF-fusion-ranks-overlap case). Verification: `tsc --noEmit`
+clean; focused suite (rag-*/vector-db*/salience/disclosure-rag/strategy-rag-quickwins-wiring/
+run-strategy-offline/strategy-episodic-injection/strategy-hardening/strategy-money-path-f-g) 33
+files, 381 tests, all green. See `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+**Next:** land via the central operator (not this session — HARD RULE: no push/PR from this lane).
+
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
 Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
 `executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;

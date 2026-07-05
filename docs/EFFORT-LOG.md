@@ -237,6 +237,21 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
+  `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05.** New
+  `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 facet sub-queries from
+  evidence/sector/dominant-factor) + `generateHydePassages()` (one cheap fail-open LLM call, HyDE
+  passages, salience-llm.ts pattern). Two independent flags `RAG_MULTIQUERY`/`RAG_HYDE`
+  (+`RAG_HYDE_MODEL`), both default OFF. `vector-db.ts` `RetrieveOptions.queries?: string[]`:
+  per-query embed+match, RRF-fused (`rag/hybrid.ts` `rrfFuse`) into the existing `rankPool`
+  pipeline unchanged. `strategy.ts` filings-RAG block wired behind both flags + budget-degrade
+  check; flags-off is byte-identical (pinned by a dedicated regression test). Tests: 29 new
+  (`test/rag-multi-query.test.ts`, `test/rag-hyde.test.ts`, `test/rag-multi-query-retrieval.test.ts`).
+  Verification: tsc clean, focused RAG/strategy suite green (28+ files / 379 tests). See
+  `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`. Local-worktree HARD RULE: commit only,
+  no push/PR — central landing operator handles integration with `origin/main` (7 commits ahead
+  incl. sibling lanes `claude/due-jobs-substrate`, `claude/prompt-safety-fencing`).
+
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
   (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
   Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +
