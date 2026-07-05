@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-05 - Console live-data build-out slice (Codex subagent, issue #471).** No roadmap
+> change. This branch is delivering the smallest reliable piece of the planned CODEX live-data row:
+> reuse the existing `/api/events/stream` for console push refreshes, surface stream/freshness
+> state, and improve overview mark-to-market / risk utilization / open-blotter / intraday equity
+> using existing components first. Merged forward to current `origin/main` and verified on the
+> current tree; lightweight-charts adoption and broader live-stream fanout stay deferred until
+> this slice lands cleanly.
+
 > **2026-07-04 - Shared public dependency hardening (Codex).** No roadmap scope change. Socratic
 > now consumes `congress-trading-shared` from the public HTTPS git tag instead of GitHub Packages,
 > and CI/deploy setup returns to plain `npm ci`. This removes package-read token requirements for

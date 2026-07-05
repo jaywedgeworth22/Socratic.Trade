@@ -1,6 +1,7 @@
 // db-socratic.ts — durable Socratic decision case files, coaching, and framework proposals.
 import crypto from "crypto";
 import { audit, getDb } from "./db";
+import { mergeHorizonRows } from "./outcome-horizons";
 import type {
   OrderSide,
   PolicyDecision,
@@ -390,6 +391,12 @@ export function listSocraticDecisionCasesNeedingOutcome(
  * receipt, and re-index the vector-memory doc so retrieval sees the matured outcome instead of
  * "outcome: pending" frozen at creation. Same fire-and-forget/lifecycle-hook pattern as
  * appendSocraticDecisionCoachNote. Returns the updated case, or undefined when the id is unknown.
+ *
+ * Lost-update guard: `outcome.outcomes` may have been built from a pass-start snapshot held across
+ * awaits (measureCase in outcome-engine.ts), so a worker-sampled 15m/1h row written concurrently
+ * (drainDueIntradaySampleJobs) could otherwise be erased by this stale write. Re-merge against the
+ * FRESH `existing` row read just above right before persisting — mergeHorizonRows' existing-terminal-
+ * wins semantics make this idempotent/first-writer-wins regardless of write order.
  */
 export async function writeSocraticDecisionOutcome(
   id: string,
@@ -398,17 +405,18 @@ export async function writeSocraticDecisionOutcome(
 ): Promise<SocraticDecisionCase | undefined> {
   const existing = getSocraticDecisionCase(id, userId);
   if (!existing) return undefined;
-  upsertSocraticDecisionCase({ ...existing, userId, outcome });
-  const resolvedHorizons = outcome.outcomes.filter((row) => row.resolution === "ok").length;
+  const mergedOutcome = { ...outcome, outcomes: mergeHorizonRows(existing.outcome?.outcomes, outcome.outcomes) };
+  upsertSocraticDecisionCase({ ...existing, userId, outcome: mergedOutcome });
+  const resolvedHorizons = mergedOutcome.outcomes.filter((row) => row.resolution === "ok").length;
   audit(
     "socratic_outcome_recorded",
     {
       decisionId: id,
-      status: outcome.status,
-      returnPct: outcome.returnPct,
-      pnlUsd: outcome.pnlUsd,
-      horizons: outcome.outcomes,
-      coverage: `${resolvedHorizons}/${outcome.outcomes.length} horizons resolved`
+      status: mergedOutcome.status,
+      returnPct: mergedOutcome.returnPct,
+      pnlUsd: mergedOutcome.pnlUsd,
+      horizons: mergedOutcome.outcomes,
+      coverage: `${resolvedHorizons}/${mergedOutcome.outcomes.length} horizons resolved`
     },
     userId,
     existing.connectedAccountId

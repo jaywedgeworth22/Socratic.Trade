@@ -286,6 +286,14 @@ export const HARD_GATE_REASON_PATTERNS: readonly string[] = [
  */
 export function isHardGateReason(reason: string): boolean {
   const lower = reason.toLowerCase();
+  // Pre-veto tags (`deterministic_bear_veto:` / `red_team_veto:` from the pre-policy-veto-advisory
+  // flow in strategy.ts) are ADVISORY preferences BY CONSTRUCTION, regardless of the free-text reason
+  // after the prefix. A Red Team veto's reason is unconstrained LLM natural language and can
+  // coincidentally contain a hard-gate substring ("broker", "buying power", "PERMANENTLY", "wash
+  // sale"); classifying by the prefix here stops the substring scan from misclassifying a pre-veto
+  // tag as hard and silently refusing a valid override. These prefixes are ONLY produced by that
+  // tagging, so this can never mask a real hard gate.
+  if (lower.startsWith("deterministic_bear_veto:") || lower.startsWith("red_team_veto:")) return false;
   return HARD_GATE_REASON_PATTERNS.some((pattern) => lower.includes(pattern.toLowerCase()));
 }
 

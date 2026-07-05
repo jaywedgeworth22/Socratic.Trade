@@ -236,4 +236,61 @@ describe("Socratic decision persistence", () => {
       ownerResponse: "Split this into a crash-only guardrail and a lesson-review path."
     });
   });
+
+  it("writeSocraticDecisionOutcome re-merges at write time so a concurrently-written worker row survives a stale caller (Finding 1 regression)", async () => {
+    const { upsertSocraticDecisionCase, writeSocraticDecisionOutcome, getSocraticDecisionCase } = await import("../src/lib/db");
+
+    const decisionId = upsertSocraticDecisionCase({
+      userId: "u-lost-update",
+      runId: "run-lu-1",
+      proposalId: "prop-lu-1",
+      accountNumber: "acct",
+      symbol: "AAPL",
+      side: "buy",
+      status: "placed",
+      authority: "decide",
+      thesis: "Momentum",
+      rationale: "Breakout with volume.",
+      action: "BUY AAPL $1000",
+      evidence: [],
+      ragAttributions: [],
+      dissent: []
+    });
+
+    // Simulate the durable due-jobs WORKER (drainDueIntradaySampleJobs) resolving the 15m horizon
+    // mid-pass, persisted directly through the same writer a real worker uses.
+    await writeSocraticDecisionOutcome(
+      decisionId,
+      {
+        status: "open",
+        measuredAt: "2026-07-05T12:15:00.000Z",
+        outcomes: [
+          { horizon: "15m", returnPct: 3, maturedAt: "2026-07-05T12:15:00.000Z", priceBasis: "fill->live_quote(+15m)", resolution: "ok" }
+        ]
+      },
+      "u-lost-update"
+    );
+    const afterWorker = getSocraticDecisionCase(decisionId, "u-lost-update");
+    expect(afterWorker?.outcome?.outcomes.find((r) => r.horizon === "15m")?.resolution).toBe("ok");
+
+    // Now the INLINE maturation pass writes back a STALE outcomes array built from a pass-start
+    // snapshot taken BEFORE the worker's write above (measureCase holds `outcomes` across awaits) —
+    // it has no 15m row at all, only a later-horizon row the inline pass itself just measured.
+    const staleOutcomes = [
+      { horizon: "1h" as const, maturedAt: "2026-07-05T13:00:00.000Z", priceBasis: "fill->live_quote", resolution: "unresolvable" as const, reason: "no_intraday_source" }
+    ];
+    await writeSocraticDecisionOutcome(decisionId, { status: "open", measuredAt: "2026-07-05T13:00:00.000Z", outcomes: staleOutcomes }, "u-lost-update");
+
+    // The worker-written 15m row must SURVIVE the stale write — this is the lost-update bug: without
+    // the write-time re-merge, the stale array (missing 15m entirely) would have wholesale-replaced
+    // the persisted outcome and erased it.
+    const final = getSocraticDecisionCase(decisionId, "u-lost-update");
+    const row15m = final?.outcome?.outcomes.find((r) => r.horizon === "15m");
+    expect(row15m?.resolution).toBe("ok");
+    expect(row15m?.returnPct).toBe(3);
+    // And the inline pass's own new row is still present alongside it (a real merge, not a partial
+    // overwrite that drops the caller's own contribution).
+    const row1h = final?.outcome?.outcomes.find((r) => r.horizon === "1h");
+    expect(row1h?.resolution).toBe("unresolvable");
+  });
 });
