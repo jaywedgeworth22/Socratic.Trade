@@ -115,7 +115,7 @@ describe("retrieveContextDetailed: RetrieveOptions.queries wiring", () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it("with queries: [q1, q2, q3] supplied, embeds+matches each query independently (one embed + one Pinecone query call per variant)", async () => {
+  it("with queries: [q1, q2, q3] supplied, embeds+matches each query independently PLUS the original primary query (one embed + one Pinecone query call per variant, plus one for the primary)", async () => {
     mocks.embed.mockImplementation(({ input }: { input: string[] }) =>
       Promise.resolve({ data: [{ embedding: [input[0]!.length, 0.2, 0.3] }] })
     );
@@ -129,13 +129,14 @@ describe("retrieveContextDetailed: RetrieveOptions.queries wiring", () => {
 
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const variants = ["AAPL risk factors", "AAPL guidance outlook", "AAPL litigation disclosures"];
-    const result = await retrieveContextDetailed("AAPL primary query", "AAPL", 3, "local", { queries: variants });
+    const result = await retrieveContextDetailed("AAPL primary query", "AAPL", 4, "local", { queries: variants });
 
-    // 3 embeds, one per variant query (not the primary query — it's only used for BM25/rerank scoring).
-    expect(mocks.embed).toHaveBeenCalledTimes(3);
-    expect(mocks.query).toHaveBeenCalledTimes(3);
-    // All three fused matches should surface (distinct ids, RRF-merged pool).
-    expect(result.length).toBe(3);
+    // 4 embeds: one per variant query PLUS the original primary query (2026-07-05 review fix —
+    // the primary query's dense recall is augmented, not replaced, by the fan-out).
+    expect(mocks.embed).toHaveBeenCalledTimes(4);
+    expect(mocks.query).toHaveBeenCalledTimes(4);
+    // All four fused matches should surface (distinct ids, RRF-merged pool).
+    expect(result.length).toBe(4);
   });
 
   it("with queries supplied, RRF-fuses overlapping per-query pools so a match appearing in multiple queries ranks first", async () => {
@@ -162,13 +163,19 @@ describe("retrieveContextDetailed: RetrieveOptions.queries wiring", () => {
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
     const result = await retrieveContextDetailed("primary", "AAPL", 5, "local", { queries: ["q1", "q2"] });
 
-    const ids = result.map((c: any) => c.metadata?.symbol ?? c.text);
     expect(result.length).toBeGreaterThanOrEqual(2);
     // "shared" (appearing in both per-query pools) should be the top-ranked chunk after RRF fusion.
     expect(result[0]!.text).toBe("shared doc");
   });
 
-  it("with queries supplied, falls back to [] gracefully when every variant's embedding is malformed", async () => {
+  it("with queries supplied, falls back to the plain single-query path (not []) when every variant's embedding is malformed", async () => {
+    // 2026-07-05 review fix (Finding 1): the fan-out must fail OPEN — when every variant (including
+    // the always-included primary `query`) embeds to a malformed vector, retrieveContextDetailed
+    // used to return `[]` outright. It must instead fall back to the plain single-query path (i.e.
+    // behave exactly as flags-off), per the module's own "always falls back to the caller's
+    // original single query, never throws" contract. Here ALL embeddings are malformed, so even the
+    // fallback's single-query embed is malformed too, and `[]` is the correct terminal result — but
+    // it must come from the single-query path, not from an empty fan-out short-circuit.
     mocks.embed.mockResolvedValue({ data: [{ embedding: [NaN, NaN, NaN] }] });
 
     const { retrieveContextDetailed } = await import("../src/lib/vector-db");
@@ -176,5 +183,38 @@ describe("retrieveContextDetailed: RetrieveOptions.queries wiring", () => {
 
     expect(result).toEqual([]);
     expect(mocks.query).not.toHaveBeenCalled();
+    // One embed per fan-out entry (primary + q1 + q2 = 3) plus one retry embed for the fallback's
+    // single-query path = 4 total embed attempts, all malformed.
+    expect(mocks.embed).toHaveBeenCalledTimes(4);
+  });
+
+  it("with queries supplied, when ONE variant's Voyage/Pinecone call rejects, the OTHER variants' results still surface (fail-open, no throw)", async () => {
+    // 2026-07-05 review fix (Finding 1, BLOCKER): embedAndMatchOneQuery has no internal catch and
+    // withRagApiHealth/embedWithRetry rethrow on a transient provider error, so a bare Promise.all
+    // over the fan-out used to let ONE variant's rejection reject the WHOLE Promise.all, discarding
+    // every other variant's already-successful results and returning `[]` from the outer catch.
+    // Each fan-out call must now be caught individually so surviving variants still contribute.
+    let embedCall = 0;
+    mocks.embed.mockImplementation(({ input }: { input: string[] }) => {
+      embedCall++;
+      // The second embed call (whichever query it is) fails; the rest succeed.
+      if (embedCall === 2) return Promise.reject(new Error("Voyage 500"));
+      return Promise.resolve({ data: [{ embedding: [input[0]!.length, 0.2, 0.3] }] });
+    });
+    mocks.query.mockImplementation(({ vector }: { vector: number[] }) => {
+      const tag = vector[0];
+      return Promise.resolve({
+        matches: [{ id: `match-${tag}`, score: 0.9, metadata: { text: `text for ${tag}`, userId: "local", scope: "shared" } }]
+      });
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const variants = ["AAPL risk factors", "AAPL guidance outlook"];
+    const result = await retrieveContextDetailed("AAPL primary query", "AAPL", 5, "local", { queries: variants });
+
+    // Fan-out is [primary, ...variants] = 3 embeds attempted; one rejects, two succeed.
+    expect(mocks.embed).toHaveBeenCalledTimes(3);
+    // The whole call must NOT throw, and the surviving variants' matches must surface.
+    expect(result.length).toBeGreaterThanOrEqual(2);
   });
 });

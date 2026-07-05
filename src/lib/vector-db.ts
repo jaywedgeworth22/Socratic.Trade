@@ -1830,29 +1830,65 @@ export async function retrieveContextDetailed(
 
     // Additive multi-query fan-out (hyde-multiquery-retrieval, 2026-07-05): when the caller passes
     // `options.queries` (a non-empty array — set behind RAG_MULTIQUERY/RAG_HYDE in strategy.ts),
-    // embed + match EACH query independently, then RRF-fuse the per-query ranked id lists into one
-    // candidate pool before the existing rankPool pipeline. Absent/empty `queries` runs the exact
-    // single-query path unchanged (same one embed, one match round-trip as before this item).
+    // embed + match EACH query independently (INCLUDING the caller's original `query`, so its dense
+    // recall is augmented rather than replaced — 2026-07-05 review fix), then RRF-fuse the per-query
+    // ranked id lists into one candidate pool before the existing rankPool pipeline. Absent/empty
+    // `queries` runs the exact single-query path unchanged (same one embed, one match round-trip).
+    //
+    // Fail-OPEN, never fail-closed (2026-07-05 review fix): `embedAndMatchOneQuery` has no internal
+    // catch and its callees (withRagApiHealth/embedWithRetry) rethrow on a transient Voyage/Pinecone
+    // error, so a bare `Promise.all` here would let ONE variant's failure reject the whole fan-out —
+    // dropping every OTHER variant's already-successful results along with it. Each fan-out call is
+    // now individually caught (a rejected variant -> null, same "no result for this query" contract
+    // as a malformed embedding); and if EVERY variant fails/fuses to nothing, we fall back to the
+    // plain single-`query` path (i.e. behave exactly as flags-off) instead of returning `[]` — this
+    // module's header promise ("always falls back to the caller's original single query, never
+    // throws") only holds if this branch degrades that far, not just to an empty result.
+    const fanOutQueries = (options?.queries ?? []).length > 0
+      ? Array.from(new Set([query, ...(options!.queries as string[])]))
+      : [];
     let matches: any[];
-    if (options?.queries && options.queries.length > 0) {
-      const perQueryResults = await Promise.all(options.queries.map((q) => embedAndMatchOneQuery(q)));
-      const validResults = perQueryResults.filter((r): r is any[] => r != null);
-      if (validResults.length === 0) return [];
-      // Synthetic ids for matches lacking a real Pinecone id are scoped per-list-index (list N /
-      // position i) so a missing id in one query's pool can never collide with a missing id at the
-      // same position in a DIFFERENT query's pool — each stays its own distinct, unfused candidate.
-      const rankedIdLists: string[][] = validResults.map((matchList, listIdx) =>
-        matchList.map((m: any, i: number) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__idx_${listIdx}_${i}__`))
+    if (fanOutQueries.length > 0) {
+      const perQueryResults = await Promise.all(
+        fanOutQueries.map(async (q) => {
+          try {
+            return await embedAndMatchOneQuery(q);
+          } catch (err) {
+            console.warn(`[vector-db] multi-query variant failed, dropping it from the fan-out:`, err instanceof Error ? err.message : String(err));
+            return null;
+          }
+        })
       );
-      const idToMatch = new Map<string, any>();
-      validResults.forEach((matchList, listIdx) => {
-        matchList.forEach((m: any, i: number) => {
-          const id = rankedIdLists[listIdx]![i]!;
-          if (!idToMatch.has(id)) idToMatch.set(id, m);
+      const validResults = perQueryResults.filter((r): r is any[] => r != null && r.length > 0);
+      if (validResults.length === 0) {
+        // Every variant (including the original query, always included above) failed or matched
+        // nothing — fall back to the plain single-query path rather than returning `[]`.
+        const single = await embedAndMatchOneQuery(query);
+        if (single == null) return [];
+        matches = single;
+      } else {
+        // Synthetic ids for matches lacking a real Pinecone id are scoped per-list-index (list N /
+        // position i) so a missing id in one query's pool can never collide with a missing id at the
+        // same position in a DIFFERENT query's pool — each stays its own distinct, unfused candidate.
+        const rankedIdLists: string[][] = validResults.map((matchList, listIdx) =>
+          matchList.map((m: any, i: number) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__idx_${listIdx}_${i}__`))
+        );
+        // First-occurrence-wins would let a LOWER cosine score for a chunk that appears in multiple
+        // per-query pools silently win the fused entry (feeding a lower score into rankPool's
+        // minScore floor for that chunk). Keep the occurrence with the HIGHER match.score instead.
+        const idToMatch = new Map<string, any>();
+        validResults.forEach((matchList, listIdx) => {
+          matchList.forEach((m: any, i: number) => {
+            const id = rankedIdLists[listIdx]![i]!;
+            const existing = idToMatch.get(id);
+            if (!existing || (Number(m?.score) || 0) > (Number(existing?.score) || 0)) {
+              idToMatch.set(id, m);
+            }
+          });
         });
-      });
-      const fusedIds = rrfFuse(rankedIdLists);
-      matches = fusedIds.map((id) => idToMatch.get(id)).filter((m): m is any => m !== undefined).slice(0, fetchK);
+        const fusedIds = rrfFuse(rankedIdLists);
+        matches = fusedIds.map((id) => idToMatch.get(id)).filter((m): m is any => m !== undefined).slice(0, fetchK);
+      }
     } else {
       const single = await embedAndMatchOneQuery(query);
       if (single == null) return [];

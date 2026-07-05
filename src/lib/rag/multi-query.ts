@@ -3,13 +3,17 @@
  * 2026-07-05). Flag-gated, DEFAULT OFF — every helper here is additive; the existing single-static-
  * query call site in `strategy.ts` is byte-identical when both flags are off.
  *
- * Two independent flags (both default false, both via `envFlagOn`):
+ * Two flags (both default false, both via `envFlagOn`) — NOT independent, despite the name:
  *   - RAG_MULTIQUERY: derive 2-4 focused facet sub-queries from the candidate's evidence/sector/
  *     regime instead of one generic query. Pure, no I/O — see `deriveQueryVariants`.
  *   - RAG_HYDE: additionally draft 1-3 short hypothetical filing passages via one cheap LLM call
  *     (Hypothetical Document Embeddings) and retrieve using THOSE as queries too — closer to filing
  *     prose than a keyword-ish question, which tends to help dense cosine recall. See
- *     `generateHydePassages`.
+ *     `generateHydePassages`. RAG_HYDE alone is a NO-OP: `strategy.ts` only calls
+ *     `generateHydePassages` on the variants `deriveQueryVariants` already produced, inside the
+ *     `wantMultiQuery` branch, so RAG_HYDE requires RAG_MULTIQUERY to also be on to have any effect
+ *     (there is nothing to draft HyDE passages FROM otherwise). Turning on RAG_HYDE by itself
+ *     changes nothing.
  *
  * Both stages degrade to "no variants" on any error/budget condition — retrieval always falls back
  * to the caller's original single query, never throws, never blocks the money path.
@@ -17,6 +21,7 @@
 
 import { audit } from "../db";
 import { buildLlmRequestBody, extractLlmText, llmAuthHeaders, type LlmJsonSchema } from "../llm-call";
+import { isOverLlmBudget } from "../llm-budget";
 import { resolveLlmEndpoint } from "../llm-provider";
 import { LLM_TIMEOUT_MS } from "../llm-request";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
@@ -28,7 +33,12 @@ export function multiQueryEnabled(): boolean {
   return envFlagOn("RAG_MULTIQUERY", false);
 }
 
-/** Returns true when RAG_HYDE is truthy. Default OFF. Independent of RAG_MULTIQUERY (either can run alone). */
+/**
+ * Returns true when RAG_HYDE is truthy. Default OFF. NOT independent of RAG_MULTIQUERY: the
+ * `strategy.ts` call site only drafts HyDE passages from the variants `deriveQueryVariants`
+ * produced inside its `wantMultiQuery` branch, so RAG_HYDE=on with RAG_MULTIQUERY off is a no-op
+ * (nothing to draft HyDE passages from) — turning on RAG_HYDE alone requires RAG_MULTIQUERY too.
+ */
 export function hydeEnabled(): boolean {
   return envFlagOn("RAG_HYDE", false);
 }
@@ -166,26 +176,48 @@ function parsePassages(text: string | undefined): string[] {
  *
  * Records usage under context "rag-hyde" via `recordLlmUsage` on a successful call (best-effort;
  * a usage-recording failure must not affect the returned passages).
+ *
+ * Also skips (returns `[]`, no request) when `userId` is over its daily LLM/RAG budget — mirrors
+ * `retrieveContextDetailed`'s own `isOverLlmBudget` gate so HyDE's extra LLM call is covered by
+ * the same durable spend ceiling as retrieval itself, instead of only the best-effort per-run
+ * `shouldDegradeForBudget` check the caller (strategy.ts) already applies.
  */
 export async function generateHydePassages(
   queries: string[],
-  opts: { userId?: string } = {}
+  opts: { userId?: string; connectedAccountId?: string } = {}
 ): Promise<string[]> {
   const userId = opts.userId ?? "local";
   if (queries.length === 0) return [];
+  if (isOverLlmBudget(userId, opts.connectedAccountId)) return [];
 
   try {
+    // Resolve the endpoint FOR the model HyDE actually sends, not the policy's general `llmModel`
+    // (2026-07-05 review fix). `resolveLlmEndpoint(policy, ...)` picks provider/URL/key from
+    // `policy.llmModel`, but the request body below sends the separately-configured `hydeModel()`
+    // (default `gpt-5.4-mini`, overridable via RAG_HYDE_MODEL) — under an Anthropic policy those
+    // used to disagree (an OpenAI model id shipped to api.anthropic.com -> 400 -> silently `[]`,
+    // with no audit since a non-OK response wasn't audited either). Mirrors how salience-llm.ts
+    // stays coherent: it always sends `endpoint.model`, the exact model the endpoint was resolved
+    // for. Here HyDE has its own override knob, so we resolve the endpoint for THAT model instead
+    // by substituting it into the policy passed to resolveLlmEndpoint — same provider-dispatch
+    // rules (claude-*/grok-*/gemini-*/mistral-*/deepseek-* prefixes, else OpenAI), just keyed off
+    // the model that will actually be sent.
     const policy = getPolicy(userId);
-    const endpoint = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions", "green");
+    const model = hydeModel();
+    const endpoint = resolveLlmEndpoint(
+      { ...policy, llmModel: model },
+      userId,
+      "https://api.openai.com/v1/chat/completions",
+      "green"
+    );
     if (!endpoint.key) return [];
 
-    const model = hydeModel();
     const userContent = `Sub-topics to draft hypothetical filing passages for:\n${queries.map((q, i) => `${i + 1}. ${q}`).join("\n")}`;
 
     const body = buildLlmRequestBody(
       { provider: endpoint.provider, transport: endpoint.transport },
       {
-        model,
+        model: endpoint.model,
         systemPrompt: HYDE_SYSTEM_PROMPT,
         userContent,
         schema: HYDE_SCHEMA,
@@ -199,7 +231,14 @@ export async function generateHydePassages(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(LLM_TIMEOUT_MS)
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      try {
+        audit("rag_hyde_failed", { reason: `HTTP ${response.status}`, provider: endpoint.provider, model: endpoint.model }, userId);
+      } catch {
+        // best-effort telemetry only
+      }
+      return [];
+    }
 
     const payload = await response.json();
     const text = extractLlmText(payload);
@@ -209,7 +248,7 @@ export async function generateHydePassages(
       recordLlmUsage({
         userId,
         provider: endpoint.provider,
-        model,
+        model: endpoint.model,
         context: "rag-hyde",
         keySource: endpoint.keySource,
         keyRef: endpoint.keyRef,

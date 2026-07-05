@@ -558,7 +558,9 @@ export async function runStrategyOnce(
                 evidenceBulletins: candidate?.evidenceBulletins
               });
               if (wantHyde && variants.length > 0) {
-                const hydePassages = await generateHydePassages(variants, { userId });
+                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
+                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
+                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
                 variants = [...variants, ...hydePassages];
               }
             }

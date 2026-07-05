@@ -112,6 +112,73 @@ executes.
   suites after both the `vector-db.ts` refactor and the `strategy.ts` filings-block edit).
 - Did NOT run full `npm test` or `npm run build` per this lane's hard rules (focused verification only).
 
+## Review fixes (2026-07-05, same day)
+
+A review of the initial slice found one blocker and several minor issues, all fixed in a second
+commit on this branch (no amend):
+
+- **BLOCKER — fan-out was fail-CLOSED, not fail-open (`vector-db.ts`).** The multi-query
+  `Promise.all(options.queries.map(embedAndMatchOneQuery))` had no per-item catch, and
+  `embedAndMatchOneQuery`'s callees (`withRagApiHealth`/`embedWithRetry`) rethrow on a transient
+  Voyage/Pinecone error — so ONE variant's failure rejected the WHOLE `Promise.all`, discarding
+  every other variant's already-successful results, hitting the outer `catch`, and returning `[]`
+  (empty filings context) even when most variants succeeded. Separately, `if (validResults.length
+  === 0) return [];` never fell back to the caller's plain single query, contradicting this
+  module's own "always falls back to the caller's original single query, never throws" promise.
+  Fixed: each fan-out call is now individually try/caught (a rejected variant -> `null`, dropped,
+  same contract as a malformed embedding); when EVERY variant fails or fuses to nothing, retrieval
+  now falls back to the plain single-`query` path (i.e. behaves exactly as flags-off) instead of
+  returning `[]`. `test/rag-multi-query-retrieval.test.ts`'s "falls back to `[]` on all-malformed"
+  test (which pinned the wrong behavior) was rewritten to assert the single-query fallback path is
+  taken (still `[]` in that specific all-malformed case, but reached via the fallback, not a
+  short-circuit — asserted via the expected embed-call count); a new test asserts that when ONE
+  variant rejects, the OTHER variants' results still surface with no throw.
+- **Minor — first-occurrence-wins id resolution could keep a lower score (`vector-db.ts`).** When
+  building the fused id -> match map, a chunk id appearing in multiple per-query pools kept
+  whichever occurrence was seen first, which could feed a LOWER cosine score into `rankPool`'s
+  `minScore` floor for that chunk. Fixed: the occurrence with the HIGHER `match.score` now wins.
+- **Minor — HyDE endpoint/model incoherence (`multi-query.ts`).** `generateHydePassages` resolved
+  its endpoint via `resolveLlmEndpoint(policy, ...)` (keyed off `policy.llmModel`) but then sent
+  the separately-configured `hydeModel()` (default `gpt-5.4-mini`, override via `RAG_HYDE_MODEL`)
+  in the request body — under an Anthropic `policy.llmModel`, this shipped an OpenAI model id to
+  `api.anthropic.com`, got a 400, and returned `[]` silently (non-OK responses weren't audited).
+  Fixed: the endpoint is now resolved FOR the HyDE model actually sent (by passing `{ ...policy,
+  llmModel: hydeModel() }` into `resolveLlmEndpoint`, so provider/URL/transport/key all agree with
+  `endpoint.model`, mirroring how `salience-llm.ts` always sends `endpoint.model` verbatim); the
+  request body and `recordLlmUsage` call now use `endpoint.model` instead of the raw `hydeModel()`.
+  A non-OK response now also fires the existing best-effort `rag_hyde_failed` audit (previously
+  only the network-error/malformed-JSON paths audited).
+- **Minor — false "independent flags" claim (`multi-query.ts`, docs only).** The module docstring
+  and `hydeEnabled()`'s doc comment claimed `RAG_MULTIQUERY`/`RAG_HYDE` were independent ("either
+  can run alone"), but `strategy.ts`'s call site only drafts HyDE passages from the variants
+  `deriveQueryVariants` produced inside the `wantMultiQuery` branch — `RAG_HYDE=on` alone is a
+  no-op. Fixed the docstrings only (`multi-query.ts`'s header comment and `hydeEnabled()`'s doc
+  comment) to state the dependency plainly; `.env.example`'s comment already stated this correctly
+  and needed no change. `strategy.ts`'s gating structure itself was intentionally left untouched.
+- **Minor — HyDE spend not gated on the daily LLM budget (`multi-query.ts`).** `generateHydePassages`
+  only depended on `strategy.ts`'s best-effort per-run `shouldDegradeForBudget()` check, unlike
+  `retrieveContextDetailed`'s own durable `isOverLlmBudget` gate. Fixed: `generateHydePassages` now
+  short-circuits to `[]` (no request) when `isOverLlmBudget(userId, connectedAccountId)` is true —
+  a read-only import from `./llm-budget` (no edits to that file). `strategy.ts`'s call site was
+  updated to pass `connectedAccountId: policy.connectedAccountId` through (comment-plus-argument
+  addition only, no gating restructure).
+- **Nit — primary query dropped from the fan-out (`vector-db.ts`).** Previously only
+  `options.queries` (the derived variants/HyDE passages) were embedded+matched when multi-query was
+  active; the caller's original `query` string was used solely for BM25/rerank scoring, never for
+  its own dense recall pass. Fixed: the fan-out list is now `[query, ...options.queries]` (deduped),
+  so the primary query's dense recall is augmented rather than replaced by the variants.
+
+Files touched in this pass: `src/lib/vector-db.ts`, `src/lib/rag/multi-query.ts`,
+`src/lib/strategy.ts` (one-line addition + comment only, no gating restructure),
+`test/rag-multi-query-retrieval.test.ts`, `test/rag-hyde.test.ts`, this rollout note.
+
+Verification: `npx tsc --noEmit` clean;
+`npx vitest run test/rag-multi-query.test.ts test/rag-hyde.test.ts
+test/rag-multi-query-retrieval.test.ts test/rag-retrieval-eval.test.ts
+test/rag-retrieval-regression.test.ts test/strategy-rag-quickwins-wiring.test.ts` — 6 files / 62
+tests, all green; broader safety-net re-run of the original 33-file/381-test combined focused list
+(now 384 tests — 3 new fan-out/budget/endpoint-coherence tests) — all green, no regressions.
+
 ## Follow-ups
 
 - This worktree's `node_modules` was missing its `.bin` directory and most dependencies at session

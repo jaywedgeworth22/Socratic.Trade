@@ -13,20 +13,37 @@ New `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 evidence/sec
 facet sub-queries — risk/guidance/litigation/supply-chain — deterministic, no I/O, `[]` on a bare
 symbol with no context) and `generateHydePassages()` (one cheap fail-open LLM call drafting 1-3
 short hypothetical filing passages, salience-llm.ts pattern, records usage under context
-`"rag-hyde"`, `[]` on any error). Two independent flags, both `envFlagOn`, both **default OFF**:
-`RAG_MULTIQUERY`, `RAG_HYDE` (+ `RAG_HYDE_MODEL` override). `vector-db.ts`: `RetrieveOptions` gains
-optional `queries?: string[]` — when supplied, `retrieveContextDetailed` embeds+matches EACH query
-independently (same query-embed cache) and RRF-fuses (`rag/hybrid.ts` `rrfFuse`, already
-N-list-generic) the per-query pools into one candidate pool feeding the existing `rankPool`
-pipeline UNCHANGED. `strategy.ts` filings-RAG block (the per-top-candidate 10-K/10-Q/8-K/earnings
-retrieval) wires both flags behind `!shouldDegradeForBudget()`; flags-off is byte-identical (one
-embed, one Pinecone query call) — pinned by a dedicated regression test. New tests:
-`test/rag-multi-query.test.ts` (14, pure variant derivation), `test/rag-hyde.test.ts` (10, mocked
-LLM), `test/rag-multi-query-retrieval.test.ts` (5, vector-db.ts wiring incl. flags-off
-byte-identical call-count regression + RRF-fusion-ranks-overlap case). Verification: `tsc --noEmit`
-clean; focused suite (rag-*/vector-db*/salience/disclosure-rag/strategy-rag-quickwins-wiring/
-run-strategy-offline/strategy-episodic-injection/strategy-hardening/strategy-money-path-f-g) 33
-files, 381 tests, all green. See `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+`"rag-hyde"`, `[]` on any error). Two flags, both `envFlagOn`, both **default OFF**:
+`RAG_MULTIQUERY`, `RAG_HYDE` (+ `RAG_HYDE_MODEL` override) — **not independent**: `RAG_HYDE` alone
+is a no-op, it requires `RAG_MULTIQUERY` too (see review-fixes doc fix below). `vector-db.ts`:
+`RetrieveOptions` gains optional `queries?: string[]` — when supplied, `retrieveContextDetailed`
+embeds+matches EACH query independently (same query-embed cache, INCLUDING the original `query`
+alongside the variants) and RRF-fuses (`rag/hybrid.ts` `rrfFuse`, already N-list-generic) the
+per-query pools into one candidate pool feeding the existing `rankPool` pipeline UNCHANGED.
+`strategy.ts` filings-RAG block (the per-top-candidate 10-K/10-Q/8-K/earnings retrieval) wires both
+flags behind `!shouldDegradeForBudget()`; flags-off is byte-identical (one embed, one Pinecone
+query call) — pinned by a dedicated regression test.
+
+**Review fixes (same day, second commit):** fixed one BLOCKER (the fan-out was fail-CLOSED — a
+bare `Promise.all` over per-variant embed+match calls let one variant's rejection discard every
+other variant's results and return `[]`; now each call is caught individually and an all-fail case
+falls back to the plain single-query path instead of `[]`) + four minor issues (first-occurrence-
+wins id resolution could keep a lower cosine score — now higher-score wins; HyDE resolved its
+endpoint from `policy.llmModel` but sent a different `hydeModel()` in the body, which could route
+an OpenAI model to `api.anthropic.com` under an Anthropic policy — now the endpoint is resolved FOR
+the HyDE model, and non-OK responses now audit `rag_hyde_failed` too; the "independent flags" doc
+claim was false — docstrings fixed; HyDE spend wasn't gated on the daily LLM budget — now gated via
+`isOverLlmBudget`) + one nit (the primary query is now included in the fan-out alongside variants).
+Full details: `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`'s "Review fixes" section.
+
+New/updated tests: `test/rag-multi-query.test.ts` (14, pure variant derivation), `test/rag-hyde.test.ts`
+(12, mocked LLM, incl. endpoint/model coherence + daily-budget gate), `test/rag-multi-query-retrieval.test.ts`
+(8, vector-db.ts wiring incl. flags-off byte-identical call-count regression, RRF-fusion-ranks-
+overlap case, single-query fallback on all-variants-fail, one-variant-throws-others-survive).
+Verification: `tsc --noEmit` clean; focused suite (rag-*/vector-db*/salience/disclosure-rag/
+strategy-rag-quickwins-wiring/run-strategy-offline/strategy-episodic-injection/strategy-hardening/
+strategy-money-path-f-g) 33 files, 384 tests, all green. See
+`docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
 **Next:** land via the central operator (not this session — HARD RULE: no push/PR from this lane).
 
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
