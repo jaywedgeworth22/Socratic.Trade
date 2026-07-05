@@ -276,6 +276,42 @@ const MIGRATIONS: Migration[] = [
       }
       database.exec("CREATE INDEX IF NOT EXISTS idx_chat_turns_user_client ON chat_turns (user_id, client_turn_id)");
     }
+  },
+  {
+    // Durable due-jobs substrate (src/lib/db-jobs.ts): a generic claimable job queue so time-based
+    // work (starting with 15m/1h intraday outcome sampling — outcome-horizons.ts) survives process
+    // restarts instead of depending on a strategy run coincidentally landing inside the sampling
+    // window. Lease/reclaim semantics (claimed_by + lease_expires_at) fix the gap the mobile_commands
+    // queue (v8 above) has: a crashed 'running' row there is stuck forever; this table's claim path
+    // reclaims a stale 'claimed' row whose lease expired instead of leaving it orphaned.
+    version: 11,
+    name: "due_jobs",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS due_jobs (
+          id TEXT PRIMARY KEY,
+          job_type TEXT NOT NULL,
+          dedupe_key TEXT,
+          due_at TEXT NOT NULL,
+          not_after TEXT,
+          status TEXT NOT NULL CHECK(status IN ('pending','claimed','done','unresolvable')),
+          payload TEXT NOT NULL DEFAULT '{}',
+          claimed_by TEXT,
+          claimed_at TEXT,
+          lease_expires_at TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          result TEXT,
+          user_id TEXT,
+          connected_account_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(job_type, dedupe_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_due_jobs_status_due ON due_jobs (status, due_at);
+        CREATE INDEX IF NOT EXISTS idx_due_jobs_type_status ON due_jobs (job_type, status);
+      `);
+    }
   }
 ];
 
@@ -1397,3 +1433,4 @@ export * from "./db-api-keys";
 export * from "./db-health";
 export * from "./db-securities-import";
 export * from "./db-socratic";
+export * from "./db-jobs";

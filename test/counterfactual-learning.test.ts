@@ -3,7 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { materializeSkippedCandidateCounterfactuals, type CounterfactualOHLCFetcher } from "../src/lib/counterfactual-learning";
-import { audit, listMaturedSkippedCounterfactuals } from "../src/lib/db";
+import {
+  audit,
+  insertSkippedCounterfactualCandidate,
+  listMaturedSkippedCounterfactuals,
+  listSkippedCounterfactualsByStatus,
+  markSkippedCounterfactualMatured,
+  markSkippedCounterfactualUnresolvable,
+  skippedCounterfactualId,
+  updateSkippedCounterfactualOutcomes
+} from "../src/lib/db";
 import { getSkippedCandidateReturns } from "../src/lib/performance";
 
 beforeAll(() => {
@@ -128,5 +137,98 @@ describe("counterfactual skipped-candidate learning", () => {
     // The materializer now also fetches one SPY series per run (for the multi-horizon rows'
     // SPY-relative excess) before the per-candidate fetches.
     expect(calls).toEqual([`${userA}:SPY`, `${userA}:NVDA`, `${userB}:SPY`, `${userB}:NVDA`]);
+  });
+
+  it("markSkippedCounterfactualMatured re-merges at write time so a concurrently-written worker row survives a stale caller (Finding 1 regression)", async () => {
+    const userId = `cf-lost-update-matured-${randomUUID()}`;
+    const runId = "run-lu-matured";
+    const symbol = "AAPL";
+    const horizonDays = 5;
+    const id = skippedCounterfactualId(userId, runId, symbol, horizonDays);
+
+    insertSkippedCounterfactualCandidate({
+      userId,
+      runId,
+      symbol,
+      snapshotAt: "2026-06-10T14:30:00.000Z",
+      refPrice: 100,
+      horizonDays,
+      targetDate: "2026-06-17",
+      now: "2026-06-10T14:30:00.000Z"
+    });
+
+    // Simulate the durable due-jobs WORKER resolving the 15m horizon mid-pass, persisted through
+    // the same low-level updater the worker path uses (writeIntradaySampleRow ->
+    // updateSkippedCounterfactualOutcomes).
+    updateSkippedCounterfactualOutcomes(id, userId, [
+      { horizon: "15m", returnPct: 2.5, maturedAt: "2026-06-10T14:45:00.000Z", priceBasis: "ref_price->live_quote(+15m)", resolution: "ok" }
+    ]);
+
+    // Now the counterfactual materializer's own maturation write fires with a STALE `outcomes` array
+    // built before the worker's write above (no 15m row at all — only the 1d/1w rows it just
+    // computed from daily bars).
+    const staleOutcomes = [
+      { horizon: "1d" as const, returnPct: 4, maturedAt: "2026-06-17T00:00:00.000Z", priceBasis: "ref_price->daily_close(2026-06-11)", resolution: "ok" as const }
+    ];
+    const wrote = markSkippedCounterfactualMatured({
+      id,
+      userId,
+      exitDate: "2026-06-17",
+      exitPrice: 115,
+      returnPct: 15,
+      outcomes: staleOutcomes,
+      checkedAt: "2026-06-17T00:00:00.000Z"
+    });
+    expect(wrote).toBe(true);
+
+    // The worker-written 15m row must SURVIVE the stale terminal write, and the caller's own new 1d
+    // row must also be present — a real merge, not a partial overwrite.
+    const [row] = listMaturedSkippedCounterfactuals(userId);
+    const row15m = row?.outcomes?.find((r) => r.horizon === "15m");
+    const row1d = row?.outcomes?.find((r) => r.horizon === "1d");
+    expect(row15m?.resolution).toBe("ok");
+    expect(row15m?.returnPct).toBe(2.5);
+    expect(row1d?.resolution).toBe("ok");
+    expect(row1d?.returnPct).toBe(4);
+  });
+
+  it("markSkippedCounterfactualUnresolvable re-merges at write time so a concurrently-written worker row survives a stale caller (Finding 1 regression)", async () => {
+    const userId = `cf-lost-update-unresolvable-${randomUUID()}`;
+    const runId = "run-lu-unresolvable";
+    const symbol = "ZZZZ";
+    const horizonDays = 5;
+    const id = skippedCounterfactualId(userId, runId, symbol, horizonDays);
+
+    insertSkippedCounterfactualCandidate({
+      userId,
+      runId,
+      symbol,
+      snapshotAt: "2026-06-10T14:30:00.000Z",
+      refPrice: 40,
+      horizonDays,
+      targetDate: "2026-06-17",
+      now: "2026-06-10T14:30:00.000Z"
+    });
+
+    // Worker writes the 15m row first.
+    updateSkippedCounterfactualOutcomes(id, userId, [
+      { horizon: "15m", returnPct: -1.2, maturedAt: "2026-06-10T14:45:00.000Z", priceBasis: "ref_price->live_quote(+15m)", resolution: "ok" }
+    ]);
+
+    // Terminal 'unresolvable' write (delisted symbol, no price series) fires with a stale outcomes
+    // snapshot that has no 15m row.
+    const wrote = markSkippedCounterfactualUnresolvable({
+      id,
+      userId,
+      reason: "no_price_series",
+      outcomes: [{ horizon: "1d", maturedAt: "2026-06-17T00:00:00.000Z", priceBasis: "ref_price->daily_close", resolution: "unresolvable", reason: "no_price_series" }],
+      checkedAt: "2026-06-17T00:00:00.000Z"
+    });
+    expect(wrote).toBe(true);
+
+    const [row] = listSkippedCounterfactualsByStatus(userId, "unresolvable");
+    const row15m = row?.outcomes?.find((r) => r.horizon === "15m");
+    expect(row15m?.resolution).toBe("ok");
+    expect(row15m?.returnPct).toBe(-1.2);
   });
 });
