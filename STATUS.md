@@ -23,6 +23,7 @@ green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes
 Note: two foreign uncommitted items remain preserved in this worktree, deliberately NOT landed —
 an AGENTS.md Monet-lane port edit (4103→4104, unclaimed; raised in #agent-sync) and untracked
 `.codex/` setup scripts. Whoever owns them should claim/land them.
+**Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
