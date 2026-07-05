@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
+The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
+itemization pass) tripped GitHub's secondary rate limit — 403 "secondary rate limit ...
+temporarily blocked from content creation" — and the workflow hard-failed mid-sync. Hardened
+the script: (a) 2.5s throttle after every issue creation; (b) on a rate-limit response
+(403/429 with a rate-limit/abuse message or `Retry-After`), retry honoring `Retry-After`
+else exponential backoff (15s base, 120s cap), all retry sleeps drawn from a bounded 300s
+per-run budget; (c) when the budget is exhausted, exit 0 with an explicit "PARTIAL SYNC —
+resume on next run" summary instead of exit 1 (the sync is idempotent; the daily cron +
+next push re-run resume cleanly, and a red run for an expected partial pass is noise).
+Verified with an offline monkeypatched harness (15 checks: detection, Retry-After
+vs. backoff, budget accounting, both partial-exit paths) plus a live `--dry-run`. Next
+action: propagate the identical file to congress-trading-shared, api-usage-monitor, and
+Congress.Trade via their own PRs (fleet protocol: the file is copied verbatim). See
+`docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
 Owner-directed: promoted every still-open item from the review docs
 (`docs/reviews/2026-06-30-improvement-audit.md`, both 2026-07-04 expert/composite reviews,
