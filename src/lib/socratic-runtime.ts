@@ -332,6 +332,18 @@ export function buildSocraticDecisionCase(input: {
       }),
       // Appended AFTER the per-proposal evidence (which is capped at 8) so safety receipts are
       // never crowded out by candidate/market rows.
+      //
+      // This ordering is DELIBERATE and safety-load-bearing, not incidental: kind-'safety' items
+      // (prompt-injection / evidence-age receipts from src/lib/prompt-safety.ts) land at the TAIL
+      // of this array. Downstream summarizers that feed the RAG/lesson-learning prompts take a
+      // fixed-size PREFIX slice — socratic-memory.ts summarizeEvidence does .slice(0, 5) and
+      // outcome-engine.ts's lesson pass does decisionCase.evidence.slice(0, 6) — so as long as a
+      // case has >5/>6 proposal-evidence rows ahead of them, the tail-appended safety items are
+      // excluded from what gets summarized back into memory/lessons. Do NOT reorder extraEvidence
+      // to the front (or otherwise make it appear before the slice cutoff): that would let a
+      // detected injection attempt's own excerpt text ride into the RAG/lesson corpus, creating a
+      // detection -> memory -> re-detection feedback loop where the scanner's receipts become
+      // future "learned" input. Keep safety receipts append-only and tail-positioned.
       ...(input.extraEvidence ?? [])
     ],
     ragAttributions: ragAttributions.filter((row) => normalizeSymbol(row.symbol) === normalizeSymbol(input.proposal.symbol)),

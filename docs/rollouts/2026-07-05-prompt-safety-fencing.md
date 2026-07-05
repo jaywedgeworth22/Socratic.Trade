@@ -122,6 +122,50 @@ npx eslint <changed files>  # 0 errors (5 pre-existing grandfathered warnings, n
 Full `npm test` / `npm run build` intentionally NOT run here — the central landing operator
 runs them sequentially per this lane's contract.
 
+## Review fixes (second commit)
+
+A follow-up review of the six changes above surfaced three precise, low-scope fixes, applied as
+a second local commit (not amended onto the first):
+
+1. **Excerpt cap on persisted findings** (`src/lib/prompt-safety.ts`): `excerptAround` bounded
+   ±80 chars around a match but not the match text itself. Every pattern except
+   `base64-instruction-blob` matches a short phrase, so this was latent — but that pattern's
+   regex (`[A-Za-z0-9+/]{200,}={0,2}`) has no upper bound, so a multi-KB base64 run in a RAG
+   chunk/filing produced an excerpt of comparable size. The audit-log path already caps
+   (`strategy.ts` slices findings to 12 × 240 chars) and the evidence `summary` string is capped
+   too, but the evidence item's `data: findings` (`strategy.ts`) is the RAW, uncapped findings
+   array, and it gets `JSON.stringify`'d as-is into `evidence` on **every** decision case
+   recorded for the run (`upsertSocraticDecisionCase`, `db-socratic.ts`) — so an unbounded
+   excerpt would persist unbounded text repeatedly. Added `MAX_EXCERPT_LENGTH = 400`: excerpts
+   over the cap keep a head+tail slice around a `...` marker instead of truncating one end. New
+   test: a ~50,000-char base64 run yields a finding whose excerpt length is ≤ 400.
+2. **Fence-escape detection** (`src/lib/prompt-safety.ts`): added a `fence-escape` pattern
+   matching a literal `<reflection_summary>`, `</reflection_summary>`,
+   `<owner_strategy_prompt>`, or `</owner_strategy_prompt>` tag appearing inside untrusted field
+   text — i.e. an attempt to forge/close the DATA fences this branch introduces (item 1/2 above)
+   from inside the data itself. Requires the literal angle-bracket tag, so prose that merely
+   *mentions* "reflection summary" or "owner strategy prompt" does not fire (new negative tests
+   added alongside the existing false-positive battery). Detection-only, same as every other
+   pattern in the set — no blocking, no text alteration.
+3. **No-feedback-loop guard comment** (`src/lib/socratic-runtime.ts`, `buildSocraticDecisionCase`
+   evidence-array construction): documented, at the `extraEvidence` append site, that appending
+   safety receipts AFTER the capped per-proposal evidence is intentional, not incidental. Two
+   downstream summarizers take a fixed-size prefix slice of a case's evidence/dissent —
+   `socratic-memory.ts` `summarizeEvidence` (`.slice(0, 5)`) and `outcome-engine.ts`'s lesson
+   pass (`.slice(0, 6)`) — so tail-positioned safety items are excluded from what feeds back into
+   RAG/lesson-learning prompts. Reordering `extraEvidence` to the front (or otherwise pulling it
+   ahead of the slice cutoff) would let a detected injection attempt's own excerpt text ride into
+   the memory corpus: a detection -> memory -> re-detection feedback loop. Comment-only change,
+   no behavior difference.
+
+Files touched: `src/lib/prompt-safety.ts`, `src/lib/socratic-runtime.ts`,
+`test/prompt-safety.test.ts`.
+
+Verification: `npx tsc --noEmit` (clean) +
+`npx vitest run test/prompt-safety.test.ts test/strategy-prompt-safety.test.ts` (35 passed: 31 in
+`prompt-safety.test.ts`, up from 25 — 3 new fence-escape positive cases, 1 excerpt-cap test, 2
+new fence-escape-mention negative cases — + 4 unchanged in `strategy-prompt-safety.test.ts`).
+
 ## Follow-ups
 
 - **Headlines first-seen timestamps**: headlines carry no first-seen timestamp, so the

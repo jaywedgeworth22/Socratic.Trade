@@ -34,6 +34,16 @@ export interface InjectionFinding {
 const MAX_FINDINGS = 24;
 /** Excerpt window (chars) around a match. */
 const EXCERPT_RADIUS = 80;
+/**
+ * Hard cap on a single finding's excerpt length. Most patterns match a short phrase, so the
+ * ±EXCERPT_RADIUS window is normally well under this — EXCEPT base64-instruction-blob, whose
+ * regex has no upper bound on match length: a multi-KB base64 run in a RAG chunk or filing would
+ * otherwise produce an excerpt of comparable size. Findings are persisted verbatim into every
+ * decision-case evidence item for the run (`data: findings`, see strategy.ts) via
+ * upsertSocraticDecisionCase (db-socratic.ts) — unlike the audit-log and evidence-summary paths,
+ * that write has no length cap of its own, so the cap has to live here, at the source.
+ */
+const MAX_EXCERPT_LENGTH = 400;
 
 /**
  * The curated pattern set. Deliberately SMALL and low-false-positive: every pattern targets an
@@ -76,7 +86,18 @@ const INJECTION_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   },
   // A 200+ char unbroken base64-alphabet blob — an obfuscated instruction payload. Real market
   // text (incl. long URLs) virtually never carries 200 consecutive chars of pure [A-Za-z0-9+/].
-  { name: "base64-instruction-blob", re: /[A-Za-z0-9+/]{200,}={0,2}/ }
+  { name: "base64-instruction-blob", re: /[A-Za-z0-9+/]{200,}={0,2}/ },
+  // Fence-escape smuggling: a literal <reflection_summary>/<owner_strategy_prompt> tag (open OR
+  // close) inside UNTRUSTED field text. These are the DATA fences this branch introduces around
+  // the reflection summary and owner strategy prompt (see strategy-prompts.ts) — an untrusted
+  // field containing one is attempting to forge a fence boundary and smuggle itself out of the
+  // DATA region into a position that reads as the start of the next trusted block. Ordinary prose
+  // that merely talks ABOUT "reflection summary" or "owner strategy prompt" (no angle brackets)
+  // must not fire — requires the literal tag syntax.
+  {
+    name: "fence-escape",
+    re: /<\/?(?:reflection_summary|owner_strategy_prompt)>/i
+  }
 ];
 
 function excerptAround(text: string, index: number, matchLength: number): string {
@@ -84,7 +105,13 @@ function excerptAround(text: string, index: number, matchLength: number): string
   const end = Math.min(text.length, index + matchLength + EXCERPT_RADIUS);
   const prefix = start > 0 ? "…" : "";
   const suffix = end < text.length ? "…" : "";
-  return `${prefix}${text.slice(start, end).replace(/\s+/g, " ").trim()}${suffix}`;
+  const raw = `${prefix}${text.slice(start, end).replace(/\s+/g, " ").trim()}${suffix}`;
+  if (raw.length <= MAX_EXCERPT_LENGTH) return raw;
+  // Over the cap (only reachable via an unbounded match, e.g. base64-instruction-blob): keep a
+  // head + tail slice around a middle ellipsis marker instead of truncating one end, so both the
+  // start of the match's context and its end stay visible in the receipt.
+  const half = Math.floor((MAX_EXCERPT_LENGTH - 5) / 2);
+  return `${raw.slice(0, half)} ... ${raw.slice(raw.length - half)}`;
 }
 
 /**
