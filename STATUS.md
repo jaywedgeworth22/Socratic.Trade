@@ -26,6 +26,8 @@ Pillow glyph masks → SVG; on the shortlist board as F5 with light/dark PNG exp
 Round 5 (same day): animated morph — the same 110 candlesticks spell SOCRATIC (3s), drift
 semi-naturally (6s) into TRADE (3s), and morph back (18s loop); pure SVG+CSS at
 `docs/branding/firefly/candle-morph.svg`, card F6 on the shortlist board.
+Round 6 (same day): morph exports — MP4 (18s loop), palette-optimized GIF, and a 3s one-way
+Live-Photo-ready MOV+JPG pair (bounce-friendly) in `docs/branding/firefly/`; site keeps SVG+CSS.
 Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the

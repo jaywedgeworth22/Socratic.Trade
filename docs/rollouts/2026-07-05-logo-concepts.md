@@ -81,6 +81,22 @@ green/red mix, ~62/38), emitted as SVG — perfectly upright, scales cleanly.
 - `docs/branding/firefly/candle-wordmark-upright-{light,dark}.png` (exports)
 - `shortlist.html` gains card **F5** showing it on both grounds.
 
+## Round 6 (same day) — Morph export formats (GIF / Live Photo / video)
+
+Owner kept the SVG+CSS morph for the site and asked for portable exports.
+Rendered the 18s loop to 360 frames (20 fps) with headless Chromium — each
+frame is the animation paused at a negative `animation-delay` — then encoded
+with ffmpeg (imageio-ffmpeg binary):
+
+- `candle-morph.mp4` — full 18s loop, 1400x380 H.264 yuv420p, faststart.
+- `candle-morph.gif` — 10 fps, 700px wide, palette-optimized, infinite loop.
+- `candle-morph-livephoto.mov` + `.jpg` — one-way SOCRATIC->TRADE morph
+  compressed to 3.0s (Live Photo length) so iPhone "bounce" plays it back and
+  forth; MOV tagged with `Keys:ContentIdentifier` via exiftool. Caveat: the
+  JPEG cannot receive Apple MakerNotes ContentIdentifier off-device (exiftool
+  cannot create maker notes), so final Live Photo pairing happens on-device
+  (intoLive app or Shortcuts "Make Live Photo" with the MOV) in seconds.
+
 ## Round 5 (same day) — SOCRATIC ⇄ TRADE morph animation
 
 Owner asked for an animation where one set of candlesticks alternates between
