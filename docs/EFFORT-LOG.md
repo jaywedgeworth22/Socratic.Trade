@@ -514,6 +514,15 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 📋 Planned
 
+- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray `.codex/`
+  (FLEET, XS) — PLANNED 2026-07-05, awaiting seat responses.** Owner confirmed 2026-07-05: MONET
+  preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude`
+  (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE
+  sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in
+  AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its
+  lane/tooling expects 4104; CODEX claims/relocates or approves deletion of untracked
+  `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
+
 - **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
   RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
   self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
