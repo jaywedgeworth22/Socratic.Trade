@@ -14,6 +14,7 @@ import {
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
+  listFillEvents,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
@@ -50,6 +51,7 @@ import {
   getClosedLotCount,
   getConfidenceCalibration,
   type ConfidenceCalibrationStat,
+  type PrefetchedFills,
   getFactorScorecard,
   getRegimeScorecard,
   getSectorScorecard,
@@ -395,6 +397,9 @@ export async function runStrategyOnce(
     const workingPortfolio = portfolio;
     const workingPositions = positions;
     const learningSource = fillSourceForExecutionMode(executionMode);
+    const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
+    const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
+    const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
@@ -944,7 +949,8 @@ export async function runStrategyOnce(
         ...(experienceAnalogs ? { experienceAnalogs } : {}),
         ...(ownerCoaching ? { ownerCoaching } : {}),
         drawdownAdvisory,
-        budgetAdvisory
+        budgetAdvisory,
+        prefetched: prefetchedFills
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
@@ -977,7 +983,7 @@ export async function runStrategyOnce(
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
     const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
       policy.tuning?.calibrationSizing && policy.accountNumber
-        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId)
+        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId, prefetchedFills)
         : undefined;
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
@@ -985,7 +991,7 @@ export async function runStrategyOnce(
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
     const sizedProposals = llmProposals
       .filter((p) => {
-        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId);
+        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
           console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
           audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
@@ -993,7 +999,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
         return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
@@ -2124,20 +2130,21 @@ export function shouldSkipNegativeExpectancy(
   proposal: TradeProposal,
   policy: TradingPolicy,
   source: FillSource,
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): { skip: boolean; reason?: string } {
   if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
   if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
   const account = policy.accountNumber;
   if (!account) return { skip: false };
 
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
   const parentTrades = parentStat?.trades ?? 0;
   const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
   if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
   const sampleTrades = stat?.trades ?? 0;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
@@ -2186,7 +2193,17 @@ export async function applyCorrelationClusterGate(
   return kept;
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
+export function applyDeterministicSizing(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  portfolio: Portfolio,
+  source: FillSource,
+  userId: string = "local",
+  positions: EquityPosition[] = [],
+  marketScan?: MarketScan,
+  precomputedCalibration?: ConfidenceCalibrationStat[],
+  prefetched?: PrefetchedFills
+): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -2209,8 +2226,8 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const account = policy.accountNumber;
   if (!account) return proposal;
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
@@ -2227,7 +2244,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const rawScore = proposal.confidenceScore ?? 50;
   let rawConviction = rawScore / 100;
   if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
-    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId);
+    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId, prefetched);
     const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
     rawConviction = calibratedConviction(rawScore, calibration, minLots);
   }
@@ -3039,6 +3056,7 @@ async function proposeTrades(input: {
    * independent of whether USAGE_BUDGET_ENFORCE is on.
    */
   budgetAdvisory?: string;
+  prefetched?: PrefetchedFills;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -3082,27 +3100,27 @@ async function proposeTrades(input: {
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
-  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
-  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
+  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
+  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
   // 5 trades produce a statistic that is dominated by the Bayesian shrinkage prior anyway
   // and adds noise to the agent's reasoning without improving signal quality.
-  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
-  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId) : [];
+  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
-  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId) : [];
+  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Sector learning: realized outcomes grouped by the sector each position was opened in.
-  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5 && bucket.sector !== "Unknown")
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId, undefined, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
@@ -3110,7 +3128,7 @@ async function proposeTrades(input: {
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
+    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
