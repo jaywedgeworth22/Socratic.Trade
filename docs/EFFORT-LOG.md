@@ -214,8 +214,11 @@ to `socratictrade.com`, record the release commit + date here._
   Socratic Trade / Socratic.Trade: ten concept comps (five wordmark-led where the name fills the
   logo, five mark-led with a favicon-capable symbol), built on the existing product palette (ink
   `#0f1722`, green `#0e9f6e`, mint `#63e6be`) — new `docs/branding/` (README + `logo-concepts.html`
-  board + 10 standalone SVGs). No app code touched; `public/icon.svg` unchanged. Next: owner picks a
-  direction (shortlist A/D/F/G), then redraw with outlined letterforms + favicon/app-icon variants.
+  board + standalone SVGs). No app code touched; `public/icon.svg` unchanged. Round 2 same-day:
+  owner shared four Adobe Firefly comps (candlestick letterforms, owl, red/green) and asked for a
+  more professional take — added concepts K–N (candlestick-owl lockup, owl seal, candle-I wordmark,
+  three-candle cluster), 14 SVGs total. Next: owner picks a direction (suggested: K owl primary,
+  M type-led alternative), then redraw with outlined letterforms + favicon/app-icon variants.
   See `docs/rollouts/2026-07-05-logo-concepts.md`.
   _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
   container — owner/next local agent should mirror this row there._

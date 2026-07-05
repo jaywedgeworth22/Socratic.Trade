@@ -10,7 +10,12 @@ steps materially change.
 
 ## 2026-07-05 — Logo concept exploration (Claude cloud, docs-only)
 Owner asked for a set of logo ideas for Socratic Trade / Socratic.Trade, favoring options that
-aren't busy and where the words carry the logo. Added `docs/branding/`: ten concept comps — five
+aren't busy and where the words carry the logo. Round 2 (same day): owner shared four Adobe
+Firefly comps (letters made of candlesticks, an owl, market red/green) and asked for a more
+professional version — added four refined concepts K–N that keep those motifs but use the
+candlestick exactly once each: K candlestick-owl lockup (suggested primary), L circular owl seal,
+M candle-as-the-I wordmark, N three-candle up/down/up cluster (only concept keeping red).
+Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the
 existing favicon) — as `logo-concepts.html` (side-by-side light/dark board with rationale) plus 10

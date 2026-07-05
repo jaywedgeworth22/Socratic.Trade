@@ -97,8 +97,8 @@
     justify-content: center;
   }
   .tile svg { width: 100%; height: auto; display: block; }
-  .tile.light { background: var(--tile-light); color: #0f1722; --lg: #0e9f6e; border: 1px solid #e6ebf0; }
-  .tile.dark  { background: var(--tile-dark);  color: #f2f6fa; --lg: #63e6be; border: 1px solid #1b2534; }
+  .tile.light { background: var(--tile-light); color: #0f1722; --lg: #0e9f6e; --dn: #c22f4e; --tbg: #fbfcfd; border: 1px solid #e6ebf0; }
+  .tile.dark  { background: var(--tile-dark);  color: #f2f6fa; --lg: #63e6be; --dn: #e0607a; --tbg: #0b1018; border: 1px solid #1b2534; }
 
   .caption { display: flex; gap: 0.9rem; align-items: baseline; margin-top: 0.9rem; padding: 0 0.25rem; }
   .tag {
@@ -227,19 +227,152 @@
             font-size="44" font-weight="300" fill="currentColor" textLength="108">Trade</text>
     </symbol>
 
+    <!-- K · Owl lockup (round 2) -->
+    <symbol id="logo-k" viewBox="0 0 640 180">
+      <g transform="translate(96,10)">
+        <line x1="17" y1="14" x2="17" y2="32" stroke="var(--lg)" stroke-width="4" stroke-linecap="round"/>
+        <line x1="57" y1="2"  x2="57" y2="20" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <rect x="0"  y="30" width="34" height="68" rx="11" fill="var(--lg)"/>
+        <rect x="40" y="18" width="34" height="80" rx="11" fill="currentColor"/>
+        <circle cx="17" cy="50" r="10.5" fill="var(--tbg)"/>
+        <circle cx="17" cy="50" r="4.5" fill="currentColor"/>
+        <circle cx="57" cy="50" r="10.5" fill="var(--tbg)"/>
+        <circle cx="57" cy="50" r="4.5" fill="currentColor"/>
+        <polygon points="30,62 44,62 37,75" fill="#e8a13a"/>
+        <line x1="17" y1="100" x2="17" y2="112" stroke="var(--lg)" stroke-width="4" stroke-linecap="round"/>
+        <line x1="57" y1="100" x2="57" y2="112" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+      </g>
+      <text x="230" y="86" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="44" font-weight="700" letter-spacing="2" fill="currentColor" textLength="310">SOCRATIC</text>
+      <text x="230" y="132" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="44" font-weight="300" letter-spacing="17" fill="currentColor" textLength="310">TRADE</text>
+    </symbol>
+
+    <!-- L · Owl seal (round 2) -->
+    <symbol id="logo-l" viewBox="0 0 200 200">
+      <circle cx="100" cy="100" r="92" fill="none" stroke="currentColor" stroke-width="2.5"/>
+      <circle cx="100" cy="100" r="64" fill="none" stroke="currentColor" stroke-width="1" stroke-opacity="0.35"/>
+      <defs>
+        <path id="arcTop" d="M 26 100 A 74 74 0 0 1 174 100"/>
+        <path id="arcBot" d="M 26 100 A 74 74 0 0 0 174 100"/>
+      </defs>
+      <text font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="6" fill="currentColor">
+        <textPath href="#arcTop" startOffset="50%" text-anchor="middle">SOCRATIC</textPath>
+      </text>
+      <text font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="500" letter-spacing="8" fill="var(--lg)">
+        <textPath href="#arcBot" startOffset="50%" text-anchor="middle">TRADE</textPath>
+      </text>
+      <circle cx="26" cy="100" r="3" fill="var(--lg)"/>
+      <circle cx="174" cy="100" r="3" fill="var(--lg)"/>
+      <g transform="translate(63,58)">
+        <line x1="17" y1="10" x2="17" y2="24" stroke="var(--lg)" stroke-width="3.5" stroke-linecap="round"/>
+        <line x1="57" y1="1"  x2="57" y2="15" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+        <rect x="0"  y="22" width="34" height="54" rx="11" fill="var(--lg)"/>
+        <rect x="40" y="13" width="34" height="63" rx="11" fill="currentColor"/>
+        <circle cx="17" cy="38" r="9" fill="var(--tbg)"/>
+        <circle cx="17" cy="38" r="4" fill="currentColor"/>
+        <circle cx="57" cy="38" r="9" fill="var(--tbg)"/>
+        <circle cx="57" cy="38" r="4" fill="currentColor"/>
+        <polygon points="30,48 44,48 37,59" fill="#e8a13a"/>
+        <line x1="17" y1="78" x2="17" y2="88" stroke="var(--lg)" stroke-width="3.5" stroke-linecap="round"/>
+        <line x1="57" y1="78" x2="57" y2="88" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+      </g>
+    </symbol>
+
+    <!-- M · Candle-I wordmark (round 2) -->
+    <symbol id="logo-m" viewBox="0 0 640 180">
+      <text x="59" y="115" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="58" font-weight="700" letter-spacing="2" fill="currentColor" textLength="232">SOCRAT</text>
+      <line x1="308" y1="64" x2="308" y2="124" stroke="var(--lg)" stroke-width="4" stroke-linecap="round"/>
+      <rect x="299" y="76" width="18" height="34" rx="3" fill="var(--lg)"/>
+      <text x="322" y="115" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="58" font-weight="700" letter-spacing="2" fill="currentColor">C</text>
+      <text x="392" y="115" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="58" font-weight="300" letter-spacing="2" fill="currentColor" textLength="190">TRADE</text>
+    </symbol>
+
+    <!-- N · Three-candle cluster (round 2) -->
+    <symbol id="logo-n" viewBox="0 0 640 180">
+      <line x1="92"  y1="66" x2="92"  y2="128" stroke="var(--lg)" stroke-width="3.5" stroke-linecap="round"/>
+      <rect x="84"  y="78" width="16" height="38" rx="3" fill="var(--lg)"/>
+      <line x1="120" y1="50" x2="120" y2="118" stroke="var(--dn)" stroke-width="3.5" stroke-linecap="round"/>
+      <rect x="112" y="60" width="16" height="40" rx="3" fill="var(--dn)"/>
+      <line x1="148" y1="34" x2="148" y2="100" stroke="var(--lg)" stroke-width="3.5" stroke-linecap="round"/>
+      <rect x="140" y="44" width="16" height="42" rx="3" fill="var(--lg)"/>
+      <text x="196" y="105" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="46" font-weight="600" fill="currentColor" textLength="310">Socratic Trade</text>
+    </symbol>
+
   </defs>
 </svg>
 
 <main>
   <header class="intro">
     <p class="eyebrow">Brand exploration</p>
-    <h1>Socratic Trade — ten logo directions</h1>
+    <h1>Socratic Trade — fourteen logo directions</h1>
     <p>Concepts for the wordmark and mark, built on the product's existing palette: ink
        <code>#0f1722</code>, green <code>#0e9f6e</code> on light, mint <code>#63e6be</code> on dark.
        Every concept is shown on both grounds.</p>
     <p>The first group keeps the words as the logo — quiet, type-led, with at most one small device.
-       The second group adds a mark that can stand alone as a favicon or app icon.</p>
+       The second group adds a mark that can stand alone as a favicon or app icon.
+       <strong>Round 2</strong> (top) distills your Adobe Firefly comps — candlestick letterforms,
+       the owl, market red/green — into disciplined, professional versions.</p>
   </header>
+
+  <section class="group">
+    <h2>Round 2 — refined from the Firefly comps</h2>
+    <p class="groupnote">What the Firefly images got right: candles as brand DNA, Athena's owl for "Socratic", honest red/green. What they got wrong: every letter made of dozens of candles. These keep the ideas and cut the noise — each uses the candlestick exactly once, deliberately.</p>
+
+    <div class="concept">
+      <div class="tiles">
+        <div class="tile light"><svg viewBox="0 0 640 180" role="img" aria-label="Owl built from two candlesticks beside stacked SOCRATIC TRADE"><use href="#logo-k"/></svg></div>
+        <div class="tile dark"><svg viewBox="0 0 640 180" role="img" aria-label="Candlestick owl lockup, dark"><use href="#logo-k"/></svg></div>
+      </div>
+      <div class="caption">
+        <span class="tag">K</span>
+        <div>
+          <h3>The Owl — two candles</h3>
+          <p>The owl from your comps, rebuilt from exactly two candlesticks: wicks become ear tufts and feet, bodies become the face, one amber beak. It's Athena's owl <em>made of</em> the market — and it survives at 16&thinsp;px. My pick for the primary identity.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="concept">
+      <div class="tiles">
+        <div class="tile light"><svg viewBox="0 0 200 200" style="max-width:340px;margin:0 auto" role="img" aria-label="Circular seal with curved SOCRATIC TRADE text around the candlestick owl"><use href="#logo-l"/></svg></div>
+        <div class="tile dark"><svg viewBox="0 0 200 200" style="max-width:340px;margin:0 auto" role="img" aria-label="Owl seal, dark"><use href="#logo-l"/></svg></div>
+      </div>
+      <div class="caption">
+        <span class="tag">L</span>
+        <div>
+          <h3>The Seal</h3>
+          <p>The professional version of the circular Firefly comps: a proper seal — name set on the arc, owl at center. Works as an avatar, a watermark on reports, or an "exchange crest" moment on the landing page.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="concept">
+      <div class="tiles">
+        <div class="tile light"><svg viewBox="0 0 640 180" role="img" aria-label="SOCRATIC TRADE wordmark where the I is a single green candlestick"><use href="#logo-m"/></svg></div>
+        <div class="tile dark"><svg viewBox="0 0 640 180" role="img" aria-label="Candle-I wordmark, dark"><use href="#logo-m"/></svg></div>
+      </div>
+      <div class="caption">
+        <span class="tag">M</span>
+        <div>
+          <h3>The Candle-I</h3>
+          <p>The letters-made-of-candles idea, disciplined to a single substitution: the I of SOCRATIC is one green candle. The words stay perfectly legible and fill the logo — the closest Round-2 option to your "words clear, not busy" brief.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="concept">
+      <div class="tiles">
+        <div class="tile light"><svg viewBox="0 0 640 180" role="img" aria-label="Three candlesticks in an ascending pattern beside Socratic Trade"><use href="#logo-n"/></svg></div>
+        <div class="tile dark"><svg viewBox="0 0 640 180" role="img" aria-label="Three-candle cluster lockup, dark"><use href="#logo-n"/></svg></div>
+      </div>
+      <div class="caption">
+        <span class="tag">N</span>
+        <div>
+          <h3>The Cluster</h3>
+          <p>The only concept that keeps the red: three candles — up, down, up — rising left to right. Honest about how markets actually move (the product loses trades too, and explains why), with the red held to one small, deliberate note.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <section class="group">
     <h2>Wordmark-led</h2>
@@ -392,7 +525,7 @@
   </section>
 
   <footer>
-    <p>These are concept comps: type is set live in Helvetica/Georgia stacks so it stays editable. Whichever direction wins gets redrawn with final letterforms outlined, plus favicon, app-icon, and mono variants. A, D, F, and G are the ones I'd shortlist — each survives a 16&thinsp;px favicon and a black-and-white fax test.</p>
+    <p>These are concept comps: type is set live in Helvetica/Georgia stacks so it stays editable. Whichever direction wins gets redrawn with final letterforms outlined, plus favicon, app-icon, and mono variants. From Round 2 I'd pick <strong>K</strong> (the candlestick owl) as the identity, with <strong>M</strong> as the type-led alternative; from Round 1, A, D, F, and G remain the shortlist — each survives a 16&thinsp;px favicon and a black-and-white fax test.</p>
   </footer>
 </main>
 </body></html>

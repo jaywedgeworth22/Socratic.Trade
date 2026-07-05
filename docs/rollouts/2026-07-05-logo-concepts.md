@@ -27,6 +27,27 @@ Added `docs/branding/` with ten concept comps:
 - **J · Continuity** — the existing `public/icon.svg` unchanged, given a
   proper wordmark lockup.
 
+## Round 2 (same day) — refined from the owner's Adobe Firefly comps
+
+Owner shared four Firefly-generated images (letters built from candlesticks,
+an owl perched on a scroll, circular chart-backdrop compositions, market
+red/green) and asked for a better, more professional version. Kept the motifs,
+cut the noise — each Round-2 concept uses the candlestick exactly once:
+
+- **K · The Owl** — owl built from exactly two candlesticks (wicks = ear
+  tufts/feet, bodies = face, amber beak) + stacked wordmark. Suggested primary.
+- **L · The Seal** — circular seal, SOCRATIC/TRADE on curved arcs, owl center.
+- **M · The Candle-I** — bold caps wordmark; the I of SOCRATIC is one green
+  candle. The disciplined letters-as-candles.
+- **N · The Cluster** — three candles up/down/up rising left→right; the only
+  concept keeping the Firefly red (`#c22f4e` light / `#e0607a` dark).
+
+Files added: `docs/branding/logo-concepts/{k-owl,l-owl-seal,m-candle-i,n-cluster}.svg`;
+`logo-concepts.html` board updated with a Round 2 section (theme-aware owl eye
+knockouts via a `--tbg` tile variable). Verification: same headless-Chromium
+screenshot pass (owl variants iterated once — bubble-style beak/eye geometry
+tuned; seal bottom-arc text switched from a clipped tagline to TRADE).
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
