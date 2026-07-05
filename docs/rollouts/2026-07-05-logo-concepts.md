@@ -81,6 +81,24 @@ green/red mix, ~62/38), emitted as SVG — perfectly upright, scales cleanly.
 - `docs/branding/firefly/candle-wordmark-upright-{light,dark}.png` (exports)
 - `shortlist.html` gains card **F5** showing it on both grounds.
 
+## Round 5 (same day) — SOCRATIC ⇄ TRADE morph animation
+
+Owner asked for an animation where one set of candlesticks alternates between
+the two words: SOCRATIC held 3s → 6s semi-natural morph → TRADE held 3s → 6s
+morph back (18s loop). Implementation: the Round-4 generator now produces
+candle sets for both words (TRADE rendered at font 340 so the same ~110
+candles fill it: 110 vs 109 slots, one jittered duplicate), maps candles
+left-to-right/top-to-bottom, and emits per-candle CSS `@keyframes` animating
+SVG geometry properties (x/y/height on body+wick rects) with per-candle
+stagger (±1.2s), drift midpoints (±16/±22px wander, 0.75–1.3× height wobble),
+and `ease-in-out` segments. Pure SVG+CSS, no JS; `prefers-reduced-motion`
+freezes it on SOCRATIC. Colors stay with each candle through the morph.
+
+- `docs/branding/firefly/candle-morph.svg` (76 KB, plays anywhere SVG+CSS does)
+- `shortlist.html` gains animated card **F6** on both grounds.
+- Verified via headless-Chromium screenshots at t=1s (SOCRATIC), 5s/7s
+  (dispersed mid-flight), 10s (TRADE).
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than

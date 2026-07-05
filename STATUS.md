@@ -23,6 +23,9 @@ Round 4 (same day): upright vector remake of the candlestick wordmark — SOCRAT
 letter built from red/green candles, vertically normal (not tilted) — generated via
 Pillow glyph masks → SVG; on the shortlist board as F5 with light/dark PNG exports in
 `docs/branding/firefly/`.
+Round 5 (same day): animated morph — the same 110 candlesticks spell SOCRATIC (3s), drift
+semi-naturally (6s) into TRADE (3s), and morph back (18s loop); pure SVG+CSS at
+`docs/branding/firefly/candle-morph.svg`, card F6 on the shortlist board.
 Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the

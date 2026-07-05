@@ -271,7 +271,7 @@ to `socratictrade.com`, record the release commit + date here._
   picks (Examined/Dialectic/Stoa from `claude/logo-ideas-c5n61b`) + the four Firefly comps
   (backgrounds removed for light/dark use) into one combined board `docs/branding/shortlist.html`
   with assets in `docs/branding/firefly/`. Next: owner narrows the combined shortlist to a final
-  direction, then redraw with outlined letterforms + favicon/app-icon variants. Round 4: upright vector remake of the candle-letters wordmark (F5, `docs/branding/firefly/candle-wordmark-upright.svg`).
+  direction, then redraw with outlined letterforms + favicon/app-icon variants. Round 4: upright vector remake of the candle-letters wordmark (F5, `docs/branding/firefly/candle-wordmark-upright.svg`). Round 5: 18s SVG+CSS morph animation - same candles alternate SOCRATIC/TRADE (F6, `docs/branding/firefly/candle-morph.svg`).
   See `docs/rollouts/2026-07-05-logo-concepts.md`.
   _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
   container — owner/next local agent should mirror this row there._
