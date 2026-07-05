@@ -209,6 +209,15 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
+- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
+  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
+  ticker-drawer parity if the scan surface needs it. Keepout: no broad
+  settings/approvals/live-data/coach/tooltip conversions in this lane. Verification green:
+  focused scan-column test (4), lint 0 errors / 308 existing warnings, tsc clean, full suite
+  2469 tests / 255 files, build green.
+
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`, isolated worktree `nice-heyrovsky-b9d0bd`) — **PR open**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
@@ -562,8 +571,6 @@ locks — re-negotiate in #agent-sync._
   make the retention window configurable. (completeness §F + quick-wins)
 
 #### CODEX lane (adds to the annotated parity rows above)
-- **Scan table column customization parity (CODEX, M)** — visibility/ordering/reset/saved state vs
-  the legacy dashboard. (console-parity-open-items)
 - **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
   console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter

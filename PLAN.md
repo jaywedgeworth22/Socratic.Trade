@@ -11,6 +11,12 @@ filling the missing pieces.
 > the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
 > deployed to production at `1e1a15bc`.
 
+> **2026-07-04 - Console scan column customization parity (Codex subagent).** `/console/scan`
+> now matches the legacy dashboard's browser-local column behavior for the current console scan
+> columns: visibility toggles, reorder controls, Reset, and saved visible-column order/state.
+> No roadmap scope change; this closes the documented scan-column parity gap from
+> `docs/reviews/2026-07-03-console-parity-open-items.md`.
+
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"

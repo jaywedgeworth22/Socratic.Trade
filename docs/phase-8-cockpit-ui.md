@@ -55,6 +55,10 @@
 > data, and linked citations; `/console/decisions/[id]` is the read-only trace inspector for
 > decision cases, coach notes, and linked framework proposals; mobile LIVE approval uses the same
 > phrase gate as desktop. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+>
+> 2026-07-04: `/console/scan` now matches the legacy dashboard's browser-local column controls
+> for the current console scan columns: visibility toggles, reorder arrows, Reset, and saved
+> visible-column state/order. See `docs/rollouts/2026-07-04-scan-column-customization.md`.
 
 
 This phase restructures the dashboard from a long vertical page into a
