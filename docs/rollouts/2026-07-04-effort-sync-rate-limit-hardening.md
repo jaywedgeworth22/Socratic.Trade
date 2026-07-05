@@ -71,3 +71,27 @@ repos via their own PRs, each with its own `docs/EFFORT-LOG.md` update.
 - The dry-run showed 305 pending body updates on existing issues (link ref churn from
   `GITHUB_SHA`) — pre-existing behavior, not touched here; those PATCHes also flow
   through the budgeted retry path now.
+
+## 2026-07-05 addendum — landed, validated live, Codex-review refinements
+
+- Merged as **PR #694** (verify/smoke/gitleaks green, auto-merge). On merge, the
+  push-triggered `Effort Issues Sync` run on `main` — the exact bulk scenario that
+  previously hard-failed — completed green: `created=101 updated=305 unchanged=0`, exit 0,
+  no partial needed (the 2.5s create throttle alone kept it under the limit).
+- Propagated verbatim: congress-trading-shared **PR #27** (merged), api-usage-monitor
+  **PR #38** (merged), Congress.Trade **PR #162**.
+- Codex's automated review on #162 raised three P2s; two were real gaps and all three were
+  folded back into the canonical file (and re-propagated):
+  1. Budget exhaustion while paging the initial `GET /issues` listing escaped the partial
+     handling and would still exit 1 — the listing now sits inside `reconcile`'s
+     try/except.
+  2. A server-sent `Retry-After` was capped at 120s, retrying earlier than GitHub asked
+     and burning budget — the cap now applies only to our own exponential guess; an
+     over-budget `Retry-After` goes partial immediately.
+  3. Bulk PATCH runs (e.g. the 305 body updates above) had no pacing — added a 1s
+     `UPDATE_THROTTLE_SECONDS` after each successful update (GitHub guidance: >=1s between
+     mutations). Empirically the unthrottled 305-PATCH run succeeded, so this one is
+     insurance rather than a proven failure.
+- Harness extended to 19 checks (uncapped Retry-After honored; listing-limited run exits 0
+  partial); all pass. Worst-case added runtime for a full-churn run: ~4 min creates +
+  ~5 min updates + ≤5 min retry budget — well under the workflow's default timeout.

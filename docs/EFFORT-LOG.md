@@ -72,6 +72,18 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **PR #694 - Effort-issues sync secondary-rate-limit hardening (CLAUDE).** Merged to `main`
+  2026-07-05 (verify/smoke/gitleaks green, auto-merge). `scripts/sync-effort-issues.py` now
+  survives GitHub secondary rate limits: 2.5s creation throttle, Retry-After/exponential-backoff
+  retries under a bounded 300s per-run retry budget, and exit-0 "PARTIAL SYNC - resume on next
+  run" summary on budget exhaustion instead of a red workflow run (the sync is idempotent, so
+  the next run resumes cleanly; non-rate-limit failures still exit 1). Validated live on merge:
+  the previously hard-failing bulk run completed green (created=101 updated=305, exit 0).
+  Follow-up refinements from Codex PR review (Congress.Trade #162): initial issue listing
+  covered by the same partial handling, server-sent Retry-After honored uncapped, 1s update
+  throttle for bulk PATCH runs. Propagated verbatim to congress-trading-shared (PR #27),
+  api-usage-monitor (PR #38), and Congress.Trade (PR #162). Rollout:
+  `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
 ### Console parity port — legacy `app/ui/*` rebuilt as `/console` (2026-07-02)
 - **#321** — parity-port foundation: logo/model/drilldown primitives, nav scaffolding, model-attribution approval card.
 - **#322** — Settings expansions: brokers, API keys, LLM model picker, delivery channels, glossary.
@@ -209,16 +221,6 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🔨 In Progress
 
-- **Effort-issues sync secondary-rate-limit hardening** (CLAUDE, branch `agent/claude`) —
-  **in progress 2026-07-04**. Harden `scripts/sync-effort-issues.py` against GitHub secondary
-  rate limits (bulk-creating ~100 issues 403'd with "secondary rate limit ... temporarily
-  blocked from content creation" and the workflow hard-failed): throttle between issue
-  creations, honor `Retry-After` / exponential backoff under a bounded total retry budget, and
-  when the budget is exhausted exit 0 with a "partial sync, resume on next run" summary instead
-  of exit 1 (the sync is idempotent, so the next run resumes cleanly — a red run for an
-  expected partial pass is noise). Per fleet protocol the same file is copied verbatim to
-  congress-trading-shared, api-usage-monitor, and Congress.Trade — propagate the identical file
-  there via their own PRs after landing here.
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`, isolated worktree `nice-heyrovsky-b9d0bd`) — **PR open**. The
   three deterministic risk gates now classify the persisted regime label through the shared typed
