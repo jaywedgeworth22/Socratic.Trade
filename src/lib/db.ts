@@ -325,6 +325,18 @@ const MIGRATIONS: Migration[] = [
         database.exec("ALTER TABLE socratic_framework_proposals ADD COLUMN owner_verb TEXT");
       }
     }
+  },
+  {
+    version: 13,
+    name: "processed_webhooks",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS processed_webhooks (
+          id TEXT PRIMARY KEY,
+          processed_at TEXT NOT NULL
+        );
+      `);
+    }
   }
 ];
 

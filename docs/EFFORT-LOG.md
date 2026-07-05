@@ -298,6 +298,7 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — IN PROGRESS 2026-07-05.** Worktree `~/Code/Socratic.Trade`, branch `antigravity/socratic-webhooks`. Validate `X-Signature` for webhooks and ensure persistent idempotency store.
 - **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
   `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
   fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
