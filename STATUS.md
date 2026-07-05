@@ -28,6 +28,10 @@ semi-naturally (6s) into TRADE (3s), and morph back (18s loop); pure SVG+CSS at
 `docs/branding/firefly/candle-morph.svg`, card F6 on the shortlist board.
 Round 6 (same day): morph exports — MP4 (18s loop), palette-optimized GIF, and a 3s one-way
 Live-Photo-ready MOV+JPG pair (bounce-friendly) in `docs/branding/firefly/`; site keeps SVG+CSS.
+Rounds 7-8 (same day): transparent video exports (VP9-alpha WebM + animated WebP in
+`docs/branding/firefly/`; ProRes 4444 delivered off-repo, 113 MB) and the console-intro
+animation - an unnamed-asset candlestick chart whose 182 candles fly up-left and settle as the
+SOCRATIC TRADE header wordmark (`console-intro.svg`, one-shot SVG+CSS, shortlist card F7).
 Round 1 remains: ten concept comps — five
 wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
 mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the

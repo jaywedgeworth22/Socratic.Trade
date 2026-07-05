@@ -139,6 +139,26 @@ frame), then encoded:
   an Apple editor or convert on-device if a Safari-native alpha video is
   ever needed.
 
+## Round 8 (same day) — console intro: chart flies into the logo
+
+Owner asked for a page-open animation: a candlestick chart of an unnamed
+asset on screen, whose candles all fly to the top-left and settle as the
+logo that stays in the console header. Built as a one-shot ~5.8s SVG+CSS
+animation (`docs/branding/firefly/console-intro.svg`, 1440x810 stage):
+
+- The chart is generated FROM the logo: the stacked SOCRATIC/TRADE candle
+  wordmark (182 candles) defines each candle's color, and the random-walk
+  chart's per-candle up/down direction follows that color, so every candle
+  keeps its color through the flight.
+- Chart holds 2s (faint gridlines), candles depart left-to-right in a wave
+  (staggered, drift midpoints biased upward), settle into a ~300px-wide
+  top-left wordmark; a header hairline + nav-pill ghosts fade in at the end.
+- Base SVG attributes are the FINAL logo state, keyframes start at the chart
+  state — so `prefers-reduced-motion` (animation:none) shows the settled
+  header immediately.
+- Added as card F7 (wide tile) on `shortlist.html`. Not wired into the app;
+  wiring it into `/console` page-load is a follow-up if the owner picks it.
+
 ## Why / decisions
 
 - Palette deliberately reuses the product's existing brand tokens rather than
