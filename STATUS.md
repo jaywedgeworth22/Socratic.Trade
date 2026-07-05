@@ -31,6 +31,24 @@ three enumeration agents then classified EVERY finding in the two 2026-07-04 pan
 (partial-day ADV in the impact model; checkRegimeFlip 'local' non-atomic RMW) and the
 safety-critical prerequisites of the factor-weight auto-apply lane.
 
+## 2026-07-04 — Approvals triage upgrades + alert center focused slice (Codex)
+Branch `codex/approvals-alert-center`, worktree
+`/Users/jay/.codex/worktrees/socratic-approvals-alert-center`. Implemented the narrow issue #470
+slice only: `/console/approvals` now has client-side triage controls (search, opening-vs-exit,
+paper-vs-live, sort by newest/confidence/notional/drift), visible-row multi-select, bulk reject,
+and bulk approve for safe non-LIVE proposals by reusing the existing per-item proposal endpoints.
+LIVE proposals stay single-item only and keep the typed-confirm broker path unchanged. The console
+also now has a reusable alert-center surface backed by existing `notification_events` snapshot data:
+summary buckets (attention / deliveries / approvals / all), search, account scoping, better
+notification titles/details via the existing formatter, and a compact version on Approvals plus the
+full version on `Activity -> Alert center`. Snapshot notification history was widened from 50 to 100
+rows for the alert view. Verification in this worktree after `npm ci`: `npm run lint` (0 errors,
+311 existing warnings), `./node_modules/.bin/tsc --noEmit`, `npm test` (255 files / 2467 tests),
+`npm run build` (passes with the existing Next middleware deprecation + Edge-runtime warning from
+Sentry/Next internals). Remaining follow-up inside the broader row: no bulk LIVE typed-confirm flow,
+no unified trade+learned-context+framework inbox yet, and no keyboard triage shortcuts. See
+`docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
+
 ## 2026-07-04 — Regime-enum adoption inside the risk gates (Monet risk lane)
 Branch `claude/regime-enum-risk-gates` (isolated worktree `nice-heyrovsky-b9d0bd`), PR open.
 The three deterministic risk gates now classify the persisted regime label through the shared
