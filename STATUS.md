@@ -42,6 +42,20 @@ resolved keep-both conflicts in `AGENTS.md`/`docs/EFFORT-LOG.md`, and pushed to 
 Owner actions now done: `SLACK_BOT_TOKEN` added as a cloud Runtime Secret; the cloud env
 setup-script field points at `bash scripts/cloud-setup.sh`. See
 `docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+## 2026-07-05 — Guardrails → overridable preferences (denylist) (Monet risk lane)
+Worktree `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`, PR open.
+Owner directive: only the account boundary (+ physical/broker/regulatory/accounting impossibilities)
+stays hard; every other policy block is a light preference the agent may self-override with a logged
+`autonomyOverride` thesis. Inverted the Socratic override classifier from an allowlist to a **denylist**:
+new `HARD_GATE_REASON_PATTERNS` + `isHardGateReason` source-of-truth in `policy.ts` (risk engine); the
+`socratic-runtime.ts` `overrideableReason` is now `!isHardGateReason`. Reclassified short-stop-required,
+bracket-required, and policy-level short-disabled from hard → overridable; any unlisted/new gate now
+defaults overridable instead of silently hard. Advisory-only (nothing auto-overrides; broker / account /
+regulatory hard gates untouched). New `test/hard-gate-classification.test.ts` pins the full matrix; the
+one cross-lane touch (`socratic-runtime.ts`, Claude's file) was coordinated on `#agent-sync`. Follow-ups:
+extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. Gate: tsc clean,
+2504 tests green (the earlier "4 failed" were flakes; clean on re-run). See
+`docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
 
 ## 2026-07-04 — Effort-issues sync: secondary-rate-limit hardening (Claude)
 The first bulk run of `scripts/sync-effort-issues.py` (~100 issue creations after the
@@ -53,10 +67,15 @@ else exponential backoff (15s base, 120s cap), all retry sleeps drawn from a bou
 per-run budget; (c) when the budget is exhausted, exit 0 with an explicit "PARTIAL SYNC —
 resume on next run" summary instead of exit 1 (the sync is idempotent; the daily cron +
 next push re-run resume cleanly, and a red run for an expected partial pass is noise).
-Verified with an offline monkeypatched harness (15 checks: detection, Retry-After
-vs. backoff, budget accounting, both partial-exit paths) plus a live `--dry-run`. Next
-action: propagate the identical file to congress-trading-shared, api-usage-monitor, and
-Congress.Trade via their own PRs (fleet protocol: the file is copied verbatim). See
+Verified with an offline monkeypatched harness (19 checks: detection, Retry-After
+vs. backoff, budget accounting, all partial-exit paths) plus a live `--dry-run`.
+**Done 2026-07-05:** merged as PR #694 and validated live on `main` — the previously
+hard-failing bulk run completed green (created=101 updated=305, exit 0). Propagated
+verbatim to congress-trading-shared (PR #27, merged), api-usage-monitor (PR #38, merged),
+and Congress.Trade (PR #162). Codex's PR-review pass on #162 produced three refinements,
+folded back into the canonical file and re-propagated: the initial issue listing is now
+inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
+our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
 `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
 
 ## 2026-07-04 — Backlog exhaustiveness + cross-agent assignment pass (Claude, docs-only)
