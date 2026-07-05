@@ -263,10 +263,12 @@ to `socratictrade.com`, record the release commit + date here._
   ticker-drawer parity if the scan surface needs it. Keepout: no broad
   settings/approvals/live-data/coach/tooltip conversions in this lane. PR #806 open with
   auto-merge enabled; merge-forward after PR #807 pushed. Codex review follow-up pins `symbol` as
-  the first/sticky column during saved-state sanitization and column reordering. Verification
-  before review follow-up: focused scan-column test (4), lint 0 errors / 308 existing warnings,
-  land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up verification:
-  focused scan-column test (4), TypeScript clean, `git diff --check` clean.
+  the first/sticky column during saved-state sanitization and column reordering; second review
+  follow-up defers saved `localStorage` column state until after mount to avoid hydration mismatch.
+  Verification before review follow-up: focused scan-column test (4), lint 0 errors / 308 existing
+  warnings, land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up
+  verification: focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration
+  follow-up verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check` clean.
 
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The

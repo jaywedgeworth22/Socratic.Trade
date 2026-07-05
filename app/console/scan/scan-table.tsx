@@ -8,7 +8,7 @@
  *  tooltip; cell tooltips get the scan-level "Received …" stamp when the
  *  field's own tooltip doesn't already carry one. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
@@ -70,18 +70,25 @@ export function moveVisibleScanColumn(visible: string[], id: string, delta: -1 |
   return next;
 }
 
+function sameScanColumns(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 export function ScanTable({ scan }: { scan: MarketScan }) {
   const [sort, setSort] = useState<{ col: string; dir: SortDir }>({ col: "score", dir: "desc" });
-  const [visible, setVisible] = useState<string[]>(() => {
-    if (typeof window === "undefined") return DEFAULT_VISIBLE_SCAN_COLUMN_IDS;
+  const [visible, setVisible] = useState<string[]>(DEFAULT_VISIBLE_SCAN_COLUMN_IDS);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+
+  useEffect(() => {
     try {
       const saved = window.localStorage.getItem(SCAN_COLS_KEY);
-      return saved ? sanitizeVisibleScanColumns(JSON.parse(saved)) : DEFAULT_VISIBLE_SCAN_COLUMN_IDS;
+      if (!saved) return;
+      const next = sanitizeVisibleScanColumns(JSON.parse(saved));
+      setVisible((current) => (sameScanColumns(current, next) ? current : next));
     } catch {
-      return DEFAULT_VISIBLE_SCAN_COLUMN_IDS;
+      /* ignore storage failures */
     }
-  });
-  const [columnsOpen, setColumnsOpen] = useState(false);
+  }, []);
 
   function saveVisibleColumns(next: string[]) {
     setVisible(next);

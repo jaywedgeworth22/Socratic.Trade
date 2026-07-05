@@ -26,7 +26,9 @@ Verification green in this isolated worktree: focused
 2508 tests, `npm run build`). PR #806 is open with auto-merge enabled; after PR #807 merged, this
 branch was merge-forwarded and pushed. 2026-07-05 Codex PR review follow-up pins `symbol` as the
 first/sticky column during saved-state sanitization and column reordering; focused regression rerun
-passed and TypeScript is clean.
+passed and TypeScript is clean. A second Codex review follow-up defers saved `localStorage` column
+state until after mount to keep the server render and first client render identical; verification
+rerun passed (focused scan-column test, TypeScript, lint, diff check).
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude

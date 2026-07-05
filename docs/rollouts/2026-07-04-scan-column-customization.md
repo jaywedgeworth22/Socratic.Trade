@@ -46,6 +46,8 @@ without turning this lane into a broader settings/live-data conversion.
   in progress and implemented in this worktree.
 - Addressed Codex PR review on PR #806 by pinning `symbol` as the first/sticky column during both
   saved-state sanitization and visible-column reordering.
+- Addressed follow-up Codex PR review on PR #806 by deferring saved `localStorage` column state
+  until after mount, keeping the server render and first client render on the default column layout.
 
 ## Verification
 
@@ -90,6 +92,18 @@ NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc --noEmit --pretty
 - focused scan-column helper suite passed: 1 file / 4 tests.
 - TypeScript passed.
 - `git diff --check` passed.
+
+Hydration follow-up on 2026-07-05:
+
+```bash
+npx vitest run test/scan-table-columns.test.ts
+NODE_OPTIONS=--max-old-space-size=8192 ./node_modules/.bin/tsc --noEmit --pretty false
+npm run lint -- --quiet
+```
+
+- focused scan-column helper suite passed: 1 file / 4 tests.
+- TypeScript passed.
+- lint passed with 0 errors.
 
 ## Follow-ups
 
