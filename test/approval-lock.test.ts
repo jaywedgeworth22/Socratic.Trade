@@ -34,6 +34,42 @@ vi.mock("../src/lib/vector-db", () => ({
   storeContexts: async () => {}
 }));
 
+// Same rationale as test/order-confirmation-status.test.ts: executeProposal's market scan is
+// incidental here (this file verifies the run-lock), but unmocked it makes REAL Nasdaq/Yahoo
+// fetches — the root cause of this file's recurring full-suite timeout flake (the 2026-06-21
+// "fix" only padded the timeouts). Stub scanMarket; keep every other market.ts export real.
+vi.mock("../src/lib/market", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/market")>();
+  return {
+    ...actual,
+    scanMarket: async (): Promise<import("../src/lib/types").MarketScan> => {
+      const asOf = new Date().toISOString();
+      const aapl: import("../src/lib/types").MarketQuote = {
+        symbol: "AAPL",
+        price: 200,
+        bid: 199,
+        ask: 200,
+        volume: 1_000_000,
+        intradayChangePct: 0,
+        positionMarketValue: 0,
+        score: 1,
+        provider: "test-scan",
+        asOf
+      };
+      return {
+        source: "test-scan",
+        generatedAt: asOf,
+        scannedSymbols: 1,
+        returnedQuotes: 1,
+        topCandidates: [aapl],
+        sectorBySymbol: {},
+        quotesBySymbol: { AAPL: aapl },
+        warnings: []
+      };
+    }
+  };
+});
+
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-approval-lock-${randomUUID()}.db`)}`;
 });

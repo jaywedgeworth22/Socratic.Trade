@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
+Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
+`executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;
+~12–13s/test solo → >30s under 4-worker load); the chat-orchestrator file paid the ~15s
+orchestrator module-graph import inside the first test's 20s `testTimeout`. Fix: partial-mock
+`scanMarket` (importOriginal; everything else real) in `test/order-confirmation-status.test.ts`
+AND `test/approval-lock.test.ts` (same class — its 2026-06-21 fix only padded timeouts), and
+hoist the orchestrator import into `beforeAll(…, 120_000)` in
+`test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
+green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
+`docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+**Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
+
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
 Branch `claude/slack-sync-default-setup` (off `origin/main` @ `c2ee3f0`). Makes the two-Claude
 Slack coordination (Monet = cloud, Fable = local Mac) work by default in every session/repo

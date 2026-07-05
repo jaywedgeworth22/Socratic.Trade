@@ -237,6 +237,15 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
+  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-05.**
+  Root causes (not timeout-tuning): `executeProposal` tests run a REAL market scan (Nasdaq screener +
+  Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12s/test solo, past 30s under 4-worker
+  full-suite load; chat-orchestrator's first test pays the ~15s orchestrator module-graph import
+  inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the `market.ts` module boundary
+  in `order-confirmation-status` + `approval-lock` (same class); hoist the orchestrator import into
+  `beforeAll` with an explicit long hook budget.
+
 - **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
   `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
   only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
