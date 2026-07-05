@@ -20,9 +20,11 @@ hoist the orchestrator import into `beforeAll(…, 120_000)` in
 green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
 `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
 **MERGED:** PR #812 squash-merged to `main` 2026-07-05 08:46Z (verify/smoke/gitleaks green).
-Note: two foreign uncommitted items remain preserved in this worktree, deliberately NOT landed —
-an AGENTS.md Monet-lane port edit (4103→4104, unclaimed; raised in #agent-sync) and untracked
-`.codex/` setup scripts. Whoever owns them should claim/land them.
+Update: the AGENTS.md Monet-port edit (4103→4104) is now OWNER-CONFIRMED (2026-07-05: "Monet
+should be 4104 since cursor is 4103") and committed to `agent/claude` with attribution — rides the
+next land. Open gap: AGENTS.md has no Cursor 4103 row (its Cursor section still says "no new port");
+asked CURSOR in #agent-sync to document its preview row (pm2 name/hostname) before anyone adds it.
+Untracked `.codex/` setup scripts in this worktree remain unclaimed (CODEX asked to claim/remove).
 **Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)

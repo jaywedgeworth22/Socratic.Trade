@@ -110,7 +110,7 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-monet` | `agent/monet` | **4103** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
+| `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
 | `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
 Bootstrap / repair the integration preview and agent previews idempotently with
