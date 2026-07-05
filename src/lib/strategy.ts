@@ -3925,11 +3925,10 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
-/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
- *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
- *  degrades to the refPrice-based branch instead. */
+/** A real, quoted ask — excludes a synthesized (price-derived) spread. A synthetic ask must
+ *  NEVER anchor ask-relative limit-price math; it degrades to the refPrice-based branch instead. */
 function hasRealAsk(quote: MarketQuote): boolean {
-  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+  return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
@@ -3954,11 +3953,11 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
-  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
-  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
-  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
-  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
-  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
+  // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
+  // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = !quote.syntheticBid ? quote.bid : undefined;
+  const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -4262,10 +4261,8 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
       // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
       // back to refPrice only for the side that is actually synthetic so the limit is honest.
-      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
-      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
-      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
         ? round2((realAsk ?? refPrice) * (1 + buffer))
         : round2((realBid ?? refPrice) * (1 - buffer));
