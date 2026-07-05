@@ -224,3 +224,9 @@ A second pass (still on this branch, second commit — HEAD `4b105e5a` untouched
 - `npm test` (full suite) — 2529/2530 passed; the 1 failure
   (`test/account-deletion-coverage.test.ts`) is pre-existing at `4b105e5a` (confirmed via
   `git stash`), unrelated to these 7 findings, and tracked as a separate follow-up above.
+
+6. **Drift-guard fix (third commit).** Added `due_jobs` to `DELETE_TABLES_BY_USER_ID`
+  (`src/lib/account-deletion.ts`) so account deletion now cleans up the user's due-jobs rows,
+  resolving the `test/account-deletion-coverage.test.ts` failure noted above as a follow-up —
+  `npx tsc --noEmit` clean; `test/account-deletion-coverage.test.ts` + `test/db-jobs.test.ts` +
+  `test/outcome-engine-due-jobs.test.ts` — 18/18 passed.
