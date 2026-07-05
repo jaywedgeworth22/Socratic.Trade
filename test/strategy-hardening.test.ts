@@ -244,7 +244,7 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     const withSyntheticAsk: MarketScan = {
       ...marketScan,
       quotesBySymbol: {
-        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, sources: { ask: "yahoo-finance-synthetic" } }
+        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, syntheticAsk: true, sources: { ask: "yahoo-finance-synthetic" } }
       }
     };
     const p = enrichOpeningProposal(
@@ -268,7 +268,7 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
           ask: 101,
           bid: 99,
           score: 50,
-          sources: { ask: "alpaca", bid: "yahoo-finance-synthetic" }
+          sources: { ask: "alpaca", bid: "yahoo-finance-synthetic" }, syntheticBid: true
         }
       }
     };

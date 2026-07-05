@@ -19,6 +19,11 @@ filling the missing pieces.
 > the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
 > deployed to production at `1e1a15bc`.
 
+> **2026-07-04 - Console scan column customization parity (Codex subagent).** `/console/scan`
+> now matches the legacy dashboard's browser-local column behavior for the current console scan
+> columns: visibility toggles, reorder controls, Reset, and saved visible-column order/state.
+> No roadmap scope change; this closes the documented scan-column parity gap from
+> `docs/reviews/2026-07-03-console-parity-open-items.md`.
 > **2026-07-04 - Approvals triage + alert center focused slice (Codex).** No roadmap scope change.
 > `/console/approvals` now covers the first operational triage layer from issue #470: sort/filter,
 > visible-row multi-select, bulk reject, and safe non-LIVE bulk approve through the existing

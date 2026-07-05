@@ -72,6 +72,12 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
+  2026-07-05 as squash `0bfa4f1e`. Focused slice for issue #470: `/console/approvals`
+  sort/filter, visible-row multi-select, bulk reject, safe non-LIVE bulk approve through existing
+  per-item proposal endpoints, and a reusable alert-center surface backed by existing
+  notifications/activity data. CI green: classify, smoke, gitleaks, verify. See
+  `docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
 - **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
   landing by CLAUDE-CLOUD, owner-directed).** Merged to `main` 2026-07-05 as squash `546c451`
   (verify x2/smoke/gitleaks green; relands #367, whose branch heads never received CI runs from
@@ -383,14 +389,19 @@ to `socratictrade.com`, record the release commit + date here._
   outcome-engine 'safety'-kind tolerance), learned-context provenance extension. tsc clean; focused +
   adjacent strategy/chat/socratic suites green. See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
 
-- **Approvals triage upgrades + alert center (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-approvals-alert-center`, branch
-  `codex/approvals-alert-center`. Focused slice only: pending-approval sort/filter, bulk safe
-  actions via existing per-item proposal endpoints, and a console alert center built from existing
-  notifications/activity data. Keepout: settings/model/live-data/coach/tooltip broad conversions,
-  Monet risk files, Claude memory/RAG files, workflows, AGENTS, and Slack scripts. Verification
-  green: tsc clean, focused approvals/dashboard tests 24, full suite 2467 tests / 255 files, lint
-  0 errors, build green.
+- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
+  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
+  ticker-drawer parity if the scan surface needs it. Keepout: no broad
+  settings/approvals/live-data/coach/tooltip conversions in this lane. PR #806 open with
+  auto-merge enabled; merge-forward after PR #807 pushed. Codex review follow-up pins `symbol` as
+  the first/sticky column during saved-state sanitization and column reordering; second review
+  follow-up defers saved `localStorage` column state until after mount to avoid hydration mismatch.
+  Verification before review follow-up: focused scan-column test (4), lint 0 errors / 308 existing
+  warnings, land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up
+  verification: focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration
+  follow-up verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check` clean.
 
 - **Coach chat → framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
   `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
@@ -774,10 +785,6 @@ locks — re-negotiate in #agent-sync._
   make the retention window configurable. (completeness §F + quick-wins)
 
 #### CODEX lane (adds to the annotated parity rows above)
-- **Scan table column customization parity (CODEX, M)** — visibility/ordering/reset/saved state vs
-  the legacy dashboard. (console-parity-open-items)
-- **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
-  console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
   streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
   the SSE learned-context-inbox row above. (expert reviews)

@@ -14,6 +14,7 @@ import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
 import { reconcilePendingFills, runStrategyOnce } from "./strategy";
+import { checkMonthlyLlmSpendCeiling } from "./llm-budget";
 import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
@@ -31,6 +32,43 @@ const TICK_MS = 60_000; // check every 60s; cadence changes take effect within o
 function singleLeaderEnabled(): boolean {
   const v = String(process.env.SCHEDULER_SINGLE_LEADER ?? "").trim().toLowerCase();
   return ["1", "true", "on", "yes"].includes(v);
+}
+
+// ── Health threshold: abdicate leadership after N consecutive heartbeat failures ──
+//
+// When the scheduler's heartbeat write (setInternalSetting("scheduler:lastTick", …)) fails, the
+// DB is unreachable — the lease operations in the same tick will also fail, so another process can
+// acquire it. But we also want the current process to explicitly stop trying + log the event rather
+// than spinning on a dead DB. After N consecutive heartbeat failures, the leader releases its lease
+// and this tick returns early. A successful heartbeat resets the counter.
+//
+// Pinned to globalThis so Next.js HMR re-evaluations can't reset the counter mid-run.
+
+const healthFailuresHost = globalThis as unknown as { __schedulerHealthFailures?: number };
+const DEFAULT_HEALTH_FAILURE_THRESHOLD = 5;
+
+function healthFailureThreshold(): number {
+  const v = Number(process.env.SCHEDULER_HEALTH_FAILURE_THRESHOLD);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_HEALTH_FAILURE_THRESHOLD;
+}
+
+function incrementHealthFailures(): number {
+  const current = healthFailuresHost.__schedulerHealthFailures ?? 0;
+  healthFailuresHost.__schedulerHealthFailures = current + 1;
+  return current + 1;
+}
+
+function resetHealthFailures(): void {
+  healthFailuresHost.__schedulerHealthFailures = 0;
+}
+
+function getHealthFailures(): number {
+  return healthFailuresHost.__schedulerHealthFailures ?? 0;
+}
+
+/** Exported for tests — asserts the env gate and that failures can never propagate. */
+export function _schedulerTickHealthCheck(): { failures: number; threshold: number; heartbeatOk: boolean } {
+  return { failures: getHealthFailures(), threshold: healthFailureThreshold(), heartbeatOk: true };
 }
 
 // Sentry Crons heartbeat for the scheduler tick. Addresses a confirmed monitoring gap: a
@@ -184,10 +222,22 @@ async function tick(): Promise<void> {
   // Liveness heartbeat for /api/health: a persisted timestamp each tick lets an external
   // supervisor (PM2/uptime monitor) detect a dead/hung scheduler — i.e. autonomy and the
   // synthetic-stop monitor silently not running. Self-guarded so it can never break a tick.
+  let heartbeatOk = false;
   try {
     setInternalSetting("scheduler:lastTick", new Date().toISOString());
+    heartbeatOk = true;
+    if (getHealthFailures() > 0) resetHealthFailures();
   } catch (err) {
     console.error("[scheduler] heartbeat write error:", err);
+    const failures = incrementHealthFailures();
+    const threshold = healthFailureThreshold();
+    if (failures >= threshold && singleLeaderEnabled()) {
+      console.error(
+        `[scheduler] health threshold reached (${failures}/${threshold} consecutive heartbeat failures) — abdicating leadership`
+      );
+      try { releaseLease(LEASE_OWNER); } catch { /* never throw on shutdown */ }
+      return; // stop this tick — we can't prove leadership anyway with a dead DB
+    }
   }
 
   // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
@@ -217,7 +267,10 @@ async function tick(): Promise<void> {
   // Collects the union of all user watchlists + policy universes so the shared
   // corpus covers every symbol any active user is monitoring. Fire-and-forget;
   // errors are captured inside refreshFilingBodies and audited there.
-  if (isFilingIngestDue()) {
+  // Gated on the operator monthly spend ceiling too: RAG (Voyage/Pinecone) spend counts toward
+  // LLM_SPEND_CEILING, and this refresh runs BEFORE the strategy-run ceiling check below, so without
+  // this guard a breached ceiling would still let the weekly filing-body ingest spend.
+  if (isFilingIngestDue() && checkMonthlyLlmSpendCeiling().ok) {
     const symbolSet = new Set<string>();
     for (const userId of listUsers()) {
       try {
@@ -240,9 +293,13 @@ async function tick(): Promise<void> {
     console.error("[scheduler] congress-share daily batch error:", err)
   );
 
-  // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded, runs beside the web-source
-  // refresh. Records + announces a regime change; only triggers a run when TRIGGER_ENGINE is on.
-  void checkRegimeFlip().catch((err) => console.error("[scheduler] regime check error:", err));
+  // Deterministic regime-flip detector (Phase 1) — cheap, self-guarded. Runs per-user so
+  // each user's stored regime label is independent; multi-user setups can't share one KV row.
+  for (const userId of listUsers()) {
+    void checkRegimeFlip(userId).catch((err) =>
+      console.error(`[scheduler] regime check error for ${userId}:`, err)
+    );
+  }
 
   // Atlas public-repo port: evaluate armed price alerts against live quotes every tick.
   void checkAllUserPriceAlerts().catch((err) => console.error("[scheduler] price-alert check error:", err));
@@ -263,11 +320,31 @@ async function tick(): Promise<void> {
 
   try {
 
+    // ── Operator-level monthly LLM spend ceiling ──────────────────────────────
+    // Checked once per tick after the single-leader gate. When breached, the scheduler
+    // skips LLM work (strategy runs) for all users but still runs non-LLM safety
+    // maintenance: reconciliation, synthetic-stop monitor, stale-limit alerts, etc.
+    const monthlyCeiling = checkMonthlyLlmSpendCeiling();
+    if (!monthlyCeiling.ok) {
+      console.warn(
+        `[scheduler] monthly LLM spend ceiling reached: $${monthlyCeiling.totalUsd.toFixed(2)} ` +
+        `of $${monthlyCeiling.ceilingUsd?.toFixed(2)} — skipping LLM work for all users this tick`
+      );
+      // Still run the per-account non-LLM safety tasks below (reconciliation, stop monitor,
+      // stale orders, proposal expiry). Only the dueRuns / strategy execution is skipped.
+    }
+
     // --- Per-Account Scheduling ---
     // Each connected account is scheduled independently: its own per-account policy
     // (systemState, cadence, broker) drives whether/when it runs. Autonomy is opt-in per
     // account — only accounts whose own systemState is "active" trade.
-    const dueRuns: Array<{ userId: string; accountId: string }> = [];
+    const dueRuns: Array<{
+      userId: string;
+      accountId: string;
+      key: string;
+      prevLastRunAt: string | null;
+      prevNextRunAt: string | null;
+    }> = [];
 
     for (const userId of listUsers()) {
       for (const account of listConnectedAccounts(userId)) {
@@ -357,16 +434,41 @@ async function tick(): Promise<void> {
           }
         }
 
-        // Due for a run
+        // Due for a run. Record the pre-mutation cadence state so a run suppressed by the monthly
+        // operator ceiling below can be ROLLED BACK — otherwise advancing lastRunAt/nextRunAt here
+        // makes a never-executed run look completed, so the account waits a full cadence and the UI
+        // shows a next-run for a skipped run (see the monthly-ceiling rollback below).
+        const prevLastRunAt = schedule.lastRunAt;
+        const prevNextRunAt = schedule.nextRunAt;
         schedule.lastRunAt = new Date(now).toISOString();
         schedule.nextRunAt = new Date(now + cadenceMs).toISOString();
-        dueRuns.push({ userId, accountId });
+        dueRuns.push({ userId, accountId, key, prevLastRunAt, prevNextRunAt });
       }
     }
 
     // Run with bounded concurrency (max 3 at a time) to balance throughput and API rate limits
     const MAX_CONCURRENCY = 3;
     const executing = new Set<Promise<unknown>>();
+
+    // Skip LLM strategy runs when the monthly operator spend ceiling is breached.
+    // Non-LLM safety tasks (reconciliation, stop monitor, stale orders, proposal expiry)
+    // have already run above — only the LLM-heavy strategy execution is gated here.
+    if (!monthlyCeiling.ok) {
+      if (dueRuns.length > 0) {
+        console.warn(`[scheduler] monthly ceiling: suppressing ${dueRuns.length} due strategy run(s)`);
+        // Roll back the cadence state advanced in the due-detection loop above: a run that never
+        // executed must NOT look completed, or the account waits a full cadence and the UI shows a
+        // next-run for a skipped run. Restore each suppressed account's pre-mutation lastRunAt/nextRunAt.
+        for (const { key, prevLastRunAt, prevNextRunAt } of dueRuns) {
+          const s = accountSchedules[key];
+          if (s) {
+            s.lastRunAt = prevLastRunAt;
+            s.nextRunAt = prevNextRunAt;
+          }
+        }
+      }
+      return;
+    }
 
     for (const { userId, accountId } of dueRuns) {
       // The daily LLM budget ceiling is enforced INSIDE runStrategyOnce (after its non-LLM risk
