@@ -49,7 +49,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Anthropic (Claude)",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast Claude review · $" },
-      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — balanced Claude analysis · $$", recommendedRed: true },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
       { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude critique · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
