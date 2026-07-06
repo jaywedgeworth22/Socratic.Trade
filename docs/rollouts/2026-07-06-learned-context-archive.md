@@ -64,6 +64,25 @@ Note: hit a local-only `better-sqlite3` NODE_MODULE_VERSION mismatch (native bin
 a newer Node ABI than the active `node -v` in this worktree) before the first test run — fixed with
 `npm rebuild better-sqlite3`; unrelated to this change, no source files involved.
 
+## Merge note
+
+`land.sh`'s stale-overlap guard correctly flagged that `origin/main` had moved since this branch
+forked — a large amount of fleet work landed in the interim (Coolify/Hetzner migration prep, a
+mobile console width-overflow fix, RAG multi-query/HyDE, Kelly/vol-targeting sizing, prompt-safety
+fencing, red-team routing, and dozens of other rollouts). Reviewed each flagged overlap by hand
+before merging:
+- `src/lib/db-learning.ts` — the other side's changes were entirely in the unrelated
+  skipped-counterfactual section (outcome-horizons lost-update guard); merged with zero conflict,
+  confirmed `deleteLearnedContext` intact afterward.
+- `AGENTS.md` / `docs/EFFORT-LOG.md` — genuine adjacent-insertion conflicts (both sides added rows
+  at the same position); resolved by keeping both sides' content. Also folded in CURSOR's new 4103
+  fleet-table row (the missing piece flagged in my own earlier #agent-sync ask) and corrected a
+  stray 4104→4103 typo in another agent's Coolify-migration effort-log row to match the
+  owner-confirmed port assignment.
+
+Re-ran the full verify gate (tsc, lint, full test suite, build) on the merged tree before landing —
+see Verification above for the pre-merge numbers; post-merge results are in STATUS.md.
+
 ## Deploy
 
 Landed via `scripts/land.sh` → PR → squash auto-merge on green `verify`, then released to
