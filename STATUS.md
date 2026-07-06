@@ -12,11 +12,14 @@ steps materially change.
 Owner asked for help offloading local agent/dev-server resource usage (16GB M5 MacBook Air
 crashing under 5+ concurrent AI coding tools). Landed on a self-hosted Coolify instance
 (open-source PaaS) on a Hetzner CX23 (2 vCPU/4GB, x86 — Ampere/CAX capacity was unavailable at
-signup time) behind `jays.services` (apex domain, DNS-only/grey-cloud so Coolify's own
-Let's Encrypt issuance works; a Cloudflare Tunnel is also in place and is what this session's
-network proxy actually reaches over :443). Coolify 4.1.2 confirmed reachable and API-token
-auth verified (`Security > API Tokens`, token stored as this environment's
-`COOLIFY_API_TOKEN` secret going forward — do not commit it anywhere).
+signup time) behind `jays.services` (apex domain). Public routing is via a **Cloudflare
+Tunnel**, not a plain DNS `A` record — a manual `A` record was suggested initially (which
+would need DNS-only/grey-cloud for Coolify's own Let's Encrypt to issue directly), but the
+owner set up a Cloudflare Tunnel instead, which is what's actually live: TLS terminates at
+Cloudflare's edge and is forwarded to the box over the tunnel, which is also why this
+session (limited to outbound HTTPS:443 to well-known hosts) can reach it at all. Coolify
+4.1.2 confirmed reachable and API-token auth verified (`Security > API Tokens`, token stored
+as this environment's `COOLIFY_API_TOKEN` secret going forward — do not commit it anywhere).
 
 **Doc correction (this session):** `AGENTS.md`'s "Cursor: not a 4th agent lane" section was
 outdated per the owner — Cursor now runs its own background/agent-mode work on **DeepSeek**,
