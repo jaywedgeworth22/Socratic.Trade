@@ -8,6 +8,41 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Held-position retrieval scope (RAG + learned-context + episodic)
+
+Widened the three retrieval scopes in `runStrategyOnce` (filings RAG, learned-context, episodic
+decision memory) so a held (open) position that scores outside the score-sorted top-N slice still
+gets a retrieval pass — previously such a position got ZERO retrieved memory, so sell/hold/trim
+decisions on it ran uninformed. Strictly additive: the BUY-candidate scan/prompt set
+(`marketScan.topCandidates`) and its ordering are completely unchanged; held symbols are UNIONed
+into each retrieval scope's local symbol list (Set-dedupe), never substituted for the top-N. No
+risk-gate/sizing/policy touch.
+
+- Hoisted a single `heldSymbols` computation (right after `workingPositions` is set) and reused it
+  for both the pre-existing take-profit trim-band pruning and all three retrieval scopes (was
+  previously computed a second time locally at the trim-band call site).
+- Filings-RAG `topSymbols` (~top-3) and learned-context `learnedSymbols` (~top-8): unioned with
+  `heldSymbols` via the existing `uniqueSymbols` normalize+dedupe helper.
+- Episodic `situationCandidates` (~top-3): needs the fuller candidate shape (sector/dominantFactor/
+  evidence), so held symbols outside the top-3 are looked up in `marketScan.topCandidates` (which
+  force-includes every held symbol per `market.ts`'s `heldExtra` union) to build the same shape,
+  with a minimal symbol+sector fallback for the defensive case where a lookup somehow misses.
+- No duplicate retrieval call when a held symbol is already inside a slice (Set-based union is
+  naturally dedupe-safe).
+- New test: `test/strategy-held-position-retrieval-scope.test.ts` (2 tests) — asserts held-symbol
+  inclusion in all three retrieval scopes when outside the top slice, no duplication when the held
+  symbol IS inside the slice, and top-N regression (unchanged membership/order).
+- **Follow-up fix (same day, 2nd commit):** the episodic scope's query builder,
+  `buildSituationSketch` (`src/lib/experience-memory.ts`), still did a bare `slice(0, 3)`, so a
+  held symbol appended past top-3 reached the `retrieveDecisionExperiences` call but was dropped
+  before it entered the actual sketch/query text — episodic parity was only partial versus the
+  filings-RAG and learned-context scopes. Fixed with an additive `SituationCandidate.held` flag
+  and a bounded (max 6 total) held-aware selection in `buildSituationSketch`; the non-held path is
+  byte-identical to the old `slice(0, 3)`. `strategy.ts` now stamps `held: true` on candidates it
+  appends past the top-3. Covered by 3 new `buildSituationSketch` unit tests plus a strengthened
+  assertion in `test/strategy-held-position-retrieval-scope.test.ts` that calls the real
+  `buildSituationSketch` on the captured input to prove the held symbol reaches actual query text.
+- Full details: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
 ## 2026-07-06 — RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
 
 Worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`. Test/fixture/
