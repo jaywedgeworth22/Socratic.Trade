@@ -287,6 +287,14 @@ export function formatNotificationDisplay(
   } else if (event.type === "proposal_withdrawn") {
     const expired = stringValue(payload.source) === "expiry";
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
+  } else if (event.type === "deterministic_bear_veto") {
+    title = `${actionLabel(side)} ${symbol ?? "Trade"} Vetoed by Bear Risk`;
+  } else if (event.type === "red_team_veto_overridden") {
+    title = `Red Team Veto Overridden ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "prompt_injection_suspected") {
+    title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "evidence_age_anomaly") {
+    title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
   }
 
   return {
@@ -299,6 +307,16 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
+  if (
+    event.type === "deterministic_bear_veto" ||
+    event.type === "red_team_veto_overridden" ||
+    event.type === "prompt_injection_suspected" ||
+    event.type === "evidence_age_anomaly"
+  ) {
+    const payload = asRecord(event.payload);
+    const reason = stringValue(payload.reason) || stringValue(payload.detail);
+    return reason ? `Audit logged: ${reason}` : "Advisory audit logged";
+  }
   const prefix = event.status === "sent" ? "Notification Sent" : event.status === "failed" ? "Notification Failed" : "Notification Skipped";
   const reason = notificationReason(event.error);
   return reason ? `${prefix} - ${reason}` : prefix;

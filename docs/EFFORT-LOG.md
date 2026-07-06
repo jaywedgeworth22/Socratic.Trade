@@ -1354,7 +1354,7 @@ discrepancies that motivated these rows._
   now: Three money-path behavior changes (#799/#814/#816) plus major console work are beta-only;
   nothing merged 07-05 has been verified in production, and the Deployed board section stops at
   07-04.)_
-- **Render the new advisory audit kinds in the console alert center and activity feed (CODEX, S)** —
+- **Render the new advisory audit kinds in the console alert center and activity feed (AG, S)** — COMPLETED 2026-07-06.
   Label/filter deterministic_bear_veto, red_team_veto_overridden, prompt_injection_suspected, and
   evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
   whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
