@@ -1,4 +1,5 @@
 import { resolveLlmCredential } from "./db";
+import type { LlmKeySource } from "./db-api-keys";
 import { resolveOpenAiModel, type LlmTransport } from "./llm-request";
 
 export type LlmTeamRole = "green" | "red" | "support";
@@ -9,7 +10,7 @@ export interface LlmEndpoint {
   url: string;
   key?: string;
   model: string;
-  keySource: "operator" | "user";
+  keySource: LlmKeySource;
   keyRef?: string;
   transport: LlmTransport;
 }
@@ -103,7 +104,7 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
-      keySource: cred.source === "operator" ? "operator" : "user",
+      keySource: cred.source,
       keyRef: cred.keyRef,
       transport: "anthropic-messages"
     };
@@ -119,7 +120,7 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
-      keySource: cred.source === "operator" ? "operator" : "user",
+      keySource: cred.source,
       keyRef: cred.keyRef,
       transport: "chat-completions"
     };
@@ -135,7 +136,7 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
-      keySource: cred.source === "operator" ? "operator" : "user",
+      keySource: cred.source,
       keyRef: cred.keyRef,
       transport: "chat-completions"
     };
@@ -151,7 +152,7 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
-      keySource: cred.source === "operator" ? "operator" : "user",
+      keySource: cred.source,
       keyRef: cred.keyRef,
       transport: "chat-completions"
     };
@@ -167,7 +168,7 @@ export function resolveLlmEndpoint(
       url,
       key: cred.key,
       model,
-      keySource: cred.source === "operator" ? "operator" : "user",
+      keySource: cred.source,
       keyRef: cred.keyRef,
       transport: "chat-completions"
     };
@@ -190,7 +191,7 @@ export function resolveLlmEndpoint(
     url,
     key: cred.key,
     model,
-    keySource: cred.source === "operator" ? "operator" : "user",
+    keySource: cred.source,
     keyRef: cred.keyRef,
     transport
   };

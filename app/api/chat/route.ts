@@ -39,8 +39,9 @@ function resolveChatProvider(modelHint: string | undefined, providerHint: string
 
 export const dynamic = "force-dynamic";
 
-function usageOpts(userId: string, source: "user" | "operator" | "none", keyRef?: string): LlmUsageOpts {
-  return { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+import type { LlmKeySource } from "@/lib/db-api-keys";
+function usageOpts(userId: string, source: LlmKeySource, keyRef?: string): LlmUsageOpts {
+  return { userId, keySource: source, keyRef, context: "chat" };
 }
 
 /**

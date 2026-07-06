@@ -25,7 +25,7 @@ import { deriveReality } from "../lib/derive";
 import { cx, fmtExact } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { ModelBadge } from "../ui/provider-logo";
-import { Chip, Select, TextInput } from "../ui/primitives";
+import { Chip, Select, TextInput, Tooltip } from "../ui/primitives";
 import { useToast } from "../ui/toast";
 import { DraftTicket } from "./draft-card";
 import { AssistantMarkdown } from "./markdown";
@@ -327,26 +327,31 @@ export function AssistantChat() {
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-[color:var(--con-line)] px-3 py-2 sm:px-4">
         <Sparkles size={15} className="shrink-0 text-[color:var(--con-accent)]" aria-hidden />
         <h1 className="text-[length:var(--con-fs-md)] font-bold leading-none">Assistant</h1>
-        <span
-          className="hidden text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] md:inline"
-          title="The assistant can answer questions and draft orders, but it has no way to place one — every order goes through Approvals."
+        <Tooltip
+          as="span"
+          className="hidden text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] md:inline cursor-default"
+          content="The assistant can answer questions and draft orders, but it has no way to place one — every order goes through Approvals."
         >
           drafts orders you approve — it never places on its own
-        </span>
+        </Tooltip>
         <div className="ml-auto flex items-center gap-2">
           {customPending || !CATALOG_MODEL_IDS.has(model) ? (
             <div className="w-36">
-              <TextInput
-                value={customPending ? "" : model}
-                placeholder="model id, e.g. gpt-5.5"
-                className="con-mono"
-                style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
-                title="Type any model id your provider serves. It is routed by name: claude-* to Anthropic, grok-* to xAI, gemini-* to Gemini, mistral-* to Mistral, deepseek-* to DeepSeek, anything else to OpenAI."
-                onChange={(e) => pickModel(e.target.value.trim() || CUSTOM_MODEL_VALUE)}
-              />
+              <Tooltip
+                content="Type any model id your provider serves. It is routed by name: claude-* to Anthropic, grok-* to xAI, gemini-* to Gemini, mistral-* to Mistral, deepseek-* to DeepSeek, anything else to OpenAI."
+                className="w-full block"
+              >
+                <TextInput
+                  value={customPending ? "" : model}
+                  placeholder="model id, e.g. gpt-5.5"
+                  className="con-mono w-full"
+                  style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
+                  onChange={(e) => pickModel(e.target.value.trim() || CUSTOM_MODEL_VALUE)}
+                />
+              </Tooltip>
             </div>
           ) : null}
-          <div className="w-40 sm:w-56">
+          <Tooltip className="w-40 sm:w-56 block" content="Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key.">
             <Select
               value={CATALOG_MODEL_IDS.has(model) ? model : CUSTOM_MODEL_VALUE}
               onChange={(e) => {
@@ -354,8 +359,8 @@ export function AssistantChat() {
                 inputRef.current?.focus();
               }}
               style={{ padding: "3px 8px", fontSize: "var(--con-fs-xs)" }}
-              title="Which AI model answers. $ signs are relative cost within the provider. 'no key' means that provider has no key in Settings; Mock is a deterministic offline model that needs no key."
               aria-label="Chat model"
+              className="w-full"
             >
               {MODEL_GROUPS.map((g) => {
                 const noKey = g.provider !== "offline" && statusLoaded && providerStatus[g.provider] === false;
@@ -372,26 +377,29 @@ export function AssistantChat() {
                 );
               })}
             </Select>
-          </div>
-          <button
-            type="button"
-            onClick={() => void clearConversation()}
-            disabled={sending || clearing}
-            className={cx(
-              "flex h-7 items-center gap-1 rounded-lg border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-              clearArmed
-                ? "border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] text-[color:var(--con-neg)]"
-                : "border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
-            )}
-            title={
+          </Tooltip>
+          <Tooltip
+            content={
               sending
                 ? "Wait for the current reply to finish — clearing mid-reply could orphan it in the saved history."
                 : "Deletes your ENTIRE saved assistant conversation — one transcript shared across all your accounts, not just the one selected. Staged proposals, orders, and positions are untouched. Click twice to confirm."
             }
           >
-            <Trash2 size={13} aria-hidden />
-            {clearArmed ? "Really clear?" : clearing ? "Clearing…" : "Clear"}
-          </button>
+            <button
+              type="button"
+              onClick={() => void clearConversation()}
+              disabled={sending || clearing}
+              className={cx(
+                "flex h-7 items-center gap-1 rounded-lg border px-2 text-[length:var(--con-fs-xs)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                clearArmed
+                  ? "border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] text-[color:var(--con-neg)]"
+                  : "border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)]"
+              )}
+            >
+              <Trash2 size={13} aria-hidden />
+              {clearArmed ? "Really clear?" : clearing ? "Clearing…" : "Clear"}
+            </button>
+          </Tooltip>
         </div>
       </header>
 
@@ -403,12 +411,13 @@ export function AssistantChat() {
           </div>
         )}
         {historyState === "failed" && (
-          <div
-            className="rounded-md bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
-            title="Only loading old messages failed — sending new ones still works."
+          <Tooltip
+            as="div"
+            className="rounded-md bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)] w-fit"
+            content="Only loading old messages failed — sending new ones still works."
           >
             Couldn&apos;t load the earlier conversation. New messages still work; reload the page to retry.
-          </div>
+          </Tooltip>
         )}
         {historyState === "ready" && messages.length === 0 && (
           <div className="grid h-full place-items-center">
@@ -421,17 +430,17 @@ export function AssistantChat() {
               </p>
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s.prompt}
-                    type="button"
-                    onClick={() => void send(s.prompt)}
-                    disabled={sending || keyMissing}
-                    title={`Sends: "${s.prompt}"`}
-                    className="rounded-full border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] transition-colors hover:border-[color:var(--con-accent)] hover:bg-[color:var(--con-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <span className="uppercase tracking-wide text-[color:var(--con-faint)]">{s.category}</span>
-                    <span className="ml-1.5">{s.prompt}</span>
-                  </button>
+                  <Tooltip key={s.prompt} content={`Sends: "${s.prompt}"`}>
+                    <button
+                      type="button"
+                      onClick={() => void send(s.prompt)}
+                      disabled={sending || keyMissing}
+                      className="rounded-full border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] transition-colors hover:border-[color:var(--con-accent)] hover:bg-[color:var(--con-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="uppercase tracking-wide text-[color:var(--con-faint)]">{s.category}</span>
+                      <span className="ml-1.5">{s.prompt}</span>
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             </div>
@@ -440,13 +449,14 @@ export function AssistantChat() {
         {messages.map((m) => (
           <div key={m.id} className={cx("flex", m.role === "user" ? "justify-end" : "justify-start")}>
             <div className="max-w-[88%] sm:max-w-[36rem]">
-              <div
+              <Tooltip
+                as="div"
                 className={cx(
                   "rounded-xl px-3 py-2 text-[length:var(--con-fs-sm)]",
                   m.role === "user" ? "bg-[color:var(--con-accent-soft)]" : "bg-[color:var(--con-surface-2)]",
                   m.failed && "border border-[color:var(--con-warn-border)]"
                 )}
-                title={m.at ? fmtExact(m.at) : undefined}
+                content={m.at ? fmtExact(m.at) : undefined}
               >
                 {m.role === "assistant" ? (
                   <AssistantMarkdown>{m.text}</AssistantMarkdown>
@@ -457,11 +467,11 @@ export function AssistantChat() {
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {m.citations.map((c, i) =>
                       c.url ? (
-                        <a key={i} href={c.url} target="_blank" rel="noopener noreferrer" title={`Source this answer cited — opens ${c.url}`}>
+                        <Tooltip key={i} as="a" href={c.url} target="_blank" rel="noopener noreferrer" content={`Source this answer cited — opens ${c.url}`}>
                           <Chip tone="muted" className="underline decoration-dotted">
                             {c.label}
                           </Chip>
-                        </a>
+                        </Tooltip>
                       ) : (
                         <Chip key={i} tone="muted" title="Source this answer cited.">
                           {c.label}
@@ -471,12 +481,12 @@ export function AssistantChat() {
                   </div>
                 )}
                 {m.draft && reality && <DraftTicket draft={m.draft} reality={reality} />}
-              </div>
+              </Tooltip>
               {m.role === "assistant" && m.model && (
                 <div className="mt-0.5 px-1 text-[10px] text-[color:var(--con-faint)]">
                   {m.model.trim().toLowerCase() === "mock" ? (
                     // No vendor logo for the offline mock — that would fake a provider.
-                    <span title="The deterministic offline model produced this answer — no LLM provider was called.">mock</span>
+                    <Tooltip as="span" content="The deterministic offline model produced this answer — no LLM provider was called.">mock</Tooltip>
                   ) : (
                     <ModelBadge modelId={m.model} size="sm" className="font-normal" title="The model that produced this answer." />
                   )}
@@ -485,15 +495,16 @@ export function AssistantChat() {
               {m.failed && (
                 <div className="mt-1 flex items-center justify-end gap-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
                   <AlertTriangle size={12} aria-hidden /> Not answered
-                  <button
-                    type="button"
-                    onClick={() => void send(m.text, m.id)}
-                    disabled={sending || clearing}
-                    className="flex items-center gap-1 rounded border border-[color:var(--con-line-strong)] px-1.5 py-0.5 font-semibold text-[color:var(--con-fg)] transition-colors hover:bg-[color:var(--con-surface-2)] disabled:opacity-50"
-                    title="Send this message again."
-                  >
-                    <RotateCcw size={11} aria-hidden /> Retry
-                  </button>
+                  <Tooltip content="Send this message again.">
+                    <button
+                      type="button"
+                      onClick={() => void send(m.text, m.id)}
+                      disabled={sending || clearing}
+                      className="flex items-center gap-1 rounded border border-[color:var(--con-line-strong)] px-1.5 py-0.5 font-semibold text-[color:var(--con-fg)] transition-colors hover:bg-[color:var(--con-surface-2)] disabled:opacity-50"
+                    >
+                      <RotateCcw size={11} aria-hidden /> Retry
+                    </button>
+                  </Tooltip>
                 </div>
               )}
             </div>
@@ -512,44 +523,45 @@ export function AssistantChat() {
           <p className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
             <AlertTriangle size={13} aria-hidden />
             No {providerDisplayName(provider)} key is connected — this model can&apos;t answer.
-            <Link
-              href="/console/settings"
-              className="font-semibold underline decoration-dotted"
-              title="Open Settings to connect an LLM provider key."
-            >
-              Connect one in Settings
-            </Link>
+            <Tooltip content="Open Settings to connect an LLM provider key.">
+              <Link
+                href="/console/settings"
+                className="font-semibold underline decoration-dotted"
+              >
+                Connect one in Settings
+              </Link>
+            </Tooltip>
             or pick a different model above.
           </p>
         )}
         <div className="flex items-end gap-2">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              autoResize();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={keyMissing ? "Pick a model with a key to chat…" : "Ask a question, or describe an order to draft…"}
-            disabled={keyMissing}
-            className="con-textarea flex-1 leading-normal"
-            style={{ resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
-            title="Your message to the assistant. Enter sends; Shift+Enter adds a line break."
-            aria-label="Message the assistant"
-          />
-          <button
-            type="button"
-            onClick={() => void send()}
-            disabled={!canSend}
-            className="con-btn con-btn-primary h-9 shrink-0"
-            title={
+          <Tooltip
+            className="flex-1 block"
+            content="Your message to the assistant. Enter sends; Shift+Enter adds a line break."
+          >
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                autoResize();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={keyMissing ? "Pick a model with a key to chat…" : "Ask a question, or describe an order to draft…"}
+              disabled={keyMissing}
+              className="con-textarea w-full leading-normal"
+              style={{ resize: "none", minHeight: "2.25rem", maxHeight: "9rem" }}
+              aria-label="Message the assistant"
+            />
+          </Tooltip>
+          <Tooltip
+            content={
               keyMissing
                 ? "Connect a key for this model's provider, or pick another model."
                 : customPending
@@ -557,13 +569,20 @@ export function AssistantChat() {
                   : "Send the message (Enter)."
             }
           >
-            <Send size={14} aria-hidden /> Send
-          </button>
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={!canSend}
+              className="con-btn con-btn-primary h-9 shrink-0"
+            >
+              <Send size={14} aria-hidden /> Send
+            </button>
+          </Tooltip>
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10px] text-[color:var(--con-faint)]">
-          <span title="The assistant reads real quotes and your real account data. When it can't know something, it says so instead of inventing a number.">
+          <Tooltip as="span" content="The assistant reads real quotes and your real account data. When it can't know something, it says so instead of inventing a number.">
             Answers use live data and your account. Orders come back as drafts — nothing places without your approval.
-          </span>
+          </Tooltip>
           <span className="hidden sm:inline">Enter to send · Shift+Enter for a line break</span>
         </div>
       </div>

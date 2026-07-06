@@ -1,3 +1,4 @@
+import type { LlmKeySource } from "./db-api-keys";
 import { getActiveConnectedAccount, getPolicy, getStrategyPrompt, resolveLlmCredential } from "./db";
 import { deriveExecutionState, llmExecutionMode, llmModeClarification } from "./execution-mode";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
@@ -139,7 +140,7 @@ Respond with a JSON object containing:
     if (anthropic.key) {
       return debateViaAnthropic({
         apiKey: anthropic.key,
-        keySource: anthropic.source === "operator" ? "operator" : "user",
+        keySource: anthropic.source,
         keyRef: anthropic.keyRef,
         systemPrompt,
         userContent,
@@ -292,7 +293,7 @@ Respond with a JSON object containing:
  *  path's fail-closed contract: any failure returns available:false so the caller routes to a human. */
 async function debateViaAnthropic(args: {
   apiKey: string;
-  keySource: "operator" | "user";
+  keySource: LlmKeySource;
   keyRef?: string;
   systemPrompt: string;
   userContent: string;

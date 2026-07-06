@@ -60,7 +60,7 @@ describe("usage-monitor-push", () => {
     delete process.env.USAGE_INGEST_TOKEN;
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured));
-    push.pushLlmUsage({ provider: "openai", userId: "local", keySource: "operator", totalTokens: 100, costUsd: 0.01 });
+    push.pushLlmUsage({ provider: "openai", userId: "local", keySource: "user", totalTokens: 100, costUsd: 0.01 });
     push.recordProviderCall("finnhub", { ok: true });
     await push.flushUsageMonitor();
     expect(captured).toHaveLength(0);
@@ -74,7 +74,7 @@ describe("usage-monitor-push", () => {
       model: "claude-opus-4-8",
       context: "strategy",
       userId: "local",
-      keySource: "operator",
+      keySource: "user",
       keyRef: "abcd",
       promptTokens: 800,
       completionTokens: 200,
@@ -132,7 +132,7 @@ describe("usage-monitor-push", () => {
     push.__setUsageMonitorFetch(makeFetchStub(captured));
     push.pushRagUsage({ provider: "pinecone", operation: "query", userId: "local", tokensIn: 7, tokensOut: 5 });
     push.recordProviderCall("finnhub", { ok: true, keySource: "user", userId: "u_abc" });
-    push.recordProviderCall("finnhub", { ok: true, keySource: "operator" });
+    push.recordProviderCall("finnhub", { ok: true, keySource: "user" });
     await push.flushUsageMonitor();
 
     const events = captured[0]!.body.events;
@@ -153,7 +153,7 @@ describe("usage-monitor-push", () => {
     const captured: CapturedRequest[] = [];
     push.__setUsageMonitorFetch(makeFetchStub(captured, { throwErr: true }));
     expect(() =>
-      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "operator", promptTokens: 10, completionTokens: 5 })
+      recordLlmUsage({ provider: "openai", model: "gpt-4o-mini", context: "chat", userId: "local", keySource: "user", promptTokens: 10, completionTokens: 5 })
     ).not.toThrow();
     await expect(push.flushUsageMonitor()).resolves.toBeUndefined();
     const { getLlmUsageSummary } = await import("../src/lib/llm-usage");

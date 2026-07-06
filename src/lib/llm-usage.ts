@@ -18,10 +18,9 @@ export interface LlmUsageEntry {
   model?: string;
   /** Where in the app the call originated, e.g. "chat", "strategy", "red-team". */
   context?: string;
-  /** 'operator' means the operator-funded env key served this (non-owning) user. */
-  keySource: Exclude<LlmKeySource, "none">;
+  keySource: LlmKeySource;
   /** Non-secret stable fingerprint of the API key that served this call (see keyFingerprint), so
-   *  usage/cost can be measured PER ATTACHED KEY — user-provided or operator. */
+   *  usage/cost can be measured PER ATTACHED KEY. */
   keyRef?: string;
   promptTokens?: number;
   completionTokens?: number;
@@ -176,13 +175,7 @@ export interface LlmUsageRow {
   costUsd: number;
 }
 
-/**
- * Aggregate usage grouped by (userId, provider, keySource, keyRef) — so usage/cost is measured per
- * ATTACHED KEY, not just per source. `sinceIso` bounds the window. `operatorFundedOnly` returns only
- * rows where a NON-`local` tenant spent on the operator key — the figure the operator most cares
- * about while the failover is enabled.
- */
-export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean; userId?: string } = {}): LlmUsageRow[] {
+export function getLlmUsageSummary(opts: { sinceIso?: string; userId?: string } = {}): LlmUsageRow[] {
   const where: string[] = [];
   const params: unknown[] = [];
   if (opts.sinceIso) {
@@ -192,10 +185,6 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
   if (opts.userId) {
     where.push("user_id = ?");
     params.push(opts.userId);
-  }
-  if (opts.operatorFundedOnly) {
-    where.push("key_source = 'operator'");
-    where.push("user_id != 'local'");
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = getDb()
@@ -241,25 +230,13 @@ export function maskApiKey(rawKey: string): string {
   return `${rawKey.slice(0, 8)}...${rawKey.slice(-4)}`;
 }
 
-/**
- * Resolve a non-secret, human-readable descriptor (last-4 + label) for a usage row's opaque
- * `keyRef`, by matching the fingerprint against the LIVE key stores. Returns undefined once the key
- * is detached — the ledger keeps the fingerprint, but a friendly label is only available while the
- * key is still attached. The last-4 is computed at read time and never stored.
- */
 export function describeUsageKey(row: { keyRef: string | null; userId: string; provider: string }): KeyDescriptor | undefined {
   if (!row.keyRef) return undefined;
-  // The user's own stored key (for `local` this is the migrated operator key).
+  // The user's own stored key.
   const own = getUserApiKey(row.userId, row.provider)?.apiKey;
   if (own && keyFingerprint(own) === row.keyRef) {
     const label = row.userId === LOCAL_USER ? `primary user (${row.provider})` : `${row.userId} (${row.provider})`;
     return { last4: own.slice(-4), masked: maskApiKey(own), label };
-  }
-  // The operator's env key (the failover that served a tenant).
-  const envVar = apiKeyEnvVarForService(row.provider);
-  const envKey = envVar ? process.env[envVar]?.trim() : undefined;
-  if (envKey && keyFingerprint(envKey) === row.keyRef) {
-    return { last4: envKey.slice(-4), masked: maskApiKey(envKey), label: `server failover (${row.provider})` };
   }
   return undefined;
 }

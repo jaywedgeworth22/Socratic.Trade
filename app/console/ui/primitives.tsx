@@ -5,6 +5,34 @@
 import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { cx, fmtExact, timeAgo, EM_DASH } from "../lib/format";
 
+// ── Tooltip ──────────────────────────────────────────────────────────────────
+
+export function Tooltip({
+  content,
+  children,
+  className,
+  as: Component = "div"
+}: {
+  content: ReactNode;
+  children: ReactNode;
+  className?: string;
+  as?: React.ElementType;
+}) {
+  if (!content) return <>{children}</>;
+  return (
+    <Component className={cx("group relative inline-flex", className)}>
+      {children}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 -translate-x-1/2 whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[length:var(--con-fs-xs)] text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100 dark:bg-slate-100 dark:text-slate-900"
+      >
+        {content}
+        <span className="absolute -bottom-1 left-1/2 -ml-1 border-[4px] border-transparent border-t-slate-900 dark:border-t-slate-100" />
+      </div>
+    </Component>
+  );
+}
+
 // ── Card ─────────────────────────────────────────────────────────────────────
 
 export function Card({
@@ -78,11 +106,12 @@ const CHIP_CLASS: Record<ChipTone, string | undefined> = {
 };
 
 export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
-  return (
-    <span className={cx("con-chip", CHIP_CLASS[tone], className)} title={title}>
+  const el = (
+    <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
       {children}
     </span>
   );
+  return title ? <Tooltip content={title}>{el}</Tooltip> : el;
 }
 
 /** Small brokerage-confirmation tag for actions that still use the server's
@@ -136,8 +165,8 @@ export function Stat({
   title?: string;
 }) {
   const color = tone === "pos" ? "var(--con-pos)" : tone === "neg" ? "var(--con-neg)" : undefined;
-  return (
-    <div title={title}>
+  const el = (
+    <div>
       <div className="con-card-title">{label}</div>
       <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight" style={color ? { color } : undefined}>
         {value}
@@ -145,6 +174,7 @@ export function Stat({
       {sub !== undefined && <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{sub}</div>}
     </div>
   );
+  return title ? <Tooltip content={title} className="block w-full">{el}</Tooltip> : el;
 }
 
 // ── Form controls ────────────────────────────────────────────────────────────
@@ -263,9 +293,11 @@ export function Dash() {
 export function Ago({ iso }: { iso: string | null | undefined }) {
   if (!iso) return <Dash />;
   return (
-    <time dateTime={iso} title={fmtExact(iso)} className="cursor-default whitespace-nowrap">
-      {timeAgo(iso)}
-    </time>
+    <Tooltip content={fmtExact(iso)}>
+      <time dateTime={iso} className="cursor-default whitespace-nowrap">
+        {timeAgo(iso)}
+      </time>
+    </Tooltip>
   );
 }
 

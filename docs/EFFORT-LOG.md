@@ -124,6 +124,7 @@ As of 2026-07-04.
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Accessible tooltip/popover primitive everywhere (AG, S)** — ✅ COMPLETED 2026-07-06. Added a reusable `Tooltip` primitive to `app/console/ui/primitives.tsx` supporting accessible hover/focus. Performed a console-native title replacement pass upgrading `Chip`, `Stat`, `Ago`, `TickerLogo`, and `ProviderLogo` to use the Tooltip component instead of native `title` attributes.
 
 - **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
   1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
@@ -1115,7 +1116,7 @@ As of 2026-07-04.
 
 ## Planned / Reserved Before Implementation
 
-
+- **Retire duplicate API client fetchers/stream parsers (AG) — PLANNED 2026-07-06.** Retiring `congress-trade-client.ts`, `congress-trade-events.ts` and others in favor of `@jaywedgeworth22/congress-trading-shared` imports.
 
 
 

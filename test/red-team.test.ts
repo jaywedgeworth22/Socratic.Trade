@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS } from "../src/lib/llm-request";
+import { LOCAL_USER, deleteUserApiKey, upsertUserApiKey } from "../src/lib/db-api-keys";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-red-team-${randomUUID()}.db`)}`;
@@ -11,7 +12,7 @@ beforeAll(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENAI_API_KEY;
+  deleteUserApiKey(LOCAL_USER, "openai");
   delete process.env.OPENAI_API_URL;
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_URL;
@@ -34,7 +35,7 @@ describe("debateProposal — T11 fail-open contract", () => {
   it("fails open (does not reject) when OpenAI is not configured", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    delete process.env.OPENAI_API_KEY;
+    deleteUserApiKey(LOCAL_USER, "openai");
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY" });
     setStrategyPrompt("BASE STRATEGY");
 
@@ -46,7 +47,7 @@ describe("debateProposal — T11 fail-open contract", () => {
   it("fails open when the LLM request throws", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    process.env.OPENAI_API_KEY = "test-key";
+    upsertUserApiKey(LOCAL_USER, "openai", "test-key");
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_THROW" });
     setStrategyPrompt("BASE STRATEGY");
@@ -83,7 +84,8 @@ describe("debateProposal — shape-violation fail-closed (Deliverable A + B)", (
 
   async function setupOpenAi(accountNumber: string) {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
-    process.env.OPENAI_API_KEY = "test-key";
+    const { upsertUserApiKey, LOCAL_USER } = await import("../src/lib/db-api-keys");
+    upsertUserApiKey(LOCAL_USER, "openai", "test-key");
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
     setPolicy({ ...DEFAULT_POLICY, accountNumber });
     setStrategyPrompt("BASE STRATEGY");
@@ -158,7 +160,7 @@ describe("debateProposal — shape-violation fail-closed (Deliverable A + B)", (
   it("classifies no-key as not_configured", async () => {
     const { setStrategyPrompt, setPolicy } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
-    delete process.env.OPENAI_API_KEY;
+    deleteUserApiKey(LOCAL_USER, "openai");
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY2" });
     setStrategyPrompt("BASE STRATEGY");
 
@@ -184,7 +186,7 @@ describe("debateProposal LLM request bounds", () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
 
-    process.env.OPENAI_API_KEY = "test-key";
+    upsertUserApiKey(LOCAL_USER, "openai", "test-key");
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
     // Pin a classic (non-reasoning) model so this test verifies temperature + exact output caps.
     // Reasoning-model bounds (reasoning_effort, raised caps) are covered by test/llm-request.test.ts.
@@ -246,7 +248,7 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { debateProposal } = await import("../src/lib/red-team");
 
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    upsertUserApiKey(LOCAL_USER, "anthropic", "sk-ant-test");
     setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_CLAUDE", llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-opus-4-8" });
     setStrategyPrompt("BASE STRATEGY");
 

@@ -1,3 +1,4 @@
+import type { LlmKeySource } from "./db-api-keys";
 import {
   acquireStrategyLock,
   audit,
@@ -175,7 +176,7 @@ export interface StrategyLlmStep {
   provider: string;
   model: string;
   transport: string;
-  keySource: "operator" | "user";
+  keySource: LlmKeySource;
   status: "started" | "completed" | "skipped" | "fallback" | "failed";
   proposalCount?: number;
   reason?: string;
@@ -3679,7 +3680,7 @@ async function proposeTrades(input: {
   prefetched?: PrefetchedFills;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
-  // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
+  // No resolvable LLM credential (user's own key) → HARD ERROR.
   // We deliberately do NOT fabricate a rule-based stub here: a strategy session is an LLM-driven action,
   // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
   // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
