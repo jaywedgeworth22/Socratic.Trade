@@ -20,7 +20,7 @@ import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import { toBrokerSide } from "./broker-side";
 import { getActiveConnectedAccount, getConnectedAccount, resolveApiKey } from "./db";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall } from "./usage-monitor-push";
+import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { fetchDailyOHLC } from "./history";
 
 /**
@@ -324,8 +324,9 @@ class AlpacaBrokerGateway implements BrokerGateway {
         cash: number(account.cash)
       };
     }).then((res: any) => {
+      let result: Portfolio;
       if (res && res.account_number) {
-        return {
+        result = {
           accountNumber,
           totalMarketValue: number(res.portfolio_value),
           buyingPower: number(res.buying_power),
@@ -333,8 +334,20 @@ class AlpacaBrokerGateway implements BrokerGateway {
           optionMarketValue: 0,
           cash: number(res.cash)
         };
+      } else {
+        result = res;
       }
-      return res;
+      if (result && result.accountNumber) {
+        pushBrokerBalance({
+          provider: "alpaca",
+          userId: this.userId,
+          accountNumber: result.accountNumber,
+          cash: result.cash,
+          buyingPower: result.buyingPower,
+          equity: result.totalMarketValue
+        });
+      }
+      return result;
     });
   }
 
