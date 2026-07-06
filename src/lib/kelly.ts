@@ -42,17 +42,24 @@ export function kellyFraction(p: number, b: number): number | undefined {
  * winners, with a fat, unpredictable left tail). A thesis with a strong, steady positive edge
  * (mean >= 2x sigma_down) keeps the full Kelly suggestion (penalty = 1).
  *
- * Shape: ratio = avgReturnPct / downsideDeviationPct, clamped to [0, 2], then divided by 2 to land
- * in [0, 1]. `downsideDeviationPct <= 0` (no losing lots at all in the bucket — no downside signal
- * to penalize against) short-circuits to a penalty of 1 (no damping): with no measured downside,
- * there is nothing to penalize.
+ * Precedence (checked in this exact order — resolves the avgReturnPct<=0 vs downsideDeviationPct<=0
+ * ambiguity):
+ *   1. avgReturnPct non-finite → penalty 0 (defensive).
+ *   2. avgReturnPct <= 0 → penalty 0 UNCONDITIONALLY (no measured edge, or a net-loser bucket — the
+ *      Kelly suggestion is fully damped regardless of downside dispersion). This takes precedence
+ *      over the downsideDeviationPct<=0 short-circuit below, so a net loser never reads as "full
+ *      Kelly" merely because the bucket happened to record no losing lots.
+ *   3. downsideDeviationPct <= 0 with a POSITIVE edge (no losing lots — no downside signal to
+ *      penalize against) → penalty 1 (no damping).
+ *   4. Otherwise: ratio = avgReturnPct / downsideDeviationPct, clamped to [0, 2], divided by 2 to
+ *      land in [0, 1].
  *
- * Endpoints: avgReturnPct <= 0 → penalty 0 (no measured edge, or the bucket is a net loser — Kelly
- * suggestion is fully damped). avgReturnPct >= 2 * downsideDeviationPct → penalty 1 (full Kelly).
+ * Endpoints: avgReturnPct <= 0 → 0. avgReturnPct >= 2 * downsideDeviationPct → 1 (full Kelly).
  * Strictly monotonically non-decreasing in avgReturnPct for a fixed positive downsideDeviationPct.
  */
 export function dispersionPenalty(avgReturnPct: number, downsideDeviationPct: number): number {
   if (!Number.isFinite(avgReturnPct)) return 0;
+  if (avgReturnPct <= 0) return 0; // net-loser / no-edge bucket: fully damped regardless of dispersion
   if (!Number.isFinite(downsideDeviationPct) || !(downsideDeviationPct > 0)) return 1;
   const ratio = avgReturnPct / downsideDeviationPct;
   const clamped = Math.max(0, Math.min(2, ratio));

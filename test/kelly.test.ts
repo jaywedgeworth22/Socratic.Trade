@@ -35,9 +35,15 @@ describe("kellyFraction", () => {
 });
 
 describe("dispersionPenalty", () => {
-  it("no downside deviation (bucket has no losers) -> full penalty (1), nothing to damp", () => {
+  it("no downside deviation (bucket has no losers) + POSITIVE edge -> full penalty (1), nothing to damp", () => {
     expect(dispersionPenalty(5, 0)).toBe(1);
-    expect(dispersionPenalty(-5, 0)).toBe(1);
+  });
+
+  it("non-positive edge is fully damped (0) even with no measured downside (precedence: edge<=0 wins)", () => {
+    // avgReturnPct <= 0 takes precedence over the downsideDeviationPct<=0 short-circuit, so a net
+    // loser never reads as full Kelly merely because the bucket recorded no losing lots.
+    expect(dispersionPenalty(-5, 0)).toBe(0);
+    expect(dispersionPenalty(0, 0)).toBe(0);
   });
 
   it("mean edge >= 2x sigma_down -> full Kelly (penalty 1)", () => {

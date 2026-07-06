@@ -2426,7 +2426,11 @@ export function applyDeterministicSizing(
   // is computable (informational only) — the size itself only changes when
   // policy.tuning.fractionalKellySizing is explicitly on, and even then Kelly may only REDUCE size
   // vs today (min of the existing multiplier and the Kelly suggestion), never increase it.
-  const kellyFractionSetting = policy.tuning?.kellyFraction ?? 0.5;
+  // Validate/clamp to a finite [0,1] fraction: a non-finite or out-of-range policy value must not
+  // leak into the sizing math or print a misleading "NaN-Kelly" receipt. Falls back to 0.5 when unset
+  // or non-finite; clamps stray >1 / <0 values into range.
+  const kellyFractionRaw = policy.tuning?.kellyFraction ?? 0.5;
+  const kellyFractionSetting = Number.isFinite(kellyFractionRaw) ? Math.max(0, Math.min(1, kellyFractionRaw)) : 0.5;
   const kellySuggestion = fractionalKellySuggestion(
     {
       winRate,
