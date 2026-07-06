@@ -31,6 +31,48 @@ Lane 3 of the 5-lane parallel risk-engine build: three new advisory RECEIPTS att
 No macro-event (FOMC/CPI) calendar was built — confirmed out of scope per the lane spec (none exists
 in this codebase; see Follow-ups).
 
+## Post-review fixes (adversarial review, same lane)
+
+Two must-fix blockers surfaced in review of the initial commit; both are fixed on this branch:
+
+1. **Reference-identity break in `applyRiskReceipts`.** The initial version rebuilt each opening
+   proposal via `proposal = { ...proposal, rationale: ... }` when appending a correlation/stress/
+   earnings note. Every earlier stage in `runStrategyOnce` (Bear-unavailable routing, the
+   rationale-collapse gate, FIX#3 propose-mode pre-routing) adds the SAME proposal object to
+   `requiresHumanReview`, a `Set<TradeProposal>` keyed by reference — and the placement loop's
+   `requiresHumanReview.has(proposal)` check (the Fail-CLOSED safety net that keeps an un-critiqued or
+   collapsed-rationale opening from auto-executing in "decide" mode) depends on that same reference
+   surviving unchanged. Rebuilding the object silently broke Set membership for any proposal that both
+   (a) was routed to human review by an earlier gate and (b) picked up any risk-receipt note — which
+   happens routinely, since the earnings note is unconditional whenever `daysToEarnings <= 7`, with
+   both new flags off. **Fix:** `applyRiskReceipts` now mutates the same object reference throughout
+   (`proposal.rationale += note`, matching every other stage's existing convention) instead of
+   spreading into a new object. No test in the original submission drove `runStrategyOnce` with this
+   combination (Bear-unavailable + a risk-receipt note on the same proposal), so the regression shipped
+   with a fully green suite; two new tests in `test/risk-receipts.test.ts`
+   ("applyRiskReceipts — reference identity (regression)") build a `Set` before calling
+   `applyRiskReceipts` and assert `.has()` still recognizes the returned object afterward, for both an
+   opening (correlation+stress+earnings notes) and an exit (untouched).
+2. **Earnings-blackout tag applied too late for `preVetoTaggedOpeningWillPlace` / FIX#3.** The
+   `earnings_blackout` `preVetoReasons` tag was applied inside `applyRiskReceipts` at the
+   `gatedProposals` stage, near the end of the pipeline — AFTER the FIX#3 propose-mode pre-routing loop
+   (which reads `preVetoReasons` to decide whether an opening carrying a pre-veto tag needs to route to
+   `requiresHumanReview` now) and AFTER the sell-to-fund intended-notional filter (which excludes a
+   pre-veto-tagged opening that won't auto-execute via `preVetoTaggedOpeningWillPlace`, per that
+   function's own doc comment). Because both of those ran on `debatedProposals` before the tag existed,
+   an earnings-blackout-tagged opening was NOT excluded from sell-to-fund notional / FIX#3 pre-routing
+   for one run — a live re-run of the exact hazard `preVetoTaggedOpeningWillPlace`'s doc comment warns
+   about, just for this lane's own new tag. **Fix:** split the earnings-proximity logic out of
+   `applyRiskReceipts` into its own exported function, `applyEarningsBlackoutTag(proposals, policy,
+   marketScan, userId)`, and call it in `runStrategyOnce` immediately after the debate loop —
+   BEFORE the rationale-collapse gate, FIX#3 pre-routing, and the sell-to-fund planner. `applyRiskReceipts`
+   still calls `applyEarningsBlackoutTag` again internally at its later `gatedProposals` stage (so its
+   own unit tests and any other direct caller keep seeing the earnings note/tag), guarded by an
+   idempotency check (skips a proposal whose rationale already contains the `[Risk] Earnings in` marker)
+   so the same proposal is never double-tagged or double-noted within one run. New test:
+   "applyEarningsBlackoutTag — ordering (regression)" in `test/risk-receipts.test.ts` drives the tag
+   function directly, then `applyRiskReceipts`, and asserts exactly one tag / one note survive.
+
 ## Why
 
 The board row asked for EWMA/downside correlation, earnings/macro-event blackout windows, and
@@ -52,7 +94,13 @@ reuses the existing `preVetoReasons` fold-in from PR #814 so the earnings tag is
   wired into the proposal pipeline right after `applyCorrelationClusterGate` resolves (before the
   rationale-diversity check), renaming the intermediate variable to `gatedProposals` so `proposals`
   still names the final set consumed downstream. New imports: `correlationProfile` from
-  `./correlation`, `stressScenario`/`StressPositionInput` from `./stress-scenario`.
+  `./correlation`, `stressScenario`/`StressPositionInput` from `./stress-scenario`. Post-review: the
+  earnings-proximity logic was split out into its own exported `applyEarningsBlackoutTag` function,
+  called early on `debatedProposals` (right after the debate loop, before the rationale-collapse gate/
+  FIX#3 pre-routing/sell-to-fund planner) as well as internally by `applyRiskReceipts` at its later
+  call site (idempotent — see "Post-review fixes" above); `applyRiskReceipts` itself now mutates
+  proposals in place (`proposal.rationale += note`) instead of rebuilding via spread, to preserve
+  `requiresHumanReview` Set-by-reference membership.
 - `src/lib/types.ts` — three new `TuningSettings` fields: `riskReceipts?: boolean` (covers Parts 2+4
   — correlation + stress receipts, one flag per COMMON.md guidance since they're the two halves of
   one feature and share the same cost-bounding rationale), `earningsBlackout?: boolean`,
@@ -73,7 +121,10 @@ reuses the existing `preVetoReasons` fold-in from PR #814 so the earnings tag is
   mocked bars and audits both receipts; correlation note is skipped (never fabricated) when there are
   no holdings or bar data is insufficient; exits (sell/cover) are never touched; earnings note is
   unconditional at `daysToEarnings<=7` regardless of flags, only the `preVetoReasons` tag depends on
-  `earningsBlackout` + being inside the window; unknown `daysToEarnings` is skipped silently. 9 tests.
+  `earningsBlackout` + being inside the window; unknown `daysToEarnings` is skipped silently. Post-review
+  additions: reference-identity regression tests (a `Set<TradeProposal>` built before `applyRiskReceipts`
+  still `.has()` the returned proposal, for both an opening with notes and an untouched exit), and an
+  `applyEarningsBlackoutTag` ordering/idempotency regression test. 12 tests.
 - `test/hard-gate-classification.test.ts` — pinned one new case: `earnings_blackout: opening within 2
   day(s) of earnings (window 3)` classifies as a PREFERENCE (`isHardGateReason(...) === false`), same
   as the existing `deterministic_bear_veto:`/`red_team_veto:` pre-veto prefixes.
@@ -95,6 +146,21 @@ Run from the worktree root (`/Users/jay/Code/Socratic.Trade/.claude/worktrees/mo
 - `npm run lint` → **0 errors, 309 warnings** (matches the documented pre-existing baseline; grepped
   the lint output for every new/touched file — zero warnings from `correlation.ts`,
   `stress-scenario.ts`, `strategy.ts`, or any of the four test files).
+- Did NOT run `npm run build` per lane instructions (orchestrator runs it at landing).
+
+### Post-review fix re-verification
+
+Re-ran all gates after the two blockers above were fixed (`applyRiskReceipts` in-place mutation +
+`applyEarningsBlackoutTag` extraction/reordering) and two regression tests were added:
+
+- `npx tsc --noEmit` → clean, no output.
+- Focused (same 10 files as above, now including the 3 new regression tests in
+  `test/risk-receipts.test.ts`): **10 files passed, 179 tests passed**.
+- Full suite: `npm test -- --run` → **263 files passed, 2612 tests passed**, 24.03s wall — clean, no
+  flakes this run.
+- `npm run lint` → **0 errors, 309 warnings** (unchanged baseline; `strategy.ts`'s only warnings are
+  the 3 pre-existing unused-var ones at lines 115/606/632, none introduced by this fix; the touched
+  `test/risk-receipts.test.ts` has zero warnings).
 - Did NOT run `npm run build` per lane instructions (orchestrator runs it at landing).
 
 ## Follow-ups

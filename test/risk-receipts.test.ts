@@ -227,3 +227,61 @@ describe("applyRiskReceipts — earnings blackout", () => {
     expect(out[0].preVetoReasons ?? []).toHaveLength(0);
   });
 });
+
+describe("applyRiskReceipts — reference identity (regression)", () => {
+  it("returns the SAME object reference for an opening proposal, so a Set<TradeProposal> built before this call (e.g. requiresHumanReview) still recognizes it after", async () => {
+    const { applyRiskReceipts } = await import("../src/lib/strategy");
+    const proposals = [buy("AAA")];
+    // requiresHumanReview mirrors runStrategyOnce's Set<TradeProposal>, built (as it is there) from an
+    // EARLIER gate — before applyRiskReceipts ever runs.
+    const requiresHumanReview = new Set(proposals);
+    // riskReceipts ON + a nearby daysToEarnings so this proposal actually picks up BOTH a stress note
+    // and an earnings note — the exact combination the regression required (any risk-receipt note
+    // appended to a proposal already routed to human review by an earlier gate).
+    const policy = { ...DEFAULT_POLICY, accountNumber: "X", tuning: { riskReceipts: true } };
+    const marketScan = scan([quote("AAA", { beta: 1.1, daysToEarnings: 5 })]);
+
+    const out = await applyRiskReceipts(proposals, policy, held, portfolio, marketScan, "local");
+
+    expect(out[0]).toBe(proposals[0]); // same reference, not a rebuilt copy
+    expect(out[0].rationale).toContain("[Risk] Stress");
+    expect(out[0].rationale).toContain("[Risk] Earnings in 5 trading day(s)");
+    // The Set built BEFORE applyRiskReceipts ran must still recognize this exact proposal afterward —
+    // this is what the placement loop's `requiresHumanReview.has(proposal)` depends on.
+    expect(requiresHumanReview.has(out[0])).toBe(true);
+  });
+
+  it("preserves reference identity for an exit (sell/cover), which applyRiskReceipts never touches", async () => {
+    const { applyRiskReceipts } = await import("../src/lib/strategy");
+    const proposals: TradeProposal[] = [buy("HELD", { side: "sell" })];
+    const requiresHumanReview = new Set(proposals);
+    const policy = { ...DEFAULT_POLICY, accountNumber: "X", tuning: { riskReceipts: true } };
+    const marketScan = scan([quote("HELD", { beta: 1.1 })]);
+
+    const out = await applyRiskReceipts(proposals, policy, held, portfolio, marketScan, "local");
+
+    expect(out[0]).toBe(proposals[0]);
+    expect(requiresHumanReview.has(out[0])).toBe(true);
+  });
+});
+
+describe("applyEarningsBlackoutTag — ordering (regression)", () => {
+  it("tags preVetoReasons independently and BEFORE applyRiskReceipts runs, matching the order runStrategyOnce now uses (tag on debatedProposals, then later stages read preVetoReasons)", async () => {
+    const { applyEarningsBlackoutTag, applyRiskReceipts } = await import("../src/lib/strategy");
+    const proposals = [buy("AAA")];
+    const policy = { ...DEFAULT_POLICY, accountNumber: "X", tuning: { earningsBlackout: true, earningsBlackoutDays: 3 } };
+    const marketScan = scan([quote("AAA", { daysToEarnings: 2 })]);
+
+    // Simulate runStrategyOnce's ordering: tag on debatedProposals FIRST (before FIX#3 pre-routing /
+    // sell-to-fund would read preVetoReasons in the real pipeline)...
+    applyEarningsBlackoutTag(proposals, policy, marketScan, "local");
+    expect(proposals[0].preVetoReasons).toHaveLength(1);
+    expect(proposals[0].preVetoReasons![0]).toMatch(/^earnings_blackout:/);
+
+    // ...then applyRiskReceipts runs later at the gatedProposals stage and must NOT double-tag or
+    // double-append the note (idempotent per proposal).
+    const out = await applyRiskReceipts(proposals, policy, [], portfolio, marketScan, "local");
+    expect(out[0].preVetoReasons).toHaveLength(1);
+    expect(out[0].rationale.match(/\[Risk\] Earnings in/g)).toHaveLength(1);
+  });
+});
