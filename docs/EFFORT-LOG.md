@@ -707,6 +707,46 @@ As of 2026-07-04.
   the new "Resolve main-protection ruleset review gate" Planned row below for the structural fix.
 
 
+## 🔨 In Progress
+
+- **Console intro animation (candlestick page-load splash)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **pushed; PR open**. New
+  `app/console/components/intro-canvas.tsx` (pure Canvas, responsive, any-bg, once/session,
+  click-skip, reduced-motion-safe) wired into `shell.tsx` as the console first-load splash:
+  waving chart -> candles fly -> big SOCRATIC/TRADE (formed candles + colours, ripple only — no
+  reshape/"flip") -> shrink to top-left header. Header is a varied candlestick ticker (12-unit
+  green-biased walk marching one column/sec; every candle its own red/green, no colour blocks; no
+  wave); speckle fixed by overlapping flying candles onto natural strokes + body width tied to
+  column count. Letter-stem evenness fixed. tsc/lint/build green + center & header driven live.
+  Reference `docs/branding/intro-live.html`. Next (opt): persistent ticking header brand. See
+  `docs/rollouts/2026-07-06-console-intro-animation.md`.
+- **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
+  `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
+  fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
+  `deriveQueryVariants()` (2-4 facet sub-queries from evidence/sector/dominant-factor) +
+  `generateHydePassages()` (one cheap fail-open LLM call, HyDE passages, salience-llm.ts pattern).
+  Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both default OFF — **not
+  independent**: `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY` (docstring fixed in review
+  pass). `vector-db.ts` `RetrieveOptions.queries?: string[]`: per-query embed+match (now including
+  the original `query` alongside variants), RRF-fused (`rag/hybrid.ts` `rrfFuse`) into the existing
+  `rankPool` pipeline unchanged. `strategy.ts` filings-RAG block wired behind both flags +
+  budget-degrade check; flags-off is byte-identical (pinned by a dedicated regression test).
+  **Review-fix pass (same day):** fixed a BLOCKER — the multi-query fan-out was fail-CLOSED (one
+  variant's rejected Voyage/Pinecone call discarded every other variant's results via a bare
+  `Promise.all`, returning `[]` instead of falling back to the single-query path) — now each
+  fan-out call is caught individually and an all-fail case falls back to plain single-query
+  retrieval. Also fixed: first-occurrence-wins id resolution could keep a lower cosine score (now
+  higher-score wins); HyDE's endpoint/model could disagree (endpoint resolved from
+  `policy.llmModel`, model sent was the separate `hydeModel()` — could route an OpenAI model to
+  `api.anthropic.com` under an Anthropic policy; now resolved coherently, and non-OK responses now
+  audit `rag_hyde_failed`); HyDE spend wasn't gated on the daily LLM budget (now gated via
+  `isOverLlmBudget`, read-only import from `llm-budget.ts`). Tests: 34 total across the 3 new files
+  (`test/rag-multi-query.test.ts` 14, `test/rag-hyde.test.ts` 12,
+  `test/rag-multi-query-retrieval.test.ts` 8). Verification: tsc clean, focused RAG/strategy suite
+  green (33 files / 384 tests). See `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`
+  (incl. its "Review fixes" section). Local-worktree HARD RULE: commit only, no push/PR — central
+  landing operator handles integration with `origin/main` (7 commits ahead incl. sibling lanes
+  `claude/due-jobs-substrate`, `claude/prompt-safety-fencing`).
 - **MONET 5 risk lanes — reclaimed from the handback (MONET) — IN PROGRESS 2026-07-05.** The five risk rows handed back to MONET (board "MONET risk-row handback"): `monet/multi-signal-regime-scorer` (credit spreads + VIX term structure + breadth → severity), `monet/vol-targeting-portfolio-heat` (continuous vol-target exposure taper + portfolio-heat budget), `monet/correlation-event-stress-gates` (EWMA/downside correlation gate + earnings/macro blackouts + pre-trade stress), `monet/fractional-kelly-sizing` (downside-dispersion fractional Kelly), `monet/redteam-policy-aware-routing` (Red-Team unavailable → policy-aware routing timeout/429/malformed; builds on merged #814). All advisory/owner-overridable (never a cage), new-module-first (minimal policy.ts/strategy.ts diffs), built off current `main` on `monet/*` branches (the old empty `.claude/worktrees/monet-*` `claude/*` branches are NOT reused). Running a 5-lane design team, then implementing lane-by-lane with builder + adversarial verify, one PR per lane via `land.sh`. The old CLAUDE-pickup "Risk-lane implementation train" row below is superseded by this handback reclaim.
 
 - **Codex Cloud Slack + effort-log readiness across all four apps (CODEX, shared fleet-infra) —
