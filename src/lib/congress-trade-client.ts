@@ -157,7 +157,7 @@ export async function getAppARef(ticker: string): Promise<SecurityRef | null> {
 
 export async function getAppARefs(tickers: string[]): Promise<SecurityRef[]> {
   if (!congressReadsEnabled()) return [];
-  const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean))).slice(0, MAX_REFS_BATCH);
+  const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean)));
   if (syms.length === 0) return [];
   try { return await getSharedClient().getRefs(syms); } catch { return []; }
 }
