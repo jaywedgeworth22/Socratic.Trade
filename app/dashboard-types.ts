@@ -84,6 +84,7 @@ export interface DashboardSnapshot {
     sec8k?: { enabled: boolean; fetchedAt?: string; recordCount: number; sources: string[]; due: boolean; ttlMs: number };
     technical?: { enabled: boolean; source: "tradingview" | "computed"; fetchedAt?: string; recordCount: number; due: boolean; ttlMs: number; secretConfigured: boolean };
   };
+  congressScoreVerdict?: import("@/lib/congress-score-gate").CongressScoreVerdictRead | null;
   smartMoney?: {
     congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
     insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;

@@ -125,6 +125,8 @@ As of 2026-07-04.
 
 ## Completed
 
+- **Congress Score Eval UI Wiring (AG) — ✅ COMPLETED 2026-07-06.** Wired `congressScoreVerdict` into the `MarketScanTab` on the console dashboard. The signal verdict, stats, and gating status are now explicitly surfaced in the UI. Lint, tsc, and Next.js build all pass.
+
 - **PR #844 - `claude/pr805-remediation`: P0 checkRegimeFlip RMW fix + P1 backlog + AG connection-health
   slice, merged as one honest PR (CURSOR + AG + CLAUDE remediation) — ✅ COMPLETED, merged 2026-07-05
   (squash `ebcf6a23`).**

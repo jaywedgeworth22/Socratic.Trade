@@ -146,6 +146,8 @@ export default function ScanPage() {
           error={live.error}
           onRefresh={() => void onRefresh()}
           policyLimit={snapshot.policy.marketScanCandidateLimit}
+          congressScoreVerdict={snapshot.congressScoreVerdict}
+          gatingEnabled={snapshot.policy.tuning?.congressGoNoGoGating ?? false}
         />
       ) : (
         <SmartMoneySection snapshot={snapshot} />
@@ -159,13 +161,17 @@ function MarketScanTab({
   refreshing,
   error,
   onRefresh,
-  policyLimit
+  policyLimit,
+  congressScoreVerdict,
+  gatingEnabled
 }: {
   scan: MarketScan | null;
   refreshing: boolean;
   error: string | null;
   onRefresh: () => void;
   policyLimit?: number;
+  congressScoreVerdict?: any;
+  gatingEnabled?: boolean;
 }) {
   // No scan at all: friendly empty state that explains how to get one.
   if (!scan) {
@@ -203,6 +209,27 @@ function MarketScanTab({
 
   return (
     <div className="flex flex-col gap-3">
+      {congressScoreVerdict && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)]">
+          <span className="font-semibold text-[color:var(--con-fg)]">
+            Congress Signal Validation:
+          </span>
+          <Chip
+            tone={congressScoreVerdict.verdict === "PASS" ? "pos" : "warn"}
+            title={congressScoreVerdict.reasons.length > 0 ? congressScoreVerdict.reasons.join("\n") : "Signal passed statistical significance validation."}
+          >
+            {congressScoreVerdict.verdict}
+          </Chip>
+          <span className="text-[color:var(--con-faint)]">
+            t-stat: {congressScoreVerdict.stats.rankICTStat.toFixed(2)}
+            {congressScoreVerdict.stats.marginalICMeanIC !== undefined ? ` · marginal IC: ${(congressScoreVerdict.stats.marginalICMeanIC * 100).toFixed(2)}%` : ""}
+          </span>
+          <div className="flex-1" />
+          <span className="text-[color:var(--con-faint)]" title="Whether a failing verdict is currently zeroing the congress signal in this scan.">
+            Gating: {gatingEnabled ? <span className="font-medium text-[color:var(--con-fg)]">Active</span> : "Off"}
+          </span>
+        </div>
+      )}
       {/* A failed refresh never contradicts a populated table — muted notice only. */}
       {error && (
         <p className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
