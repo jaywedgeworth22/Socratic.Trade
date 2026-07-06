@@ -78,7 +78,8 @@ import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
-import { avgReturnCorrelation } from "./correlation";
+import { avgReturnCorrelation, correlationProfile } from "./correlation";
+import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
 import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
@@ -1237,6 +1238,16 @@ export async function runStrategyOnce(
       debatedProposals.push(proposal);
     }
 
+    // Earnings-proximity advisory tag — applied HERE (before the rationale-collapse gate, FIX#3
+    // pre-routing, and the sell-to-fund intended-notional computation below), NOT at the later
+    // `gatedProposals`/`applyRiskReceipts` stage near the end of the pipeline. Both the FIX#3
+    // pre-routing loop and the sell-to-fund notional filter read `preVetoReasons` to decide whether an
+    // opening will actually auto-execute; tagging `earnings_blackout` after those checks run would let
+    // a blackout-tagged opening slip through un-excluded for one run — the exact hazard
+    // `preVetoTaggedOpeningWillPlace`'s doc comment warns about, for this lane's own new tag. See
+    // `applyEarningsBlackoutTag`'s doc comment for the idempotency contract with `applyRiskReceipts`.
+    applyEarningsBlackoutTag(debatedProposals, policy, marketScan, userId);
+
     // Rationale-collapse gate (Chat A item 7) — evaluated on the OPENING proposals HERE, BEFORE the
     // sell-to-fund planner below, so a collapse-gated buy (routed to human review) does NOT drive
     // automated funding sells: intendedOpeningNotional excludes requiresHumanReview openings, and by
@@ -1331,12 +1342,16 @@ export async function runStrategyOnce(
       }
     }
 
-    const proposals = await applyCorrelationClusterGate(
+    const gatedProposals = await applyCorrelationClusterGate(
       [...fundingSells, ...proactiveProposals, ...debatedProposals],
       policy,
       workingPositions,
       userId
     );
+
+    // Advisory correlation/stress/earnings-proximity receipts on the final opening proposal set —
+    // receipts only, never a gate. See applyRiskReceipts's doc comment for the flag semantics.
+    const proposals = await applyRiskReceipts(gatedProposals, policy, workingPositions, workingPortfolio, marketScan, userId);
 
     // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
     // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
@@ -2290,6 +2305,189 @@ export async function applyCorrelationClusterGate(
     kept.push(p);
   }
   return kept;
+}
+
+/**
+ * Part 3 — earnings-proximity advisory, split out of `applyRiskReceipts` so it can run EARLY in
+ * `runStrategyOnce` (right after the debate loop, before the FIX#3 propose-mode pre-routing and the
+ * sell-to-fund intended-notional computation both read `preVetoReasons`). Those two steps decide
+ * whether an opening will auto-execute (and therefore whether it should count as intended buy
+ * notional / drive automated funding sells) based on `preVetoReasons`; if this tag were applied AFTER
+ * them (as it was when it lived only inside `applyRiskReceipts`, called at the `gatedProposals` stage
+ * near the end of the pipeline), an earnings-blackout-tagged opening would slip through both checks
+ * un-excluded for one run — exactly the hazard `preVetoTaggedOpeningWillPlace`'s doc comment warns
+ * about, just for this lane's own new tag.
+ *
+ * The INFORMATIONAL note is unconditional whenever `daysToEarnings` is known (per spec: "Receipt
+ * (always when daysToEarnings known and <= 7)"); only the preVetoReasons TAG depends on
+ * `earningsBlackout` being on. Unknown daysToEarnings (Yahoo returned no future earnings date) is
+ * skipped silently — never fabricated. Mutates proposals IN PLACE (same reference) for the same
+ * reason `applyRiskReceipts` does: `requiresHumanReview` Set membership and `preVetoReasons` array
+ * identity must survive downstream reference-keyed checks. Idempotent per proposal (checked via the
+ * `[Risk] Earnings` marker) so `applyRiskReceipts` can safely call this again at its later stage
+ * without double-appending the note or double-tagging preVetoReasons for the same run.
+ */
+export function applyEarningsBlackoutTag(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  marketScan: MarketScan,
+  userId: string = "local"
+): TradeProposal[] {
+  const earningsBlackoutOn = policy.tuning?.earningsBlackout === true;
+  const earningsWindow = policy.tuning?.earningsBlackoutDays != null && policy.tuning.earningsBlackoutDays > 0
+    ? policy.tuning.earningsBlackoutDays
+    : 3;
+
+  for (const proposal of proposals) {
+    const isOpening = proposal.side === "buy" || proposal.side === "short";
+    if (!isOpening) continue;
+    if (proposal.rationale.includes("\n\n[Risk] Earnings in ")) continue; // already tagged this run (match the exact prefix this fn appends, not a bare substring that LLM rationale could contain)
+
+    const quote = marketScan.quotesBySymbol[normalizeSymbol(proposal.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
+    const daysToEarnings = quote?.daysToEarnings;
+    if (typeof daysToEarnings === "number" && Number.isFinite(daysToEarnings) && daysToEarnings <= 7) {
+      const insideWindow = earningsBlackoutOn && daysToEarnings <= earningsWindow;
+      const windowSuffix = insideWindow ? " — inside advisory blackout window" : "";
+      const earningsNote = `\n\n[Risk] Earnings in ${daysToEarnings} trading day(s)${windowSuffix}`;
+      proposal.rationale += earningsNote;
+      if (insideWindow) {
+        proposal.preVetoReasons = [
+          ...(proposal.preVetoReasons ?? []),
+          `earnings_blackout: opening within ${daysToEarnings} day(s) of earnings (window ${earningsWindow})`
+        ];
+        audit(
+          "proposal_tagged_earnings_blackout",
+          { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
+          userId
+        );
+      }
+    }
+  }
+  return proposals;
+}
+
+/**
+ * Advisory-only per-candidate risk receipts for OPENING (buy/short) proposals: a correlation profile
+ * (pearson/EWMA/downside vs current holdings) + a pre-trade parametric stress scenario, both appended
+ * to `proposal.rationale` as `\n\n[Risk] …` notes with a matching `audit(...)` event — plus the
+ * earnings-proximity advisory (`applyEarningsBlackoutTag`, see its doc comment for why it's a
+ * separate, idempotent function called EARLY in `runStrategyOnce` and again here for callers, such as
+ * this function's own unit tests, that invoke `applyRiskReceipts` standalone).
+ *
+ * Correlation + stress receipts are gated behind `policy.tuning.riskReceipts` (default off/undefined):
+ * when off and the earnings tag has already run, this function returns `proposals` UNCHANGED and
+ * performs zero extra bar fetches — the rationale/prompt/audit trail stays byte-identical to today.
+ * The earnings note/tag is independent (per the board row: earnings blackout is its own opt-in via
+ * `policy.tuning.earningsBlackout`) and runs regardless of `riskReceipts`, but only ever touches
+ * proposals whose `daysToEarnings` is known (never fabricated) — most runs with neither flag on see NO
+ * change at all.
+ *
+ * Never blocks, drops, or resizes a proposal: `preVetoReasons` tagging follows the exact "tag, fold
+ * into the sized PolicyDecision, remain overridable" pattern PR #814 established (see the fold-in at
+ * the `preVetoReasons?.length` check before `resolveSocraticOverride`) — it is not a new blocking gate.
+ */
+export async function applyRiskReceipts(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  positions: EquityPosition[],
+  portfolio: Portfolio,
+  marketScan: MarketScan,
+  userId: string = "local"
+): Promise<TradeProposal[]> {
+  const riskReceiptsOn = policy.tuning?.riskReceipts === true;
+
+  const equity = accountEquity(portfolio);
+  const holdingsForCorrelation = positions.map((p) => ({ symbol: p.symbol, marketValue: p.marketValue }));
+  const stressPositions: StressPositionInput[] = positions.map((p) => ({
+    symbol: p.symbol,
+    marketValue: p.marketValue,
+    beta: marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.beta
+  }));
+
+  const out: TradeProposal[] = [];
+  for (const p of proposals) {
+    const isOpening = p.side === "buy" || p.side === "short";
+    if (!isOpening) {
+      out.push(p);
+      continue;
+    }
+
+    // Mutate the SAME object reference throughout (never rebuild via spread): every other stage in
+    // this pipeline (Bear-unavailable, rationale-collapse gate, FIX#3 pre-routing) adds this exact
+    // object to `requiresHumanReview` (a Set<TradeProposal> keyed by reference), and the placement
+    // loop's `requiresHumanReview.has(proposal)` check depends on that reference surviving unchanged
+    // through this function. Rebuilding the object here would silently break Set membership for any
+    // proposal that was routed to human review by an earlier gate and also picks up a risk-receipt
+    // note — defeating the Fail-CLOSED safety net in "decide" (auto-execute) mode.
+    const proposal = p;
+    const quote = marketScan.quotesBySymbol[normalizeSymbol(p.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(p.symbol));
+
+    // Part 2 — correlation receipt (gated on riskReceipts; costs extra fetchDailyOHLC calls).
+    if (riskReceiptsOn && equity > 0) {
+      const profile = await correlationProfile(proposal.symbol, holdingsForCorrelation, equity, userId);
+      if (profile) {
+        const max = profile.maxPairwise;
+        const maxIsDownsideDriven = profile.holdings.some(
+          (h) => h.symbol === max.symbol && h.downside != null && h.pearson != null && h.downside > h.pearson
+        );
+        const downsideNote = maxIsDownsideDriven
+          ? `; downside corr ${(profile.holdings.find((h) => h.symbol === max.symbol)!.downside! * 100).toFixed(0)}% — diversification weakens in drawdowns`
+          : "";
+        const avgEwmaText = profile.avgEwma != null ? `${(profile.avgEwma * 100).toFixed(0)}%` : "n/a";
+        const correlationNote = `\n\n[Risk] Correlation: max ${(max.corr * 100).toFixed(0)}% w/ ${max.symbol} (${max.weightPct.toFixed(1)}% of book), avg EWMA ${avgEwmaText} across ${profile.holdings.length} holdings${downsideNote}`;
+        proposal.rationale += correlationNote;
+        audit(
+          "correlation_receipt",
+          { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
+          userId
+        );
+      }
+    }
+
+    // Part 4 — pre-trade stress scenario receipt (gated on riskReceipts; free — betas come from the scan).
+    if (riskReceiptsOn && equity > 0) {
+      const candidateBeta = quote?.beta;
+      // No run-level VIX is plumbed into MarketScan today (see macro.ts's separate MacroData for the
+      // live VIX read) — omitting `vix` here falls back to stressScenario's own default (20, long-run
+      // average), which is the documented, tested behavior when a live level isn't available.
+      const stress = stressScenario({
+        positions: stressPositions,
+        candidate: { symbol: proposal.symbol, notional: estimateNotional(proposal), side: proposal.side, beta: candidateBeta },
+        equity
+      });
+      if (stress) {
+        const estimatedNote = stress.betasEstimated
+          ? ` (betas estimated for ${stress.betaEstimatedCount} of ${stress.betaTotalCount} positions)`
+          : "";
+        const topText = stress.topContributors.map((c) => `${c.symbol} ${formatWholeDollars(c.impactUsd)}`).join(", ");
+        // Omit the "; top: …" clause entirely for an empty/new book (no contributors) rather than
+        // rendering a blank "top: " in the user-visible rationale.
+        const topClause = topText ? `; top: ${topText}` : "";
+        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%${topClause}${estimatedNote}`;
+        proposal.rationale += stressNote;
+        audit(
+          "stress_receipt",
+          {
+            symbol: proposal.symbol,
+            shockPct: stress.shockPct,
+            bookImpactPctOfEquity: stress.bookImpactPctOfEquity,
+            withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
+            candidateMarginalUsd: stress.candidateMarginalUsd
+          },
+          userId
+        );
+      }
+    }
+
+    out.push(proposal);
+  }
+
+  // Part 3 — earnings-proximity advisory. Idempotent: a no-op for any proposal already tagged by an
+  // earlier `applyEarningsBlackoutTag` call in this run (see that function's doc comment for why
+  // `runStrategyOnce` calls it early, before this function runs).
+  applyEarningsBlackoutTag(out, policy, marketScan, userId);
+
+  return out;
 }
 
 export function applyDeterministicSizing(
