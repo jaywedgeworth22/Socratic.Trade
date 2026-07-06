@@ -422,16 +422,15 @@ export function AssistantChat() {
               </p>
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <Tooltip content={`Sends: "${s.prompt}"`}>
-                    (<button
-                      key={s.prompt}
+                  <Tooltip key={s.prompt} content={`Sends: "${s.prompt}"`}>
+                    <button
                       type="button"
                       onClick={() => void send(s.prompt)}
                       disabled={sending || keyMissing}
                       className="rounded-full border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-3 py-1.5 text-[length:var(--con-fs-xs)] transition-colors hover:border-[color:var(--con-accent)] hover:bg-[color:var(--con-surface-2)] disabled:cursor-not-allowed disabled:opacity-50">
                       <span className="uppercase tracking-wide text-[color:var(--con-faint)]">{s.category}</span>
                       <span className="ml-1.5">{s.prompt}</span>
-                    </button>)
+                    </button>
                   </Tooltip>
                 ))}
               </div>
@@ -457,8 +456,8 @@ export function AssistantChat() {
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {m.citations.map((c, i) =>
                         c.url ? (
-                          <Tooltip content={`Source this answer cited — opens ${c.url}`}>
-                            <a key={i} href={c.url} target="_blank" rel="noopener noreferrer">
+                          <Tooltip key={i} content={`Source this answer cited — opens ${c.url}`}>
+                            <a href={c.url} target="_blank" rel="noopener noreferrer">
                               <Chip tone="muted" className="underline decoration-dotted">
                                 {c.label}
                               </Chip>
