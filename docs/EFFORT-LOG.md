@@ -32,6 +32,18 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
+  `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
+  empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what
+  was silently learned" archive the design doc promised but never built — new
+  `deleteLearnedContext` (ownership-scoped, also the shared-contribution erasure path),
+  `GET /api/learned-context` + `DELETE /api/learned-context/[id]`, and a collapsed-by-default
+  `LearnedFactsArchive` component. 8-angle adversarial review found no correctness/security bugs.
+  Verify: 283 files / 2843 tests green, tsc clean, lint 0 errors, build clean (re-run post-merge —
+  branch had drifted far behind main). Prod verified: `/api/health` 200, `pm2 trading` stable (0
+  unstable restarts), new route live (401 unauthenticated, not 404/500). See
+  `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 - 2026-07-06 - `trading-live` published at `7b5450fe` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`). Ships the full CLAUDE backlog train (#816 prompt-safety, #819
   usage-budget advisory, #820 due-jobs, #822 hyde-multiquery) plus everything merged to `main`
@@ -402,14 +414,17 @@ As of 2026-07-04.
   tests across 264 files, all green; build clean. See
   `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
 - **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
+- **Coach chat -> framework primitives (CODEX, M) — ✅ COMPLETED via PR #810.**
+  Focused slice for issue #473: decision-trace coach-note POST can optionally promote into lesson/framework primitives, framework review now carries explicit rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
 
-- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
-  _2026-07-05 (CLAUDE audit-c3): CORRECTION — this row is mis-filed. Per protocol "Completed" = merged
-  to `main`; `gh pr view 854` shows state **OPEN**, mergeStateStatus **BLOCKED** (all CI green —
-  verify/smoke/gitleaks/autofix/classify SUCCESS — reviewDecision empty, no auto-merge armed). Blocked
-  by the main-protection ruleset requiring review/thread-resolution, not by code. Moved to In Progress
-  below pending actual merge; do not let the issues-sync mirror close its tracking issue off this
-  stale Completed text. action=land-it._
+- **Scan table column customization parity (CODEX, M) — ✅ COMPLETED via PR #806.**
+  Scope: bring `/console/scan` to legacy dashboard parity for column visibility, ordering, reset, and saved browser-local state; allow only tightly related ticker-drawer parity if the scan surface needs it.
+
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854.** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
+
+- **Codex autofix storm guard (CODEX/AG, workflow/fleet-infra) — ✅ COMPLETED via PR #1004 (2026-07-06).**
+  Scope: reduced `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
+  Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue comment.
 - **Push account status metrics to Usage Monitor (AG, M) — ✅ COMPLETED 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits. Telemetry wired into Alpaca and Robinhood `getPortfolio` calls. Lint, tsc, and tests green.
 - **Eliminate redundant fill-history fetch/replay (AG, M) — ✅ COMPLETED via PR #850 (merged 2026-07-05).** Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
 - **PRs #816 / #819 / #820 / #822 - CLAUDE planned-backlog train: prompt-safety fencing, usage-budget
@@ -571,6 +586,18 @@ As of 2026-07-04.
 ---
 
 ## 🔨 In Progress
+- **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
+  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **COMPLETED 2026-07-05, merged
+  PR #812.** Root causes (measured, not timeout-tuning): `executeProposal` tests ran a REAL market
+  scan (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12-13s/test solo,
+  past 30s under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class — its
+  2026-06-21 fix only padded timeouts); hoist the orchestrator import into `beforeAll(…, 120_000)`.
+  After: full suite 256 files / 2506 tests green in 20.77s wall; the three files ~1s of test time.
+  See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
+  at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
+
 - **Mobile console width overflow — autonomy-desk home (CLAUDE cloud, branch
   `claude/mobile-console-width-overflow`) — PR open (#992).** Owner-reported: on mobile, every section
   after the Live-thesis hero rendered wider than the viewport (content clipped off the right edge).
@@ -589,7 +616,9 @@ As of 2026-07-04.
   token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
   created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
   corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
-  (port 4104, `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
+  (port 4103 [corrected from an earlier 4104 typo in this row — owner confirmed 2026-07-06 "Monet
+  should be 4104 since cursor is 4103"; AGENTS.md's fleet table is the corrected source of truth],
+  `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
   create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
   agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
   onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
@@ -753,17 +782,7 @@ As of 2026-07-04.
     decision before the server-side filter can replace post-fetch as-of).
   KEEPOUT held throughout: MONET risk gates, CODEX console/UI, AG data-provider lanes untouched.
   Session rollout: `docs/rollouts/2026-07-06-claude-nextwave-rag.md`.
-- **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
-  Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
-  Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
-  comment. Touch workflow callers only in clean Codex worktrees; preserve manual dispatch and
-  round-cap behavior.
 
-- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — moved back from Completed
-  2026-07-05 (CLAUDE audit-c3).** PR #854 (`antigravity/socratic-webhooks`) is OPEN,
-  mergeStateStatus BLOCKED, all CI green, reviewDecision empty, no auto-merge armed. Blocked by the
-  main-protection ruleset needing review/thread-resolution — not a code issue. action=land-it; see
-  the new "Resolve main-protection ruleset review gate" Planned row below for the structural fix.
 
 
 ## 🔨 In Progress
@@ -960,31 +979,7 @@ As of 2026-07-04.
   (action=reclaim-and-finish from the new owner). AG: the implementation intent (issue #474) is
   fully specified above — recreate/finish on a fresh `agent/antigravity`-lane branch since the
   original Codex worktree content isn't recoverable from origin._
-- **Coach chat -> framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
-  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
-  can optionally promote into lesson/framework primitives, framework review now carries explicit
-  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
-  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
-  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
-  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
-  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
-  squash auto-merge is armed pending `verify`.
-- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
-  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
-  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
-  ticker-drawer parity if the scan surface needs it. Keepout: no broad settings/approvals/live-data/
-  coach/tooltip conversions in this lane. PR #806 open with auto-merge enabled; merge-forward
-  through PR #807 pushed 2026-07-05 as `63c69d05`; later blocker identified as unresolved Codex
-  review thread and addressed locally by pinning `symbol` as the first/sticky column during
-  saved-state sanitization and reordering; second review follow-up defers saved `localStorage`
-  column state until after mount to avoid hydration mismatch.
-  Verification green: focused scan-column test (4), lint 0 errors / 308 existing warnings,
-  land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up verification:
-  focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration follow-up
-  verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check`
-  clean.
+
 
 - **CODEX assigned backlog implementation train (Codex, 2026-07-05) — IN PROGRESS.**
   Scope: owner-directed CODEX rows from the backlog exhaustiveness pass: scan column customization,
@@ -995,7 +990,7 @@ As of 2026-07-04.
   with subagent exploration/verification; do not touch AG backend-health lane, Monet risk lanes,
   Claude memory/RAG lanes, or Cursor security/perf rows.
 
-- **PR #853 - sync effort-log mirror with live board (AG, S) — new row, IN PROGRESS 2026-07-05
+- **PR #853 - sync effort-log mirror with live board (AG, S) — ✅ COMPLETED via PR #853 2026-07-05
   (CLAUDE audit-c3).** Branch `ag/effort-log-sync`. `gh pr view 853`: OPEN, mergeStateStatus
   BLOCKED, all CI green, no auto-merge armed, reviewDecision empty. Docs-only board sync; blocked
   only by the ruleset review gate. Open since 07-05 20:38. action=land-it.
@@ -1094,6 +1089,36 @@ As of 2026-07-04.
   - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index decision memory on lifecycle changes; trading-day horizon arithmetic; + Codex second-pass review fixes (market-day horizon anchoring via new `market-calendar.marketDateOf`, kind-scoped veto audit queries + keyed efficacy joins, NULL-evidence backfill on `insertSkippedCounterfactualCandidate`). STATUS: **MERGED (PR #365)**. `getRedTeamEfficacy()` remains API/db-level only (console lane owns UI wiring). Deferred: `skipped_candidate_counterfactuals` has no `side` column, so vetoed SHORTs still read as long moves in the GENERIC missed-opportunity path (efficacy path side-adjusts) — candidate for the w2-outcome-engine lane's schema pass.
   - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap. STATUS: **MERGED (PR #366)**.
   - `claude/w1-regime-data` — typed regime enum + numeric severity (new dependency-free `src/lib/market-regime.ts`); live ^VIX off the 24h macro cache; per-data-class TTLs + asOf on Alpaca snapshot. STATUS: **MERGED (PR #368)**. NOTE (correction to the earlier row text): the crisis cap (policy.ts) and bear filter (strategy.ts) deliberately KEPT their substring checks per the Fable/Monet swimlane keepout — enum adoption inside risk gates is Monet's (#360 landed with them intact); only the console regime card adopted the enum.
+
+- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray `.codex/`
+  (FLEET, XS) — MOSTLY RESOLVED 2026-07-06.** Owner confirmed 2026-07-05: MONET preview = 4104,
+  CURSOR = 4103. The Monet-port line (4103→4104) landed on `agent/claude` (31d8da7). **CURSOR has
+  since documented its own 4103 row** (`~/apps/trading-cursor`, `agent/cursor`, pm2
+  `trading-cursor`, `cursor.jays.services`) — folded in as part of resolving a same-file merge
+  overlap on 2026-07-06 (also corrected a 4104 typo in the Coolify-migration effort row's prose to
+  4103 to match). Still open: MONET confirming its lane/tooling expects 4104; CODEX
+  claiming/relocating or approving deletion of untracked `.codex/{setup.sh,maintenance.sh}` still
+  sitting in `~/apps/trading-claude`.
+
+- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
+  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
+  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
+  owner, answering the objections raised when this was first proposed): (1) Mac-side
+  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
+  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
+  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
+  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
+  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
+  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
+  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
+  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
+  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
+  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
+  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
+  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
+  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
+  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
+  hosted-only default stands; resource-aware routing stays opt-in per repo.
 
 - 2026-07-04 landing train (Fable operator) — also landed: `claude/console-small-fixes` (**PR #361**), `claude/washsale-advisory-defaults` (**PR #362**), `claude/socratic-expert-review-doc` (**PR #363**), `claude/agent-sync-protocol-docs` (**PR #369**). Wave-2 lanes landed sequentially: `w2-episodic-retrieval` (**PR #437, merged 2026-07-04T21:05:02Z**), `w2-outcome-engine` (merged, see the corrected sub-lane rows above), `w2-coaching-durable`, `w2-reflection-decompose`. _(2026-07-05 CLAUDE next-wave correction: this line said "PR #437 in flight"; #437 has since merged. `w2-coaching-durable`/`w2-reflection-decompose` remain the two genuinely unlanded sub-lanes — no PR opened for either since 07-04.)_
 
