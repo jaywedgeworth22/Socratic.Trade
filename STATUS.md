@@ -8,6 +8,39 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
+
+Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that
+followed the prior backlog train (#816/#819/#820/#822, deployed to production the same day at
+`7b5450fe`). Triage-first: worked a 9-row scope, confirmed ground truth before building. Five lanes
+needed real code and landed as five separate PRs, all merged 2026-07-06:
+
+- **PR #970** — typed retrieval-status receipt (`no_memory`/`lookup_failed`/`budget_skipped`/
+  `degraded`/`ok`), additive `RetrieveOptions.onStatus` callback, persistence-only.
+- **PR #973** — RAG golden-eval expansion: 10 episodic-analog fixture cases + single-vs-multi-query
+  (#822) coverage suite. Test/fixture/docs only.
+- **PR #974** — widened filings-RAG/learned-context/episodic retrieval scope to include held (open)
+  positions outside the top-N scan slice, so sell/hold/trim decisions get retrieved memory too.
+- **PR #977** — per-run corpus-coverage receipt for requested-but-never-ingested filings doc types
+  (advisory only, both-conditions gate scoped to the ledger-complete `10-k`/`10-q` subset after a
+  pre-merge 8-K false-positive was caught and fixed).
+- **PR #979** — persist full retrieved candidate pool behind new flag `RAG_PERSIST_CANDIDATE_POOL`
+  (default OFF, byte-identical when off); ids/scores/docType/asOf/`used` only, never raw text.
+
+The remaining 4 rows from the original 9-row triage scope resolved without new PRs: 3 were
+confirmed already-done in code (`VECTOR_ASOF_STRICT` as-of-strict mode, `VECTOR_EMBED_CLEAN_TEXT`
+train/serve text-skew fix, `indexSocraticDecisionMemory` decision-memory re-index coverage) and 1
+is **deferred pending owner design input**: a server-side numeric as-of epoch filter in Pinecone
+(needs an ingest-time numeric-epoch backfill on existing vectors plus a fail-open-vs-fail-closed
+decision first). A second deferred item surfaced during this cluster's own review: a
+persist-candidate-pool v2 that captures pre-`rankPool` drops with per-stage reasons (the shipped
+v1 only sees the post-recall output pool, so it rarely shows `used:false` in the flagship
+production caller).
+
+See `docs/EFFORT-LOG.md`'s Completed section for the per-lane detail (each carries its PR #, what
+shipped, and the pre-merge review fixes) and `docs/rollouts/2026-07-06-claude-nextwave-rag.md` for
+the full session-level rollout note tying all five lanes together.
+
 ## 2026-07-06 — persist-candidate-pool: full retrieved candidate set, flag-gated (CLAUDE, branch `claude/persist-candidate-pool`)
 
 Persists the post-recall/post-dedupe candidate pool `retrieveContextDetailed` produces —

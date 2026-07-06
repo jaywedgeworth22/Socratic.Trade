@@ -169,30 +169,42 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
-- **Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
-  `claude/persist-candidate-pool`).** Captures the post-recall/post-dedupe candidate pool from
-  `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the final top-`limit`
-  slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF, byte-identical when off).
-  **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so candidates dropped upstream
-  by minScore/asOf/dedupe are never present, and in the flagship production caller (dedupe 0.6 +
-  limit 3, both of which already hard-cap output at `limit`) `used:false` rows are rare/absent —
-  a pre-rankPool v2 with per-stage drop reasons is the real follow-up (see rollout note). New
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
+## ✅ Completed (merged to `main`, on beta/integration)
+
+- **PR #979 - Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Merged 2026-07-06. Captures the post-recall/post-dedupe
+  candidate pool from `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the
+  final top-`limit` slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF,
+  byte-identical when off). **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so
+  candidates dropped upstream by minScore/asOf/dedupe are never present, and in the flagship
+  production caller (dedupe 0.6 + limit 3, both of which already hard-cap output at `limit`)
+  `used:false` rows are rare/absent — a pre-rankPool v2 with per-stage drop reasons is the real
+  follow-up (see rollout note, and the deferred-work row below). New
   `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
   new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
   added (additive) and threaded from both `strategy.ts` retrieval call sites +
-  `experience-memory.ts`. Coordinates with sibling lane `claude/typed-retrieval-status` (same file,
-  disjoint region — this lane owns only the block right before the final slice; lands after it).
+  `experience-memory.ts`. Coordinated with sibling lane `claude/typed-retrieval-status` (same file,
+  disjoint region — this lane owns only the block right before the final slice; landed after it).
   Local verify: `tsc --noEmit` clean, `test/persist-candidate-pool.test.ts` (new) +
   `test/rag-retrieval-regression.test.ts` 26/26 green, plus spot-checked adjacent RAG/strategy/
-  experience-memory suites, no regressions. Rollout:
-  `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
-- **Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE).** Advisory-only
-  per-run receipt: when strategy.ts's filings-RAG pass requests a doc type that produces zero
-  chunks THIS run, emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety`
-  decision-case evidence item. Never touches `ragContext`/sizing/policy — advisory only, no flag
-  (mirrors the unconditional `evidence_age_anomaly` receipt). Branch `claude/corpus-coverage-receipt`.
-  Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
-  - **2026-07-06 BLOCKER fix (same day):** the original design gated the receipt on
+  experience-memory suites, no regressions; `land.sh` full gate (tsc/test/build) green at merge.
+  Rollout: `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
+- **PR #977 - Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE, branch
+  `claude/corpus-coverage-receipt`).** Merged 2026-07-06. Advisory-only per-run receipt: when
+  strategy.ts's filings-RAG pass requests a doc type that produces zero chunks THIS run, emits one
+  `audit('rag_doc_type_coverage_empty')` + one kind-`safety` decision-case evidence item. Never
+  touches `ragContext`/sizing/policy — advisory only, no flag (mirrors the unconditional
+  `evidence_age_anomaly` receipt). Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  - **2026-07-06 BLOCKER fix (same day, pre-merge):** the original design gated the receipt on
     "zero ever-ingested `ingested_accessions` rows corpus-wide" as the producer-existence check.
     That signal was itself broken: the default-ON 8-K SUMMARY writer
     (`src/lib/web-sources/sec8k.ts`'s `refreshEightK`, via `storeContexts`) writes retrievable
@@ -219,26 +231,27 @@ As of 2026-07-04.
     false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
     31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
     section.
-  - **2026-07-06 THIRD fix (same day) — restore both-conditions guard, ledger-complete subset
-    only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug: firing on
-    this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K — event-sparse,
-    routinely won't rank top-3 — would fire the receipt on a large fraction of normal runs.
-    Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the types whose
-    `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an accession row
-    for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its ledger can't
-    distinguish "no coverage" from "didn't rank today" — excluded; `earnings-transcript` stays
-    excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate for that subset:
-    `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third `hasProducerForDocType`
-    predicate parameter — a type is "empty" only when NOT retrieved this run AND the predicate
-    reports zero producer rows. Kept `prompt-safety.ts` DB-free: `strategy.ts` builds the predicate
-    from ONE bulk `ingestedAccessionCountsByDocType()` call + an in-memory prefix lookup (not N
-    per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts` (14/14 passing) including the
-    key low-noise case: a 10-K that didn't retrieve this run but HAS a producer row must stay
-    silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/`strategy-rag-quickwins-wiring`
-    sweep 5/5. Full rationale in the rollout note's new "Second correction" section.
-- **RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822) (CLAUDE),
-  worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`.** Test/
-  fixture/docs only, no production code changed. Added 10 new fixture cases to
+  - **2026-07-06 THIRD fix (same day, pre-merge) — restore both-conditions guard, ledger-complete
+    subset only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug:
+    firing on this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K —
+    event-sparse, routinely won't rank top-3 — would fire the receipt on a large fraction of
+    normal runs. Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the
+    types whose `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an
+    accession row for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its
+    ledger can't distinguish "no coverage" from "didn't rank today" — excluded;
+    `earnings-transcript` stays excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate
+    for that subset: `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third
+    `hasProducerForDocType` predicate parameter — a type is "empty" only when NOT retrieved this
+    run AND the predicate reports zero producer rows. Kept `prompt-safety.ts` DB-free:
+    `strategy.ts` builds the predicate from ONE bulk `ingestedAccessionCountsByDocType()` call + an
+    in-memory prefix lookup (not N per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts`
+    (14/14 passing) including the key low-noise case: a 10-K that didn't retrieve this run but HAS
+    a producer row must stay silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/
+    `strategy-rag-quickwins-wiring` sweep 5/5. This is the corpus-truth-then-ledger-scoped redesign
+    that shipped — full rationale in the rollout note's new "Second correction" section.
+- **PR #973 - RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+  (CLAUDE), branch `claude/rag-golden-eval-episodic`.** Merged 2026-07-06. Test/fixture/docs only,
+  no production code changed. Added 10 new fixture cases to
   `test/fixtures/rag-retrieval-eval-fixture.ts` covering `EPISODIC_DOC_TYPES`
   (`socratic-decision`/`coach-note`/`lesson`) — the prior 462-line fixture had zero non-filings
   cases, so the harness reportedly saturated at recall 1.0. Each new case has near-miss hard
@@ -250,40 +263,65 @@ As of 2026-07-04.
   multiple query lists (one `mocks.query` call per fan-out variant). No RAG env flag defaults
   touched. tsc clean; focused `test/rag-retrieval-eval.test.ts` +
   `test/rag-retrieval-regression.test.ts` = 36/36 passing (17 new).
-  **2026-07-06 follow-up (2nd commit):** the "filings behavior byte-identical" claim above was
-  actually FALSE — the filings baseline/rerank/hybrid/as-of `it`s had no `cases` filter and were
-  silently scoring the full 39-case mix (measured MRR 0.919) instead of the original 29 filings
-  cases (MRR 1.0). Fixed by adding `FILINGS_CASES` and wiring it through every filings-only `it`;
-  filings MRR confirmed back to 1.0. Also added an explicit `recall1` assertion over the episodic
-  cases (`toBeCloseTo(0.4, 5)`, the actual measured value, since recall@3 alone saturates at 1.0
-  and can't discriminate), and replaced a brittle Set+fixed-array-slice assertion in the
-  multi-query plumbing test with a no-dupes + all-from-pool check. Still 36/36 passing, tsc clean.
-  Rollout: `docs/rollouts/2026-07-06-rag-golden-eval-episodic.md`.
-- **Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).** Distinguishes
-  no-memory vs lookup-failed vs budget-skipped vs degraded instead of every RAG/episodic retrieval
-  outcome collapsing to an indistinguishable `[]`/non-empty result. Additive/advisory-only: new
-  `RetrievalStatus` union + optional `RetrieveOptions.onStatus` callback wired through the four
-  existing classification points in `retrieveContextDetailed` (vector-db.ts), a new `status` field on
-  `ExperienceRetrievalResult` (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts
-  persisted via a new `rag_retrieval_status` audit row alongside `experience_retrieval`, and an
-  additive optional `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence
-  only, no rendering. Never gates/alters chunk selection. Coordination: sibling lane
-  `claude/persist-candidate-pool` also edits `vector-db.ts` `retrieveContextDetailed` — this diff is
-  kept minimal/localized to the early-return points and a thin status output. Tests:
-  `test/rag-retrieval-status.test.ts` (new, 11 cases, network-free). Rollout:
-  `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
-
-- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
-  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
-  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
-  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
-  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
-  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
-
----
-
-## ✅ Completed (merged to `main`, on beta/integration)
-
+  **2026-07-06 follow-up (2nd commit, pre-merge) — baseline-population + recall-discrimination
+  fixes:** the "filings behavior byte-identical" claim above was actually FALSE — the filings
+  baseline/rerank/hybrid/as-of `it`s had no `cases` filter and were silently scoring the full
+  39-case mix (measured MRR 0.919) instead of the original 29 filings cases (MRR 1.0). Fixed by
+  adding `FILINGS_CASES` and wiring it through every filings-only `it`; filings MRR confirmed back
+  to 1.0. Also added an explicit `recall1` assertion over the episodic cases (`toBeCloseTo(0.4, 5)`,
+  the actual measured value, since recall@3 alone saturates at 1.0 and can't discriminate), and
+  replaced a brittle Set+fixed-array-slice assertion in the multi-query plumbing test with a
+  no-dupes + all-from-pool check. Still 36/36 passing, tsc clean. Rollout:
+  `docs/rollouts/2026-07-06-rag-golden-eval-episodic.md`.
+- **PR #970 - Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).**
+  Merged 2026-07-06. Distinguishes no-memory vs lookup-failed vs budget-skipped vs degraded
+  instead of every RAG/episodic retrieval outcome collapsing to an indistinguishable `[]`/
+  non-empty result. Additive/advisory-only: new `RetrievalStatus` union + optional
+  `RetrieveOptions.onStatus` callback wired through the four existing classification points in
+  `retrieveContextDetailed` (vector-db.ts), a new `status` field on `ExperienceRetrievalResult`
+  (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts persisted via a new
+  `rag_retrieval_status` audit row alongside `experience_retrieval`, and an additive optional
+  `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence only, no rendering.
+  Never gates/alters chunk selection. Coordinated with sibling lane `claude/persist-candidate-pool`
+  (also edits `vector-db.ts` `retrieveContextDetailed`) — this diff was kept minimal/localized to
+  the early-return points and a thin status output. Tests: `test/rag-retrieval-status.test.ts`
+  (new, 11 cases, network-free). Pre-merge Copilot review caught a real bug:
+  `retrieveContextDetailedWithStatus`'s forwarding call to a caller-supplied `onStatus` would
+  propagate a throwing callback instead of swallowing it (breaking the "throwing callback never
+  affects retrieval" contract every other call site relies on) — fixed with a try/catch + a
+  regression test. Rollout: `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
+- **PR #974 - Held-position retrieval scope (CLAUDE, worktree `~/apps/trading-wt-held-scope`,
+  branch `claude/held-position-retrieval-scope`).** Merged 2026-07-06. Widens the three retrieval
+  scopes in `runStrategyOnce` (filings RAG `topSymbols`, learned-context `learnedSymbols`, episodic
+  `situationCandidates`) to UNION in every held (open) position's symbol, not just the score-sorted
+  top-N scan candidates — so sell/hold/trim decisions on a held name outside the top slice get
+  retrieved memory too (previously zero). Strictly additive: the BUY-candidate scan/prompt set
+  (`marketScan.topCandidates`) and its ordering are unchanged; no risk-gate/sizing/policy touch.
+  Hoisted the pre-existing `heldSymbols` computation (was locally recomputed for take-profit
+  trim-band pruning) to a single shared value. New test:
+  `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
+  duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
+  experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+  **Follow-up fix (same day, 2nd commit, pre-merge) — episodic-sketch gap:** episodic
+  `buildSituationSketch` (`src/lib/experience-memory.ts`) still did a bare `slice(0, 3)` on
+  candidates, so held symbols appended past top-3 reached the `retrieveDecisionExperiences` call
+  but were dropped before entering the actual sketch/query text — episodic parity was only
+  partial. Fixed with an additive `SituationCandidate.held` flag + a bounded (max 6) held-aware
+  selection in `buildSituationSketch`; non-held path is byte-identical to the old slice. 4
+  new/strengthened tests across `test/experience-memory.test.ts` +
+  `test/strategy-held-position-retrieval-scope.test.ts`; tsc clean; full `npm test` 2678/2678
+  passed. Same rollout note, follow-up section appended.
+  **Pre-merge Copilot review fix — cross-lane catch-block fallback bug:** with `topSymbols` now
+  widened to include `heldSymbols`, the filings-RAG pass could cover more than the original top-3,
+  but the typed-retrieval-status lane's (`#970`) fallback in the later `catch` block still only
+  added receipt rows for `marketScan.topCandidates.slice(0, 3)` — so a full-pass failure (e.g. a
+  vector-db import error) would silently omit held symbols from the `rag_retrieval_status` receipt
+  even though they were now in-scope for retrieval. Fixed (commit `23784ad`): the catch-block
+  fallback now iterates the same held-widened symbol set (`uniqueSymbols([...top-3,
+  ...heldSymbols])`) as the happy path, so a held symbol outside the top-3 still gets a
+  `lookup_failed` receipt row if the whole filings-RAG pass throws. (Same review pass also fixed an
+  O(heldSymbols × topCandidates) `.find()` loop to O(heldSymbols) via a pre-built symbol→candidate
+  map, and corrected a stale code comment on the `SITUATION_SKETCH_MAX_CANDIDATES` cap.)
 - **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
   prompts (CLAUDE).** Merged to `main` 2026-07-05 as squash `041b73b2` (verify/smoke/gitleaks
   green). Advisory ONLY (owner philosophy: receipts, never blocks): fenced
@@ -532,26 +570,6 @@ As of 2026-07-04.
 ---
 
 ## 🔨 In Progress
-- **Held-position retrieval scope (CLAUDE, worktree `~/apps/trading-wt-held-scope`, branch
-  `claude/held-position-retrieval-scope`)** — **IN PROGRESS 2026-07-06.** Widens the three
-  retrieval scopes in `runStrategyOnce` (filings RAG `topSymbols`, learned-context
-  `learnedSymbols`, episodic `situationCandidates`) to UNION in every held (open) position's
-  symbol, not just the score-sorted top-N scan candidates — so sell/hold/trim decisions on a
-  held name outside the top slice get retrieved memory too (previously zero). Strictly additive:
-  the BUY-candidate scan/prompt set (`marketScan.topCandidates`) and its ordering are unchanged;
-  no risk-gate/sizing/policy touch. Hoisted the pre-existing `heldSymbols` computation (was
-  locally recomputed for take-profit trim-band pruning) to a single shared value. New test:
-  `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
-  duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
-  experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
-  **Follow-up fix (same day, 2nd commit):** episodic `buildSituationSketch`
-  (`src/lib/experience-memory.ts`) still did a bare `slice(0, 3)` on candidates, so held symbols
-  appended past top-3 reached the `retrieveDecisionExperiences` call but were dropped before
-  entering the actual sketch/query text — episodic parity was only partial. Fixed with an
-  additive `SituationCandidate.held` flag + a bounded (max 6) held-aware selection in
-  `buildSituationSketch`; non-held path is byte-identical to the old slice. 4 new/strengthened
-  tests across `test/experience-memory.test.ts` + `test/strategy-held-position-retrieval-scope.test.ts`;
-  tsc clean; full `npm test` 2678/2678 passed. Same rollout note, follow-up section appended.
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
   was physically still sitting under the In Progress heading; relocated to Completed (issues mirror
@@ -685,15 +703,29 @@ As of 2026-07-04.
 
 ## In Progress
 - **Bump shared dependency in agentic-trading and Congress.Trade to ^1.3.0 and fix HTTPS lockfile (AG) — IN PROGRESS 2026-07-06.** Fixing CI/CD `check-pin` failures by syncing both repositories' `package.json` specifications to the exact same version, and normalizing `package-lock.json` to use `git+https` instead of `git+ssh` to prevent tokenless environment crashes.
-- **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — IN PROGRESS 2026-07-06.**
-  Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod `7b5450fe`). Throwaway worktree
-  session (seat CLAUDE per AGENT_SEAT pin), `claude/*` lanes off `main@fc4b179e`, triage-first then
-  parallel build/review/land. Scope (triage in flight): as-of-strict undated-chunk drop; per-run
-  corpus-coverage receipt; persist full retrieved candidate set (incl. unused); train/serve
-  embed-text skew; server-side numeric as-of Pinecone filter; typed retrieval-status receipt; RAG
-  golden-eval episodic expansion (validates #822 single-vs-multi-query); held-position symbols in
-  retrieval scope; verify decision-memory re-index covers outcome/lesson writes. KEEPOUT: MONET risk
-  gates, CODEX console/UI, AG data-provider lanes. Own PRs, sequential land.
+- **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — COMPLETED,
+  5 PRs merged 2026-07-06.** Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod
+  `7b5450fe`). Throwaway worktree session (seat CLAUDE per AGENT_SEAT pin), `claude/*` lanes off
+  `main@fc4b179e`, triage-first then parallel build/review/land. Of the 9-row triage scope, 5 lanes
+  were built/reviewed/fixed/landed same day (see their own Completed rows below for detail):
+  typed retrieval-status receipt (**PR #970**, merged 2026-07-06), RAG golden-eval episodic
+  expansion (**PR #973**, merged 2026-07-06), held-position retrieval scope (**PR #974**, merged
+  2026-07-06), per-run corpus-coverage receipt (**PR #977**, merged 2026-07-06), and persist
+  full retrieved candidate pool (**PR #979**, merged 2026-07-06). The remaining 4 triage rows
+  resolved without new PRs — no code changed for these, so they were never split into their own
+  board rows; disposition of each, triaged 2026-07-06:
+  - "Fail-closed as-of strict mode for undated chunks" (triage 2026-07-06: already done —
+    `VECTOR_ASOF_STRICT` + rankPool drop-count audit + `test/vector-db-asof-strict.test.ts`).
+  - "Fix train/serve embedding text skew" (triage 2026-07-06: already done — see `VECTOR_EMBED_CLEAN_TEXT`,
+    shipped 2026-07-01 per `PLAN.md`'s R17/RAG-backlog entry and `docs/rollouts/2026-07-01-rag-backlog.md`).
+  - "Verify decision-memory re-index covers outcome/lesson writes" (triage 2026-07-06: already done
+    — outcome + lesson writers both call `indexSocraticDecisionMemory` (`src/lib/db-socratic.ts`,
+    `src/lib/strategy.ts`)).
+  - "Server-side numeric as-of epoch filter in Pinecone" (2026-07-06: DEFERRED — needs an
+    ingest-time numeric-epoch backfill on existing vectors + a fail-open-vs-fail-closed owner
+    decision before the server-side filter can replace post-fetch as-of).
+  KEEPOUT held throughout: MONET risk gates, CODEX console/UI, AG data-provider lanes untouched.
+  Session rollout: `docs/rollouts/2026-07-06-claude-nextwave-rag.md`.
 - **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
   Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
   Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
