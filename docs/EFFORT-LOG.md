@@ -165,6 +165,115 @@ As of 2026-07-04.
   Rollout doc: `docs/rollouts/2026-07-05-cursor-session.md` (describes intended scope; now
   confirmed-merged via #844).
 
+---
+
+## 🚧 In Progress
+
+- **Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).** Distinguishes
+  no-memory vs lookup-failed vs budget-skipped vs degraded instead of every RAG/episodic retrieval
+  outcome collapsing to an indistinguishable `[]`/non-empty result. Additive/advisory-only: new
+  `RetrievalStatus` union + optional `RetrieveOptions.onStatus` callback wired through the four
+  existing classification points in `retrieveContextDetailed` (vector-db.ts), a new `status` field on
+  `ExperienceRetrievalResult` (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts
+  persisted via a new `rag_retrieval_status` audit row alongside `experience_retrieval`, and an
+  additive optional `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence
+  only, no rendering. Never gates/alters chunk selection. Coordination: sibling lane
+  `claude/persist-candidate-pool` also edits `vector-db.ts` `retrieveContextDetailed` — this diff is
+  kept minimal/localized to the early-return points and a thin status output. Tests:
+  `test/rag-retrieval-status.test.ts` (new, 11 cases, network-free). Rollout:
+  `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
+
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
+## ✅ Completed (merged to `main`, on beta/integration)
+
+- **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
+  prompts (CLAUDE).** Merged to `main` 2026-07-05 as squash `041b73b2` (verify/smoke/gitleaks
+  green). Advisory ONLY (owner philosophy: receipts, never blocks): fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt covering every
+  untrusted block (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent
+  (`STRATEGY_PROMPT_VERSION` 1.4.0→1.5.0); `reflection_summary` moved out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; new leaf `src/lib/prompt-safety.ts`
+  deterministic injection scanner → `audit('prompt_injection_suspected')` + kind-`safety`
+  decision-case evidence (detection only, never blocks/alters); learned-context lines carry inline
+  provenance (`[origin= source= asserted= conf=]`); same-day high-relevance RAG chunk / same-day
+  fact → aggregated `audit('evidence_age_anomaly')` + `safety` evidence item; post-mortem
+  reflection WRITER fenced at source. Review pass added an excerpt cap on persisted findings (a
+  ~50KB base64 blob could otherwise persist unbounded text repeatedly via the decision-case
+  evidence JSON) and a fence-escape detection pattern (forged closing tags from inside untrusted
+  data). Tests: 2577 total in the full local gate, all green (`test/prompt-safety.test.ts` 31,
+  `test/strategy-prompt-safety.test.ts` 4, plus focused strategy/chat/socratic/learned-context
+  suites). See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+- **PR #819 - Wire `usage-budget` Phase 2 (advisory-first, owner-overridable enforcement) into
+  `runStrategyOnce` (CLAUDE).** Merged to `main` 2026-07-05 as squash `f28322fe`
+  (verify/smoke/gitleaks green). ADVISORY (always on when the monitor is configured):
+  `usage_budget_status` audit receipt every run + a `formatBudgetAdvisory` line injected into the
+  Bull userContent next to `drawdownAdvisory`. ENFORCEMENT (opt-in via `USAGE_BUDGET_ENFORCE`,
+  default off) at the per-user/day LLM budget choke point: skip ends the run before any LLM call
+  (audit + `notifyBudgetSkip`); downgrade swaps `policy.llmModel`/`redTeamLlmModel` on the
+  in-memory run policy only, never persisted. `debateProposal` gained an optional `policyOverride`
+  param so the Bear picks up the same transient downgrade. **Adversarial review caught a BLOCKER
+  pre-merge:** the enforcement block was mutating the shared `policy` object in place, so a
+  same-run cap-breach demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would
+  have persisted the downgraded models to the DB permanently, contradicting the "never persisted"
+  contract; fixed with a separately-carried `runLlmOverride`/`runPolicy` never passed to
+  `setPolicy`/`autoRevertOnCapBreach`, plus a regression test that trips both a downgrade and a
+  cap-breach demotion in the same run. Also fixed: scoped the enforcement try/catch so a post-audit
+  throw in the skip path can't be swallowed into the full LLM path; threaded the downgrade into
+  `generateReflectionSummary` (outcome-engine lesson pass left as a documented intentional
+  exemption — fire-and-forget, outlives the run); de-duplicated the budget-status fetch; extended
+  the downgrade test to assert the Red Team request body's model too. Full local gate: 2587 tests
+  across 261 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+- **PR #820 - Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE).** Merged to
+  `main` 2026-07-05 as squash `e90db1a8` (verify/smoke/gitleaks green). New `due_jobs` table
+  (migration v11) + `src/lib/db-jobs.ts` (lease/reclaim claimable queue — fixes the
+  crashed-row-stuck-forever gap the existing `mobile_commands` queue has). `counterfactual-learning.ts`
+  + `outcome-engine.ts`'s `measureCase` enqueue `sample_intraday_horizon` jobs once a case's basis
+  (fill or ref price) resolves; new `drainDueIntradaySampleJobs` worker drains them through the same
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows); one fire-and-forget call added to `scheduler.ts`'s `tick()`. **Adversarial
+  review caught a lost-update-race BLOCKER pre-merge:** `measureCase` held an outcomes snapshot
+  across awaits, so its wholesale write could erase a 15m/1h row the due-jobs worker had already
+  persisted concurrently; fixed by re-merging against a fresh DB read immediately before every
+  terminal/partial write (`writeSocraticDecisionOutcome`, `markSkippedCounterfactualMatured`,
+  `markSkippedCounterfactualUnresolvable`). Also fixed: claimant-fenced the three terminal-transition
+  functions in `db-jobs.ts` (a stale/lease-expired worker could otherwise resurrect an
+  already-completed job); renamed the drain receipt's `failed` counter to `erroredRetried` +
+  removed the dead `'failed'` `DueJobStatus` value; replaced the worker's `caseId.split(":")`
+  counterfactual lookup with an exact `runId`/`horizonDays`-keyed lookup (the split-based lookup
+  could silently match the wrong row when a run/symbol pair had more than one horizon-day config);
+  added `due_jobs` to the account-deletion drift guard. Full local gate green (2529+/2530+ full
+  suite, build clean). See `docs/rollouts/2026-07-05-durable-due-jobs.md`.
+- **PR #822 - HyDE + evidence-derived multi-query retrieval for filings RAG, flag-gated (CLAUDE).**
+  Merged to `main` 2026-07-05 as squash `d97b7c71` (verify/smoke/gitleaks green). New
+  `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 facet sub-queries from
+  evidence/sector/dominant-factor) + `generateHydePassages()` (one cheap fail-open LLM call, HyDE
+  passages). Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both **default OFF** —
+  byte-identical retrieval when both are off (pinned by a dedicated regression test); not
+  independent, `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY`. `vector-db.ts`
+  `RetrieveOptions.queries?: string[]`: per-query embed+match (including the original query
+  alongside variants), RRF-fused into the existing `rankPool` pipeline unchanged. **Adversarial
+  review caught a fail-CLOSED BLOCKER pre-merge:** the multi-query fan-out had no per-item catch,
+  so one variant's rejected Voyage/Pinecone call discarded every other variant's already-successful
+  results via a bare `Promise.all`, returning empty filings context instead of falling back to the
+  single-query path; fixed so each fan-out call is caught individually and an all-fail case falls
+  back to plain single-query retrieval (flags-off behavior). Also fixed: first-occurrence-wins id
+  resolution could keep a lower cosine score (now higher-score wins); HyDE's endpoint/model could
+  disagree (could route an OpenAI model id to `api.anthropic.com` under an Anthropic policy,
+  silently returning `[]`; now resolved coherently with an audit on non-OK responses); HyDE spend
+  wasn't gated on the daily LLM budget (now gated via `isOverLlmBudget`). Full local gate: 2619
+  tests across 264 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+- **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
+
 - **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
   _2026-07-05 (CLAUDE audit-c3): CORRECTION — this row is mis-filed. Per protocol "Completed" = merged
   to `main`; `gh pr view 854` shows state **OPEN**, mergeStateStatus **BLOCKED** (all CI green —
