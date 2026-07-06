@@ -54,6 +54,13 @@ concurrency:
 
 jobs:
   report:
+    # Cost gate (2026-07-05): the reporter only emits on FAILURE (a Sentry error
+    # event) or on SCHEDULE completions (a Sentry Crons check-in). On the common
+    # case — a successful, non-scheduled run — the script is a no-op, yet it was
+    # still spinning up a full runner + checkout for every one of ~95 completions/day.
+    # Gate the whole job so those no-op cases skip at ZERO runner minutes while the
+    # two real signals (failure alerts, cron missed-check-in detection) are unchanged.
+    if: ${{ github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.event == 'schedule' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)

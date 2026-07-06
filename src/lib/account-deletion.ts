@@ -44,7 +44,10 @@ const DELETE_TABLES_BY_USER_ID = [
   "api_health_log",
   "mobile_commands",
   "rag_usage",
-  "take_profit_trims"
+  "take_profit_trims",
+  // Added 2026-07-05: due_jobs (src/lib/db-jobs.ts) is user-scoped (nullable user_id — system-wide
+  // jobs have none, matching the generic loop's `WHERE user_id = ?` no-op for those rows).
+  "due_jobs"
 ] as const;
 
 type DeleteTable = (typeof DELETE_TABLES_BY_USER_ID)[number];

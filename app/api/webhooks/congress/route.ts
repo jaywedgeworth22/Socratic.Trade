@@ -1,24 +1,50 @@
 import { NextResponse } from "next/server";
 import { audit } from "@/lib/db";
 import { applyCongressEvent, applyCongressEvents, type CongressEvent } from "@/lib/congress-trade-events";
-import { verifyCongressWebhookSecret } from "@/lib/congress-webhook-auth";
+import { verifyCongressWebhookSignature } from "@/lib/congress-webhook-auth";
 import { logApiHealth } from "@/lib/db-health";
 
 export const dynamic = "force-dynamic";
 
 // Inbound receiver for congress.trade (App A) push events (see docs/push-to-app-b.md).
-// Auth: a shared bearer secret (CONGRESS_WEBHOOK_SECRET) verified constant-time. Rejects all writes
-// when no secret is configured. Accepts a single event envelope or { events: [...] } for batches.
+// Auth: a shared secret (CONGRESS_WEBHOOK_SECRET) verified via HMAC SHA256 (X-Signature).
+// Rejects all writes when no secret is configured. Accepts a single event envelope or { events: [...] } for batches.
 // Always returns fast and never throws into the app; events are idempotent (deduped by id).
 export async function POST(req: Request) {
-  if (!verifyCongressWebhookSecret(req)) {
-    audit("congress_webhook_rejected", { reason: "secret" });
+  const expectedSecret = (process.env.CONGRESS_WEBHOOK_SECRET ?? "").trim();
+  if (!expectedSecret) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  const hasSignature = req.headers.has("x-signature");
+  const hasAuth = req.headers.has("authorization");
+  if (!hasSignature && !hasAuth) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  const contentLengthStr = req.headers.get("content-length");
+  if (contentLengthStr) {
+    const contentLength = Number(contentLengthStr);
+    if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) {
+      return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
+    }
+  }
+
+  let text: string;
+  try {
+    text = await req.text();
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid body" }, { status: 400 });
+  }
+
+  if (!verifyCongressWebhookSignature(req, text)) {
+    audit("congress_webhook_rejected", { reason: "signature" });
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
   let body: unknown;
   try {
-    body = await req.json();
+    body = JSON.parse(text);
   } catch {
     return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
   }

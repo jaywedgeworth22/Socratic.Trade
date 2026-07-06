@@ -77,6 +77,20 @@ export interface ThesisStat {
   avgDaysHeld?: number;
   /** % of lots held < 365 days (short-term capital gains); undefined when no timestamp data. */
   shortTermPct?: number;
+  /** Mean returnPct over WINNING lots only (returnPct > 0); undefined when the bucket has no winners. */
+  avgWinPct?: number;
+  /** Mean |returnPct| over LOSING lots only (returnPct < 0), reported POSITIVE; undefined when no losers. */
+  avgLossPct?: number;
+  /**
+   * Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots in the bucket — the
+   * root-mean-square of negative-clamped returns, i.e. the sigma_down of a 0%-MAR Sortino ratio.
+   * Always defined when trades > 0 (0 when there are no losing lots).
+   */
+  downsideDeviationPct?: number;
+  /** Count of lots with returnPct > 0. */
+  winCount?: number;
+  /** Count of lots with returnPct < 0. */
+  lossCount?: number;
 }
 
 /** Realized-outcome stats grouped by the market regime a position was opened in. */
@@ -516,9 +530,10 @@ export function getSectorScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
@@ -554,6 +569,16 @@ export interface ThesisRegimeStat {
   shrunkAvgReturnPct: number;
   avgDaysHeld?: number;
   shortTermPct?: number;
+  /** Mean returnPct over WINNING lots only (returnPct > 0); undefined when the bucket has no winners. */
+  avgWinPct?: number;
+  /** Mean |returnPct| over LOSING lots only (returnPct < 0), reported POSITIVE; undefined when no losers. */
+  avgLossPct?: number;
+  /** Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots — see ThesisStat for detail. */
+  downsideDeviationPct?: number;
+  /** Count of lots with returnPct > 0. */
+  winCount?: number;
+  /** Count of lots with returnPct < 0. */
+  lossCount?: number;
 }
 
 const THESIS_REGIME_SEP = " @ ";
@@ -562,9 +587,10 @@ export function getThesisRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ThesisRegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(closedLots, (lot) => {
     const thesis = lot.thesisTag?.trim() || "Untagged";
     const regime = lot.regime?.trim() || "Unspecified";
@@ -576,8 +602,13 @@ export function getThesisRegimeScorecard(
 }
 
 /** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
-export function getClosedLotCount(accountNumber: string, source?: FillSource, userId: string = "local"): number {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots.length;
+export function getClosedLotCount(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): number {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots.length;
 }
 
 /**
@@ -598,9 +629,10 @@ export function getSignalEfficacy(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SignalEfficacyStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   if (closedLots.length === 0) return [];
 
   // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
@@ -690,9 +722,10 @@ export function getFactorScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  options?: FactorScorecardOptions
+  options?: FactorScorecardOptions,
+  prefetched?: PrefetchedFills
 ): FactorScorecardStat[] {
-  const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots: allLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   // Optional regime filter — default (no option) preserves the original all-lots behavior.
   // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
   // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
@@ -1145,9 +1178,10 @@ export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ConfidenceCalibrationStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
     (lot) => confidenceBandOf(lot.confidence as number),
@@ -1201,6 +1235,16 @@ function aggregateClosedLots(
   avgDaysHeld: number | undefined;
   /** Percentage of lots held < 365 days (short-term for tax purposes). */
   shortTermPct: number | undefined;
+  /** Mean returnPct over lots with returnPct > 0; undefined when the bucket has no winners (never fabricated). */
+  avgWinPct: number | undefined;
+  /** Mean |returnPct| over lots with returnPct < 0, reported POSITIVE; undefined when the bucket has no losers. */
+  avgLossPct: number | undefined;
+  /** Downside deviation (%): sqrt(mean(min(returnPct, 0)^2)) over ALL lots — sigma_down of a 0%-MAR Sortino. */
+  downsideDeviationPct: number | undefined;
+  /** Count of lots with returnPct > 0. */
+  winCount: number | undefined;
+  /** Count of lots with returnPct < 0. */
+  lossCount: number | undefined;
 }> {
   const prior = resolveShrinkPrior(userId);
   const byKey = new Map<string, {
@@ -1211,10 +1255,18 @@ function aggregateClosedLots(
     daysHeldSum: number;
     daysHeldCount: number;
     shortTermCount: number;
+    winReturnSum: number;
+    winCount: number;
+    lossReturnAbsSum: number;
+    lossCount: number;
+    downsideSqSum: number;
   }>();
   for (const lot of closedLots) {
     const key = keyFn(lot);
-    const cur = byKey.get(key) ?? { pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0 };
+    const cur = byKey.get(key) ?? {
+      pnl: 0, returnSum: 0, wins: 0, trades: 0, daysHeldSum: 0, daysHeldCount: 0, shortTermCount: 0,
+      winReturnSum: 0, winCount: 0, lossReturnAbsSum: 0, lossCount: 0, downsideSqSum: 0
+    };
     cur.pnl += lot.pnl;
     cur.returnSum += lot.returnPct;
     cur.wins += lot.pnl > 0 ? 1 : 0;
@@ -1230,6 +1282,17 @@ function aggregateClosedLots(
         if (daysHeld < 365) cur.shortTermCount += 1;
       }
     }
+    // Payoff-split fields (Fractional-Kelly advisory input; read-only, never fabricated): win/loss
+    // classification here uses returnPct (not pnl) so the split lines up with the % Kelly math needs.
+    if (lot.returnPct > 0) {
+      cur.winReturnSum += lot.returnPct;
+      cur.winCount += 1;
+    } else if (lot.returnPct < 0) {
+      cur.lossReturnAbsSum += Math.abs(lot.returnPct);
+      cur.lossCount += 1;
+    }
+    const downsideClamped = Math.min(lot.returnPct, 0);
+    cur.downsideSqSum += downsideClamped * downsideClamped;
     byKey.set(key, cur);
   }
   return Array.from(byKey.entries())
@@ -1244,7 +1307,13 @@ function aggregateClosedLots(
       shrunkAvgReturnPct: Number((s.returnSum / (s.trades + prior)).toFixed(2)),
       // Holding-period fields: undefined when no lots in this bucket have entryAt/exitAt data.
       avgDaysHeld: s.daysHeldCount > 0 ? Number((s.daysHeldSum / s.daysHeldCount).toFixed(1)) : undefined,
-      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined
+      shortTermPct: s.daysHeldCount > 0 ? Number(((s.shortTermCount / s.daysHeldCount) * 100).toFixed(1)) : undefined,
+      // Payoff-split fields: undefined (never a fabricated 0) when the bucket has no winners/losers.
+      avgWinPct: s.winCount > 0 ? Number((s.winReturnSum / s.winCount).toFixed(2)) : undefined,
+      avgLossPct: s.lossCount > 0 ? Number((s.lossReturnAbsSum / s.lossCount).toFixed(2)) : undefined,
+      downsideDeviationPct: s.trades > 0 ? Number(Math.sqrt(s.downsideSqSum / s.trades).toFixed(2)) : undefined,
+      winCount: s.trades > 0 ? s.winCount : undefined,
+      lossCount: s.trades > 0 ? s.lossCount : undefined
     }))
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }

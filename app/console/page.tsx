@@ -102,8 +102,8 @@ export default function ConsoleHomePage() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <div className="flex min-w-0 flex-col gap-4">
           <Card
             title={
               <span className="flex items-center gap-1.5">
@@ -205,7 +205,7 @@ export default function ConsoleHomePage() {
           <PositionsCard snapshot={snapshot} />
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4">
           <RiskUtilizationCard risk={risk} />
 
           <Card
@@ -772,15 +772,25 @@ function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase;
 function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFrameworkProposal[]; refresh: () => Promise<void> }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [responses, setResponses] = useState<Record<string, string>>({});
 
-  const update = async (proposal: SocraticFrameworkProposal, status: "accepted" | "rejected" | "applied") => {
+  const update = async (
+    proposal: SocraticFrameworkProposal,
+    status: "accepted" | "rejected" | "applied",
+    ownerVerb?: "accept" | "reject" | "rewrite"
+  ) => {
     setBusyId(proposal.id);
     setMessage(null);
     try {
+      const ownerResponse = responses[proposal.id]?.trim();
       const res = await fetch(`/api/socratic/framework/${encodeURIComponent(proposal.id)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({
+          status,
+          ...(ownerVerb ? { ownerVerb } : {}),
+          ...(ownerResponse ? { ownerResponse } : {})
+        })
       });
       if (!res.ok) throw new Error(await res.text());
       await refresh();
@@ -800,19 +810,40 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
             <span>{proposal.status}</span>
           </div>
           <p>{proposal.proposedChange}</p>
+          <textarea
+            className="con-textarea mt-3"
+            rows={3}
+            value={responses[proposal.id] ?? proposal.ownerResponse ?? ""}
+            onChange={(event) => setResponses((current) => ({ ...current, [proposal.id]: event.target.value }))}
+            placeholder="Owner response or rewrite"
+          />
+          {proposal.ownerResponse && (
+            <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+              {proposal.ownerVerb ? `${proposal.ownerVerb}: ` : "Owner: "}
+              {proposal.ownerResponse}
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
               className="con-btn con-btn-pos con-btn-sm"
               disabled={busyId === proposal.id || proposal.status !== "pending"}
-              onClick={() => void update(proposal, "accepted")}
+              onClick={() => void update(proposal, "accepted", "accept")}
             >
               <Check size={14} /> Accept
             </button>
             <button
               type="button"
               className="con-btn con-btn-outline con-btn-sm"
-              disabled={busyId === proposal.id || proposal.status === "applied"}
+              disabled={busyId === proposal.id || proposal.status !== "pending" || !(responses[proposal.id] ?? proposal.ownerResponse ?? "").trim()}
+              onClick={() => void update(proposal, "accepted", "rewrite")}
+            >
+              <MessageSquare size={14} /> Rewrite
+            </button>
+            <button
+              type="button"
+              className="con-btn con-btn-outline con-btn-sm"
+              disabled={busyId === proposal.id || proposal.status !== "accepted"}
               onClick={() => void update(proposal, "applied")}
             >
               <GitBranch size={14} /> Applied
@@ -821,7 +852,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
               type="button"
               className="con-btn con-btn-danger-outline con-btn-sm"
               disabled={busyId === proposal.id || proposal.status !== "pending"}
-              onClick={() => void update(proposal, "rejected")}
+              onClick={() => void update(proposal, "rejected", "reject")}
             >
               <X size={14} /> Reject
             </button>

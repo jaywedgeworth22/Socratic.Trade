@@ -21,12 +21,81 @@ export const DAILY_HORIZONS: ReadonlyArray<{ horizon: "1d" | "1w"; tradingDays: 
 
 /** Intraday horizons: resolvable ONLY by sampling a live quote while the tolerance window is open
  * (no intraday history source exists in the stack). Once the window closes unsampled, the row is
- * terminally 'unresolvable(no_intraday_source)' — the durable due-jobs substrate that would
- * guarantee sampling is a separate, later effort. */
+ * terminally 'unresolvable(no_intraday_source)'. The durable due-jobs substrate (db-jobs.ts +
+ * outcome-engine.ts's drainDueIntradaySampleJobs) enqueues a 'sample_intraday_horizon' job at
+ * basisAt+ms for each horizon below so sampling survives process downtime instead of depending on
+ * a strategy run coincidentally landing inside the window. */
 export const INTRADAY_HORIZONS: ReadonlyArray<{ horizon: "15m" | "1h"; ms: number; toleranceMs: number }> = [
   { horizon: "15m", ms: 15 * 60_000, toleranceMs: 30 * 60_000 },
   { horizon: "1h", ms: 60 * 60_000, toleranceMs: 60 * 60_000 }
 ];
+
+/** caseKind used in a 'sample_intraday_horizon' job's dedupe_key / payload — identifies which
+ * pipeline (placed decision case, blocked/rejected decision case, or skipped-candidate
+ * counterfactual) owns the case identity carried in the payload. */
+export type IntradaySampleJobCaseKind = "decision" | "counterfactual";
+
+export interface IntradaySampleJobSpec {
+  dedupeKey: string;
+  dueAt: string;
+  notAfter: string;
+  payload: {
+    caseKind: IntradaySampleJobCaseKind;
+    caseId: string;
+    /** The decision/signal-snapshot run this case belongs to. Carried explicitly (rather than
+     * parsed back out of caseId) so the worker can look up the exact owning row without any
+     * string-splitting assumption about caseId's shape. */
+    runId?: string;
+    symbol: string;
+    horizon: "15m" | "1h";
+    /** Only present for caseKind === 'counterfactual': the exact horizon_days the owning
+     * skipped_candidate_counterfactuals row was inserted with (a run+symbol pair can have more than
+     * one row across different horizons — this disambiguates instead of picking min(horizon_days)). */
+    horizonDays?: number;
+    basisPrice: number;
+    basisAtMs: number;
+    side?: OrderSide;
+    priceBasisPrefix: string;
+  };
+}
+
+/**
+ * Pure builder for the pair of 'sample_intraday_horizon' due-job specs (one per INTRADAY_HORIZONS
+ * entry) for a single decision case / counterfactual whose entry basis just became known. No I/O —
+ * callers pass the resulting specs to enqueueDueJob (db-jobs.ts). dedupe_key is
+ * `${caseKind}:${caseId}:${horizon}` so a re-established basis (e.g. a re-run) or a double call from
+ * both the inline path and this enqueue path can never create a duplicate job row.
+ */
+export function buildIntradaySampleJobSpecs(input: {
+  caseKind: IntradaySampleJobCaseKind;
+  caseId: string;
+  runId?: string;
+  symbol: string;
+  horizonDays?: number;
+  basisPrice: number;
+  basisAtMs: number;
+  side?: OrderSide;
+  priceBasisPrefix: string;
+}): IntradaySampleJobSpec[] {
+  if (!(input.basisPrice > 0) || !Number.isFinite(input.basisAtMs)) return [];
+  return INTRADAY_HORIZONS.map(({ horizon, ms, toleranceMs }) => ({
+    dedupeKey: `${input.caseKind}:${input.caseId}:${horizon}`,
+    dueAt: new Date(input.basisAtMs + ms).toISOString(),
+    notAfter: new Date(input.basisAtMs + ms + toleranceMs).toISOString(),
+    payload: {
+      caseKind: input.caseKind,
+      caseId: input.caseId,
+      ...(input.runId ? { runId: input.runId } : {}),
+      symbol: input.symbol,
+      ...(input.horizonDays !== undefined ? { horizonDays: input.horizonDays } : {}),
+      horizon,
+      basisPrice: input.basisPrice,
+      basisAtMs: input.basisAtMs,
+      ...(input.side ? { side: input.side } : {}),
+      priceBasisPrefix: input.priceBasisPrefix
+    }
+  }));
+}
 
 /** Trading days PAST a horizon's target date after which a still-unresolved daily horizon is
  * terminal 'unresolvable' (bounded recheck window — delisted/renamed symbols stop pending forever). */
@@ -183,7 +252,16 @@ export function computeIntradayHorizonRows(input: IntradayHorizonInput): Socrati
 }
 
 /** Merge previously-persisted horizon rows with newly-computed ones: an existing TERMINAL row
- * (ok or unresolvable) is never overwritten; new rows fill the gaps. Order: 15m, 1h, 1d, 1w. */
+ * (ok or unresolvable) is never overwritten; new rows fill the gaps. Order: 15m, 1h, 1d, 1w.
+ *
+ * This is what makes the belt-and-suspenders double-sampling of a 15m/1h horizon safe: the same
+ * case can be sampled both by the inline `samplableNow` path inside measureCase (outcome-engine.ts)
+ * AND by the durable due-jobs worker (drainDueIntradaySampleJobs), whichever runs first for that
+ * horizon. WHICHEVER SIDE WRITES (persists) A RESOLVED ROW FIRST WINS — `existing` is layered in
+ * after `computed` below, so a previously-persisted terminal row always survives; the other path's
+ * later attempt reads that same persisted row as already-terminal and skips re-computing it (see the
+ * "already_resolved" short-circuit in drainDueIntradaySampleJobs). Neither path re-prices a
+ * horizon once it's terminal, so there is exactly one authoritative row per horizon, ever. */
 export function mergeHorizonRows(
   existing: SocraticOutcomeHorizonRow[] | undefined,
   computed: SocraticOutcomeHorizonRow[]

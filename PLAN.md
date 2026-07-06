@@ -13,6 +13,12 @@ filling the missing pieces.
 > `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
 > `LearnedFactsArchive` component on the Approvals page. See
 > `docs/rollouts/2026-07-06-learned-context-archive.md`.
+> **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
+> (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
+> stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
+> usage; in progress toward hosting preview lanes + eventually production. Separately,
+> `AGENTS.md` corrected to treat Cursor as a full peer agent lane (DeepSeek-driven) rather
+> than "not a 4th agent lane." See `docs/rollouts/2026-07-06-coolify-migration.md`.
 
 > **2026-07-05 - Console live-data build-out slice (Codex subagent, issue #471).** No roadmap
 > change. This branch is delivering the smallest reliable piece of the planned CODEX live-data row:
@@ -28,6 +34,11 @@ filling the missing pieces.
 > the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
 > deployed to production at `1e1a15bc`.
 
+> **2026-07-04 - Console scan column customization parity (Codex subagent).** `/console/scan`
+> now matches the legacy dashboard's browser-local column behavior for the current console scan
+> columns: visibility toggles, reorder controls, Reset, and saved visible-column order/state.
+> No roadmap scope change; this closes the documented scan-column parity gap from
+> `docs/reviews/2026-07-03-console-parity-open-items.md`.
 > **2026-07-04 - Approvals triage + alert center focused slice (Codex).** No roadmap scope change.
 > `/console/approvals` now covers the first operational triage layer from issue #470: sort/filter,
 > visible-row multi-select, bulk reject, and safe non-LIVE bulk approve through the existing
@@ -37,6 +48,15 @@ filling the missing pieces.
 > `Activity -> Alert center`. Remaining scope for the larger backlog row stays separate: unified
 > owner inbox across more object types, keyboard triage, and any broader console/live-data/settings
 > work.
+> **2026-07-04 - Coach/framework primitives slice (Codex, issue #473).** No roadmap scope change.
+> This branch is a focused primitive-wiring pass: the decision-trace coach flow can now attach a
+> note while optionally promoting it into a lesson or linked framework proposal, framework review
+> persists explicit owner rewrite/accept/reject verb semantics plus `ownerResponse`, and the trace
+> surfaces linked run metadata when the originating run exists. 2026-07-05 update: the branch is
+> now merge-forwarded to `origin/main` @ `0bfa4f1e` and fully green on focused + full verification
+> (`test/socratic-db`, `tsc`, quiet lint, full `npm test`, full build`). This closes a narrow part of the
+> console/coaching loop without touching live-data, settings IA, tooltip, Monet risk, or Claude
+> memory/RAG lanes.
 
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,

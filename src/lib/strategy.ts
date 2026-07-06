@@ -10,10 +10,12 @@ import {
   getPolicy,
   getProposal,
   getStrategyPrompt,
+  ingestedAccessionCountsByDocType,
   insertProposal,
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
+  listFillEvents,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
@@ -50,6 +52,7 @@ import {
   getClosedLotCount,
   getConfidenceCalibration,
   type ConfidenceCalibrationStat,
+  type PrefetchedFills,
   getFactorScorecard,
   getRegimeScorecard,
   getSectorScorecard,
@@ -62,21 +65,25 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
+import { fractionalKellySuggestion } from "./kelly";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
+import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
-import { checkBudgetAndAlert } from "./usage-budget";
-import { avgReturnCorrelation } from "./correlation";
+import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
+import { avgReturnCorrelation, correlationProfile } from "./correlation";
+import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -87,10 +94,20 @@ import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
-import { retrieveLearnedContext } from "./learned-context/store";
+import { retrieveLearnedContextDetailed } from "./learned-context/store";
+import {
+  collectEvidenceAgeAnomalies,
+  computeEmptyDocTypes,
+  scanForInjectionAttempts,
+  type EvidenceAgeInput,
+  type InjectionFinding,
+  type UntrustedPromptField
+} from "./prompt-safety";
 import { debateProposal } from "./red-team";
+import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
-import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
+import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
+import { computeMultiSignalSeverity } from "./regime-severity";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
 import {
   applySocraticOverrideSizing,
@@ -102,7 +119,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -115,6 +132,36 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+/**
+ * corpus-coverage-receipt (2026-07-06, redesigned same day — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history): doc types the
+ * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. Deliberately a STATIC
+ * allowlist restricted to types whose PRODUCER LEDGER (`ingested_accessions`, via
+ * `ingestedAccessionCountsByDocType`) is COMPLETE — i.e. every writer for that type records an
+ * accession row, so "zero ingested rows" reliably means "never produced," not "this writer just
+ * doesn't track accessions."
+ *   - "10-k" / "10-q": src/lib/web-sources/sec-filings.ts's `ingestFiling` (always on) writes an
+ *     `ingested_accessions` row for every 10-K/10-Q ingest, stored as the raw form letter
+ *     ("10-K"/"10-Q"). Complete ledger — safe to both-conditions-check.
+ *
+ * "8-k" is EXCLUDED here (though it stays in `requestedFilingsDocTypes` below — harmless,
+ * retrieval-only): the default-ON 8-K SUMMARY writer (src/lib/web-sources/sec8k.ts,
+ * `refreshEightK`'s `storeContexts` call, `doc_type: "8-k"`) writes retrievable chunks to the
+ * vector corpus but NEVER calls `insertIngestedAccession` — only the default-OFF full-body writer
+ * (`ingestEightKBody`, under the "8-K-body" sentinel) does. So the ledger cannot distinguish "this
+ * account has no 8-K coverage at all" from "8-K summaries exist in the corpus but none ranked this
+ * run" — treating a zero producer-count as "never produced" would be wrong, and 8-K is
+ * event-sparse enough (frequently won't rank top-3) that a retrieval-only check would false-positive
+ * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
+ * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
+ *
+ * "earnings-transcript" also stays EXCLUDED (same as before): no ingestion writer exists anywhere
+ * in this repo for it, so it is a genuine, permanent zero-producer — including it would fire a
+ * receipt on every single run forever, training the operator to ignore the whole receipt. Re-add
+ * it the day a producer lands.
+ */
+const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -221,6 +268,28 @@ function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, ru
   return nudge.weights;
 }
 
+/**
+ * Whether a debated OPENING should count toward the sell-to-fund intended-notional. A pre-veto-tagged
+ * opening (deterministic-bear / red-team veto, now tag-not-drop) is BLOCKED downstream unless the agent
+ * self-overrides it — which only AUTO-EXECUTES in "execute" mode with a requested override thesis
+ * ("propose" routes it to requiresHumanReview and is excluded there; "off" / no-thesis stays blocked).
+ * Counting a non-auto-executing tagged opening would let `sellToFundBuy: "automated"` liquidate real
+ * holdings to fund a buy the system then refuses — the exact regression tag-not-drop introduced, since
+ * a vetoed buy used to be dropped and contribute $0. Untagged openings are unaffected (return true).
+ * Exported for direct unit testing.
+ */
+export function preVetoTaggedOpeningWillPlace(
+  p: TradeProposal,
+  socraticOverrideMode: TradingPolicy["socraticOverrideMode"]
+): boolean {
+  if (!p.preVetoReasons?.length) return true;
+  return (
+    socraticOverrideMode === "execute" &&
+    p.autonomyOverride?.requested === true &&
+    !!p.autonomyOverride.thesis?.trim()
+  );
+}
+
 export async function runStrategyOnce(
   userId: string = "local",
   options: { manual?: boolean; connectedAccountId?: string } = {}
@@ -278,10 +347,44 @@ export async function runStrategyOnce(
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
-    // Phase 2 (model-downgrade / cycle-skip enforcement) is DEFERRED to a follow-up PR: it must skip
-    // only the LLM proposal step — never the broker reconciliation or the risk-reducing exits below —
-    // and must not persist a temporary downgrade; see docs/usage-monitor-integration.md.
     void checkBudgetAndAlert(userId, policy).catch(() => {});
+
+    // ADVISORY (always on when the monitor is configured, independent of USAGE_BUDGET_ENFORCE): read
+    // budget status once and (a) stamp a receipt so operator spend is auditable per-run even when
+    // enforcement is off, (b) format a compact advisory line threaded into the Bull/Bear userContent
+    // below (see `budgetAdvisory` on proposeTrades' input) — DATA for the agent, never a command; the
+    // agent decides whether a cheaper model or skipping is worth it. Enforcement (Phase 2, below at
+    // the LLM budget choke point) is the owner's opt-in override of that same decision via
+    // USAGE_BUDGET_ENFORCE. Best-effort: never blocks or fails a run. The fetched status is cached
+    // (see `budgetStatus` below) and reused at the enforcement choke point instead of re-fetching.
+    let budgetAdvisory: string | undefined;
+    let budgetStatus: Awaited<ReturnType<typeof getBudgetStatusCached>> = null;
+    try {
+      budgetStatus = await getBudgetStatusCached();
+      if (budgetStatus) {
+        const enforceOn = usageBudgetEnforceEnabled();
+        const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
+        audit(
+          "usage_budget_status",
+          {
+            runId,
+            enforceOn,
+            summary: budgetStatus.summary,
+            providers: budgetStatus.providers.map((p) => ({ name: p.name, status: p.status, spentUsd: p.spentUsd, monthlyBudgetUsd: p.monthlyBudgetUsd, percentUsed: p.percentUsed })),
+            wouldSkip: wouldDecide.skip,
+            wouldDowngrade: wouldDecide.downgraded,
+            suggestedLlmModel: wouldDecide.llmModel,
+            suggestedRedTeamLlmModel: wouldDecide.redTeamLlmModel,
+            reason: wouldDecide.reason
+          },
+          userId,
+          connectedAccountId
+        );
+        budgetAdvisory = formatBudgetAdvisory(budgetStatus);
+      }
+    } catch {
+      /* advisory is best-effort — never break the run */
+    }
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -331,7 +434,16 @@ export async function runStrategyOnce(
     const currentPrices = currentPricesFromScan(marketScan);
     const workingPortfolio = portfolio;
     const workingPositions = positions;
+    // Held-position symbol set, hoisted here so every retrieval scope below (filings RAG,
+    // learned-context, episodic) can widen its symbol list to include OPEN positions — not just
+    // the score-sorted top-N scan candidates — so sell/hold/trim decisions on existing holdings
+    // get retrieved memory too. Strictly additive: never used to shrink/reorder the BUY-candidate
+    // scan/prompt set. Reused (not recomputed) by the take-profit trim-band pruning below.
+    const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
     const learningSource = fillSourceForExecutionMode(executionMode);
+    const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
+    const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
+    const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
@@ -416,6 +528,66 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Usage-budget Phase 2 enforcement (opt-in, USAGE_BUDGET_ENFORCE) ────
+    // Owner's off-by-default switch on top of the ADVISORY computed above. Placed at this same
+    // choke point — AFTER the risk-reducing breakers, BEFORE any LLM call — so it can only ever skip
+    // the LLM proposal step, never risk maintenance. skip ends the run gracefully right here (audit +
+    // notifyBudgetSkip, no LLM call, no reservation taken); downgrade is carried as a RUN-SCOPED
+    // `runLlmOverride`/`runPolicy` (below) — NEVER written onto `policy` itself — so every
+    // persistence-adjacent site (autoRevertOnCapBreach, setPolicy) keeps seeing the owner's pristine,
+    // configured models and can never persist the downgrade. `runPolicy` (the derived clone with the
+    // override merged in) is what actually reaches `resolveLlmEndpoint` in `proposeTrades`,
+    // `debateProposal`'s explicit policy argument, and proposal revalidation. Fail-open on any
+    // evaluator error (evaluateBudgetForRun never throws, but this is the same posture as everything
+    // else in this file's budget handling). The `try` is scoped to ONLY the evaluator call — the skip
+    // sequence (audit + notify + finish + release + return) runs OUTSIDE the catch so a transient
+    // throw from finishStrategyRun/releaseStrategyLock can't be swallowed and silently fall through
+    // into the full LLM/trade path while the audit trail still says "skipped" (mirrors the
+    // market-closed early-return above).
+    let enforceDecision: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
+    try {
+      enforceDecision = await evaluateBudgetForRun(userId, policy, { status: budgetStatus });
+    } catch {
+      /* fail-open — never let usage-budget enforcement break a run */
+    }
+    if (enforceDecision.skip) {
+      const reason = enforceDecision.reason ?? "Over budget.";
+      audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);
+      await notifyBudgetSkip(userId, policy, runId, reason);
+      const summary = `Strategy run skipped — over usage budget. ${reason}`;
+      result = { runId, status: "completed", summary, proposals: [] };
+      finishStrategyRun(runId, "completed", summary, userId);
+      releaseStrategyLock(userId, connectedAccountId);
+      return result;
+    }
+    // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
+    // autoRevertOnCapBreach) can ever see or write the downgraded models. `runPolicy` below is the ONLY
+    // object threaded into LLM-model-resolution call sites for this run.
+    const runLlmOverride: { llmModel?: string; redTeamLlmModel?: string } = {};
+    if (enforceDecision.downgraded) {
+      const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+      if (enforceDecision.llmModel) runLlmOverride.llmModel = enforceDecision.llmModel;
+      if (enforceDecision.redTeamLlmModel) runLlmOverride.redTeamLlmModel = enforceDecision.redTeamLlmModel;
+      audit(
+        "usage_budget_enforced",
+        {
+          runId,
+          userId,
+          action: "downgrade",
+          reason: enforceDecision.reason,
+          before,
+          after: { llmModel: runLlmOverride.llmModel ?? before.llmModel, redTeamLlmModel: runLlmOverride.redTeamLlmModel ?? before.redTeamLlmModel }
+        },
+        userId,
+        connectedAccountId
+      );
+    }
+    // Derived, run-scoped policy used ONLY for LLM-model resolution (proposeTrades, debateProposal,
+    // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
+    // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
+    // persists ONLY `strategyAuthority`, never the in-run model downgrade.
+    const runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride };
+
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
     // breakers above) and BEFORE any model call below (proposal REVALIDATION and generation), so a
@@ -432,6 +604,23 @@ export async function runStrategyOnce(
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
+    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
+    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
+    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
+    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
+    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
+    if (!skipLlmDueToBudget) {
+      const monthly = checkMonthlyLlmSpendCeiling();
+      if (!monthly.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "usage_budget_enforced",
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          userId,
+          connectedAccountId
+        );
+      }
+    }
     if (!skipLlmDueToBudget) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;
@@ -465,7 +654,8 @@ export async function runStrategyOnce(
       });
     const revalidation = skipLlmDueToBudget
       ? null
-      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+      // runPolicy (not policy): this LLM re-check must see the run-scoped usage-budget downgrade too.
+      : await revalidatePendingProposals({ userId, policy: runPolicy, accountNumber: policy.accountNumber, marketScan })
           .catch((e) => {
             console.error("[revalidation] run error:", e);
             return null;
@@ -506,7 +696,6 @@ export async function runStrategyOnce(
       try {
         const lastTpBands = getTakeProfitTrimBands(policy.accountNumber, userId);
         const tpPlan = planTakeProfitTrims(workingPositions, currentPrices, policy, lastTpBands);
-        const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
         clearTakeProfitTrimBands(policy.accountNumber, Object.keys(lastTpBands).filter((s) => !heldSymbols.has(s)), userId);
         proactiveProposals.push(...tpPlan.proposals);
       } catch (err) {
@@ -516,6 +705,26 @@ export async function runStrategyOnce(
 
     let ragContext = "";
     let socraticRagAttributions: SocraticRagAttribution[] = [];
+    // Advisory prompt-safety receipts (CR-H lane): kind-'safety' evidence items attached to every
+    // decision case this run records. Populated by the evidence-age check below and the
+    // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
+    const promptSafetyEvidence: SocraticEvidenceItem[] = [];
+    const evidenceAgeInputs: EvidenceAgeInput[] = [];
+    // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
+    // coverage receipt after this block can report "requested" alongside "retrieved this run" /
+    // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
+    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
+    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below — "8-k"
+    // and "earnings-transcript" stay in this retrieval request list (harmless — retrieveContextDetailed
+    // just gets more empty filter values) but are deliberately excluded from the coverage check
+    // itself; see COVERAGE_CHECKED_DOC_TYPES's comment near the top of this file.
+    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
+    const retrievedFilingsDocTypes = new Set<string>();
+    // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
+    // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
+    // below and mirrored onto the decision case's `ragRetrievalStatus` field. Advisory only — never
+    // changes which chunks are retrieved/used; a pure receipt of WHY a pass came back empty/degraded.
+    const ragRetrievalStatusRows: { symbol: string; status: string; reason?: string }[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -525,12 +734,51 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
           await import("./vector-db");
-        const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
+        // hyde-multiquery-retrieval (2026-07-05): both flag-gated, default OFF — when off, `variants`
+        // is always `[]` below and `retrieveContextDetailed` gets no `queries` option, so this pass is
+        // byte-for-byte the single-query call it was before this item.
+        const { multiQueryEnabled, hydeEnabled, deriveQueryVariants, generateHydePassages } = await import("./rag/multi-query");
+        const { shouldDegradeForBudget } = await import("./rag/run-budget");
+        const wantMultiQuery = multiQueryEnabled() && !shouldDegradeForBudget();
+        const wantHyde = hydeEnabled() && !shouldDegradeForBudget();
+        // Widen retrieval (not the BUY-candidate scan/prompt set) to also cover OPEN positions: a
+        // held name outside the top-3 by score still needs a filings-RAG pass so sell/hold/trim
+        // decisions on it are informed. Held symbols are unioned in, never substituted for the
+        // top-N, and the top-N ordering/membership is untouched.
+        const topSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map(c => c.symbol), ...heldSymbols]);
         const contexts = await Promise.all(
           topSymbols.map(async (sym) => {
             const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            let variants: string[] = [];
+            if (wantMultiQuery) {
+              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+              const breakdown = candidate?.factorBreakdown;
+              let dominantFactor: string | undefined;
+              if (breakdown) {
+                let best = -Infinity;
+                for (const [key, value] of Object.entries(breakdown)) {
+                  if (key === "weightedTotal" || typeof value !== "number") continue;
+                  if (value > best) {
+                    best = value;
+                    dominantFactor = key;
+                  }
+                }
+              }
+              variants = deriveQueryVariants({
+                symbol: sym,
+                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                dominantFactor,
+                evidenceBulletins: candidate?.evidenceBulletins
+              });
+              if (wantHyde && variants.length > 0) {
+                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
+                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
+                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                variants = [...variants, ...hydePassages];
+              }
+            }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              docType: requestedFilingsDocTypes,
               minScore: defaultMinScore(),
               // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
               // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
@@ -538,13 +786,38 @@ export async function runStrategyOnce(
               // socratic-decision retrieval path per the composite review's guidance.
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId
+              connectedAccountId: policy.connectedAccountId,
+              runId,
+              ...(variants.length > 0 ? { queries: variants } : {}),
+              // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
+              // never affects `chunks` — see RetrievalStatus in vector-db.ts.
+              onStatus: (status) => {
+                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+              }
             });
             return { sym, query, chunks };
           })
         );
         const validContexts = contexts.flatMap((context) => context.chunks).filter(Boolean);
         socraticRagAttributions = contexts.flatMap((context) => ragAttributionsFromChunks(context.sym, context.query, context.chunks));
+        // Evidence-age receipt inputs: a HIGH-relevance chunk dated <24h old is worth a receipt
+        // (fresh text steering a same-day decision). Aggregated + audited once below.
+        const relevanceFloor = defaultRelevanceFloor();
+        for (const context of contexts) {
+          for (const chunk of context.chunks) {
+            evidenceAgeInputs.push({
+              kind: "rag_chunk",
+              id: chunk.id,
+              label: `${context.sym} ${chunk.doc_type ?? "chunk"}${chunk.as_of ? ` ${String(chunk.as_of).slice(0, 10)}` : ""}`,
+              timestamp: chunk.as_of,
+              relevanceScore: chunk.relevanceScore ?? chunk.score,
+              relevanceFloor
+            });
+            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
+            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
+            if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
+          }
+        }
         if (validContexts.length > 0) {
           // 2026-07-04 RAG quick-wins: prefix each chunk with a compact provenance header
           // (doc_type/section/symbol/date/relevance) so the model can weight a fresh 8-K over a
@@ -555,6 +828,15 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
+        // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
+        // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
+        // have fired yet — record a fallback row per symbol actually in scope (top-3 UNION held
+        // positions — see `topSymbols` above) so the receipt isn't silently absent for a held name.
+        for (const sym of uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map((c) => c.symbol), ...heldSymbols])) {
+          if (!ragRetrievalStatusRows.some((row) => row.symbol === sym)) {
+            ragRetrievalStatusRows.push({ symbol: sym, status: "lookup_failed", reason: e instanceof Error ? e.message : String(e) });
+          }
+        }
       }
     }
 
@@ -564,14 +846,88 @@ export async function runStrategyOnce(
     // learned-context safety regression test guards that invariant.
     let learnedContext = "";
     try {
-      const learnedSymbols = marketScan.topCandidates.slice(0, 8).map((c) => c.symbol);
+      // Same held-position widening as the filings-RAG pass above: union in open positions so
+      // learned facts on a held name outside the top-8 still surface, without touching the
+      // top-8 BUY-candidate slice itself.
+      const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
       // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
-      const learnedFacts = retrieveLearnedContext(userId, learnedSymbols);
-      if (learnedFacts.length > 0) {
-        learnedContext = learnedFacts.join("\n");
+      const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
+      if (learnedFacts.lines.length > 0) {
+        learnedContext = learnedFacts.lines.join("\n");
+      }
+      // Evidence-age receipt inputs: a fact FIRST ASSERTED <24h ago entering today's prompt.
+      for (const row of learnedFacts.rows) {
+        evidenceAgeInputs.push({
+          kind: "learned_fact",
+          id: row.id,
+          label: `${row.symbol ?? "GENERAL"} ${row.subject}`,
+          timestamp: row.assertedAt
+        });
       }
     } catch (e) {
       console.warn("[Strategy] Skipping learned-context, store unavailable.");
+    }
+
+    // ── Evidence-age anomaly receipt (advisory only) ───────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when same-day evidence (a fresh,
+    // high-relevance RAG chunk or a fact asserted today) entered this run's prompts. No text is
+    // changed, nothing is dropped or blocked — the receipt IS the control.
+    const evidenceAgeAnomalies = collectEvidenceAgeAnomalies(evidenceAgeInputs);
+    if (evidenceAgeAnomalies.length > 0) {
+      audit("evidence_age_anomaly", { runId, items: evidenceAgeAnomalies }, userId, connectedAccountId);
+      promptSafetyEvidence.push({
+        kind: "safety",
+        tone: "warning",
+        title: "Same-day evidence entered this run",
+        summary:
+          `${evidenceAgeAnomalies.length} evidence item(s) first seen <24h before this run: ` +
+          `${evidenceAgeAnomalies.map((i) => `${i.label} (${i.kind}, ${i.ageHours}h old)`).join("; ").slice(0, 400)}. ` +
+          "Advisory receipt only — nothing was altered or blocked.",
+        source: "prompt-safety",
+        data: evidenceAgeAnomalies
+      });
+    }
+
+    // ── Corpus-coverage receipt (advisory only) ────────────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
+    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist restricted to types whose producer
+    // ledger is COMPLETE, currently 10-k/10-q; see its comment for why "8-k" and
+    // "earnings-transcript" are excluded) is BOTH not retrieved this run AND has zero ever-ingested
+    // producer rows. Both-conditions is load-bearing — see computeEmptyDocTypes's doc comment.
+    // Never touches ragContext/sizing/policy — receipt only.
+    if (!skipLlmDueToBudget) {
+      // ONE bulk query for the whole run (not one query per coverage-checked type), reused as an
+      // in-memory lookup — mirrors ingestedAccessionCountForDocType's prefix-tolerant matching
+      // (any stored doc_type whose lowercased form starts with the requested lowercased type)
+      // without the DB dependency living inside prompt-safety.ts.
+      const accessionCountsByDocType = ingestedAccessionCountsByDocType();
+      const hasProducerForDocType = (docType: string): boolean => {
+        const normalized = docType.toLowerCase();
+        for (const [storedType, count] of Object.entries(accessionCountsByDocType)) {
+          if (count > 0 && storedType.startsWith(normalized)) return true;
+        }
+        return false;
+      };
+      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes, hasProducerForDocType);
+      if (emptyDocTypes.length > 0) {
+        const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
+        audit(
+          "rag_doc_type_coverage_empty",
+          { runId, symbols: coverageSymbols, emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes },
+          userId,
+          connectedAccountId
+        );
+        promptSafetyEvidence.push({
+          kind: "safety",
+          tone: "warning",
+          title: "Requested filings doc type never ingested",
+          summary:
+            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run: ` +
+            `${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
+          source: "prompt-safety",
+          data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
+        });
+      }
     }
 
     // ── Episodic decision memory: closest historical analogs + owner coaching ──
@@ -591,7 +947,7 @@ export async function runStrategyOnce(
         // the same regime proposeTrades derives later for entryMarketRegime stamping.
         const macroForSketch = await fetchMacroData(userId).catch(() => undefined);
         const regimeForSketch = macroForSketch ? determineMarketRegime(macroForSketch) : "Unknown";
-        const situationCandidates = marketScan.topCandidates.slice(0, 3).map((candidate) => {
+        const toSituationCandidate = (candidate: MarketQuote) => {
           const sym = normalizeSymbol(candidate.symbol);
           const breakdown = candidate.factorBreakdown;
           let topFactor: string | undefined;
@@ -611,7 +967,32 @@ export async function runStrategyOnce(
             dominantFactor: topFactor,
             evidence: candidate.evidenceBulletins
           };
-        });
+        };
+        const topSlice = marketScan.topCandidates.slice(0, 3);
+        const situationCandidates: SituationCandidate[] = topSlice.map(toSituationCandidate);
+        // Widen episodic retrieval scope (not the BUY-candidate top-3 itself) to also cover OPEN
+        // positions outside that slice, so sell/hold/trim decisions on them get analog/coaching
+        // memory too. marketScan.topCandidates force-includes every held symbol (see market.ts
+        // heldExtra), so the fuller candidate shape (sector/dominantFactor/evidence) is available
+        // via lookup; a minimal symbol+sector fallback covers the defensive case where it's somehow
+        // absent (e.g. a mocked/partial marketScan in a test). Lookup map built once so the loop
+        // below is O(heldSymbols) rather than O(heldSymbols x topCandidates).
+        const coveredSymbols = new Set(topSlice.map((c) => normalizeSymbol(c.symbol)));
+        const candidateBySymbol = new Map(marketScan.topCandidates.map((c) => [normalizeSymbol(c.symbol), c]));
+        for (const heldSym of heldSymbols) {
+          if (coveredSymbols.has(heldSym)) continue;
+          coveredSymbols.add(heldSym);
+          const fullCandidate = candidateBySymbol.get(heldSym);
+          // `held: true` lets buildSituationSketch (experience-memory.ts) fold this candidate into
+          // the episodic query text even though it's appended past the top-3 slice — without that
+          // flag the sketch's own slice(0, 3)-equivalent would silently drop it (see
+          // docs/rollouts/2026-07-06-held-position-retrieval-scope.md follow-up).
+          situationCandidates.push(
+            fullCandidate
+              ? { ...toSituationCandidate(fullCandidate), held: true }
+              : { symbol: heldSym, sector: marketScan.sectorBySymbol[heldSym], dominantFactor: undefined, evidence: undefined, held: true }
+          );
+        }
         const episodic = await retrieveDecisionExperiences({
           userId,
           runId,
@@ -621,6 +1002,9 @@ export async function runStrategyOnce(
         });
         experienceAnalogs = episodic.analogsBlock ?? "";
         ownerCoaching = episodic.coachingBlock ?? "";
+        // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the episodic pass is
+        // cross-symbol, so it gets one PORTFOLIO row rather than a per-symbol one.
+        ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: episodic.status });
         if (episodic.injected.length > 0) {
           // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
           // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
@@ -646,7 +1030,22 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         console.warn("[Strategy] Skipping episodic decision memory, retrieval unavailable:", e instanceof Error ? e.message : String(e));
+        // Typed retrieval-status receipt fallback: retrieveDecisionExperiences itself never throws
+        // (its own try/catch always resolves to a status-carrying result), but this outer catch
+        // covers earlier statements in the block (e.g. fetchMacroData) — record the row if missing.
+        if (!ragRetrievalStatusRows.some((row) => row.symbol === "PORTFOLIO")) {
+          ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: "lookup_failed", reason: e instanceof Error ? e.message : String(e) });
+        }
       }
+    }
+
+    // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): persist the per-symbol
+    // (filings pass) + PORTFOLIO (episodic pass) classification alongside the existing
+    // `experience_retrieval` audit above. Advisory only — this NEVER changes which chunks were used;
+    // it is purely a receipt of WHY a pass came back empty/degraded (no-memory vs lookup-failed vs
+    // budget-skipped vs degraded), for observability instead of every cause collapsing to silence.
+    if (ragRetrievalStatusRows.length > 0) {
+      audit("rag_retrieval_status", { runId, rows: ragRetrievalStatusRows }, userId, connectedAccountId);
     }
 
     // ── "Do nothing" threshold (minProposalScoreThreshold) ─────────────────
@@ -703,7 +1102,9 @@ export async function runStrategyOnce(
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId),
-        policy,
+        // runPolicy (not policy): carries the run-scoped usage-budget model downgrade (if any) into
+        // resolveLlmEndpoint without ever mutating/persisting the owner's configured policy.
+        policy: runPolicy,
         activeAccount,
         portfolio: workingPortfolio,
         positions: workingPositions,
@@ -715,27 +1116,114 @@ export async function runStrategyOnce(
         learnedContext,
         ...(experienceAnalogs ? { experienceAnalogs } : {}),
         ...(ownerCoaching ? { ownerCoaching } : {}),
-        drawdownAdvisory
+        drawdownAdvisory,
+        budgetAdvisory,
+        prefetched: prefetchedFills
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
       bearReviewUnavailable = proposed.bearReviewUnavailable === true;
       bearReviewReason = proposed.bearReviewReason;
+      // Advisory injection receipts from the prompt-assembly scan (audited inside proposeTrades):
+      // fold into kind-'safety' evidence, one item per flagged field, so every decision case this
+      // run records carries the receipt. Never alters proposals or routing.
+      if (proposed.promptSafetyFindings && proposed.promptSafetyFindings.length > 0) {
+        const byField = new Map<string, InjectionFinding[]>();
+        for (const finding of proposed.promptSafetyFindings) {
+          byField.set(finding.name, [...(byField.get(finding.name) ?? []), finding]);
+        }
+        for (const [field, findings] of Array.from(byField.entries()).slice(0, 4)) {
+          promptSafetyEvidence.push({
+            kind: "safety",
+            tone: "warning",
+            title: `Possible prompt-injection pattern in ${field}`,
+            summary:
+              `Deterministic scan matched ${findings.map((f) => f.pattern).join(", ")}: "${findings[0].excerpt.slice(0, 240)}". ` +
+              "The text was passed through unmodified — advisory receipt, generation was not blocked.",
+            source: "prompt-safety",
+            data: findings
+          });
+        }
+      }
     }
 
     // Item 6: compute the confidence-calibration curve ONCE per run (not per-proposal) when the flag is on,
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
     const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
       policy.tuning?.calibrationSizing && policy.accountNumber
-        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId)
+        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId, prefetchedFills)
         : undefined;
+
+    // Volatility-targeting sizing (opt-in, default off): precompute annualized realized vol (%) per
+    // OPENING candidate symbol, mirroring the atrStopPctBySymbol precompute pattern above so the sync
+    // sizer can use it. Gated on volTargeting-or-atrStops being on so we never add fetch load purely
+    // for an advisory note when the feature is fully off; bars are shared with the ATR precompute's
+    // 30-min cache when a symbol is both an open position and a fresh candidate. Best-effort + bounded:
+    // a fetch error or insufficient bars simply leaves that symbol's vol-target note/taper skipped.
+    const realizedVolPctBySymbol: Record<string, number> = {};
+    if (policy.tuning?.volTargeting === true || policy.atrStops === true) {
+      const openingSymbols = Array.from(
+        new Set(
+          llmProposals
+            .filter((p) => p.side === "buy" || p.side === "short")
+            .map((p) => normalizeSymbol(p.symbol))
+        )
+      );
+      await Promise.all(
+        openingSymbols.map(async (sym) => {
+          try {
+            const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+            if (!bars) return;
+            const vol = realizedVolPct(bars);
+            if (typeof vol === "number") realizedVolPctBySymbol[sym] = vol;
+          } catch {
+            // best-effort — the vol-target note/taper is simply skipped for this symbol
+          }
+        })
+      );
+    }
+
+    // Portfolio-heat budget (opt-in, default off): compute the CURRENT book's heat ONCE per run (not
+    // per-proposal) from existing positions, reusing the SAME stop-basis precedence as
+    // generateProactiveRiskProposals' effectiveStopPct (ATR > beta-scaled > flat) so heat reflects the
+    // same protective distances the app already manages. Never fabricates a stop for a position with
+    // no basis — computePortfolioHeat excludes it from totalRiskUsd and flags it in perPosition instead.
+    let bookHeat: PortfolioHeatResult | undefined;
+    if (policy.tuning?.volTargeting === true && (policy.tuning?.portfolioHeatBudgetPct ?? 0) > 0) {
+      const flatStopPct = policy.riskRules.stopLossPct ?? 0;
+      const betaStopsOn = policy.betaScaledStops === true;
+      const stopPctBySymbol: Record<string, number> = {};
+      for (const p of workingPositions) {
+        if (Math.abs(p.quantity) <= 0.000001) continue;
+        const sym = normalizeSymbol(p.symbol);
+        const baseStop = p.quantity < 0 ? (policy.riskRules.shortStopLossPct ?? flatStopPct) : flatStopPct;
+        if (baseStop <= 0) continue;
+        const atrPct = atrStopPctBySymbol[sym];
+        const resolved =
+          typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0
+            ? atrPct
+            : betaScaledStopPct(baseStop, betaBySymbol[sym], betaStopsOn);
+        if (typeof resolved === "number" && Number.isFinite(resolved) && resolved > 0) {
+          stopPctBySymbol[sym] = resolved;
+        }
+      }
+      const equity = accountEquity(workingPortfolio);
+      bookHeat = computePortfolioHeat(
+        workingPositions
+          .filter((p) => Math.abs(p.quantity) > 0.000001)
+          .map((p) => ({ symbol: normalizeSymbol(p.symbol), marketValue: p.marketValue })),
+        stopPctBySymbol,
+        flatStopPct > 0 ? flatStopPct : undefined,
+        equity
+      );
+    }
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
     // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
     const sizedProposals = llmProposals
       .filter((p) => {
-        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId);
+        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
           console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
           audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
@@ -743,7 +1231,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
         return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
@@ -788,7 +1276,10 @@ export async function runStrategyOnce(
       if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // Pass the run-scoped `runPolicy` explicitly (rather than letting debateProposal re-read
+        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of redTeamLlmModel — carried on this
+        // run-scoped object only, never persisted onto `policy` — actually reaches the Bear's model choice.
+        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, runPolicy);
         // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
         proposal.redTeamVerdict = {
@@ -799,54 +1290,127 @@ export async function runStrategyOnce(
           // persisted so the approval card's red-team badge doesn't drift with later policy edits.
           ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
           // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
-          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {})
+          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {}),
+          // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
+          ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
         };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
-          // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
-          // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
-          // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
-          // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
-          // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
-          // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
-          // account's vetoes bleed into another account's efficacy scorecard.
-          audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
-          // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
-          // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
-          // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
-          // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
-          // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
-          // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
-          // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
-          // score/sector/factor/bulletin evidence onto this early row — see
-          // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
-          if (proposal.side === "buy" || proposal.side === "short") {
-            try {
-              recordRejectedProposalCounterfactual({
-                userId,
-                connectedAccountId,
+          // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent
+          // attaches an autonomyOverride thesis to an OPENING and socraticOverrideMode isn't "off".
+          // In that case we TAG the proposal with an overridable `red_team_veto:` reason and fall
+          // through to debatedProposals (NO continue) — the sized override decision then happens once
+          // at resolveSocraticOverride. Otherwise the Bear genuinely kept the trade out and we keep
+          // today's exact behavior (audit + missed-opportunity counterfactual + continue).
+          const isOpening = proposal.side === "buy" || proposal.side === "short";
+          const overrideRequested =
+            isOpening &&
+            proposal.autonomyOverride?.requested === true &&
+            !!proposal.autonomyOverride.thesis?.trim() &&
+            policy.socraticOverrideMode !== "off";
+
+          if (overrideRequested) {
+            // ADVISORY path — tag, do NOT continue. FIX #1: emit a DISTINCT audit kind
+            // (red_team_veto_overridden) and DO NOT write the missed-opportunity counterfactual. This
+            // trade may actually EXECUTE, so recording it as a Bear-vetoed missed opportunity would
+            // corrupt getRedTeamEfficacy() (it keys strictly off proposal_rejected_by_red_team joined
+            // to the counterfactual return) — double-booking the same symbol as both a missed winner
+            // and a real position. Override payoff is measured through the matured-position path
+            // (frameworkProposalFromDecision's "Review overridden gate") instead.
+            audit(
+              "red_team_veto_overridden",
+              {
                 runId,
                 symbol: proposal.symbol,
-                refPrice: proposal.referencePrice,
-                createdAt: new Date().toISOString(),
-                regime: proposal.entryMarketRegime
-              });
-            } catch (err) {
-              console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+                side: proposal.side,
+                thesisTag: proposal.tradeThesisTag,
+                reason: redTeamResult.reason,
+                model: redTeamResult.model,
+                mode: policy.socraticOverrideMode
+              },
+              userId,
+              connectedAccountId
+            );
+            proposal.redTeamVerdict = { ...proposal.redTeamVerdict!, rejected: true, overridden: true };
+            proposal.preVetoReasons = [...(proposal.preVetoReasons ?? []), `red_team_veto: ${redTeamResult.reason}`];
+            // fall through to debatedProposals.push(proposal) — NO continue
+          } else {
+            // Audit the Bear veto (parity with proposal_skipped_negative_ev / proposal_skipped_correlation)
+            // so a rejected high-conviction trade is visible in the Activity/Audit feed, not just console.
+            // runId + model are stamped so getRedTeamEfficacy() can join this veto to its matured
+            // counterfactual return (joined by runId+symbol) and break efficacy out per red-team model.
+            // connectedAccountId keeps the audit ACCOUNT-scoped in multi-account runs, matching the
+            // counterfactual row it joins to (Codex review on PR #365) — a user-wide row would let one
+            // account's vetoes bleed into another account's efficacy scorecard.
+            audit("proposal_rejected_by_red_team", { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model }, userId, connectedAccountId);
+            // Feed a Bear-VETOED OPENING proposal into the same counterfactual pipeline as a policy
+            // block / human rejection (same three-way parity: policy blocks at ~line 1010, human
+            // rejections in rejectProposal) so its post-veto return matures into missed-opportunity
+            // analytics and getRedTeamEfficacy() below — the Red Team's own vetoes were previously the
+            // one rejection path with zero downstream measurement. Opening sides only (a vetoed exit
+            // is not a missed opportunity); best-effort + non-fatal. If this symbol also appears in the
+            // run's signal_snapshot (chosen: false), the later snapshot ingestion BACKFILLS the
+            // score/sector/factor/bulletin evidence onto this early row — see
+            // insertSkippedCounterfactualCandidate's NULL-backfill contract (Codex review on PR #365).
+            if (proposal.side === "buy" || proposal.side === "short") {
+              try {
+                recordRejectedProposalCounterfactual({
+                  userId,
+                  connectedAccountId,
+                  runId,
+                  symbol: proposal.symbol,
+                  refPrice: proposal.referencePrice,
+                  createdAt: new Date().toISOString(),
+                  regime: proposal.entryMarketRegime
+                });
+              } catch (err) {
+                console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
+              }
             }
+            // Skip this proposal completely, as the Red Team found a critical flaw
+            continue;
           }
-          // Skip this proposal completely, as the Red Team found a critical flaw
-          continue;
         } else if (!redTeamResult.available) {
-          console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
-          proposal.rationale += `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${redTeamResult.reason}); routed to human approval.`;
-          requiresHumanReview.add(proposal);
+          // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
+          // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
+          // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
+          // has opted in via policy.tuning.deRiskExitsOnAdversaryUnavailable — default OFF, so default
+          // behavior is byte-identical to main's unconditional requiresHumanReview.add for every side.
+          // Audit parity with strategy_bear_review_unavailable.
+          const routing = routeOnAdversaryUnavailable(
+            proposal.side,
+            redTeamResult.failureKind,
+            redTeamResult.reason,
+            policy.tuning?.deRiskExitsOnAdversaryUnavailable,
+            policy.strategyAuthority === "decide"
+          );
+          console.warn(
+            `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
+          );
+          proposal.rationale += routing.note;
+          if (routing.holdForHuman) requiresHumanReview.add(proposal);
+          audit(
+            "strategy_red_team_unavailable",
+            { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
+            userId,
+            connectedAccountId
+          );
         } else {
           proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
         }
       }
       debatedProposals.push(proposal);
     }
+
+    // Earnings-proximity advisory tag — applied HERE (before the rationale-collapse gate, FIX#3
+    // pre-routing, and the sell-to-fund intended-notional computation below), NOT at the later
+    // `gatedProposals`/`applyRiskReceipts` stage near the end of the pipeline. Both the FIX#3
+    // pre-routing loop and the sell-to-fund notional filter read `preVetoReasons` to decide whether an
+    // opening will actually auto-execute; tagging `earnings_blackout` after those checks run would let
+    // a blackout-tagged opening slip through un-excluded for one run — the exact hazard
+    // `preVetoTaggedOpeningWillPlace`'s doc comment warns about, for this lane's own new tag. See
+    // `applyEarningsBlackoutTag`'s doc comment for the idempotency contract with `applyRiskReceipts`.
+    applyEarningsBlackoutTag(debatedProposals, policy, marketScan, userId);
 
     // Rationale-collapse gate (Chat A item 7) — evaluated on the OPENING proposals HERE, BEFORE the
     // sell-to-fund planner below, so a collapse-gated buy (routed to human review) does NOT drive
@@ -873,6 +1437,25 @@ export async function runStrategyOnce(
       }
     }
 
+    // FIX #3 — propose-mode override pre-routing. The pre-veto fold-in + override resolution happen
+    // LATER, inside the placement loop (before resolveSocraticOverride), which is AFTER the sell-to-
+    // fund planner below reads `requiresHumanReview` (intendedOpeningNotional excludes members of that
+    // set). An opening that carries a pre-veto tag + a requested override thesis will, in "propose"
+    // mode, route to human — so it must be in requiresHumanReview NOW, or the planner would drive
+    // automated funding sells for a buy that never auto-executes. This mirrors the Bear-unavailable
+    // and rationale-collapse gates above and works precisely because it sits before line ~882. Cheap
+    // pure predicate — no sizing; the AUTHORITATIVE sized cap/mode decision still runs once at the
+    // override call inside the loop. (execute mode self-executes and needs no pre-route; off keeps the
+    // block, so only propose pre-routes here.)
+    if (policy.socraticOverrideMode === "propose") {
+      for (const p of debatedProposals) {
+        const isOpening = p.side === "buy" || p.side === "short";
+        if (isOpening && p.preVetoReasons?.length && p.autonomyOverride?.requested === true && !!p.autonomyOverride.thesis?.trim()) {
+          requiresHumanReview.add(p);
+        }
+      }
+    }
+
     // ── Sell-to-fund-buy (PR 3) ──────────────────────────────────────────────
     // When this run's intended BUYs exceed buying power, optionally raise cash by trimming holdings.
     // Default "off" → no-op. "suggest" only records the plan (audit + run summary); "propose" queues
@@ -888,7 +1471,10 @@ export async function runStrategyOnce(
       // (e.g. a Bear-unavailable or rationale-collapse-gated buy) must not drive automated funding
       // sells — otherwise in "decide" mode we'd auto-liquidate holdings to fund buys that are merely
       // queued for approval and won't execute (potentially leaving the account short on buying power).
-      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p)).reduce((sum, p) => {
+      // Also exclude a pre-veto-TAGGED opening that won't auto-execute (no override thesis / mode !=
+      // execute): the fold-in below keeps it blocked, so — like the pre-tag-not-drop hard drop — it
+      // must contribute $0 and never trigger funding sells (preVetoTaggedOpeningWillPlace).
+      const intendedOpeningNotional = debatedProposals.filter((p) => isOpening(p) && !requiresHumanReview.has(p) && preVetoTaggedOpeningWillPlace(p, policy.socraticOverrideMode)).reduce((sum, p) => {
         const price = currentPrices[normalizeSymbol(p.symbol)] ?? p.referencePrice ?? 0;
         const notional = p.dollarAmount ?? (p.quantity ? p.quantity * price : 0);
         return sum + (Number.isFinite(notional) ? notional : 0);
@@ -920,12 +1506,16 @@ export async function runStrategyOnce(
       }
     }
 
-    const proposals = await applyCorrelationClusterGate(
+    const gatedProposals = await applyCorrelationClusterGate(
       [...fundingSells, ...proactiveProposals, ...debatedProposals],
       policy,
       workingPositions,
       userId
     );
+
+    // Advisory correlation/stress/earnings-proximity receipts on the final opening proposal set —
+    // receipts only, never a gate. See applyRiskReceipts's doc comment for the flag semantics.
+    const proposals = await applyRiskReceipts(gatedProposals, policy, workingPositions, workingPortfolio, marketScan, userId);
 
     // Rationale-diversity check (improvement-program item #8). Computed on the final post-debate,
     // post-gate proposal set. Advisory by default; an optional default-off gate can route collapsed
@@ -979,7 +1569,11 @@ export async function runStrategyOnce(
             review: input.review,
             marketScan,
             ragAttributions: socraticRagAttributions,
-            overrideResolution: input.overrideResolution
+            overrideResolution: input.overrideResolution,
+            // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
+            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
+            // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
+            ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
           }),
           createdAt: now,
           updatedAt: now
@@ -1041,6 +1635,23 @@ export async function runStrategyOnce(
           ? countDayTradesInLastBusinessDays(policy.accountNumber, 5, new Date(), userId)
           : 0
       });
+
+      // Pre-veto fold-in (Option 2): the two PRE-POLICY vetoes (deterministic-bear filter + approval-
+      // time Red Team) no longer DROP a candidate — they TAG it with advisory `preVetoReasons`. Fold
+      // those reasons into the single sized PolicyDecision right here, before the one override call, so
+      // the SAME resolveSocraticOverride path that governs owner-preference gates also governs the
+      // vetoes: `isHardGateReason("deterministic_bear_veto: …")` and `isHardGateReason("red_team_veto:
+      // …")` are both false, so they classify as OVERRIDABLE conflicts and an autonomyOverride thesis
+      // can pass them on openings (subject to socraticOverrideMode + the override cap on the already-
+      // sized notional). With no thesis (or mode "off") they keep the candidate blocked exactly as the
+      // old hard-drop did. No parallel override system and no second override call.
+      if (normalizedProposal.preVetoReasons?.length) {
+        decision = {
+          ...decision,
+          approved: false,
+          reasons: [...decision.reasons, ...normalizedProposal.preVetoReasons]
+        };
+      }
 
       // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
       // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
@@ -1229,6 +1840,12 @@ export async function runStrategyOnce(
       }
 
       if (policy.strategyAuthority === "propose") {
+        // Under "propose" authority EVERY proposal already becomes a pending-approval card
+        // regardless of Red Team outcome. The Red-Team-unavailable signal is already on the
+        // rationale via routeOnAdversaryUnavailable's note (appended in the debate loop above),
+        // which is authority-aware — held/openings read "routed to human approval" and an opt-in
+        // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
+        // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
@@ -1244,13 +1861,16 @@ export async function runStrategyOnce(
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
+        const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
+          ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
+          : "";
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         continue;
       }
 
@@ -1423,6 +2043,11 @@ export async function runStrategyOnce(
     // (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), writes the
     // multi-horizon outcome + receipt, re-indexes decision memory, and runs the budget-gated
     // post-mortem lesson pass. Fire-and-forget + dynamic import: never blocks or fails the run.
+    // INTENTIONALLY EXEMPT from the run-scoped usage-budget model downgrade (`runPolicy` above):
+    // this runs detached from THIS run's lifetime/lock (it matures cases across accounts and can
+    // still be in flight after `runStrategyOnce` returns), so there is no single well-defined
+    // "this run's downgrade" to hand it — `callLessonLlm` in outcome-engine.ts re-reads the owner's
+    // persisted (undowngraded) policy via getPolicy(), same as before this branch.
     void import("./outcome-engine")
       .then(({ matureSocraticDecisionOutcomes }) => matureSocraticDecisionOutcomes(userId, { connectedAccountId }))
       .catch((e) => console.error("[outcome-engine] maturation error:", e));
@@ -1466,7 +2091,9 @@ export async function runStrategyOnce(
     // spend stays inside the reserved headroom rather than racing a queued same-user run.
     reflectionPromise = skipLlmDueToBudget
       ? undefined
-      : generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
+      // runPolicy (not policy): the reflection LLM call must see the run-scoped usage-budget
+      // downgrade too, rather than re-reading the owner's persisted (undowngraded) policy.
+      : generateReflectionSummary(policy.accountNumber, userId, runPolicy).catch((e) => console.error("Post-mortem error:", e));
 
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
@@ -1679,7 +2306,12 @@ export function deterministicBearFilter(
     const sym = normalizeSymbol(p.symbol);
     const quote = quoteBySymbol.get(sym);
 
-    // Rule 1: can't sell a long position that doesn't exist in the live book
+    // Rule 1: can't sell a long position that doesn't exist in the live book.
+    // DELIBERATELY a hard `continue` DROP and NOT tagged as an overridable pre-veto: it is an
+    // accounting impossibility (a phantom sell/cover), not a risk preference, and it fires only on
+    // NON-opening sides which resolveSocraticOverride refuses anyway — so there is nothing to override.
+    // Do not "fix" this into a preVetoReasons tag; that would surface a non-openable, non-overridable
+    // reason on a card as if it could be overridden.
     if (p.side === "sell" && !heldLong.has(sym)) {
       vetoed.push({ symbol: sym, side: "sell", reason: "No existing long position to sell" });
       continue;
@@ -1696,30 +2328,48 @@ export function deterministicBearFilter(
       }
     }
 
-    // Rule 4: model-free fundamentals hard-veto on buys (independent of the Bull/Bear LLMs, which
+    // Rule 4: model-free fundamentals veto on buys (independent of the Bull/Bear LLMs, which
     // share one model and can rationalize a weak long). Catches cash-burning / over-levered names
     // regardless of what the LLMs agree on. Skipped when the threshold is unset OR the field is
     // unavailable, so a missing fundamental never false-vetoes a legitimate name.
+    //
+    // ⚠️ OWNER-RATIFICATION FLAG (2026-07-05): Rule 4 was DELIBERATELY model-INDEPENDENT — it exists
+    // precisely because the Bull and Bear share one model and can jointly rationalize a weak long, so
+    // it vetoed cash-burning / over-levered names no matter what the LLMs agreed on. This change makes
+    // it OVERRIDABLE by an autonomyOverride thesis authored BY THAT SAME MODEL (per owner philosophy
+    // "nothing is hard but the account boundary"). That re-couples the exact failure mode Rule 4 was
+    // built to be independent of. It is now tag-not-drop (kept + preVetoReasons) rather than a hard
+    // `continue`. TO REVERT to a non-overridable hard veto, change the two lines below back to
+    // `vetoed.push({...}); continue;` (drop the preVetoReasons tag + kept.push). Flagged for explicit
+    // owner ratification — see the rollout note.
     if (p.side === "buy" && quote) {
       const fcfFloor = vetoThresholds?.fcfYieldFloorPct;
       const deCeil = vetoThresholds?.debtToEquityCeiling;
       if (fcfFloor != null && typeof quote.fcfYield === "number" && Number.isFinite(quote.fcfYield) && quote.fcfYield < fcfFloor) {
-        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)` });
+        const reason = `Fundamentals veto: FCF yield ${quote.fcfYield.toFixed(2)}% below floor ${fcfFloor}% (cash-burning)`;
+        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+        kept.push(p);
         continue;
       }
       if (deCeil != null && typeof quote.debtToEquity === "number" && Number.isFinite(quote.debtToEquity) && quote.debtToEquity > deCeil) {
-        vetoed.push({ symbol: sym, side: "buy", reason: `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)` });
+        const reason = `Fundamentals veto: debt/equity ${quote.debtToEquity.toFixed(2)} exceeds ceiling ${deCeil} (over-levered)`;
+        vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+        p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+        kept.push(p);
         continue;
       }
     }
 
-    // Rule 3: below-median buy in a risk-off/crisis regime → hard veto
+    // Rule 3: below-median buy in a risk-off/crisis regime → advisory pre-veto (tag-not-drop). Was a
+    // hard `continue` drop; now tagged as an OVERRIDABLE `deterministic_bear_veto:` reason and KEPT, so
+    // an autonomyOverride thesis can pass it on the opening at the single resolveSocraticOverride call.
+    // With no thesis (or socraticOverrideMode "off") the tag keeps it blocked exactly as the old drop.
     if (p.side === "buy" && riskOffRegime && quote && quote.score < medianScore) {
-      vetoed.push({
-        symbol: sym,
-        side:   "buy",
-        reason: `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`
-      });
+      const reason = `${regime} regime with below-median scan score (${quote.score.toFixed(1)} < median ${medianScore.toFixed(1)}); risk-on entry too weak`;
+      vetoed.push({ symbol: sym, side: "buy", reason }); // telemetry parity — still recorded even when kept
+      p.preVetoReasons = [...(p.preVetoReasons ?? []), `deterministic_bear_veto: ${reason}`];
+      kept.push(p);
       continue;
     }
 
@@ -1760,20 +2410,21 @@ export function shouldSkipNegativeExpectancy(
   proposal: TradeProposal,
   policy: TradingPolicy,
   source: FillSource,
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): { skip: boolean; reason?: string } {
   if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
   if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
   const account = policy.accountNumber;
   if (!account) return { skip: false };
 
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
   const parentTrades = parentStat?.trades ?? 0;
   const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
   if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
   const sampleTrades = stat?.trades ?? 0;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
@@ -1822,7 +2473,208 @@ export async function applyCorrelationClusterGate(
   return kept;
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
+/**
+ * Part 3 — earnings-proximity advisory, split out of `applyRiskReceipts` so it can run EARLY in
+ * `runStrategyOnce` (right after the debate loop, before the FIX#3 propose-mode pre-routing and the
+ * sell-to-fund intended-notional computation both read `preVetoReasons`). Those two steps decide
+ * whether an opening will auto-execute (and therefore whether it should count as intended buy
+ * notional / drive automated funding sells) based on `preVetoReasons`; if this tag were applied AFTER
+ * them (as it was when it lived only inside `applyRiskReceipts`, called at the `gatedProposals` stage
+ * near the end of the pipeline), an earnings-blackout-tagged opening would slip through both checks
+ * un-excluded for one run — exactly the hazard `preVetoTaggedOpeningWillPlace`'s doc comment warns
+ * about, just for this lane's own new tag.
+ *
+ * The INFORMATIONAL note is unconditional whenever `daysToEarnings` is known (per spec: "Receipt
+ * (always when daysToEarnings known and <= 7)"); only the preVetoReasons TAG depends on
+ * `earningsBlackout` being on. Unknown daysToEarnings (Yahoo returned no future earnings date) is
+ * skipped silently — never fabricated. Mutates proposals IN PLACE (same reference) for the same
+ * reason `applyRiskReceipts` does: `requiresHumanReview` Set membership and `preVetoReasons` array
+ * identity must survive downstream reference-keyed checks. Idempotent per proposal (checked via the
+ * `[Risk] Earnings` marker) so `applyRiskReceipts` can safely call this again at its later stage
+ * without double-appending the note or double-tagging preVetoReasons for the same run.
+ */
+export function applyEarningsBlackoutTag(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  marketScan: MarketScan,
+  userId: string = "local"
+): TradeProposal[] {
+  const earningsBlackoutOn = policy.tuning?.earningsBlackout === true;
+  const earningsWindow = policy.tuning?.earningsBlackoutDays != null && policy.tuning.earningsBlackoutDays > 0
+    ? policy.tuning.earningsBlackoutDays
+    : 3;
+
+  for (const proposal of proposals) {
+    const isOpening = proposal.side === "buy" || proposal.side === "short";
+    if (!isOpening) continue;
+    if (proposal.rationale.includes("\n\n[Risk] Earnings in ")) continue; // already tagged this run (match the exact prefix this fn appends, not a bare substring that LLM rationale could contain)
+
+    const quote = marketScan.quotesBySymbol[normalizeSymbol(proposal.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
+    const daysToEarnings = quote?.daysToEarnings;
+    if (typeof daysToEarnings === "number" && Number.isFinite(daysToEarnings) && daysToEarnings <= 7) {
+      const insideWindow = earningsBlackoutOn && daysToEarnings <= earningsWindow;
+      const windowSuffix = insideWindow ? " — inside advisory blackout window" : "";
+      const earningsNote = `\n\n[Risk] Earnings in ${daysToEarnings} trading day(s)${windowSuffix}`;
+      proposal.rationale += earningsNote;
+      if (insideWindow) {
+        proposal.preVetoReasons = [
+          ...(proposal.preVetoReasons ?? []),
+          `earnings_blackout: opening within ${daysToEarnings} day(s) of earnings (window ${earningsWindow})`
+        ];
+        audit(
+          "proposal_tagged_earnings_blackout",
+          { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
+          userId
+        );
+      }
+    }
+  }
+  return proposals;
+}
+
+/**
+ * Advisory-only per-candidate risk receipts for OPENING (buy/short) proposals: a correlation profile
+ * (pearson/EWMA/downside vs current holdings) + a pre-trade parametric stress scenario, both appended
+ * to `proposal.rationale` as `\n\n[Risk] …` notes with a matching `audit(...)` event — plus the
+ * earnings-proximity advisory (`applyEarningsBlackoutTag`, see its doc comment for why it's a
+ * separate, idempotent function called EARLY in `runStrategyOnce` and again here for callers, such as
+ * this function's own unit tests, that invoke `applyRiskReceipts` standalone).
+ *
+ * Correlation + stress receipts are gated behind `policy.tuning.riskReceipts` (default off/undefined):
+ * when off and the earnings tag has already run, this function returns `proposals` UNCHANGED and
+ * performs zero extra bar fetches — the rationale/prompt/audit trail stays byte-identical to today.
+ * The earnings note/tag is independent (per the board row: earnings blackout is its own opt-in via
+ * `policy.tuning.earningsBlackout`) and runs regardless of `riskReceipts`, but only ever touches
+ * proposals whose `daysToEarnings` is known (never fabricated) — most runs with neither flag on see NO
+ * change at all.
+ *
+ * Never blocks, drops, or resizes a proposal: `preVetoReasons` tagging follows the exact "tag, fold
+ * into the sized PolicyDecision, remain overridable" pattern PR #814 established (see the fold-in at
+ * the `preVetoReasons?.length` check before `resolveSocraticOverride`) — it is not a new blocking gate.
+ */
+export async function applyRiskReceipts(
+  proposals: TradeProposal[],
+  policy: TradingPolicy,
+  positions: EquityPosition[],
+  portfolio: Portfolio,
+  marketScan: MarketScan,
+  userId: string = "local"
+): Promise<TradeProposal[]> {
+  const riskReceiptsOn = policy.tuning?.riskReceipts === true;
+
+  const equity = accountEquity(portfolio);
+  const holdingsForCorrelation = positions.map((p) => ({ symbol: p.symbol, marketValue: p.marketValue }));
+  const stressPositions: StressPositionInput[] = positions.map((p) => ({
+    symbol: p.symbol,
+    marketValue: p.marketValue,
+    beta: marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.beta
+  }));
+
+  const out: TradeProposal[] = [];
+  for (const p of proposals) {
+    const isOpening = p.side === "buy" || p.side === "short";
+    if (!isOpening) {
+      out.push(p);
+      continue;
+    }
+
+    // Mutate the SAME object reference throughout (never rebuild via spread): every other stage in
+    // this pipeline (Bear-unavailable, rationale-collapse gate, FIX#3 pre-routing) adds this exact
+    // object to `requiresHumanReview` (a Set<TradeProposal> keyed by reference), and the placement
+    // loop's `requiresHumanReview.has(proposal)` check depends on that reference surviving unchanged
+    // through this function. Rebuilding the object here would silently break Set membership for any
+    // proposal that was routed to human review by an earlier gate and also picks up a risk-receipt
+    // note — defeating the Fail-CLOSED safety net in "decide" (auto-execute) mode.
+    const proposal = p;
+    const quote = marketScan.quotesBySymbol[normalizeSymbol(p.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(p.symbol));
+
+    // Part 2 — correlation receipt (gated on riskReceipts; costs extra fetchDailyOHLC calls).
+    if (riskReceiptsOn && equity > 0) {
+      const profile = await correlationProfile(proposal.symbol, holdingsForCorrelation, equity, userId);
+      if (profile) {
+        const max = profile.maxPairwise;
+        const maxIsDownsideDriven = profile.holdings.some(
+          (h) => h.symbol === max.symbol && h.downside != null && h.pearson != null && h.downside > h.pearson
+        );
+        const downsideNote = maxIsDownsideDriven
+          ? `; downside corr ${(profile.holdings.find((h) => h.symbol === max.symbol)!.downside! * 100).toFixed(0)}% — diversification weakens in drawdowns`
+          : "";
+        const avgEwmaText = profile.avgEwma != null ? `${(profile.avgEwma * 100).toFixed(0)}%` : "n/a";
+        const correlationNote = `\n\n[Risk] Correlation: max ${(max.corr * 100).toFixed(0)}% w/ ${max.symbol} (${max.weightPct.toFixed(1)}% of book), avg EWMA ${avgEwmaText} across ${profile.holdings.length} holdings${downsideNote}`;
+        proposal.rationale += correlationNote;
+        audit(
+          "correlation_receipt",
+          { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
+          userId
+        );
+      }
+    }
+
+    // Part 4 — pre-trade stress scenario receipt (gated on riskReceipts; free — betas come from the scan).
+    if (riskReceiptsOn && equity > 0) {
+      const candidateBeta = quote?.beta;
+      // No run-level VIX is plumbed into MarketScan today (see macro.ts's separate MacroData for the
+      // live VIX read) — omitting `vix` here falls back to stressScenario's own default (20, long-run
+      // average), which is the documented, tested behavior when a live level isn't available.
+      const stress = stressScenario({
+        positions: stressPositions,
+        candidate: { symbol: proposal.symbol, notional: estimateNotional(proposal), side: proposal.side, beta: candidateBeta },
+        equity
+      });
+      if (stress) {
+        const estimatedNote = stress.betasEstimated
+          ? ` (betas estimated for ${stress.betaEstimatedCount} of ${stress.betaTotalCount} positions)`
+          : "";
+        const topText = stress.topContributors.map((c) => `${c.symbol} ${formatWholeDollars(c.impactUsd)}`).join(", ");
+        // Omit the "; top: …" clause entirely for an empty/new book (no contributors) rather than
+        // rendering a blank "top: " in the user-visible rationale.
+        const topClause = topText ? `; top: ${topText}` : "";
+        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%${topClause}${estimatedNote}`;
+        proposal.rationale += stressNote;
+        audit(
+          "stress_receipt",
+          {
+            symbol: proposal.symbol,
+            shockPct: stress.shockPct,
+            bookImpactPctOfEquity: stress.bookImpactPctOfEquity,
+            withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
+            candidateMarginalUsd: stress.candidateMarginalUsd
+          },
+          userId
+        );
+      }
+    }
+
+    out.push(proposal);
+  }
+
+  // Part 3 — earnings-proximity advisory. Idempotent: a no-op for any proposal already tagged by an
+  // earlier `applyEarningsBlackoutTag` call in this run (see that function's doc comment for why
+  // `runStrategyOnce` calls it early, before this function runs).
+  applyEarningsBlackoutTag(out, policy, marketScan, userId);
+
+  return out;
+}
+
+export function applyDeterministicSizing(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  portfolio: Portfolio,
+  source: FillSource,
+  userId: string = "local",
+  positions: EquityPosition[] = [],
+  marketScan?: MarketScan,
+  precomputedCalibration?: ConfidenceCalibrationStat[],
+  // Precomputed annualized realized-vol (%) per OPENING candidate symbol — mirrors
+  // precomputedCalibration's "compute once per run, pass in" pattern. Undefined/missing symbol →
+  // the vol-target note/taper is simply skipped (never fabricated).
+  realizedVolPctBySymbol?: Record<string, number>,
+  // Precomputed CURRENT book heat (existing positions only, computed once per run) — undefined when
+  // the heat budget isn't configured or volTargeting is off. This proposal's own incremental risk is
+  // computed fresh below and added to bookHeat.totalRiskUsd for the remaining-budget taper.
+  bookHeat?: PortfolioHeatResult,
+  prefetched?: PrefetchedFills
+): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -1845,8 +2697,8 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const account = policy.accountNumber;
   if (!account) return proposal;
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
@@ -1863,7 +2715,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const rawScore = proposal.confidenceScore ?? 50;
   let rawConviction = rawScore / 100;
   if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
-    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId);
+    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId, prefetched);
     const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
     rawConviction = calibratedConviction(rawScore, calibration, minLots);
   }
@@ -1888,7 +2740,35 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   // one with a proven positive edge earns more. This uses the learned shrunk avg return
   // so a handful of lucky trades can't inflate sizing.
   const edgeFactor = avgReturn > 1 ? 1 : avgReturn >= 0 ? 0.7 : avgReturn > -1 ? 0.5 : 0.3;
-  const multiplier = (winRate / 100) * conviction * edgeFactor;
+  const rawMultiplier = (winRate / 100) * conviction * edgeFactor;
+
+  // Volatility-targeting sizing (opt-in, default off): taper the Kelly-lite multiplier by
+  // targetVol/realizedVol (never up, floored at 0.25) BEFORE the floor/ceiling clamp below, so it
+  // composes with (and stays bounded by) the existing sizingFloorPct/sizingCeilingPct clamps exactly
+  // like every other input to `multiplier`. The realized-vol number itself is surfaced in the
+  // rationale whenever cheaply available, independent of whether the taper is actually applied —
+  // an honest receipt even when the feature is off or no target is configured.
+  const realizedVol = realizedVolPctBySymbol?.[normalizeSymbol(proposal.symbol)];
+  const targetVol = policy.tuning?.targetPortfolioVolPct;
+  const volScaleApplies = policy.tuning?.volTargeting === true && typeof targetVol === "number" && targetVol > 0;
+  const volScale =
+    volScaleApplies && typeof realizedVol === "number"
+      ? volTargetScale(realizedVol, targetVol as number)
+      : 1;
+  const multiplier = rawMultiplier * volScale;
+  const volTargetNote =
+    typeof realizedVol === "number"
+      ? `\n\n[Sizing] Realized vol ${realizedVol.toFixed(1)}%${typeof targetVol === "number" && targetVol > 0
+          ? ` vs target ${targetVol}% → vol-target scale ${volScale.toFixed(2)}x (${volScaleApplies ? "applied" : "advisory-only"})`
+          : " (no vol target configured — advisory-only)"}.`
+      : "";
+  if (volScaleApplies && volScale < 1) {
+    audit(
+      "sizing_vol_target_applied",
+      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, realizedVolPct: realizedVol, targetPortfolioVolPct: targetVol, volScale },
+      userId
+    );
+  }
 
   // Bounds are configurable (policy.tuning.sizingFloorPct / sizingCeilingPct); default 10–100%.
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
@@ -1901,7 +2781,64 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     : avgReturn < 0
       ? 0
       : Math.max(floor, Math.min(ceiling, multiplier));
-  
+
+  // Fractional-Kelly sizing on realized payoff (downside-dispersion-aware, advisory). Runs BESIDE
+  // the Kelly-lite heuristic above (never replaces it): computes a suggested multiplier from the
+  // bucket's realized win/loss payoff split (avgWinPct/avgLossPct) and downside-dispersion
+  // penalty (downsideDeviationPct), added to performance.ts's aggregateClosedLots alongside this
+  // feature. A receipt is appended whenever the bucket clears the sample gate AND the payoff ratio
+  // is computable (informational only) — the size itself only changes when
+  // policy.tuning.fractionalKellySizing is explicitly on, and even then Kelly may only REDUCE size
+  // vs today (min of the existing multiplier and the Kelly suggestion), never increase it.
+  // Validate/clamp to a finite [0,1] fraction: a non-finite or out-of-range policy value must not
+  // leak into the sizing math or print a misleading "NaN-Kelly" receipt. Falls back to 0.5 when unset
+  // or non-finite; clamps stray >1 / <0 values into range.
+  const kellyFractionRaw = policy.tuning?.kellyFraction ?? 0.5;
+  const kellyFractionSetting = Number.isFinite(kellyFractionRaw) ? Math.max(0, Math.min(1, kellyFractionRaw)) : 0.5;
+  const kellySuggestion = fractionalKellySuggestion(
+    {
+      winRate,
+      avgWinPct: stat?.avgWinPct,
+      avgLossPct: stat?.avgLossPct,
+      downsideDeviationPct: stat?.downsideDeviationPct,
+      avgReturnPct: avgReturn,
+      trades: sampleTrades
+    },
+    { fraction: kellyFractionSetting, minTrades: minLotsForSizing }
+  );
+  // Calibration (and by extension this Kelly payoff split) is long-only — getConfidenceCalibration
+  // filters side==='long'. Shorts have no calibration curve to lean on, so the receipt says so
+  // rather than silently presenting the raw split as if it were calibrated the same way.
+  const kellyUncalibratedShort = proposal.side === "short";
+  let kellyNote = "";
+  let kellyApplied = false;
+  let finalMultiplier = boundedMultiplier;
+  if (kellySuggestion && !("insufficient" in kellySuggestion)) {
+    const { suggestedPctOfCeiling, p, b, penalty } = kellySuggestion;
+    const applyKelly = policy.tuning?.fractionalKellySizing === true && suggestedPctOfCeiling < boundedMultiplier;
+    if (applyKelly) {
+      // Kelly is allowed to cut BELOW the normal sizingFloorPct — that is the entire point of the
+      // "reduce, never increase" guardrail (a poor risk-adjusted edge should be able to shrink size
+      // past the ordinary exploratory floor). Only clamp to sane absolute bounds: never negative,
+      // never above the ceiling, and never above the multiplier Kelly is replacing.
+      finalMultiplier = Math.max(0, Math.min(ceiling, Math.min(boundedMultiplier, suggestedPctOfCeiling)));
+      kellyApplied = true;
+    }
+    kellyNote = `\n\n[Sizing] Fractional-Kelly (p=${p.toFixed(2)}, b=${b.toFixed(2)}, σ_down=${(stat?.downsideDeviationPct ?? 0).toFixed(2)}%, penalty=${penalty.toFixed(2)}): suggests ${Math.round(suggestedPctOfCeiling * 100)}% of max (${kellyFractionSetting}-Kelly)${kellyApplied ? " — applied" : " — informational only, not applied"}${kellyUncalibratedShort ? " (short: uncalibrated)" : ""}`;
+    if (kellyApplied) {
+      audit("sizing_fractional_kelly_applied", {
+        symbol: proposal.symbol,
+        thesisTag: proposal.tradeThesisTag,
+        p: Number(p.toFixed(4)),
+        b: Number(b.toFixed(4)),
+        penalty: Number(penalty.toFixed(4)),
+        suggested: Number(suggestedPctOfCeiling.toFixed(4)),
+        previousMultiplier: Number(boundedMultiplier.toFixed(4)),
+        applied: Number(finalMultiplier.toFixed(4))
+      }, userId);
+    }
+  }
+
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
   const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
   const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
@@ -1924,7 +2861,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   // later policy review rejects it instead of skipping the broker bracket. (Review: PR #278.)
   let effectiveOpeningCap = openingSizingCap;
   const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
-  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
+  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * finalMultiplier);
   const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
   let targetNotional = advisedNotional && advisedNotional > 0
     ? Math.min(Math.floor(advisedNotional), openingSizingCap)
@@ -1945,6 +2882,70 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
         targetNotional = advCap;
       }
       if (advCap > 0) effectiveOpeningCap = Math.min(effectiveOpeningCap, advCap);
+    }
+  }
+
+  // Portfolio-heat budget (opt-in, default off, continuous taper — never a hard block): if the
+  // CURRENT book's heat (bookHeat, precomputed once per run from existing positions) plus this
+  // order's OWN incremental risk would exceed portfolioHeatBudgetPct of equity, taper this order's
+  // notional to fit whatever budget remains. Never sizes below zero; when no budget remains at all,
+  // floors at the existing exploratory-floor notional and tags an OVERRIDABLE advisory reason —
+  // it still places unless another gate says otherwise. Uses the FLAT stop % (no ATR/beta history
+  // exists yet for a name that isn't already a position) for this order's own risk basis; honest
+  // "no stop basis" skip when no flat stop is configured either.
+  let heatNote = "";
+  const heatBudgetPct = policy.tuning?.portfolioHeatBudgetPct;
+  if (policy.tuning?.volTargeting === true && bookHeat && typeof heatBudgetPct === "number" && heatBudgetPct > 0) {
+    const ownStopPct = proposal.side === "short"
+      ? (policy.riskRules.shortStopLossPct ?? policy.riskRules.stopLossPct ?? 0)
+      : (policy.riskRules.stopLossPct ?? 0);
+    if (ownStopPct > 0) {
+      const equity = accountEquity(portfolio);
+      if (equity > 0) {
+        const budgetUsd = (heatBudgetPct / 100) * equity;
+        const orderRiskUsd = positionRiskUsd(targetNotional, ownStopPct);
+        const currentHeatUsd = bookHeat.totalRiskUsd;
+        const noStopBasisCount = bookHeat.perPosition.filter((p) => p.estimated).length;
+        const totalPositionsCount = bookHeat.perPosition.length;
+        const currentHeatPct = bookHeat.heatPct ?? 0;
+        if (orderRiskUsd > 0 && currentHeatUsd + orderRiskUsd > budgetUsd) {
+          const remainingUsd = Math.max(0, budgetUsd - currentHeatUsd);
+          const taperFactor = orderRiskUsd > 0 ? Math.min(1, remainingUsd / orderRiskUsd) : 1;
+          const taperedNotional = Math.floor(targetNotional * taperFactor);
+          if (remainingUsd <= 0) {
+            // No budget left at all: hold at the existing floor rather than a hard cage, and tag an
+            // OVERRIDABLE advisory reason (not a policy block) — the order still places.
+            targetNotional = Math.min(targetNotional, Math.max(fallbackNotional, taperedNotional));
+            heatNote =
+              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
+              `no remaining budget — held to exploratory floor (overridable advisory, not a block).`;
+          } else if (taperedNotional < targetNotional) {
+            targetNotional = Math.max(0, taperedNotional);
+            heatNote =
+              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
+              `this order tapered to add ${(Math.max(0, (budgetUsd - currentHeatUsd) / equity * 100)).toFixed(2)}% (fit remaining budget).`;
+          }
+          // Distinct audit kind from the vol-target scale above: this is the heat-budget taper, a
+          // separate mechanism, and conflating the two in telemetry would hide which brake fired.
+          audit(
+            "sizing_heat_budget_applied",
+            {
+              symbol: normalizeSymbol(proposal.symbol),
+              side: proposal.side,
+              currentHeatPct,
+              budgetPct: heatBudgetPct,
+              orderRiskUsd,
+              remainingUsd,
+              taperFactor,
+              targetNotional
+            },
+            userId
+          );
+        } else {
+          heatNote =
+            `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); this order adds ${((orderRiskUsd / equity) * 100).toFixed(2)}%.`;
+        }
+      }
     }
   }
 
@@ -1975,7 +2976,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     : "";
   const fallbackSizeNote = advisedNotional && advisedNotional > 0
     ? ""
-    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(boundedMultiplier * 100)}% of max)`;
+    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(finalMultiplier * 100)}% of max)`;
 
   return {
     ...proposal,
@@ -1983,7 +2984,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
   };
 }
 
@@ -2634,6 +3635,13 @@ interface ProposeTradesResult {
    */
   bearReviewUnavailable?: boolean;
   bearReviewReason?: string;
+  /**
+   * Advisory findings from the deterministic prompt-injection scan over the untrusted text
+   * blocks assembled into the Bull/Bear prompts (see src/lib/prompt-safety.ts). Already audited
+   * (kind 'prompt_injection_suspected') inside proposeTrades; the caller folds them into
+   * decision-case evidence. NEVER affects the proposals themselves.
+   */
+  promptSafetyFindings?: InjectionFinding[];
 }
 
 async function proposeTrades(input: {
@@ -2661,6 +3669,14 @@ async function proposeTrades(input: {
   experienceAnalogs?: string;
   ownerCoaching?: string;
   drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
+  /**
+   * Usage-budget ADVISORY (formatBudgetAdvisory output): a compact 1-2 line summary of operator LLM
+   * spend vs budget, injected next to `drawdownAdvisory` below. DATA for the agent, never a command —
+   * present whenever the usage monitor is configured and at least one provider is at warning/exceeded,
+   * independent of whether USAGE_BUDGET_ENFORCE is on.
+   */
+  budgetAdvisory?: string;
+  prefetched?: PrefetchedFills;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -2704,27 +3720,27 @@ async function proposeTrades(input: {
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
-  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
-  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
+  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
+  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
   // 5 trades produce a statistic that is dominated by the Bayesian shrinkage prior anyway
   // and adds noise to the agent's reasoning without improving signal quality.
-  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
-  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId) : [];
+  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
-  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId) : [];
+  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Sector learning: realized outcomes grouped by the sector each position was opened in.
-  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5 && bucket.sector !== "Unknown")
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId, undefined, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
@@ -2732,7 +3748,7 @@ async function proposeTrades(input: {
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
+    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
@@ -2800,7 +3816,9 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     strategyPrompt: input.prompt,
-    reflection,
+    // reflection deliberately NOT interpolated into the SYSTEM prompt anymore (prompt-safety
+    // lane, agentic-strategy@1.5.0): the post-mortem writer persists raw LLM output, so it rides
+    // in userContent as the fenced `reflectionSummary` DATA field below instead.
     hasTaxContext: taxContext != null,
     washSaleHandling,
     iraWashSaleDisregard,
@@ -2834,6 +3852,35 @@ async function proposeTrades(input: {
   // Fama-French factor regime). Cached 6h; failure-tolerant — never blocks a run.
   const marketSignals = await getMarketSignals(input.userId).catch(() => undefined);
 
+  // Multi-signal regime severity (Lane 5, composite review E/high/S follow-up): blends VIX term
+  // structure, HY credit spread, and market breadth (+ VVIX/SKEW when available) into one
+  // continuous [0,1] severity reading, floored by the classified enum's own severity so it can
+  // only ADD caution vs. today's boolean-gate channel. Data-only receipt (prompt context +
+  // proposal stamp) — does NOT change any cap/gate behavior. Best-effort: a scorer failure must
+  // never fail the run.
+  //
+  // OPT-IN (DEFAULT false via policy.tuning.regimeSeverityScoring): default behavior is
+  // byte-identical — the scorer is not invoked, so no regimeSeverity block, entryRegimeSeverity
+  // stamp, or downstream receipt exists unless an operator opts in.
+  const regimeSeverity = !input.policy.tuning?.regimeSeverityScoring
+    ? undefined
+    : (() => {
+        try {
+          const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
+          return computeMultiSignalSeverity({
+            regime: classifyMarketRegime(macro).regime,
+            vix: macro.vix ? parseFloat(macro.vix) : undefined,
+            vixTermStructure: macroDerived.vixTermStructure,
+            hyCreditSpreadPct: Number.isFinite(hyCreditSpreadPct) ? hyCreditSpreadPct : undefined,
+            breadthPct: marketSignals?.marketBreadthPct ?? input.marketScan?.breadthPct,
+            vvix: marketSignals?.vvix,
+            skew: marketSignals?.skew
+          });
+        } catch {
+          return undefined;
+        }
+      })();
+
   // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
   // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade
   // from the provided topCandidates (which the backend pre-filters). We enforce this at the gateway.
@@ -2853,6 +3900,19 @@ async function proposeTrades(input: {
     executionMode,
     executionModeClarification,
     currentMarketRegime,
+    ...(regimeSeverity
+      ? {
+          regimeSeverity: {
+            severity: Number(regimeSeverity.severity.toFixed(2)),
+            topComponents: [...regimeSeverity.components]
+              .sort((a, b) => b.normalized * b.weight - a.normalized * a.weight)
+              .slice(0, 3)
+              .map((c) => ({ signal: c.signal, normalized: Number(c.normalized.toFixed(2)), weight: Number(c.weight.toFixed(2)) })),
+            inputsUsed: regimeSeverity.inputsUsed,
+            inputsAvailable: regimeSeverity.inputsAvailable
+          }
+        }
+      : {}),
     portfolio: input.portfolio,
     positions: input.positions,
     recentOrders: input.recentOrders,
@@ -2873,6 +3933,14 @@ async function proposeTrades(input: {
             equity: input.drawdownAdvisory.equity,
             highWaterMark: input.drawdownAdvisory.highWaterMark,
             detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
+    ...(input.budgetAdvisory
+      ? {
+          budgetAdvisory: {
+            note: "ADVISORY, not a block: operator LLM spend context. YOU decide whether a cheaper model tier or skipping this cycle is worth it — every choice is logged and coachable.",
+            detail: input.budgetAdvisory
           }
         }
       : {}),
@@ -2898,11 +3966,52 @@ async function proposeTrades(input: {
     ...(taxContext ? { taxContext } : {}),
     ...(input.ragContext ? { retrievedFinancialContext: input.ragContext } : {}),
     ...(input.learnedContext ? { learnedContext: input.learnedContext } : {}),
+    // Historical reflection RELOCATED here from the Bull SYSTEM prompt (prompt-safety lane): it is
+    // persisted raw LLM output, so it enters as fenced, labeled user-role DATA — the system prompt
+    // references it by name and the data-not-command clause covers it.
+    ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
     // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
     ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
     ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
+
+  // ── Advisory prompt-injection scan (CR-H prompt-safety lane) ─────────────
+  // Deterministic receipts over the UNTRUSTED text blocks entering the Bull/Bear prompts. The
+  // per-candidate fields mirror EXACTLY what compactCandidateForPrompt injects (news = first 2
+  // headlines, smartMoney = first 3 bulletins). Detection IS the control: on a hit we audit and
+  // surface evidence — the text is NEVER altered or dropped, and generation always proceeds.
+  const untrustedPromptFields: UntrustedPromptField[] = [
+    { name: "owner_strategy_prompt", text: input.prompt },
+    { name: "reflection_summary", text: reflection },
+    { name: "retrievedFinancialContext", text: input.ragContext ?? "" },
+    { name: "learnedContext", text: input.learnedContext ?? "" },
+    { name: "closestHistoricalAnalogs", text: input.experienceAnalogs ?? "" },
+    { name: "ownerCoaching", text: input.ownerCoaching ?? "" },
+    ...(input.marketScan?.topCandidates ?? []).flatMap((candidate) => {
+      const sym = normalizeSymbol(candidate.symbol);
+      const fields: UntrustedPromptField[] = [];
+      const news = candidate.headlines?.slice(0, 2) ?? [];
+      if (news.length > 0) fields.push({ name: `headlines:${sym}`, text: news.join("\n") });
+      const bulletins = candidate.evidenceBulletins?.slice(0, 3) ?? [];
+      if (bulletins.length > 0) fields.push({ name: `smartMoney:${sym}`, text: bulletins.join("\n") });
+      return fields;
+    })
+  ];
+  const promptSafetyFindings = scanForInjectionAttempts(untrustedPromptFields);
+  if (promptSafetyFindings.length > 0) {
+    audit(
+      "prompt_injection_suspected",
+      {
+        runId: input.runId,
+        fields: [...new Set(promptSafetyFindings.map((f) => f.name))],
+        patterns: [...new Set(promptSafetyFindings.map((f) => f.pattern))],
+        findings: promptSafetyFindings.slice(0, 12).map((f) => ({ ...f, excerpt: f.excerpt.slice(0, 240) }))
+      },
+      input.userId,
+      input.policy.connectedAccountId
+    );
+  }
 
   const model = resolvedModel;
   const llmSteps: StrategyLlmStep[] = [];
@@ -3136,6 +4245,7 @@ async function proposeTrades(input: {
   const rawBullProposals = sanitizeProposals(bullResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime,
+    ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // FAILOVER-AWARE attribution: the model that actually served this run (not necessarily
     // policy.llmModel). Persisted with the proposal so approval-time attribution stays accurate.
     proposedByModel: bullServedModel
@@ -3169,9 +4279,12 @@ async function proposeTrades(input: {
   });
 
   // Deterministic pre-filter: model-independent veto layer that runs before the Bear LLM.
-  // See deterministicBearFilter for the three rules (no-phantom-exit, momentum overextension
-  // flag, below-median buy in risk-off regime). Vetoed proposals are logged, not silently
-  // dropped, so runs are auditable.
+  // See deterministicBearFilter for the rules (no-phantom-exit HARD drop, momentum overextension
+  // flag, and the ADVISORY fundamentals + below-median-in-risk-off pre-vetoes which now TAG the
+  // candidate with `preVetoReasons` and keep it rather than dropping it). Vetoed proposals are logged
+  // and — FIX #2b — durably AUDITED below so an overridden pre-veto is recorded even when the trade
+  // proceeds (the filter previously recorded nothing but a console.log, leaving an overridden
+  // fundamentals veto invisible in the audit feed).
   const { kept: bullProposals, vetoed: deterministicVetoed } = deterministicBearFilter(
     rawBullProposals,
     input.positions,
@@ -3184,6 +4297,17 @@ async function proposeTrades(input: {
   );
   if (deterministicVetoed.length > 0) {
     console.log("[DeterministicBear] Vetoed before Bear LLM:", deterministicVetoed.map(v => `${v.symbol} ${v.side}: ${v.reason}`).join(" | "));
+    // FIX #2b: durably audit each deterministic-bear veto (kept-and-tagged OR hard-dropped) so an
+    // overridden fundamentals/regime veto is visible in the Activity/Audit feed, not just console.
+    // ACCOUNT-scoped (connectedAccountId) to match the counterfactual rows and the red-team audits.
+    for (const v of deterministicVetoed) {
+      audit(
+        "deterministic_bear_veto",
+        { runId: input.runId, symbol: v.symbol, side: v.side, reason: v.reason, regime: currentMarketRegime },
+        input.userId,
+        input.policy.connectedAccountId
+      );
+    }
   }
 
   // Phase 7: Bear Agent (Red Team) Critique (prompt in ./strategy-prompts, Chat A item 2)
@@ -3253,6 +4377,7 @@ async function proposeTrades(input: {
     executionMode: userContent.executionMode,
     executionModeClarification: userContent.executionModeClarification,
     currentMarketRegime: userContent.currentMarketRegime,
+    ...(userContent.regimeSeverity ? { regimeSeverity: userContent.regimeSeverity } : {}),
     macroeconomicData: userContent.macroeconomicData,
     limits: userContent.limits,
     socraticAuthority: userContent.socraticAuthority,
@@ -3340,7 +4465,13 @@ async function proposeTrades(input: {
       kind: "provider_degraded",
       data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
     }).catch((err) => console.error("[Bear] notify error:", err));
-    return { proposals: bullProposals, llmSteps, bearReviewUnavailable: true, bearReviewReason: reason };
+    return {
+      proposals: bullProposals,
+      llmSteps,
+      bearReviewUnavailable: true,
+      bearReviewReason: reason,
+      ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
+    };
   };
 
   if (!bearKey) {
@@ -3450,6 +4581,7 @@ async function proposeTrades(input: {
   const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
     ...p,
     entryMarketRegime: currentMarketRegime,
+    ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
     // Re-stamp after the Bear pass: survivors are re-emitted through the Bear's strict schema,
     // which strips proposedByModel — the ORIGIN model is still the Bull's served model.
     proposedByModel: bullServedModel
@@ -3459,7 +4591,7 @@ async function proposeTrades(input: {
     status: "completed",
     proposalCount: bearProposals.length
   });
-  return { proposals: bearProposals, llmSteps };
+  return { proposals: bearProposals, llmSteps, ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}) };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
@@ -3493,11 +4625,10 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
-/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
- *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
- *  degrades to the refPrice-based branch instead. */
+/** A real, quoted ask — excludes a synthesized (price-derived) spread. A synthetic ask must
+ *  NEVER anchor ask-relative limit-price math; it degrades to the refPrice-based branch instead. */
 function hasRealAsk(quote: MarketQuote): boolean {
-  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+  return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
@@ -3522,11 +4653,11 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
-  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
-  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
-  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
-  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
-  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
+  // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
+  // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = !quote.syntheticBid ? quote.bid : undefined;
+  const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -3830,10 +4961,8 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
       // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
       // back to refPrice only for the side that is actually synthetic so the limit is honest.
-      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
-      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
-      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
         ? round2((realAsk ?? refPrice) * (1 + buffer))
         : round2((realBid ?? refPrice) * (1 - buffer));

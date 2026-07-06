@@ -304,3 +304,49 @@ export function listStrategyRuns(limit = 20, userId: string = "local", connected
     totalCount: r.total_count
   }));
 }
+
+export function getStrategyRunById(id: string, userId: string = "local"): StrategyRunRow | undefined {
+  type RawRow = {
+    id: string;
+    started_at: string;
+    finished_at: string | null;
+    status: string;
+    summary: string | null;
+    connected_account_id: string | null;
+    placed_count: number;
+    paper_count: number;
+    blocked_count: number;
+    proposed_count: number;
+    total_count: number;
+  };
+  const row = getDb()
+    .prepare(
+      `SELECT sr.id, sr.started_at, sr.finished_at, sr.status, sr.summary, sr.connected_account_id,
+              COUNT(CASE WHEN tp.status = 'placed'   THEN 1 END) AS placed_count,
+              COUNT(CASE WHEN tp.status = 'paper'    THEN 1 END) AS paper_count,
+              COUNT(CASE WHEN tp.status = 'blocked'  THEN 1 END) AS blocked_count,
+              COUNT(CASE WHEN tp.status = 'proposed' THEN 1 END) AS proposed_count,
+              COUNT(tp.id)                                        AS total_count
+         FROM strategy_runs sr
+         LEFT JOIN trade_proposals tp ON tp.run_id = sr.id
+        WHERE sr.id = ? AND sr.user_id = ?
+        GROUP BY sr.id`
+    )
+    .get(id, userId) as RawRow | undefined;
+
+  return row
+    ? {
+        id: row.id,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at ?? undefined,
+        status: row.status as StrategyRunRow["status"],
+        summary: row.summary ?? undefined,
+        connectedAccountId: row.connected_account_id ?? undefined,
+        placedCount: row.placed_count,
+        paperCount: row.paper_count,
+        blockedCount: row.blocked_count,
+        proposedCount: row.proposed_count,
+        totalCount: row.total_count
+      }
+    : undefined;
+}
