@@ -394,8 +394,7 @@ describe("item 4: hybrid BM25/RRF eval delta (HYBRID_RETRIEVAL on vs off)", () =
 // block scores recall@k/MRR over ONLY the new episodic cases (query -> closed-lot experience /
 // coach-note / lesson chunk), reusing the exact same runFixture + recall/MRR scorers as the
 // filings suite above, filtered to the episodic subset via runFixture's additive `cases` option.
-const EPISODIC_CASE_IDS = new Set(RAG_EVAL_FIXTURE.filter((c) => c.id.startsWith("episodic-")).map((c) => c.id));
-const EPISODIC_CASES = RAG_EVAL_FIXTURE.filter((c) => EPISODIC_CASE_IDS.has(c.id));
+const EPISODIC_CASES = RAG_EVAL_FIXTURE.filter((c) => c.id.startsWith("episodic-"));
 
 describe("episodic decision-memory eval (recall@k / MRR over socratic-decision/coach-note/lesson cases)", () => {
   beforeEach(() => {
@@ -474,9 +473,11 @@ describe("episodic decision-memory eval (recall@k / MRR over socratic-decision/c
 //
 // Exercises RetrieveOptions.queries / rrfFuse directly against retrieveContextDetailed: the SAME
 // fixture case is run once as a plain single query, and once with `options.queries` set to
-// [primary, ...2-3 derived variants] — mirroring how strategy.ts's RAG_MULTIQUERY/RAG_HYDE lane
-// would populate it (paraphrases/evidence-derived variants of the same situation sketch), without
-// flipping either flag or touching production code. Because the mocked Pinecone `query()` returns
+// [...2-3 derived variants] (the primary query is passed separately as retrieveContextDetailed's
+// own first arg and vector-db.ts folds it into the fan-out set itself) — mirroring how
+// strategy.ts's RAG_MULTIQUERY/RAG_HYDE lane would populate it (paraphrases/evidence-derived
+// variants of the same situation sketch), without flipping either flag or touching production
+// code. Because the mocked Pinecone `query()` returns
 // the SAME recorded pool for every fan-out variant call (this harness has one fixed pool per case,
 // not a different pool per paraphrase), the realistic assertion is NO-REGRESSION + "the fused pool
 // actually drew from multiple query lists" — not a strict improvement, since the mock cannot
@@ -565,7 +566,9 @@ describe("item #822: single-query vs multi-query (RetrieveOptions.queries / rrfF
   });
 
   it("multi-query (rrfFuse) recall is never worse than single-query on the same near-miss-heavy episodic case", async () => {
-    const testCase = RAG_EVAL_FIXTURE.find((c) => c.id === "episodic-nvda-momentum-analog")!;
+    const testCase = RAG_EVAL_FIXTURE.find((c) => c.id === "episodic-nvda-momentum-analog");
+    expect(testCase, "fixture case episodic-nvda-momentum-analog not found").toBeDefined();
+    if (!testCase) throw new Error("unreachable: asserted above");
     // Derived variants: paraphrases of the same situation sketch, the shape strategy.ts's
     // RAG_MULTIQUERY/RAG_HYDE lane produces (evidence-derived rephrasings, not new topics).
     const derived = [
@@ -590,7 +593,9 @@ describe("item #822: single-query vs multi-query (RetrieveOptions.queries / rrfF
   });
 
   it("multi-query (rrfFuse) recall is never worse than single-query on the exact-term hybrid-style case", async () => {
-    const testCase = RAG_EVAL_FIXTURE.find((c) => c.id === "amzn-exact-term-fulfillment")!;
+    const testCase = RAG_EVAL_FIXTURE.find((c) => c.id === "amzn-exact-term-fulfillment");
+    expect(testCase, "fixture case amzn-exact-term-fulfillment not found").toBeDefined();
+    if (!testCase) throw new Error("unreachable: asserted above");
     const derived = [
       "Amazon fulfillment centers and delivery stations network structure",
       "How is AMZN's fulfillment and sortation infrastructure organized?"
