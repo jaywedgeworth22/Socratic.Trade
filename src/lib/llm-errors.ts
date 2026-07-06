@@ -70,7 +70,7 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   // this is an admin-configured spend cap) comes back as a 400 invalid_request_error, so it doesn't
   // match the 429/quota branch above and previously fell through to a raw-JSON dump.
   if (has("usage limit", "usage limits")) {
-    const regainMatch = text.match(/regain access(?: on)? ([^."]+)/i);
+    const regainMatch = text.match(/regain access ((?:on )?[^."]+)/i);
     const when = regainMatch ? ` You'll regain access ${regainMatch[1].trim()}.` : "";
     return `${provider} has hit its configured API usage limit for this account.${when} Raise the limit with your ${provider} plan/console, or wait for it to reset.`;
   }

@@ -59,6 +59,7 @@ describe("humanizeLlmError", () => {
     expect(msg).toContain("Anthropic (Claude)");
     expect(msg.toLowerCase()).toContain("usage limit");
     expect(msg).toContain("2026-08-01");
+    expect(msg).toContain("regain access on 2026-08-01");
     expect(msg).not.toContain("{");
     expect(msg).not.toContain("request_id");
   });
