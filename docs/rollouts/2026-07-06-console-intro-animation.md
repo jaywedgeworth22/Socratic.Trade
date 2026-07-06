@@ -93,6 +93,19 @@ clean varied candlestick "SOCRATIC TRADE" ticker (per-candle red/green mix, no
 colour blocks) marching left. Standalone frames also confirmed the header stays
 varied and legible across consecutive ticks.
 
+## Review follow-ups (PR #876)
+
+Post-open fixes:
+- **Mobile header overflow:** `logoH` now also clamps by available width
+  (`(vw - 2·pad) / HEADER_AR`), so the enlarged header no longer runs off narrow
+  viewports. Verified at 390×844 (center + header both fit) and 1280×800 (unchanged).
+- **Copilot review comments (all addressed):** (1) `sampleCells` builds its font
+  string from its `fontPx` arg instead of a hard-coded 200px const (honest
+  contract); (2) the fade `setTimeout` is tracked and cleared in effect cleanup
+  (no setState-after-unmount if unmounted mid-fade); (3) overlay `zIndex` raised
+  60 → 200 so console toasts (120) / drawers (111) can't render over the splash;
+  (4) added a keyboard skip (Escape / Enter / Space) alongside click-to-skip.
+
 ## Follow-ups
 
 - Optionally replace the console header's text brand with the persistent ticking

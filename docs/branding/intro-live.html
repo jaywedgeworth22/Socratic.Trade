@@ -102,7 +102,7 @@ function layout(vw,vh){
   const stackX=(vw-stackW)/2, stackY=(vh-stackH)*0.46;
   const cm=Math.max(18,vw*0.03);
   const chart={x0:cm,x1:vw-cm,midY:vh*(portrait?0.42:0.5),amp:vh*(portrait?0.34:0.40)};
-  const logoH=Math.min(Math.max(vh*0.05,24),42), headerW=logoH*HEADER_AR, pad=Math.max(14,vw*0.014);
+  const pad=Math.max(14,vw*0.014), logoH=Math.min(Math.max(vh*0.05,24),42,(vw-2*pad)/HEADER_AR), headerW=logoH*HEADER_AR;
   const header={x:pad,y:pad,w:headerW,h:logoH};
   return {portrait,stackW,stackH,stackX,stackY,chart,header,sizeScale:stackW/blockW};
 }

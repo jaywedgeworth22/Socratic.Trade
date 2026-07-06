@@ -43,15 +43,15 @@ function buildModel(): Model {
 
   const off = document.createElement("canvas");
   const octx = off.getContext("2d", { willReadFrequently: true })!;
-  const FONT = '700 200px Arial, "Helvetica Neue", sans-serif';
   function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
-    octx.font = FONT;
+    const font = `700 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
+    octx.font = font;
     const widths = [...text].map((ch) => (ch === " " ? fontPx * 0.45 : octx.measureText(ch).width));
     const total = widths.reduce((a, b) => a + b, 0) + tracking * (text.length - 1);
     const padX = Math.ceil(fontPx * 0.35), H = Math.ceil(fontPx * 1.5);
     off.width = Math.ceil(total) + padX * 2; off.height = H;
     octx.clearRect(0, 0, off.width, off.height);
-    octx.fillStyle = "#fff"; octx.textBaseline = "alphabetic"; octx.font = FONT;
+    octx.fillStyle = "#fff"; octx.textBaseline = "alphabetic"; octx.font = font;
     let x = padX; const topY = Math.round(fontPx * 1.1);
     for (let i = 0; i < text.length; i++) { if (text[i] !== " ") octx.fillText(text[i], x, topY); x += widths[i] + tracking; }
     const img = octx.getImageData(0, 0, off.width, off.height).data, W = off.width;
@@ -132,7 +132,7 @@ function buildModel(): Model {
     const portrait = vh > vw;
     const stackW = Math.min(portrait ? vw * 0.9 : vw * 0.8, vh * STACK_AR * 0.62), stackH = stackW / STACK_AR;
     const cm = Math.max(18, vw * 0.03);
-    const logoH = Math.min(Math.max(vh * 0.05, 24), 42), pad = Math.max(14, vw * 0.014);
+    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.05, 24), 42, (vw - 2 * pad) / HEADER_AR);
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
       chart: { x0: cm, x1: vw - cm, midY: vh * (portrait ? 0.42 : 0.5), amp: vh * (portrait ? 0.34 : 0.4) },
@@ -217,7 +217,7 @@ export function ConsoleIntro() {
     const model = MODEL;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false;
+    let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false, fadeTimer = 0;
     const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); };
     resize();
     window.addEventListener("resize", resize);
@@ -228,8 +228,10 @@ export function ConsoleIntro() {
       hide();
     };
     const skip = () => { if (!fading) startFade(); };
-    const startFade = () => { fading = true; if (wrap) { wrap.style.opacity = "0"; } window.setTimeout(finish, 720); };
+    const startFade = () => { fading = true; if (wrap) { wrap.style.opacity = "0"; } fadeTimer = window.setTimeout(finish, 720); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" || e.key === "Enter" || e.key === " ") skip(); };
     wrap.addEventListener("click", skip);
+    window.addEventListener("keydown", onKey);
 
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
@@ -246,7 +248,7 @@ export function ConsoleIntro() {
     };
     raf = requestAnimationFrame(loop);
 
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); wrap.removeEventListener("click", skip); };
+    return () => { cancelAnimationFrame(raf); if (fadeTimer) window.clearTimeout(fadeTimer); window.removeEventListener("resize", resize); window.removeEventListener("keydown", onKey); wrap.removeEventListener("click", skip); };
   }, []);
 
   if (hidden) return null;
@@ -254,7 +256,7 @@ export function ConsoleIntro() {
     <div
       ref={wrapRef}
       aria-hidden
-      style={{ position: "fixed", inset: 0, zIndex: 60, background: "#0b1018", transition: "opacity .7s ease", cursor: "pointer" }}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "#0b1018", transition: "opacity .7s ease", cursor: "pointer" }}
     >
       <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
     </div>
