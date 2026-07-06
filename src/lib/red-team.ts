@@ -18,6 +18,39 @@ export interface RedTeamDebateResult {
   /** The model that actually served (or attempted) the debate — persisted onto the proposal's
    *  redTeamVerdict for accurate approval-time attribution. Absent when no endpoint was resolved. */
   model?: string;
+  /**
+   * Structured reason the debate is unavailable (`available: false`), for policy-aware routing
+   * ("RED TEAM FAILED" flag) that needs to distinguish failure modes rather than just a free-text
+   * reason string. Absent when `available: true` (a verdict was actually returned).
+   *  - `not_configured`: no LLM key/credential resolved for the Red Team role.
+   *  - `provider_error`: the provider returned a non-2xx response (excluding 429).
+   *  - `rate_limited`: the provider returned HTTP 429.
+   *  - `timeout`: the request was aborted by the debate's own timeout (or the error otherwise
+   *    looks like an abort), as opposed to some other transport failure.
+   *  - `malformed_response`: the provider returned a 2xx response but the body was not parseable
+   *    JSON, or was parseable JSON that didn't match the required `{rejected: boolean}` shape.
+   */
+  failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
+}
+
+/** True when `error` looks like an AbortSignal.timeout()-triggered abort (vs some other thrown
+ *  transport error) — used to classify RedTeamDebateResult.failureKind precisely. */
+function isAbortTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "AbortError" || error.name === "TimeoutError" || /abort|timed?\s*out/i.test(error.message);
+}
+
+/**
+ * Validate a parsed Red Team verdict body has the required shape. A parseable-but-schema-violating
+ * response (missing/non-boolean `rejected`) must NOT silently coerce to an approved verdict — that
+ * is the exact fail-open gap this function closes (design doc §4.4). Returns the validated verdict
+ * (with `reason` defaulted) or `null` when the shape is invalid.
+ */
+function validateRedTeamVerdictShape(parsed: unknown): { rejected: boolean; reason: string } | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const candidate = parsed as { rejected?: unknown; reason?: unknown };
+  if (typeof candidate.rejected !== "boolean") return null;
+  return { rejected: candidate.rejected, reason: typeof candidate.reason === "string" && candidate.reason ? candidate.reason : "No reason provided." };
 }
 
 /** Abort the Red Team LLM call after this long so a hung provider can't wedge the run lock. */
@@ -117,7 +150,7 @@ Respond with a JSON object containing:
       });
     }
   }
-  if (!llmKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured." };
+  if (!llmKey) return { rejected: false, available: false, reason: "Red Team debate skipped because the LLM is not configured.", failureKind: "not_configured" };
 
   // OpenAI-compatible providers now request STRICT `json_schema` (the {rejected, reason} verdict
   // shape) so the response is schema-enforced instead of relying on prose + a bare `json_object`.
@@ -167,7 +200,7 @@ Respond with a JSON object containing:
           reasonChars: result.debate.reason.length
         })
       },
-      async () => {
+      async (): Promise<{ text: string | undefined; debate: RedTeamDebateResult }> => {
         const response = await llmFetch(url, {
           method: "POST",
           headers: llmAuthHeaders({ provider, key: llmKey }),
@@ -180,9 +213,16 @@ Respond with a JSON object containing:
         if (!response.ok) {
           const why = humanizeLlmError(await response.text().catch(() => ""), { provider, status: response.status });
           console.warn("Red Team LLM call failed:", why);
+          const failureKind: RedTeamDebateResult["failureKind"] = response.status === 429 ? "rate_limited" : "provider_error";
           return {
             text: undefined,
-            debate: { rejected: false, available: false, reason: `Red Team debate unavailable — ${why}`, model }
+            debate: {
+              rejected: false,
+              available: false,
+              reason: `Red Team debate unavailable — ${why}`,
+              model,
+              failureKind
+            }
           };
         }
 
@@ -191,30 +231,61 @@ Respond with a JSON object containing:
         const text = extractLlmText(payload);
 
         if (text) {
-          const parsed = JSON.parse(text) as RedTeamDebateResult;
+          // A parseable-but-schema-violating response (missing/non-boolean `rejected`) must NOT
+          // silently coerce to an approved verdict (design doc §4.4) — validate the shape and fail
+          // closed (available:false, malformed_response) rather than defaulting via `!!parsed.rejected`.
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text);
+          } catch (parseError) {
+            console.warn("Red Team response was not valid JSON:", parseError);
+            return {
+              text,
+              debate: {
+                rejected: false,
+                available: false,
+                reason: "Red Team returned an unparseable response (not valid JSON); treating the debate as unavailable.",
+                model,
+                failureKind: "malformed_response"
+              }
+            };
+          }
+          const verdict = validateRedTeamVerdictShape(parsed);
+          if (!verdict) {
+            return {
+              text,
+              debate: {
+                rejected: false,
+                available: false,
+                reason: "Red Team returned a malformed verdict (missing/invalid 'rejected'); treating the debate as unavailable.",
+                model,
+                failureKind: "malformed_response"
+              }
+            };
+          }
           return {
             text,
-            debate: {
-              rejected: !!parsed.rejected,
-              available: true,
-              reason: parsed.reason || "No reason provided.",
-              model
-            }
+            debate: { rejected: verdict.rejected, available: true, reason: verdict.reason, model }
           };
         }
 
         return {
           text: undefined,
-          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response.", model }
+          debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response.", model, failureKind: "malformed_response" }
         };
       }
     );
     return traced.debate;
   } catch (error) {
     console.error("Failed to debate proposal:", error);
+    return {
+      rejected: false,
+      available: false,
+      reason: "Red Team evaluation errored out.",
+      model,
+      failureKind: isAbortTimeoutError(error) ? "timeout" : "provider_error"
+    };
   }
-
-  return { rejected: false, available: false, reason: "Red Team evaluation errored out.", model };
 }
 
 /** Run the Red Team debate on Anthropic's Messages API (cross-provider Bear). Mirrors the OpenAI
@@ -256,7 +327,7 @@ async function debateViaAnthropic(args: {
         tags: ["red-team", "proposal-review", "anthropic"],
         output: (result) => ({ rejected: result.debate.rejected, reasonChars: result.debate.reason.length })
       },
-      async () => {
+      async (): Promise<{ debate: RedTeamDebateResult }> => {
         const response = await llmFetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -269,31 +340,60 @@ async function debateViaAnthropic(args: {
         });
         if (!response.ok) {
           console.warn("Red Team (Anthropic) call failed", await response.text());
-          return { debate: { rejected: false, available: false, reason: "Red Team debate failed to execute.", model } };
+          const failureKind: RedTeamDebateResult["failureKind"] = response.status === 429 ? "rate_limited" : "provider_error";
+          return {
+            debate: {
+              rejected: false,
+              available: false,
+              reason: "Red Team debate failed to execute.",
+              model,
+              failureKind
+            }
+          };
         }
         const payload = await response.json();
         recordLlmUsage({ userId: args.userId, provider: "anthropic", model, context: "red-team", keySource: args.keySource, keyRef: args.keyRef, ...extractLlmUsage(payload) });
         const text: string | undefined = Array.isArray(payload.content)
           ? payload.content.map((c: { text?: string }) => c?.text ?? "").join("")
           : undefined;
-        let parsed: RedTeamDebateResult | null = null;
+        let parsed: unknown = null;
         if (text) {
           try {
             const match = text.match(/\{[\s\S]*\}/);
-            if (match) parsed = JSON.parse(match[0]) as RedTeamDebateResult;
+            if (match) parsed = JSON.parse(match[0]);
           } catch {
             parsed = null;
           }
         }
-        if (parsed) {
-          return { debate: { rejected: !!parsed.rejected, available: true, reason: parsed.reason || "No reason provided.", model } };
+        // Same shape-validation fail-closed fix as the OpenAI path (design doc §4.4): a
+        // parseable-but-schema-violating body (missing/non-boolean `rejected`) must not coerce to
+        // an approved verdict via `!!parsed.rejected`.
+        const verdict = parsed ? validateRedTeamVerdictShape(parsed) : null;
+        if (verdict) {
+          return { debate: { rejected: verdict.rejected, available: true, reason: verdict.reason, model } };
         }
-        return { debate: { rejected: false, available: false, reason: "Red Team evaluation returned no response.", model } };
+        return {
+          debate: {
+            rejected: false,
+            available: false,
+            reason: parsed
+              ? "Red Team returned a malformed verdict (missing/invalid 'rejected'); treating the debate as unavailable."
+              : "Red Team evaluation returned no response.",
+            model,
+            failureKind: "malformed_response"
+          }
+        };
       }
     );
     return traced.debate;
   } catch (error) {
     console.error("Failed to debate proposal (Anthropic):", error);
-    return { rejected: false, available: false, reason: "Red Team evaluation errored out.", model };
+    return {
+      rejected: false,
+      available: false,
+      reason: "Red Team evaluation errored out.",
+      model,
+      failureKind: isAbortTimeoutError(error) ? "timeout" : "provider_error"
+    };
   }
 }
