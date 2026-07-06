@@ -110,8 +110,8 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-monet` | `agent/monet` | **4103** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
-| `~/apps/trading-cursor` | `agent/cursor` | **4104** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
+| `~/apps/trading-cursor` | `agent/cursor` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
+| `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
 | `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
 A parallel Coolify-based hosting migration (Hetzner box behind `jays.services`) is
@@ -190,7 +190,7 @@ called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, 
 1. **A full peer autonomous lane**, on par with Claude Code, Codex, and Antigravity/Gemini.
    The owner runs Cursor's background/agent mode on **DeepSeek**, producing work in its own
    worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`), with its own
-   PM2-hosted preview (`cursor.jays.services`, port **4104**) — see the hosting table above.
+   PM2-hosted preview (`cursor.jays.services`, port **4103**) — see the hosting table above.
    Treat it exactly like the Claude/Codex/Antigravity/Monet rows: don't edit in it from
    another agent, land via `scripts/land.sh`, keep the Pre-Commit/Handoff Protocol current
    from it like any other lane.
