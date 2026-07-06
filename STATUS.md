@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Remove server failover API keys
+
+Removed server failover API keys (`process.env` fallbacks) for LLMs and related services. All LLM and service calls are now authenticated exclusively via database-backed per-user API keys (`user_api_keys` table). The first user (the owner) will configure their keys, which automatically work system-wide for their account and data sharing.
+
+- Modified `src/lib/db-api-keys.ts` and `src/lib/llm-usage.ts`.
+- Replaced `process.env` fallbacks with `upsertUserApiKey` in test files.
+- Completed verification: `npm test` passed 2836/2836 tests, build and lint are clean.
+- Created rollout note: `docs/rollouts/2026-07-06-remove-server-failover-keys.md`.
+
 ## 2026-07-06 — Mobile console width overflow fix (PR open)
 
 Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
