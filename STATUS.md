@@ -22,6 +22,21 @@ Verification in this worktree is fully green: `npm test -- test/socratic-db.test
 --quiet`, `npm test` (256 files / 2507 tests), and `npm run build` (passes; `/api/socratic/*`,
 `/console`, and `/console/decisions/[id]` all present in the build output). PR #810 is open as
 READY with squash auto-merge armed; next action is just letting GitHub `verify` go green and land it.
+## 2026-07-06 — Console intro animation (candlestick page-load splash)
+Wired the candlestick intro into the app as the console first-load splash: new client component
+`app/console/components/intro-canvas.tsx` (pure Canvas 2D, responsive, any-background), rendered by
+`app/console/components/shell.tsx`. Chart waves -> candles peel off and fly -> big SOCRATIC/TRADE
+(keeps its formed candles + colours and only *ripples* — no field reshape, so no sudden "flip";
+0.75s hold) -> shrink into top-left logo -> fade to console. The **header is a real candlestick
+ticker**: a green-biased walk of 12 candle units marches one column left per second so every candle
+keeps its own varied red/green (never one big red-then-green block); the header never waves. Plays
+once per tab session, click-to-skip, reduced-motion-safe. Letter-stem evenness fixed via a
+coverage-thresholded type sampler; header speckle/mush fixed by overlapping flying candles onto
+natural strokes + body width tied to column count. Gate green: tsc clean, lint 0 errors, build ok;
+center + header both driven live via dev+Playwright on `/console`. Standalone reference at
+`docs/branding/intro-live.html`. Blocker: none. Next action (optional): make the header brand the
+persistent ticking logo. See `docs/rollouts/2026-07-06-console-intro-animation.md`.
+
 ## 2026-07-05 — Logo concept exploration (Claude cloud, docs-only)
 Owner asked for a set of logo ideas for Socratic Trade / Socratic.Trade, favoring options that
 aren't busy and where the words carry the logo. Round 2 (same day): owner shared four Adobe

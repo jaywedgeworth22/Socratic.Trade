@@ -298,6 +298,18 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+
+- **Console intro animation (candlestick page-load splash)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **pushed; PR open**. New
+  `app/console/components/intro-canvas.tsx` (pure Canvas, responsive, any-bg, once/session,
+  click-skip, reduced-motion-safe) wired into `shell.tsx` as the console first-load splash:
+  waving chart -> candles fly -> big SOCRATIC/TRADE (formed candles + colours, ripple only — no
+  reshape/"flip") -> shrink to top-left header. Header is a varied candlestick ticker (12-unit
+  green-biased walk marching one column/sec; every candle its own red/green, no colour blocks; no
+  wave); speckle fixed by overlapping flying candles onto natural strokes + body width tied to
+  column count. Letter-stem evenness fixed. tsc/lint/build green + center & header driven live.
+  Reference `docs/branding/intro-live.html`. Next (opt): persistent ticking header brand. See
+  `docs/rollouts/2026-07-06-console-intro-animation.md`.
 - **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
   `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
   fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
