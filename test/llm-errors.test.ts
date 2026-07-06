@@ -53,6 +53,16 @@ describe("humanizeLlmError", () => {
     expect(humanizeLlmError("model_not_found", { provider: "openai", status: 404 }).toLowerCase()).toContain("isn't available");
   });
 
+  it("maps Anthropic's workspace usage-limit error to a plain-English message (not raw JSON)", () => {
+    const raw = '{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-08-01 at 00:00 UTC."},"request_id":"req_011Ccm8KXQnpRLjFAULndY1w"}';
+    const msg = humanizeLlmError(raw, { provider: "anthropic", status: 400 });
+    expect(msg).toContain("Anthropic (Claude)");
+    expect(msg.toLowerCase()).toContain("usage limit");
+    expect(msg).toContain("2026-08-01");
+    expect(msg).not.toContain("{");
+    expect(msg).not.toContain("request_id");
+  });
+
   it("falls back to the raw text (single line, provider-prefixed) for unrecognized errors", () => {
     const msg = humanizeLlmError("some weird\n  multi-line   detail", { provider: "openai" });
     expect(msg).toContain("OpenAI error:");

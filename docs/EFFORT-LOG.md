@@ -83,6 +83,25 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **Plain-English Anthropic usage-limit error (CLAUDE, cloud lane, 2026-07-06).** Owner reported a
+  screenshot where a Roth IRA thesis card's "⚠ RED TEAM FAILED (provider error)" note showed a raw
+  Anthropic JSON error blob (`{"type":"error","error":{"type":"invalid_request_error","message":"You
+  have reached your specified API usage limits...` verbatim, including `request_id`) instead of
+  plain English. Root cause: `humanizeLlmError` (`src/lib/llm-errors.ts`) already recognizes
+  401/403/404/429/5xx/timeout/context-length shapes, but Anthropic's org/workspace-level "specified
+  API usage limit" comes back as a 400 `invalid_request_error` — not a 429 — so it fell through to
+  the generic `${provider} error: ${rawText}` fallback and dumped the JSON body. Fix: added a
+  dedicated `usage limit`/`usage limits` branch that extracts the "regain access on <date>" text (if
+  present) and returns a plain-English sentence naming the provider and reset time, with no raw JSON.
+  This is the single chokepoint most call sites (red-team.ts, strategy.ts, outcome-engine.ts,
+  post-mortem.ts, proposal-revalidation.ts, strategy-tuning.ts, the Assistant console) already route
+  through, so the fix applies everywhere those reasons/rationale strings surface. New regression test
+  in `test/llm-errors.test.ts` pins the exact screenshot payload → plain-English, no `{`/`request_id`
+  in output. Files: `src/lib/llm-errors.ts`, `test/llm-errors.test.ts`. Verification: `npx tsc
+  --noEmit` clean; `npm run lint` 0 errors; `npm test` 2674/2674 passed; `npm run build` fails with a
+  pre-existing `/_not-found` "Invalid URL" collection error reproduced identically on a clean stash
+  of `main` (unrelated to this change, likely a missing env var in this cloud environment — not a
+  regression). See `docs/rollouts/2026-07-06-plain-english-anthropic-usage-limit-error.md`.
 - **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
   prompts (CLAUDE).** Merged to `main` 2026-07-05 as squash `041b73b2` (verify/smoke/gitleaks
   green). Advisory ONLY (owner philosophy: receipts, never blocks): fenced
