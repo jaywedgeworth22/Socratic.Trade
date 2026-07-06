@@ -68,6 +68,18 @@ describe("routeOnAdversaryUnavailable — pure routing helper", () => {
       expect(exit.holdForHuman).toBe(false);
       expect(exit.note).toContain("RED TEAM FAILED");
     });
+
+    it("under propose authority (autoExecutes=false) an opt-in de-risk exit is NOT held but the note says 'surfaced for approval', never 'proceeding'", () => {
+      const decide = routeOnAdversaryUnavailable("sell", "timeout", "timed out", true, true);
+      expect(decide.holdForHuman).toBe(false);
+      expect(decide.note).toContain("proceeding because this order reduces risk");
+
+      const propose = routeOnAdversaryUnavailable("sell", "timeout", "timed out", true, false);
+      expect(propose.holdForHuman).toBe(false); // routing decision itself is unchanged
+      expect(propose.note).toContain("RED TEAM FAILED");
+      expect(propose.note).toContain("surfaced for your approval");
+      expect(propose.note).not.toContain("proceeding because"); // never falsely claims it proceeds
+    });
   });
 });
 

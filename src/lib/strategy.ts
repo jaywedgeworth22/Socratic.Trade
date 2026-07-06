@@ -1150,7 +1150,8 @@ export async function runStrategyOnce(
             proposal.side,
             redTeamResult.failureKind,
             redTeamResult.reason,
-            policy.tuning?.deRiskExitsOnAdversaryUnavailable
+            policy.tuning?.deRiskExitsOnAdversaryUnavailable,
+            policy.strategyAuthority === "decide"
           );
           console.warn(
             `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
@@ -1593,13 +1594,11 @@ export async function runStrategyOnce(
 
       if (policy.strategyAuthority === "propose") {
         // Under "propose" authority EVERY proposal already becomes a pending-approval card
-        // regardless of Red Team outcome — which means a Red-Team-unavailable signal was
-        // previously invisible on the card itself (the human approving never saw the adversary
-        // didn't run). Surface the same loud note the "decide"-authority branch below persists.
-        if (requiresHumanReview.has(proposal) && normalizedProposal.redTeamVerdict && !normalizedProposal.redTeamVerdict.available) {
-          const kindLabel = describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind);
-          normalizedProposal.rationale += `\n\n⚠ RED TEAM FAILED (${kindLabel}): review unavailable — awaiting human approval.`;
-        }
+        // regardless of Red Team outcome. The Red-Team-unavailable signal is already on the
+        // rationale via routeOnAdversaryUnavailable's note (appended in the debate loop above),
+        // which is authority-aware — held/openings read "routed to human approval" and an opt-in
+        // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
+        // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
