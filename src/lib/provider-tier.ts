@@ -23,9 +23,16 @@ export interface ProviderTierEntry {
 }
 export type ProviderTierStatus = Partial<Record<"massive" | "fmp", ProviderTierEntry>>;
 
-/** Internal-setting key holding the latest detected tier per provider. Also read by massive.ts. */
-export const PROVIDER_TIER_STATUS_KEY = "providerTier:status";
-const LAST_CHECK_KEY = "providerTier:lastCheckAt";
+/** Per-user internal-setting key holding the latest detected tier for the user's API keys.
+ *  Also read by massive.ts (massiveDetectedFree). Scoped per-user to avoid the shared-row RMW
+ *  race that checkRegimeFlip had — two users probing concurrently would otherwise overwrite each
+ *  other's merged status on the single shared key. */
+export function providerTierStatusKey(userId: string): string {
+  return `providerTier:status:${userId}`;
+}
+export function lastCheckKey(userId: string): string {
+  return `providerTier:lastCheckAt:${userId}`;
+}
 const DEFAULT_INTERVAL_HOURS = 24;
 const PROBE_TIMEOUT_MS = 8000;
 const DAY_MS = 86_400_000;
@@ -41,8 +48,8 @@ function ymd(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function getProviderTierStatus(): ProviderTierStatus {
-  return getInternalSetting<ProviderTierStatus>(PROVIDER_TIER_STATUS_KEY) ?? {};
+export function getProviderTierStatus(userId: string = "local"): ProviderTierStatus {
+  return getInternalSetting<ProviderTierStatus>(providerTierStatusKey(userId)) ?? {};
 }
 
 // ── Massive (Polygon) probe ───────────────────────────────────────────────────
@@ -116,7 +123,7 @@ export async function runProviderTierCheck(opts: { userId?: string; now?: number
   const now = opts.now ?? Date.now();
   const fetcher = opts.fetcher ?? fetch;
   const nowIso = new Date(now).toISOString();
-  const prev = getProviderTierStatus();
+  const prev = getProviderTierStatus(userId);
   const next: ProviderTierStatus = {};
 
   const massiveKey = resolveApiKey("massive", userId);
@@ -130,7 +137,7 @@ export async function runProviderTierCheck(opts: { userId?: string; now?: number
     next.fmp = { tier: r.tier, at: nowIso, reason: r.reason };
   }
 
-  setInternalSetting(PROVIDER_TIER_STATUS_KEY, next);
+  setInternalSetting(providerTierStatusKey(userId), next);
   audit("provider_tier_check", { massive: next.massive, fmp: next.fmp }, userId);
 
   // Alert on a subscription LAPSE or CHANGE (either direction), via the in-app feed AND the
@@ -190,9 +197,9 @@ function isOvernightEt(now: number): boolean {
   }
 }
 
-export function isProviderTierCheckDue(now: number = Date.now()): boolean {
+export function isProviderTierCheckDue(now: number = Date.now(), userId: string = "local"): boolean {
   const intervalMs = numericEnv("PROVIDER_TIER_CHECK_INTERVAL_HOURS", DEFAULT_INTERVAL_HOURS, 1) * 3600_000;
-  const last = getInternalSetting<string>(LAST_CHECK_KEY);
+  const last = getInternalSetting<string>(lastCheckKey(userId));
   if (!last) return true;
   const lastMs = Date.parse(last);
   if (!Number.isFinite(lastMs)) return true;
@@ -207,9 +214,10 @@ export function isProviderTierCheckDue(now: number = Date.now()): boolean {
  *  busy tick loop can't double-run it. No-op until due (default every 24h). */
 export async function runProviderTierCheckIfDue(now: number = Date.now()): Promise<void> {
   try {
-    if (!isProviderTierCheckDue(now)) return;
-    setInternalSetting(LAST_CHECK_KEY, new Date(now).toISOString());
-    await runProviderTierCheck({ now });
+    const userId = "local"; // provider tier check uses the env-level API keys
+    if (!isProviderTierCheckDue(now, userId)) return;
+    setInternalSetting(lastCheckKey(userId), new Date(now).toISOString());
+    await runProviderTierCheck({ now, userId });
   } catch (err) {
     console.error("[provider-tier] tier check error:", err);
   }

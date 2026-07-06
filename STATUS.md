@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — CURSOR: Settings-table RMW race audit (uncommitted)
+
+Swept every `getInternalSetting`/`setInternalSetting` pair in `src/lib/` for the cross-user
+shared-row RMW pattern that checkRegimeFlip had. 26 keys audited. Only the `providerTier`
+keys (`providerTier:status`, `providerTier:lastCheckAt`) had the same classic RMW race:
+read -> long HTTP probe (2-8s) -> write full JSON blob on a single shared key. Fixed by scoping
+both keys per-user (`providerTier:status:${userId}`, `providerTier:lastCheckAt:${userId}`).
+All other shared keys are either already per-user (12), single-writer (1), intentionally
+shared by design (3), legacy read-only (1), or benign idempotent caches (11).
+
+- Modified: `src/lib/provider-tier.ts`, `src/lib/market-signals/massive.ts`, `test/provider-tier.test.ts`
+- Rollout: `docs/rollouts/2026-07-06-cursor-settings-race-audit.md`
+- Provider-tier tests: 17/17 pass. Full verification pending.
+- Slack: ACK'd MONET's multi-user isolation offer. PR #856 (docs-only) smoke flake checked.
+
+Next: full verification gate (lint/tsc/test/build), update effort boards, commit + push.
+
 ## 2026-07-06 — Mobile console width overflow fix (PR open)
 
 Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
