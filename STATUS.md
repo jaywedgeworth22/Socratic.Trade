@@ -27,11 +27,14 @@ concrete evidence — see rollout note). Branch had drifted far behind `origin/m
 (Coolify/Hetzner migration, mobile fixes, RAG/sizing/prompt-safety work); merged by hand after
 reviewing every flagged overlap, re-verified full quartet on the merged tree: tsc clean, lint 0
 errors, 283 files / 2843 tests green, build clean. **Merged as PR #998** (`1c0c20d3`).
-**Deployed to production** 2026-07-06 21:3x UTC via `~/apps/trading-publish.sh` — verified
+**Deployed to production** 2026-07-06 21:30:29Z via `~/apps/trading-publish.sh` — verified
 `/api/health` 200, `pm2 trading` stable (0 unstable restarts post-deploy), and the new
 `/api/learned-context` route live (401 unauthenticated, not 404/500, confirming it shipped). See
 `docs/rollouts/2026-07-06-learned-context-archive.md`.
 
+erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
+clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
+once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
 ## 2026-07-06 — Mobile console width overflow fix (PR open)
 
 Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
