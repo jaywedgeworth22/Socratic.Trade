@@ -6,7 +6,7 @@ import { filterNewDocumentChunks, insertDocumentChunks } from "./db";
 import { logApiHealth } from "./db-health";
 import { CHARS_PER_TOKEN_CEILING, DEFAULT_MAX_TOKENS, canonicalTicker, chunkDocument, hashContent, type ChunkInput, type ChunkOptions } from "./rag/chunk";
 import { envFlagOn } from "./rag/env-flag";
-import { fuseHybrid } from "./rag/hybrid";
+import { fuseHybrid, rrfFuse } from "./rag/hybrid";
 import { dedupeSimilar } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
@@ -1621,6 +1621,16 @@ export interface RetrieveOptions {
    * behavior (no dedup pass, near-identical chunks can all appear in the final context).
    */
   dedupeSimilarity?: number;
+  /**
+   * HyDE + evidence-derived multi-query retrieval (hyde-multiquery-retrieval, 2026-07-05).
+   * When present (and non-empty), `retrieveContextDetailed` embeds EACH query independently (via
+   * the same query-embed cache as the single-query path), runs a separate Pinecone match per
+   * query, and RRF-fuses the per-query ranked id lists into one candidate pool BEFORE the existing
+   * `rankPool` pipeline (hybrid/rerank/floors/dedup) runs, unchanged. The primary `query` argument
+   * is still used for hybrid BM25 fusion and rerank scoring; `queries` only affects which Pinecone
+   * matches are recalled. Omitted/empty = current single-query behavior, byte-for-byte unchanged.
+   */
+  queries?: string[];
 }
 
 /**
@@ -1697,47 +1707,9 @@ export async function retrieveContextDetailed(
   const extraFilter = buildExtraFilters(options);
 
   try {
-    // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
-    // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
-    // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
-    // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
-    // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
-    // LLM/RAG budget, not "local"), and books the per-run budget op.
-    let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, query);
-    if (embedding == null) {
-      const response = await withRagApiHealth("voyage", voyageSource, userId, "embed query", () =>
-        embedWithRetry(voyage, [query], "query")
-      );
-      meterEmbed([query], undefined, userId); // count only on a cache MISS; book under the requesting userId
-      recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
-      embedding = response.data?.[0]?.embedding;
-    }
-    // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,
-    // NaN) would return garbage matches rather than a clean empty result. Audit so a Voyage
-    // model/config drift is observable instead of silently returning bad matches.
-    if (!isValidEmbedding(embedding)) {
-      if (embedding != null) {
-        const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
-        audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
-        console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
-        void captureRagSentryMessage("warning", "Voyage query embedding integrity rejection", {
-          provider: "voyage",
-          operation: "embed query",
-          source: voyageSource,
-          rejected: 1,
-          dimension: String(dim)
-        });
-      }
-      return [];
-    }
-    // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
-    setCachedQueryEmbedding(VOYAGE_MODEL, query, embedding);
-
     if (!(await indexExists(pc, pineconeSource, userId))) return [];
 
     const index = pc.Index(indexName());
-
-    let matches: any[] = [];
 
     // Episodic cross-symbol mode (matchAllSymbols): omit the symbol clause entirely so decision
     // analogs on OTHER tickers stay retrievable. Default (unset) keeps the per-symbol restriction.
@@ -1755,18 +1727,61 @@ export async function retrieveContextDetailed(
       ]
     };
 
-    if (vectorUserId === "local") {
-      const results = await withRagApiHealth("pinecone", pineconeSource, userId, "query", () =>
-        index.query({
-          vector: embedding,
-          topK: fetchK,
-          filter: sharedTierFilter,
-          includeMetadata: true,
-        })
-      );
-      matches = results.matches || [];
-      meterPineconeQuery(pineconeReadUnits(results, 1), userId, matches.length);
-    } else {
+    // Embed ONE query string (via the shared query-embed cache) and run its Pinecone match(es),
+    // returning `null` on a malformed embedding (already audited/logged by the caller of `null`).
+    // Factored out of the single-query path unchanged so `queries?.length` absent/empty is
+    // byte-for-byte identical to pre-multi-query behavior (one embed, one match round-trip).
+    const embedAndMatchOneQuery = async (q: string): Promise<any[] | null> => {
+      // Query-embedding cache (consolidated R9 + G8b): a vector-only LRU keyed on the NORMALIZED
+      // query (lowercase + collapsed whitespace) so trivial casing/spacing variants share a hit —
+      // never Pinecone results (see query-embed-cache.ts for the full safety rationale). Default ON;
+      // disable with RAG_QUERY_EMBED_CACHE=off. A hit skips the Voyage embed and its metering; a miss
+      // embeds, meters under the REQUESTING userId (so retrieval spend counts toward that user's daily
+      // LLM/RAG budget, not "local"), and books the per-run budget op.
+      let embedding = getCachedQueryEmbedding(VOYAGE_MODEL, q);
+      if (embedding == null) {
+        const response = await withRagApiHealth("voyage", voyageSource, userId, "embed query", () =>
+          embedWithRetry(voyage, [q], "query")
+        );
+        meterEmbed([q], undefined, userId); // count only on a cache MISS; book under the requesting userId
+        recordRagOperation(); // R16: count this embed call against the per-run budget (no-op unless enabled).
+        embedding = response.data?.[0]?.embedding;
+      }
+      // R2 integrity guard applies to the query embedding too: a malformed vector (wrong dimension,
+      // NaN) would return garbage matches rather than a clean empty result. Audit so a Voyage
+      // model/config drift is observable instead of silently returning bad matches.
+      if (!isValidEmbedding(embedding)) {
+        if (embedding != null) {
+          const dim = Array.isArray(embedding as unknown) ? (embedding as unknown[]).length : "n/a";
+          audit("vector_embedding_integrity", { rejected: 1, context: "query" }, userId);
+          console.warn(`[vector-db] Rejected malformed query embedding (dim=${dim}).`);
+          void captureRagSentryMessage("warning", "Voyage query embedding integrity rejection", {
+            provider: "voyage",
+            operation: "embed query",
+            source: voyageSource,
+            rejected: 1,
+            dimension: String(dim)
+          });
+        }
+        return null;
+      }
+      // Only cache a validated (finite, correctly-shaped) embedding — never a malformed one.
+      setCachedQueryEmbedding(VOYAGE_MODEL, q, embedding);
+
+      if (vectorUserId === "local") {
+        const results = await withRagApiHealth("pinecone", pineconeSource, userId, "query", () =>
+          index.query({
+            vector: embedding,
+            topK: fetchK,
+            filter: sharedTierFilter,
+            includeMetadata: true,
+          })
+        );
+        const m = results.matches || [];
+        meterPineconeQuery(pineconeReadUnits(results, 1), userId, m.length);
+        return m;
+      }
+
       const [userResults, localResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
           index.query({
@@ -1799,7 +1814,7 @@ export async function retrieveContextDetailed(
       combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
       const seenIds = new Set<string>();
-      const unique = [];
+      const unique: any[] = [];
       for (const m of combined) {
         if (m.id) {
           if (!seenIds.has(m.id)) {
@@ -1810,7 +1825,74 @@ export async function retrieveContextDetailed(
           unique.push(m);
         }
       }
-      matches = unique.slice(0, fetchK);
+      return unique.slice(0, fetchK);
+    };
+
+    // Additive multi-query fan-out (hyde-multiquery-retrieval, 2026-07-05): when the caller passes
+    // `options.queries` (a non-empty array — set behind RAG_MULTIQUERY/RAG_HYDE in strategy.ts),
+    // embed + match EACH query independently (INCLUDING the caller's original `query`, so its dense
+    // recall is augmented rather than replaced — 2026-07-05 review fix), then RRF-fuse the per-query
+    // ranked id lists into one candidate pool before the existing rankPool pipeline. Absent/empty
+    // `queries` runs the exact single-query path unchanged (same one embed, one match round-trip).
+    //
+    // Fail-OPEN, never fail-closed (2026-07-05 review fix): `embedAndMatchOneQuery` has no internal
+    // catch and its callees (withRagApiHealth/embedWithRetry) rethrow on a transient Voyage/Pinecone
+    // error, so a bare `Promise.all` here would let ONE variant's failure reject the whole fan-out —
+    // dropping every OTHER variant's already-successful results along with it. Each fan-out call is
+    // now individually caught (a rejected variant -> null, same "no result for this query" contract
+    // as a malformed embedding); and if EVERY variant fails/fuses to nothing, we fall back to the
+    // plain single-`query` path (i.e. behave exactly as flags-off) instead of returning `[]` — this
+    // module's header promise ("always falls back to the caller's original single query, never
+    // throws") only holds if this branch degrades that far, not just to an empty result.
+    const fanOutQueries = (options?.queries ?? []).length > 0
+      ? Array.from(new Set([query, ...(options!.queries as string[])]))
+      : [];
+    let matches: any[];
+    if (fanOutQueries.length > 0) {
+      const perQueryResults = await Promise.all(
+        fanOutQueries.map(async (q) => {
+          try {
+            return await embedAndMatchOneQuery(q);
+          } catch (err) {
+            console.warn(`[vector-db] multi-query variant failed, dropping it from the fan-out:`, err instanceof Error ? err.message : String(err));
+            return null;
+          }
+        })
+      );
+      const validResults = perQueryResults.filter((r): r is any[] => r != null && r.length > 0);
+      if (validResults.length === 0) {
+        // Every variant (including the original query, always included above) failed or matched
+        // nothing — fall back to the plain single-query path rather than returning `[]`.
+        const single = await embedAndMatchOneQuery(query);
+        if (single == null) return [];
+        matches = single;
+      } else {
+        // Synthetic ids for matches lacking a real Pinecone id are scoped per-list-index (list N /
+        // position i) so a missing id in one query's pool can never collide with a missing id at the
+        // same position in a DIFFERENT query's pool — each stays its own distinct, unfused candidate.
+        const rankedIdLists: string[][] = validResults.map((matchList, listIdx) =>
+          matchList.map((m: any, i: number) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__idx_${listIdx}_${i}__`))
+        );
+        // First-occurrence-wins would let a LOWER cosine score for a chunk that appears in multiple
+        // per-query pools silently win the fused entry (feeding a lower score into rankPool's
+        // minScore floor for that chunk). Keep the occurrence with the HIGHER match.score instead.
+        const idToMatch = new Map<string, any>();
+        validResults.forEach((matchList, listIdx) => {
+          matchList.forEach((m: any, i: number) => {
+            const id = rankedIdLists[listIdx]![i]!;
+            const existing = idToMatch.get(id);
+            if (!existing || (Number(m?.score) || 0) > (Number(existing?.score) || 0)) {
+              idToMatch.set(id, m);
+            }
+          });
+        });
+        const fusedIds = rrfFuse(rankedIdLists);
+        matches = fusedIds.map((id) => idToMatch.get(id)).filter((m): m is any => m !== undefined).slice(0, fetchK);
+      }
+    } else {
+      const single = await embedAndMatchOneQuery(query);
+      if (single == null) return [];
+      matches = single;
     }
 
     // R12 (2026-07-01 RAG backlog): apply the default cosine floor for a caller that opted in via

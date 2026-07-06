@@ -1113,6 +1113,7 @@ export interface SocraticDecisionCase {
   coachNotes: string[];
 }
 
+export type SocraticFrameworkOwnerVerb = "accept" | "reject" | "rewrite";
 export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
 
 export interface SocraticFrameworkProposal {
@@ -1130,7 +1131,13 @@ export interface SocraticFrameworkProposal {
   rationale: string;
   proposedChange: string;
   evidence: SocraticEvidenceItem[];
+  ownerVerb?: SocraticFrameworkOwnerVerb;
   ownerResponse?: string;
+}
+
+export interface SocraticDecisionTrace {
+  decision: SocraticDecisionCase;
+  run?: StrategyRunRow;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1205,6 +1212,10 @@ export interface MarketQuote {
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
+  /** True when the bid was synthesized from price (no real quoted bid from an exchange/market maker). */
+  syntheticBid?: boolean;
+  /** True when the ask was synthesized from price (no real quoted ask from an exchange/market maker). */
+  syntheticAsk?: boolean;
   /** Bar-based technical strength, 0–100 (50 = neutral). From the technical web source
    *  (TradingView push or in-house computed). Lifts/dings `momentumScore`. */
   technicalScore?: number;
@@ -1339,6 +1350,8 @@ export interface MarketQuoteSummary {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  syntheticBid?: boolean;
+  syntheticAsk?: boolean;
   evidenceBulletins?: string[];
   /** Factor-score digest for the drilldown's factor bars (same shape MarketQuote carries). */
   factorBreakdown?: MarketFactorBreakdown;
