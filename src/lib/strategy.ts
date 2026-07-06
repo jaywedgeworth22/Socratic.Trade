@@ -69,6 +69,7 @@ import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
+import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
 import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
@@ -987,6 +988,70 @@ export async function runStrategyOnce(
         ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId, prefetchedFills)
         : undefined;
 
+    // Volatility-targeting sizing (opt-in, default off): precompute annualized realized vol (%) per
+    // OPENING candidate symbol, mirroring the atrStopPctBySymbol precompute pattern above so the sync
+    // sizer can use it. Gated on volTargeting-or-atrStops being on so we never add fetch load purely
+    // for an advisory note when the feature is fully off; bars are shared with the ATR precompute's
+    // 30-min cache when a symbol is both an open position and a fresh candidate. Best-effort + bounded:
+    // a fetch error or insufficient bars simply leaves that symbol's vol-target note/taper skipped.
+    const realizedVolPctBySymbol: Record<string, number> = {};
+    if (policy.tuning?.volTargeting === true || policy.atrStops === true) {
+      const openingSymbols = Array.from(
+        new Set(
+          llmProposals
+            .filter((p) => p.side === "buy" || p.side === "short")
+            .map((p) => normalizeSymbol(p.symbol))
+        )
+      );
+      await Promise.all(
+        openingSymbols.map(async (sym) => {
+          try {
+            const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+            if (!bars) return;
+            const vol = realizedVolPct(bars);
+            if (typeof vol === "number") realizedVolPctBySymbol[sym] = vol;
+          } catch {
+            // best-effort — the vol-target note/taper is simply skipped for this symbol
+          }
+        })
+      );
+    }
+
+    // Portfolio-heat budget (opt-in, default off): compute the CURRENT book's heat ONCE per run (not
+    // per-proposal) from existing positions, reusing the SAME stop-basis precedence as
+    // generateProactiveRiskProposals' effectiveStopPct (ATR > beta-scaled > flat) so heat reflects the
+    // same protective distances the app already manages. Never fabricates a stop for a position with
+    // no basis — computePortfolioHeat excludes it from totalRiskUsd and flags it in perPosition instead.
+    let bookHeat: PortfolioHeatResult | undefined;
+    if (policy.tuning?.volTargeting === true && (policy.tuning?.portfolioHeatBudgetPct ?? 0) > 0) {
+      const flatStopPct = policy.riskRules.stopLossPct ?? 0;
+      const betaStopsOn = policy.betaScaledStops === true;
+      const stopPctBySymbol: Record<string, number> = {};
+      for (const p of workingPositions) {
+        if (Math.abs(p.quantity) <= 0.000001) continue;
+        const sym = normalizeSymbol(p.symbol);
+        const baseStop = p.quantity < 0 ? (policy.riskRules.shortStopLossPct ?? flatStopPct) : flatStopPct;
+        if (baseStop <= 0) continue;
+        const atrPct = atrStopPctBySymbol[sym];
+        const resolved =
+          typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0
+            ? atrPct
+            : betaScaledStopPct(baseStop, betaBySymbol[sym], betaStopsOn);
+        if (typeof resolved === "number" && Number.isFinite(resolved) && resolved > 0) {
+          stopPctBySymbol[sym] = resolved;
+        }
+      }
+      const equity = accountEquity(workingPortfolio);
+      bookHeat = computePortfolioHeat(
+        workingPositions
+          .filter((p) => Math.abs(p.quantity) > 0.000001)
+          .map((p) => ({ symbol: normalizeSymbol(p.symbol), marketValue: p.marketValue })),
+        stopPctBySymbol,
+        flatStopPct > 0 ? flatStopPct : undefined,
+        equity
+      );
+    }
+
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
     // has a negative post-cost realized edge BEFORE sizing it — the conservative "don't open a proven
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
@@ -1000,7 +1065,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, prefetchedFills);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
         return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
@@ -2235,6 +2300,14 @@ export function applyDeterministicSizing(
   positions: EquityPosition[] = [],
   marketScan?: MarketScan,
   precomputedCalibration?: ConfidenceCalibrationStat[],
+  // Precomputed annualized realized-vol (%) per OPENING candidate symbol — mirrors
+  // precomputedCalibration's "compute once per run, pass in" pattern. Undefined/missing symbol →
+  // the vol-target note/taper is simply skipped (never fabricated).
+  realizedVolPctBySymbol?: Record<string, number>,
+  // Precomputed CURRENT book heat (existing positions only, computed once per run) — undefined when
+  // the heat budget isn't configured or volTargeting is off. This proposal's own incremental risk is
+  // computed fresh below and added to bookHeat.totalRiskUsd for the remaining-budget taper.
+  bookHeat?: PortfolioHeatResult,
   prefetched?: PrefetchedFills
 ): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
@@ -2302,7 +2375,35 @@ export function applyDeterministicSizing(
   // one with a proven positive edge earns more. This uses the learned shrunk avg return
   // so a handful of lucky trades can't inflate sizing.
   const edgeFactor = avgReturn > 1 ? 1 : avgReturn >= 0 ? 0.7 : avgReturn > -1 ? 0.5 : 0.3;
-  const multiplier = (winRate / 100) * conviction * edgeFactor;
+  const rawMultiplier = (winRate / 100) * conviction * edgeFactor;
+
+  // Volatility-targeting sizing (opt-in, default off): taper the Kelly-lite multiplier by
+  // targetVol/realizedVol (never up, floored at 0.25) BEFORE the floor/ceiling clamp below, so it
+  // composes with (and stays bounded by) the existing sizingFloorPct/sizingCeilingPct clamps exactly
+  // like every other input to `multiplier`. The realized-vol number itself is surfaced in the
+  // rationale whenever cheaply available, independent of whether the taper is actually applied —
+  // an honest receipt even when the feature is off or no target is configured.
+  const realizedVol = realizedVolPctBySymbol?.[normalizeSymbol(proposal.symbol)];
+  const targetVol = policy.tuning?.targetPortfolioVolPct;
+  const volScaleApplies = policy.tuning?.volTargeting === true && typeof targetVol === "number" && targetVol > 0;
+  const volScale =
+    volScaleApplies && typeof realizedVol === "number"
+      ? volTargetScale(realizedVol, targetVol as number)
+      : 1;
+  const multiplier = rawMultiplier * volScale;
+  const volTargetNote =
+    typeof realizedVol === "number"
+      ? `\n\n[Sizing] Realized vol ${realizedVol.toFixed(1)}%${typeof targetVol === "number" && targetVol > 0
+          ? ` vs target ${targetVol}% → vol-target scale ${volScale.toFixed(2)}x (${volScaleApplies ? "applied" : "advisory-only"})`
+          : " (no vol target configured — advisory-only)"}.`
+      : "";
+  if (volScaleApplies && volScale < 1) {
+    audit(
+      "sizing_vol_target_applied",
+      { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, realizedVolPct: realizedVol, targetPortfolioVolPct: targetVol, volScale },
+      userId
+    );
+  }
 
   // Bounds are configurable (policy.tuning.sizingFloorPct / sizingCeilingPct); default 10–100%.
   const floor = (policy.tuning?.sizingFloorPct ?? 10) / 100;
@@ -2315,7 +2416,7 @@ export function applyDeterministicSizing(
     : avgReturn < 0
       ? 0
       : Math.max(floor, Math.min(ceiling, multiplier));
-  
+
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
   const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
   const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
@@ -2362,6 +2463,70 @@ export function applyDeterministicSizing(
     }
   }
 
+  // Portfolio-heat budget (opt-in, default off, continuous taper — never a hard block): if the
+  // CURRENT book's heat (bookHeat, precomputed once per run from existing positions) plus this
+  // order's OWN incremental risk would exceed portfolioHeatBudgetPct of equity, taper this order's
+  // notional to fit whatever budget remains. Never sizes below zero; when no budget remains at all,
+  // floors at the existing exploratory-floor notional and tags an OVERRIDABLE advisory reason —
+  // it still places unless another gate says otherwise. Uses the FLAT stop % (no ATR/beta history
+  // exists yet for a name that isn't already a position) for this order's own risk basis; honest
+  // "no stop basis" skip when no flat stop is configured either.
+  let heatNote = "";
+  const heatBudgetPct = policy.tuning?.portfolioHeatBudgetPct;
+  if (policy.tuning?.volTargeting === true && bookHeat && typeof heatBudgetPct === "number" && heatBudgetPct > 0) {
+    const ownStopPct = proposal.side === "short"
+      ? (policy.riskRules.shortStopLossPct ?? policy.riskRules.stopLossPct ?? 0)
+      : (policy.riskRules.stopLossPct ?? 0);
+    if (ownStopPct > 0) {
+      const equity = accountEquity(portfolio);
+      if (equity > 0) {
+        const budgetUsd = (heatBudgetPct / 100) * equity;
+        const orderRiskUsd = positionRiskUsd(targetNotional, ownStopPct);
+        const currentHeatUsd = bookHeat.totalRiskUsd;
+        const noStopBasisCount = bookHeat.perPosition.filter((p) => p.estimated).length;
+        const totalPositionsCount = bookHeat.perPosition.length;
+        const currentHeatPct = bookHeat.heatPct ?? 0;
+        if (orderRiskUsd > 0 && currentHeatUsd + orderRiskUsd > budgetUsd) {
+          const remainingUsd = Math.max(0, budgetUsd - currentHeatUsd);
+          const taperFactor = orderRiskUsd > 0 ? Math.min(1, remainingUsd / orderRiskUsd) : 1;
+          const taperedNotional = Math.floor(targetNotional * taperFactor);
+          if (remainingUsd <= 0) {
+            // No budget left at all: hold at the existing floor rather than a hard cage, and tag an
+            // OVERRIDABLE advisory reason (not a policy block) — the order still places.
+            targetNotional = Math.min(targetNotional, Math.max(fallbackNotional, taperedNotional));
+            heatNote =
+              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
+              `no remaining budget — held to exploratory floor (overridable advisory, not a block).`;
+          } else if (taperedNotional < targetNotional) {
+            targetNotional = Math.max(0, taperedNotional);
+            heatNote =
+              `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); ` +
+              `this order tapered to add ${(Math.max(0, (budgetUsd - currentHeatUsd) / equity * 100)).toFixed(2)}% (fit remaining budget).`;
+          }
+          // Distinct audit kind from the vol-target scale above: this is the heat-budget taper, a
+          // separate mechanism, and conflating the two in telemetry would hide which brake fired.
+          audit(
+            "sizing_heat_budget_applied",
+            {
+              symbol: normalizeSymbol(proposal.symbol),
+              side: proposal.side,
+              currentHeatPct,
+              budgetPct: heatBudgetPct,
+              orderRiskUsd,
+              remainingUsd,
+              taperFactor,
+              targetNotional
+            },
+            userId
+          );
+        } else {
+          heatNote =
+            `\n\n[Risk] Portfolio heat ${currentHeatPct.toFixed(1)}% of equity vs budget ${heatBudgetPct}% (${totalPositionsCount} positions, ${noStopBasisCount} without stop basis); this order adds ${((orderRiskUsd / equity) * 100).toFixed(2)}%.`;
+        }
+      }
+    }
+  }
+
   const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
   let bracketMinNote = "";
   if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
@@ -2397,7 +2562,7 @@ export function applyDeterministicSizing(
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote
   };
 }
 
