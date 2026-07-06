@@ -60,6 +60,7 @@ export interface DashboardSnapshot {
   accounts: BrokerageAccount[];
   accountReadiness?: AccountReadiness;
   connectedAccounts: ConnectedAccount[];
+  connectedAccountPolicies?: Record<string, Pick<TradingPolicy, "systemState" | "strategyAuthority">>;
   portfolio?: Portfolio;
   positions: EquityPosition[];
   symbolMetaBySymbol: Record<string, DashboardSymbolMeta>;
