@@ -570,6 +570,17 @@ As of 2026-07-04.
 ---
 
 ## 🔨 In Progress
+- **Mobile console width overflow — autonomy-desk home (CLAUDE cloud, branch
+  `claude/mobile-console-width-overflow`) — PR open.** Owner-reported: on mobile, every section
+  after the Live-thesis hero rendered wider than the viewport (content clipped off the right edge).
+  Root cause: the lower content grid in `app/console/page.tsx` fell back to an implicit `auto`
+  (min-content) track on mobile with `min-width:auto` column items, so the 7-column `PositionsCard`
+  table (nowrap headers, ~610px min-content) stretched the whole column and defeated its
+  `overflow-x-auto` wrapper. Fix: `grid-cols-1` on the wrapper + `min-w-0` on both column children
+  (mirrors the hero's existing shrink-safe pattern; layout `<main>` was already `min-w-0`). Verified
+  tsc/lint/build clean + empirical 390px before/after with the real `console.css` (627px overflow →
+  contained; table now scrolls inside its card). See
+  `docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
   was physically still sitting under the In Progress heading; relocated to Completed (issues mirror

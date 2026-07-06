@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Mobile console width overflow fix (PR open)
+
+Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
+hero rendered wider than the viewport and clipped off the right edge. Root cause was a
+`min-width:auto` grid-item chain in `app/console/page.tsx`: the lower content grid fell back to an
+implicit `auto` (min-content) mobile track, so the 7-column Positions table (nowrap headers,
+~610px min-content) stretched the whole column and defeated its `overflow-x-auto` wrapper — dragging
+sibling cards off-screen. Fix is 3 Tailwind classes: `grid-cols-1` on the lower-grid wrapper +
+`min-w-0` on both column children (the left `<div>` and right `<aside>`), matching the hero's already
+shrink-safe pattern. tsc/lint/build clean; verified with an empirical 390px before/after using the
+real `console.css` (627px page overflow → contained; the wide table now scrolls inside its own card).
+Branch `claude/mobile-console-width-overflow`; rollout
+`docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
+
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
 
 Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that
