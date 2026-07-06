@@ -109,7 +109,14 @@ describe("computeMultiSignalSeverity — weight renormalization", () => {
     });
     expect(result.inputsUsed).toBe(6);
     const weights = Object.fromEntries(result.components.map((c) => [c.signal, c.weight]));
-    expect(weights).toMatchObject({ vix: 0.3, vixTermStructure: 0.2, hyCreditSpreadPct: 0.2, breadthPct: 0.15, vvix: 0.1, skew: 0.05 });
+    // Weights are renormalized by dividing by a floating-point sum, so assert with tolerance —
+    // exact float equality would be brittle across engines/rounding. All six present → sum is 1.0.
+    expect(weights.vix).toBeCloseTo(0.3, 10);
+    expect(weights.vixTermStructure).toBeCloseTo(0.2, 10);
+    expect(weights.hyCreditSpreadPct).toBeCloseTo(0.2, 10);
+    expect(weights.breadthPct).toBeCloseTo(0.15, 10);
+    expect(weights.vvix).toBeCloseTo(0.1, 10);
+    expect(weights.skew).toBeCloseTo(0.05, 10);
     // All calm -> severity is the floor (0 for "unknown").
     expect(result.severity).toBe(0);
   });

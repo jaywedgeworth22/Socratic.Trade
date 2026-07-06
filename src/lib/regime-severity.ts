@@ -9,7 +9,9 @@
 // not import it for values it doesn't already need — see below).
 //
 // Design contract:
-//   - Pure function of its inputs. No fetches, no DB, no imports beyond the `MarketRegime` type.
+//   - Pure function of its inputs. No fetches, no DB, and no imports beyond market-regime.ts's
+//     pinned exports (the `MarketRegime` type and the `MARKET_REGIME_SEVERITY` floor lookup) — so
+//     this file stays as dependency-light as market-regime.ts itself.
 //   - Never fabricates: a missing input is simply absent from `components` and its weight is
 //     redistributed across whatever IS available (never defaulted to a guessed number).
 //   - The classified enum's own severity (`MARKET_REGIME_SEVERITY[regime]`) is a FLOOR, not an
