@@ -7,6 +7,32 @@ import { cx, fmtExact, timeAgo, EM_DASH } from "../lib/format";
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 
+export function Tooltip({
+  content,
+  children,
+  className,
+  style,
+  as: Component = "div",
+  ...props
+}: {
+  content: ReactNode;
+  children: ReactNode;
+  className?: string;
+  style?: import("react").CSSProperties;
+  as?: React.ElementType;
+  [key: string]: any;
+}) {
+  if (!content) return <>{children}</>;
+  return (
+    <Component className={cx("group relative inline-flex", className)} style={style} {...props}>
+      {children}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-max -translate-x-1/2 rounded bg-neutral-800 px-2 py-1 text-[length:var(--con-fs-xs)] text-white opacity-0 transition-opacity group-hover:block group-hover:opacity-100">
+        {content}
+      </div>
+    </Component>
+  );
+}
+
 export function Card({
   title,
   action,
