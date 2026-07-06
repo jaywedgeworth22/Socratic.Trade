@@ -489,6 +489,24 @@ export interface TuningSettings {
    * phrase) depends on the flag being on and `daysToEarnings <= earningsBlackoutDays`.
    */
   earningsBlackoutDays?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer additionally computes a
+   * fractional-Kelly suggestion from the thesis bucket's realized win/loss payoff split
+   * (avgWinPct/avgLossPct) and downside-dispersion penalty (downsideDeviationPct), and — ONLY
+   * when the suggestion is STRICTLY SMALLER than the existing sizing multiplier — reduces the
+   * final size to the Kelly suggestion. Kelly can only shrink size vs today, never grow it
+   * (advisory taper, not a booster). Off by default: a rationale receipt is still appended
+   * whenever the bucket has enough closed lots and a computable payoff ratio (informational
+   * only), but the size itself is byte-identical to today unless this flag is on.
+   */
+  fractionalKellySizing?: boolean;
+  /**
+   * Fraction of full Kelly used by the fractional-Kelly sizing suggestion (0.5 = "half-Kelly",
+   * the conventional conservative default — full Kelly is notoriously volatile in practice).
+   * Default 0.5. Only meaningful when `fractionalKellySizing` is on, or informationally in the
+   * always-on rationale receipt.
+   */
+  kellyFraction?: number;
 
   // ── Volatility-targeting sizing + portfolio-heat budget (continuous taper, advisory) ──────────
   /**
