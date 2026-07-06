@@ -169,6 +169,56 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE).** Advisory-only
+  per-run receipt: when strategy.ts's filings-RAG pass requests a doc type that produces zero
+  chunks THIS run, emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety`
+  decision-case evidence item. Never touches `ragContext`/sizing/policy — advisory only, no flag
+  (mirrors the unconditional `evidence_age_anomaly` receipt). Branch `claude/corpus-coverage-receipt`.
+  Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  - **2026-07-06 BLOCKER fix (same day):** the original design gated the receipt on
+    "zero ever-ingested `ingested_accessions` rows corpus-wide" as the producer-existence check.
+    That signal was itself broken: the default-ON 8-K SUMMARY writer
+    (`src/lib/web-sources/sec8k.ts`'s `refreshEightK`, via `storeContexts`) writes retrievable
+    `doc_type: "8-k"` chunks but never calls `insertIngestedAccession` — only the default-OFF
+    full-body writer does. So `ingested_accessions` had ZERO "8-k" rows in the default config even
+    with real 8-K chunks in the corpus, meaning the receipt false-fired "8-k" on any day an 8-K
+    chunk didn't rank top-3 — routinely, not rarely. Investigated `document_chunks` as a
+    corpus-truth replacement (the reviewer's suggestion) and confirmed it's not viable: no
+    `doc_type` column in its schema, not populated unconditionally by every writer, and
+    `source`/prefix values aren't a reliable per-doc_type proxy (`disclosure-rag.ts` shares one
+    prefix across two different doc types). Fixed per the task's documented fallback: dropped the
+    runtime `ingested_accessions` producer-count entirely; added a static
+    `COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"]` allowlist (`src/lib/strategy.ts`) of
+    doc types hand-verified to have a producer in code; `computeEmptyDocTypes`
+    (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes, retrievedDocTypes)` with no
+    DB dependency at all. Also fixed the companion noise finding: `earnings-transcript` (genuine
+    zero-producer, no writer anywhere) excluded from `COVERAGE_CHECKED_DOC_TYPES` (stays in the
+    harmless retrieval-request literal) so it no longer fires a receipt every single run forever.
+    `ingestedAccessionCountForDocType`/`ingestedAccessionCountsByDocType`
+    (`src/lib/db-learning.ts`) kept as general-purpose diagnostic helpers (doc comment corrected
+    to spell out the "8-k" undercount caveat), just no longer used by this receipt. Added the
+    regression test the fix requires (`test/rag-doc-type-coverage.test.ts`, "(c) REGRESSION"):
+    stores an 8-K summary chunk with NO `insertIngestedAccession` call anywhere and asserts no
+    false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
+    31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
+    section.
+  - **2026-07-06 THIRD fix (same day) — restore both-conditions guard, ledger-complete subset
+    only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug: firing on
+    this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K — event-sparse,
+    routinely won't rank top-3 — would fire the receipt on a large fraction of normal runs.
+    Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the types whose
+    `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an accession row
+    for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its ledger can't
+    distinguish "no coverage" from "didn't rank today" — excluded; `earnings-transcript` stays
+    excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate for that subset:
+    `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third `hasProducerForDocType`
+    predicate parameter — a type is "empty" only when NOT retrieved this run AND the predicate
+    reports zero producer rows. Kept `prompt-safety.ts` DB-free: `strategy.ts` builds the predicate
+    from ONE bulk `ingestedAccessionCountsByDocType()` call + an in-memory prefix lookup (not N
+    per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts` (14/14 passing) including the
+    key low-noise case: a 10-K that didn't retrieve this run but HAS a producer row must stay
+    silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/`strategy-rag-quickwins-wiring`
+    sweep 5/5. Full rationale in the rollout note's new "Second correction" section.
 - **RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822) (CLAUDE),
   worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`.** Test/
   fixture/docs only, no production code changed. Added 10 new fixture cases to

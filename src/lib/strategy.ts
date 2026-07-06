@@ -10,6 +10,7 @@ import {
   getPolicy,
   getProposal,
   getStrategyPrompt,
+  ingestedAccessionCountsByDocType,
   insertProposal,
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
@@ -96,6 +97,7 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
   collectEvidenceAgeAnomalies,
+  computeEmptyDocTypes,
   scanForInjectionAttempts,
   type EvidenceAgeInput,
   type InjectionFinding,
@@ -130,6 +132,36 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+/**
+ * corpus-coverage-receipt (2026-07-06, redesigned same day — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history): doc types the
+ * empty-corpus receipt (below, near `computeEmptyDocTypes`) checks. Deliberately a STATIC
+ * allowlist restricted to types whose PRODUCER LEDGER (`ingested_accessions`, via
+ * `ingestedAccessionCountsByDocType`) is COMPLETE — i.e. every writer for that type records an
+ * accession row, so "zero ingested rows" reliably means "never produced," not "this writer just
+ * doesn't track accessions."
+ *   - "10-k" / "10-q": src/lib/web-sources/sec-filings.ts's `ingestFiling` (always on) writes an
+ *     `ingested_accessions` row for every 10-K/10-Q ingest, stored as the raw form letter
+ *     ("10-K"/"10-Q"). Complete ledger — safe to both-conditions-check.
+ *
+ * "8-k" is EXCLUDED here (though it stays in `requestedFilingsDocTypes` below — harmless,
+ * retrieval-only): the default-ON 8-K SUMMARY writer (src/lib/web-sources/sec8k.ts,
+ * `refreshEightK`'s `storeContexts` call, `doc_type: "8-k"`) writes retrievable chunks to the
+ * vector corpus but NEVER calls `insertIngestedAccession` — only the default-OFF full-body writer
+ * (`ingestEightKBody`, under the "8-K-body" sentinel) does. So the ledger cannot distinguish "this
+ * account has no 8-K coverage at all" from "8-K summaries exist in the corpus but none ranked this
+ * run" — treating a zero producer-count as "never produced" would be wrong, and 8-K is
+ * event-sparse enough (frequently won't rank top-3) that a retrieval-only check would false-positive
+ * on a large fraction of normal runs. Re-add "8-k" here the day an accurate per-doc_type 8-K corpus
+ * signal exists (e.g. a `document_chunks.doc_type` column populated by both writers).
+ *
+ * "earnings-transcript" also stays EXCLUDED (same as before): no ingestion writer exists anywhere
+ * in this repo for it, so it is a genuine, permanent zero-producer — including it would fire a
+ * receipt on every single run forever, training the operator to ignore the whole receipt. Re-add
+ * it the day a producer lands.
+ */
+const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q"];
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -678,6 +710,16 @@ export async function runStrategyOnce(
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
     const promptSafetyEvidence: SocraticEvidenceItem[] = [];
     const evidenceAgeInputs: EvidenceAgeInput[] = [];
+    // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
+    // coverage receipt after this block can report "requested" alongside "retrieved this run" /
+    // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
+    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
+    // (10-k/10-q — narrower than this request list) against retrievedFilingsDocTypes below — "8-k"
+    // and "earnings-transcript" stay in this retrieval request list (harmless — retrieveContextDetailed
+    // just gets more empty filter values) but are deliberately excluded from the coverage check
+    // itself; see COVERAGE_CHECKED_DOC_TYPES's comment near the top of this file.
+    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
+    const retrievedFilingsDocTypes = new Set<string>();
     // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
     // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
     // below and mirrored onto the decision case's `ragRetrievalStatus` field. Advisory only — never
@@ -736,7 +778,7 @@ export async function runStrategyOnce(
               }
             }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              docType: requestedFilingsDocTypes,
               minScore: defaultMinScore(),
               // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
               // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
@@ -770,6 +812,9 @@ export async function runStrategyOnce(
               relevanceScore: chunk.relevanceScore ?? chunk.score,
               relevanceFloor
             });
+            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
+            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
+            if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
           }
         }
         if (validContexts.length > 0) {
@@ -840,6 +885,48 @@ export async function runStrategyOnce(
         source: "prompt-safety",
         data: evidenceAgeAnomalies
       });
+    }
+
+    // ── Corpus-coverage receipt (advisory only) ────────────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
+    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist restricted to types whose producer
+    // ledger is COMPLETE, currently 10-k/10-q; see its comment for why "8-k" and
+    // "earnings-transcript" are excluded) is BOTH not retrieved this run AND has zero ever-ingested
+    // producer rows. Both-conditions is load-bearing — see computeEmptyDocTypes's doc comment.
+    // Never touches ragContext/sizing/policy — receipt only.
+    if (!skipLlmDueToBudget) {
+      // ONE bulk query for the whole run (not one query per coverage-checked type), reused as an
+      // in-memory lookup — mirrors ingestedAccessionCountForDocType's prefix-tolerant matching
+      // (any stored doc_type whose lowercased form starts with the requested lowercased type)
+      // without the DB dependency living inside prompt-safety.ts.
+      const accessionCountsByDocType = ingestedAccessionCountsByDocType();
+      const hasProducerForDocType = (docType: string): boolean => {
+        const normalized = docType.toLowerCase();
+        for (const [storedType, count] of Object.entries(accessionCountsByDocType)) {
+          if (count > 0 && storedType.startsWith(normalized)) return true;
+        }
+        return false;
+      };
+      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes, hasProducerForDocType);
+      if (emptyDocTypes.length > 0) {
+        const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
+        audit(
+          "rag_doc_type_coverage_empty",
+          { runId, symbols: coverageSymbols, emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes },
+          userId,
+          connectedAccountId
+        );
+        promptSafetyEvidence.push({
+          kind: "safety",
+          tone: "warning",
+          title: "Requested filings doc type never ingested",
+          summary:
+            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run: ` +
+            `${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
+          source: "prompt-safety",
+          data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
+        });
+      }
     }
 
     // ── Episodic decision memory: closest historical analogs + owner coaching ──
