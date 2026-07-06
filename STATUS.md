@@ -8,6 +8,59 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Hybrid runner: calibration fixes + activation (owner-directed)
+Owner asked to make the runner actually offload. Live diagnosis: the feature was 100% inert
+(PR #372 unmerged, publisher never started, repo var still the `ts:0` seed, and the
+`free+inactive>6GB` metric was unsatisfiable on the 16GB swapping Mac). Merged the
+33-commit-stale branch forward (re-resolving `ci.yml` vs main's docs-only fast path, tokenless
+`npm ci` migration, dropped `agent/**` trigger) and applied fixes: router `ts` numeric-coercion
+(a latent merge-blocker), staleness 300s→180s, availability metric rewritten to a pressure-based
+gate (`kern.memorystatus_vm_pressure_level==1` + `page_free_wanted==0` + swap<3GB + compressor<25%
++ free floor), CPU 0.6→0.8, and `verify-self` made safe on the 16GB box (drop the cache-wedging
+`setup-node` for system node, tokenless `npm ci`, `NODE_OPTIONS=3072` + `--maxWorkers=2` RSS cap).
+Verified bash-3.2/ASCII + YAML + jq coercion; adversarial calibration audit (4 lenses) + pre-land
+review (3 lenses, GO/GO zero blockers, 2 fail-closed hardenings applied). Next: land via
+`land.sh`, then start the pm2 publisher on the production Mac (it will correctly report `hosted`
+while the box is memory-tight; offload activates only when the box has real headroom). Known
+residual: a self-hosted queue-wait can *stall* (never fake-pass) a routed PR — documented, watchdog
+is a follow-up. Rollout: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 sections).
+
+## 2026-07-04 — Landing operator: #372 needed a double merge-forward (base moved twice mid-land)
+PR #372's base moved out from under it twice: once catching up to several cars/docs work that
+had landed since #370, and again mid-wait when PR #440 (Outcome Engine lane) landed first
+(`mergeStateStatus` flipped `BLOCKED` -> `DIRTY`). Both merges resolved in this worktree
+(`~/apps/trading-wt-ci-efficiency`); the second conflict was `docs/EFFORT-LOG.md`'s "In
+Progress" section (this branch's own status line vs. the Outcome Engine's entry in the same
+slot) — resolved keep-both-newest-first, updating the Outcome Engine entry's status to
+"merged (PR #440)". Full quartet green both times (final: lint 0 errors, tsc clean, 252 files /
+2455 tests, build green). See both addenda in
+`docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+
+## 2026-07-04 — Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370)
+Branch `claude/ci-hybrid-runner-verify`, worktree `~/apps/trading-wt-ci-efficiency`, off
+`origin/main`@`370692cf` (post-#370). Owner re-confirmed hybrid AFTER the tradeoff escalation,
+verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
+available." `ci.yml` restructured 2 jobs → 4: `classify` (+ new `route` output: self only for
+fresh (<5 min) publisher state on same-repo pull_request/push; merge_group/schedule/fork/stale/
+corrupt/absent all → hosted), `verify-self` (opportunistic macOS lane — [self-hosted,
+trading-live], timeout 30, concurrency-1 group, untrusted-source guard, node fail-fast, `nice
+-n 19` on every heavy command, macOS-namespaced caches via runner.os), `verify-hosted` (Linux
+lane — routed-hosted runs PLUS exactly-one automatic re-run whenever verify-self did not
+succeed; also saves the Linux .next cache on the new nightly schedule leg), and `verify` (the
+REQUIRED check, now a pure gate job: fail-closed on classify failure, docs-only short-circuit,
+hosted result wins on disagreement — Linux is the arbiter, a Mac flake can never block or
+fake-fail a merge; per-run environment annotation to $GITHUB_STEP_SUMMARY). Nightly hosted
+full-gate canary on main via new `schedule` cron (47 7 * * * UTC). New owner-run
+`scripts/runner-availability.sh` (ASCII, Apple-bash-3.2-verified): every 60s publishes repo var
+`VERIFY_RUNNER_STATE` {"mode","ts"} from load(<0.6/cpu)+RAM(>6GB free+inactive)+runner-alive+
+pm2-trading-online with 2-check hysteresis to self / instant flip to hosted + EXIT-trap hosted
+publish. **Safe rollout: var pre-created as {"mode":"hosted","ts":0} — merging changes nothing
+until the owner runs the pm2 one-liner** (in the rollout note). smoke/gitleaks/check-pin stay
+hosted. Full history (2026-07-01 move-off, the objections, the re-confirmation), gate decision
+table, and failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+Verification: yaml-lint, /bin/bash 3.2 -n + ASCII check, 8-case route-logic test (every
+non-happy path → hosted), read-only availability probes on the real Mac (correctly said "busy"
+during an active agent build), full local quartet green.
 ## 2026-07-05 — Push account status metrics to Usage Monitor (AG)
 Implemented telemetry for tech account balances and limits. Socratic.Trade now pushes metricTypes `"balance"` and `"limit"` via `pushBrokerBalance` in `src/lib/usage-monitor-push.ts`. This allows tracking caps and credits for the API Usage Monitor. The hooks were wired into Alpaca and Robinhood `getPortfolio` calls. All tests passed and code was verified locally.
 

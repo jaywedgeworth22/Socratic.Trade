@@ -311,7 +311,17 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
-
+- **Hybrid resource-aware runner routing for `verify` — calibration fixes + activation** (CLAUDE,
+  worktree `~/apps/trading-wt-ci-efficiency`, branch `claude/ci-hybrid-runner-verify`, PR #372) —
+  **IN PROGRESS 2026-07-05 (owner-directed).** Live audit found the feature 100% inert (PR
+  unmerged, publisher never started, metric unsatisfiable on the 16GB swapping Mac). Merged
+  33-commits-stale branch forward and applied fixes: router `ts` numeric-coercion (was a latent
+  merge-blocker), staleness 300s→180s, availability metric rewritten free+inactive→pressure-based
+  (`kern.memorystatus_vm_pressure_level==1` + swap/compressor/page-free-wanted terms), CPU 0.6→0.8,
+  `verify-self` drops the cache-wedging `setup-node` for system node + tokenless `npm ci` + RSS cap
+  (`NODE_OPTIONS` 3072 + `--maxWorkers=2`). Verified bash-3.2/ASCII + YAML + adversarial reviews.
+  Next: land via `land.sh`, then start the pm2 publisher on the production Mac. Rollout:
+  `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 section).
 - **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
   `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
   fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
@@ -693,25 +703,10 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 📋 Planned
 
-- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
-  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
-  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
-  owner, answering the objections raised when this was first proposed): (1) Mac-side
-  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
-  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
-  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
-  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
-  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
-  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
-  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
-  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
-  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
-  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
-  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
-  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
-  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
-  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
-  hosted-only default stands; resource-aware routing stays opt-in per repo.
+- _(Moved to In Progress 2026-07-05: **Hybrid resource-aware runner routing for `verify`** — see
+  the In Progress section. The original availability metric was changed from `free+inactive > 6 GB`
+  to a pressure-based gate during calibration; `workflow_call`/reusable cross-repo remains deferred
+  until this lands and proves itself, hosted-only default stands.)_
 
 ### Socratic console parity sub-lanes — reserved before implementation
 - **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
