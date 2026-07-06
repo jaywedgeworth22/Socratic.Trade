@@ -397,6 +397,12 @@ export async function runStrategyOnce(
     const currentPrices = currentPricesFromScan(marketScan);
     const workingPortfolio = portfolio;
     const workingPositions = positions;
+    // Held-position symbol set, hoisted here so every retrieval scope below (filings RAG,
+    // learned-context, episodic) can widen its symbol list to include OPEN positions — not just
+    // the score-sorted top-N scan candidates — so sell/hold/trim decisions on existing holdings
+    // get retrieved memory too. Strictly additive: never used to shrink/reorder the BUY-candidate
+    // scan/prompt set. Reused (not recomputed) by the take-profit trim-band pruning below.
+    const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
     const learningSource = fillSourceForExecutionMode(executionMode);
     const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
     const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
@@ -653,7 +659,6 @@ export async function runStrategyOnce(
       try {
         const lastTpBands = getTakeProfitTrimBands(policy.accountNumber, userId);
         const tpPlan = planTakeProfitTrims(workingPositions, currentPrices, policy, lastTpBands);
-        const heldSymbols = new Set(workingPositions.map((p) => normalizeSymbol(p.symbol)));
         clearTakeProfitTrimBands(policy.accountNumber, Object.keys(lastTpBands).filter((s) => !heldSymbols.has(s)), userId);
         proactiveProposals.push(...tpPlan.proposals);
       } catch (err) {
@@ -684,7 +689,11 @@ export async function runStrategyOnce(
         const { shouldDegradeForBudget } = await import("./rag/run-budget");
         const wantMultiQuery = multiQueryEnabled() && !shouldDegradeForBudget();
         const wantHyde = hydeEnabled() && !shouldDegradeForBudget();
-        const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
+        // Widen retrieval (not the BUY-candidate scan/prompt set) to also cover OPEN positions: a
+        // held name outside the top-3 by score still needs a filings-RAG pass so sell/hold/trim
+        // decisions on it are informed. Held symbols are unioned in, never substituted for the
+        // top-N, and the top-N ordering/membership is untouched.
+        const topSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map(c => c.symbol), ...heldSymbols]);
         const contexts = await Promise.all(
           topSymbols.map(async (sym) => {
             const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
@@ -767,7 +776,10 @@ export async function runStrategyOnce(
     // learned-context safety regression test guards that invariant.
     let learnedContext = "";
     try {
-      const learnedSymbols = marketScan.topCandidates.slice(0, 8).map((c) => c.symbol);
+      // Same held-position widening as the filings-RAG pass above: union in open positions so
+      // learned facts on a held name outside the top-8 still surface, without touching the
+      // top-8 BUY-candidate slice itself.
+      const learnedSymbols = uniqueSymbols([...marketScan.topCandidates.slice(0, 8).map((c) => c.symbol), ...heldSymbols]);
       // regime is intentionally omitted here (not yet a retrieval filter in the fact-tier slice).
       const learnedFacts = retrieveLearnedContextDetailed(userId, learnedSymbols);
       if (learnedFacts.lines.length > 0) {
@@ -823,7 +835,7 @@ export async function runStrategyOnce(
         // the same regime proposeTrades derives later for entryMarketRegime stamping.
         const macroForSketch = await fetchMacroData(userId).catch(() => undefined);
         const regimeForSketch = macroForSketch ? determineMarketRegime(macroForSketch) : "Unknown";
-        const situationCandidates = marketScan.topCandidates.slice(0, 3).map((candidate) => {
+        const toSituationCandidate = (candidate: MarketQuote) => {
           const sym = normalizeSymbol(candidate.symbol);
           const breakdown = candidate.factorBreakdown;
           let topFactor: string | undefined;
@@ -843,7 +855,26 @@ export async function runStrategyOnce(
             dominantFactor: topFactor,
             evidence: candidate.evidenceBulletins
           };
-        });
+        };
+        const topSlice = marketScan.topCandidates.slice(0, 3);
+        const situationCandidates = topSlice.map(toSituationCandidate);
+        // Widen episodic retrieval scope (not the BUY-candidate top-3 itself) to also cover OPEN
+        // positions outside that slice, so sell/hold/trim decisions on them get analog/coaching
+        // memory too. marketScan.topCandidates force-includes every held symbol (see market.ts
+        // heldExtra), so the fuller candidate shape (sector/dominantFactor/evidence) is available
+        // via lookup; a minimal symbol+sector fallback covers the defensive case where it's somehow
+        // absent (e.g. a mocked/partial marketScan in a test).
+        const coveredSymbols = new Set(topSlice.map((c) => normalizeSymbol(c.symbol)));
+        for (const heldSym of heldSymbols) {
+          if (coveredSymbols.has(heldSym)) continue;
+          coveredSymbols.add(heldSym);
+          const fullCandidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === heldSym);
+          situationCandidates.push(
+            fullCandidate
+              ? toSituationCandidate(fullCandidate)
+              : { symbol: heldSym, sector: marketScan.sectorBySymbol[heldSym], dominantFactor: undefined, evidence: undefined }
+          );
+        }
         const episodic = await retrieveDecisionExperiences({
           userId,
           runId,

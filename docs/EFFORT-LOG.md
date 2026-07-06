@@ -390,6 +390,18 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Held-position retrieval scope (CLAUDE, worktree `~/apps/trading-wt-held-scope`, branch
+  `claude/held-position-retrieval-scope`)** — **IN PROGRESS 2026-07-06.** Widens the three
+  retrieval scopes in `runStrategyOnce` (filings RAG `topSymbols`, learned-context
+  `learnedSymbols`, episodic `situationCandidates`) to UNION in every held (open) position's
+  symbol, not just the score-sorted top-N scan candidates — so sell/hold/trim decisions on a
+  held name outside the top slice get retrieved memory too (previously zero). Strictly additive:
+  the BUY-candidate scan/prompt set (`marketScan.topCandidates`) and its ordering are unchanged;
+  no risk-gate/sizing/policy touch. Hoisted the pre-existing `heldSymbols` computation (was
+  locally recomputed for take-profit trim-band pruning) to a single shared value. New test:
+  `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
+  duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
+  experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)** — branch
   `claude/veto-advisory-overridable`, isolated worktree — **IN PROGRESS 2026-07-05, PR pending.**
   Deterministic bear filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with
