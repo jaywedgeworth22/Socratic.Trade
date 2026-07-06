@@ -1140,7 +1140,6 @@ export async function runStrategyOnce(
             continue;
           }
         } else if (!redTeamResult.available) {
-          console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
           // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
           // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
           // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
@@ -1152,6 +1151,9 @@ export async function runStrategyOnce(
             redTeamResult.failureKind,
             redTeamResult.reason,
             policy.tuning?.deRiskExitsOnAdversaryUnavailable
+          );
+          console.warn(
+            `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
           );
           proposal.rationale += routing.note;
           if (routing.holdForHuman) requiresHumanReview.add(proposal);

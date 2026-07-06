@@ -244,7 +244,7 @@ Respond with a JSON object containing:
               debate: {
                 rejected: false,
                 available: false,
-                reason: "Red Team returned a malformed verdict (missing/invalid 'rejected'); treating the debate as unavailable.",
+                reason: "Red Team returned an unparseable response (not valid JSON); treating the debate as unavailable.",
                 model,
                 failureKind: "malformed_response"
               }
