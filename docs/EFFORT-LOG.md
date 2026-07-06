@@ -718,6 +718,7 @@ As of 2026-07-04.
 
 ## In Progress
 - **Bump shared dependency in agentic-trading and Congress.Trade to ^1.3.0 and fix HTTPS lockfile (AG) — IN PROGRESS 2026-07-06.** Fixing CI/CD `check-pin` failures by syncing both repositories' `package.json` specifications to the exact same version, and normalizing `package-lock.json` to use `git+https` instead of `git+ssh` to prevent tokenless environment crashes.
+- **Fix mobile "Settings" crash inside Sheet (AG, S)** — Fixed "Maximum call stack size exceeded" bug caused by a focus trap race condition when navigating to settings from the More sheet menu on mobile. PR pending.
 - **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — COMPLETED,
   5 PRs merged 2026-07-06.** Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod
   `7b5450fe`). Throwaway worktree session (seat CLAUDE per AGENT_SEAT pin), `claude/*` lanes off

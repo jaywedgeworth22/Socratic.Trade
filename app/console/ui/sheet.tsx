@@ -95,12 +95,20 @@ export function Sheet({
       }
     };
 
+    let isFocusing = false;
     const onFocusIn = (e: FocusEvent) => {
+      if (isFocusing) return;
       const currentSheet = sheetRef.current;
-      if (!currentSheet) return;
+      if (!currentSheet || !currentSheet.isConnected) return;
       if (e.target instanceof Node && currentSheet.contains(e.target)) return;
-      const tabbables = getFocusableElements(currentSheet);
-      focusElement(tabbables[0] ?? currentSheet);
+      
+      isFocusing = true;
+      try {
+        const tabbables = getFocusableElements(currentSheet);
+        focusElement(tabbables[0] ?? currentSheet);
+      } finally {
+        isFocusing = false;
+      }
     };
 
     window.addEventListener("keydown", onKey);
