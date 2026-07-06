@@ -133,8 +133,9 @@ Respond with a JSON object containing:
 
   // Optional cross-provider Bear: force the critique onto Anthropic (independent of the user's Bull
   // model) so it doesn't share the Bull's structural biases. Falls through to the resolved endpoint
-  // above if no Anthropic key is configured, so the (required) debate never silently skips.
-  if (redTeamProvider() === "anthropic") {
+  // above if no Anthropic key is configured, or if the user explicitly chose a Red Team model.
+  const explicitlyChosen = !!policy.redTeamLlmModel?.trim();
+  if (!explicitlyChosen && redTeamProvider() === "anthropic") {
     const anthropic = resolveLlmCredential("anthropic", userId);
     if (anthropic.key) {
       return debateViaAnthropic({

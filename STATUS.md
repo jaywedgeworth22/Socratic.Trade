@@ -8,6 +8,11 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override
+
+Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected.
+
+
 ## 2026-07-06 — Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane (Claude cloud, branch `claude/llm-apps-m5-resource-optimization-n9w5ax`)
 Owner asked for help offloading local agent/dev-server resource usage (16GB M5 MacBook Air
 crashing under 5+ concurrent AI coding tools). Landed on a self-hosted Coolify instance
@@ -37,6 +42,11 @@ still needs: secrets transfer (broker/LLM API keys), safe DB migration/cutover p
 Backups enabled in Coolify for that app specifically (the preview lanes deliberately skip
 Coolify Backups as not worth the 20% cost for fully-reproducible state; production is not
 reproducible and must not skip this). See `docs/rollouts/2026-07-06-coolify-migration.md`.
+## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override
+
+Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected.
+
+
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
 
 Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that
@@ -6119,6 +6129,12 @@ None. Phase 2 backend optimization is complete.
   explicit clean-start script). Added direct vector/SEC/strategy prompt tests. Full
   combined worktree verification passed: `npx tsc --noEmit`, `npm test` (195 tests,
   27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
+- 2026-07-06: **Global Application Font Settings** — updated the settings page to allow the user
+  to select a global application-wide font in addition to a specific text box font. Separated
+  the app font configuration into its own `appFont` property in `localStorage` and injected
+  it via a new CSS variable `--con-app-font` that targets the `.console-root` class.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-global-app-font.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
