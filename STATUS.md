@@ -6135,6 +6135,11 @@ None. Phase 2 backend optimization is complete.
   it via a new CSS variable `--con-app-font` that targets the `.console-root` class.
   Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
   See `docs/rollouts/2026-07-06-global-app-font.md`.
+- 2026-07-06: **Credential Naming UI Fix** — updated the API keys settings page to dynamically
+  use appropriate credential terminology ("key" vs "contact") based on the catalog entry.
+  This ensures accurate text for the SEC EDGAR User-Agent which expects a contact string.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-credential-naming.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
