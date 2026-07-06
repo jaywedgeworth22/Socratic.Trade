@@ -32,6 +32,8 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-06 - `trading-live` published at `3910ede2` on `socratictrade.com` (AG, PR #1014). Refactored API client and stream parser to use `@jaywedgeworth22/congress-trading-shared`. Removed duplicated logic from App A and pinned exact version match with App B.
+
 - 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
   empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what
