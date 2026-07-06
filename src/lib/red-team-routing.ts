@@ -36,15 +36,20 @@ export interface AdversaryUnavailableRouting {
  * could NOT run (`available: false`) — de-risk-only routing consistency (design doc / board item
  * "Bear/Red-Team unavailable -> policy-aware routing for ALL failure modes").
  *
- * Openings (`buy`/`short`) are risk-INCREASING: hold for human review, matching the in-flow Bear's
- * existing openings-only gate (strategy.ts's `bearReviewUnavailable` branch) so the two adversary
- * passes agree on failure-mode routing.
+ * Openings (`buy`/`short`) are risk-INCREASING: ALWAYS hold for human review, matching the in-flow
+ * Bear's existing openings-only gate (strategy.ts's `bearReviewUnavailable` branch) so the two
+ * adversary passes agree on failure-mode routing. This is unconditional regardless of the policy
+ * flag below.
  *
- * Exits (`sell`/`cover`) are risk-REDUCING: do NOT hold — blocking a de-risking trade on an
- * adversary outage is itself unsafe (mirrors the rationale-collapse gate and the in-flow Bear's own
- * "exits must still flow through" comment). Instead we append a loud rationale note and let the
- * caller emit the parity audit event, so the human-facing signal is never silently lost even though
- * the order proceeds.
+ * Exits (`sell`/`cover`) are risk-REDUCING. Whether they are held for human review depends on
+ * `deRiskExitsOnAdversaryUnavailable` (default false/undefined):
+ *  - DEFAULT (false/undefined): hold for human review, same as openings — byte-identical to
+ *    today's unconditional `requiresHumanReview.add(proposal)` in strategy.ts regardless of side.
+ *  - OPT-IN (true): do NOT hold — blocking a de-risking trade on an adversary outage is itself
+ *    unsafe (mirrors the rationale-collapse gate and the in-flow Bear's own "exits must still flow
+ *    through" comment). Instead we append a loud rationale note and let the caller emit the parity
+ *    audit event, so the human-facing signal is never silently lost even though the order proceeds
+ *    without a hold.
  *
  * Side classification is RAW-side (buy/short vs sell/cover), the codebase-wide convention (see
  * strategy.ts's other `isOpening`-style checks) — net-exposure-aware classification (a buy that
@@ -54,7 +59,8 @@ export interface AdversaryUnavailableRouting {
 export function routeOnAdversaryUnavailable(
   side: OrderSide,
   failureKind: RedTeamDebateResult["failureKind"],
-  reason: string
+  reason: string,
+  deRiskExitsOnAdversaryUnavailable?: boolean
 ): AdversaryUnavailableRouting {
   const isOpening = side === "buy" || side === "short";
   const kindLabel = describeRedTeamFailureKind(failureKind);
@@ -63,6 +69,14 @@ export function routeOnAdversaryUnavailable(
     return {
       holdForHuman: true,
       note: `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${kindLabel}: ${reason}); routed to human approval.`
+    };
+  }
+
+  if (deRiskExitsOnAdversaryUnavailable !== true) {
+    // Default OFF: default behavior is byte-identical to main — exits hold for human review too.
+    return {
+      holdForHuman: true,
+      note: `\n\nRed Team review was REQUIRED but unavailable (${kindLabel}: ${reason}); routed to human approval.`
     };
   }
 

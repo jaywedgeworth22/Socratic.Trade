@@ -447,6 +447,16 @@ export interface TuningSettings {
    * 4, still supplies a floor). A positive value raises the distinct-test-date floor above that env default.
    */
   minOosTestDates?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, a debate-unavailable EXIT (sell/cover) is routed by
+   * `routeOnAdversaryUnavailable`'s de-risk-only rule — NOT held for human review, just annotated
+   * with a loud "RED TEAM FAILED" rationale note and the parity audit event. Default false: default
+   * behavior is byte-identical — every proposal (buy/short/sell/cover) is still added to
+   * `requiresHumanReview` when the Red Team debate could not run, exactly like today's unconditional
+   * hold in strategy.ts's debate-unavailable branch. Flip this on to let risk-reducing exits proceed
+   * autonomously through an adversary outage instead of freezing behind an approval queue.
+   */
+  deRiskExitsOnAdversaryUnavailable?: boolean;
 }
 
 export interface RiskRules {

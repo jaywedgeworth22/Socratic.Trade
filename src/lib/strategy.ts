@@ -982,10 +982,17 @@ export async function runStrategyOnce(
         } else if (!redTeamResult.available) {
           console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
           // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
-          // gate. Openings (risk-increasing) hold for human review; exits (risk-reducing) proceed
-          // with a loud "RED TEAM FAILED" rationale note instead of being frozen behind approval
-          // exactly when de-risking matters most. Audit parity with strategy_bear_review_unavailable.
-          const routing = routeOnAdversaryUnavailable(proposal.side, redTeamResult.failureKind, redTeamResult.reason);
+          // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
+          // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
+          // has opted in via policy.tuning.deRiskExitsOnAdversaryUnavailable — default OFF, so default
+          // behavior is byte-identical to main's unconditional requiresHumanReview.add for every side.
+          // Audit parity with strategy_bear_review_unavailable.
+          const routing = routeOnAdversaryUnavailable(
+            proposal.side,
+            redTeamResult.failureKind,
+            redTeamResult.reason,
+            policy.tuning?.deRiskExitsOnAdversaryUnavailable
+          );
           proposal.rationale += routing.note;
           if (routing.holdForHuman) requiresHumanReview.add(proposal);
           audit(

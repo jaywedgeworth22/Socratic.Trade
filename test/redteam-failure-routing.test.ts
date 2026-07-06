@@ -24,29 +24,50 @@ describe("routeOnAdversaryUnavailable — pure routing helper", () => {
     expect(routing.note).toContain("provider error");
   });
 
-  it("does NOT hold a de-risking SELL — appends a loud 'RED TEAM FAILED' note instead", () => {
-    const routing = routeOnAdversaryUnavailable("sell", "rate_limited", "429");
-    expect(routing.holdForHuman).toBe(false);
-    expect(routing.note).toContain("RED TEAM FAILED");
-    expect(routing.note).toContain("rate limited");
-    expect(routing.note).toContain("reduces risk");
+  it("holds an OPENING even when deRiskExitsOnAdversaryUnavailable is opted in — openings are never exempted", () => {
+    const routing = routeOnAdversaryUnavailable("buy", "timeout", "Red Team evaluation errored out.", true);
+    expect(routing.holdForHuman).toBe(true);
   });
 
-  it("does NOT hold a de-risking COVER — appends a loud 'RED TEAM FAILED' note instead", () => {
-    const routing = routeOnAdversaryUnavailable("cover", "malformed_response", "bad shape");
-    expect(routing.holdForHuman).toBe(false);
-    expect(routing.note).toContain("RED TEAM FAILED");
-    expect(routing.note).toContain("malformed response");
+  describe("default (policy.tuning.deRiskExitsOnAdversaryUnavailable is OFF/undefined)", () => {
+    it("still holds a de-risking SELL for human review — byte-identical to main", () => {
+      const routing = routeOnAdversaryUnavailable("sell", "rate_limited", "429");
+      expect(routing.holdForHuman).toBe(true);
+      expect(routing.note).toContain("routed to human approval");
+    });
+
+    it("still holds a de-risking COVER for human review — byte-identical to main", () => {
+      const routing = routeOnAdversaryUnavailable("cover", "malformed_response", "bad shape", false);
+      expect(routing.holdForHuman).toBe(true);
+      expect(routing.note).toContain("routed to human approval");
+    });
   });
 
-  it("handles an absent failureKind (legacy/unclassified unavailability) with a generic label", () => {
-    const opening = routeOnAdversaryUnavailable("buy", undefined, "unknown error");
-    expect(opening.holdForHuman).toBe(true);
-    expect(opening.note).toContain("unavailable");
+  describe("opted in (policy.tuning.deRiskExitsOnAdversaryUnavailable === true)", () => {
+    it("does NOT hold a de-risking SELL — appends a loud 'RED TEAM FAILED' note instead", () => {
+      const routing = routeOnAdversaryUnavailable("sell", "rate_limited", "429", true);
+      expect(routing.holdForHuman).toBe(false);
+      expect(routing.note).toContain("RED TEAM FAILED");
+      expect(routing.note).toContain("rate limited");
+      expect(routing.note).toContain("reduces risk");
+    });
 
-    const exit = routeOnAdversaryUnavailable("cover", undefined, "unknown error");
-    expect(exit.holdForHuman).toBe(false);
-    expect(exit.note).toContain("RED TEAM FAILED");
+    it("does NOT hold a de-risking COVER — appends a loud 'RED TEAM FAILED' note instead", () => {
+      const routing = routeOnAdversaryUnavailable("cover", "malformed_response", "bad shape", true);
+      expect(routing.holdForHuman).toBe(false);
+      expect(routing.note).toContain("RED TEAM FAILED");
+      expect(routing.note).toContain("malformed response");
+    });
+
+    it("handles an absent failureKind (legacy/unclassified unavailability) with a generic label", () => {
+      const opening = routeOnAdversaryUnavailable("buy", undefined, "unknown error", true);
+      expect(opening.holdForHuman).toBe(true);
+      expect(opening.note).toContain("unavailable");
+
+      const exit = routeOnAdversaryUnavailable("cover", undefined, "unknown error", true);
+      expect(exit.holdForHuman).toBe(false);
+      expect(exit.note).toContain("RED TEAM FAILED");
+    });
   });
 });
 
@@ -214,37 +235,81 @@ describe("Red Team unavailable — opening routing + audit parity (decide author
   }, 30_000);
 });
 
-describe("Red Team unavailable — exit (sell) is NOT held, de-risk-only routing", () => {
-  it("lets a high-conviction SELL of an existing position proceed to placement with a loud RED TEAM FAILED note", async () => {
+const SELL_PROPOSAL = {
+  symbol: "AAPL",
+  side: "sell",
+  type: "market",
+  quantity: 1,
+  timeInForce: "gfd",
+  marketHours: "regular_hours",
+  rationale: "Take profit into strength.",
+  tradeThesisTag: "Quality-Compounder",
+  entryMarketRegime: "Neutral (Normal Volatility)",
+  confidenceScore: 90
+};
+
+async function seedExistingAaplLongPosition() {
+  const { insertFillEvent } = await import("../src/lib/db-fills");
+  // Seed an existing AAPL long position (an open lot) so the sell is sizeable/not a phantom sell.
+  // Cost basis is deliberately close to the stubbed $200 quote (< policy.riskRules.takeProfitPct's
+  // default 20% band) so `planTakeProfitTrims`'s independent, price-driven take-profit-trim
+  // mechanism does NOT ALSO fire a competing AAPL sell proposal here — that pipeline is unrelated to
+  // this test's target (the debate-unavailable routing branch) and its proposal would otherwise
+  // intermittently race/collide with (and sometimes clobber) the one asserted on below.
+  insertFillEvent({
+    userId: "local",
+    accountNumber: "TEST",
+    source: "paper",
+    symbol: "AAPL",
+    side: "buy",
+    quantity: 5,
+    price: 190,
+    notional: 950,
+    status: "filled"
+  });
+}
+
+describe("Red Team unavailable — exit (sell) DEFAULT behavior: still held for human review", () => {
+  it("[default false: byte-identical to main] holds a de-risking SELL for human review when deRiskExitsOnAdversaryUnavailable is NOT set", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
-    const SELL_PROPOSAL = {
-      symbol: "AAPL",
-      side: "sell",
-      type: "market",
-      quantity: 1,
-      timeInForce: "gfd",
-      marketHours: "regular_hours",
-      rationale: "Take profit into strength.",
-      tradeThesisTag: "Quality-Compounder",
-      entryMarketRegime: "Neutral (Normal Volatility)",
-      confidenceScore: 90
-    };
     vi.stubGlobal("fetch", makeUnavailableFetchStub([SELL_PROPOSAL]));
 
     await seedTestAccountAndPolicy();
-    const { insertFillEvent } = await import("../src/lib/db-fills");
-    // Seed an existing AAPL long position (an open lot) so the sell is sizeable/not a phantom sell.
-    insertFillEvent({
-      userId: "local",
-      accountNumber: "TEST",
-      source: "paper",
-      symbol: "AAPL",
-      side: "buy",
-      quantity: 5,
-      price: 150,
-      notional: 750,
-      status: "filled"
+    await seedExistingAaplLongPosition();
+
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const { listRecentProposals, listAudit } = await import("../src/lib/db");
+
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+
+    // Default OFF: the sell is held for human review, same as an opening, matching main's
+    // unconditional requiresHumanReview.add for every side when the debate is unavailable.
+    const proposals = listRecentProposals("TEST", 100, "local");
+    const aaplSell = proposals.find((p) => p.proposal.symbol === "AAPL" && p.proposal.side === "sell");
+    expect(aaplSell).toBeDefined();
+    expect(aaplSell?.status).toBe("proposed");
+
+    const unavailableAudits = listAudit(500).filter(
+      (e) => e.kind === "strategy_red_team_unavailable" && (e.payload as { side?: string }).side === "sell"
+    );
+    expect(unavailableAudits.length).toBeGreaterThanOrEqual(1);
+    expect((unavailableAudits[0].payload as { heldForHuman?: boolean }).heldForHuman).toBe(true);
+  }, 30_000);
+});
+
+describe("Red Team unavailable — exit (sell) OPT-IN: de-risk-only routing", () => {
+  it("[deRiskExitsOnAdversaryUnavailable=true] lets a high-conviction SELL of an existing position proceed to placement with a loud RED TEAM FAILED note", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    vi.stubGlobal("fetch", makeUnavailableFetchStub([SELL_PROPOSAL]));
+
+    await seedTestAccountAndPolicy();
+    const { setPolicy, getPolicy } = await import("../src/lib/db");
+    setPolicy({
+      ...getPolicy("local"),
+      tuning: { ...getPolicy("local").tuning, deRiskExitsOnAdversaryUnavailable: true }
     });
+    await seedExistingAaplLongPosition();
 
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const { listRecentProposals, listAudit } = await import("../src/lib/db");
