@@ -458,11 +458,11 @@ export function AssistantChat() {
                       {m.citations.map((c, i) =>
                         c.url ? (
                           <Tooltip content={`Source this answer cited — opens ${c.url}`}>
-                            (<a key={i} href={c.url} target="_blank" rel="noopener noreferrer">
+                            <a key={i} href={c.url} target="_blank" rel="noopener noreferrer">
                               <Chip tone="muted" className="underline decoration-dotted">
                                 {c.label}
                               </Chip>
-                            </a>)
+                            </a>
                           </Tooltip>
                         ) : (
                           <Chip key={i} tone="muted" title="Source this answer cited.">
@@ -478,10 +478,9 @@ export function AssistantChat() {
               {m.role === "assistant" && m.model && (
                 <div className="mt-0.5 px-1 text-[10px] text-[color:var(--con-faint)]">
                   {m.model.trim().toLowerCase() === "mock" ? (
-                    <Tooltip
-                      content="The deterministic offline model produced this answer — no LLM provider was called.">
-                      // No vendor logo for the offline mock — that would fake a provider.
-                      (<span>mock</span>)
+                    // No vendor logo for the offline mock — that would fake a provider.
+                    <Tooltip content="The deterministic offline model produced this answer — no LLM provider was called.">
+                      <span>mock</span>
                     </Tooltip>
                   ) : (
                     <ModelBadge modelId={m.model} size="sm" className="font-normal" title="The model that produced this answer." />
