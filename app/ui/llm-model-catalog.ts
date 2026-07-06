@@ -9,7 +9,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano - lowest cost OpenAI", tier: "$" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - balanced default", tier: "$$" },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - balanced default", tier: "$$", recommendedGreen: true },
       { value: "gpt-5.4", label: "gpt-5.4 - stronger analysis", tier: "$$$" },
       { value: "gpt-5.5", label: "gpt-5.5 - deepest OpenAI reasoning", tier: "$$$" }
     ]
@@ -19,7 +19,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Anthropic (Claude)",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast Claude review", tier: "$" },
-      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 - balanced Claude analysis", tier: "$$" },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
       { value: "claude-opus-4-8", label: "claude-opus-4-8 - premium Claude critique", tier: "$$$" },
       { value: "claude-fable-5", label: "claude-fable-5 - most capable Claude", tier: "$$$" }
     ]
@@ -37,8 +37,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$" },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - preview Pro reasoning", tier: "$$$" }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - preview Pro reasoning", tier: "$$$", recommendedRed: true }
     ]
   },
   {
@@ -54,7 +54,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$" }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$", recommendedGreen: true, recommendedRed: true }
     ]
   }
 ];

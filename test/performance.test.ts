@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { mergeQuoteData } from "../src/lib/market";
 import {
   calculatePnl,
@@ -15,7 +15,8 @@ import {
   getSkippedCandidateReturns,
   getThesisRegimeScorecard,
   getThesisScorecard,
-  recordFillFromProposal
+  recordFillFromProposal,
+  type PrefetchedFills
 } from "../src/lib/performance";
 import type { FillEvent, MarketScan, OrderSide, TradeProposal } from "../src/lib/types";
 
@@ -761,3 +762,38 @@ function marketScanWithQuote(symbol: string, price: number): MarketScan {
     }
   };
 }
+
+describe("PrefetchedFills optimization", () => {
+  it("uses prefetched fills instead of calling listFillEvents when supplied", async () => {
+    const db = await import("../src/lib/db");
+    const spy = vi.spyOn(db, "listFillEvents");
+    
+    const prefetched: PrefetchedFills = {
+      liveFills: [
+        fill({ id: "b1", side: "buy", quantity: 1, price: 100, notional: 100, accountNumber: "PREFETCH1", symbol: "AAPL" }),
+        fill({ id: "s1", side: "sell", quantity: 1, price: 110, notional: 110, accountNumber: "PREFETCH1", symbol: "AAPL" })
+      ],
+      paperFills: []
+    };
+
+    spy.mockClear();
+
+    // Call all the optimized scorecards with prefetched fills
+    getSectorScorecard("PREFETCH1", "live", {}, "local", prefetched);
+    getThesisRegimeScorecard("PREFETCH1", "live", {}, "local", prefetched);
+    getClosedLotCount("PREFETCH1", "live", "local", prefetched);
+    getSignalEfficacy("PREFETCH1", "live", {}, "local", prefetched);
+    getFactorScorecard("PREFETCH1", "live", {}, "local", undefined, prefetched);
+    getConfidenceCalibration("PREFETCH1", "live", {}, "local", prefetched);
+
+    // listFillEvents should not have been called!
+    expect(spy).not.toHaveBeenCalled();
+
+    // Call without prefetched and listFillEvents should be called
+    spy.mockClear();
+    getSectorScorecard("PREFETCH1", "live", {}, "local");
+    expect(spy).toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+});

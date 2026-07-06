@@ -1,6 +1,7 @@
 // db-learning.ts — audit-event helpers, counterfactual learning watermarks/candidates,
 // learned-context fact-tier functions, and RAG ingestion (ingested_accessions).
 import { getDb } from "./db";
+import { mergeHorizonRows } from "./outcome-horizons";
 import type { LearnedContextRow, LearnedContextPendingRow, LearnedContextPendingStatus, SocraticOutcomeHorizonRow } from "./types";
 
 // ── Audit-event helpers ────────────────────────────────────────────────────────
@@ -297,10 +298,17 @@ function toSkippedCounterfactualRow(row: RawSkippedCounterfactualRow): SkippedCo
   };
 }
 
+/** Deterministic skipped-candidate-counterfactual row id — single-sourced here so callers that need
+ * to reference the row before/without re-reading it (e.g. enqueueing its intraday sample due-jobs
+ * right after insert) can derive the same id rather than duplicating the format. */
+export function skippedCounterfactualId(userId: string, runId: string, symbol: string, horizonDays: number): string {
+  return `${userId}:${runId}:${symbol}:${horizonDays}`;
+}
+
 export function insertSkippedCounterfactualCandidate(input: SkippedCounterfactualCandidateInput): boolean {
   const userId = input.userId ?? "local";
   const now = input.now ?? new Date().toISOString();
-  const id = `${userId}:${input.runId}:${input.symbol}:${input.horizonDays}`;
+  const id = skippedCounterfactualId(userId, input.runId, input.symbol, input.horizonDays);
   const db = getDb();
   const existing = db
     .prepare("SELECT id FROM skipped_candidate_counterfactuals WHERE id = ? AND user_id = ?")
@@ -399,6 +407,28 @@ export function markSkippedCounterfactualChecked(id: string, userId: string = "l
     .run(checkedAt, checkedAt, id, userId);
 }
 
+/** Fresh (uncached) read of just the persisted `outcomes` column for one counterfactual row — used
+ * immediately before a terminal write to re-merge against whatever a concurrent worker may have
+ * already written (see the lost-update guard note on markSkippedCounterfactualMatured). */
+function readPersistedCounterfactualOutcomes(id: string, userId: string): SocraticOutcomeHorizonRow[] | undefined {
+  const row = getDb()
+    .prepare("SELECT outcomes FROM skipped_candidate_counterfactuals WHERE id = ? AND user_id = ?")
+    .get(id, userId) as { outcomes: string | null } | undefined;
+  if (!row?.outcomes) return undefined;
+  try {
+    return JSON.parse(row.outcomes) as SocraticOutcomeHorizonRow[];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Lost-update guard: `input.outcomes` may have been built from a pass-start snapshot held across
+ * awaits (materializeSkippedCandidateCounterfactuals / outcome-engine's counterfactual worker path),
+ * so a worker-sampled 15m/1h row written concurrently could otherwise be erased by this stale write.
+ * Re-merge against the FRESH persisted row right before persisting — mergeHorizonRows'
+ * existing-terminal-wins semantics make this idempotent/first-writer-wins regardless of write order.
+ */
 export function markSkippedCounterfactualMatured(input: {
   id: string;
   userId?: string;
@@ -411,6 +441,7 @@ export function markSkippedCounterfactualMatured(input: {
 }): boolean {
   const userId = input.userId ?? "local";
   const checkedAt = input.checkedAt ?? new Date().toISOString();
+  const mergedOutcomes = mergeHorizonRows(readPersistedCounterfactualOutcomes(input.id, userId), input.outcomes ?? []);
   const result = getDb()
     .prepare(
       `UPDATE skipped_candidate_counterfactuals
@@ -427,7 +458,7 @@ export function markSkippedCounterfactualMatured(input: {
       input.exitDate,
       input.exitPrice,
       input.returnPct,
-      input.outcomes ? JSON.stringify(input.outcomes) : null,
+      mergedOutcomes.length > 0 ? JSON.stringify(mergedOutcomes) : null,
       checkedAt,
       checkedAt,
       input.id,
@@ -442,6 +473,9 @@ export function markSkippedCounterfactualMatured(input: {
  * status='unresolvable' WITH a reason, instead of sitting 'pending' forever and silently dropping
  * out of every matured-outcome denominator. Unresolvable rows keep their optional multi-horizon
  * outcome rows (each marked unresolvable with its own reason) so coverage math can count them.
+ *
+ * Lost-update guard: same re-merge-at-write-time treatment as markSkippedCounterfactualMatured above
+ * — a worker-sampled 15m/1h row must survive this terminal write even if `input.outcomes` is stale.
  */
 export function markSkippedCounterfactualUnresolvable(input: {
   id: string;
@@ -452,6 +486,7 @@ export function markSkippedCounterfactualUnresolvable(input: {
 }): boolean {
   const userId = input.userId ?? "local";
   const checkedAt = input.checkedAt ?? new Date().toISOString();
+  const mergedOutcomes = mergeHorizonRows(readPersistedCounterfactualOutcomes(input.id, userId), input.outcomes ?? []);
   const result = getDb()
     .prepare(
       `UPDATE skipped_candidate_counterfactuals
@@ -462,7 +497,7 @@ export function markSkippedCounterfactualUnresolvable(input: {
         updated_at = ?
        WHERE id = ? AND user_id = ? AND status = 'pending'`
     )
-    .run(input.reason, input.outcomes ? JSON.stringify(input.outcomes) : null, checkedAt, checkedAt, input.id, userId);
+    .run(input.reason, mergedOutcomes.length > 0 ? JSON.stringify(mergedOutcomes) : null, checkedAt, checkedAt, input.id, userId);
   return result.changes > 0;
 }
 
@@ -533,6 +568,31 @@ export function getSkippedCounterfactualCoverage(
   return { total: matured + pending + unresolvable, matured, pending, unresolvable, resolvedPct, disclosure };
 }
 
+/**
+ * Merge freshly-sampled intraday (15m/1h) horizon rows into a still-'pending' counterfactual's
+ * `outcomes` column WITHOUT touching status/exit fields — used by the due-jobs intraday sampler
+ * (outcome-engine.ts's drainDueIntradaySampleJobs), which resolves one horizon at a time and is not
+ * the pipeline that closes the whole counterfactual (that's markSkippedCounterfactualMatured /
+ * markSkippedCounterfactualUnresolvable, both status='pending'-gated same as this). A no-op once the
+ * row has already gone terminal (matured/unresolvable) — those rows' outcomes are owned by their own
+ * terminal writer, not by a late-arriving intraday sample.
+ */
+export function updateSkippedCounterfactualOutcomes(
+  id: string,
+  userId: string,
+  outcomes: SocraticOutcomeHorizonRow[],
+  updatedAt: string = new Date().toISOString()
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE skipped_candidate_counterfactuals
+       SET outcomes = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'pending'`
+    )
+    .run(JSON.stringify(outcomes), updatedAt, id, userId);
+  return result.changes > 0;
+}
+
 /** One counterfactual row by its natural join key (runId, symbol) — the outcome engine joins
  * blocked/rejected/vetoed decision cases to their forward returns through this. */
 export function getSkippedCounterfactualByRunSymbol(
@@ -547,6 +607,29 @@ export function getSkippedCounterfactualByRunSymbol(
        ORDER BY horizon_days ASC LIMIT 1`
     )
     .get(userId, runId, symbol) as RawSkippedCounterfactualRow | undefined;
+  return row ? toSkippedCounterfactualRow(row) : undefined;
+}
+
+/** Exact counterfactual row by its full natural key (runId, symbol, horizonDays) — used by the
+ * durable due-jobs intraday sampler (outcome-engine.ts's drainDueIntradaySampleJobs), which carries
+ * horizonDays explicitly in its job payload rather than guessing via min(horizon_days) the way
+ * getSkippedCounterfactualByRunSymbol does. A (runId, symbol) pair can have more than one row across
+ * different horizons (e.g. a Bear-veto early insert vs. the run's own signal-snapshot ingestion using
+ * a different configured horizonDays) — this disambiguates to the exact owning row instead of always
+ * picking the shortest horizon. */
+export function getSkippedCounterfactualByRunSymbolHorizon(
+  userId: string,
+  runId: string,
+  symbol: string,
+  horizonDays: number
+): SkippedCounterfactualRow | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM skipped_candidate_counterfactuals
+       WHERE user_id = ? AND run_id = ? AND symbol = ? AND horizon_days = ?
+       LIMIT 1`
+    )
+    .get(userId, runId, symbol, horizonDays) as RawSkippedCounterfactualRow | undefined;
   return row ? toSkippedCounterfactualRow(row) : undefined;
 }
 

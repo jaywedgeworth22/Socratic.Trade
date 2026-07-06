@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import {
   applyCongressEvents,
   resetCongressEventDedupe
 } from "../src/lib/congress-trade-events";
-import { verifyCongressWebhookSecret } from "../src/lib/congress-webhook-auth";
+import { verifyCongressWebhookSignature } from "../src/lib/congress-webhook-auth";
 import { getServiceHealthSummaries } from "../src/lib/db-health";
 import { coerceCongressTrade, fetchAppACongressTrades } from "../src/lib/web-sources/congress";
 import { getCongressDataset, getInsiderSignals, getSymbolWebSignals } from "../src/lib/web-sources";
@@ -204,29 +204,38 @@ describe("fetchAppACongressTrades — public feed with rolling from= window", ()
   });
 });
 
-describe("verifyCongressWebhookSecret", () => {
-  const reqWith = (auth?: string) => new Request("https://b.example/api/webhooks/congress", auth ? { headers: { authorization: auth } } : undefined);
+function sign(secret: string, bodyText: string) {
+  return createHmac("sha256", secret).update(bodyText).digest("hex");
+}
+
+describe("verifyCongressWebhookSignature", () => {
+  const reqWith = (sig?: string) => new Request("https://b.example/api/webhooks/congress", sig ? { headers: { "x-signature": sig } } : undefined);
 
   it("rejects when no secret is configured", () => {
-    expect(verifyCongressWebhookSecret(reqWith("Bearer anything"))).toBe(false);
+    expect(verifyCongressWebhookSignature(reqWith("anything"), "{}")).toBe(false);
   });
 
-  it("accepts the correct bearer token and rejects others", () => {
+  it("accepts the correct signature and rejects others", () => {
     process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
-    expect(verifyCongressWebhookSecret(reqWith("Bearer s3cr3t"))).toBe(true);
-    expect(verifyCongressWebhookSecret(reqWith("Bearer wrong"))).toBe(false);
-    expect(verifyCongressWebhookSecret(reqWith(undefined))).toBe(false);
-    expect(verifyCongressWebhookSecret(reqWith("s3cr3t"))).toBe(false); // missing "Bearer "
+    const body = `{"foo":"bar"}`;
+    const sig = sign("s3cr3t", body);
+
+    expect(verifyCongressWebhookSignature(reqWith(sig), body)).toBe(true);
+    expect(verifyCongressWebhookSignature(reqWith("wrong"), body)).toBe(false);
+    expect(verifyCongressWebhookSignature(reqWith(undefined), body)).toBe(false);
+    expect(verifyCongressWebhookSignature(reqWith(sig), "{}")).toBe(false);
   });
 
   it("records webhook health from the ingest result, not just successful authentication", async () => {
     process.env.CONGRESS_WEBHOOK_SECRET = "s3cr3t";
+    const body = `{"foo":"bar"}`;
+    const sig = sign("s3cr3t", body);
 
     const res = await postCongressWebhook(
       new Request("https://b.example/api/webhooks/congress", {
         method: "POST",
-        headers: { authorization: "Bearer s3cr3t", "content-type": "application/json" },
-        body: JSON.stringify({ foo: "bar" }),
+        headers: { "x-signature": sig, "content-type": "application/json" },
+        body: body,
       })
     );
 
