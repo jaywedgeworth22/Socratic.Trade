@@ -32,6 +32,18 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
+  `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
+  empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what
+  was silently learned" archive the design doc promised but never built — new
+  `deleteLearnedContext` (ownership-scoped, also the shared-contribution erasure path),
+  `GET /api/learned-context` + `DELETE /api/learned-context/[id]`, and a collapsed-by-default
+  `LearnedFactsArchive` component. 8-angle adversarial review found no correctness/security bugs.
+  Verify: 283 files / 2843 tests green, tsc clean, lint 0 errors, build clean (re-run post-merge —
+  branch had drifted far behind main). Prod verified: `/api/health` 200, `pm2 trading` stable (0
+  unstable restarts), new route live (401 unauthenticated, not 404/500). See
+  `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 - 2026-07-06 - `trading-live` published at `7b5450fe` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`). Ships the full CLAUDE backlog train (#816 prompt-safety, #819
   usage-budget advisory, #820 due-jobs, #822 hyde-multiquery) plus everything merged to `main`
@@ -581,17 +593,6 @@ As of 2026-07-04.
   After: full suite 256 files / 2506 tests green in 20.77s wall; the three files ~1s of test time.
   See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
   at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
-
-- **Learned-context UX: copy fix + "learned facts" browse/delete archive** (CLAUDE, worktree
-  `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-06.** Owner spotted awkward
-  empty-state copy on the Learned Context approval queue and asked why the AI doesn't auto-learn and
-  let the user review/delete afterward — it mostly already does (the `fact` tier is silent-passthrough,
-  never queued; only `risk`/`strategy-directive` confirms first, by design). Building both: reworded
-  copy in `app/console/approvals/learned-context.tsx`; new `deleteLearnedContext` in
-  `src/lib/db-learning.ts` + `GET /api/learned-context` + `DELETE /api/learned-context/[id]` + client
-  helpers + a new `LearnedFactsArchive` browse/delete component wired into
-  `app/console/approvals/page.tsx`. New `test/learned-context-delete.test.ts` (7 tests). Verify in
-  progress; will land via `land.sh` and release to production this pass.
 
 - **Mobile console width overflow — autonomy-desk home (CLAUDE cloud, branch
   `claude/mobile-console-width-overflow`) — PR open (#992).** Owner-reported: on mobile, every section
