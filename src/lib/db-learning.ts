@@ -847,6 +847,55 @@ export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
   return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
 }
 
+/**
+ * Count ever-ingested `ingested_accessions` rows per doc type (all tickers, all time), keyed by a
+ * LOWERCASED doc type — cheap single GROUP BY, no new table/migration. Raw counts only; see
+ * `ingestedAccessionCountForDocType` for the prefix-tolerant lookup callers should actually use.
+ */
+export function ingestedAccessionCountsByDocType(): Record<string, number> {
+  const rows = getDb()
+    .prepare("SELECT LOWER(doc_type) AS doc_type, COUNT(*) AS n FROM ingested_accessions GROUP BY LOWER(doc_type)")
+    .all() as Array<{ doc_type: string; n: number }>;
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.doc_type] = row.n;
+  return counts;
+}
+
+/**
+ * Count ever-ingested rows for ONE requested doc type (all tickers, all time).
+ *
+ * `doc_type` casing/naming in `ingested_accessions` is NOT uniform across writers — see
+ * src/lib/web-sources/sec-filings.ts (stores the raw SEC form letter, e.g. "10-K"/"10-Q") vs.
+ * src/lib/web-sources/sec8k.ts's FULL-BODY writer (stores the sentinel "8-K-body", not "8-K").
+ * The prefix-tolerant lookup below (any stored type whose lowercased form starts with the
+ * requested lowercased type) reconciles that split — e.g. "8-k-body" counts toward requested
+ * "8-k"; "10-k" counts toward requested "10-k" exactly (no other stored type shares that prefix).
+ *
+ * IMPORTANT CAVEAT (found 2026-07-06, see docs/rollouts/2026-07-06-corpus-coverage-receipt.md):
+ * this table is NOT a complete producer-existence signal for "8-k". The default-ON 8-K SUMMARY
+ * writer (`refreshEightK`'s `storeContexts` call in sec8k.ts) writes retrievable "8-k" chunks to
+ * the vector corpus but never calls `insertIngestedAccession` at all — only the default-OFF
+ * full-body writer (`ingestEightKBody`) does. So in the default config this function returns 0 for
+ * "8-k" even when the corpus has real, retrievable 8-K chunks. That is exactly why
+ * `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts (the corpus-coverage receipt's allowlist) EXCLUDES
+ * "8-k" — the receipt only both-conditions-checks doc types (currently 10-k/10-q) whose ledger IS
+ * complete. strategy.ts builds its own in-memory prefix lookup on top of the bulk
+ * `ingestedAccessionCountsByDocType()` (rather than calling this function once per type) and feeds
+ * it into `computeEmptyDocTypes` (prompt-safety.ts) as a `hasProducerForDocType` predicate. This
+ * function itself remains a correct, useful admin/diagnostic "how many accessions has this
+ * pipeline recorded for doc type X" count — including for "8-k", where it still answers "how many
+ * full-body accessions" correctly, just not "does 8-k coverage exist at all."
+ */
+export function ingestedAccessionCountForDocType(requestedDocType: string): number {
+  const counts = ingestedAccessionCountsByDocType();
+  const requested = requestedDocType.toLowerCase();
+  let total = 0;
+  for (const [storedType, n] of Object.entries(counts)) {
+    if (storedType.startsWith(requested)) total += n;
+  }
+  return total;
+}
+
 // ── document_chunks content-hash dedup ─────────────────────────────────────
 
 /** Check whether a chunk with this content_hash has already been embedded. */

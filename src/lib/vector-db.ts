@@ -1571,6 +1571,23 @@ export function formatChunkWithProvenance(chunk: RetrievedChunk, symbol?: string
 }
 
 /**
+ * Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): `retrieveContextDetailed`
+ * already computes four distinct reasons an empty (or quality-degraded) result can occur, but
+ * previously only surfaced them as Sentry-only warning strings — every caller saw an
+ * indistinguishable `[]`/non-empty result. This union names them for callers that opt in via
+ * `RetrieveOptions.onStatus`; it is a RECEIPT ONLY and must never gate/alter which chunks are
+ * returned (owner philosophy: advisory-only, see AGENTS.md).
+ *  - "ok": normal path, chunks returned (possibly empty via `no_memory`, see below).
+ *  - "no_memory": pipeline ran cleanly but found zero matching chunks (real empty corpus/query).
+ *  - "lookup_failed": missing Pinecone/Voyage keys, or the pipeline threw (outer catch).
+ *  - "budget_skipped": skipped before any Voyage/Pinecone call because the daily LLM/RAG budget
+ *    (isOverLlmBudget) was already exceeded.
+ *  - "degraded": the per-run RAG budget (R16 shouldDegradeForBudget) tripped, so rerank/hybrid were
+ *    skipped but core dense-cosine recall still ran — NON-empty, just lower quality.
+ */
+export type RetrievalStatus = "ok" | "no_memory" | "lookup_failed" | "budget_skipped" | "degraded";
+
+/**
  * Retrieve relevant chunks from Pinecone with REAL provenance (id/score/as_of/url) so answers can
  * be grounded and honestly cited.
  */
@@ -1639,6 +1656,24 @@ export interface RetrieveOptions {
    * retrieval behavior either way.
    */
   runId?: string;
+  /**
+   * Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06, additive/optional). When
+   * supplied, invoked exactly once with the classified `RetrievalStatus` before `retrieveContextDetailed`
+   * returns. Fire-and-forget from the callee's perspective — a throwing callback is swallowed so it
+   * can never break retrieval; never used to alter chunk selection. Omitted = current behavior,
+   * byte-for-byte unchanged (no callback invoked, no extra work performed).
+   */
+  onStatus?: (status: RetrievalStatus) => void;
+}
+
+/** Invoke `options?.onStatus` best-effort; a throwing callback must never affect retrieval. */
+function reportRetrievalStatus(options: RetrieveOptions | undefined, status: RetrievalStatus): void {
+  if (!options?.onStatus) return;
+  try {
+    options.onStatus(status);
+  } catch {
+    // advisory receipt only — never let a callback failure affect retrieval
+  }
 }
 
 /**
@@ -1678,6 +1713,7 @@ export async function retrieveContextDetailed(
       source: userId === "local" ? "operator" : "user",
       connectedAccountId: options?.connectedAccountId ?? null
     });
+    reportRetrievalStatus(options, "budget_skipped");
     return [];
   }
   const vectorUserId = vectorUserIdFor(userId);
@@ -1688,6 +1724,7 @@ export async function retrieveContextDetailed(
       operation: "retrieveContext",
       source: userId === "local" ? "operator" : "user"
     });
+    reportRetrievalStatus(options, "lookup_failed");
     return [];
   }
   // R16 (2026-07-01 RAG backlog): default-off, very-high-ceiling per-run budget check. When
@@ -1715,7 +1752,10 @@ export async function retrieveContextDetailed(
   const extraFilter = buildExtraFilters(options);
 
   try {
-    if (!(await indexExists(pc, pineconeSource, userId))) return [];
+    if (!(await indexExists(pc, pineconeSource, userId))) {
+      reportRetrievalStatus(options, "lookup_failed");
+      return [];
+    }
 
     const index = pc.Index(indexName());
 
@@ -1872,7 +1912,10 @@ export async function retrieveContextDetailed(
         // Every variant (including the original query, always included above) failed or matched
         // nothing — fall back to the plain single-query path rather than returning `[]`.
         const single = await embedAndMatchOneQuery(query);
-        if (single == null) return [];
+        if (single == null) {
+          reportRetrievalStatus(options, "lookup_failed");
+          return [];
+        }
         matches = single;
       } else {
         // Synthetic ids for matches lacking a real Pinecone id are scoped per-list-index (list N /
@@ -1899,7 +1942,10 @@ export async function retrieveContextDetailed(
       }
     } else {
       const single = await embedAndMatchOneQuery(query);
-      if (single == null) return [];
+      if (single == null) {
+        reportRetrievalStatus(options, "lookup_failed");
+        return [];
+      }
       matches = single;
     }
 
@@ -1981,9 +2027,14 @@ export async function retrieveContextDetailed(
         userId
       );
     }
-    return finalSlice
+    const finalChunks = finalSlice
       .map(matchToChunk)
       .filter((c) => c.text);
+    // Final status classification (receipt only — never changes `finalChunks`): a real zero-match
+    // result is "no_memory" (pipeline ran cleanly, nothing relevant found); a non-empty result under
+    // the R16 per-run budget degrade is "degraded" (lower quality, not absent); everything else "ok".
+    reportRetrievalStatus(options, finalChunks.length === 0 ? "no_memory" : budgetDegraded ? "degraded" : "ok");
+    return finalChunks;
   } catch (err) {
     console.error("[vector-db] Error retrieving context:", err);
     if (!wasRagSentryCaptured(err)) {
@@ -1995,8 +2046,41 @@ export async function retrieveContextDetailed(
         reason: err instanceof Error ? err.message : String(err)
       });
     }
+    reportRetrievalStatus(options, "lookup_failed");
     return [];
   }
+}
+
+/**
+ * Thin convenience wrapper (typed-retrieval-status, 2026-07-06) for callers that want the typed
+ * status alongside the chunks without wiring their own `onStatus` callback. Purely additive — does
+ * not change `retrieveContextDetailed` itself, and a caller-supplied `options.onStatus` (if any)
+ * still fires exactly as it would calling `retrieveContextDetailed` directly.
+ */
+export async function retrieveContextDetailedWithStatus(
+  query: string,
+  symbol: string,
+  limit: number = 3,
+  userId: string = "local",
+  options?: RetrieveOptions
+): Promise<{ chunks: RetrievedChunk[]; status: RetrievalStatus }> {
+  let status: RetrievalStatus = "ok";
+  const chunks = await retrieveContextDetailed(query, symbol, limit, userId, {
+    ...options,
+    onStatus: (s) => {
+      status = s;
+      // Forward to the caller-supplied callback best-effort — a throwing callback must never
+      // break retrieval. This mirrors the same guarantee `reportRetrievalStatus` already gives
+      // internally; guarded explicitly here too since this closure is itself what gets invoked
+      // through that internal call chain, and a receipt callback must never propagate a throw.
+      try {
+        options?.onStatus?.(s);
+      } catch {
+        // advisory receipt only — never let a callback failure affect retrieval
+      }
+    }
+  });
+  return { chunks, status };
 }
 
 /** Injectable rerank function shape `rankPool` accepts — matches `rerankMatches`'s signature minus the `voyage` client. */
