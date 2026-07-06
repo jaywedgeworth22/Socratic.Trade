@@ -1,7 +1,9 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import dns from "node:dns";
 import { withSentryConfig } from "@sentry/nextjs";
 
+dns.setDefaultResultOrder("ipv4first");
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
