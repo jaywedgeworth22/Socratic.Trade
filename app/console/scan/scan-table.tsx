@@ -13,6 +13,7 @@ import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
 import { cx } from "../lib/format";
+import { Tooltip } from "../ui/primitives";
 import { DEFAULT_VISIBLE_SCAN_COLUMN_IDS, SCAN_COLUMNS } from "./columns";
 
 type SortDir = "asc" | "desc";
@@ -134,19 +135,23 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3 border-b border-[color:var(--con-line)] px-4 py-2">
-        <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Visible columns are saved per browser for the console scan table.">
-          {visibleColumns.length} shown
-        </p>
+        <Tooltip
+          content="Visible columns are saved per browser for the console scan table.">
+          <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            {visibleColumns.length} shown
+          </p>
+        </Tooltip>
         <div className="relative">
-          <button
-            type="button"
-            onClick={() => setColumnsOpen((open) => !open)}
-            title="Show, hide, reorder, or reset scan columns. Saved in this browser."
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)]"
-          >
-            <Columns3 size={14} aria-hidden />
-            Columns
-          </button>
+          <Tooltip
+            content="Show, hide, reorder, or reset scan columns. Saved in this browser.">
+            <button
+              type="button"
+              onClick={() => setColumnsOpen((open) => !open)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-2.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)]">
+              <Columns3 size={14} aria-hidden />
+              Columns
+            </button>
+          </Tooltip>
           {columnsOpen && (
             <>
               <button
@@ -173,49 +178,49 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     const isVisible = visible.includes(column.id);
                     const index = visible.indexOf(column.id);
                     return (
-                      <div
-                        key={column.id}
-                        title={column.headerTitle}
-                        className={cx(
-                          "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
-                          !isVisible && "opacity-70"
-                        )}
-                      >
-                        <label className={cx("flex min-w-0 items-center gap-2", column.id === SYMBOL_COLUMN_ID ? "opacity-70" : "cursor-pointer")}>
-                          <input
-                            type="checkbox"
-                            checked={isVisible}
-                            onChange={() => saveVisibleColumns(toggleVisibleScanColumn(visible, column.id))}
-                            disabled={column.id === SYMBOL_COLUMN_ID}
-                            className="accent-[var(--con-accent)]"
-                          />
-                          <span className="truncate">{column.label}</span>
-                        </label>
-                        {isVisible ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              aria-label={`Move ${column.label} earlier`}
-                              onClick={() => saveVisibleColumns(moveVisibleScanColumn(visible, column.id, -1))}
-                              disabled={index <= 0}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded text-[color:var(--con-faint)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)] disabled:opacity-30"
-                            >
-                              <ArrowUp size={14} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Move ${column.label} later`}
-                              onClick={() => saveVisibleColumns(moveVisibleScanColumn(visible, column.id, 1))}
-                              disabled={index === visible.length - 1}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded text-[color:var(--con-faint)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)] disabled:opacity-30"
-                            >
-                              <ArrowDown size={14} aria-hidden />
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">hidden</span>
-                        )}
-                      </div>
+                      <Tooltip content={column.headerTitle}>
+                        <div
+                          key={column.id}
+                          className={cx(
+                            "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
+                            !isVisible && "opacity-70"
+                          )}>
+                          <label className={cx("flex min-w-0 items-center gap-2", column.id === SYMBOL_COLUMN_ID ? "opacity-70" : "cursor-pointer")}>
+                            <input
+                              type="checkbox"
+                              checked={isVisible}
+                              onChange={() => saveVisibleColumns(toggleVisibleScanColumn(visible, column.id))}
+                              disabled={column.id === SYMBOL_COLUMN_ID}
+                              className="accent-[var(--con-accent)]"
+                            />
+                            <span className="truncate">{column.label}</span>
+                          </label>
+                          {isVisible ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                aria-label={`Move ${column.label} earlier`}
+                                onClick={() => saveVisibleColumns(moveVisibleScanColumn(visible, column.id, -1))}
+                                disabled={index <= 0}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-[color:var(--con-faint)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)] disabled:opacity-30"
+                              >
+                                <ArrowUp size={14} aria-hidden />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Move ${column.label} later`}
+                                onClick={() => saveVisibleColumns(moveVisibleScanColumn(visible, column.id, 1))}
+                                disabled={index === visible.length - 1}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-[color:var(--con-faint)] hover:bg-[color:var(--con-surface-2)] hover:text-[color:var(--con-fg)] disabled:opacity-30"
+                              >
+                                <ArrowDown size={14} aria-hidden />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">hidden</span>
+                          )}
+                        </div>
+                      </Tooltip>
                     );
                   })}
                 </div>
@@ -237,20 +242,21 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                   aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
                   className={cx(c.num && "num", i === 0 && STICKY_CELL)}
                 >
-                  <button
-                    type="button"
-                    title={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}
-                    onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
-                    className={cx(
-                      "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
-                      active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
-                    )}
-                  >
-                    {c.label}
-                    <span aria-hidden className={cx("text-[9px]", !active && "opacity-0")}>
-                      {active && activeSort.dir === "asc" ? "▲" : "▼"}
-                    </span>
-                  </button>
+                  <Tooltip
+                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
+                    <button
+                      type="button"
+                      onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
+                      className={cx(
+                        "inline-flex cursor-pointer select-none items-center gap-1 font-semibold uppercase tracking-[0.07em] transition-colors",
+                        active ? "text-[color:var(--con-fg)]" : "hover:text-[color:var(--con-fg)]"
+                      )}>
+                      {c.label}
+                      <span aria-hidden className={cx("text-[9px]", !active && "opacity-0")}>
+                        {active && activeSort.dir === "asc" ? "▲" : "▼"}
+                      </span>
+                    </button>
+                  </Tooltip>
                 </th>
               );
             })}
@@ -266,13 +272,13 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                 const title =
                   [own, own?.includes("Received ") ? undefined : received].filter(Boolean).join("\n") || undefined;
                 return (
-                  <td
-                    key={c.id}
-                    title={title}
-                    className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}
-                  >
-                    {c.render(q)}
-                  </td>
+                  <Tooltip content={title}>
+                    <td
+                      key={c.id}
+                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
+                      {c.render(q)}
+                    </td>
+                  </Tooltip>
                 );
               })}
             </tr>
