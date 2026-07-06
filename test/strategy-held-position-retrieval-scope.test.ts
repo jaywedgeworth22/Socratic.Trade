@@ -192,7 +192,8 @@ describe("strategy.ts held-position retrieval scope", () => {
     // ── 3. Episodic candidates include an entry for the held symbol. ──
     expect(mocks.retrieveDecisionExperiences).toHaveBeenCalledTimes(1);
     const episodicInput = mocks.retrieveDecisionExperiences.mock.calls[0]![0] as {
-      candidates: Array<{ symbol: string }>;
+      regime: string;
+      candidates: Array<{ symbol: string; held?: boolean }>;
     };
     const episodicSymbols = episodicInput.candidates.map((c) => c.symbol);
     expect(episodicSymbols).toContain(HELD_SYMBOL);
@@ -200,6 +201,20 @@ describe("strategy.ts held-position retrieval scope", () => {
     // Additive: top-3 plus exactly one held addition, no duplicate.
     expect(episodicSymbols.length).toBe(4);
     expect(episodicSymbols.filter((sym) => sym === HELD_SYMBOL).length).toBe(1);
+    // The held candidate appended past the top-3 must be flagged `held: true` — that's what lets
+    // buildSituationSketch fold it into the episodic query text instead of silently dropping it
+    // (the bug this test suite was originally missing: candidates reaching the RETRIEVAL CALL is
+    // necessary but not sufficient — they must also reach the SKETCH TEXT the query is built from).
+    const heldEntry = episodicInput.candidates.find((c) => c.symbol === HELD_SYMBOL);
+    expect(heldEntry?.held).toBe(true);
+
+    // Only retrieveDecisionExperiences itself is mocked in this file — buildSituationSketch is the
+    // real implementation, so we can prove the held symbol actually reaches the sketch/query text
+    // an unmocked call would send, not just the candidates array handed to the (mocked) retriever.
+    const { buildSituationSketch } = await import("../src/lib/experience-memory");
+    const realSketch = buildSituationSketch(episodicInput);
+    expect(realSketch).toContain(HELD_SYMBOL);
+    for (const sym of SCAN_SYMBOLS.slice(0, 3)) expect(realSketch).toContain(sym);
   }, 30_000);
 
   it("does not issue a duplicate retrieval call when the held symbol is already inside the top slice", async () => {

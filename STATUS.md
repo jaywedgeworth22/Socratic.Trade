@@ -32,6 +32,16 @@ risk-gate/sizing/policy touch.
 - New test: `test/strategy-held-position-retrieval-scope.test.ts` (2 tests) — asserts held-symbol
   inclusion in all three retrieval scopes when outside the top slice, no duplication when the held
   symbol IS inside the slice, and top-N regression (unchanged membership/order).
+- **Follow-up fix (same day, 2nd commit):** the episodic scope's query builder,
+  `buildSituationSketch` (`src/lib/experience-memory.ts`), still did a bare `slice(0, 3)`, so a
+  held symbol appended past top-3 reached the `retrieveDecisionExperiences` call but was dropped
+  before it entered the actual sketch/query text — episodic parity was only partial versus the
+  filings-RAG and learned-context scopes. Fixed with an additive `SituationCandidate.held` flag
+  and a bounded (max 6 total) held-aware selection in `buildSituationSketch`; the non-held path is
+  byte-identical to the old `slice(0, 3)`. `strategy.ts` now stamps `held: true` on candidates it
+  appends past the top-3. Covered by 3 new `buildSituationSketch` unit tests plus a strengthened
+  assertion in `test/strategy-held-position-retrieval-scope.test.ts` that calls the real
+  `buildSituationSketch` on the captured input to prove the held symbol reaches actual query text.
 - Full details: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
 
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)

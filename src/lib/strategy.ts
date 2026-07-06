@@ -66,6 +66,7 @@ import {
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
+import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
@@ -857,7 +858,7 @@ export async function runStrategyOnce(
           };
         };
         const topSlice = marketScan.topCandidates.slice(0, 3);
-        const situationCandidates = topSlice.map(toSituationCandidate);
+        const situationCandidates: SituationCandidate[] = topSlice.map(toSituationCandidate);
         // Widen episodic retrieval scope (not the BUY-candidate top-3 itself) to also cover OPEN
         // positions outside that slice, so sell/hold/trim decisions on them get analog/coaching
         // memory too. marketScan.topCandidates force-includes every held symbol (see market.ts
@@ -869,10 +870,14 @@ export async function runStrategyOnce(
           if (coveredSymbols.has(heldSym)) continue;
           coveredSymbols.add(heldSym);
           const fullCandidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === heldSym);
+          // `held: true` lets buildSituationSketch (experience-memory.ts) fold this candidate into
+          // the episodic query text even though it's appended past the top-3 slice — without that
+          // flag the sketch's own slice(0, 3)-equivalent would silently drop it (see
+          // docs/rollouts/2026-07-06-held-position-retrieval-scope.md follow-up).
           situationCandidates.push(
             fullCandidate
-              ? toSituationCandidate(fullCandidate)
-              : { symbol: heldSym, sector: marketScan.sectorBySymbol[heldSym], dominantFactor: undefined, evidence: undefined }
+              ? { ...toSituationCandidate(fullCandidate), held: true }
+              : { symbol: heldSym, sector: marketScan.sectorBySymbol[heldSym], dominantFactor: undefined, evidence: undefined, held: true }
           );
         }
         const episodic = await retrieveDecisionExperiences({

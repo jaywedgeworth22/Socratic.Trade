@@ -402,6 +402,14 @@ to `socratictrade.com`, record the release commit + date here._
   `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
   duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
   experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+  **Follow-up fix (same day, 2nd commit):** episodic `buildSituationSketch`
+  (`src/lib/experience-memory.ts`) still did a bare `slice(0, 3)` on candidates, so held symbols
+  appended past top-3 reached the `retrieveDecisionExperiences` call but were dropped before
+  entering the actual sketch/query text — episodic parity was only partial. Fixed with an
+  additive `SituationCandidate.held` flag + a bounded (max 6) held-aware selection in
+  `buildSituationSketch`; non-held path is byte-identical to the old slice. 4 new/strengthened
+  tests across `test/experience-memory.test.ts` + `test/strategy-held-position-retrieval-scope.test.ts`;
+  tsc clean; full `npm test` 2678/2678 passed. Same rollout note, follow-up section appended.
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up)** — branch
   `claude/veto-advisory-overridable`, isolated worktree — **IN PROGRESS 2026-07-05, PR pending.**
   Deterministic bear filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with

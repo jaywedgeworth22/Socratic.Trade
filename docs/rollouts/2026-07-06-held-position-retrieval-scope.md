@@ -67,3 +67,47 @@
 - None identified. The change is intentionally minimal/localized to the three named retrieval
   call sites in `strategy.ts`; no other retrieval scope in the codebase was in scope for this
   slug.
+
+## Follow-up fix (same day, second commit): episodic sketch was still dropping held symbols
+
+- **Gap found in review:** the commit above widened `situationCandidates` in `strategy.ts` to
+  append held symbols past the top-3, and asserted (in
+  `test/strategy-held-position-retrieval-scope.test.ts`) that those symbols reach the
+  `retrieveDecisionExperiences` call's `candidates` array. But the actual episodic **query text**
+  is built by `buildSituationSketch` (`src/lib/experience-memory.ts`), which did a bare
+  `input.candidates.slice(0, 3)` — so a held symbol appended at index 3+ was passed into
+  `retrieveDecisionExperiences` but then silently discarded before it ever reached the vector
+  query. The original test mocked `retrieveDecisionExperiences` itself, so it only proved the
+  candidate reached the call site, not that it reached the sketch/query text — the retrieval
+  breadth claim ("held symbols get episodic analog/coaching memory too") was only partially true:
+  filings-RAG and learned-context genuinely widened; episodic did not, for symbols outside the
+  top-3.
+- **Fix (chosen approach: code fix, not a docs trim):** `SituationCandidate` gained an additive
+  optional `held?: boolean` field. `buildSituationSketch` now selects `slice(0, 3)` PLUS any
+  `held: true` candidates found beyond index 3, capped at a total of
+  `SITUATION_SKETCH_MAX_CANDIDATES = 6` so a large held-position book can never make the sketch
+  query unbounded. Candidates that are neither in the top-3 nor flagged `held` are still dropped —
+  non-held callers see byte-identical output to the old `slice(0, 3)`. `strategy.ts` now stamps
+  `held: true` on every candidate it appends past `topSlice` in the episodic-scope loop.
+  Chose the code fix over the honest-docs-trim alternative because the fix is small, additive,
+  keeps the non-held path provably unchanged (regression test below), and bounds query length
+  explicitly — the full episodic parity the original commit claimed is now actually true rather
+  than needing a doc correction.
+- **Files:** `src/lib/experience-memory.ts` (`SituationCandidate.held`,
+  `SITUATION_SKETCH_MAX_CANDIDATES`, `buildSituationSketch` selection logic),
+  `src/lib/strategy.ts` (type-only `SituationCandidate` import, explicit
+  `situationCandidates: SituationCandidate[]` annotation, `held: true` stamped on appended
+  candidates), `test/experience-memory.test.ts` (3 new `buildSituationSketch` unit tests: non-held
+  index-3+ still dropped (regression), held index-3+ now included, and the 6-candidate cap with
+  deterministic first-in-order selection), `test/strategy-held-position-retrieval-scope.test.ts`
+  (strengthened test 1 to assert `held: true` on the appended candidate AND to call the real
+  `buildSituationSketch` on the captured input, proving the held symbol reaches the actual sketch
+  text an unmocked call would send — not just the candidates array handed to the mocked
+  retriever).
+- **Verification:** `npx tsc --noEmit` clean. `npx vitest run
+  test/strategy-held-position-retrieval-scope.test.ts test/experience-memory.test.ts
+  test/strategy-episodic-injection.test.ts` — 12/12 passed (3 test files). Full `npm test` also
+  run as an extra check for this follow-up — 2678/2678 passed across 270 files.
+- **Not done:** did not re-run `npm run build` for this narrowly-scoped follow-up (per the task's
+  own verification list); `npx tsc --noEmit` plus the full `npm test` run cover the touched
+  surface. No push/PR/land — committed locally only, per instructions.

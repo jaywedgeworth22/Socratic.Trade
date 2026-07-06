@@ -323,16 +323,38 @@ export interface SituationCandidate {
   dominantFactor?: string;
   /** 1-line evidence bulletins from the scan (congress/insider/technical etc.). */
   evidence?: string[];
+  /**
+   * Set by callers for candidates appended past the top-N scan slice specifically because the
+   * symbol is a held (open) position — not because it scored into the top-N. Lets the sketch
+   * builder below include held names beyond its top-3 cutoff without widening the cutoff for
+   * ordinary (non-held) scan candidates.
+   */
+  held?: boolean;
 }
+
+/** Hard cap on candidates folded into the sketch text, so a large held-position book can never
+ *  make the situation-sketch query unbounded (top-3 scan + up to 3 extra held names). */
+const SITUATION_SKETCH_MAX_CANDIDATES = 6;
 
 /**
  * Build the SITUATION SKETCH query for episodic retrieval: current regime + candidate factor/
  * sector hints + evidence summary. Deliberately NOT the generic "significant financial events,
  * SEC filings" query the filings pass uses — the point is to match past decision SITUATIONS,
  * not filing content.
+ *
+ * Candidate selection: the top-3 (by input order — callers pass scan-ranked candidates first)
+ * PLUS any `held: true` candidates beyond that cutoff, so sell/hold/trim decisions on a held
+ * position outside the top-3 still reach the episodic query text — capped at
+ * SITUATION_SKETCH_MAX_CANDIDATES total so query length stays bounded regardless of book size.
+ * Non-held callers (or callers that never set `held`) see byte-identical behavior to a plain
+ * slice(0, 3).
  */
 export function buildSituationSketch(input: { regime: string; candidates: SituationCandidate[] }): string {
-  const candidateLines = input.candidates.slice(0, 3).map((candidate) => {
+  const topThree = input.candidates.slice(0, 3);
+  const extraHeld = input.candidates.slice(3).filter((candidate) => candidate.held);
+  const budget = Math.max(0, SITUATION_SKETCH_MAX_CANDIDATES - topThree.length);
+  const selected = [...topThree, ...extraHeld.slice(0, budget)];
+  const candidateLines = selected.map((candidate) => {
     const parts = [normalizeSymbol(candidate.symbol)];
     if (candidate.sector) parts.push(`sector ${candidate.sector}`);
     if (candidate.dominantFactor) parts.push(`dominant factor ${candidate.dominantFactor}`);
