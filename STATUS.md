@@ -22,6 +22,46 @@ Gate green (tsc/lint/build); driven live (settled logo + handoff, dark + forced-
 none. Open question surfaced to owner: transparent splash reveals the loading console + first-visit
 consent modal behind the candles — offered a one-line switch to `var(--con-bg)` (theme fill) if a
 cleaner splash is wanted. See `docs/rollouts/2026-07-06-persistent-header-logo.md`.
+## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
+Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
+doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the
+`fact` tier is silent passthrough, never queued; only `risk`/`strategy-directive` (numeric limits,
+sizing, leverage, authority) confirms first, and that's deliberate (ingested-document/inference
+safety, not paternalism — see `docs/chat-multiuser-learning-design.md`). What was genuinely
+missing: the "browse + delete what was silently learned" surface the design doc promised but never
+built. Shipped both: reworded the empty-state copy; added `deleteLearnedContext` (ownership-scoped,
+also the shared-contribution erasure path) in `src/lib/db-learning.ts`, new `GET
+/api/learned-context` + `DELETE /api/learned-context/[id]` routes, client helpers, and a new
+collapsed-by-default `LearnedFactsArchive` browse/delete component in
+`app/console/approvals/learned-context.tsx` wired into the approvals page. New
+`test/learned-context-delete.test.ts` (7 tests: ownership isolation, foreign-user 404, shared-row
+erasure, audit trail, superseded-row exclusion). 8-angle adversarial review found no
+correctness/security bugs (two correctness-adjacent candidates investigated and refuted with
+concrete evidence — see rollout note). Branch had drifted far behind `origin/main`
+(Coolify/Hetzner migration, mobile fixes, RAG/sizing/prompt-safety work); merged by hand after
+reviewing every flagged overlap, re-verified full quartet on the merged tree: tsc clean, lint 0
+errors, 283 files / 2843 tests green, build clean. **Merged as PR #998** (`1c0c20d3`).
+**Deployed to production** 2026-07-06 21:30:29Z via `~/apps/trading-publish.sh` — verified
+`/api/health` 200, `pm2 trading` stable (0 unstable restarts post-deploy), and the new
+`/api/learned-context` route live (401 unauthenticated, not 404/500, confirming it shipped). See
+`docs/rollouts/2026-07-06-learned-context-archive.md`.
+
+erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
+clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
+once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
+## 2026-07-06 — Mobile console width overflow fix (PR open)
+
+Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
+hero rendered wider than the viewport and clipped off the right edge. Root cause was a
+`min-width:auto` grid-item chain in `app/console/page.tsx`: the lower content grid fell back to an
+implicit `auto` (min-content) mobile track, so the 7-column Positions table (nowrap headers,
+~610px min-content) stretched the whole column and defeated its `overflow-x-auto` wrapper — dragging
+sibling cards off-screen. Fix is 3 Tailwind classes: `grid-cols-1` on the lower-grid wrapper +
+`min-w-0` on both column children (the left `<div>` and right `<aside>`), matching the hero's already
+shrink-safe pattern. tsc/lint/build clean; verified with an empirical 390px before/after using the
+real `console.css` (627px page overflow → contained; the wide table now scrolls inside its own card).
+Branch `claude/mobile-console-width-overflow`; rollout
+`docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
 
 ## 2026-07-06 — Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane (Claude cloud, branch `claude/llm-apps-m5-resource-optimization-n9w5ax`)
 Owner asked for help offloading local agent/dev-server resource usage (16GB M5 MacBook Air
@@ -726,6 +766,12 @@ hoist the orchestrator import into `beforeAll(…, 120_000)` in
 `test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
 green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
 `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+**MERGED:** PR #812 squash-merged to `main` 2026-07-05 08:46Z (verify/smoke/gitleaks green).
+Update: the AGENTS.md Monet-port edit (4103→4104) is now OWNER-CONFIRMED (2026-07-05: "Monet
+should be 4104 since cursor is 4103") and committed to `agent/claude` with attribution — rides the
+next land. Open gap: AGENTS.md has no Cursor 4103 row (its Cursor section still says "no new port");
+asked CURSOR in #agent-sync to document its preview row (pm2 name/hostname) before anyone adds it.
+Untracked `.codex/` setup scripts in this worktree remain unclaimed (CODEX asked to claim/remove).
 **Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)
