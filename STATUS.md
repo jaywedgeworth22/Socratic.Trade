@@ -76,6 +76,116 @@ the fix); regression spot-checks (`prompt-safety`, `strategy-prompt-safety`,
 `strategy-rag-quickwins-wiring`, `rag-multi-query-retrieval`, `sec8k-full-body`, `sec-filings`) all
 still green (42/42 + 31/31, unchanged from before this fix); `npx eslint` on the touched files — 0
 errors, 4 pre-existing unrelated warnings in `strategy.ts`.
+## 2026-07-06 — Held-position retrieval scope (RAG + learned-context + episodic)
+
+Widened the three retrieval scopes in `runStrategyOnce` (filings RAG, learned-context, episodic
+decision memory) so a held (open) position that scores outside the score-sorted top-N slice still
+gets a retrieval pass — previously such a position got ZERO retrieved memory, so sell/hold/trim
+decisions on it ran uninformed. Strictly additive: the BUY-candidate scan/prompt set
+(`marketScan.topCandidates`) and its ordering are completely unchanged; held symbols are UNIONed
+into each retrieval scope's local symbol list (Set-dedupe), never substituted for the top-N. No
+risk-gate/sizing/policy touch.
+
+- Hoisted a single `heldSymbols` computation (right after `workingPositions` is set) and reused it
+  for both the pre-existing take-profit trim-band pruning and all three retrieval scopes (was
+  previously computed a second time locally at the trim-band call site).
+- Filings-RAG `topSymbols` (~top-3) and learned-context `learnedSymbols` (~top-8): unioned with
+  `heldSymbols` via the existing `uniqueSymbols` normalize+dedupe helper.
+- Episodic `situationCandidates` (~top-3): needs the fuller candidate shape (sector/dominantFactor/
+  evidence), so held symbols outside the top-3 are looked up in `marketScan.topCandidates` (which
+  force-includes every held symbol per `market.ts`'s `heldExtra` union) to build the same shape,
+  with a minimal symbol+sector fallback for the defensive case where a lookup somehow misses.
+- No duplicate retrieval call when a held symbol is already inside a slice (Set-based union is
+  naturally dedupe-safe).
+- New test: `test/strategy-held-position-retrieval-scope.test.ts` (2 tests) — asserts held-symbol
+  inclusion in all three retrieval scopes when outside the top slice, no duplication when the held
+  symbol IS inside the slice, and top-N regression (unchanged membership/order).
+- **Follow-up fix (same day, 2nd commit):** the episodic scope's query builder,
+  `buildSituationSketch` (`src/lib/experience-memory.ts`), still did a bare `slice(0, 3)`, so a
+  held symbol appended past top-3 reached the `retrieveDecisionExperiences` call but was dropped
+  before it entered the actual sketch/query text — episodic parity was only partial versus the
+  filings-RAG and learned-context scopes. Fixed with an additive `SituationCandidate.held` flag
+  and a bounded (max 6 total) held-aware selection in `buildSituationSketch`; the non-held path is
+  byte-identical to the old `slice(0, 3)`. `strategy.ts` now stamps `held: true` on candidates it
+  appends past the top-3. Covered by 3 new `buildSituationSketch` unit tests plus a strengthened
+  assertion in `test/strategy-held-position-retrieval-scope.test.ts` that calls the real
+  `buildSituationSketch` on the captured input to prove the held symbol reaches actual query text.
+- Full details: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+## 2026-07-06 — RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+
+Worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`. Test/fixture/
+docs only, no production code touched.
+
+**What changed:** `test/fixtures/rag-retrieval-eval-fixture.ts` gained 10 new cases covering
+`EPISODIC_DOC_TYPES` (`socratic-decision`/`coach-note`/`lesson`, `src/lib/experience-memory.ts:44`)
+— the prior fixture (462 lines, 29 cases) had zero non-filings cases, so the harness reportedly
+saturated at recall 1.0. Each new case ships >=1 near-miss hard negative (same symbol/regime, wrong
+thesis or direction) so recall is a real signal, not a giveaway; one case (`episodic-asof-guard-
+analog`) exercises the point-in-time guard on an episodic doc_type the same way the existing
+`aapl-8k-asof-guard` case does for filings.
+
+`test/rag-retrieval-eval.test.ts` gained two `describe` blocks:
+1. Episodic recall@k/MRR eval — reuses the existing scorer functions via a minimal additive
+   `cases?: FixtureCase[]` option threaded onto `runFixture` (defaults to the full fixture, so
+   every existing call site is byte-for-byte unchanged).
+2. Single-query-vs-multi-query fan-out exercising `RetrieveOptions.queries`/`rrfFuse` (#822)
+   directly against `retrieveContextDetailed` — no flag flips, no production code changes. Because
+   the mock returns the identical recorded pool for every fan-out variant, the assertions are
+   no-regression (multi-query recall >= single-query recall) plus a plumbing check that
+   `mocks.query` fires once per fan-out variant and the fused pool is a de-duplicated union across
+   variants — not a claimed strict improvement (documented inline; the mock can't manufacture a
+   variant-specific gain by construction).
+
+**Verification:** `npx tsc --noEmit` clean. `npx vitest run test/rag-retrieval-eval.test.ts
+test/rag-retrieval-regression.test.ts` → 36/36 passing (17 new: 10 fixture cases + 4 episodic eval
+`it`s + 3 multi-query `it`s). Full `npm test`/`npm run build` intentionally NOT run per this lane's
+scope (test/fixture/docs only).
+
+**2026-07-06 follow-up (second commit, same lane):** fixed a real "byte-for-byte unchanged" claim
+regression — the filings baseline/rerank/hybrid/as-of `it`s had no `cases` filter, so once the
+episodic cases existed they silently scored the full 39-case mix (measured MRR 0.919) instead of
+the original 29 filings cases (MRR 1.0). Added `FILINGS_CASES` and wired it through every
+filings-only `it`; confirmed filings MRR is back to 1.0. Also added an explicit `recall1` assertion
+over the episodic cases (`toBeCloseTo(0.4, 5)`, the actual measured value — recall@3 alone was
+saturated at 1.0 and couldn't discriminate), and replaced a brittle Set+fixed-array-slice assertion
+in the multi-query plumbing test with a no-dupes + all-from-pool check. Test/fixture only, 36/36
+still passing, no test-count change. See rollout note for full detail.
+
+**Next:** none planned for this lane; see rollout note `docs/rollouts/2026-07-06-rag-golden-eval-
+episodic.md` for exact touched files and follow-ups.
+## 2026-07-06 — Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`)
+
+Added a typed `RetrievalStatus` receipt (`ok | no_memory | lookup_failed | budget_skipped |
+degraded`) to `retrieveContextDetailed` (`src/lib/vector-db.ts`) via a new optional
+`RetrieveOptions.onStatus` callback (plus a thin `retrieveContextDetailedWithStatus` wrapper),
+wired at the four points that already computed this classification internally (Sentry-only until
+now): budget-skip, missing-keys/pipeline-error (folded to `lookup_failed`), a real zero-match
+result (`no_memory`), and the R16 per-run budget degrade (`degraded`, non-empty). Propagated an
+analogous `status` field on `ExperienceRetrievalResult` (`src/lib/experience-memory.ts`, adding two
+caller-specific values `flag_off`/`ok_empty`), captured per-symbol + PORTFOLIO in `strategy.ts`'s
+filings and episodic RAG blocks, persisted via a new `rag_retrieval_status` audit row (alongside the
+existing `experience_retrieval` audit), and added an additive optional `ragRetrievalStatus` field on
+`SocraticDecisionCase` (`src/lib/types.ts`) as a typed persistence home — NOT rendered anywhere
+(Memory-panel rendering is Codex keepout). Advisory receipt only: never gates, alters, or drops
+retrieval/proposals; every existing caller that ignores the new option stays byte-identical.
+
+Coordination note: the sibling lane `claude/persist-candidate-pool` also edits
+`retrieveContextDetailed` in `vector-db.ts` — this diff was kept deliberately minimal and localized
+to (a) the early-return classification points and (b) the thin typed-status output, per the
+orchestrator's instruction, to keep a forward-merge trivial.
+
+Files: `src/lib/vector-db.ts`, `src/lib/experience-memory.ts`, `src/lib/strategy.ts`,
+`src/lib/socratic-runtime.ts`, `src/lib/types.ts`, `test/rag-retrieval-status.test.ts` (new).
+
+Verification: `npx tsc --noEmit` clean; `npx vitest run test/rag-retrieval-status.test.ts
+test/rag-retrieval-eval.test.ts` — 21/21 passed. Also spot-ran the broader RAG/vector-db/strategy
+suites most likely to touch this code path (experience-memory, socratic-runtime, socratic-memory,
+strategy-episodic-injection, strategy-rag-quickwins-wiring, run-strategy-offline, and the full
+`vector-db-*`/`rag-*` families) — 171 + 26 passed, all green. The `land.sh` gate ran the full
+suite at land time: `npx tsc --noEmit` clean, `npm test` 2711/2711 passed across 272 files, and
+`npm run build` clean (confirmed via the PR's `verify`/`verify-hosted` CI logs).
+
+See `docs/rollouts/2026-07-06-typed-retrieval-status.md` for the full note.
 
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
