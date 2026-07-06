@@ -8,6 +8,10 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Update shared dependency to v1.3.2 (AG)
+
+Bumped `@jaywedgeworth22/congress-trading-shared` to `v1.3.2` to match the exact pin required by `check-pin` across Socratic.Trade and Congress.Trade, resolving CI consistency failures.
+
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
 Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to
