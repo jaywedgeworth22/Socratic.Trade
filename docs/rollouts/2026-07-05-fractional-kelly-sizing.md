@@ -99,10 +99,12 @@ learning-loop feature in this codebase (`calibrationSizing`, `skipNegativeExpect
   `fractionalKellySuggestion` (hand-computed vectors, domain edges, monotonicity).
 - `test/performance-payoff-stats.test.ts` (new, 4 tests) — `aggregateClosedLots` payoff-split
   fields via `getThesisScorecard`/`getThesisRegimeScorecard`, synthetic closed-lot fixtures.
-- `test/kelly-sizing.test.ts` (new, 7 tests) — end-to-end `applyDeterministicSizing` integration:
+- `test/kelly-sizing.test.ts` (new, 8 tests) — end-to-end `applyDeterministicSizing` integration:
   flag off (byte-identical sizing + informational receipt), flag on (reduced size + "applied"
   note), thin bucket (no note, no change), no-losers bucket (no note), shorts (uncalibrated
-  marker), `kellyFraction` tuning knob, audit event emission.
+  marker), `kellyFraction` tuning knob, audit event emission, and a dedicated safety-invariant
+  regression (below) proving Kelly cannot size UP even when its own suggestion is numerically
+  higher than the pre-existing multiplier.
 - `docs/rollouts/2026-07-05-fractional-kelly-sizing.md` (this file).
 
 ## Verification
@@ -125,6 +127,39 @@ Run from `/Users/jay/Code/Socratic.Trade/.claude/worktrees/monet-kelly`:
   `git stash` before re-running), so it predates and is unrelated to this change; both pass cleanly
   in isolation and inside the full 263-file suite run above.
 - Did not run `npm run build` (orchestrator runs it at landing, per lane instructions).
+
+### Post-review addendum (2026-07-06) — safety-invariant test coverage
+
+An adversarial review flagged a real coverage gap (not a source bug): none of the seeded fixtures
+in `test/kelly-sizing.test.ts` produced a case where the raw Kelly-suggested multiplier
+(`suggestedPctOfCeiling`) exceeds the pre-existing bounded multiplier (`boundedMultiplier`) — the
+exact condition the `suggestedPctOfCeiling < boundedMultiplier` guard in `applyKelly`
+(`strategy.ts`) exists to prevent from ever sizing up. Mutation-tested by relaxing that guard to
+`policy.tuning?.fractionalKellySizing === true` (dropping the reduce-only check): all 7
+pre-existing tests still passed, confirming the gap.
+
+Fix: added one new fixture (60 closed lots, 59 winners @ +1%, 1 loser @ -1%, `confidenceScore=50`)
+that genuinely produces `suggested (45% of max) > boundedMultiplier (33% of max)` — a near-100%
+win-rate, low-conviction, tight-payoff-ratio bucket where Kelly-lite's three-factor product
+(shrunk win rate x capped conviction x edgeFactor) lands below the raw Kelly fraction's own
+suggestion. Verified end-to-end through `applyDeterministicSizing` (not hand-modeled): flag OFF and
+flag ON both report `dollarAmount = 3324` (33% of the $10,000 ceiling) and the note stays
+"informational only, not applied" — i.e. Kelly does NOT size up even though its own suggestion is
+numerically larger. Re-ran the same mutation against this new test in isolation: it fails exactly
+as expected (`dollarAmount` jumps to $4,536 / 45%, note flips to "— applied"), while the other 7
+tests remain green — confirming the new test isolates this invariant without being redundant with
+existing coverage.
+
+No production code changed — `src/lib/strategy.ts` is unmodified since the original commit
+(`git diff` against `a955bd6a` is empty for that file). This was purely a missing-coverage gap, not
+a logic bug: the guard was already correct.
+
+- `npx tsc --noEmit` — clean, no output (re-run post-fix).
+- `npx vitest run test/kelly-sizing.test.ts` — **1 file / 8 tests, all passed**.
+- `npm test -- --run` (full suite, re-run post-fix) — **263 files / 2609 tests, all passed**
+  (18.90s wall, exit code 0).
+- `npm run lint` (re-run post-fix) — **0 errors, 309 warnings** (same pre-existing/grandfathered
+  set as before; no new warnings).
 
 ## Follow-ups
 

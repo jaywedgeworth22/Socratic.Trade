@@ -245,6 +245,42 @@ describe("fractional-Kelly sizing", () => {
     expect(notionalFromRationale(quarter)).toBeLessThan(notionalFromRationale(half));
   });
 
+  it("safety invariant: Kelly may only REDUCE size — even when the suggested multiplier is HIGHER than the existing bounded multiplier, flag ON must stay byte-identical to flag OFF (guarded by suggestedPctOfCeiling < boundedMultiplier)", async () => {
+    const { setPolicy } = await import("../src/lib/db");
+    const account = "KELLY-GUARD-NO-INCREASE";
+    // 60 lots, 59 winners @ +1%, 1 loser @ -1%, low confidenceScore (50, uncorroborated conviction
+    // cap 0.6): the existing Kelly-lite multiplier lands at ~33% of max (95% shrunkWinRate * 0.5
+    // conviction cap * 0.7 edgeFactor), while the raw Kelly payoff suggestion (p=.95, b=1, full
+    // penalty since avgReturn > 2*sigma_down) computes to ~45% of max — i.e. suggested > existing.
+    // This is exactly the scenario the `suggestedPctOfCeiling < boundedMultiplier` guard in
+    // applyKelly (strategy.ts) exists for: without it, Kelly would size UP. Verified by mutation:
+    // relaxing the guard to `=== true` (dropping the reduce-only check) makes this test fail
+    // (dollarAmount goes from $3,324 to $4,536, and the note flips to "— applied").
+    await seedClosedLots({ account, count: 60, wins: 59, winPct: 1, lossPct: 1 });
+    setPolicy(policyFor(account));
+
+    const off = applyDeterministicSizing(buyProposal(50), policyFor(account), PORTFOLIO, "paper", "local", NO_POSITIONS);
+    const on = applyDeterministicSizing(
+      buyProposal(50),
+      policyFor(account, { fractionalKellySizing: true }),
+      PORTFOLIO,
+      "paper",
+      "local",
+      NO_POSITIONS
+    );
+
+    // Sanity: confirm the fixture actually produces suggested > existing (45% > 33%), i.e. this
+    // test is exercising the "Kelly wants to size UP" branch, not a vacuously-passing case.
+    expect(off.rationale).toMatch(/suggests 45% of max/);
+    expect(off.rationale).toMatch(/fallback sized to \$3,324 \(33% of max\)/);
+
+    // The invariant: flag ON must NOT increase size above flag OFF, even though Kelly's own
+    // suggestion is numerically higher than the pre-existing multiplier.
+    expect(notionalFromRationale(on)).toBe(notionalFromRationale(off));
+    expect(on.rationale).toContain("informational only, not applied");
+    expect(on.rationale).not.toContain("— applied");
+  });
+
   it("audit event sizing_fractional_kelly_applied is recorded only when Kelly actually changes size", async () => {
     const { setPolicy, listAuditByKind } = await import("../src/lib/db");
     const account = "KELLY-AUDIT";
