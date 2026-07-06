@@ -43,9 +43,7 @@ import {
 } from "@jaywedgeworth22/congress-trading-shared";
 
 import type { OHLCBar } from "./indicators";
-import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
 import { normalizeSymbol } from "./money";
-import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
 import { logApiHealth } from "./db-health";
 
 const DEFAULT_BASE_URL = "https://congress.trade";
@@ -71,7 +69,6 @@ export type AppABacktestHorizon = BacktestHorizon;
 export type AppATickerBacktest = TickerBacktest;
 export type AppAConflict = CommitteeConflict;
 
-import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
 import { CongressTradeClient } from "@jaywedgeworth22/congress-trading-shared";
 
 function baseUrl(): string {
@@ -140,7 +137,7 @@ export async function getAppABundle(ticker: string, opts?: { from?: string; to?:
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
   try {
-    const res = await getSharedClient().getBundle(sym, opts);
+    const res = (await getSharedClient().getBundle(sym, opts)) as unknown as AppABundle;
     return {
       ref: res.ref,
       prices: res.prices,

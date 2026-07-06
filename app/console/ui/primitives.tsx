@@ -299,17 +299,23 @@ export function SignedText({ value, children }: { value: number | null | undefin
 
 // ── Tooltip ──────────────────────────────────────────────────────────────────
 
-export function Tooltip({
+export function Tooltip<T extends React.ElementType = "span">({
   children,
   content,
-  className
+  className,
+  as,
+  style,
+  ...rest
 }: {
   children: ReactNode;
   content: ReactNode;
   className?: string;
-}) {
+  as?: T;
+  style?: React.CSSProperties;
+} & React.ComponentPropsWithoutRef<T>) {
+  const Component = as || "span";
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
+  const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -323,15 +329,17 @@ export function Tooltip({
   if (!content) return <>{children}</>;
 
   return (
-    <span
+    <Component
       ref={ref}
       className={cx("group relative inline-flex", className)}
+      style={style}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
-      onBlur={(event) => {
+      onBlur={(event: React.FocusEvent) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}
+      {...rest}
     >
       {children}
       <AnimatePresence>
@@ -348,7 +356,7 @@ export function Tooltip({
           </motion.div>
         )}
       </AnimatePresence>
-    </span>
+    </Component>
   );
 }
 
