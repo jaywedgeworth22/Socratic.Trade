@@ -28,7 +28,7 @@ import { logApiHealth } from "./db-health";
 
 // ── Contract (mirrors the shared UsageTelemetryEvent) ──────────────────────────
 
-export type UsageMetricType = "usage" | "cost" | "quota" | "tier" | "health";
+export type UsageMetricType = "usage" | "cost" | "quota" | "tier" | "health" | "balance" | "limit";
 export type UsageUnit =
   | "request" | "call" | "token" | "credit" | "usd" | "page" | "job" | "document" | "row" | "byte";
 export type UsageBillingMode = "actual" | "estimated" | "manual";
@@ -216,6 +216,82 @@ export function pushRagUsage(entry: {
         recordCount: isPinecone ? entry.tokensOut ?? null : null,
       }),
     });
+  } catch {
+    /* telemetry must never break the caller */
+  }
+}
+
+/**
+ * Record broker account balances and limits.
+ */
+export function pushBrokerBalance(entry: {
+  provider: string;
+  userId: string;
+  accountNumber: string;
+  cash?: number;
+  buyingPower?: number;
+  equity?: number;
+}): void {
+  if (!usageMonitorEnabled()) return;
+  try {
+    const occurredAt = new Date().toISOString();
+    if (typeof entry.cash === "number") {
+      enqueue({
+        sourceApp: SOURCE_APP,
+        environment: usageMonitorEnv(),
+        provider: entry.provider,
+        service: "broker",
+        billingMode: "actual",
+        metricType: "balance",
+        quantity: entry.cash,
+        unit: "usd",
+        confidence: "actual",
+        occurredAt,
+        metadata: cleanMetadata({
+          userId: entry.userId,
+          accountNumber: entry.accountNumber,
+          metric: "cash"
+        }),
+      });
+    }
+    if (typeof entry.buyingPower === "number") {
+      enqueue({
+        sourceApp: SOURCE_APP,
+        environment: usageMonitorEnv(),
+        provider: entry.provider,
+        service: "broker",
+        billingMode: "actual",
+        metricType: "limit",
+        quantity: entry.buyingPower,
+        unit: "usd",
+        confidence: "actual",
+        occurredAt,
+        metadata: cleanMetadata({
+          userId: entry.userId,
+          accountNumber: entry.accountNumber,
+          metric: "buyingPower"
+        }),
+      });
+    }
+    if (typeof entry.equity === "number") {
+      enqueue({
+        sourceApp: SOURCE_APP,
+        environment: usageMonitorEnv(),
+        provider: entry.provider,
+        service: "broker",
+        billingMode: "actual",
+        metricType: "balance",
+        quantity: entry.equity,
+        unit: "usd",
+        confidence: "actual",
+        occurredAt,
+        metadata: cleanMetadata({
+          userId: entry.userId,
+          accountNumber: entry.accountNumber,
+          metric: "equity"
+        }),
+      });
+    }
   } catch {
     /* telemetry must never break the caller */
   }

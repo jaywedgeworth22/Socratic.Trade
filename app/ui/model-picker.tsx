@@ -14,6 +14,8 @@ export interface ModelOption {
   value: string;
   label: string;
   tier: "" | "$" | "$$" | "$$$";
+  recommendedGreen?: boolean;
+  recommendedRed?: boolean;
 }
 export interface ModelGroup {
   provider: PickerProviderId;

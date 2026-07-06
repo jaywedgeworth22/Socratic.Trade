@@ -34,6 +34,9 @@ export default [
       ".tools/**",
       "**/worktrees/**",
       "scratch/**",
+      "ds-bundle/**",
+      ".design-sync/**",
+      ".ds-sync/**",
     ],
   },
   {

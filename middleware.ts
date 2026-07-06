@@ -110,9 +110,20 @@ function cspPolicy(): string {
  *  Exported so tests can assert the header set without driving the full edge middleware. */
 export function withSecurityHeaders(res: NextResponse): NextResponse {
   res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Permissions-Policy: restrict powerful browser features to self. A conservative starting
+  // policy that disables camera/mic/geolocation/payment by default; tighten per use case.
+  res.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=()"
+  );
+  // Strict-Transport-Security: only emit in production (Next.js dev server on localhost is not TLS).
+  // Browsers ignore HSTS on localhost anyway, but this is cleaner.
+  if (process.env.NODE_ENV === "production") {
+    res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  }
   if (isFlagOn(process.env.CSP_ENABLED)) {
-    // Report-only by default; enforcing only when CSP_REPORT_ONLY is explicitly turned off.
     const reportOnly = !isFlagExplicitlyOff(process.env.CSP_REPORT_ONLY);
     const header = reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
     res.headers.set(header, cspPolicy());

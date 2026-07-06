@@ -530,9 +530,10 @@ export function getSectorScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SectorStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots,
     (lot) => (lot.sector && lot.sector.trim() ? lot.sector.trim() : "Unknown"),
@@ -586,9 +587,10 @@ export function getThesisRegimeScorecard(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ThesisRegimeStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(closedLots, (lot) => {
     const thesis = lot.thesisTag?.trim() || "Untagged";
     const regime = lot.regime?.trim() || "Unspecified";
@@ -600,8 +602,13 @@ export function getThesisRegimeScorecard(
 }
 
 /** Number of closed (realized) lots — the sample size that gates learned weight shifts. */
-export function getClosedLotCount(accountNumber: string, source?: FillSource, userId: string = "local"): number {
-  return calculatePnl(listFillEvents(accountNumber, source, 500, userId)).closedLots.length;
+export function getClosedLotCount(
+  accountNumber: string,
+  source?: FillSource,
+  userId: string = "local",
+  prefetched?: PrefetchedFills
+): number {
+  return calculatePnl(fillsForSource(accountNumber, source, userId, prefetched)).closedLots.length;
 }
 
 /**
@@ -622,9 +629,10 @@ export function getSignalEfficacy(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): SignalEfficacyStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   if (closedLots.length === 0) return [];
 
   // runId|symbol -> entry signals, from the signal_snapshot audit trail. The snapshot
@@ -714,9 +722,10 @@ export function getFactorScorecard(
   source?: FillSource,
   currentPrices: Record<string, number> = {},
   userId: string = "local",
-  options?: FactorScorecardOptions
+  options?: FactorScorecardOptions,
+  prefetched?: PrefetchedFills
 ): FactorScorecardStat[] {
-  const { closedLots: allLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots: allLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   // Optional regime filter — default (no option) preserves the original all-lots behavior.
   // Exact-string join: `lot.regime` is the `entryMarketRegime` stamped from one of the
   // MARKET_REGIME_LABELS values (src/lib/macro.ts) — a persisted contract. See that const's
@@ -1169,9 +1178,10 @@ export function getConfidenceCalibration(
   accountNumber: string,
   source?: FillSource,
   currentPrices: Record<string, number> = {},
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): ConfidenceCalibrationStat[] {
-  const { closedLots } = calculatePnl(listFillEvents(accountNumber, source, 500, userId), currentPrices);
+  const { closedLots } = calculatePnl(fillsForSource(accountNumber, source, userId, prefetched), currentPrices);
   return aggregateClosedLots(
     closedLots.filter((lot) => lot.side === "long" && typeof lot.confidence === "number"),
     (lot) => confidenceBandOf(lot.confidence as number),
