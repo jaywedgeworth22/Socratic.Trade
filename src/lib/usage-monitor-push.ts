@@ -20,37 +20,25 @@
 // `UsageTelemetryEventSchema` and the monitor's server-side parser
 // (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
 // `createUsageTelemetryClient` because the usageTelemetry export was added after this code
-// was written. MIGRATION: the shared package is now at ^1.2.0 which includes `createUsageTelemetryClient`;
-// swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
-// — the event shape is already the shared contract, so only the transport changes.
+// was written. MIGRATION COMPLETE (2026-07-06): types now imported from the shared package.
+// The postBatch transport keeps its own abort/timeout + health-logging wrapper because the
+// shared client does not support request-level abort signals or health-callback injection.
 
 import { logApiHealth } from "./db-health";
+import {
+  type UsageTelemetryEvent,
+  type UsageTelemetryMetricType,
+  type UsageTelemetryUnit,
+  type UsageTelemetryBillingMode,
+  type UsageTelemetryConfidence,
+} from "@jaywedgeworth22/congress-trading-shared";
 
-// ── Contract (mirrors the shared UsageTelemetryEvent) ──────────────────────────
-
-export type UsageMetricType = "usage" | "cost" | "quota" | "tier" | "health" | "balance" | "limit";
-export type UsageUnit =
-  | "request" | "call" | "token" | "credit" | "usd" | "page" | "job" | "document" | "row" | "byte";
-export type UsageBillingMode = "actual" | "estimated" | "manual";
-export type UsageConfidence = "actual" | "estimated" | "manual";
-
-export interface UsageMonitorEvent {
-  sourceApp: string;
-  environment?: string;
-  provider: string;
-  service?: string;
-  label?: string;
-  keyRef?: string;
-  billingMode?: UsageBillingMode;
-  metricType?: UsageMetricType;
-  quantity?: number;
-  unit?: UsageUnit;
-  costUsd?: number;
-  requests?: number;
-  confidence?: UsageConfidence;
-  occurredAt?: string;
-  metadata?: Record<string, string | number | boolean | null>;
-}
+// Re-export shared types under the names consumers already use.
+export type UsageMetricType = UsageTelemetryMetricType;
+export type UsageUnit = UsageTelemetryUnit;
+export type UsageBillingMode = UsageTelemetryBillingMode;
+export type UsageConfidence = UsageTelemetryConfidence;
+export type UsageMonitorEvent = UsageTelemetryEvent;
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 

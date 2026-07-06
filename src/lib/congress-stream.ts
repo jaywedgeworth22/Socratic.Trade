@@ -18,10 +18,13 @@
 // this module is on the instrumentation import chain, which Next also bundles for the edge runtime, so
 // it must NOT statically import Node-only modules (crypto, better-sqlite3/db) — keep it fetch-only.
 
+import { CongressTradeClient, SseParser, type SseMessage } from "@jaywedgeworth22/congress-trading-shared";
+
+// Re-export for existing consumers that import SseParser from this module
+export { SseParser, type SseMessage };
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
 import { logApiHealth } from "./db-health";
 
-const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
@@ -57,10 +60,8 @@ function baseUrl(): string {
 
 /** Build App A's stream URL with the required `?subscription=<id>` query param. */
 function streamUrl(subscriptionId: string): string {
-  const path = (process.env.CONGRESS_STREAM_PATH ?? DEFAULT_PATH).trim();
-  const p = path.startsWith("/") ? path : `/${path}`;
-  const sep = p.includes("?") ? "&" : "?";
-  return `${baseUrl()}${p}${sep}subscription=${encodeURIComponent(subscriptionId)}`;
+  const client = new CongressTradeClient({ baseUrl: baseUrl() });
+  return client.streamUrl(subscriptionId);
 }
 
 function envSubscriptionId(): string | undefined {
@@ -85,20 +86,9 @@ async function createSubscription(): Promise<Subscription | null> {
   const clientId = (process.env.CONGRESS_STREAM_CLIENT_ID ?? "app-b").trim() || "app-b";
   const desiredSecret = (process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN ?? "").trim();
   try {
-    const res = await fetch(`${baseUrl()}/api/subscriptions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ delivery: "sse", clientId, ...(desiredSecret.length >= 16 ? { secret: desiredSecret } : {}) }),
-      cache: "no-store"
-    });
-    if (!res.ok) {
-      console.warn(`[congress-stream] subscription create failed: HTTP ${res.status}`);
-      return null;
-    }
-    const body = (await res.json().catch(() => null)) as { id?: string; secret?: string } | null;
-    if (body?.id && body?.secret) return { id: body.id, token: body.secret };
-    console.warn("[congress-stream] subscription create returned no id/secret");
-    return null;
+    const client = new CongressTradeClient({ baseUrl: baseUrl() });
+    const sub = await client.createSubscription(clientId, desiredSecret.length >= 16 ? desiredSecret : undefined);
+    return { id: sub.id, token: sub.secret };
   } catch (err) {
     console.warn("[congress-stream] subscription create error:", err instanceof Error ? err.message : err);
     return null;
@@ -119,47 +109,6 @@ export async function resolveSubscription(): Promise<Subscription | null> {
   const created = await createSubscription();
   if (created) state.subscription = created;
   return created;
-}
-
-// ── Pure SSE frame parser (unit-tested; no network) ──────────────────────────
-export interface SseMessage {
-  event?: string;
-  id?: string;
-  data: string;
-}
-
-/** Incremental text/event-stream parser. Feed decoded chunks; get back complete events. */
-export class SseParser {
-  private buf = "";
-  private cur: { event?: string; id?: string; data: string[] } = { data: [] };
-
-  push(chunk: string): SseMessage[] {
-    this.buf += chunk;
-    const out: SseMessage[] = [];
-    let nl: number;
-    while ((nl = this.buf.indexOf("\n")) >= 0) {
-      let line = this.buf.slice(0, nl);
-      this.buf = this.buf.slice(nl + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (line === "") {
-        if (this.cur.data.length > 0 || this.cur.event !== undefined || this.cur.id !== undefined) {
-          out.push({ event: this.cur.event, id: this.cur.id, data: this.cur.data.join("\n") });
-        }
-        this.cur = { data: [] };
-        continue;
-      }
-      if (line.startsWith(":")) continue; // comment / heartbeat
-      const colon = line.indexOf(":");
-      const field = colon === -1 ? line : line.slice(0, colon);
-      let value = colon === -1 ? "" : line.slice(colon + 1);
-      if (value.startsWith(" ")) value = value.slice(1);
-      if (field === "data") this.cur.data.push(value);
-      else if (field === "event") this.cur.event = value;
-      else if (field === "id") this.cur.id = value;
-      // "retry" and unknown fields ignored
-    }
-    return out;
-  }
 }
 
 /** App A's non-data control frames — recognized so they never log as "dropped unparseable". */
