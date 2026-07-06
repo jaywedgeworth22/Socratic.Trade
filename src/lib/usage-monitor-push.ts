@@ -221,6 +221,12 @@ export function pushRagUsage(entry: {
   }
 }
 
+function maskAccountNumber(acc: string): string {
+  const clean = acc.trim();
+  if (clean.length <= 4) return clean;
+  return `...${clean.slice(-4)}`;
+}
+
 /**
  * Record broker account balances and limits.
  */
@@ -235,12 +241,14 @@ export function pushBrokerBalance(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const occurredAt = new Date().toISOString();
+    const maskedAcc = maskAccountNumber(entry.accountNumber);
     if (typeof entry.cash === "number") {
       enqueue({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:cash`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.cash,
@@ -249,7 +257,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "cash"
         }),
       });
@@ -260,6 +268,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:buyingPower`,
         billingMode: "actual",
         metricType: "limit",
         quantity: entry.buyingPower,
@@ -268,7 +277,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "buyingPower"
         }),
       });
@@ -279,6 +288,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:equity`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.equity,
@@ -287,7 +297,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "equity"
         }),
       });

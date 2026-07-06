@@ -457,6 +457,31 @@ export interface TuningSettings {
    * autonomously through an adversary outage instead of freezing behind an approval queue.
    */
   deRiskExitsOnAdversaryUnavailable?: boolean;
+
+  // ── Volatility-targeting sizing + portfolio-heat budget (continuous taper, advisory) ──────────
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer additionally tapers an OPENING
+   * proposal's size by `targetPortfolioVolPct / realizedVolPct` (never up, floored) when the
+   * candidate's realized annualized volatility exceeds the target, AND continuously tapers toward
+   * the remaining `portfolioHeatBudgetPct` when set. Off by default: sizing is byte-identical — the
+   * realized-vol/heat numbers are still computed and surfaced as an advisory rationale note (when
+   * cheaply available) regardless of this flag, but never change the order size unless it's true.
+   */
+  volTargeting?: boolean;
+  /**
+   * Per-position annualized realized-volatility target (%) used by the taper above. Advisory
+   * guidance: typical 15-25. Only meaningful when `volTargeting` is true; undefined disables the
+   * vol-target taper (the heat-budget taper below is independent and can still apply).
+   */
+  targetPortfolioVolPct?: number;
+  /**
+   * Advisory portfolio-heat budget as % of equity (typical 4-8) — the book's total distance-to-stop
+   * dollar risk should not exceed this. When set (and `volTargeting` is true), an opening order's
+   * incremental risk is continuously tapered to fit whatever budget remains; it is never sized
+   * below the existing exploratory floor and this is never a hard block — an overridable advisory
+   * reason is tagged on the rationale instead. Undefined disables the heat-budget taper.
+   */
+  portfolioHeatBudgetPct?: number;
 }
 
 export interface RiskRules {
