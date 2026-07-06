@@ -18,14 +18,12 @@
 //
 // CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 // `UsageTelemetryEventSchema` and the monitor's server-side parser
-// (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
-// `createUsageTelemetryClient` because the usageTelemetry export was added after this code
-// was written. MIGRATION COMPLETE (2026-07-06): types now imported from the shared package.
-// The postBatch transport keeps its own abort/timeout + health-logging wrapper because the
-// shared client does not support request-level abort signals or health-callback injection.
+// (`API-usage-monitor/src/lib/usage-telemetry.ts`).
+// MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
 import {
+  createUsageTelemetryClient,
   type UsageTelemetryEvent,
   type UsageTelemetryMetricType,
   type UsageTelemetryUnit,
@@ -43,7 +41,6 @@ export type UsageMonitorEvent = UsageTelemetryEvent;
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
 const SOURCE_APP = "socratic-trade";
-const INGEST_PATH = "/api/ingest/usage";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events
 
@@ -79,9 +76,6 @@ function flushDelayMs(): number {
   return numEnv("USAGE_MONITOR_FLUSH_MS", 2000);
 }
 
-function timeoutMs(): number {
-  return numEnv("USAGE_MONITOR_TIMEOUT_MS", 8000);
-}
 
 // ── State (globalThis-pinned so Next.js HMR module duplication can't split it) ──
 
@@ -403,23 +397,14 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
   if (!baseUrl || !token || events.length === 0) return;
 
   const fetchImpl = state.fetchImpl ?? fetch;
-  const url = `${baseUrl}${INGEST_PATH}`;
   const start = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs());
   try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ events }),
-      signal: controller.signal,
-      cache: "no-store",
-    });
+    const client = createUsageTelemetryClient({ baseUrl, token, fetchImpl });
+    await client.send(events);
     logApiHealth({
       service: HEALTH_SERVICE,
-      ok: res.ok,
+      ok: true,
       latencyMs: Date.now() - start,
-      errorText: res.ok ? undefined : `HTTP ${res.status}`,
     });
   } catch (err) {
     logApiHealth({
@@ -428,8 +413,6 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
     });
-  } finally {
-    clearTimeout(timer);
   }
 }
 
