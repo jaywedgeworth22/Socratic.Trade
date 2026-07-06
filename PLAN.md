@@ -5,6 +5,13 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
+> (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
+> stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
+> usage; in progress toward hosting preview lanes + eventually production. Separately,
+> `AGENTS.md` corrected to treat Cursor as a full peer agent lane (DeepSeek-driven) rather
+> than "not a 4th agent lane." See `docs/rollouts/2026-07-06-coolify-migration.md`.
+
 > **2026-07-05 - Console live-data build-out slice (Codex subagent, issue #471).** No roadmap
 > change. This branch is delivering the smallest reliable piece of the planned CODEX live-data row:
 > reuse the existing `/api/events/stream` for console push refreshes, surface stream/freshness
