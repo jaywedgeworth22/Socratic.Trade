@@ -10,6 +10,7 @@ import {
   getPolicy,
   getProposal,
   getStrategyPrompt,
+  ingestedAccessionCountForDocType,
   insertProposal,
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
@@ -92,6 +93,7 @@ import { withLlmGeneration, recordDecisionObservation } from "./observability";
 import { retrieveLearnedContextDetailed } from "./learned-context/store";
 import {
   collectEvidenceAgeAnomalies,
+  computeEmptyDocTypes,
   scanForInjectionAttempts,
   type EvidenceAgeInput,
   type InjectionFinding,
@@ -668,6 +670,11 @@ export async function runStrategyOnce(
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
     const promptSafetyEvidence: SocraticEvidenceItem[] = [];
     const evidenceAgeInputs: EvidenceAgeInput[] = [];
+    // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
+    // coverage receipt after this block can compare "requested" against "retrieved this run"
+    // without re-declaring the literal. Advisory only — never affects the retrieval call itself.
+    const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
+    const retrievedFilingsDocTypes = new Set<string>();
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -717,7 +724,7 @@ export async function runStrategyOnce(
               }
             }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
-              docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
+              docType: requestedFilingsDocTypes,
               minScore: defaultMinScore(),
               // 2026-07-04 RAG quick-wins: wire the previously-dormant post-rerank relevance floor
               // + near-duplicate suppression (both existed since 2026-07-01 but no caller passed
@@ -746,6 +753,9 @@ export async function runStrategyOnce(
               relevanceScore: chunk.relevanceScore ?? chunk.score,
               relevanceFloor
             });
+            // corpus-coverage-receipt: track which requested doc types actually produced a chunk
+            // THIS run, regardless of symbol — coverage is corpus-wide, not per-symbol.
+            if (chunk.doc_type) retrievedFilingsDocTypes.add(chunk.doc_type.toLowerCase());
           }
         }
         if (validContexts.length > 0) {
@@ -804,6 +814,39 @@ export async function runStrategyOnce(
         source: "prompt-safety",
         data: evidenceAgeAnomalies
       });
+    }
+
+    // ── Corpus-coverage receipt (advisory only) ────────────────────────────
+    // ONE aggregated audit + ONE kind-'safety' evidence item when a requested filings doc type
+    // produced zero chunks THIS run AND the corpus has zero ever-ingested rows of that type (e.g.
+    // "earnings-transcript" today — no writer exists yet). A doc type that simply didn't rank this
+    // run but DOES have ingested rows is normal and must NOT fire here (see computeEmptyDocTypes).
+    // Never touches ragContext/sizing/policy — receipt only.
+    if (!skipLlmDueToBudget) {
+      const ingestedCountByRequestedType: Record<string, number> = {};
+      for (const dt of requestedFilingsDocTypes) {
+        ingestedCountByRequestedType[dt.toLowerCase()] = ingestedAccessionCountForDocType(dt);
+      }
+      const emptyDocTypes = computeEmptyDocTypes(requestedFilingsDocTypes, retrievedFilingsDocTypes, ingestedCountByRequestedType);
+      if (emptyDocTypes.length > 0) {
+        const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
+        audit(
+          "rag_doc_type_coverage_empty",
+          { runId, symbols: coverageSymbols, emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes },
+          userId,
+          connectedAccountId
+        );
+        promptSafetyEvidence.push({
+          kind: "safety",
+          tone: "warning",
+          title: "Requested filings doc type never ingested",
+          summary:
+            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run and have zero ever-ingested ` +
+            `rows in the corpus: ${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
+          source: "prompt-safety",
+          data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
+        });
+      }
     }
 
     // ── Episodic decision memory: closest historical analogs + owner coaching ──

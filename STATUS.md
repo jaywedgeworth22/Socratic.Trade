@@ -8,6 +8,38 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE, in progress)
+
+Branch `claude/corpus-coverage-receipt` (worktree `~/apps/trading-wt-corpus-coverage`). Adds ONE
+new advisory receipt to strategy.ts's filings-RAG pass, modeled directly on the existing
+`evidence_age_anomaly` receipt block: when a requested doc type (`10-k`/`10-q`/`8-k`/
+`earnings-transcript`) produces zero retrieved chunks THIS run **and** the corpus has zero
+ever-ingested rows of that type (all tickers, all time), emits one
+`audit('rag_doc_type_coverage_empty', { runId, symbols, emptyDocTypes, requestedDocTypes })` +
+one kind-`safety` `SocraticEvidenceItem` ("Requested filings doc type never ingested"). A type
+that's simply low-relevance this run but HAS ingested rows must NOT fire — that's normal and
+would false-positive daily otherwise.
+
+Two new pieces:
+- `ingestedAccessionCountForDocType` / `ingestedAccessionCountsByDocType`
+  (`src/lib/db-learning.ts`, barrel-reexported via `db.ts`) — one cheap `GROUP BY LOWER(doc_type)`
+  query, no new table/migration. Tolerates the pre-existing `ingested_accessions.doc_type` naming
+  split: `src/lib/web-sources/sec-filings.ts` stores the raw SEC form letter (`"10-K"`/`"10-Q"`),
+  but `src/lib/web-sources/sec8k.ts` stores the sentinel `"8-K-body"` — NOT `"8-K"`. A naive
+  case-only match would report zero ingested 8-K rows forever and false-positive on every run, so
+  the lookup treats any stored type whose lowercase form starts with the requested type as a
+  match.
+- `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`, pure, alongside `collectEvidenceAgeAnomalies`)
+  — the both-conditions diff (not-retrieved-this-run AND zero-ever-ingested).
+
+Advisory only, no flag (mirrors `evidence_age_anomaly`, which is unconditional): never touches
+`ragContext`, sizing, or policy. Verified via `test/rag-doc-type-coverage.test.ts` (10 tests:
+pure-helper unit tests, DB-helper unit tests incl. the naming-split case, a full `runStrategyOnce`
+integration test that the receipt fires with only the genuinely-empty type named, a
+no-false-positive case, and an advisory-invariant check that `ragContext`/proposal count are
+unchanged). `npx tsc --noEmit` clean. See
+`docs/rollouts/2026-07-06-corpus-coverage-receipt.md` for full verification detail.
+
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
 Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to

@@ -72,6 +72,21 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🚧 In Progress
 
+- **Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE).** Advisory-only
+  per-run receipt: when strategy.ts's filings-RAG pass requests a doc type (10-K/10-Q/8-K/
+  earnings-transcript) that produces zero chunks THIS run AND has zero ever-ingested
+  `ingested_accessions` rows corpus-wide (e.g. "earnings-transcript" — no writer exists yet),
+  emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety` decision-case evidence
+  item. Both-conditions rule is load-bearing: a type that's merely low-relevance-this-run but HAS
+  ingested rows must NOT fire (would false-positive daily). New `ingestedAccessionCountForDocType`
+  (`src/lib/db-learning.ts`, re-exported via the `db.ts` barrel) tolerates the pre-existing
+  `ingested_accessions.doc_type` naming split across writers (10-K/10-Q store the raw form
+  letter; 8-K stores the sentinel `"8-K-body"`, not `"8-K"`) via prefix matching so 8-K coverage
+  doesn't perpetually false-positive. Pure `computeEmptyDocTypes` lives in `src/lib/prompt-safety.ts`
+  alongside `collectEvidenceAgeAnomalies`. Never touches `ragContext`/sizing/policy — advisory
+  only, no flag (mirrors the unconditional `evidence_age_anomaly` receipt). Branch
+  `claude/corpus-coverage-receipt`. Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
   builds with the app's real components. Render check 30/30 clean; conventions header shipped.

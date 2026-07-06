@@ -847,6 +847,43 @@ export function listIngestedAccessions(limit = 200): IngestedAccessionRow[] {
   return rows.map((r) => ({ accession: r.accession, docType: r.doc_type, ticker: r.ticker, indexedAt: r.indexed_at, chunkCount: r.chunk_count }));
 }
 
+/**
+ * Count ever-ingested `ingested_accessions` rows per doc type (all tickers, all time), keyed by a
+ * LOWERCASED doc type — cheap single GROUP BY, no new table/migration. Raw counts only; see
+ * `ingestedAccessionCountForDocType` for the prefix-tolerant lookup callers should actually use.
+ */
+export function ingestedAccessionCountsByDocType(): Record<string, number> {
+  const rows = getDb()
+    .prepare("SELECT LOWER(doc_type) AS doc_type, COUNT(*) AS n FROM ingested_accessions GROUP BY LOWER(doc_type)")
+    .all() as Array<{ doc_type: string; n: number }>;
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.doc_type] = row.n;
+  return counts;
+}
+
+/**
+ * Count ever-ingested rows for ONE requested doc type (all tickers, all time).
+ *
+ * `doc_type` casing/naming in `ingested_accessions` is NOT uniform across writers — see
+ * src/lib/web-sources/sec-filings.ts (stores the raw SEC form letter, e.g. "10-K"/"10-Q") vs.
+ * src/lib/web-sources/sec8k.ts (stores the sentinel "8-K-body", not "8-K"). A naive
+ * `LOWER(doc_type) === requested` lookup would therefore report zero ingested 8-K rows FOREVER
+ * even after real 8-K ingestion ran, which would false-positive a "never ingested" receipt every
+ * day. To stay correct across those writers without a schema change, any stored type whose
+ * lowercased form starts with the requested (lowercased) type counts toward it — e.g. "8-k-body"
+ * counts toward requested "8-k"; "10-k" counts toward requested "10-k" exactly (no other stored
+ * type shares that prefix).
+ */
+export function ingestedAccessionCountForDocType(requestedDocType: string): number {
+  const counts = ingestedAccessionCountsByDocType();
+  const requested = requestedDocType.toLowerCase();
+  let total = 0;
+  for (const [storedType, n] of Object.entries(counts)) {
+    if (storedType.startsWith(requested)) total += n;
+  }
+  return total;
+}
+
 // ── document_chunks content-hash dedup ─────────────────────────────────────
 
 /** Check whether a chunk with this content_hash has already been embedded. */
