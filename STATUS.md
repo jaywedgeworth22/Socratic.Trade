@@ -21,6 +21,17 @@ also the shared-contribution erasure path) in `src/lib/db-learning.ts`, new `GET
 collapsed-by-default `LearnedFactsArchive` browse/delete component in
 `app/console/approvals/learned-context.tsx` wired into the approvals page. New
 `test/learned-context-delete.test.ts` (7 tests: ownership isolation, foreign-user 404, shared-row
+erasure, audit trail, superseded-row exclusion). 8-angle adversarial review found no
+correctness/security bugs (two correctness-adjacent candidates investigated and refuted with
+concrete evidence — see rollout note). Branch had drifted far behind `origin/main`
+(Coolify/Hetzner migration, mobile fixes, RAG/sizing/prompt-safety work); merged by hand after
+reviewing every flagged overlap, re-verified full quartet on the merged tree: tsc clean, lint 0
+errors, 283 files / 2843 tests green, build clean. **Merged as PR #998** (`1c0c20d3`).
+**Deployed to production** 2026-07-06 21:30:29Z via `~/apps/trading-publish.sh` — verified
+`/api/health` 200, `pm2 trading` stable (0 unstable restarts post-deploy), and the new
+`/api/learned-context` route live (401 unauthenticated, not 404/500, confirming it shipped). See
+`docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
 clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
 once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
