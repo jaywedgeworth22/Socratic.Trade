@@ -40,6 +40,114 @@ failure. Posted to #agent-sync flagging the corrected value; Monet (or the
 owner on Monet's behalf) should update that environment's Setup script field
 to `cd Socratic.Trade && bash scripts/cloud-setup.sh`. See
 `docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
+## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
+
+Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to
+`main`; this section is the summary pointer, the four detailed per-lane entries lower in this file
+(and their linked rollout notes) remain the technical record.
+
+**(a) What landed (one line per PR):**
+- **PR #816** (squash `041b73b2`) — prompt-safety fencing + deterministic injection/age receipts
+  for the money-path (Bull/Bear/post-mortem) prompts; advisory only, detection never blocks.
+- **PR #819** (squash `f28322fe`) — wired the previously-dormant usage-budget Phase 2 building
+  block into `runStrategyOnce`: advisory receipts always on, enforcement opt-in via
+  `USAGE_BUDGET_ENFORCE` (default off).
+- **PR #820** (squash `e90db1a8`) — durable due-jobs substrate (`due_jobs` table + `db-jobs.ts`,
+  lease/reclaim) so 15m/1h intraday outcome sampling survives process downtime.
+- **PR #822** (squash `d97b7c71`) — HyDE + evidence-derived multi-query retrieval for the filings
+  RAG pass, both flags (`RAG_MULTIQUERY`/`RAG_HYDE`) default off, byte-identical when off.
+
+**(b) Triage findings — 3 board rows proved already done, not re-implemented:**
+- RAG retrieval-quality eval harness + its two prerequisite rows (golden-set anti-leakage lint;
+  retrieval regression net) — already shipped via PRs #297/#299.
+- Bull/Bear prompt eval + versioning harness — already shipped 2026-07-01 on the money-path
+  landing (`STRATEGY_PROMPT_VERSION` + `npm run eval:strategy-offline`).
+- Per-user/day token-budget ceiling at trigger/strategy entry — already shipped via the PR #316
+  series; the "deferred" comment remaining in `triggers.ts` refers to run-count caps, not the
+  token-budget ceiling itself.
+
+See `docs/EFFORT-LOG.md` for the annotated rows (each carries a
+"(triage 2026-07-05: already done — ...)" note in place, not deleted).
+
+**(c) Adversarial-review blockers caught pre-merge (all fixed + regression-tested before landing):**
+- **Usage-budget (#819):** the enforcement block mutated the run's shared `policy` object in
+  place, so a same-run cap-breach demotion's `setPolicy(...)` would have persisted the transient
+  model downgrade to the DB permanently — fixed with a separately-carried `runLlmOverride`/
+  `runPolicy` never passed to any `setPolicy`/`autoRevertOnCapBreach` call site.
+- **Due-jobs (#820):** a lost-update race — `measureCase` held an outcomes snapshot across awaits,
+  so its wholesale write could erase a 15m/1h row the due-jobs worker had already persisted
+  concurrently — fixed by re-merging against a fresh DB read immediately before every
+  terminal/partial write.
+- **HyDE/multi-query (#822):** the fan-out was fail-CLOSED, not fail-open — one variant's rejected
+  Voyage/Pinecone call discarded every other variant's already-successful results via a bare
+  `Promise.all`, returning empty filings context instead of falling back to single-query retrieval
+  — fixed so each fan-out call is caught individually with a single-query fallback on total failure.
+
+**(d) Next actions for the CLAUDE lane:**
+- Remaining itemized RAG-hygiene rows still on the board (see `docs/EFFORT-LOG.md` Planned
+  section, "RAG, ingestion & embedded memory" and "Deep-sweep additions" groups) — none of the
+  three triaged-done rows above are among them; those groups' other rows are still open.
+- RAG golden-eval expansion row ("Expand the RAG golden eval with episodic-analog queries and hard
+  negatives") — separate from the harness-already-done row above; still open, still blocking
+  decay/hybrid/ranking tuning per its own note.
+- `RAG_MULTIQUERY` / `RAG_HYDE` ship default OFF pending eval evidence — no retrieval-quality eval
+  yet compares single-query vs. multi-query vs. multi-query+HyDE recall@k/MRR before either flag
+  is flipped on by default; flagged as a follow-up in `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+## 2026-07-05 — Hybrid runner: calibration fixes + activation (owner-directed)
+Owner asked to make the runner actually offload. Live diagnosis: the feature was 100% inert
+(PR #372 unmerged, publisher never started, repo var still the `ts:0` seed, and the
+`free+inactive>6GB` metric was unsatisfiable on the 16GB swapping Mac). Merged the
+33-commit-stale branch forward (re-resolving `ci.yml` vs main's docs-only fast path, tokenless
+`npm ci` migration, dropped `agent/**` trigger) and applied fixes: router `ts` numeric-coercion
+(a latent merge-blocker), staleness 300s→180s, availability metric rewritten to a pressure-based
+gate (`kern.memorystatus_vm_pressure_level==1` + `page_free_wanted==0` + swap<3GB + compressor<25%
++ free floor), CPU 0.6→0.8, and `verify-self` made safe on the 16GB box (drop the cache-wedging
+`setup-node` for system node, tokenless `npm ci`, `NODE_OPTIONS=3072` + `--maxWorkers=2` RSS cap).
+Verified bash-3.2/ASCII + YAML + jq coercion; adversarial calibration audit (4 lenses) + pre-land
+review (3 lenses, GO/GO zero blockers, 2 fail-closed hardenings applied). Next: land via
+`land.sh`, then start the pm2 publisher on the production Mac (it will correctly report `hosted`
+while the box is memory-tight; offload activates only when the box has real headroom). Known
+residual: a self-hosted queue-wait can *stall* (never fake-pass) a routed PR — documented, watchdog
+is a follow-up. Rollout: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 sections).
+
+## 2026-07-04 — Landing operator: #372 needed a double merge-forward (base moved twice mid-land)
+PR #372's base moved out from under it twice: once catching up to several cars/docs work that
+had landed since #370, and again mid-wait when PR #440 (Outcome Engine lane) landed first
+(`mergeStateStatus` flipped `BLOCKED` -> `DIRTY`). Both merges resolved in this worktree
+(`~/apps/trading-wt-ci-efficiency`); the second conflict was `docs/EFFORT-LOG.md`'s "In
+Progress" section (this branch's own status line vs. the Outcome Engine's entry in the same
+slot) — resolved keep-both-newest-first, updating the Outcome Engine entry's status to
+"merged (PR #440)". Full quartet green both times (final: lint 0 errors, tsc clean, 252 files /
+2455 tests, build green). See both addenda in
+`docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+
+## 2026-07-04 — Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370)
+Branch `claude/ci-hybrid-runner-verify`, worktree `~/apps/trading-wt-ci-efficiency`, off
+`origin/main`@`370692cf` (post-#370). Owner re-confirmed hybrid AFTER the tradeoff escalation,
+verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
+available." `ci.yml` restructured 2 jobs → 4: `classify` (+ new `route` output: self only for
+fresh (<5 min) publisher state on same-repo pull_request/push; merge_group/schedule/fork/stale/
+corrupt/absent all → hosted), `verify-self` (opportunistic macOS lane — [self-hosted,
+trading-live], timeout 30, concurrency-1 group, untrusted-source guard, node fail-fast, `nice
+-n 19` on every heavy command, macOS-namespaced caches via runner.os), `verify-hosted` (Linux
+lane — routed-hosted runs PLUS exactly-one automatic re-run whenever verify-self did not
+succeed; also saves the Linux .next cache on the new nightly schedule leg), and `verify` (the
+REQUIRED check, now a pure gate job: fail-closed on classify failure, docs-only short-circuit,
+hosted result wins on disagreement — Linux is the arbiter, a Mac flake can never block or
+fake-fail a merge; per-run environment annotation to $GITHUB_STEP_SUMMARY). Nightly hosted
+full-gate canary on main via new `schedule` cron (47 7 * * * UTC). New owner-run
+`scripts/runner-availability.sh` (ASCII, Apple-bash-3.2-verified): every 60s publishes repo var
+`VERIFY_RUNNER_STATE` {"mode","ts"} from load(<0.6/cpu)+RAM(>6GB free+inactive)+runner-alive+
+pm2-trading-online with 2-check hysteresis to self / instant flip to hosted + EXIT-trap hosted
+publish. **Safe rollout: var pre-created as {"mode":"hosted","ts":0} — merging changes nothing
+until the owner runs the pm2 one-liner** (in the rollout note). smoke/gitleaks/check-pin stay
+hosted. Full history (2026-07-01 move-off, the objections, the re-confirmation), gate decision
+table, and failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+Verification: yaml-lint, /bin/bash 3.2 -n + ASCII check, 8-case route-logic test (every
+non-happy path → hosted), read-only availability probes on the real Mac (correctly said "busy"
+during an active agent build), full local quartet green.
+## 2026-07-05 — Push account status metrics to Usage Monitor (AG)
+Implemented telemetry for tech account balances and limits. Socratic.Trade now pushes metricTypes `"balance"` and `"limit"` via `pushBrokerBalance` in `src/lib/usage-monitor-push.ts`. This allows tracking caps and credits for the API Usage Monitor. The hooks were wired into Alpaca and Robinhood `getPortfolio` calls. All tests passed and code was verified locally.
 
 ## 2026-07-05 — Coach/framework primitives slice ready to land (Codex, issue #473)
 Branch `codex/coach-framework-primitives`, worktree

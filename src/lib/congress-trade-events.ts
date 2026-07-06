@@ -18,6 +18,7 @@ import {
   type InsiderFiling
 } from "./web-sources/sec";
 import type { CongressTrade } from "./web-sources/types";
+import { getDb } from "./db";
 
 export type { CongressEventType, CongressEvent };
 
@@ -37,6 +38,20 @@ const seenIds: Set<string> = dedupeHost.__congressEventIds ?? (dedupeHost.__cong
 
 function markSeen(id: string): boolean {
   if (seenIds.has(id)) return false;
+
+  try {
+    const db = getDb();
+    const existing = db.prepare("SELECT id FROM processed_webhooks WHERE id = ?").get(id);
+    if (existing) {
+      seenIds.add(id); // backfill memory cache
+      return false;
+    }
+    db.prepare("INSERT INTO processed_webhooks (id, processed_at) VALUES (?, ?)").run(id, new Date().toISOString());
+  } catch (err) {
+    console.error("[congress-events] dedupe db error:", err);
+    // fall through to in-memory check if DB throws
+  }
+
   if (seenIds.size >= DEDUPE_CAP) {
     // Evict ~half (oldest-ish: Set preserves insertion order) to bound memory.
     let toDrop = Math.floor(DEDUPE_CAP / 2);
