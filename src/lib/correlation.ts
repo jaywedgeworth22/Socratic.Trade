@@ -220,7 +220,12 @@ export interface CorrelationProfile {
   avgEwma?: number;
   /** True when `holdings` were truncated to the cap (largest |marketValue| first) before computing. */
   truncated: boolean;
-  /** Count of holdings actually considered (after any truncation). */
+  /**
+   * Count of holdings in scope AFTER truncation — i.e. how many we attempted to profile. Some of
+   * these may lack enough overlapping daily bars to yield a correlation and are therefore absent
+   * from `holdings`, so `holdings.length <= consideredCount`. Use `holdings.length` for "how many
+   * were actually computed"; this field is the pre-computation attempt count (post-cap).
+   */
   consideredCount: number;
 }
 

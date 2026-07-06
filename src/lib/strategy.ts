@@ -2275,7 +2275,7 @@ export function applyEarningsBlackoutTag(
   for (const proposal of proposals) {
     const isOpening = proposal.side === "buy" || proposal.side === "short";
     if (!isOpening) continue;
-    if (proposal.rationale.includes("[Risk] Earnings in")) continue; // already tagged this run
+    if (proposal.rationale.includes("\n\n[Risk] Earnings in ")) continue; // already tagged this run (match the exact prefix this fn appends, not a bare substring that LLM rationale could contain)
 
     const quote = marketScan.quotesBySymbol[normalizeSymbol(proposal.symbol)] ?? marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
     const daysToEarnings = quote?.daysToEarnings;
@@ -2394,7 +2394,10 @@ export async function applyRiskReceipts(
           ? ` (betas estimated for ${stress.betaEstimatedCount} of ${stress.betaTotalCount} positions)`
           : "";
         const topText = stress.topContributors.map((c) => `${c.symbol} ${formatWholeDollars(c.impactUsd)}`).join(", ");
-        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%; top: ${topText}${estimatedNote}`;
+        // Omit the "; top: …" clause entirely for an empty/new book (no contributors) rather than
+        // rendering a blank "top: " in the user-visible rationale.
+        const topClause = topText ? `; top: ${topText}` : "";
+        const stressNote = `\n\n[Risk] Stress ${stress.shockPct.toFixed(1)}% (mkt): book ${stress.bookImpactPctOfEquity.toFixed(1)}% of equity; with this order ${stress.withCandidateImpactPctOfEquity.toFixed(1)}%${topClause}${estimatedNote}`;
         proposal.rationale += stressNote;
         audit(
           "stress_receipt",
