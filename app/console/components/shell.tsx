@@ -19,6 +19,7 @@ import { ToastProvider } from "../ui/toast";
 import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
 import { ConsentGate } from "./consent-gate";
 import { ConsoleIntro } from "./intro-canvas";
+import { HeaderLogo } from "../ui/header-logo";
 import { DesktopRail, MobileTabBar } from "./nav";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
@@ -142,7 +143,7 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
-        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Socratic.Trade</span>
+        <div className="hidden shrink-0 pr-2 lg:block"><HeaderLogo /></div>
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />

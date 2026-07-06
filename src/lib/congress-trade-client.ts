@@ -1,3 +1,4 @@
+import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
 // Read client for congress.trade (App A) — server-only, cache-aside + congress source.
 //
 // App A also pulls FMP (its own key + cron + backfill) and exposes public, read-only endpoints
@@ -34,14 +35,13 @@ import type {
   CommitteeConflict,
   PriceClose,
   PriceSeries,
-  SecurityRef,
 } from "@jaywedgeworth22/congress-trading-shared";
 import {
   API_PATHS,
-  CongressTradeClient,
   MAX_REFS_BATCH,
   TransactionsPageSchema,
 } from "@jaywedgeworth22/congress-trading-shared";
+
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { logApiHealth } from "./db-health";
@@ -69,6 +69,8 @@ export type AppABacktestHorizon = BacktestHorizon;
 export type AppATickerBacktest = TickerBacktest;
 export type AppAConflict = CommitteeConflict;
 
+import { CongressTradeClient } from "@jaywedgeworth22/congress-trading-shared";
+
 function baseUrl(): string {
   return (process.env.CONGRESS_TRADE_BASE_URL ?? DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
 }
@@ -78,25 +80,22 @@ function flagOn(value: string | undefined): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-/** Whether App B should read App A's MARKET cache (refs/prices/spx) before its own providers. */
 export function congressReadsEnabled(): boolean {
   return flagOn(process.env.CONGRESS_TRADE_READS_ENABLED);
 }
 
-/** Whether App B should read App A's FUNDAMENTALS/ANALYST cache as an enrichment tier.
- *  Gated SEPARATELY from market/price reads (`CONGRESS_TRADE_READS_ENABLED`) so enabling
- *  the price cache-aside doesn't also give App A precedence over the direct fundamentals
- *  providers (Finnhub/FMP/Yahoo). Default OFF — an explicit, independent opt-in. */
 export function congressFundamentalsEnabled(): boolean {
   return flagOn(process.env.CONGRESS_TRADE_FUNDAMENTALS_ENABLED);
 }
 
-/** Whether App B should source congressional trades from App A's /api/transactions feed. */
 export function congressAsCongressSourceEnabled(): boolean {
   return flagOn(process.env.CONGRESS_TRADE_AS_CONGRESS_SOURCE);
 }
 
-/** Optional bearer for App A's public reads (market + transactions are public; token only if gated). */
+export function congressAnalyticsEnabled(): boolean {
+  return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED);
+}
+
 function readToken(): string | undefined {
   const t = (process.env.CONGRESS_TRADE_READ_TOKEN ?? "").trim();
   return t.length > 0 ? t : undefined;
@@ -107,48 +106,43 @@ function timeoutMs(): number {
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_TIMEOUT_MS;
 }
 
-function createTimedHealthFetch(timeout: number): typeof fetch {
-  return async (input, init) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    const start = Date.now();
-    try {
-      const res = await fetch(input, { ...init, signal: controller.signal });
-      logApiHealth({ service: "congress.trade", ok: res.ok, latencyMs: Date.now() - start, errorText: res.ok ? undefined : `HTTP ${res.status}` });
-      return res;
-    } catch (err) {
-      logApiHealth({ service: "congress.trade", ok: false, latencyMs: Date.now() - start, errorText: err instanceof Error ? err.message : String(err) });
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-}
-
-/** Get a shared CongressTradeClient configured with health logging, timeouts, and auth. */
-function getClient(): CongressTradeClient {
+function getSharedClient(): CongressTradeClient {
   return new CongressTradeClient({
     baseUrl: baseUrl(),
     token: readToken(),
-    fetch: createTimedHealthFetch(timeoutMs()),
+    fetch: async (input, init) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs());
+      const start = Date.now();
+      try {
+        const res = await fetch(input, {
+          ...init,
+          signal: controller.signal,
+          cache: "no-store"
+        });
+        logApiHealth({ service: "congress.trade", ok: res.ok, latencyMs: Date.now() - start, errorText: res.ok ? undefined : `HTTP ${res.status}` });
+        return res;
+      } catch (err) {
+        logApiHealth({ service: "congress.trade", ok: false, latencyMs: Date.now() - start, errorText: err instanceof Error ? err.message : String(err) });
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
   });
 }
 
-function dateRangeQuery(opts?: { from?: string; to?: string }): string {
-  const params = new URLSearchParams();
-  if (opts?.from) params.set("from", opts.from);
-  if (opts?.to) params.set("to", opts.to);
-  const s = params.toString();
-  return s ? `?${s}` : "";
-}
-
-/** One round-trip: ref + closes + spx for a ticker. Null when reads are off / on any error. */
 export async function getAppABundle(ticker: string, opts?: { from?: string; to?: string }): Promise<AppABundle | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
   try {
-    return await getClient().getBundle(sym, opts);
+    const res = await getSharedClient().getBundle(sym, opts);
+    return {
+      ref: res.ref,
+      prices: res.prices,
+      spx: Array.isArray(res.spx) ? res.spx : []
+    };
   } catch {
     return null;
   }
@@ -158,149 +152,76 @@ export async function getAppARef(ticker: string): Promise<SecurityRef | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  try {
-    return (await getClient().getRef(sym)) as SecurityRef | null;
-  } catch {
-    return null;
-  }
+  try { return await getSharedClient().getRef(sym); } catch { return null; }
 }
 
 export async function getAppARefs(tickers: string[]): Promise<SecurityRef[]> {
   if (!congressReadsEnabled()) return [];
   const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean)));
   if (syms.length === 0) return [];
-  try {
-    return (await getClient().getRefs(syms)) as unknown as SecurityRef[];
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getRefs(syms); } catch { return []; }
 }
 
 export async function getAppAPrices(ticker: string, opts?: { from?: string; to?: string }): Promise<PriceSeries | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  try {
-    return await getClient().getPrices(sym, opts);
-  } catch {
-    return null;
-  }
+  try { return await getSharedClient().getPrices(sym, opts); } catch { return null; }
 }
 
 export async function getAppASpx(opts?: { from?: string; to?: string }): Promise<PriceClose[]> {
   if (!congressReadsEnabled()) return [];
-  try {
-    return await getClient().getSpx(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getSpx(opts); } catch { return []; }
 }
 
-/** Read App A's cached fundamentals (P/E, EPS, beta, 52w, FCF, debt/equity…) so App B
- *  doesn't re-pay a provider for data App A already stored. [] when the gate is off / on error. */
 export async function getAppAFundamentals(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAFundamental[]> {
   if (!congressFundamentalsEnabled()) return [];
   const sym = normalizeSymbol(ticker);
   if (!sym) return [];
-  try {
-    return await getClient().getFundamentals(sym, opts) as AppAFundamental[];
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getFundamentals(sym, opts); } catch { return []; }
 }
 
-/** Read App A's cached analyst consensus + price targets. [] when off / on error. */
 export async function getAppAAnalyst(ticker: string, opts?: { from?: string; to?: string }): Promise<AppAAnalyst[]> {
   if (!congressFundamentalsEnabled()) return [];
   const sym = normalizeSymbol(ticker);
   if (!sym) return [];
-  try {
-    return await getClient().getAnalyst(sym, opts) as AppAAnalyst[];
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getAnalyst(sym, opts); } catch { return []; }
 }
 
-/** Pull a page of congressional transactions. Null when the congress-source gate is off / on error. */
 export async function getAppATransactions(query: AppATransactionsQuery = {}): Promise<AppATransactionsPage | null> {
   if (!congressAsCongressSourceEnabled()) return null;
   try {
-    const json = await getClient().getTransactions(query);
-    if (!json || !Array.isArray(json.transactions)) return null;
-    // Validate response shape at runtime.
-    const parsed = TransactionsPageSchema.safeParse(json);
+    const res = await getSharedClient().getTransactions(query);
+    const parsed = TransactionsPageSchema.safeParse(res);
     if (!parsed.success) {
       console.warn("[congress-trade-client] transactions page validation failed:", parsed.error.flatten());
     }
-    return json;
+    return res;
   } catch {
     return null;
   }
-}
-
-// ── App A analytics (the public "Trends" composite) ──────────────────────────
-// App A computes aggregate congressional analytics App B can't derive from raw trades alone:
-// dollar-weighted net flow, distinct-member counts, cluster buys (many members → same ticker), and
-// member performance leaderboards. Public, no token. Gated on CONGRESS_ANALYTICS_ENABLED (default off).
-
-/** Whether App B reads App A's congressional analytics overlay. */
-export function congressAnalyticsEnabled(): boolean {
-  return flagOn(process.env.CONGRESS_ANALYTICS_ENABLED);
-}
-
-function analyticsQuery(opts: { window?: string; limit?: number; chamber?: string; party?: string }): string {
-  const p = new URLSearchParams();
-  if (opts.window) p.set("window", opts.window);
-  if (opts.limit) p.set("limit", String(opts.limit));
-  if (opts.chamber) p.set("chamber", opts.chamber);
-  if (opts.party) p.set("party", opts.party);
-  const s = p.toString();
-  return s ? `?${s}` : "";
 }
 
 export async function getAppATickerLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppATickerLeader[]> {
   if (!congressAnalyticsEnabled()) return [];
-  try {
-    return await getClient().getTickerLeaderboard(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getTickerLeaderboard(opts); } catch { return []; }
 }
 
 export async function getAppAClusterBuys(opts: { window?: string; limit?: number } = {}): Promise<AppAClusterRow[]> {
   if (!congressAnalyticsEnabled()) return [];
-  try {
-    return await getClient().getClusterBuys(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getClusterBuys(opts); } catch { return []; }
 }
 
 export async function getAppAMemberLeaderboard(opts: { window?: string; limit?: number } = {}): Promise<AppAMemberRow[]> {
   if (!congressAnalyticsEnabled()) return [];
-  try {
-    return await getClient().getMemberLeaderboard(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getMemberLeaderboard(opts); } catch { return []; }
 }
 
-/** Per-member realized performance (return / win-rate / alpha vs S&P). `scoredCount`=0 → all nulls.
- *  Now a type alias for MemberPerformance from the shared package. */
 export async function getAppAMemberPerformance(filerId: string): Promise<AppAMemberPerformance | null> {
   if (!congressAnalyticsEnabled() || !filerId) return null;
-  try {
-    return await getClient().getMemberPerformance(filerId);
-  } catch {
-    return null;
-  }
+  try { return await getSharedClient().getMemberPerformance(filerId); } catch { return null; }
 }
 
-/**
- * Convert App A's {date, close} series to OHLCBars (close-only — open/high/low/volume undefined,
- * which OHLCBar permits). Suitable for close-series consumers (technical/returns); a price chart
- * fed from these renders a line, not candles. Ascending by date.
- */
 export function appAClosesToBars(closes: PriceClose[] | null | undefined): OHLCBar[] {
   if (!closes || closes.length === 0) return [];
   return closes
@@ -313,32 +234,10 @@ export function appAClosesToBars(closes: PriceClose[] | null | undefined): OHLCB
     .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
 }
 
-// ── New analytics endpoints (App A PR #77/79/80) ───────────────────────────────
-// AppAConvictionTicker → type alias for ConvictionTicker from shared package.
-// AppABacktestHorizon → type alias for BacktestHorizon from shared package.
-// AppATickerBacktest → type alias for TickerBacktest from shared package.
-// AppAConflict → type alias for CommitteeConflict from shared package.
-
-/**
- * Per-ticker composite conviction score (0–100). Direction-aware: a high score on a SELL ticker
- * means strong bearish conviction. `convictionScore` is `null` (not 0) when the signal is too thin
- * (resolved-side trades < 3) so callers can distinguish "no signal" from "bearish".
- */
-
 export async function getAppAConviction(opts: { window?: string; limit?: number } = {}): Promise<AppAConvictionTicker[]> {
   if (!congressAnalyticsEnabled()) return [];
-  try {
-    return await getClient().getConviction(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getConviction(opts); } catch { return []; }
 }
-
-/**
- * Per-horizon post-buy return stats for a ticker (congressional backtest).
- * `n` is the number of buy events with full forward price history; horizons with n < 5 report null stats.
- * Returns are fractions: 0.18 = +18%. `winRate` = share beating the S&P (excess > 0).
- */
 
 export async function getAppATickerBacktest(
   ticker: string,
@@ -347,26 +246,12 @@ export async function getAppATickerBacktest(
   if (!congressAnalyticsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
-  try {
-    return await getClient().getTickerBacktest(sym, opts);
-  } catch {
-    return null;
-  }
+  try { return await getSharedClient().getTickerBacktest(sym, opts); } catch { return null; }
 }
-
-/**
- * Trades flagged as potential committee conflicts of interest (member sits on a committee
- * overseeing the traded stock's GICS sector). Educational/observational — not an accusation
- * of wrongdoing. ETFs (no single sector) are not flagged.
- */
 
 export async function getAppAConflicts(
   opts: { window?: string; limit?: number; chamber?: string; party?: string } = {}
 ): Promise<AppAConflict[]> {
   if (!congressAnalyticsEnabled()) return [];
-  try {
-    return await getClient().getConflicts(opts);
-  } catch {
-    return [];
-  }
+  try { return await getSharedClient().getConflicts(opts); } catch { return []; }
 }
