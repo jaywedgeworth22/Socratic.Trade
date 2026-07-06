@@ -458,6 +458,17 @@ export interface TuningSettings {
    */
   deRiskExitsOnAdversaryUnavailable?: boolean;
   /**
+   * OPT-IN (DEFAULT false): when true, the multi-signal regime severity scorer (src/lib/regime-severity.ts,
+   * Lane 5) is computed and (a) surfaced as a compact `regimeSeverity` block in the Bull/Bear prompt
+   * userContent next to `currentMarketRegime`, (b) stamped as `entryRegimeSeverity` on persisted
+   * TradeProposals, and (c) included as `severityMacroOnly` in the `regime_flip` audit payload. Default
+   * false: default behavior is byte-identical — the scorer is not invoked, no regimeSeverity block is
+   * added to any prompt, no entryRegimeSeverity field is stamped, and no severityMacroOnly key is added
+   * to the regime_flip audit event. Purely a new advisory/receipt channel — does NOT change any cap/gate
+   * behavior (crisis cap, bear filter, escalation trigger) either on or off.
+   */
+  regimeSeverityScoring?: boolean;
+  /**
    * OPT-IN (DEFAULT false): when true, each OPENING proposal gets two additional advisory receipts
    * appended to its rationale (+ matching audit events) — a per-candidate correlation profile
    * (pearson/EWMA/downside correlation vs current holdings) and a pre-trade parametric stress
@@ -946,6 +957,14 @@ export interface TradeProposal {
   rationale: string;
   tradeThesisTag: string;
   entryMarketRegime: string;
+  /**
+   * Multi-signal regime severity ([0,1], rounded 2dp) from `computeMultiSignalSeverity`
+   * (src/lib/regime-severity.ts), stamped alongside `entryMarketRegime` when the scorer's inputs
+   * were available at proposal time. Additive/optional: legacy persisted proposals predate it.
+   * Not consumed by any gate or sizer today — a receipt for future regime-conditioned scorecards
+   * to bucket by (do NOT build the scorecard now; see the lane-5 rollout doc).
+   */
+  entryRegimeSeverity?: number;
   confidenceScore?: number;
   /**
    * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served
