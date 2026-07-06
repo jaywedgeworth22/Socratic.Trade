@@ -204,6 +204,12 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const connectedAccounts = listConnectedAccounts(userId);
+  const connectedAccountPolicies = Object.fromEntries(
+    connectedAccounts.map((account) => {
+      const pol = getPolicy(userId, account.id);
+      return [account.id, { systemState: pol.systemState, strategyAuthority: pol.strategyAuthority }];
+    })
+  );
   const accountLabelById = Object.fromEntries(connectedAccounts.map((account) => [account.id, account.label || account.broker]));
   // An account is an account: with none connected there is no broker to call. Skip the gateway
   // entirely rather than falling back to any local/simulated broker — the snapshot still renders,
@@ -533,6 +539,8 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     strategyPrompt: getStrategyPrompt(userId),
     accounts,
     accountReadiness,
+    connectedAccounts,
+    connectedAccountPolicies,
     portfolio: displayPortfolio,
     positions: displayPositions,
     symbolMetaBySymbol,
@@ -540,7 +548,6 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     audit: clientAudit,
     auditFeed,
     unifiedFeed,
-    connectedAccounts,
     latestStrategyRun,
     dailyStats,
     strategyRuns: listStrategyRuns(15, userId, policy.connectedAccountId),
