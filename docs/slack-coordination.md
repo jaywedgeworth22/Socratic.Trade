@@ -76,8 +76,14 @@ Code session in **any** repo on that machine reads the channel at startup - when
 a token is present.
 
 On **cloud**, point the environment's "setup script" field at
-`bash scripts/cloud-setup.sh` (it runs the installer for you), or add
-`bash scripts/setup-slack-sync.sh` to whatever setup script you already use.
+`cd Socratic.Trade && bash scripts/cloud-setup.sh` (it runs the installer for
+you), or add `bash scripts/setup-slack-sync.sh` to whatever setup script you
+already use. The `cd Socratic.Trade &&` prefix is required for Claude Code
+Cloud environments specifically: the sandbox's working directory for the
+"Setup script" field is the *parent* of the cloned repo, not the repo root, so
+a bare `bash scripts/cloud-setup.sh` fails with exit 127 ("No such file or
+directory") before the installer ever runs. See the header comment in
+`scripts/cloud-setup.sh` for the full explanation.
 
 ### Other repos that do not carry these scripts (self-contained bootstrap)
 

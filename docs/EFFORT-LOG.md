@@ -298,6 +298,16 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
+  2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
+  `docs/slack-coordination.md` documented `bash scripts/cloud-setup.sh` as the Claude Code Cloud
+  "Setup script" value, but the sandbox's cwd for that field is the *parent* of the cloned repo, not
+  the repo root — causing a reproducible `exit 127 / No such file or directory` on every fresh
+  environment. Corrected value: `cd Socratic.Trade && bash scripts/cloud-setup.sh`. **Action needed
+  from MONET**: per the PR #798 record below, Monet's own cloud environment was set up with the same
+  bare (broken) value — flagged in #agent-sync, Monet should update its environment's Setup script
+  field the same way. No app code touched. See
+  `docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
 - **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
   `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
   fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
