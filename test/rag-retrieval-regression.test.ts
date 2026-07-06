@@ -25,6 +25,10 @@ import { describe, expect, it, vi } from "vitest";
 import { rankPool, isWithinAsOf, resolveAsOfStamp, matchToChunk, rerankMatches } from "../src/lib/vector-db";
 import { fuseHybrid } from "../src/lib/rag/hybrid";
 
+vi.mock("../src/lib/db-health", () => ({
+  logApiHealth: vi.fn(),
+}));
+
 // ── Fixture builders (matchToChunk-shaped: id/score/metadata, exactly what Pinecone returns) ────
 
 const mk = (id: string, score: number, text: string, extra: Record<string, unknown> = {}) => ({
