@@ -469,6 +469,38 @@ export interface TuningSettings {
    */
   regimeSeverityScoring?: boolean;
   /**
+   * OPT-IN (DEFAULT false): when true, each OPENING proposal gets two additional advisory receipts
+   * appended to its rationale (+ matching audit events) — a per-candidate correlation profile
+   * (pearson/EWMA/downside correlation vs current holdings) and a pre-trade parametric stress
+   * scenario (book impact under a -shockSigmas market shock, with and without the candidate). Both
+   * require extra fetchDailyOHLC bar fetches per candidate (correlation) or reuse quote betas (stress,
+   * free). Off by default: no extra data fetches, and prompts/rationale/audit trail are BYTE-IDENTICAL
+   * to today. One flag covers both since they're the two halves of the same "risk receipts" feature
+   * and share the same cost-bounding rationale. Never blocks/drops/modifies a proposal — receipts only.
+   */
+  riskReceipts?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true AND the candidate's `daysToEarnings` is at/below
+   * `earningsBlackoutDays`, the OPENING proposal is TAGGED with an overridable
+   * `earnings_blackout: …` preVetoReasons entry (folds into the sized PolicyDecision exactly like the
+   * deterministic-bear/red-team pre-vetoes — see PR #814's `preVetoReasons` pattern) instead of being
+   * silently allowed through. `isHardGateReason` classifies it as a preference, so an agent-authored
+   * `autonomyOverride` thesis can still pass it (subject to socraticOverrideMode). Off by default: the
+   * advisory rationale note (see `earningsBlackoutDays` doc) still appears whenever daysToEarnings is
+   * known and small, but no proposal is tagged/blocked unless this is on. Never affects proposals whose
+   * `daysToEarnings` is unknown (Yahoo returned no future earnings date) — skipped silently, never
+   * fabricated to 0.
+   */
+  earningsBlackout?: boolean;
+  /**
+   * Trading-day window (default 3 when `earningsBlackout` is enabled) at/below which an opening is
+   * inside the advisory earnings blackout. Independent of the flag: an informational
+   * "Earnings in N trading day(s)" rationale note is appended whenever daysToEarnings <= 7 REGARDLESS
+   * of `earningsBlackout`; only the preVetoReasons TAG (and the "inside advisory blackout window"
+   * phrase) depends on the flag being on and `daysToEarnings <= earningsBlackoutDays`.
+   */
+  earningsBlackoutDays?: number;
+  /**
    * OPT-IN (DEFAULT false): when true, the deterministic sizer additionally computes a
    * fractional-Kelly suggestion from the thesis bucket's realized win/loss payoff split
    * (avgWinPct/avgLossPct) and downside-dispersion penalty (downsideDeviationPct), and — ONLY
