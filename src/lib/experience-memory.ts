@@ -29,7 +29,7 @@
  */
 import { envFlagOn } from "./rag/env-flag";
 import { normalizeSymbol } from "./money";
-import type { ContextDocument, RetrievedChunk, StoreContextsResult } from "./vector-db";
+import type { ContextDocument, RetrievalStatus, RetrievedChunk, StoreContextsResult } from "./vector-db";
 import type { FillEvent, FillSource, MarketFactorBreakdown, TradeProposal } from "./types";
 
 /** Source tag for closed-lot experience vectors — the "dedicated namespace" within the index. */
@@ -380,6 +380,16 @@ export interface InjectedMemoryRef {
   relevanceScore?: number;
 }
 
+/**
+ * Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — mirrors
+ * `RetrievalStatus` from vector-db.ts but adds the two conditions specific to THIS caller:
+ * `flag_off` (experienceMemoryEnabled() is false, so retrieval never ran) and `ok_empty` (the
+ * pipeline ran and returned "ok"/"no_memory" from vector-db but same-run exclusion or the
+ * analog/coaching split left nothing to inject). Advisory receipt only — never changes which
+ * chunks are injected.
+ */
+export type ExperienceRetrievalStatus = "flag_off" | "budget_skipped" | "lookup_failed" | "ok_empty" | "ok";
+
 export interface ExperienceRetrievalResult {
   /** Labeled prompt block for Bull AND Bear, or undefined when nothing was retrieved. */
   analogsBlock?: string;
@@ -395,6 +405,8 @@ export interface ExperienceRetrievalResult {
   /** The situation-sketch query used (recoverable for replay/debug). */
   query: string;
   topAnalogSimilarity?: number;
+  /** Typed retrieval-status receipt — see `ExperienceRetrievalStatus`. */
+  status: ExperienceRetrievalStatus;
 }
 
 function chunkMeta(chunk: RetrievedChunk, key: string): unknown {
@@ -435,12 +447,18 @@ export async function retrieveDecisionExperiences(
     coachingChunks: [],
     injected: [],
     asOf,
-    query
+    query,
+    status: "flag_off"
   };
   if (!experienceMemoryEnabled()) return empty;
 
   const k = Math.min(10, Math.max(5, input.k ?? 8));
   let chunks: RetrievedChunk[] = [];
+  // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): populated by
+  // retrieveContextDetailed's onStatus callback below. Advisory only — never affects `chunks`.
+  // Held in an object (not a bare `let`) so TS doesn't narrow the read below to the closure's
+  // capture-time literal type across the intervening `await`.
+  const vectorStatusRef: { value: RetrievalStatus } = { value: "ok" };
   try {
     const { retrieveContextDetailed, defaultMinScore, formatChunkWithProvenance } = await import("./vector-db");
     // Over-ask by a small margin so same-run exclusion below doesn't leave us short of k.
@@ -456,7 +474,10 @@ export async function retrieveDecisionExperiences(
         matchAllSymbols: true,
         asOf,
         minScore: defaultMinScore(),
-        connectedAccountId: input.connectedAccountId
+        connectedAccountId: input.connectedAccountId,
+        onStatus: (s) => {
+          vectorStatusRef.value = s;
+        }
       }
     );
     // Same-run / future-neighbor exclusion: a case this run just indexed (decision run OR exit
@@ -518,6 +539,19 @@ export async function retrieveDecisionExperiences(
           ].join("\n\n")
         : undefined;
 
+    // Map vector-db's typed status onto this caller's status union. `budget_skipped`/`lookup_failed`
+    // pass through unchanged; vector-db's "no_memory"/"degraded"/"ok" all collapse to this caller's
+    // own "ok"/"ok_empty" split — `injected.length` is the ground truth for THIS caller (same-run
+    // exclusion can empty out an otherwise-"ok" vector-db result, which "no_memory" alone wouldn't
+    // capture).
+    const vectorStatus = vectorStatusRef.value;
+    const status: ExperienceRetrievalStatus =
+      vectorStatus === "budget_skipped" || vectorStatus === "lookup_failed"
+        ? vectorStatus
+        : injected.length > 0
+          ? "ok"
+          : "ok_empty";
+
     return {
       analogsBlock,
       coachingBlock,
@@ -526,13 +560,14 @@ export async function retrieveDecisionExperiences(
       injected,
       asOf,
       query,
-      topAnalogSimilarity
+      topAnalogSimilarity,
+      status
     };
   } catch (err) {
     console.warn(
       "[experience-memory] decision-time retrieval failed; continuing without analogs:",
       err instanceof Error ? err.message : String(err)
     );
-    return empty;
+    return { ...empty, status: "lookup_failed" };
   }
 }

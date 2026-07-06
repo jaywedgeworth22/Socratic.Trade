@@ -457,6 +457,92 @@ export interface TuningSettings {
    * autonomously through an adversary outage instead of freezing behind an approval queue.
    */
   deRiskExitsOnAdversaryUnavailable?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, the multi-signal regime severity scorer (src/lib/regime-severity.ts,
+   * Lane 5) is computed and (a) surfaced as a compact `regimeSeverity` block in the Bull/Bear prompt
+   * userContent next to `currentMarketRegime`, (b) stamped as `entryRegimeSeverity` on persisted
+   * TradeProposals, and (c) included as `severityMacroOnly` in the `regime_flip` audit payload. Default
+   * false: default behavior is byte-identical — the scorer is not invoked, no regimeSeverity block is
+   * added to any prompt, no entryRegimeSeverity field is stamped, and no severityMacroOnly key is added
+   * to the regime_flip audit event. Purely a new advisory/receipt channel — does NOT change any cap/gate
+   * behavior (crisis cap, bear filter, escalation trigger) either on or off.
+   */
+  regimeSeverityScoring?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true, each OPENING proposal gets two additional advisory receipts
+   * appended to its rationale (+ matching audit events) — a per-candidate correlation profile
+   * (pearson/EWMA/downside correlation vs current holdings) and a pre-trade parametric stress
+   * scenario (book impact under a -shockSigmas market shock, with and without the candidate). Both
+   * require extra fetchDailyOHLC bar fetches per candidate (correlation) or reuse quote betas (stress,
+   * free). Off by default: no extra data fetches, and prompts/rationale/audit trail are BYTE-IDENTICAL
+   * to today. One flag covers both since they're the two halves of the same "risk receipts" feature
+   * and share the same cost-bounding rationale. Never blocks/drops/modifies a proposal — receipts only.
+   */
+  riskReceipts?: boolean;
+  /**
+   * OPT-IN (DEFAULT false): when true AND the candidate's `daysToEarnings` is at/below
+   * `earningsBlackoutDays`, the OPENING proposal is TAGGED with an overridable
+   * `earnings_blackout: …` preVetoReasons entry (folds into the sized PolicyDecision exactly like the
+   * deterministic-bear/red-team pre-vetoes — see PR #814's `preVetoReasons` pattern) instead of being
+   * silently allowed through. `isHardGateReason` classifies it as a preference, so an agent-authored
+   * `autonomyOverride` thesis can still pass it (subject to socraticOverrideMode). Off by default: the
+   * advisory rationale note (see `earningsBlackoutDays` doc) still appears whenever daysToEarnings is
+   * known and small, but no proposal is tagged/blocked unless this is on. Never affects proposals whose
+   * `daysToEarnings` is unknown (Yahoo returned no future earnings date) — skipped silently, never
+   * fabricated to 0.
+   */
+  earningsBlackout?: boolean;
+  /**
+   * Trading-day window (default 3 when `earningsBlackout` is enabled) at/below which an opening is
+   * inside the advisory earnings blackout. Independent of the flag: an informational
+   * "Earnings in N trading day(s)" rationale note is appended whenever daysToEarnings <= 7 REGARDLESS
+   * of `earningsBlackout`; only the preVetoReasons TAG (and the "inside advisory blackout window"
+   * phrase) depends on the flag being on and `daysToEarnings <= earningsBlackoutDays`.
+   */
+  earningsBlackoutDays?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer additionally computes a
+   * fractional-Kelly suggestion from the thesis bucket's realized win/loss payoff split
+   * (avgWinPct/avgLossPct) and downside-dispersion penalty (downsideDeviationPct), and — ONLY
+   * when the suggestion is STRICTLY SMALLER than the existing sizing multiplier — reduces the
+   * final size to the Kelly suggestion. Kelly can only shrink size vs today, never grow it
+   * (advisory taper, not a booster). Off by default: a rationale receipt is still appended
+   * whenever the bucket has enough closed lots and a computable payoff ratio (informational
+   * only), but the size itself is byte-identical to today unless this flag is on.
+   */
+  fractionalKellySizing?: boolean;
+  /**
+   * Fraction of full Kelly used by the fractional-Kelly sizing suggestion (0.5 = "half-Kelly",
+   * the conventional conservative default — full Kelly is notoriously volatile in practice).
+   * Default 0.5. Only meaningful when `fractionalKellySizing` is on, or informationally in the
+   * always-on rationale receipt.
+   */
+  kellyFraction?: number;
+
+  // ── Volatility-targeting sizing + portfolio-heat budget (continuous taper, advisory) ──────────
+  /**
+   * OPT-IN (DEFAULT false): when true, the deterministic sizer additionally tapers an OPENING
+   * proposal's size by `targetPortfolioVolPct / realizedVolPct` (never up, floored) when the
+   * candidate's realized annualized volatility exceeds the target, AND continuously tapers toward
+   * the remaining `portfolioHeatBudgetPct` when set. Off by default: sizing is byte-identical — the
+   * realized-vol/heat numbers are still computed and surfaced as an advisory rationale note (when
+   * cheaply available) regardless of this flag, but never change the order size unless it's true.
+   */
+  volTargeting?: boolean;
+  /**
+   * Per-position annualized realized-volatility target (%) used by the taper above. Advisory
+   * guidance: typical 15-25. Only meaningful when `volTargeting` is true; undefined disables the
+   * vol-target taper (the heat-budget taper below is independent and can still apply).
+   */
+  targetPortfolioVolPct?: number;
+  /**
+   * Advisory portfolio-heat budget as % of equity (typical 4-8) — the book's total distance-to-stop
+   * dollar risk should not exceed this. When set (and `volTargeting` is true), an opening order's
+   * incremental risk is continuously tapered to fit whatever budget remains; it is never sized
+   * below the existing exploratory floor and this is never a hard block — an overridable advisory
+   * reason is tagged on the rationale instead. Undefined disables the heat-budget taper.
+   */
+  portfolioHeatBudgetPct?: number;
 }
 
 export interface RiskRules {
@@ -871,6 +957,14 @@ export interface TradeProposal {
   rationale: string;
   tradeThesisTag: string;
   entryMarketRegime: string;
+  /**
+   * Multi-signal regime severity ([0,1], rounded 2dp) from `computeMultiSignalSeverity`
+   * (src/lib/regime-severity.ts), stamped alongside `entryMarketRegime` when the scorer's inputs
+   * were available at proposal time. Additive/optional: legacy persisted proposals predate it.
+   * Not consumed by any gate or sizer today — a receipt for future regime-conditioned scorecards
+   * to bucket by (do NOT build the scorecard now; see the lane-5 rollout doc).
+   */
+  entryRegimeSeverity?: number;
   confidenceScore?: number;
   /**
    * The FAILOVER-AWARE model that actually generated this proposal (the Green/Bull step's served
@@ -1083,6 +1177,15 @@ export interface SocraticDecisionCase {
   policyDecision?: PolicyDecision;
   evidence: SocraticEvidenceItem[];
   ragAttributions: SocraticRagAttribution[];
+  /**
+   * Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the per-symbol/PORTFOLIO
+   * classification of WHY each RAG/episodic retrieval pass this run made came back the way it did
+   * (no_memory / lookup_failed / budget_skipped / degraded / ok, or the experience-memory-specific
+   * flag_off / ok_empty) — see `RetrievalStatus` (vector-db.ts) and `ExperienceRetrievalStatus`
+   * (experience-memory.ts). PERSISTENCE ONLY, not rendered anywhere; a receipt that must never gate,
+   * alter, or drop retrieval/proposals. Optional/additive — omitted on any case built before this.
+   */
+  ragRetrievalStatus?: { symbol: string; status: string; reason?: string }[];
   dissent: SocraticEvidenceItem[];
   /** Matured outcome written by the outcome engine (src/lib/outcome-engine.ts) — the closure of
    * loop step 5. `outcomes[]` is the multi-horizon truth (15m/1h/1d/1w, each individually ok or
