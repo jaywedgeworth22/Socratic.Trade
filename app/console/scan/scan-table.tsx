@@ -13,6 +13,7 @@ import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
 import { cx } from "../lib/format";
+import { Tooltip } from "../ui/primitives";
 import { DEFAULT_VISIBLE_SCAN_COLUMN_IDS, SCAN_COLUMNS } from "./columns";
 
 type SortDir = "asc" | "desc";
@@ -178,7 +179,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     const index = visible.indexOf(column.id);
                     return (
                       <Tooltip content={column.headerTitle}>
-                        (<div
+                        <div
                           key={column.id}
                           className={cx(
                             "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
@@ -218,7 +219,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                           ) : (
                             <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">hidden</span>
                           )}
-                        </div>)
+                        </div>
                       </Tooltip>
                     );
                   })}
@@ -272,11 +273,11 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                   [own, own?.includes("Received ") ? undefined : received].filter(Boolean).join("\n") || undefined;
                 return (
                   <Tooltip content={title}>
-                    (<td
+                    <td
                       key={c.id}
                       className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
                       {c.render(q)}
-                    </td>)
+                    </td>
                   </Tooltip>
                 );
               })}

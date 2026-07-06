@@ -375,9 +375,9 @@ export function LearnedContextInbox() {
                 <span className="font-semibold">{confirming.subject}</span>
                 {confirming.symbol ? (
                   <Tooltip content="The ticker this item is about.">
-                    (<span className="con-mono text-[color:var(--con-muted)]">
+                    <span className="con-mono text-[color:var(--con-muted)]">
                       {" "}· <SymbolButton symbol={confirming.symbol} showLogo={false} />
-                    </span>)
+                    </span>
                   </Tooltip>
                 ) : null}
               </p>
@@ -456,10 +456,10 @@ function LearnedFactCard({
         </Tooltip>
         {item.symbol && (
           <Tooltip content="The ticker this row is about.">
-            (<span
+            <span
               className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <SymbolButton symbol={item.symbol} showLogo={false} />
-            </span>)
+            </span>
           </Tooltip>
         )}
         {item.scope === "shared" && (
