@@ -1083,6 +1083,15 @@ export interface SocraticDecisionCase {
   policyDecision?: PolicyDecision;
   evidence: SocraticEvidenceItem[];
   ragAttributions: SocraticRagAttribution[];
+  /**
+   * Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the per-symbol/PORTFOLIO
+   * classification of WHY each RAG/episodic retrieval pass this run made came back the way it did
+   * (no_memory / lookup_failed / budget_skipped / degraded / ok, or the experience-memory-specific
+   * flag_off / ok_empty) — see `RetrievalStatus` (vector-db.ts) and `ExperienceRetrievalStatus`
+   * (experience-memory.ts). PERSISTENCE ONLY, not rendered anywhere; a receipt that must never gate,
+   * alter, or drop retrieval/proposals. Optional/additive — omitted on any case built before this.
+   */
+  ragRetrievalStatus?: { symbol: string; status: string; reason?: string }[];
   dissent: SocraticEvidenceItem[];
   /** Matured outcome written by the outcome engine (src/lib/outcome-engine.ts) — the closure of
    * loop step 5. `outcomes[]` is the multi-horizon truth (15m/1h/1d/1w, each individually ok or

@@ -8,6 +8,39 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`)
+
+Added a typed `RetrievalStatus` receipt (`ok | no_memory | lookup_failed | budget_skipped |
+degraded`) to `retrieveContextDetailed` (`src/lib/vector-db.ts`) via a new optional
+`RetrieveOptions.onStatus` callback (plus a thin `retrieveContextDetailedWithStatus` wrapper),
+wired at the four points that already computed this classification internally (Sentry-only until
+now): budget-skip, missing-keys/pipeline-error (folded to `lookup_failed`), a real zero-match
+result (`no_memory`), and the R16 per-run budget degrade (`degraded`, non-empty). Propagated an
+analogous `status` field on `ExperienceRetrievalResult` (`src/lib/experience-memory.ts`, adding two
+caller-specific values `flag_off`/`ok_empty`), captured per-symbol + PORTFOLIO in `strategy.ts`'s
+filings and episodic RAG blocks, persisted via a new `rag_retrieval_status` audit row (alongside the
+existing `experience_retrieval` audit), and added an additive optional `ragRetrievalStatus` field on
+`SocraticDecisionCase` (`src/lib/types.ts`) as a typed persistence home — NOT rendered anywhere
+(Memory-panel rendering is Codex keepout). Advisory receipt only: never gates, alters, or drops
+retrieval/proposals; every existing caller that ignores the new option stays byte-identical.
+
+Coordination note: the sibling lane `claude/persist-candidate-pool` also edits
+`retrieveContextDetailed` in `vector-db.ts` — this diff was kept deliberately minimal and localized
+to (a) the early-return classification points and (b) the thin typed-status output, per the
+orchestrator's instruction, to keep a forward-merge trivial.
+
+Files: `src/lib/vector-db.ts`, `src/lib/experience-memory.ts`, `src/lib/strategy.ts`,
+`src/lib/socratic-runtime.ts`, `src/lib/types.ts`, `test/rag-retrieval-status.test.ts` (new).
+
+Verification: `npx tsc --noEmit` clean; `npx vitest run test/rag-retrieval-status.test.ts
+test/rag-retrieval-eval.test.ts` — 21/21 passed. Also spot-ran the broader RAG/vector-db/strategy
+suites most likely to touch this code path (experience-memory, socratic-runtime, socratic-memory,
+strategy-episodic-injection, strategy-rag-quickwins-wiring, run-strategy-offline, and the full
+`vector-db-*`/`rag-*` families) — 171 + 26 passed, all green. Full `npm test`/`npm run build` were
+NOT run per this lane's scope (a central operator lands sequentially).
+
+See `docs/rollouts/2026-07-06-typed-retrieval-status.md` for the full note.
+
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
 Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to

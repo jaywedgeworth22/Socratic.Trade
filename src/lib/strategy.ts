@@ -668,6 +668,11 @@ export async function runStrategyOnce(
     // injection scan inside proposeTrades. Receipts only — never a gate on generation/placement.
     const promptSafetyEvidence: SocraticEvidenceItem[] = [];
     const evidenceAgeInputs: EvidenceAgeInput[] = [];
+    // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): one row per symbol (filings
+    // pass) plus one PORTFOLIO row (episodic pass), persisted via the `rag_retrieval_status` audit
+    // below and mirrored onto the decision case's `ragRetrievalStatus` field. Advisory only — never
+    // changes which chunks are retrieved/used; a pure receipt of WHY a pass came back empty/degraded.
+    const ragRetrievalStatusRows: { symbol: string; status: string; reason?: string }[] = [];
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
     // we're over budget) skipLlmDueToBudget is set and proposeTrades won't run — and retrieveContextDetailed
     // only checks the committed ledger, NOT live reservations, so retrieving here would still spend
@@ -726,7 +731,12 @@ export async function runStrategyOnce(
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
               connectedAccountId: policy.connectedAccountId,
-              ...(variants.length > 0 ? { queries: variants } : {})
+              ...(variants.length > 0 ? { queries: variants } : {}),
+              // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
+              // never affects `chunks` — see RetrievalStatus in vector-db.ts.
+              onStatus: (status) => {
+                ragRetrievalStatusRows.push({ symbol: normalizeSymbol(sym), status });
+              }
             });
             return { sym, query, chunks };
           })
@@ -758,6 +768,14 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
+        // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
+        // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
+        // have fired yet — record a fallback row per top symbol so the receipt isn't silently absent.
+        for (const sym of marketScan.topCandidates.slice(0, 3).map((c) => normalizeSymbol(c.symbol))) {
+          if (!ragRetrievalStatusRows.some((row) => row.symbol === sym)) {
+            ragRetrievalStatusRows.push({ symbol: sym, status: "lookup_failed", reason: e instanceof Error ? e.message : String(e) });
+          }
+        }
       }
     }
 
@@ -853,6 +871,9 @@ export async function runStrategyOnce(
         });
         experienceAnalogs = episodic.analogsBlock ?? "";
         ownerCoaching = episodic.coachingBlock ?? "";
+        // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): the episodic pass is
+        // cross-symbol, so it gets one PORTFOLIO row rather than a per-symbol one.
+        ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: episodic.status });
         if (episodic.injected.length > 0) {
           // Run-input persistence: record exactly WHICH analog/coaching vector ids entered this
           // run's prompts (plus the as-of stamp and sketch), so retrieval-usefulness scoring can
@@ -878,7 +899,22 @@ export async function runStrategyOnce(
         }
       } catch (e) {
         console.warn("[Strategy] Skipping episodic decision memory, retrieval unavailable:", e instanceof Error ? e.message : String(e));
+        // Typed retrieval-status receipt fallback: retrieveDecisionExperiences itself never throws
+        // (its own try/catch always resolves to a status-carrying result), but this outer catch
+        // covers earlier statements in the block (e.g. fetchMacroData) — record the row if missing.
+        if (!ragRetrievalStatusRows.some((row) => row.symbol === "PORTFOLIO")) {
+          ragRetrievalStatusRows.push({ symbol: "PORTFOLIO", status: "lookup_failed", reason: e instanceof Error ? e.message : String(e) });
+        }
       }
+    }
+
+    // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): persist the per-symbol
+    // (filings pass) + PORTFOLIO (episodic pass) classification alongside the existing
+    // `experience_retrieval` audit above. Advisory only — this NEVER changes which chunks were used;
+    // it is purely a receipt of WHY a pass came back empty/degraded (no-memory vs lookup-failed vs
+    // budget-skipped vs degraded), for observability instead of every cause collapsing to silence.
+    if (ragRetrievalStatusRows.length > 0) {
+      audit("rag_retrieval_status", { runId, rows: ragRetrievalStatusRows }, userId, connectedAccountId);
     }
 
     // ── "Do nothing" threshold (minProposalScoreThreshold) ─────────────────
@@ -1326,7 +1362,9 @@ export async function runStrategyOnce(
             ragAttributions: socraticRagAttributions,
             overrideResolution: input.overrideResolution,
             // Run-level advisory prompt-safety receipts (injection scan + evidence-age anomalies).
-            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {})
+            ...(promptSafetyEvidence.length > 0 ? { extraEvidence: promptSafetyEvidence } : {}),
+            // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06) — persistence only.
+            ...(ragRetrievalStatusRows.length > 0 ? { ragRetrievalStatus: ragRetrievalStatusRows } : {})
           }),
           createdAt: now,
           updatedAt: now

@@ -72,6 +72,20 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🚧 In Progress
 
+- **Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).** Distinguishes
+  no-memory vs lookup-failed vs budget-skipped vs degraded instead of every RAG/episodic retrieval
+  outcome collapsing to an indistinguishable `[]`/non-empty result. Additive/advisory-only: new
+  `RetrievalStatus` union + optional `RetrieveOptions.onStatus` callback wired through the four
+  existing classification points in `retrieveContextDetailed` (vector-db.ts), a new `status` field on
+  `ExperienceRetrievalResult` (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts
+  persisted via a new `rag_retrieval_status` audit row alongside `experience_retrieval`, and an
+  additive optional `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence
+  only, no rendering. Never gates/alters chunk selection. Coordination: sibling lane
+  `claude/persist-candidate-pool` also edits `vector-db.ts` `retrieveContextDetailed` — this diff is
+  kept minimal/localized to the early-return points and a thin status output. Tests:
+  `test/rag-retrieval-status.test.ts` (new, 11 cases, network-free). Rollout:
+  `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
+
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
   builds with the app's real components. Render check 30/30 clean; conventions header shipped.
