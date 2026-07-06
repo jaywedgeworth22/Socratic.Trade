@@ -8,7 +8,36 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-06 — Corpus-coverage receipt: BLOCKER fix (8-K false-positive) + noise fix (earnings-transcript) (CLAUDE, in progress)
+## 2026-07-06 — Corpus-coverage receipt: THIRD fix — restore both-conditions guard on a ledger-complete subset (CLAUDE, in progress)
+
+Branch `claude/corpus-coverage-receipt` (worktree `~/apps/trading-wt-corpus-coverage`), 3rd local
+commit, not yet pushed/PR'd. The SECOND fix (previous section, same day) fixed the 8-K
+false-positive by dropping the producer check entirely and firing on this-run-retrieval-emptiness
+alone for a `["10-k","10-q","8-k"]` allowlist — but that traded one bug for another: 8-K is
+event-sparse and routinely won't rank top-3, so the receipt would now fire on a large fraction of
+normal runs, which is exactly the daily-noise failure mode this receipt exists to avoid.
+
+**Redesign (this fix):** `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` only —
+`src/lib/web-sources/sec-filings.ts` writes an `ingested_accessions` row for every 10-K/10-Q ingest,
+so the ledger is COMPLETE for those two types and a "zero ever-ingested" signal is trustworthy.
+`8-k` is excluded (ledger incomplete — the default-ON summary writer never records an accession
+row) and `earnings-transcript` stays excluded (no producer anywhere). For the ledger-complete
+subset, restored the BOTH-CONDITIONS guard: a type is "empty" only when it's NOT retrieved this run
+AND has zero producer rows. `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) now takes a third
+`hasProducerForDocType` predicate parameter (kept the module DB-free — the predicate is built in
+`strategy.ts` from ONE bulk `ingestedAccessionCountsByDocType()` call + an in-memory prefix lookup,
+not N per-type queries).
+
+Verified: `npx tsc --noEmit` clean; `npx vitest run test/rag-doc-type-coverage.test.ts` — **14
+passed / 14** (rewrote the pure + integration cases for the 2-arg-plus-predicate signature; the key
+low-noise case (b) proves a 10-K that didn't rank this run but HAS a producer row stays silent);
+`npx vitest run test/strategy-prompt-safety.test.ts test/strategy-rag-quickwins-wiring.test.ts` —
+**5 passed / 5**; `npx eslint` on the touched files — 0 errors, same 4 pre-existing unrelated
+warnings in `strategy.ts` as before. Full rationale + history in
+`docs/rollouts/2026-07-06-corpus-coverage-receipt.md`'s new "Second correction" section (previous
+"Correction" section kept as historical record of the 2nd fix).
+
+## 2026-07-06 — Corpus-coverage receipt: BLOCKER fix (8-K false-positive) + noise fix (earnings-transcript) (CLAUDE, superseded same day — see section above)
 
 Branch `claude/corpus-coverage-receipt` (worktree `~/apps/trading-wt-corpus-coverage`). Post-merge
 review of the receipt below (still same day) found the original design's producer-existence signal
@@ -26,6 +55,11 @@ runtime `ingested_accessions`-based producer-count check entirely and replaced i
 types hand-verified (by reading the writers) to have an actual producer in code.
 `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes,
 retrievedDocTypes)` — no ingested-rows condition, no DB call at all now.
+
+**SUPERSEDED same day** — see the section above this one: this design still fired too often on
+"8-k" (event-sparse, routinely won't rank top-3), so the receipt was noise on a large fraction of
+normal runs. `COVERAGE_CHECKED_DOC_TYPES` was narrowed further to `["10-k", "10-q"]` and the
+both-conditions guard was restored for that ledger-complete subset.
 
 Also fixed the noise finding: `earnings-transcript` (genuinely zero-producer, no writer anywhere)
 is now excluded from `COVERAGE_CHECKED_DOC_TYPES` — it stays in the retrieval request list passed

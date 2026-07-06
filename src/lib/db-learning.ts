@@ -876,11 +876,15 @@ export function ingestedAccessionCountsByDocType(): Record<string, number> {
  * writer (`refreshEightK`'s `storeContexts` call in sec8k.ts) writes retrievable "8-k" chunks to
  * the vector corpus but never calls `insertIngestedAccession` at all — only the default-OFF
  * full-body writer (`ingestEightKBody`) does. So in the default config this function returns 0 for
- * "8-k" even when the corpus has real, retrievable 8-K chunks. Do NOT use this function (alone) as
- * a "has this doc type ever been produced" check for "8-k" — that's why strategy.ts's
- * corpus-coverage receipt no longer calls it; see `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts and
- * `computeEmptyDocTypes` in prompt-safety.ts. This remains a correct, useful admin/diagnostic
- * "how many accessions has the full-body pipeline recorded" count.
+ * "8-k" even when the corpus has real, retrievable 8-K chunks. That is exactly why
+ * `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts (the corpus-coverage receipt's allowlist) EXCLUDES
+ * "8-k" — the receipt only both-conditions-checks doc types (currently 10-k/10-q) whose ledger IS
+ * complete. strategy.ts builds its own in-memory prefix lookup on top of the bulk
+ * `ingestedAccessionCountsByDocType()` (rather than calling this function once per type) and feeds
+ * it into `computeEmptyDocTypes` (prompt-safety.ts) as a `hasProducerForDocType` predicate. This
+ * function itself remains a correct, useful admin/diagnostic "how many accessions has this
+ * pipeline recorded for doc type X" count — including for "8-k", where it still answers "how many
+ * full-body accessions" correctly, just not "does 8-k coverage exist at all."
  */
 export function ingestedAccessionCountForDocType(requestedDocType: string): number {
   const counts = ingestedAccessionCountsByDocType();

@@ -222,3 +222,124 @@ in-memory set arithmetic, called once.
   unrelated to this change (`isMarketOpen`/`e`/`currentPrices` unused-var grandfathered warnings).
 - Did not run the full `npm test`/`npm run build` suite for this focused fix — same scope
   boundary as the original rollout; a central operator runs full CI via `scripts/land.sh`.
+
+## Second correction (same day, 2026-07-06) — the retrieval-only design was itself a daily-noise bug
+
+The first correction above (dropping the `ingested_accessions` producer-count check entirely, and
+gating the receipt on this-run-retrieval-emptiness alone for `COVERAGE_CHECKED_DOC_TYPES =
+["10-k","10-q","8-k"]`) fixed the 8-K false-positive but introduced a different daily-noise bug: it
+now fires the receipt whenever an allowlisted type simply isn't RETRIEVED this run, with no
+producer/corpus check at all. 8-K is event-sparse and frequently won't rank in a run's top-3
+chunks, so the receipt would fire on a large fraction of normal runs — undesirable noise in the
+shared `safety` evidence channel of a real-money app. This section documents the corrected,
+low-noise design that actually ships.
+
+### The bug in the first correction
+
+Dropping the both-conditions check made the receipt equivalent to "was X retrieved this run?" for
+every type in `COVERAGE_CHECKED_DOC_TYPES`. For `10-k`/`10-q` this is usually fine (they retrieve
+most runs once ingestion has run at all), but `8-k` specifically is a low-frequency event type by
+nature (companies only file 8-Ks around material events) — even with real 8-K coverage in the
+corpus, a `10-k`/`10-q`/`earnings-transcript`-heavy run's top-3 filter can easily rank zero 8-K
+chunks. Firing a "coverage gap" receipt in that ordinary case trains the operator to ignore the
+whole receipt, defeating its purpose.
+
+### The corrected design: both-conditions, but only where the producer ledger is complete
+
+The fix restores the both-conditions gate (not-retrieved-this-run AND zero-ever-ingested-producer),
+but scopes it to the subset of doc types where the producer ledger (`ingested_accessions`) is
+actually a reliable "was this ever produced" signal:
+
+- **10-K/10-Q**: `src/lib/web-sources/sec-filings.ts`'s always-on `ingestFiling` writes an
+  `ingested_accessions` row for every 10-K/10-Q ingest (stored as the raw SEC form letter). Every
+  writer for these two types records a row — the ledger is COMPLETE. A zero-producer-rows count is
+  trustworthy evidence of "never ingested."
+- **8-K**: EXCLUDED. As established in the first correction, the default-ON 8-K SUMMARY writer
+  (`sec8k.ts`'s `refreshEightK`/`storeContexts`) writes retrievable chunks WITHOUT ever calling
+  `insertIngestedAccession` — only the default-OFF full-body writer does. The ledger is INCOMPLETE
+  for 8-K: it cannot distinguish "this account has zero 8-K coverage" from "8-K summaries exist in
+  the corpus but none ranked this run." Re-add 8-K to `COVERAGE_CHECKED_DOC_TYPES` the day an
+  accurate per-doc_type 8-K corpus signal exists (e.g. a `document_chunks.doc_type` column
+  populated by both writers, or the summary writer starts recording an accession row too).
+- **earnings-transcript**: stays EXCLUDED, unchanged from both prior iterations — no ingestion
+  writer exists anywhere in the repo for it, so it would fire every run forever.
+
+`COVERAGE_CHECKED_DOC_TYPES` (`src/lib/strategy.ts`) is now `["10-k", "10-q"]`.
+
+### Implementation
+
+- `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third parameter,
+  `hasProducerForDocType: (docType: string) => boolean`. A type is "empty" (receipt-worthy) only
+  when it is BOTH not in `retrievedDocTypes` (case-insensitive) AND `hasProducerForDocType(type)`
+  returns `false`. The module stays a DB-free leaf — the predicate is a plain function the caller
+  builds, not a DB call made inside `prompt-safety.ts`.
+- `strategy.ts`'s coverage-receipt block builds `hasProducerForDocType` from ONE bulk
+  `ingestedAccessionCountsByDocType()` call (already existed in `db-learning.ts`, re-exported via
+  the `db.ts` barrel) plus an in-memory loop that mirrors `ingestedAccessionCountForDocType`'s
+  prefix-tolerant matching (any stored `doc_type` whose lowercased form starts with the requested
+  lowercased type, with `count > 0`) — one query per run total, not one query per coverage-checked
+  type. `ingestedAccessionCountsByDocType` was re-added to the `./db` import block in `strategy.ts`
+  (it had been dropped in the first correction along with the whole producer-count approach).
+- `ingestedAccessionCountForDocType`'s doc comment in `db-learning.ts` was corrected again: it no
+  longer says "the coverage receipt no longer calls it" (that was only true during the first
+  correction's window) — it now explains that `strategy.ts` builds its own in-memory version of the
+  same prefix logic on top of the bulk call, rather than calling this function once per
+  coverage-checked type.
+
+### Tests (`test/rag-doc-type-coverage.test.ts`, rewritten again)
+
+- `computeEmptyDocTypes` pure tests updated to the 3-arg signature (`hasProducerForDocType`
+  predicate instead of nothing), including:
+  - (a) `10-k` requested, not retrieved, zero producer rows -> fires naming `10-k`.
+  - (b) **the key low-noise case**: `10-k` requested, not retrieved, but HAS a producer -> does NOT
+    fire — proves normal-run silence.
+  - A mixed case (`10-q` has a producer, `10-k` does not) to confirm the predicate is applied
+    per-type, not globally.
+- Strategy-level integration (`runStrategyOnce`, mocked `vector-db`, local test broker gateway):
+  - (a) `10-k` not retrieved this run, zero `ingested_accessions` rows for `10-K` anywhere in the
+    test's DB -> exactly one audit + one evidence item naming `10-k`.
+  - (b) **the key low-noise case, integration form**: `10-k` not retrieved this run, but a real
+    `insertIngestedAccession(..., "10-K", ...)` row was seeded before the run -> the receipt does
+    NOT fire. This is the direct regression test for the bug this fix addresses.
+  - (c) `8-k` retrieves nothing AND has zero `ingested_accessions` rows (the worst case for the
+    prior retrieval-only design) -> still does not fire, because `8-k` is excluded from
+    `COVERAGE_CHECKED_DOC_TYPES` entirely, regardless of retrieval/accession state.
+  - (d) `earnings-transcript` never fires, unchanged.
+  - (e) advisory invariant unchanged: `ragContext`/proposal count unaffected by the receipt firing.
+- A test-ordering note was added to the file: the strategy-integration `describe` block and the
+  `ingestedAccessionCountForDocType`/`ingestedAccessionCountsByDocType` DB-helper `describe` block
+  share ONE `DATABASE_URL` for the whole file (per the existing `beforeAll`). The DB-helper block
+  seeds a real `"10-K"` `ingested_accessions` row, which would silently falsify test (a)'s "zero
+  rows for 10-K" premise if it ran first — it is now placed AFTER the integration tests in file
+  order (vitest runs `describe`/`it` in declaration order within a file by default; no
+  `sequence.shuffle` is configured in `vitest.config.ts`).
+
+### Verification (second correction)
+
+- `npx tsc --noEmit` — clean, no errors.
+- `npx vitest run test/rag-doc-type-coverage.test.ts` — **14 passed / 14** (7 pure
+  `computeEmptyDocTypes` tests, 2 DB-helper tests, 5 strategy-integration tests including the key
+  low-noise case (b)).
+- `npx vitest run test/strategy-prompt-safety.test.ts test/strategy-rag-quickwins-wiring.test.ts` —
+  **5 passed / 5**.
+- `npx eslint src/lib/strategy.ts src/lib/prompt-safety.ts src/lib/db-learning.ts
+  test/rag-doc-type-coverage.test.ts` — 0 errors, same 4 pre-existing warnings in `strategy.ts`
+  as both prior iterations (`isMarketOpen`/`e`/`currentPrices` unused-var grandfathered warnings —
+  unrelated to this change).
+- Did not run the full `npm test`/`npm run build` suite for this focused fix, per the task's scope
+  (no scope creep beyond the redesign) — same boundary as both prior iterations; a central operator
+  runs full CI via `scripts/land.sh` at land time.
+- Did not push/open a PR/land — this is a local-commit-only fix per the task instructions.
+
+### Why both-conditions-on-a-ledger-complete-subset is the right long-term shape
+
+This design is intentionally narrower in COVERAGE than "check all 4 requested doc types" would be —
+it only ever reports a gap for `10-k`/`10-q`. That is a deliberate trade: a receipt that fires
+correctly on 2 types beats a receipt that fires incorrectly (either direction) on 3. The
+both-conditions gate is what makes the receipt trustworthy: it only fires for the genuinely useful
+"this corpus/account has zero coverage of doc type X" signal (e.g. a brand-new account before its
+first ingestion run, or an account where 10-K/10-Q ingestion is misconfigured/failing silently),
+and stays silent on the ordinary "X exists but didn't rank today" case that happens on a large
+fraction of normal runs for any type. Extending coverage to `8-k` (or `earnings-transcript`) is
+gated on a real producer-ledger fix, not a relaxation of the both-conditions design — see the
+"Re-add" notes on `COVERAGE_CHECKED_DOC_TYPES` in `src/lib/strategy.ts`.

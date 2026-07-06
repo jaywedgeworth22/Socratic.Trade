@@ -9,10 +9,11 @@
 //   2. collectEvidenceAgeAnomalies — flags evidence that is suspiciously FRESH (first seen <24h
 //      before the run): a high-relevance RAG chunk dated today, or a learned fact asserted today.
 //   3. computeEmptyDocTypes — flags a COVERAGE-CHECKED filings doc type (a static allowlist of
-//      types with a known producer in code, e.g. 10-k/10-q/8-k — see COVERAGE_CHECKED_DOC_TYPES
-//      in strategy.ts) that produced zero chunks THIS run. "earnings-transcript" is deliberately
-//      excluded from that allowlist: it has no producer anywhere in the repo today, so checking it
-//      would fire a receipt every run forever.
+//      types whose PRODUCER LEDGER IS COMPLETE, currently 10-k/10-q — see COVERAGE_CHECKED_DOC_TYPES
+//      in strategy.ts) that is BOTH not retrieved this run AND has zero ever-ingested producer rows.
+//      "8-k" and "earnings-transcript" are deliberately excluded from that allowlist — see
+//      COVERAGE_CHECKED_DOC_TYPES's comment for why (8-k's default-on writer doesn't record a
+//      producer row at all; earnings-transcript has no producer anywhere).
 //
 // OWNER PHILOSOPHY (binding): detection IS the control. Findings become audit rows and
 // decision-case evidence items — the scanned text is NEVER altered, dropped, or blocked, and
@@ -209,33 +210,33 @@ export function collectEvidenceAgeAnomalies(items: EvidenceAgeInput[], now: Date
 }
 
 /**
- * Corpus-coverage receipt (corpus-coverage-receipt, 2026-07-06; corrected 2026-07-06 — see
- * docs/rollouts/2026-07-06-corpus-coverage-receipt.md): a coverage-checked filings doc type
- * counts as "empty" for this run when zero chunks of that doc type were retrieved THIS run.
+ * Corpus-coverage receipt (corpus-coverage-receipt, 2026-07-06; corrected twice same day — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history). A coverage-checked
+ * filings doc type counts as "empty" for this run only when BOTH:
+ *   (a) zero chunks of that doc type were retrieved THIS run, AND
+ *   (b) `hasProducerForDocType` reports zero ever-ingested producer rows for it.
  *
- * `coverageCheckedDocTypes` (the caller's `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts) is
- * ALREADY restricted to doc types with a known producer in code — see that constant's comment
- * for why. Originally this function also required "zero ever-ingested rows in
- * `ingested_accessions`" as a second condition, to avoid firing on an ordinary low-relevance miss
- * for a type that legitimately has corpus rows. That signal was REMOVED: it read
- * `ingested_accessions`, but the default-ON 8-K SUMMARY writer (src/lib/web-sources/sec8k.ts,
- * `storeContexts` with `doc_type: "8-k"`) never calls `insertIngestedAccession` — only the
- * default-OFF 8-K FULL-BODY writer does (under the "8-K-body" sentinel). So in the default
- * config, `ingested_accessions` has ZERO "8-k" rows even though retrievable 8-K chunks exist in
- * the corpus, and this function would report "8-k" as empty (hence a false-positive receipt)
- * every time an 8-K chunk simply didn't rank top-3 for a run — i.e. most days. There is no local,
- * per-doc_type-queryable table that ALL chunk writers populate (`document_chunks` has no
- * `doc_type` column — see the constant's comment), so rather than trust a broken/partial signal,
- * this function now trusts the caller's static "known producer" allowlist and fires purely on
- * this-run retrieval emptiness for those pre-vetted types. This is a coarser check (it cannot
- * distinguish "never once produced" from "didn't rank today" for a producible type) but it can no
- * longer false-positive on a producer that simply doesn't write `ingested_accessions`.
+ * Both conditions are load-bearing. Condition (a) alone is too noisy: an event-sparse type
+ * (originally 8-K) can legitimately fail to rank in a normal run's top-3 chunks even though the
+ * corpus holds real coverage for it — firing on (a) alone would make the receipt noise on a large
+ * fraction of ordinary runs. Condition (b) alone would never fire (a type can rank low every run
+ * forever while still having historical producer rows). Together, the receipt only fires for the
+ * genuinely useful signal: "this account/corpus has never once produced this doc type" — not
+ * "didn't rank today."
+ *
+ * `coverageCheckedDocTypes` (the caller's `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts) MUST be
+ * restricted to doc types whose producer ledger is actually COMPLETE (every writer for that type
+ * records a producer row) — see that constant's comment. `hasProducerForDocType` is intentionally
+ * a plain predicate (not a DB call) so this module stays a DB-free leaf; the caller is responsible
+ * for building it (e.g. from one bulk `ingestedAccessionCountsByDocType()` query) and keeping the
+ * DB dependency in strategy.ts.
  *
  * Pure; DB-free.
  */
 export function computeEmptyDocTypes(
   coverageCheckedDocTypes: string[],
-  retrievedDocTypes: Iterable<string | undefined>
+  retrievedDocTypes: Iterable<string | undefined>,
+  hasProducerForDocType: (docType: string) => boolean
 ): string[] {
   const retrieved = new Set<string>();
   for (const dt of retrievedDocTypes) {
@@ -245,6 +246,7 @@ export function computeEmptyDocTypes(
   for (const requested of coverageCheckedDocTypes) {
     const normalized = requested.toLowerCase();
     if (retrieved.has(normalized)) continue;
+    if (hasProducerForDocType(requested)) continue;
     empty.push(requested);
   }
   return empty;

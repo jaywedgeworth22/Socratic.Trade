@@ -1,39 +1,38 @@
 /**
- * corpus-coverage-receipt (2026-07-06; corrected same day — see
- * docs/rollouts/2026-07-06-corpus-coverage-receipt.md): per-run advisory receipt for a
- * COVERAGE-CHECKED filings doc type (a static allowlist of types with a known producer in code —
- * COVERAGE_CHECKED_DOC_TYPES in strategy.ts, currently 10-k/10-q/8-k) that produced ZERO retrieved
- * chunks this run.
+ * corpus-coverage-receipt (2026-07-06; redesigned same day for the SECOND time — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md for the full history). Per-run advisory
+ * receipt for a COVERAGE-CHECKED filings doc type (a static allowlist of types whose PRODUCER
+ * LEDGER IS COMPLETE — COVERAGE_CHECKED_DOC_TYPES in strategy.ts, currently 10-k/10-q ONLY) that is
+ * BOTH not retrieved this run AND has zero ever-ingested producer rows.
  *
  * Ground truth: strategy.ts's filings-RAG pass (retrieveContextDetailed(..., { docType: ["10-k",
  * "10-q", "8-k", "earnings-transcript"] })) is the only doc-type-requesting call site.
+ * ingested_accessions is a COMPLETE producer ledger for 10-K/10-Q (src/lib/web-sources/sec-filings.ts
+ * writes an accession row for every 10-K/10-Q ingest) but INCOMPLETE for 8-K (the default-ON
+ * summary writer in sec8k.ts writes retrievable doc_type:"8-k" chunks but no accession row; only
+ * the default-OFF full-body path writes "8-K-body").
  *
- * BLOCKER fixed here: the receipt originally used `ingestedAccessionCountForDocType` (reading
- * `ingested_accessions`) as a "has this doc type ever been produced" proxy. But the default-ON 8-K
- * SUMMARY writer (src/lib/web-sources/sec8k.ts, `refreshEightK`'s `storeContexts` call) writes
- * retrievable `doc_type: "8-k"` chunks to the vector corpus WITHOUT ever calling
- * `insertIngestedAccession` — only the default-OFF full-body writer (`ingestEightKBody`) does, and
- * it stores the row under the "8-K-body" sentinel besides. So in the default config,
- * `ingested_accessions` has ZERO "8-k" rows even though 8-K chunks exist and are retrievable,
- * meaning the receipt would false-positive on "8-k" every day an 8-K chunk simply didn't rank
- * top-3. There is no local table that ALL chunk writers populate keyed by doc_type
- * (`document_chunks` has no `doc_type` column at all — confirmed against db.ts's schema), so the
- * fix drops the ingested-rows check entirely and gates the receipt on
- * COVERAGE_CHECKED_DOC_TYPES, a static allowlist of doc types known (by reading the writers) to
- * have a producer in code. "earnings-transcript" is excluded from that allowlist (Finding 2: it
- * has no producer anywhere, so checking it would fire a receipt every run forever).
+ * THIRD FIX in this lane (this file): the SECOND fix (which dropped the producer check entirely
+ * and fired on this-run-retrieval-emptiness alone for a 10-k/10-q/8-k allowlist) introduced a new
+ * daily-noise bug: 8-k is event-sparse and frequently won't rank top-3, so the receipt would fire
+ * on a large fraction of normal runs. This fix:
+ *   - Narrows COVERAGE_CHECKED_DOC_TYPES to ["10-k", "10-q"] (ledger-complete types only) —
+ *     "8-k" is excluded (ledger incomplete, would false-positive on normal runs) and
+ *     "earnings-transcript" stays excluded (no producer anywhere, would fire forever).
+ *   - Restores the BOTH-CONDITIONS guard for the ledger-complete set: not-retrieved-this-run AND
+ *     zero-ever-ingested-producer-rows (via one bulk ingestedAccessionCountsByDocType() call +
+ *     in-memory prefix lookup in strategy.ts, fed into computeEmptyDocTypes as a
+ *     hasProducerForDocType predicate — keeping prompt-safety.ts DB-free).
  *
  * Covers:
- *  (a) computeEmptyDocTypes (pure): flags only the coverage-checked type(s) that produced no
- *      chunks this run; case-insensitive.
- *  (b) full strategy run: receipt fires (one audit + one evidence item) naming only the
- *      empty coverage-checked type when 2 of 3 coverage-checked types retrieve nothing.
- *  (c) REGRESSION for the BLOCKER: an 8-K SUMMARY chunk is retrieved this run (proving the corpus
- *      has real 8-K chunks) but NO `insertIngestedAccession("...", "8-K"/"8-K-body", ...)` call
- *      ever happened (mirrors the default config exactly) — the receipt must NOT fire for "8-k".
- *  (d) "earnings-transcript" never produces a receipt even when it retrieves nothing (it is not
- *      in COVERAGE_CHECKED_DOC_TYPES).
- *  (e) advisory invariant: ragContext / proposal count is unchanged by the receipt firing.
+ *  (a) computeEmptyDocTypes (pure): 10-k requested, NOT retrieved this run, ZERO producer rows —
+ *      receipt fires naming 10-k.
+ *  (b) THE KEY LOW-NOISE CASE (pure + integration): 10-k requested, NOT retrieved this run, but HAS
+ *      >=1 producer row — receipt does NOT fire. Proves normal-run silence.
+ *  (c) 8-k never triggers a coverage receipt regardless of retrieval/accession state (excluded from
+ *      COVERAGE_CHECKED_DOC_TYPES).
+ *  (d) earnings-transcript never fires (no producer anywhere, excluded).
+ *  (e) advisory invariant: ragContext / proposal count unchanged by the receipt firing.
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -59,59 +58,56 @@ afterEach(() => {
   vi.resetModules();
 });
 
+const noProducer = () => false;
+const allProducer = () => true;
+
 describe("computeEmptyDocTypes (pure)", () => {
-  it("flags only the coverage-checked type(s) that produced no chunks this run", () => {
-    const empty = computeEmptyDocTypes(["10-k", "10-q", "8-k"], ["10-k", "8-k"]);
-    expect(empty).toEqual(["10-q"]);
+  it("(a) 10-k requested, NOT retrieved this run, ZERO producer rows -> fires naming 10-k", () => {
+    const empty = computeEmptyDocTypes(["10-k"], [], noProducer);
+    expect(empty).toEqual(["10-k"]);
   });
 
-  it("flags nothing when every coverage-checked type was retrieved this run", () => {
-    const empty = computeEmptyDocTypes(["10-k", "8-k"], ["10-k", "8-k"]);
+  it("(b) THE KEY LOW-NOISE CASE: 10-k requested, NOT retrieved this run, but HAS a producer -> does NOT fire", () => {
+    const empty = computeEmptyDocTypes(["10-k"], [], allProducer);
     expect(empty).toEqual([]);
   });
 
-  it("flags all coverage-checked types when none retrieved this run", () => {
-    const empty = computeEmptyDocTypes(["10-k", "10-q", "8-k"], []);
-    expect(empty).toEqual(["10-k", "10-q", "8-k"]);
+  it("flags only the coverage-checked type(s) that are BOTH unretrieved AND producer-less", () => {
+    const hasProducer = (docType: string) => docType.toLowerCase() === "10-q"; // 10-q has a producer, 10-k does not
+    const empty = computeEmptyDocTypes(["10-k", "10-q"], [], hasProducer);
+    expect(empty).toEqual(["10-k"]);
+  });
+
+  it("flags nothing when every coverage-checked type was retrieved this run, even with no producer", () => {
+    const empty = computeEmptyDocTypes(["10-k", "10-q"], ["10-k", "10-q"], noProducer);
+    expect(empty).toEqual([]);
+  });
+
+  it("flags all coverage-checked types when none retrieved this run and none has a producer", () => {
+    const empty = computeEmptyDocTypes(["10-k", "10-q"], [], noProducer);
+    expect(empty).toEqual(["10-k", "10-q"]);
   });
 
   it("is case-insensitive on both retrieved doc_type and the coverage-checked type", () => {
-    const empty = computeEmptyDocTypes(["10-K"], ["10-k"]);
+    const empty = computeEmptyDocTypes(["10-K"], ["10-k"], noProducer);
     expect(empty).toEqual([]);
   });
 
-  it("never considers earnings-transcript (not passed in by the caller's allowlist)", () => {
-    // strategy.ts only ever passes COVERAGE_CHECKED_DOC_TYPES (10-k/10-q/8-k) here —
-    // "earnings-transcript" simply never appears as an input, so it can never be flagged.
-    const empty = computeEmptyDocTypes(["10-k", "10-q", "8-k"], ["10-k", "10-q", "8-k"]);
+  it("never considers 8-k or earnings-transcript (not passed in by the caller's allowlist)", () => {
+    // strategy.ts only ever passes COVERAGE_CHECKED_DOC_TYPES (10-k/10-q) here — "8-k" and
+    // "earnings-transcript" simply never appear as inputs, so they can never be flagged.
+    const empty = computeEmptyDocTypes(["10-k", "10-q"], ["10-k", "10-q"], noProducer);
     expect(empty).toEqual([]);
-  });
-});
-
-describe("ingestedAccessionCountForDocType / ingestedAccessionCountsByDocType (db-learning, generic diagnostic helpers — NOT used by the coverage receipt anymore)", () => {
-  it("reports 0 for a doc type with no ingested rows", async () => {
-    const { ingestedAccessionCountForDocType } = await import("../src/lib/db");
-    expect(ingestedAccessionCountForDocType("earnings-transcript")).toBe(0);
-  });
-
-  it("reports non-zero for a doc type with ingested rows, tolerating the ingested_accessions naming split — but 0 for '8-k' when only the summary path (no insertIngestedAccession) ran", async () => {
-    const { insertIngestedAccession, ingestedAccessionCountForDocType } = await import("../src/lib/db");
-    // Mirrors src/lib/web-sources/sec-filings.ts (10-K/10-Q stored as the raw SEC form letter).
-    insertIngestedAccession(`acc-${randomUUID()}`, "10-K", "AAPL", 4);
-    // Mirrors src/lib/web-sources/sec8k.ts's FULL-BODY writer (stores "8-K-body", not "8-K").
-    insertIngestedAccession(`acc-${randomUUID()}`, "8-K-body", "AAPL", 2);
-
-    expect(ingestedAccessionCountForDocType("10-k")).toBeGreaterThan(0);
-    // The full-body row above DOES count toward "8-k" via prefix-matching — this function is
-    // correct for that writer. Its documented caveat is that the default-ON SUMMARY writer never
-    // calls insertIngestedAccession at all, so this count understates true corpus coverage for
-    // "8-k" in the default config — which is exactly why the coverage receipt no longer uses it.
-    expect(ingestedAccessionCountForDocType("8-k")).toBeGreaterThan(0);
-    expect(ingestedAccessionCountForDocType("earnings-transcript")).toBe(0);
   });
 });
 
 // ── Strategy-level integration: receipt fires / does not fire, advisory invariant ──────────────
+//
+// NOTE ON ORDERING: this describe block (and the DB-helper describe block below it) share ONE
+// DATABASE_URL for the whole file (see beforeAll above) — insertIngestedAccession calls persist
+// across `it`s. The DB-helper block below deliberately seeds a real "10-K" ingested_accessions row,
+// so it is placed AFTER these integration tests to avoid silently turning test (a)'s "ZERO
+// ingested_accessions rows for 10-K" premise false.
 
 type OpenAiBody = { input?: Array<{ role: string; content: string }> };
 
@@ -202,15 +198,15 @@ async function setupBrokerPaperDecide(): Promise<void> {
 }
 
 describe("corpus-coverage receipt — strategy.ts integration (advisory only)", () => {
-  it("(b) fires ONE audit + ONE evidence item naming only the coverage-checked type that retrieved nothing", async () => {
-    // This run's filings pass retrieves "10-k" and "8-k" chunks; "10-q" retrieves nothing.
-    // "earnings-transcript" also retrieves nothing but must never be reported (not coverage-checked).
+  it("(a) 10-k requested, NOT retrieved this run, ZERO ingested_accessions rows for 10-K -> receipt fires naming 10-k", async () => {
+    // 10-q and 8-k retrieve chunks this run; 10-k does not, and no ingested_accessions row for
+    // 10-K exists anywhere in this test's DB.
     vi.doMock("../src/lib/vector-db", () => ({
       findRelevantExperiences: async () => [],
       upsertExperiences: async () => {},
       retrieveContext: async () => [],
       retrieveContextDetailed: async () => [
-        { id: "chunk-10k", text: "Risk factors.", score: 0.5, doc_type: "10-k", source: "sec-filings", as_of: "2026-01-01" },
+        { id: "chunk-10q", text: "Quarterly.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" },
         { id: "chunk-8k", text: "Material event.", score: 0.5, doc_type: "8-k", source: "sec-8k", as_of: "2026-01-01" }
       ],
       defaultMinScore: () => 0.3,
@@ -236,7 +232,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     expect(coverageAudits.length).toBe(1);
 
     const payload = coverageAudits[0]!.payload as { emptyDocTypes?: string[]; requestedDocTypes?: string[] };
-    expect(payload.emptyDocTypes).toEqual(["10-q"]);
+    expect(payload.emptyDocTypes).toEqual(["10-k"]);
     expect(payload.requestedDocTypes).toEqual(["10-k", "10-q", "8-k", "earnings-transcript"]);
 
     const cases = listSocraticDecisionCases("local", { runId: result.runId });
@@ -245,28 +241,20 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       (item) => item.kind === "safety" && item.title === "Requested filings doc type never ingested"
     );
     expect(coverageItems.length).toBe(1);
-    expect(coverageItems[0]!.summary).toContain("10-q");
-    expect(coverageItems[0]!.summary).not.toContain("earnings-transcript");
+    expect(coverageItems[0]!.summary).toContain("10-k");
     expect(coverageItems[0]!.tone).toBe("warning");
   }, 30_000);
 
-  it("(c) REGRESSION (BLOCKER fix): does NOT false-positive on '8-k' when an 8-K SUMMARY chunk is retrieved this run WITHOUT any ingested_accessions row ever recorded for it", async () => {
-    // Mirrors the default production config exactly: the 8-K summary writer (sec8k.ts,
-    // WEB_SOURCE_SEC8K default ON) stores retrievable "8-k" chunks but never calls
-    // insertIngestedAccession (only the default-OFF full-body writer does). No
-    // insertIngestedAccession call happens anywhere in this test — proving the receipt no longer
-    // depends on that table at all. All three coverage-checked types retrieve chunks this run.
+  it("(b) THE KEY LOW-NOISE CASE: 10-k requested, NOT retrieved this run, but HAS >=1 ingested_accessions '10-K' row -> receipt does NOT fire", async () => {
+    // Proves normal-run silence: a coverage-checked type that simply didn't rank this run's
+    // top-3 chunks, but genuinely has corpus coverage, must not produce a receipt.
     vi.doMock("../src/lib/vector-db", () => ({
       findRelevantExperiences: async () => [],
       upsertExperiences: async () => {},
       retrieveContext: async () => [],
       retrieveContextDetailed: async () => [
-        { id: "chunk-10k", text: "Risk factors.", score: 0.5, doc_type: "10-k", source: "sec-filings", as_of: "2026-01-01" },
         { id: "chunk-10q", text: "Quarterly.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" },
-        // The load-bearing chunk for this regression test: an 8-K SUMMARY chunk (doc_type "8-k",
-        // source "sec-8k" — exactly as refreshEightK's storeContexts call tags it), with NO
-        // corresponding ingested_accessions row inserted anywhere in this test.
-        { id: "chunk-8k-summary", text: "SEC 8-K filing for AAPL. Material event.", score: 0.5, doc_type: "8-k", source: "sec-8k", as_of: "2026-01-01" }
+        { id: "chunk-8k", text: "Material event.", score: 0.5, doc_type: "8-k", source: "sec-8k", as_of: "2026-01-01" }
       ],
       defaultMinScore: () => 0.3,
       defaultRelevanceFloor: () => 0.3,
@@ -281,8 +269,12 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     stubFetch(openAiBodies);
     await setupBrokerPaperDecide();
 
-    // Deliberately NOT calling insertIngestedAccession for "8-K"/"8-K-body" anywhere — this is
-    // the exact scenario that made the old ingested_accessions-based check false-positive daily.
+    // Seed a real ingested_accessions row for 10-K BEFORE the run — mirrors sec-filings.ts's
+    // always-on ingestFiling writer having produced 10-K coverage for this account in the past,
+    // even though this particular run's retrieval didn't rank a 10-K chunk in the top 3.
+    const { insertIngestedAccession } = await import("../src/lib/db");
+    insertIngestedAccession(`acc-${randomUUID()}`, "10-K", "AAPL", 4);
+
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
     expect(result.status).toBe("completed");
@@ -290,23 +282,60 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     const { listAudit } = await import("../src/lib/db");
     const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
     const coverageAudits = runAudits.filter((e) => e.kind === "rag_doc_type_coverage_empty");
-    // All three coverage-checked types (10-k/10-q/8-k) retrieved chunks this run, so the receipt
-    // must not fire at all — "8-k" in particular must NOT be reported despite zero
-    // ingested_accessions rows for it.
+    // 10-k didn't retrieve this run, but DOES have a producer row -> both-conditions guard keeps
+    // the receipt silent. This is the normal-run case and must never fire.
     expect(coverageAudits.length).toBe(0);
   }, 30_000);
 
-  it("(d) does NOT fire for earnings-transcript even though it retrieves nothing every run (no producer, excluded from coverage checking)", async () => {
-    // All three coverage-checked types retrieve chunks; earnings-transcript (not coverage-checked)
-    // retrieves nothing, as it always will until a producer exists.
+  it("(c) 8-k never triggers a coverage receipt regardless of retrieval/accession state (excluded from COVERAGE_CHECKED_DOC_TYPES)", async () => {
+    // Mirrors the default production config exactly: the 8-K summary writer (sec8k.ts,
+    // WEB_SOURCE_SEC8K default ON) stores retrievable "8-k" chunks but never calls
+    // insertIngestedAccession. Here 8-k retrieves NOTHING this run (the event-sparse case that
+    // motivated this fix) AND has zero ingested_accessions rows — the worst case for the old,
+    // retrieval-only design — yet must still not fire, because 8-k is excluded from
+    // COVERAGE_CHECKED_DOC_TYPES entirely. 10-k/10-q both retrieve chunks this run.
     vi.doMock("../src/lib/vector-db", () => ({
       findRelevantExperiences: async () => [],
       upsertExperiences: async () => {},
       retrieveContext: async () => [],
       retrieveContextDetailed: async () => [
         { id: "chunk-10k", text: "Risk factors.", score: 0.5, doc_type: "10-k", source: "sec-filings", as_of: "2026-01-01" },
-        { id: "chunk-10q", text: "Quarterly.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" },
-        { id: "chunk-8k", text: "Material event.", score: 0.5, doc_type: "8-k", source: "sec-8k", as_of: "2026-01-01" }
+        { id: "chunk-10q", text: "Quarterly.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" }
+      ],
+      defaultMinScore: () => 0.3,
+      defaultRelevanceFloor: () => 0.3,
+      defaultDedupeSimilarity: () => 0.6,
+      formatChunkWithProvenance: (chunk: { text: string }) => chunk.text,
+      storeContext: async () => {},
+      storeContexts: async () => ({ attempted: 0, indexed: 0 })
+    }));
+
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    const openAiBodies: OpenAiBody[] = [];
+    stubFetch(openAiBodies);
+    await setupBrokerPaperDecide();
+
+    // Deliberately NOT calling insertIngestedAccession for "8-K"/"8-K-body" anywhere.
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce();
+    expect(result.status).toBe("completed");
+
+    const { listAudit } = await import("../src/lib/db");
+    const runAudits = listAudit(500).filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
+    const coverageAudits = runAudits.filter((e) => e.kind === "rag_doc_type_coverage_empty");
+    expect(coverageAudits.length).toBe(0);
+  }, 30_000);
+
+  it("(d) does NOT fire for earnings-transcript even though it retrieves nothing every run (no producer, excluded from coverage checking)", async () => {
+    // Both coverage-checked types (10-k/10-q) retrieve chunks; earnings-transcript (not
+    // coverage-checked) retrieves nothing, as it always will until a producer exists.
+    vi.doMock("../src/lib/vector-db", () => ({
+      findRelevantExperiences: async () => [],
+      upsertExperiences: async () => {},
+      retrieveContext: async () => [],
+      retrieveContextDetailed: async () => [
+        { id: "chunk-10k", text: "Risk factors.", score: 0.5, doc_type: "10-k", source: "sec-filings", as_of: "2026-01-01" },
+        { id: "chunk-10q", text: "Quarterly.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" }
       ],
       defaultMinScore: () => 0.3,
       defaultRelevanceFloor: () => 0.3,
@@ -336,7 +365,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
       upsertExperiences: async () => {},
       retrieveContext: async () => [],
       retrieveContextDetailed: async () => [
-        { id: "chunk-10k", text: "Risk factors for AAPL.", score: 0.5, doc_type: "10-k", source: "sec-filings", as_of: "2026-01-01" }
+        { id: "chunk-10q", text: "Risk factors for AAPL.", score: 0.5, doc_type: "10-q", source: "sec-filings", as_of: "2026-01-01" }
       ],
       defaultMinScore: () => 0.3,
       defaultRelevanceFloor: () => 0.3,
@@ -363,10 +392,39 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     expect(bullBody).toBeDefined();
     const bullUser = JSON.parse(userOf(bullBody!)) as Record<string, unknown>;
     // ragContext (retrievedFinancialContext) carries ONLY the retrieved chunk text — the coverage
-    // receipt must never be injected into it.
+    // receipt must never be injected into it. This run also fires the receipt (10-k has no
+    // producer and didn't retrieve) so this doubles as a same-run advisory-invariant check.
     const ragField = String(bullUser.retrievedFinancialContext ?? "");
     expect(ragField).toContain("Risk factors for AAPL.");
     expect(ragField).not.toContain("never ingested");
     expect(ragField).not.toContain("earnings-transcript");
   }, 30_000);
+});
+
+// Placed AFTER the strategy integration tests above — see the ordering note near that block's
+// header. This block seeds a real "10-K" ingested_accessions row, which would otherwise falsify
+// test (a)'s "ZERO ingested_accessions rows for 10-K" premise if it ran first (shared DB per file).
+describe("ingestedAccessionCountForDocType / ingestedAccessionCountsByDocType (db-learning, general-purpose diagnostic helpers)", () => {
+  it("reports 0 for a doc type with no ingested rows", async () => {
+    const { ingestedAccessionCountForDocType } = await import("../src/lib/db");
+    expect(ingestedAccessionCountForDocType("earnings-transcript")).toBe(0);
+  });
+
+  it("reports non-zero for a doc type with ingested rows, tolerating the ingested_accessions naming split — but 0 for '8-k' when only the summary path (no insertIngestedAccession) ran", async () => {
+    const { insertIngestedAccession, ingestedAccessionCountForDocType } = await import("../src/lib/db");
+    // Mirrors src/lib/web-sources/sec-filings.ts (10-K/10-Q stored as the raw SEC form letter).
+    insertIngestedAccession(`acc-${randomUUID()}`, "10-K", "AAPL", 4);
+    // Mirrors src/lib/web-sources/sec8k.ts's FULL-BODY writer (stores "8-K-body", not "8-K").
+    insertIngestedAccession(`acc-${randomUUID()}`, "8-K-body", "AAPL", 2);
+
+    expect(ingestedAccessionCountForDocType("10-k")).toBeGreaterThan(0);
+    // The full-body row above DOES count toward "8-k" via prefix-matching — this function is
+    // correct for that writer. Its documented caveat is that the default-ON SUMMARY writer never
+    // calls insertIngestedAccession at all, so this count understates true corpus coverage for
+    // "8-k" in the default config — which is exactly why "8-k" is excluded from
+    // COVERAGE_CHECKED_DOC_TYPES (the ledger is incomplete for it) even though this helper itself
+    // is correct for what it measures.
+    expect(ingestedAccessionCountForDocType("8-k")).toBeGreaterThan(0);
+    expect(ingestedAccessionCountForDocType("earnings-transcript")).toBe(0);
+  });
 });

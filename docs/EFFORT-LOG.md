@@ -105,6 +105,23 @@ to `socratictrade.com`, record the release commit + date here._
     false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
     31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
     section.
+  - **2026-07-06 THIRD fix (same day) — restore both-conditions guard, ledger-complete subset
+    only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug: firing on
+    this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K — event-sparse,
+    routinely won't rank top-3 — would fire the receipt on a large fraction of normal runs.
+    Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the types whose
+    `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an accession row
+    for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its ledger can't
+    distinguish "no coverage" from "didn't rank today" — excluded; `earnings-transcript` stays
+    excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate for that subset:
+    `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third `hasProducerForDocType`
+    predicate parameter — a type is "empty" only when NOT retrieved this run AND the predicate
+    reports zero producer rows. Kept `prompt-safety.ts` DB-free: `strategy.ts` builds the predicate
+    from ONE bulk `ingestedAccessionCountsByDocType()` call + an in-memory prefix lookup (not N
+    per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts` (14/14 passing) including the
+    key low-noise case: a 10-K that didn't retrieve this run but HAS a producer row must stay
+    silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/`strategy-rag-quickwins-wiring`
+    sweep 5/5. Full rationale in the rollout note's new "Second correction" section.
 
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
