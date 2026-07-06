@@ -38,6 +38,16 @@ test/rag-retrieval-regression.test.ts` → 36/36 passing (17 new: 10 fixture cas
 `it`s + 3 multi-query `it`s). Full `npm test`/`npm run build` intentionally NOT run per this lane's
 scope (test/fixture/docs only).
 
+**2026-07-06 follow-up (second commit, same lane):** fixed a real "byte-for-byte unchanged" claim
+regression — the filings baseline/rerank/hybrid/as-of `it`s had no `cases` filter, so once the
+episodic cases existed they silently scored the full 39-case mix (measured MRR 0.919) instead of
+the original 29 filings cases (MRR 1.0). Added `FILINGS_CASES` and wired it through every
+filings-only `it`; confirmed filings MRR is back to 1.0. Also added an explicit `recall1` assertion
+over the episodic cases (`toBeCloseTo(0.4, 5)`, the actual measured value — recall@3 alone was
+saturated at 1.0 and couldn't discriminate), and replaced a brittle Set+fixed-array-slice assertion
+in the multi-query plumbing test with a no-dupes + all-from-pool check. Test/fixture only, 36/36
+still passing, no test-count change. See rollout note for full detail.
+
 **Next:** none planned for this lane; see rollout note `docs/rollouts/2026-07-06-rag-golden-eval-
 episodic.md` for exact touched files and follow-ups.
 

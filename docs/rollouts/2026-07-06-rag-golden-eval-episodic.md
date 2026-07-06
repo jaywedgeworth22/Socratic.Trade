@@ -72,6 +72,51 @@
 - Did NOT run full `npm test` / `npm run build` per this lane's stated scope (test/fixture/docs
   only) and the task instructions (focused-test verification only).
 
+## 2026-07-06 follow-up: honesty + discrimination fixes (second commit, same lane)
+
+A post-merge review caught two fixture-quality issues in the change above; both are fixed here,
+test/fixture only, no production code, no test-count change (fix 2 extended an existing `it`
+rather than adding a new one; fix 3 tightened assertions within an existing `it`).
+
+- **Fix 1 (byte-for-byte claim was false):** the filings baseline/rerank/hybrid/as-of `it`s in
+  `test/rag-retrieval-eval.test.ts` called `runFixture({ rerank, hybrid, limit })` with **no**
+  `cases` filter, so once the 10 episodic cases existed those tests silently scored the full
+  39-case mix instead of the original ~29 filings cases — contradicting this note's "filings
+  behavior byte-for-byte unchanged" framing. Measured: full-39-case MRR = **0.919** (not 1.0) vs
+  filings-only-29-case MRR = **1.0**. Added `FILINGS_CASES = RAG_EVAL_FIXTURE.filter(c =>
+  !c.id.startsWith("episodic-"))` and passed `cases: FILINGS_CASES` to every filings-only `it`
+  (baseline, rerank-vs-no-rerank, as-of guard, and all three `item 4: hybrid` `it`s, which had the
+  same latent bug via `RAG_EVAL_FIXTURE.findIndex`/`.forEach`) — mirroring the episodic block's own
+  `EPISODIC_CASES` pattern. The as-of guard test's index lookup was switched from
+  `RAG_EVAL_FIXTURE.findIndex` to `FILINGS_CASES.findIndex` so its index still lines up with the
+  filtered `results`/`gold` arrays. **Confirmed: filings baseline MRR is back to 1.0** (recall@3=1.0,
+  recall@1=1.0) after the fix.
+- **Fix 2 (recall@3 was saturated, not discriminating):** the episodic suite's only quantitative
+  `it` asserted `recall3 >= 0.6` and `mrr >= 0.4`, but recall@3 measures 1.0 on this fixture (at
+  limit=3 the mock reranker always keeps gold somewhere in the top 3) — so that floor could never
+  catch anything short of a catastrophic regression; the only real discriminating signal was MRR.
+  Added an explicit `recall1` computation and `expect(recall1).toBeCloseTo(0.4, 5)` — the ACTUAL
+  measured value (not a guess): 4 of the 10 episodic cases hit gold at rank 1
+  (`episodic-owner-coaching-sizing`, `episodic-lesson-sector-concentration`,
+  `episodic-msft-value-thesis-analog`, `episodic-meta-side-short-analog`); the other 6
+  (`episodic-nvda-momentum-analog`, `episodic-tsla-riskoff-counterexample`,
+  `episodic-amzn-thesis-tag-exact-term`, `episodic-asof-guard-analog`,
+  `episodic-googl-counterexample-dissent`, `episodic-jpm-rate-thesis-analog`) have a near-miss hard
+  negative outrank gold at rank 1 on the lexical-overlap mock, exactly as designed. Sanity-checked
+  that this assertion is load-bearing by temporarily changing the expected value to 0.9 and
+  confirming the test fails (`expected 0.4 to be close to 0.9`), then reverted.
+- **Fix 3 (brittle mixed-mode assertion):** the multi-query plumbing `it`
+  ("the fused candidate pool draws from multiple query lists...") mixed an order-insensitive
+  `Set` compare with an order-sensitive `.slice(0, multi.length)` of a hardcoded 3-id array —
+  fragile against any harmless reordering of `rrfFuse`'s output. Replaced with
+  `expect(new Set(multi).size).toBe(multi.length)` (no duplicate ids — proves de-dup actually ran)
+  and `expect(multi.every(id => poolIds.has(id))).toBe(true)` (every returned id is a real pool
+  member) — no fixed-array slice.
+- Verification: `npx tsc --noEmit` clean; `npx vitest run test/rag-retrieval-eval.test.ts
+  test/rag-retrieval-regression.test.ts` — **36/36 passing** (same count as before this follow-up:
+  fix 2 extended an existing `it`, fix 3 edited assertions in an existing `it`, no new/removed
+  `it`s).
+
 ## Follow-ups
 
 - The multi-query suite's assertions are deliberately no-regression + plumbing-only, not a claimed
