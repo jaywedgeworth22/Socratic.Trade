@@ -787,6 +787,7 @@ export async function runStrategyOnce(
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
               connectedAccountId: policy.connectedAccountId,
+              runId,
               ...(variants.length > 0 ? { queries: variants } : {}),
               // Typed retrieval-status receipt (typed-retrieval-status, 2026-07-06): advisory only,
               // never affects `chunks` — see RetrievalStatus in vector-db.ts.

@@ -478,6 +478,7 @@ export async function retrieveDecisionExperiences(
         asOf,
         minScore: defaultMinScore(),
         connectedAccountId: input.connectedAccountId,
+        runId: input.runId,
         onStatus: (s) => {
           vectorStatusRef.value = s;
         }

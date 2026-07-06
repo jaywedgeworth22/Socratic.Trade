@@ -169,6 +169,23 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Captures the post-recall/post-dedupe candidate pool from
+  `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the final top-`limit`
+  slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF, byte-identical when off).
+  **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so candidates dropped upstream
+  by minScore/asOf/dedupe are never present, and in the flagship production caller (dedupe 0.6 +
+  limit 3, both of which already hard-cap output at `limit`) `used:false` rows are rare/absent —
+  a pre-rankPool v2 with per-stage drop reasons is the real follow-up (see rollout note). New
+  `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
+  new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
+  added (additive) and threaded from both `strategy.ts` retrieval call sites +
+  `experience-memory.ts`. Coordinates with sibling lane `claude/typed-retrieval-status` (same file,
+  disjoint region — this lane owns only the block right before the final slice; lands after it).
+  Local verify: `tsc --noEmit` clean, `test/persist-candidate-pool.test.ts` (new) +
+  `test/rag-retrieval-regression.test.ts` 26/26 green, plus spot-checked adjacent RAG/strategy/
+  experience-memory suites, no regressions. Rollout:
+  `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
 - **Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE).** Advisory-only
   per-run receipt: when strategy.ts's filings-RAG pass requests a doc type that produces zero
   chunks THIS run, emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety`
