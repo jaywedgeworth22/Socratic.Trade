@@ -8,9 +8,11 @@
 //      appends, and the reflection summary).
 //   2. collectEvidenceAgeAnomalies — flags evidence that is suspiciously FRESH (first seen <24h
 //      before the run): a high-relevance RAG chunk dated today, or a learned fact asserted today.
-//   3. computeEmptyDocTypes — flags a requested filings doc type that produced zero chunks THIS
-//      run AND has zero ever-ingested rows (corpus-wide) — i.e. evidence that structurally cannot
-//      exist yet, not just a normal low-relevance miss.
+//   3. computeEmptyDocTypes — flags a COVERAGE-CHECKED filings doc type (a static allowlist of
+//      types with a known producer in code, e.g. 10-k/10-q/8-k — see COVERAGE_CHECKED_DOC_TYPES
+//      in strategy.ts) that produced zero chunks THIS run. "earnings-transcript" is deliberately
+//      excluded from that allowlist: it has no producer anywhere in the repo today, so checking it
+//      would fire a receipt every run forever.
 //
 // OWNER PHILOSOPHY (binding): detection IS the control. Findings become audit rows and
 // decision-case evidence items — the scanned text is NEVER altered, dropped, or blocked, and
@@ -207,34 +209,42 @@ export function collectEvidenceAgeAnomalies(items: EvidenceAgeInput[], now: Date
 }
 
 /**
- * Corpus-coverage receipt (corpus-coverage-receipt, 2026-07-06): a requested filings doc type
- * counts as "empty" for this run ONLY when BOTH hold:
- *   1. zero chunks of that doc type were retrieved THIS run, AND
- *   2. the corpus has ZERO ever-ingested rows of that doc type (any ticker, all time).
+ * Corpus-coverage receipt (corpus-coverage-receipt, 2026-07-06; corrected 2026-07-06 — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md): a coverage-checked filings doc type
+ * counts as "empty" for this run when zero chunks of that doc type were retrieved THIS run.
  *
- * This both-conditions rule is deliberate: a doc type with ingested rows that simply didn't rank
- * for THIS run's query (normal low-relevance — happens daily) must NOT be reported here, or the
- * receipt would false-positive constantly. Only a doc type the corpus has NEVER produced (e.g.
- * "earnings-transcript" today — no writer exists yet) is worth a receipt: it tells the operator
- * "you asked for this evidence but it structurally cannot exist yet", not "today's search missed".
+ * `coverageCheckedDocTypes` (the caller's `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts) is
+ * ALREADY restricted to doc types with a known producer in code — see that constant's comment
+ * for why. Originally this function also required "zero ever-ingested rows in
+ * `ingested_accessions`" as a second condition, to avoid firing on an ordinary low-relevance miss
+ * for a type that legitimately has corpus rows. That signal was REMOVED: it read
+ * `ingested_accessions`, but the default-ON 8-K SUMMARY writer (src/lib/web-sources/sec8k.ts,
+ * `storeContexts` with `doc_type: "8-k"`) never calls `insertIngestedAccession` — only the
+ * default-OFF 8-K FULL-BODY writer does (under the "8-K-body" sentinel). So in the default
+ * config, `ingested_accessions` has ZERO "8-k" rows even though retrievable 8-K chunks exist in
+ * the corpus, and this function would report "8-k" as empty (hence a false-positive receipt)
+ * every time an 8-K chunk simply didn't rank top-3 for a run — i.e. most days. There is no local,
+ * per-doc_type-queryable table that ALL chunk writers populate (`document_chunks` has no
+ * `doc_type` column — see the constant's comment), so rather than trust a broken/partial signal,
+ * this function now trusts the caller's static "known producer" allowlist and fires purely on
+ * this-run retrieval emptiness for those pre-vetted types. This is a coarser check (it cannot
+ * distinguish "never once produced" from "didn't rank today" for a producible type) but it can no
+ * longer false-positive on a producer that simply doesn't write `ingested_accessions`.
  *
- * Pure; `ingestedCountByRequestedType` must already be resolved by the caller (this module stays
- * DB-free) keyed by the SAME requested doc type strings passed in `requestedDocTypes`.
+ * Pure; DB-free.
  */
 export function computeEmptyDocTypes(
-  requestedDocTypes: string[],
-  retrievedDocTypes: Iterable<string | undefined>,
-  ingestedCountByRequestedType: Record<string, number>
+  coverageCheckedDocTypes: string[],
+  retrievedDocTypes: Iterable<string | undefined>
 ): string[] {
   const retrieved = new Set<string>();
   for (const dt of retrievedDocTypes) {
     if (dt) retrieved.add(dt.toLowerCase());
   }
   const empty: string[] = [];
-  for (const requested of requestedDocTypes) {
+  for (const requested of coverageCheckedDocTypes) {
     const normalized = requested.toLowerCase();
     if (retrieved.has(normalized)) continue;
-    if ((ingestedCountByRequestedType[normalized] ?? 0) > 0) continue;
     empty.push(requested);
   }
   return empty;

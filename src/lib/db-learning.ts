@@ -866,13 +866,21 @@ export function ingestedAccessionCountsByDocType(): Record<string, number> {
  *
  * `doc_type` casing/naming in `ingested_accessions` is NOT uniform across writers — see
  * src/lib/web-sources/sec-filings.ts (stores the raw SEC form letter, e.g. "10-K"/"10-Q") vs.
- * src/lib/web-sources/sec8k.ts (stores the sentinel "8-K-body", not "8-K"). A naive
- * `LOWER(doc_type) === requested` lookup would therefore report zero ingested 8-K rows FOREVER
- * even after real 8-K ingestion ran, which would false-positive a "never ingested" receipt every
- * day. To stay correct across those writers without a schema change, any stored type whose
- * lowercased form starts with the requested (lowercased) type counts toward it — e.g. "8-k-body"
- * counts toward requested "8-k"; "10-k" counts toward requested "10-k" exactly (no other stored
- * type shares that prefix).
+ * src/lib/web-sources/sec8k.ts's FULL-BODY writer (stores the sentinel "8-K-body", not "8-K").
+ * The prefix-tolerant lookup below (any stored type whose lowercased form starts with the
+ * requested lowercased type) reconciles that split — e.g. "8-k-body" counts toward requested
+ * "8-k"; "10-k" counts toward requested "10-k" exactly (no other stored type shares that prefix).
+ *
+ * IMPORTANT CAVEAT (found 2026-07-06, see docs/rollouts/2026-07-06-corpus-coverage-receipt.md):
+ * this table is NOT a complete producer-existence signal for "8-k". The default-ON 8-K SUMMARY
+ * writer (`refreshEightK`'s `storeContexts` call in sec8k.ts) writes retrievable "8-k" chunks to
+ * the vector corpus but never calls `insertIngestedAccession` at all — only the default-OFF
+ * full-body writer (`ingestEightKBody`) does. So in the default config this function returns 0 for
+ * "8-k" even when the corpus has real, retrievable 8-K chunks. Do NOT use this function (alone) as
+ * a "has this doc type ever been produced" check for "8-k" — that's why strategy.ts's
+ * corpus-coverage receipt no longer calls it; see `COVERAGE_CHECKED_DOC_TYPES` in strategy.ts and
+ * `computeEmptyDocTypes` in prompt-safety.ts. This remains a correct, useful admin/diagnostic
+ * "how many accessions has the full-body pipeline recorded" count.
  */
 export function ingestedAccessionCountForDocType(requestedDocType: string): number {
   const counts = ingestedAccessionCountsByDocType();

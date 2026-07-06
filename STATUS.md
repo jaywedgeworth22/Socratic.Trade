@@ -8,37 +8,40 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-06 — Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE, in progress)
+## 2026-07-06 — Corpus-coverage receipt: BLOCKER fix (8-K false-positive) + noise fix (earnings-transcript) (CLAUDE, in progress)
 
-Branch `claude/corpus-coverage-receipt` (worktree `~/apps/trading-wt-corpus-coverage`). Adds ONE
-new advisory receipt to strategy.ts's filings-RAG pass, modeled directly on the existing
-`evidence_age_anomaly` receipt block: when a requested doc type (`10-k`/`10-q`/`8-k`/
-`earnings-transcript`) produces zero retrieved chunks THIS run **and** the corpus has zero
-ever-ingested rows of that type (all tickers, all time), emits one
-`audit('rag_doc_type_coverage_empty', { runId, symbols, emptyDocTypes, requestedDocTypes })` +
-one kind-`safety` `SocraticEvidenceItem` ("Requested filings doc type never ingested"). A type
-that's simply low-relevance this run but HAS ingested rows must NOT fire — that's normal and
-would false-positive daily otherwise.
+Branch `claude/corpus-coverage-receipt` (worktree `~/apps/trading-wt-corpus-coverage`). Post-merge
+review of the receipt below (still same day) found the original design's producer-existence signal
+was itself broken for `8-k`: the default-ON 8-K SUMMARY writer (`src/lib/web-sources/sec8k.ts`,
+`refreshEightK`'s `storeContexts` call) writes retrievable `doc_type: "8-k"` chunks but never calls
+`insertIngestedAccession` — only the default-OFF full-body writer does. So `ingested_accessions`
+had ZERO "8-k" rows in the default config even with real 8-K chunks in the corpus, meaning the
+receipt would have false-fired "8-k" on any day an 8-K chunk simply didn't rank top-3 — i.e.
+routinely. Investigated `document_chunks` as the reviewer's suggested corpus-truth replacement and
+confirmed it's not viable (no `doc_type` column in its schema, not populated unconditionally by all
+writers, `source`/prefix values aren't a reliable doc_type proxy either — see the rollout note's
+"Correction" section for full detail). Fixed per the task's own documented fallback: dropped the
+runtime `ingested_accessions`-based producer-count check entirely and replaced it with a static
+`COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"]` allowlist (`src/lib/strategy.ts`) of doc
+types hand-verified (by reading the writers) to have an actual producer in code.
+`computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes,
+retrievedDocTypes)` — no ingested-rows condition, no DB call at all now.
 
-Two new pieces:
-- `ingestedAccessionCountForDocType` / `ingestedAccessionCountsByDocType`
-  (`src/lib/db-learning.ts`, barrel-reexported via `db.ts`) — one cheap `GROUP BY LOWER(doc_type)`
-  query, no new table/migration. Tolerates the pre-existing `ingested_accessions.doc_type` naming
-  split: `src/lib/web-sources/sec-filings.ts` stores the raw SEC form letter (`"10-K"`/`"10-Q"`),
-  but `src/lib/web-sources/sec8k.ts` stores the sentinel `"8-K-body"` — NOT `"8-K"`. A naive
-  case-only match would report zero ingested 8-K rows forever and false-positive on every run, so
-  the lookup treats any stored type whose lowercase form starts with the requested type as a
-  match.
-- `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`, pure, alongside `collectEvidenceAgeAnomalies`)
-  — the both-conditions diff (not-retrieved-this-run AND zero-ever-ingested).
+Also fixed the noise finding: `earnings-transcript` (genuinely zero-producer, no writer anywhere)
+is now excluded from `COVERAGE_CHECKED_DOC_TYPES` — it stays in the retrieval request list passed
+to `retrieveContextDetailed` (harmless, separate), but checking it for coverage would fire a
+receipt every run forever, training the operator to ignore the whole receipt. `docs/EFFORT-LOG.md`
+below and `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`'s new "Correction" section have full
+rationale; the original "## Files"/"## Verification" sections of that rollout note are left as the
+historical record of the pre-fix state.
 
-Advisory only, no flag (mirrors `evidence_age_anomaly`, which is unconditional): never touches
-`ragContext`, sizing, or policy. Verified via `test/rag-doc-type-coverage.test.ts` (10 tests:
-pure-helper unit tests, DB-helper unit tests incl. the naming-split case, a full `runStrategyOnce`
-integration test that the receipt fires with only the genuinely-empty type named, a
-no-false-positive case, and an advisory-invariant check that `ragContext`/proposal count are
-unchanged). `npx tsc --noEmit` clean. See
-`docs/rollouts/2026-07-06-corpus-coverage-receipt.md` for full verification detail.
+Verified: `npx tsc --noEmit` clean; `npx vitest run test/rag-doc-type-coverage.test.ts` — **11
+passed / 11** (added a regression test that stores an 8-K summary chunk with NO
+`insertIngestedAccession` call anywhere and asserts the receipt does not fire for "8-k" — proves
+the fix); regression spot-checks (`prompt-safety`, `strategy-prompt-safety`,
+`strategy-rag-quickwins-wiring`, `rag-multi-query-retrieval`, `sec8k-full-body`, `sec-filings`) all
+still green (42/42 + 31/31, unchanged from before this fix); `npx eslint` on the touched files — 0
+errors, 4 pre-existing unrelated warnings in `strategy.ts`.
 
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 

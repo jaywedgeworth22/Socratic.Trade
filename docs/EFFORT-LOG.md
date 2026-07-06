@@ -73,19 +73,38 @@ to `socratictrade.com`, record the release commit + date here._
 ## 🚧 In Progress
 
 - **Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE).** Advisory-only
-  per-run receipt: when strategy.ts's filings-RAG pass requests a doc type (10-K/10-Q/8-K/
-  earnings-transcript) that produces zero chunks THIS run AND has zero ever-ingested
-  `ingested_accessions` rows corpus-wide (e.g. "earnings-transcript" — no writer exists yet),
-  emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety` decision-case evidence
-  item. Both-conditions rule is load-bearing: a type that's merely low-relevance-this-run but HAS
-  ingested rows must NOT fire (would false-positive daily). New `ingestedAccessionCountForDocType`
-  (`src/lib/db-learning.ts`, re-exported via the `db.ts` barrel) tolerates the pre-existing
-  `ingested_accessions.doc_type` naming split across writers (10-K/10-Q store the raw form
-  letter; 8-K stores the sentinel `"8-K-body"`, not `"8-K"`) via prefix matching so 8-K coverage
-  doesn't perpetually false-positive. Pure `computeEmptyDocTypes` lives in `src/lib/prompt-safety.ts`
-  alongside `collectEvidenceAgeAnomalies`. Never touches `ragContext`/sizing/policy — advisory
-  only, no flag (mirrors the unconditional `evidence_age_anomaly` receipt). Branch
-  `claude/corpus-coverage-receipt`. Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  per-run receipt: when strategy.ts's filings-RAG pass requests a doc type that produces zero
+  chunks THIS run, emits one `audit('rag_doc_type_coverage_empty')` + one kind-`safety`
+  decision-case evidence item. Never touches `ragContext`/sizing/policy — advisory only, no flag
+  (mirrors the unconditional `evidence_age_anomaly` receipt). Branch `claude/corpus-coverage-receipt`.
+  Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  - **2026-07-06 BLOCKER fix (same day):** the original design gated the receipt on
+    "zero ever-ingested `ingested_accessions` rows corpus-wide" as the producer-existence check.
+    That signal was itself broken: the default-ON 8-K SUMMARY writer
+    (`src/lib/web-sources/sec8k.ts`'s `refreshEightK`, via `storeContexts`) writes retrievable
+    `doc_type: "8-k"` chunks but never calls `insertIngestedAccession` — only the default-OFF
+    full-body writer does. So `ingested_accessions` had ZERO "8-k" rows in the default config even
+    with real 8-K chunks in the corpus, meaning the receipt false-fired "8-k" on any day an 8-K
+    chunk didn't rank top-3 — routinely, not rarely. Investigated `document_chunks` as a
+    corpus-truth replacement (the reviewer's suggestion) and confirmed it's not viable: no
+    `doc_type` column in its schema, not populated unconditionally by every writer, and
+    `source`/prefix values aren't a reliable per-doc_type proxy (`disclosure-rag.ts` shares one
+    prefix across two different doc types). Fixed per the task's documented fallback: dropped the
+    runtime `ingested_accessions` producer-count entirely; added a static
+    `COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"]` allowlist (`src/lib/strategy.ts`) of
+    doc types hand-verified to have a producer in code; `computeEmptyDocTypes`
+    (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes, retrievedDocTypes)` with no
+    DB dependency at all. Also fixed the companion noise finding: `earnings-transcript` (genuine
+    zero-producer, no writer anywhere) excluded from `COVERAGE_CHECKED_DOC_TYPES` (stays in the
+    harmless retrieval-request literal) so it no longer fires a receipt every single run forever.
+    `ingestedAccessionCountForDocType`/`ingestedAccessionCountsByDocType`
+    (`src/lib/db-learning.ts`) kept as general-purpose diagnostic helpers (doc comment corrected
+    to spell out the "8-k" undercount caveat), just no longer used by this receipt. Added the
+    regression test the fix requires (`test/rag-doc-type-coverage.test.ts`, "(c) REGRESSION"):
+    stores an 8-K summary chunk with NO `insertIngestedAccession` call anywhere and asserts no
+    false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
+    31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
+    section.
 
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent

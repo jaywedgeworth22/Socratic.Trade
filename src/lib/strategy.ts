@@ -10,7 +10,6 @@ import {
   getPolicy,
   getProposal,
   getStrategyPrompt,
-  ingestedAccessionCountForDocType,
   insertProposal,
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
@@ -127,6 +126,36 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+/**
+ * corpus-coverage-receipt (2026-07-06, corrected same day — see
+ * docs/rollouts/2026-07-06-corpus-coverage-receipt.md): doc types the empty-corpus receipt
+ * (below, near `computeEmptyDocTypes`) actually checks. Deliberately a STATIC allowlist of types
+ * KNOWN to have a producer in code today:
+ *   - "10-k" / "10-q": src/lib/web-sources/sec-filings.ts `ingestFiling` (always on).
+ *   - "8-k": src/lib/web-sources/sec8k.ts, BOTH the default-ON summary writer (`refreshEightK`'s
+ *     `storeContexts` call, `doc_type: "8-k"`) and the default-OFF full-body writer
+ *     (`ingestEightKBody`, `doc_type: "8-k"` via `storeDocument`).
+ *
+ * "earnings-transcript" is deliberately EXCLUDED here (it stays in the retrieval request list
+ * below, `requestedFilingsDocTypes` — that part is separate and harmless): no ingestion writer
+ * exists anywhere in this repo for it today, so it is a genuine, permanent zero-producer. Checking
+ * it for coverage would fire a receipt on every single run forever, training the operator to
+ * ignore the whole receipt and masking real 10-k/10-q/8-k signal. Re-add it here the day a
+ * producer lands.
+ *
+ * Originally this receipt ALSO required "zero rows ever in `ingested_accessions`" for a type
+ * before flagging it, to avoid firing on an ordinary daily low-relevance miss. That signal was
+ * removed because it was flat-out wrong for "8-k": the default-ON 8-K SUMMARY writer never calls
+ * `insertIngestedAccession` (only the default-OFF full-body writer does, under the "8-K-body"
+ * sentinel), so `ingested_accessions` has ZERO "8-k" rows in the default config even though
+ * retrievable 8-K chunks exist — making the receipt false-positive on "8-k" on any day an 8-K
+ * chunk didn't rank top-3. There is no local table that ALL chunk writers populate keyed by
+ * doc_type (`document_chunks` — see db-learning.ts — has no `doc_type` column; it's an opaque
+ * content-hash dedup table, not a queryable per-type corpus index), so this allowlist is the
+ * fallback: trust the static "a producer exists" fact instead of a partial/broken runtime count.
+ */
+const COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"];
 
 // STRATEGY_PROMPT_VERSION is imported at the top and re-exported here so existing consumers/tests
 // can still `import { STRATEGY_PROMPT_VERSION } from "./strategy"`; it lives in its own tiny module
@@ -671,8 +700,13 @@ export async function runStrategyOnce(
     const promptSafetyEvidence: SocraticEvidenceItem[] = [];
     const evidenceAgeInputs: EvidenceAgeInput[] = [];
     // corpus-coverage-receipt (2026-07-06): the filings doc types requested below, hoisted so the
-    // coverage receipt after this block can compare "requested" against "retrieved this run"
-    // without re-declaring the literal. Advisory only — never affects the retrieval call itself.
+    // coverage receipt after this block can report "requested" alongside "retrieved this run" /
+    // "empty" without re-declaring the literal. Advisory only — never affects the retrieval call
+    // itself. NOTE: the coverage receipt itself only CHECKS the COVERAGE_CHECKED_DOC_TYPES subset
+    // (10-k/10-q/8-k) against retrievedFilingsDocTypes below — "earnings-transcript" stays in this
+    // retrieval request list (harmless — retrieveContextDetailed just gets one more empty filter
+    // value) but is deliberately excluded from the coverage check itself; see
+    // COVERAGE_CHECKED_DOC_TYPES's comment near the top of this file.
     const requestedFilingsDocTypes = ["10-k", "10-q", "8-k", "earnings-transcript"];
     const retrievedFilingsDocTypes = new Set<string>();
     // Gate RAG on the budget/reservation skip. When a concurrent same-user run holds the reservation (or
@@ -817,17 +851,12 @@ export async function runStrategyOnce(
     }
 
     // ── Corpus-coverage receipt (advisory only) ────────────────────────────
-    // ONE aggregated audit + ONE kind-'safety' evidence item when a requested filings doc type
-    // produced zero chunks THIS run AND the corpus has zero ever-ingested rows of that type (e.g.
-    // "earnings-transcript" today — no writer exists yet). A doc type that simply didn't rank this
-    // run but DOES have ingested rows is normal and must NOT fire here (see computeEmptyDocTypes).
-    // Never touches ragContext/sizing/policy — receipt only.
+    // ONE aggregated audit + ONE kind-'safety' evidence item when a COVERAGE-CHECKED filings doc
+    // type (COVERAGE_CHECKED_DOC_TYPES — a static allowlist of types with a known producer in
+    // code; see its comment for why "earnings-transcript" is deliberately excluded) produced zero
+    // chunks THIS run. Never touches ragContext/sizing/policy — receipt only.
     if (!skipLlmDueToBudget) {
-      const ingestedCountByRequestedType: Record<string, number> = {};
-      for (const dt of requestedFilingsDocTypes) {
-        ingestedCountByRequestedType[dt.toLowerCase()] = ingestedAccessionCountForDocType(dt);
-      }
-      const emptyDocTypes = computeEmptyDocTypes(requestedFilingsDocTypes, retrievedFilingsDocTypes, ingestedCountByRequestedType);
+      const emptyDocTypes = computeEmptyDocTypes(COVERAGE_CHECKED_DOC_TYPES, retrievedFilingsDocTypes);
       if (emptyDocTypes.length > 0) {
         const coverageSymbols = marketScan.topCandidates.slice(0, 3).map((c) => c.symbol);
         audit(
@@ -841,8 +870,8 @@ export async function runStrategyOnce(
           tone: "warning",
           title: "Requested filings doc type never ingested",
           summary:
-            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run and have zero ever-ingested ` +
-            `rows in the corpus: ${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
+            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run: ` +
+            `${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
           source: "prompt-safety",
           data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
         });
