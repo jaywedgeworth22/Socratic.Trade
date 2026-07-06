@@ -34,6 +34,7 @@ import type {
   CommitteeConflict,
   PriceClose,
   PriceSeries,
+  SecurityRef,
 } from "@jaywedgeworth22/congress-trading-shared";
 import {
   API_PATHS,
@@ -41,7 +42,6 @@ import {
   MAX_REFS_BATCH,
   TransactionsPageSchema,
 } from "@jaywedgeworth22/congress-trading-shared";
-import type { CongressRef } from "./congress-share";
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
 import { logApiHealth } from "./db-health";
@@ -50,7 +50,7 @@ const DEFAULT_BASE_URL = "https://congress.trade";
 const DEFAULT_TIMEOUT_MS = 8_000;
 
 export interface AppABundle {
-  ref: CongressRef | null;
+  ref: SecurityRef | null;
   prices: PriceSeries | null;
   spx: PriceClose[];
 }
@@ -154,23 +154,23 @@ export async function getAppABundle(ticker: string, opts?: { from?: string; to?:
   }
 }
 
-export async function getAppARef(ticker: string): Promise<CongressRef | null> {
+export async function getAppARef(ticker: string): Promise<SecurityRef | null> {
   if (!congressReadsEnabled()) return null;
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
   try {
-    return (await getClient().getRef(sym)) as CongressRef | null;
+    return (await getClient().getRef(sym)) as SecurityRef | null;
   } catch {
     return null;
   }
 }
 
-export async function getAppARefs(tickers: string[]): Promise<CongressRef[]> {
+export async function getAppARefs(tickers: string[]): Promise<SecurityRef[]> {
   if (!congressReadsEnabled()) return [];
   const syms = Array.from(new Set(tickers.map(normalizeSymbol).filter(Boolean)));
   if (syms.length === 0) return [];
   try {
-    return (await getClient().getRefs(syms)) as unknown as CongressRef[];
+    return (await getClient().getRefs(syms)) as unknown as SecurityRef[];
   } catch {
     return [];
   }
