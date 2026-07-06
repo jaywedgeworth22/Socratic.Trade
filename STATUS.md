@@ -43,6 +43,48 @@ risk-gate/sizing/policy touch.
   assertion in `test/strategy-held-position-retrieval-scope.test.ts` that calls the real
   `buildSituationSketch` on the captured input to prove the held symbol reaches actual query text.
 - Full details: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+## 2026-07-06 — RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+
+Worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`. Test/fixture/
+docs only, no production code touched.
+
+**What changed:** `test/fixtures/rag-retrieval-eval-fixture.ts` gained 10 new cases covering
+`EPISODIC_DOC_TYPES` (`socratic-decision`/`coach-note`/`lesson`, `src/lib/experience-memory.ts:44`)
+— the prior fixture (462 lines, 29 cases) had zero non-filings cases, so the harness reportedly
+saturated at recall 1.0. Each new case ships >=1 near-miss hard negative (same symbol/regime, wrong
+thesis or direction) so recall is a real signal, not a giveaway; one case (`episodic-asof-guard-
+analog`) exercises the point-in-time guard on an episodic doc_type the same way the existing
+`aapl-8k-asof-guard` case does for filings.
+
+`test/rag-retrieval-eval.test.ts` gained two `describe` blocks:
+1. Episodic recall@k/MRR eval — reuses the existing scorer functions via a minimal additive
+   `cases?: FixtureCase[]` option threaded onto `runFixture` (defaults to the full fixture, so
+   every existing call site is byte-for-byte unchanged).
+2. Single-query-vs-multi-query fan-out exercising `RetrieveOptions.queries`/`rrfFuse` (#822)
+   directly against `retrieveContextDetailed` — no flag flips, no production code changes. Because
+   the mock returns the identical recorded pool for every fan-out variant, the assertions are
+   no-regression (multi-query recall >= single-query recall) plus a plumbing check that
+   `mocks.query` fires once per fan-out variant and the fused pool is a de-duplicated union across
+   variants — not a claimed strict improvement (documented inline; the mock can't manufacture a
+   variant-specific gain by construction).
+
+**Verification:** `npx tsc --noEmit` clean. `npx vitest run test/rag-retrieval-eval.test.ts
+test/rag-retrieval-regression.test.ts` → 36/36 passing (17 new: 10 fixture cases + 4 episodic eval
+`it`s + 3 multi-query `it`s). Full `npm test`/`npm run build` intentionally NOT run per this lane's
+scope (test/fixture/docs only).
+
+**2026-07-06 follow-up (second commit, same lane):** fixed a real "byte-for-byte unchanged" claim
+regression — the filings baseline/rerank/hybrid/as-of `it`s had no `cases` filter, so once the
+episodic cases existed they silently scored the full 39-case mix (measured MRR 0.919) instead of
+the original 29 filings cases (MRR 1.0). Added `FILINGS_CASES` and wired it through every
+filings-only `it`; confirmed filings MRR is back to 1.0. Also added an explicit `recall1` assertion
+over the episodic cases (`toBeCloseTo(0.4, 5)`, the actual measured value — recall@3 alone was
+saturated at 1.0 and couldn't discriminate), and replaced a brittle Set+fixed-array-slice assertion
+in the multi-query plumbing test with a no-dupes + all-from-pool check. Test/fixture only, 36/36
+still passing, no test-count change. See rollout note for full detail.
+
+**Next:** none planned for this lane; see rollout note `docs/rollouts/2026-07-06-rag-golden-eval-
+episodic.md` for exact touched files and follow-ups.
 ## 2026-07-06 — Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`)
 
 Added a typed `RetrievalStatus` receipt (`ok | no_memory | lookup_failed | budget_skipped |
