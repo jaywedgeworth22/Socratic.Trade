@@ -333,7 +333,10 @@ export interface SituationCandidate {
 }
 
 /** Hard cap on candidates folded into the sketch text, so a large held-position book can never
- *  make the situation-sketch query unbounded (top-3 scan + up to 3 extra held names). */
+ *  make the situation-sketch query unbounded: total selected (top-3 scan + held overflow) never
+ *  exceeds this cap. In the common case (3+ scan candidates) that's top-3 + up to 3 extra held
+ *  names; if fewer than 3 scan candidates are passed, the held budget grows to fill the cap
+ *  (e.g. 1 scan candidate leaves room for up to 5 held names). */
 const SITUATION_SKETCH_MAX_CANDIDATES = 6;
 
 /**

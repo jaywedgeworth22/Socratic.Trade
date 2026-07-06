@@ -784,8 +784,9 @@ export async function runStrategyOnce(
         console.warn("[Strategy] Skipping RAG context, vector-db or keys might not be available.");
         // Typed retrieval-status receipt: this catch covers the WHOLE filings pass (e.g. the
         // dynamic `import("./vector-db")` itself throwing), so no per-symbol onStatus callback may
-        // have fired yet — record a fallback row per top symbol so the receipt isn't silently absent.
-        for (const sym of marketScan.topCandidates.slice(0, 3).map((c) => normalizeSymbol(c.symbol))) {
+        // have fired yet — record a fallback row per symbol actually in scope (top-3 UNION held
+        // positions — see `topSymbols` above) so the receipt isn't silently absent for a held name.
+        for (const sym of uniqueSymbols([...marketScan.topCandidates.slice(0, 3).map((c) => c.symbol), ...heldSymbols])) {
           if (!ragRetrievalStatusRows.some((row) => row.symbol === sym)) {
             ragRetrievalStatusRows.push({ symbol: sym, status: "lookup_failed", reason: e instanceof Error ? e.message : String(e) });
           }
@@ -886,12 +887,14 @@ export async function runStrategyOnce(
         // memory too. marketScan.topCandidates force-includes every held symbol (see market.ts
         // heldExtra), so the fuller candidate shape (sector/dominantFactor/evidence) is available
         // via lookup; a minimal symbol+sector fallback covers the defensive case where it's somehow
-        // absent (e.g. a mocked/partial marketScan in a test).
+        // absent (e.g. a mocked/partial marketScan in a test). Lookup map built once so the loop
+        // below is O(heldSymbols) rather than O(heldSymbols x topCandidates).
         const coveredSymbols = new Set(topSlice.map((c) => normalizeSymbol(c.symbol)));
+        const candidateBySymbol = new Map(marketScan.topCandidates.map((c) => [normalizeSymbol(c.symbol), c]));
         for (const heldSym of heldSymbols) {
           if (coveredSymbols.has(heldSym)) continue;
           coveredSymbols.add(heldSym);
-          const fullCandidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === heldSym);
+          const fullCandidate = candidateBySymbol.get(heldSym);
           // `held: true` lets buildSituationSketch (experience-memory.ts) fold this candidate into
           // the episodic query text even though it's appended past the top-3 slice — without that
           // flag the sketch's own slice(0, 3)-equivalent would silently drop it (see
