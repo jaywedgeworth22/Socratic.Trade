@@ -300,3 +300,51 @@ export function assertWithinLlmBudget(userId: string, connectedAccountId?: strin
   const decision = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
   if (!decision.ok) throw new LlmBudgetExceededError(decision);
 }
+
+// ── Operator-level monthly spend ceiling ─────────────────────────────────────────────
+//
+// LLM_SPEND_CEILING is a global operator-set monthly USD limit (summed across all users).
+// When set, the scheduler checks total LLM+RAG spend for the current calendar month before
+// allowing any LLM work. Distinct from the per-user daily limits above — this is the operator's
+// "stop everything" cap, checked once per tick after the single-leader gate.
+
+/** Resolve the operator-level monthly ceiling. Undefined = no ceiling. */
+function monthlySpendCeilingUsd(): number | undefined {
+  const v = Number(process.env.LLM_SPEND_CEILING);
+  return Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** Total LLM+RAG cost (USD) across all users for the current calendar month. Never throws. */
+function totalMonthlyLlmCostUsd(now: Date = new Date()): number {
+  try {
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+    const db = getDb();
+    const llmRow = db
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM llm_usage WHERE created_at >= ?")
+      .get(monthStart) as { total: number } | undefined;
+    const ragRow = db
+      .prepare("SELECT COALESCE(SUM(cost_est_usd), 0) AS total FROM rag_usage WHERE created_at >= ?")
+      .get(monthStart) as { total: number } | undefined;
+    return (llmRow?.total ?? 0) + (ragRow?.total ?? 0);
+  } catch {
+    return 0; // fail open for the ceiling — never block LLM because we can't read the ledger
+  }
+}
+
+export interface MonthlyCeilingResult {
+  ok: boolean;
+  totalUsd: number;
+  ceilingUsd: number | undefined;
+}
+
+/**
+ * Check the operator-level monthly LLM spend ceiling. Called from the scheduler tick
+ * after the single-leader gate. When breached, the scheduler skips LLM work for all
+ * users but still runs non-LLM safety maintenance (reconciliation, breakers, etc.).
+ */
+export function checkMonthlyLlmSpendCeiling(now: Date = new Date()): MonthlyCeilingResult {
+  const ceiling = monthlySpendCeilingUsd();
+  if (ceiling === undefined) return { ok: true, totalUsd: 0, ceilingUsd: undefined };
+  const totalUsd = totalMonthlyLlmCostUsd(now);
+  return { ok: totalUsd < ceiling, totalUsd, ceilingUsd: ceiling };
+}

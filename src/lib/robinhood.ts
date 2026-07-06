@@ -17,7 +17,7 @@ import type {
 import type { OHLCBar } from "./indicators";
 import { clearMcpOAuthTokens, getMcpAccessToken } from "./mcp-oauth";
 import { logApiHealth } from "./db-health";
-import { recordProviderCall } from "./usage-monitor-push";
+import { recordProviderCall, pushBrokerBalance } from "./usage-monitor-push";
 import { normalizeSymbol } from "./money";
 import { isShortIntent } from "./broker-side";
 import { getOpenLots, getPerformanceSummary } from "./performance";
@@ -187,7 +187,16 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 
   async getPortfolio(accountNumber: string): Promise<Portfolio> {
     const raw = await this.callTool("get_portfolio", { account_number: accountNumber }) as Record<string, unknown>;
-    return portfolioFromRobinhoodRaw(accountNumber, raw);
+    const portfolio = portfolioFromRobinhoodRaw(accountNumber, raw);
+    pushBrokerBalance({
+      provider: "robinhood",
+      userId: this.userId,
+      accountNumber: portfolio.accountNumber,
+      cash: portfolio.cash,
+      buyingPower: portfolio.buyingPower,
+      equity: portfolio.totalMarketValue
+    });
+    return portfolio;
   }
 
   async getEquityPositions(accountNumber: string): Promise<EquityPosition[]> {

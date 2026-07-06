@@ -1,5 +1,12 @@
 name: Playwright Smoke
 
+# The `smoke` job is a REQUIRED status check for merges to `main`. Like ci.yml's
+# `verify`, it uses a cheap `classify` job + conditional steps so a documentation-only
+# PR skips the heavy Playwright browser download + build + e2e and reports success
+# immediately, WITHOUT leaving the required check permanently pending (a naive
+# `paths-ignore:` on a required check strands it as "expected" forever). Keep the
+# `classify` job in sync with ci.yml's.
+
 on:
   pull_request:
   # Required for the GitHub merge queue: the `smoke` check must run on the
@@ -8,7 +15,9 @@ on:
   push:
     branches:
       - main
-      - "agent/**"
+  # Cost note (2026-07-05): dropped the duplicate `agent/**` push trigger — agent
+  # branches run `smoke` via their PR (`pull_request`) already, so the `push` run was
+  # a duplicate of the PR run. Added the docs-only fast path (classify job) below.
   schedule:
     - cron: "17 9 * * 1"
 
@@ -17,19 +26,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    # Cheap gate-shape job: is this diff documentation-only? Only `pull_request` gets
+    # the fast path — push/merge_group/schedule always run the full smoke suite.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      docs-only: ${{ steps.check.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - name: Determine whether the diff is documentation-only
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull_request event (${{ github.event_name }}) — running full smoke."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$base" ] || [ -z "$head" ]; then
+            echo "Missing base/head SHA — running full smoke to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git merge-base "$base" "$head" >/dev/null 2>&1; then
+            echo "No merge-base found — running full smoke to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames is load-bearing (see ci.yml): with rename detection active,
+          # `git mv src/foo.ts docs/foo.md` would list only docs/foo.md and misclassify
+          # as docs-only while code was removed. --no-renames splits renames so BOTH
+          # the deleted source and the added doc get classified.
+          changed_files="$(git diff --name-only --no-renames "$base...$head" 2>/dev/null || true)"
+          if [ -z "$changed_files" ]; then
+            echo "Could not compute a changed-files list — running full smoke to be safe."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Changed files:"
+          echo "$changed_files"
+          non_docs="$(printf '%s\n' "$changed_files" | grep -Ev '(^|/)[^/]+\.md$|^docs/' || true)"
+          if [ -z "$non_docs" ]; then
+            echo "All changed files are documentation-class (*.md or docs/**) — docs-only fast path applies."
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-documentation files changed — running full smoke:"
+            echo "$non_docs"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
   smoke:
-    # Moved off the self-hosted runner (2026-07-01): playwright.config.ts already
-    # builds and serves its own local `next start` on 127.0.0.1 and only talks to
-    # itself (no live production/broker dependency), and the Linux/RUNNER_OS
-    # branch below was already written anticipating a hosted Linux runner. This
-    # job was contributing to the runner queue bottleneck. Revert to
-    # `[self-hosted, trading-live]` if the account's Actions spending limit ever
-    # blocks this (Settings → Billing → Plans and usage → Spending limit).
+    needs: classify
+    # `!cancelled()` (not always(), which would also run on cancelled/superseded runs
+    # and defeat the concurrency cancel-in-progress above) so smoke still RUNS when
+    # classify fails — a skipped required check can fail open. The first step then
+    # fails smoke closed explicitly.
+    if: ${{ !cancelled() }}
+    # Moved off the self-hosted runner (2026-07-01): playwright.config.ts builds and
+    # serves its own local `next start` on 127.0.0.1 with no live production/broker
+    # dependency. Requires the repo's Actions spending limit to be > $0.
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     steps:
+      - name: Fail closed if classify did not succeed
+        if: needs.classify.result != 'success'
+        run: |
+          echo "::error::classify job did not succeed (result: ${{ needs.classify.result }}) — failing smoke closed; the docs-only fast path never fails open."
+          exit 1
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
         shell: bash
@@ -50,14 +123,32 @@ jobs:
                 ;;
             esac
           fi
+      - name: Docs-only short-circuit
+        if: needs.classify.outputs.docs-only == 'true'
+        run: echo "docs-only diff — smoke skipped by path filter"
       - uses: actions/checkout@v4
+        if: needs.classify.outputs.docs-only != 'true'
       - uses: actions/setup-node@v4
+        if: needs.classify.outputs.docs-only != 'true'
         with:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        if: needs.classify.outputs.docs-only != 'true'
         run: npm ci
+      # Cache the Playwright browser download (chromium, ~130MB) keyed on the lockfile
+      # (which pins the playwright version). On a hit, the install step below skips the
+      # multi-minute download and only re-applies system deps.
+      - name: Cache Playwright browsers
+        if: needs.classify.outputs.docs-only != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
       - name: Install Playwright browser
+        if: needs.classify.outputs.docs-only != 'true'
         shell: bash
         run: |
           if [ "${RUNNER_OS:-}" = "Linux" ]; then
@@ -65,11 +156,10 @@ jobs:
           else
             npx playwright install chromium
           fi
-      # Restore Next.js's incremental build cache so the playwright webServer's `npm run build`
-      # (playwright.config.ts) reuses prior compilation output instead of paying a full cold build
-      # every run. Keyed on lockfile + source so it invalidates when deps or code change, with a
-      # loosened restore-key fallback so a source-only change still warm-starts from the last build.
+      # Restore Next.js's incremental build cache so the playwright webServer's
+      # `npm run build` reuses prior compilation output instead of a cold build.
       - name: Restore Next.js build cache
+        if: needs.classify.outputs.docs-only != 'true'
         uses: actions/cache@v4
         with:
           path: .next/cache
@@ -77,4 +167,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
             ${{ runner.os }}-nextjs-
-      - run: npm run test:e2e
+      - name: Run smoke tests
+        if: needs.classify.outputs.docs-only != 'true'
+        run: npm run test:e2e

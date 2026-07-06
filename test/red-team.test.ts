@@ -59,6 +59,126 @@ describe("debateProposal — T11 fail-open contract", () => {
   });
 });
 
+describe("debateProposal — shape-violation fail-closed (Deliverable A + B)", () => {
+  const buyProposal = (): any => ({
+    symbol: "AAPL",
+    side: "buy",
+    type: "market",
+    timeInForce: "gfd",
+    marketHours: "regular_hours",
+    rationale: "momentum",
+    confidenceScore: 90,
+    tradeThesisTag: "t",
+    entryMarketRegime: "t"
+  });
+
+  function stubOpenAiJsonBody(payload: unknown) {
+    vi.stubGlobal("fetch", async () => {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(payload) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+  }
+
+  async function setupOpenAi(accountNumber: string) {
+    const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+    setPolicy({ ...DEFAULT_POLICY, accountNumber });
+    setStrategyPrompt("BASE STRATEGY");
+  }
+
+  it.each([
+    ["empty object", {}],
+    ["string rejected", { rejected: "no" }],
+    ["unrelated shape", { foo: 1 }]
+  ])("fails closed (available:false, malformed_response) on a parseable-but-wrong-shape verdict: %s", async (_label, payload) => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_SHAPE");
+    stubOpenAiJsonBody(payload);
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.failureKind).toBe("malformed_response");
+    expect(result.reason).toMatch(/malformed verdict/i);
+  });
+
+  it("classifies a 429 response as rate_limited", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_429");
+    vi.stubGlobal("fetch", async () => new Response("Too Many Requests", { status: 429 }));
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.failureKind).toBe("rate_limited");
+  });
+
+  it("classifies a 500 response as provider_error", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_500");
+    vi.stubGlobal("fetch", async () => new Response("Internal Server Error", { status: 500 }));
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.failureKind).toBe("provider_error");
+  });
+
+  it("classifies an AbortError (timeout) distinctly from other thrown errors", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_TIMEOUT");
+    vi.stubGlobal("fetch", async () => {
+      const err = new Error("The operation was aborted");
+      err.name = "AbortError";
+      throw err;
+    });
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.failureKind).toBe("timeout");
+  });
+
+  it("classifies a generic thrown transport error as provider_error (not timeout)", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_TRANSPORT");
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.rejected).toBe(false);
+    expect(result.failureKind).toBe("provider_error");
+  });
+
+  it("classifies no-key as not_configured", async () => {
+    const { setStrategyPrompt, setPolicy } = await import("../src/lib/db");
+    const { debateProposal } = await import("../src/lib/red-team");
+    delete process.env.OPENAI_API_KEY;
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "RT_NOKEY2" });
+    setStrategyPrompt("BASE STRATEGY");
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.failureKind).toBe("not_configured");
+  });
+
+  it("a valid {rejected, reason} verdict is available:true with no failureKind", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_VALID");
+    stubOpenAiJsonBody({ rejected: true, reason: "Overbought." });
+
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(true);
+    expect(result.rejected).toBe(true);
+    expect(result.failureKind).toBeUndefined();
+  });
+});
+
 describe("debateProposal LLM request bounds", () => {
   it("adds chat-completions output caps and the adversary sampling temperature", async () => {
     const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");

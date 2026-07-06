@@ -194,3 +194,46 @@ describe("usage-budget: checkBudgetAndAlert", () => {
     expect(after.some((n) => n.type === "budget_alert")).toBe(true);
   });
 });
+
+describe("usage-budget: formatBudgetAdvisory", () => {
+  it("returns undefined when status is null/undefined", () => {
+    expect(budget.formatBudgetAdvisory(null)).toBeUndefined();
+    expect(budget.formatBudgetAdvisory(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when every provider is ok/unconfigured (nothing worth mentioning)", () => {
+    const s = status([{ name: "openai", status: "ok" }, { name: "anthropic", status: "unconfigured" }]);
+    expect(budget.formatBudgetAdvisory(s)).toBeUndefined();
+  });
+
+  it("summarizes an exceeded provider with a downgrade/skip suggestion, not a command", () => {
+    const s = status([{ name: "openai", status: "exceeded", spentUsd: 150, monthlyBudgetUsd: 100 }]);
+    const line = budget.formatBudgetAdvisory(s);
+    expect(line).toBeTruthy();
+    expect(line).toContain("openai");
+    expect(line).toContain("150.00");
+    expect(line).toContain("$100");
+    expect(line).toContain("status=exceeded");
+    // Advisory language, not a directive — the agent decides.
+    expect(line).toMatch(/worth weighing|your call/i);
+  });
+
+  it("summarizes a warning provider with a softer watch-it suggestion", () => {
+    const s = status([{ name: "anthropic", status: "warning", spentUsd: 85, monthlyBudgetUsd: 100 }]);
+    const line = budget.formatBudgetAdvisory(s);
+    expect(line).toBeTruthy();
+    expect(line).toContain("anthropic");
+    expect(line).toContain("status=warning");
+    expect(line).toMatch(/approaching|your call/i);
+  });
+
+  it("only mentions notable providers, silently omitting ok/unconfigured ones", () => {
+    const s = status([
+      { name: "openai", status: "ok" },
+      { name: "anthropic", status: "exceeded", spentUsd: 200, monthlyBudgetUsd: 100 },
+    ]);
+    const line = budget.formatBudgetAdvisory(s);
+    expect(line).toContain("anthropic");
+    expect(line).not.toContain("openai");
+  });
+});

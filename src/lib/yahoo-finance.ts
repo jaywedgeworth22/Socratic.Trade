@@ -117,9 +117,13 @@ export async function fetchYahooFinanceQuotesBatch(symbols: string[]): Promise<M
           prevClose,
           volume,
           asOf,
-          // Side-specific synthetic flags; syntheticSpread stays true only when BOTH sides were derived.
-          ...(syntheticBid ? { syntheticBid: true } : {}),
-          ...(syntheticAsk ? { syntheticAsk: true } : {}),
+          // Side-specific synthetic flags set EXPLICITLY (true AND false) so a consumer that falls back
+          // to the coarse `syntheticSpread` when a side flag is absent (e.g. market.ts) never mislabels
+          // a real side: a one-sided quote's real side now carries an explicit `false`, so the fallback
+          // only fires for producers that genuinely don't set side flags. `syntheticSpread` stays true
+          // only when BOTH sides were derived (back-compat for any coarse-only consumer).
+          syntheticBid,
+          syntheticAsk,
           ...(hasRealSpread ? {} : { syntheticSpread: true })
         });
       }

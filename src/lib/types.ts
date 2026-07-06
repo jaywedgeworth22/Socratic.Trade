@@ -448,6 +448,16 @@ export interface TuningSettings {
    */
   minOosTestDates?: number;
   /**
+   * OPT-IN (DEFAULT false): when true, a debate-unavailable EXIT (sell/cover) is routed by
+   * `routeOnAdversaryUnavailable`'s de-risk-only rule — NOT held for human review, just annotated
+   * with a loud "RED TEAM FAILED" rationale note and the parity audit event. Default false: default
+   * behavior is byte-identical — every proposal (buy/short/sell/cover) is still added to
+   * `requiresHumanReview` when the Red Team debate could not run, exactly like today's unconditional
+   * hold in strategy.ts's debate-unavailable branch. Flip this on to let risk-reducing exits proceed
+   * autonomously through an adversary outage instead of freezing behind an approval queue.
+   */
+  deRiskExitsOnAdversaryUnavailable?: boolean;
+  /**
    * OPT-IN (DEFAULT false): when true, each OPENING proposal gets two additional advisory receipts
    * appended to its rationale (+ matching audit events) — a per-candidate correlation profile
    * (pearson/EWMA/downside correlation vs current holdings) and a pre-trade parametric stress
@@ -960,6 +970,13 @@ export interface TradeProposal {
      * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
      */
     overridden?: boolean;
+    /**
+     * Structured reason the debate was unavailable (`available: false`) — mirrors
+     * `RedTeamDebateResult.failureKind` (src/lib/red-team.ts), persisted onto the decision case so
+     * the "RED TEAM FAILED" signal survives beyond the run (dashboard badge, audit correlation).
+     * Absent when `available: true`.
+     */
+    failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
   };
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
@@ -1120,6 +1137,7 @@ export interface SocraticDecisionCase {
   coachNotes: string[];
 }
 
+export type SocraticFrameworkOwnerVerb = "accept" | "reject" | "rewrite";
 export type SocraticFrameworkProposalStatus = "pending" | "accepted" | "rejected" | "applied";
 
 export interface SocraticFrameworkProposal {
@@ -1137,7 +1155,13 @@ export interface SocraticFrameworkProposal {
   rationale: string;
   proposedChange: string;
   evidence: SocraticEvidenceItem[];
+  ownerVerb?: SocraticFrameworkOwnerVerb;
   ownerResponse?: string;
+}
+
+export interface SocraticDecisionTrace {
+  decision: SocraticDecisionCase;
+  run?: StrategyRunRow;
 }
 
 // Per-field provenance: which provider supplied each enriched value. Used for the
@@ -1212,6 +1236,10 @@ export interface MarketQuote {
   /** Cross-sectional: this name's intraday % move minus the average move of its sector among
    *  the scan candidates. >0 = outperforming its sector today (relative strength). Computed in-house. */
   sectorRelStrength?: number;
+  /** True when the bid was synthesized from price (no real quoted bid from an exchange/market maker). */
+  syntheticBid?: boolean;
+  /** True when the ask was synthesized from price (no real quoted ask from an exchange/market maker). */
+  syntheticAsk?: boolean;
   /** Bar-based technical strength, 0–100 (50 = neutral). From the technical web source
    *  (TradingView push or in-house computed). Lifts/dings `momentumScore`. */
   technicalScore?: number;
@@ -1346,6 +1374,8 @@ export interface MarketQuoteSummary {
   targetHigh?: number;
   targetLow?: number;
   targetMedian?: number;
+  syntheticBid?: boolean;
+  syntheticAsk?: boolean;
   evidenceBulletins?: string[];
   /** Factor-score digest for the drilldown's factor bars (same shape MarketQuote carries). */
   factorBreakdown?: MarketFactorBreakdown;

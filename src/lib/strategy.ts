@@ -14,6 +14,7 @@ import {
   insertStrategyRun,
   listPendingBrokerReconciliationFills,
   listStalePlacingProposals,
+  listFillEvents,
   notionalInLastMinutes,
   releaseStrategyLock,
   setPolicy,
@@ -50,6 +51,7 @@ import {
   getClosedLotCount,
   getConfidenceCalibration,
   type ConfidenceCalibrationStat,
+  type PrefetchedFills,
   getFactorScorecard,
   getRegimeScorecard,
   getSectorScorecard,
@@ -73,11 +75,11 @@ import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
-import { checkBudgetAndAlert } from "./usage-budget";
+import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
 import { avgReturnCorrelation, correlationProfile } from "./correlation";
 import { stressScenario, type StressPositionInput } from "./stress-scenario";
 import { assertLivePreflight } from "./preflight-live-guard";
-import { checkLlmDailyBudget, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
+import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation, reserveLlmRunBudget } from "./llm-budget";
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
@@ -97,6 +99,7 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal } from "./red-team";
+import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -308,10 +311,44 @@ export async function runStrategyOnce(
 
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
-    // Phase 2 (model-downgrade / cycle-skip enforcement) is DEFERRED to a follow-up PR: it must skip
-    // only the LLM proposal step — never the broker reconciliation or the risk-reducing exits below —
-    // and must not persist a temporary downgrade; see docs/usage-monitor-integration.md.
     void checkBudgetAndAlert(userId, policy).catch(() => {});
+
+    // ADVISORY (always on when the monitor is configured, independent of USAGE_BUDGET_ENFORCE): read
+    // budget status once and (a) stamp a receipt so operator spend is auditable per-run even when
+    // enforcement is off, (b) format a compact advisory line threaded into the Bull/Bear userContent
+    // below (see `budgetAdvisory` on proposeTrades' input) — DATA for the agent, never a command; the
+    // agent decides whether a cheaper model or skipping is worth it. Enforcement (Phase 2, below at
+    // the LLM budget choke point) is the owner's opt-in override of that same decision via
+    // USAGE_BUDGET_ENFORCE. Best-effort: never blocks or fails a run. The fetched status is cached
+    // (see `budgetStatus` below) and reused at the enforcement choke point instead of re-fetching.
+    let budgetAdvisory: string | undefined;
+    let budgetStatus: Awaited<ReturnType<typeof getBudgetStatusCached>> = null;
+    try {
+      budgetStatus = await getBudgetStatusCached();
+      if (budgetStatus) {
+        const enforceOn = usageBudgetEnforceEnabled();
+        const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
+        audit(
+          "usage_budget_status",
+          {
+            runId,
+            enforceOn,
+            summary: budgetStatus.summary,
+            providers: budgetStatus.providers.map((p) => ({ name: p.name, status: p.status, spentUsd: p.spentUsd, monthlyBudgetUsd: p.monthlyBudgetUsd, percentUsed: p.percentUsed })),
+            wouldSkip: wouldDecide.skip,
+            wouldDowngrade: wouldDecide.downgraded,
+            suggestedLlmModel: wouldDecide.llmModel,
+            suggestedRedTeamLlmModel: wouldDecide.redTeamLlmModel,
+            reason: wouldDecide.reason
+          },
+          userId,
+          connectedAccountId
+        );
+        budgetAdvisory = formatBudgetAdvisory(budgetStatus);
+      }
+    } catch {
+      /* advisory is best-effort — never break the run */
+    }
 
     const gateway = getBrokerGateway(policy, userId);
     await reconcilePendingFills(gateway, policy.accountNumber, userId);
@@ -362,6 +399,9 @@ export async function runStrategyOnce(
     const workingPortfolio = portfolio;
     const workingPositions = positions;
     const learningSource = fillSourceForExecutionMode(executionMode);
+    const runLiveFills = listFillEvents(policy.accountNumber, "live", 500, userId);
+    const runPaperFills = listFillEvents(policy.accountNumber, "paper", 500, userId);
+    const prefetchedFills: PrefetchedFills = { liveFills: runLiveFills, paperFills: runPaperFills };
     await notifyStaleLimitOrders({ userId, policy, orders });
 
     // Pre-run snapshot: record the account state BEFORE any proposals execute so that
@@ -446,6 +486,66 @@ export async function runStrategyOnce(
       }
     }
 
+    // ── Usage-budget Phase 2 enforcement (opt-in, USAGE_BUDGET_ENFORCE) ────
+    // Owner's off-by-default switch on top of the ADVISORY computed above. Placed at this same
+    // choke point — AFTER the risk-reducing breakers, BEFORE any LLM call — so it can only ever skip
+    // the LLM proposal step, never risk maintenance. skip ends the run gracefully right here (audit +
+    // notifyBudgetSkip, no LLM call, no reservation taken); downgrade is carried as a RUN-SCOPED
+    // `runLlmOverride`/`runPolicy` (below) — NEVER written onto `policy` itself — so every
+    // persistence-adjacent site (autoRevertOnCapBreach, setPolicy) keeps seeing the owner's pristine,
+    // configured models and can never persist the downgrade. `runPolicy` (the derived clone with the
+    // override merged in) is what actually reaches `resolveLlmEndpoint` in `proposeTrades`,
+    // `debateProposal`'s explicit policy argument, and proposal revalidation. Fail-open on any
+    // evaluator error (evaluateBudgetForRun never throws, but this is the same posture as everything
+    // else in this file's budget handling). The `try` is scoped to ONLY the evaluator call — the skip
+    // sequence (audit + notify + finish + release + return) runs OUTSIDE the catch so a transient
+    // throw from finishStrategyRun/releaseStrategyLock can't be swallowed and silently fall through
+    // into the full LLM/trade path while the audit trail still says "skipped" (mirrors the
+    // market-closed early-return above).
+    let enforceDecision: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
+    try {
+      enforceDecision = await evaluateBudgetForRun(userId, policy, { status: budgetStatus });
+    } catch {
+      /* fail-open — never let usage-budget enforcement break a run */
+    }
+    if (enforceDecision.skip) {
+      const reason = enforceDecision.reason ?? "Over budget.";
+      audit("usage_budget_enforced", { runId, userId, action: "skip", reason }, userId, connectedAccountId);
+      await notifyBudgetSkip(userId, policy, runId, reason);
+      const summary = `Strategy run skipped — over usage budget. ${reason}`;
+      result = { runId, status: "completed", summary, proposals: [] };
+      finishStrategyRun(runId, "completed", summary, userId);
+      releaseStrategyLock(userId, connectedAccountId);
+      return result;
+    }
+    // Run-scoped model override: carried SEPARATELY from `policy` so nothing that persists (setPolicy,
+    // autoRevertOnCapBreach) can ever see or write the downgraded models. `runPolicy` below is the ONLY
+    // object threaded into LLM-model-resolution call sites for this run.
+    const runLlmOverride: { llmModel?: string; redTeamLlmModel?: string } = {};
+    if (enforceDecision.downgraded) {
+      const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+      if (enforceDecision.llmModel) runLlmOverride.llmModel = enforceDecision.llmModel;
+      if (enforceDecision.redTeamLlmModel) runLlmOverride.redTeamLlmModel = enforceDecision.redTeamLlmModel;
+      audit(
+        "usage_budget_enforced",
+        {
+          runId,
+          userId,
+          action: "downgrade",
+          reason: enforceDecision.reason,
+          before,
+          after: { llmModel: runLlmOverride.llmModel ?? before.llmModel, redTeamLlmModel: runLlmOverride.redTeamLlmModel ?? before.redTeamLlmModel }
+        },
+        userId,
+        connectedAccountId
+      );
+    }
+    // Derived, run-scoped policy used ONLY for LLM-model resolution (proposeTrades, debateProposal,
+    // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
+    // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
+    // persists ONLY `strategyAuthority`, never the in-run model downgrade.
+    const runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride };
+
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
     // breakers above) and BEFORE any model call below (proposal REVALIDATION and generation), so a
@@ -462,6 +562,23 @@ export async function runStrategyOnce(
     // src/lib/llm-budget.ts and docs/rollouts/2026-07-01-fg-codex-review-fixes.md.
     const budget = checkLlmDailyBudget(userId, new Date(), connectedAccountId);
     let skipLlmDueToBudget = !budget.ok;
+    // Operator-level MONTHLY spend ceiling (LLM_SPEND_CEILING) enforced at this same single
+    // choke point so EVERY run entry inherits it — not just the interval scheduler. Event-triggered
+    // runs (triggers.ts -> runStrategyOnce), manual "Run once", and mobile commands all pass through
+    // here, so checking the ceiling only in the scheduler tick let those paths bypass it. Skips only
+    // the LLM proposal step (never the risk breakers above); default OFF when LLM_SPEND_CEILING unset.
+    if (!skipLlmDueToBudget) {
+      const monthly = checkMonthlyLlmSpendCeiling();
+      if (!monthly.ok) {
+        skipLlmDueToBudget = true;
+        audit(
+          "usage_budget_enforced",
+          { runId, userId, action: "skip", reason: `Monthly operator LLM spend ceiling reached ($${monthly.totalUsd.toFixed(2)} of $${monthly.ceilingUsd?.toFixed(2)})`, scope: "operator_monthly" },
+          userId,
+          connectedAccountId
+        );
+      }
+    }
     if (!skipLlmDueToBudget) {
       const reservation = reserveLlmRunBudget(userId, connectedAccountId);
       llmReservationId = reservation.reservationId;
@@ -495,7 +612,8 @@ export async function runStrategyOnce(
       });
     const revalidation = skipLlmDueToBudget
       ? null
-      : await revalidatePendingProposals({ userId, policy, accountNumber: policy.accountNumber, marketScan })
+      // runPolicy (not policy): this LLM re-check must see the run-scoped usage-budget downgrade too.
+      : await revalidatePendingProposals({ userId, policy: runPolicy, accountNumber: policy.accountNumber, marketScan })
           .catch((e) => {
             console.error("[revalidation] run error:", e);
             return null;
@@ -560,10 +678,45 @@ export async function runStrategyOnce(
       try {
         const { retrieveContextDetailed, defaultMinScore, defaultRelevanceFloor, defaultDedupeSimilarity, formatChunkWithProvenance } =
           await import("./vector-db");
+        // hyde-multiquery-retrieval (2026-07-05): both flag-gated, default OFF — when off, `variants`
+        // is always `[]` below and `retrieveContextDetailed` gets no `queries` option, so this pass is
+        // byte-for-byte the single-query call it was before this item.
+        const { multiQueryEnabled, hydeEnabled, deriveQueryVariants, generateHydePassages } = await import("./rag/multi-query");
+        const { shouldDegradeForBudget } = await import("./rag/run-budget");
+        const wantMultiQuery = multiQueryEnabled() && !shouldDegradeForBudget();
+        const wantHyde = hydeEnabled() && !shouldDegradeForBudget();
         const topSymbols = marketScan.topCandidates.slice(0, 3).map(c => c.symbol);
         const contexts = await Promise.all(
           topSymbols.map(async (sym) => {
             const query = `Significant financial events, SEC filings, and macro catalysts for ${sym}`;
+            let variants: string[] = [];
+            if (wantMultiQuery) {
+              const candidate = marketScan.topCandidates.find((c) => normalizeSymbol(c.symbol) === normalizeSymbol(sym));
+              const breakdown = candidate?.factorBreakdown;
+              let dominantFactor: string | undefined;
+              if (breakdown) {
+                let best = -Infinity;
+                for (const [key, value] of Object.entries(breakdown)) {
+                  if (key === "weightedTotal" || typeof value !== "number") continue;
+                  if (value > best) {
+                    best = value;
+                    dominantFactor = key;
+                  }
+                }
+              }
+              variants = deriveQueryVariants({
+                symbol: sym,
+                sector: marketScan.sectorBySymbol[normalizeSymbol(sym)] ?? candidate?.sector,
+                dominantFactor,
+                evidenceBulletins: candidate?.evidenceBulletins
+              });
+              if (wantHyde && variants.length > 0) {
+                // generateHydePassages self-gates on isOverLlmBudget(userId, connectedAccountId) —
+                // 2026-07-05 review fix — mirroring retrieveContextDetailed's own budget gate below.
+                const hydePassages = await generateHydePassages(variants, { userId, connectedAccountId: policy.connectedAccountId });
+                variants = [...variants, ...hydePassages];
+              }
+            }
             const chunks = await retrieveContextDetailed(query, sym, 3, userId, {
               docType: ["10-k", "10-q", "8-k", "earnings-transcript"],
               minScore: defaultMinScore(),
@@ -573,7 +726,8 @@ export async function runStrategyOnce(
               // socratic-decision retrieval path per the composite review's guidance.
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
-              connectedAccountId: policy.connectedAccountId
+              connectedAccountId: policy.connectedAccountId,
+              ...(variants.length > 0 ? { queries: variants } : {})
             });
             return { sym, query, chunks };
           })
@@ -782,7 +936,9 @@ export async function runStrategyOnce(
         userId,
         policyAllowlist: allowedSymbols,
         prompt: getStrategyPrompt(userId),
-        policy,
+        // runPolicy (not policy): carries the run-scoped usage-budget model downgrade (if any) into
+        // resolveLlmEndpoint without ever mutating/persisting the owner's configured policy.
+        policy: runPolicy,
         activeAccount,
         portfolio: workingPortfolio,
         positions: workingPositions,
@@ -794,7 +950,9 @@ export async function runStrategyOnce(
         learnedContext,
         ...(experienceAnalogs ? { experienceAnalogs } : {}),
         ...(ownerCoaching ? { ownerCoaching } : {}),
-        drawdownAdvisory
+        drawdownAdvisory,
+        budgetAdvisory,
+        prefetched: prefetchedFills
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
@@ -827,7 +985,7 @@ export async function runStrategyOnce(
     // and thread it into every sizing call. Undefined when off → no DB read and byte-identical behavior.
     const calibrationForSizing: ConfidenceCalibrationStat[] | undefined =
       policy.tuning?.calibrationSizing && policy.accountNumber
-        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId)
+        ? getConfidenceCalibration(policy.accountNumber, learningSource, {}, userId, prefetchedFills)
         : undefined;
 
     // OPTIONAL negative-expectancy gate (default off): drop an opening proposal whose PROVEN thesis
@@ -835,7 +993,7 @@ export async function runStrategyOnce(
     // money-loser" stance. Unproven theses pass through to the sizer's intentional exploratory floor.
     const sizedProposals = llmProposals
       .filter((p) => {
-        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId);
+        const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
           console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
           audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
@@ -843,7 +1001,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
         return enrichOpeningProposal(overrideSized, policy, marketScan);
       });
@@ -888,7 +1046,10 @@ export async function runStrategyOnce(
       if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
         const isBullish = proposal.side === "buy" || proposal.side === "cover";
         const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId);
+        // Pass the run-scoped `runPolicy` explicitly (rather than letting debateProposal re-read
+        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of redTeamLlmModel — carried on this
+        // run-scoped object only, never persisted onto `policy` — actually reaches the Bear's model choice.
+        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, runPolicy);
         // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
         proposal.redTeamVerdict = {
@@ -899,7 +1060,9 @@ export async function runStrategyOnce(
           // persisted so the approval card's red-team badge doesn't drift with later policy edits.
           ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
           // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
-          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {})
+          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {}),
+          // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
+          ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
         };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
@@ -978,9 +1141,30 @@ export async function runStrategyOnce(
             continue;
           }
         } else if (!redTeamResult.available) {
-          console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
-          proposal.rationale += `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${redTeamResult.reason}); routed to human approval.`;
-          requiresHumanReview.add(proposal);
+          // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
+          // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
+          // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
+          // has opted in via policy.tuning.deRiskExitsOnAdversaryUnavailable — default OFF, so default
+          // behavior is byte-identical to main's unconditional requiresHumanReview.add for every side.
+          // Audit parity with strategy_bear_review_unavailable.
+          const routing = routeOnAdversaryUnavailable(
+            proposal.side,
+            redTeamResult.failureKind,
+            redTeamResult.reason,
+            policy.tuning?.deRiskExitsOnAdversaryUnavailable,
+            policy.strategyAuthority === "decide"
+          );
+          console.warn(
+            `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
+          );
+          proposal.rationale += routing.note;
+          if (routing.holdForHuman) requiresHumanReview.add(proposal);
+          audit(
+            "strategy_red_team_unavailable",
+            { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
+            userId,
+            connectedAccountId
+          );
         } else {
           proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
         }
@@ -1424,6 +1608,12 @@ export async function runStrategyOnce(
       }
 
       if (policy.strategyAuthority === "propose") {
+        // Under "propose" authority EVERY proposal already becomes a pending-approval card
+        // regardless of Red Team outcome. The Red-Team-unavailable signal is already on the
+        // rationale via routeOnAdversaryUnavailable's note (appended in the debate loop above),
+        // which is authority-aware — held/openings read "routed to human approval" and an opt-in
+        // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
+        // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
@@ -1439,13 +1629,16 @@ export async function runStrategyOnce(
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
+        const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
+          ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
+          : "";
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         continue;
       }
 
@@ -1618,6 +1811,11 @@ export async function runStrategyOnce(
     // (placed -> fills/closed lots; blocked/rejected -> counterfactual refPrice), writes the
     // multi-horizon outcome + receipt, re-indexes decision memory, and runs the budget-gated
     // post-mortem lesson pass. Fire-and-forget + dynamic import: never blocks or fails the run.
+    // INTENTIONALLY EXEMPT from the run-scoped usage-budget model downgrade (`runPolicy` above):
+    // this runs detached from THIS run's lifetime/lock (it matures cases across accounts and can
+    // still be in flight after `runStrategyOnce` returns), so there is no single well-defined
+    // "this run's downgrade" to hand it — `callLessonLlm` in outcome-engine.ts re-reads the owner's
+    // persisted (undowngraded) policy via getPolicy(), same as before this branch.
     void import("./outcome-engine")
       .then(({ matureSocraticDecisionOutcomes }) => matureSocraticDecisionOutcomes(userId, { connectedAccountId }))
       .catch((e) => console.error("[outcome-engine] maturation error:", e));
@@ -1661,7 +1859,9 @@ export async function runStrategyOnce(
     // spend stays inside the reserved headroom rather than racing a queued same-user run.
     reflectionPromise = skipLlmDueToBudget
       ? undefined
-      : generateReflectionSummary(policy.accountNumber, userId).catch((e) => console.error("Post-mortem error:", e));
+      // runPolicy (not policy): the reflection LLM call must see the run-scoped usage-budget
+      // downgrade too, rather than re-reading the owner's persisted (undowngraded) policy.
+      : generateReflectionSummary(policy.accountNumber, userId, runPolicy).catch((e) => console.error("Post-mortem error:", e));
 
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Strategy failed.";
@@ -1978,20 +2178,21 @@ export function shouldSkipNegativeExpectancy(
   proposal: TradeProposal,
   policy: TradingPolicy,
   source: FillSource,
-  userId: string = "local"
+  userId: string = "local",
+  prefetched?: PrefetchedFills
 ): { skip: boolean; reason?: string } {
   if (!policy.tuning?.skipNegativeExpectancy) return { skip: false };
   if (proposal.side === "sell" || proposal.side === "cover") return { skip: false }; // exits unaffected
   const account = policy.accountNumber;
   if (!account) return { skip: false };
 
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   const parentStat = thesisScorecard.find((s) => s.thesisTag === proposal.tradeThesisTag);
   const parentTrades = parentStat?.trades ?? 0;
   const minLots = policy.tuning?.minClosedLotsForWeightShift ?? 20;
   if (parentTrades < minLots) return { skip: false }; // parent thesis is unproven
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
   const sampleTrades = stat?.trades ?? 0;
   const avgReturn = stat?.shrunkAvgReturnPct ?? 0;
@@ -2220,7 +2421,17 @@ export async function applyRiskReceipts(
   return out;
 }
 
-export function applyDeterministicSizing(proposal: TradeProposal, policy: TradingPolicy, portfolio: Portfolio, source: FillSource, userId: string = "local", positions: EquityPosition[] = [], marketScan?: MarketScan, precomputedCalibration?: ConfidenceCalibrationStat[]): TradeProposal {
+export function applyDeterministicSizing(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  portfolio: Portfolio,
+  source: FillSource,
+  userId: string = "local",
+  positions: EquityPosition[] = [],
+  marketScan?: MarketScan,
+  precomputedCalibration?: ConfidenceCalibrationStat[],
+  prefetched?: PrefetchedFills
+): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
     // dollarAmount) must be resolved to the FULL position. Otherwise it books a 0-quantity
@@ -2243,8 +2454,8 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const account = policy.accountNumber;
   if (!account) return proposal;
 
-  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId);
-  const thesisScorecard = getThesisScorecard(account, source, {}, userId);
+  const regimeScorecard = getThesisRegimeScorecard(account, source, {}, userId, prefetched);
+  const thesisScorecard = getThesisScorecard(account, source, {}, userId, prefetched);
   
   // Prefer the thesis×regime bucket once it has enough samples; otherwise the thesis bucket.
   const stat = selectThesisStat(regimeScorecard, thesisScorecard, proposal);
@@ -2261,7 +2472,7 @@ export function applyDeterministicSizing(proposal: TradeProposal, policy: Tradin
   const rawScore = proposal.confidenceScore ?? 50;
   let rawConviction = rawScore / 100;
   if (policy.tuning?.calibrationSizing && proposal.side === "buy") {
-    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId);
+    const calibration = precomputedCalibration ?? getConfidenceCalibration(account, source, {}, userId, prefetched);
     const minLots = policy.tuning?.minClosedLotsForWeightShift ?? MIN_CLOSED_LOTS_FOR_WEIGHT_SHIFT;
     rawConviction = calibratedConviction(rawScore, calibration, minLots);
   }
@@ -3066,6 +3277,14 @@ async function proposeTrades(input: {
   experienceAnalogs?: string;
   ownerCoaching?: string;
   drawdownAdvisory?: { reason: string; equity: number; highWaterMark: number; drawdownPct: number };
+  /**
+   * Usage-budget ADVISORY (formatBudgetAdvisory output): a compact 1-2 line summary of operator LLM
+   * spend vs budget, injected next to `drawdownAdvisory` below. DATA for the agent, never a command —
+   * present whenever the usage monitor is configured and at least one provider is at warning/exceeded,
+   * independent of whether USAGE_BUDGET_ENFORCE is on.
+   */
+  budgetAdvisory?: string;
+  prefetched?: PrefetchedFills;
 }): Promise<ProposeTradesResult> {
   const { url, key: openaiKey, model: resolvedModel, provider, keySource: llmKeySource, keyRef: llmKeyRef, transport } = resolveLlmEndpoint(input.policy, input.userId);
   // No resolvable LLM credential (neither the user's own key nor the operator failover) → HARD ERROR.
@@ -3109,27 +3328,27 @@ async function proposeTrades(input: {
   const reflection = getUserSetting(input.userId, "reflection_summary", "");
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
-  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
-  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [];
+  const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
+  const regimeScorecard = input.policy.accountNumber ? getRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Multi-dimensional learning: thesis × regime buckets with >=5 closed lots. Fewer than
   // 5 trades produce a statistic that is dominated by the Bayesian shrinkage prior anyway
   // and adds noise to the agent's reasoning without improving signal quality.
-  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const thesisRegimeScorecard = (input.policy.accountNumber ? getThesisRegimeScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
   // Signal efficacy: realized win rate of buys that had a congressional/insider tailwind
   // at entry vs the baseline — so the agent learns which evidence actually predicts wins.
-  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId) : [];
+  const signalEfficacy = input.policy.accountNumber ? getSignalEfficacy(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Confidence calibration: realized outcomes by the agent's own entry confidence band —
   // since confidence now drives position size, this surfaces over/under-confidence.
-  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId) : [];
+  const confidenceCalibration = input.policy.accountNumber ? getConfidenceCalibration(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
   // Sector learning: realized outcomes grouped by the sector each position was opened in.
-  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const sectorScorecard = (input.policy.accountNumber ? getSectorScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5 && bucket.sector !== "Unknown")
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
-  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId) : [])
+  const factorScorecard = (input.policy.accountNumber ? getFactorScorecard(input.policy.accountNumber, source, {}, input.userId, undefined, input.prefetched) : [])
     .filter((bucket) => bucket.trades >= 5)
     .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
     .slice(0, 8);
@@ -3137,7 +3356,7 @@ async function proposeTrades(input: {
     .filter((row) => row.returnPct >= 3)
     .slice(0, 8);
   const taxSummary = input.policy.accountNumber
-    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId)
+    ? getTaxSummary(input.policy.accountNumber, source, currentPrices, input.policy.taxSettings, new Date(), input.userId, input.prefetched)
     : null;
   // ask/auto wash-sale handling: give the model the PRICED cost of rebuying each locked name
   // (disallowed loss × shortTermRatePct, from the cross-account provenance map) so it can weigh a
@@ -3280,6 +3499,14 @@ async function proposeTrades(input: {
             equity: input.drawdownAdvisory.equity,
             highWaterMark: input.drawdownAdvisory.highWaterMark,
             detail: input.drawdownAdvisory.reason
+          }
+        }
+      : {}),
+    ...(input.budgetAdvisory
+      ? {
+          budgetAdvisory: {
+            note: "ADVISORY, not a block: operator LLM spend context. YOU decide whether a cheaper model tier or skipping this cycle is worth it — every choice is logged and coachable.",
+            detail: input.budgetAdvisory
           }
         }
       : {}),
@@ -3961,11 +4188,10 @@ function compactRecentOrders(orders: EquityOrder[]): Array<Record<string, unknow
   });
 }
 
-/** A real, quoted ask — excludes a synthesized (price-derived) spread whose provenance was tagged
- *  "yahoo-finance-synthetic". A synthetic ask must NEVER anchor ask-relative limit-price math; it
- *  degrades to the refPrice-based branch instead. */
+/** A real, quoted ask — excludes a synthesized (price-derived) spread. A synthetic ask must
+ *  NEVER anchor ask-relative limit-price math; it degrades to the refPrice-based branch instead. */
 function hasRealAsk(quote: MarketQuote): boolean {
-  return Boolean(quote.ask && quote.ask > 0 && quote.sources?.ask !== "yahoo-finance-synthetic");
+  return Boolean(quote.ask && quote.ask > 0 && !quote.syntheticAsk);
 }
 
 function compactMarketScanForPrompt(marketScan?: MarketScan) {
@@ -3990,11 +4216,11 @@ function compactMarketScanForPrompt(marketScan?: MarketScan) {
 }
 
 function compactCandidateForPrompt(quote: MarketScan["topCandidates"][number], index: number): Record<string, unknown> {
-  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread — it
-  // would wrongly anchor ask-relative limit-price reasoning. Emit each side only when its provenance is
-  // not "yahoo-finance-synthetic" (compactPromptObject drops undefined keys, matching hasAskData).
-  const realBid = quote.sources?.bid !== "yahoo-finance-synthetic" ? quote.bid : undefined;
-  const realAsk = quote.sources?.ask !== "yahoo-finance-synthetic" ? quote.ask : undefined;
+  // Never feed a SYNTHETIC (price-derived) bid/ask to the LLM as if it were a real quoted spread —
+  // it would wrongly anchor ask-relative limit-price reasoning. Emit each side only when it is not
+  // synthetic (compactPromptObject drops undefined keys, matching hasAskData).
+  const realBid = !quote.syntheticBid ? quote.bid : undefined;
+  const realAsk = !quote.syntheticAsk ? quote.ask : undefined;
   return compactPromptObject({
     rank: index + 1,
     sym: quote.symbol,
@@ -4298,10 +4524,8 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       // marketable-limit through it. Judge each side INDEPENDENTLY: a synthetic ask must not discard a
       // real bid (or vice-versa), e.g. a quote-only ask alongside a later provider's real bid. Fall
       // back to refPrice only for the side that is actually synthetic so the limit is honest.
-      const syntheticAsk = quote?.sources?.ask === "yahoo-finance-synthetic";
-      const syntheticBid = quote?.sources?.bid === "yahoo-finance-synthetic";
-      const realAsk = !syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
-      const realBid = !syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
+      const realAsk = !quote?.syntheticAsk && quote?.ask && quote.ask > 0 ? quote.ask : undefined;
+      const realBid = !quote?.syntheticBid && quote?.bid && quote.bid > 0 ? quote.bid : undefined;
       const limitPrice = proposal.side === "buy"
         ? round2((realAsk ?? refPrice) * (1 + buffer))
         : round2((realBid ?? refPrice) * (1 - buffer));
