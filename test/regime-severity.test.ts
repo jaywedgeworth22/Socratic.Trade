@@ -290,7 +290,7 @@ afterEach(() => {
   delete process.env.OPENAI_API_KEY;
 });
 
-async function seed() {
+async function seed(options: { regimeSeverityScoring?: boolean } = {}) {
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
   upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
   const accountId = randomUUID();
@@ -302,12 +302,44 @@ async function seed() {
     llmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
-    strategyAuthority: "decide"
+    strategyAuthority: "decide",
+    ...(options.regimeSeverityScoring
+      ? { tuning: { ...DEFAULT_POLICY.tuning, regimeSeverityScoring: true } }
+      : {})
   });
 }
 
 describe("strategy.ts regime-severity wiring", () => {
-  it("includes a compact regimeSeverity block in userContent next to currentMarketRegime, and stamps entryRegimeSeverity on the persisted proposal", async () => {
+  it("policy.tuning.regimeSeverityScoring default OFF: no regimeSeverity in userContent, no entryRegimeSeverity stamp (byte-identical default)", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      if (href.includes("api.openai.com")) {
+        openAiBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ proposals: [PROPOSAL] }) }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (href.includes("nasdaq.com")) return nasdaqRow();
+      return new Response("not found", { status: 404 });
+    });
+
+    // Default seed — tuning.regimeSeverityScoring left unset (default false).
+    await seed();
+    const { runStrategyOnce } = await import("../src/lib/strategy");
+    const result = await runStrategyOnce();
+
+    expect(result.status).toBe("completed");
+    const bullBody = openAiBodies[0]!;
+    const userContent = JSON.parse(bullBody.input!.find((item) => item.role === "user")?.content ?? "{}");
+    expect(userContent.currentMarketRegime).toBeDefined();
+    expect(userContent.regimeSeverity).toBeUndefined();
+    expect(result.proposals[0]?.proposal.entryRegimeSeverity).toBeUndefined();
+  }, 30_000);
+
+  it("policy.tuning.regimeSeverityScoring ON: includes a compact regimeSeverity block in userContent next to currentMarketRegime, and stamps entryRegimeSeverity on the persisted proposal", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     const openAiBodies: Array<{ input?: Array<{ role: string; content: string }> }> = [];
     let strategyCallCount = 0;
@@ -326,7 +358,7 @@ describe("strategy.ts regime-severity wiring", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await seed();
+    await seed({ regimeSeverityScoring: true });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
 
@@ -353,7 +385,7 @@ describe("strategy.ts regime-severity wiring", () => {
     expect(persisted!.entryRegimeSeverity).toBeLessThanOrEqual(1);
   }, 30_000);
 
-  it("a scorer throw does not fail the run — no regimeSeverity in userContent, proposal still generated", async () => {
+  it("policy.tuning.regimeSeverityScoring ON, scorer throws: does not fail the run — no regimeSeverity in userContent, proposal still generated", async () => {
     process.env.OPENAI_API_KEY = "test-openai-key";
     vi.doMock("../src/lib/regime-severity", () => ({
       computeMultiSignalSeverity: () => {
@@ -375,7 +407,7 @@ describe("strategy.ts regime-severity wiring", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await seed();
+    await seed({ regimeSeverityScoring: true });
     const { runStrategyOnce } = await import("../src/lib/strategy");
     const result = await runStrategyOnce();
 

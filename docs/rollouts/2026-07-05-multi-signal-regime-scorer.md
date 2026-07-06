@@ -14,6 +14,12 @@
   (`severityMacroOnly`) added to the existing `regime_flip` audit payload in `regime-watch.ts`.
 - No changes to `market-regime.ts`'s pinned enum/label/severity contracts, no changes to any gate
   or cap (`policy.ts`, `deterministicBearFilter`, `checkRegimeFlip`'s flip/broadcast semantics).
+- **Gated behind `policy.tuning.regimeSeverityScoring?: boolean` (DEFAULT false)**, per house
+  convention (COMMON.md rule 4 — any behavior change ships behind a default-OFF `policy.tuning.*`
+  flag). Default false: default behavior is byte-identical — the scorer is never invoked, no
+  `regimeSeverity` block is added to any prompt, no `entryRegimeSeverity` field is stamped on any
+  proposal, and no `severityMacroOnly` key is added to the `regime_flip` audit payload. See
+  "Post-review fix" below for why this was added after the initial landing.
 
 ## Why
 
@@ -95,6 +101,35 @@
   too for evidence parity with the existing pattern the codebase already uses for every other
   advisory context block shared between the two passes.
 
+## Post-review fix: default-OFF flag (`policy.tuning.regimeSeverityScoring`)
+
+- **What was missed initially**: the first landing computed `regimeSeverity` unconditionally on
+  every strategy run and stamped `entryRegimeSeverity`/`severityMacroOnly` unconditionally, with
+  no `policy.tuning.*` flag gating any of it. That is a real behavior change to the money-path LLM
+  prompt content on every run as soon as it lands — exactly the class of change COMMON.md rule 4
+  requires a default-OFF flag for. Sibling lanes in this same effort followed the convention for
+  comparable advisory/receipt-only wiring (HyDE + evidence-derived retrieval, the market-data
+  staleness gate, the correlation cluster gate), so there was no basis for treating this lane as
+  exempt. Adversarial review caught the omission; it is fixed here rather than waived.
+- **Fix**: added `TuningSettings.regimeSeverityScoring?: boolean` (types.ts, default undefined ≡
+  false). `strategy.ts`'s `regimeSeverity` local is now `undefined` outright when the flag is off
+  (`!input.policy.tuning?.regimeSeverityScoring ? undefined : (() => { ... })()`), which
+  transitively gates every downstream site that was already conditioned on
+  `regimeSeverity`/`userContent.regimeSeverity` being truthy (`userContent.regimeSeverity`,
+  `bearUserContent.regimeSeverity`, both `entryRegimeSeverity` stamps) — no separate flag check
+  needed at each site. `regime-watch.ts`'s `macroOnlySeverity` now takes `userId`, reads
+  `getPolicy(userId).tuning?.regimeSeverityScoring` (imported from `./db-profiles`, no
+  circularity — `db-profiles.ts` does not import `regime-watch.ts`), and returns `undefined` when
+  off; the `regime_flip` audit payload now spreads `severityMacroOnly` in only when defined, so the
+  key is absent (not merely `undefined`-valued) by default.
+- **Tests**: `test/regime-severity.test.ts`'s two wiring tests now explicitly opt in via
+  `seed({ regimeSeverityScoring: true })`; a new third wiring test asserts the default-OFF,
+  byte-identical case (no `regimeSeverity` in `userContent`, no `entryRegimeSeverity` on the
+  proposal) with the flag left unset. `test/regime-watch.test.ts` gained a new describe block with
+  two tests: default-OFF asserts `severityMacroOnly` is entirely absent from the persisted
+  `regime_flip` audit payload; flag-ON (via `setPolicy`) asserts it is present as a number. All
+  pre-existing tests in both files pass unmodified.
+
 ## Scoping decision (explicit, per spec item 5)
 
 - **No changes to `policy.ts` caps, `deterministicBearFilter`, or any gate.** "Feeding caps" is
@@ -108,42 +143,51 @@
 
 - `src/lib/regime-severity.ts` (new) — `computeMultiSignalSeverity`, `RegimeSeverityInputs`,
   `RegimeSeverityResult`, `RegimeSeverityComponent`.
-- `src/lib/types.ts` — additive `TradeProposal.entryRegimeSeverity?: number` field (+doc comment),
-  no other changes.
+- `src/lib/types.ts` — additive `TradeProposal.entryRegimeSeverity?: number` field (+doc comment);
+  additive `TuningSettings.regimeSeverityScoring?: boolean` field (+"Default false: default
+  behavior is byte-identical" doc comment).
 - `src/lib/strategy.ts` — import `classifyMarketRegime` (market-regime.ts) and
   `computeMultiSignalSeverity` (regime-severity.ts); compute `regimeSeverity` (try/catch,
-  best-effort) once per run alongside the existing macro/signals assembly; add a compact
-  `regimeSeverity` block to both `userContent` and `bearUserContent`; stamp
-  `entryRegimeSeverity` on both `rawBullProposals` and `bearProposals`.
+  best-effort, gated on `policy.tuning?.regimeSeverityScoring`) once per run alongside the existing
+  macro/signals assembly; add a compact `regimeSeverity` block to both `userContent` and
+  `bearUserContent`; stamp `entryRegimeSeverity` on both `rawBullProposals` and `bearProposals`
+  (all four sites are already conditioned on `regimeSeverity` being truthy, so they inherit the
+  gate for free).
 - `src/lib/regime-watch.ts` — import `classifyMarketRegime`, `deriveMacroMetrics`,
-  `computeMultiSignalSeverity`; add `macroOnlySeverity(macro)` helper; append
-  `severityMacroOnly: macroOnlySeverity(macro)` to the existing `regime_flip` audit payload. No
-  other behavior change.
-- `test/regime-severity.test.ts` (new) — 19 tests: normalization endpoints/midpoints per signal,
-  weight renormalization (1 input / 2 inputs / all 6), enum-floor behavior (crisis floor wins over
-  benign signals, risk-on blend wins with no floor interference, risk-off floor vs. a milder
-  blend, risk-off blend exceeding its floor), zero-input collapse, monotonicity spot checks, and
-  two `strategy.ts` wiring tests (regimeSeverity present in userContent + entryRegimeSeverity
-  stamped on the persisted proposal; scorer throw → run still completes with no receipt).
+  `computeMultiSignalSeverity`, `getPolicy` (from `./db-profiles`); `macroOnlySeverity(macro,
+  userId)` now flag-checks before computing; the `regime_flip` audit payload spreads
+  `severityMacroOnly` in only when defined. No flip/broadcast/notify semantics changed.
+- `test/regime-severity.test.ts` — 20 tests: normalization endpoints/midpoints per signal, weight
+  renormalization (1 input / 2 inputs / all 6), enum-floor behavior (crisis floor wins over benign
+  signals, risk-on blend wins with no floor interference, risk-off floor vs. a milder blend,
+  risk-off blend exceeding its floor), zero-input collapse, monotonicity spot checks, and three
+  `strategy.ts` wiring tests: default-OFF byte-identical (no `regimeSeverity`/
+  `entryRegimeSeverity` with the flag unset), flag-ON (regimeSeverity present in userContent +
+  entryRegimeSeverity stamped on the persisted proposal), and flag-ON + scorer throw (run still
+  completes with no receipt).
+- `test/regime-watch.test.ts` — added a `regimeSeverityScoring flag gating` describe block (2
+  tests): default-OFF asserts `severityMacroOnly` is absent from the persisted `regime_flip` audit
+  payload; flag-ON (via `setPolicy`) asserts it is present as a number. All pre-existing tests in
+  the file are unmodified.
 
 ## Verification
 
 Run from `/Users/jay/Code/Socratic.Trade/.claude/worktrees/monet-regime-scorer`:
 
 - `npx tsc --noEmit` — clean, no output.
-- `npx vitest run test/regime-severity.test.ts` — 19/19 passed.
-- `npx vitest run test/hard-gate-classification.test.ts test/policy.test.ts test/red-team.test.ts test/market-regime.test.ts test/regime-gate-adoption.test.ts test/deterministic-bear.test.ts test/correlation-cluster-gate.test.ts test/regime-watch.test.ts test/regime-severity.test.ts` — 166/166 passed (all pinned tests + new tests, together).
-- `npm test -- --run` (full suite) — 2596 tests / 261 files: 2595 passed, 1 failed
-  (`test/usage-limit-alerts.test.ts`, a Resend-email notification test that touches none of this
-  lane's files). Confirmed pre-existing/unrelated: it passes in isolation
-  (`npx vitest run test/usage-limit-alerts.test.ts` → 1/1 passed) and only fails under full
-  4-worker contention (a `20000ms` timeout on an otherwise fully-mocked, offline test) — consistent
-  with the documented full-suite worker-contention flake class in this repo (see
-  `docs/rollouts/2026-07-05-full-suite-test-determinism.md` for the `scanMarket`-mock precedent).
-- `npm run lint` — 0 errors (pre-existing warning count unaffected by this diff).
+- `npx vitest run test/regime-severity.test.ts test/regime-watch.test.ts` — 25/25 passed.
+- `npx vitest run test/hard-gate-classification.test.ts test/policy.test.ts test/red-team.test.ts test/market-regime.test.ts test/regime-gate-adoption.test.ts test/deterministic-bear.test.ts test/correlation-cluster-gate.test.ts` — 144/144 passed (all COMMON.md-pinned tests).
+- `npm test -- --run` (full suite) — 2599 tests / 261 files: all passed.
+- `npm run lint` — 0 errors (pre-existing warning count unaffected by this diff; no warnings in
+  any file touched by this fix).
 
 ## Follow-ups
 
+- No dedicated Settings UI toggle for `policy.tuning.regimeSeverityScoring` — it is settable via
+  the policy JSON/API only for now, consistent with several other `tuning.*` boolean flags in this
+  codebase (e.g. `congressGoNoGoGating`, `autoApplyDrawdownGuard`) that also ship without a
+  dedicated UI control. `app/**` (console/UI) is out of scope for this lane per COMMON.md
+  keepouts; a Settings field is a follow-up for whichever lane owns that surface.
 - A severity-aware consumer (vol-targeting sizer, or a cap that scales with `entryRegimeSeverity`
   instead of a fixed threshold) is explicitly out of scope here — see "Scoping decision" above.
 - A regime-severity-bucketed scorecard (mirroring `regimeScorecard`/`thesisRegimeScorecard`) is

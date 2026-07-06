@@ -447,6 +447,17 @@ export interface TuningSettings {
    * 4, still supplies a floor). A positive value raises the distinct-test-date floor above that env default.
    */
   minOosTestDates?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, the multi-signal regime severity scorer (src/lib/regime-severity.ts,
+   * Lane 5) is computed and (a) surfaced as a compact `regimeSeverity` block in the Bull/Bear prompt
+   * userContent next to `currentMarketRegime`, (b) stamped as `entryRegimeSeverity` on persisted
+   * TradeProposals, and (c) included as `severityMacroOnly` in the `regime_flip` audit payload. Default
+   * false: default behavior is byte-identical — the scorer is not invoked, no regimeSeverity block is
+   * added to any prompt, no entryRegimeSeverity field is stamped, and no severityMacroOnly key is added
+   * to the regime_flip audit event. Purely a new advisory/receipt channel — does NOT change any cap/gate
+   * behavior (crisis cap, bear filter, escalation trigger) either on or off.
+   */
+  regimeSeverityScoring?: boolean;
 }
 
 export interface RiskRules {

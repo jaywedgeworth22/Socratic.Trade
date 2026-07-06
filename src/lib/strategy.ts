@@ -3053,22 +3053,28 @@ async function proposeTrades(input: {
   // only ADD caution vs. today's boolean-gate channel. Data-only receipt (prompt context +
   // proposal stamp) — does NOT change any cap/gate behavior. Best-effort: a scorer failure must
   // never fail the run.
-  const regimeSeverity = (() => {
-    try {
-      const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
-      return computeMultiSignalSeverity({
-        regime: classifyMarketRegime(macro).regime,
-        vix: macro.vix ? parseFloat(macro.vix) : undefined,
-        vixTermStructure: macroDerived.vixTermStructure,
-        hyCreditSpreadPct: Number.isFinite(hyCreditSpreadPct) ? hyCreditSpreadPct : undefined,
-        breadthPct: marketSignals?.marketBreadthPct ?? input.marketScan?.breadthPct,
-        vvix: marketSignals?.vvix,
-        skew: marketSignals?.skew
-      });
-    } catch {
-      return undefined;
-    }
-  })();
+  //
+  // OPT-IN (DEFAULT false via policy.tuning.regimeSeverityScoring): default behavior is
+  // byte-identical — the scorer is not invoked, so no regimeSeverity block, entryRegimeSeverity
+  // stamp, or downstream receipt exists unless an operator opts in.
+  const regimeSeverity = !input.policy.tuning?.regimeSeverityScoring
+    ? undefined
+    : (() => {
+        try {
+          const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
+          return computeMultiSignalSeverity({
+            regime: classifyMarketRegime(macro).regime,
+            vix: macro.vix ? parseFloat(macro.vix) : undefined,
+            vixTermStructure: macroDerived.vixTermStructure,
+            hyCreditSpreadPct: Number.isFinite(hyCreditSpreadPct) ? hyCreditSpreadPct : undefined,
+            breadthPct: marketSignals?.marketBreadthPct ?? input.marketScan?.breadthPct,
+            vvix: marketSignals?.vvix,
+            skew: marketSignals?.skew
+          });
+        } catch {
+          return undefined;
+        }
+      })();
 
   // [PHASE 2 OPTIMIZATION] Total Allowlist Abstraction
   // Instead of sending hundreds of allowed symbols to the LLM, we just tell it to only trade

@@ -6,6 +6,7 @@
 // (which only triggers a run when TRIGGER_ENGINE is on — otherwise a free, observable signal).
 
 import { audit, getInternalSetting, setInternalSetting } from "./db";
+import { getPolicy } from "./db-profiles";
 import { determineMarketRegime, fetchMacroDataWithLiveVix, type MacroData } from "./macro";
 import { classifyMarketRegime, isEscalationMarketRegime, regimeFromLabel } from "./market-regime";
 import { deriveMacroMetrics } from "./macro-metrics";
@@ -17,7 +18,12 @@ import { broadcastMaterialEvent } from "./triggers";
 // Best-effort: a scorer failure must never affect flip detection/notification. Logged as
 // `severityMacroOnly` in the regime_flip audit payload to distinguish it from the fuller
 // (macro + signals) `regimeSeverity` computed at strategy-run time (strategy.ts).
-function macroOnlySeverity(macro: MacroData): number | undefined {
+//
+// OPT-IN (DEFAULT false via policy.tuning.regimeSeverityScoring): default false: default behavior
+// is byte-identical — the scorer is not invoked and no `severityMacroOnly` key is added to the
+// regime_flip audit payload unless an operator opts in.
+function macroOnlySeverity(macro: MacroData, userId: string): number | undefined {
+  if (!getPolicy(userId).tuning?.regimeSeverityScoring) return undefined;
   try {
     const derived = deriveMacroMetrics(macro);
     const hyCreditSpreadPct = macro.hyCreditSpread ? parseFloat(macro.hyCreditSpread) : undefined;
@@ -72,9 +78,19 @@ export async function checkRegimeFlip(userId: string = "local"): Promise<void> {
   if (prev === next) return;
 
   setInternalSetting(REGIME_KEY, next);
+  const severityMacroOnly = macroOnlySeverity(macro, userId);
   audit(
     "regime_flip",
-    { from: prev, to: next, vix: macro.vix, vixAsOf: macro.vixAsOf, fedFunds: macro.fedFundsRate, dgs10: macro.dgs10Treasury, escalation: isEscalationRegime(next), severityMacroOnly: macroOnlySeverity(macro) },
+    {
+      from: prev,
+      to: next,
+      vix: macro.vix,
+      vixAsOf: macro.vixAsOf,
+      fedFunds: macro.fedFundsRate,
+      dgs10: macro.dgs10Treasury,
+      escalation: isEscalationRegime(next),
+      ...(severityMacroOnly !== undefined ? { severityMacroOnly } : {})
+    },
     userId
   );
   // Immediate dashboard refresh even when the trigger engine is off.
