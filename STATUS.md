@@ -8,6 +8,35 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane (Claude cloud, branch `claude/llm-apps-m5-resource-optimization-n9w5ax`)
+Owner asked for help offloading local agent/dev-server resource usage (16GB M5 MacBook Air
+crashing under 5+ concurrent AI coding tools). Landed on a self-hosted Coolify instance
+(open-source PaaS) on a Hetzner CX23 (2 vCPU/4GB, x86 — Ampere/CAX capacity was unavailable at
+signup time) behind `jays.services` (apex domain). Public routing is via a **Cloudflare
+Tunnel**, not a plain DNS `A` record — a manual `A` record was suggested initially (which
+would need DNS-only/grey-cloud for Coolify's own Let's Encrypt to issue directly), but the
+owner set up a Cloudflare Tunnel instead, which is what's actually live: TLS terminates at
+Cloudflare's edge and is forwarded to the box over the tunnel, which is also why this
+session (limited to outbound HTTPS:443 to well-known hosts) can reach it at all. Coolify
+4.1.2 confirmed reachable and API-token auth verified (`Security > API Tokens`, token stored
+as this environment's `COOLIFY_API_TOKEN` secret going forward — do not commit it anywhere).
+
+**Doc correction (this session):** `AGENTS.md`'s "Cursor: not a 4th agent lane" section was
+outdated per the owner — Cursor now runs its own background/agent-mode work on **DeepSeek**,
+exactly like the other CLI agents, so it's promoted to a full peer lane (`agent/cursor` branch,
+`~/apps/trading-cursor` worktree, port 4104, `cursor.jays.services`) while *also* keeping its
+existing human-review-seat role in the `main` integration worktree. `agent/antigravity` branch
+also created (didn't exist before; only a topic branch `antigravity/socratic-webhooks` did).
+
+**In progress / next action:** create the Coolify "Socratic Trade" project, connect the GitHub
+repo, and deploy 6 preview lanes (`main`, `agent/claude`, `agent/codex`, `agent/antigravity`,
+`agent/monet`, `agent/cursor`) plus, per explicit owner decision, `socratictrade.com` production
+on the **same** CX23 box (owner accepted the noisy-neighbor/reliability risk of colocating
+production with preview-lane builds on a 4GB box after it was flagged). Production migration
+still needs: secrets transfer (broker/LLM API keys), safe DB migration/cutover plan, and
+Backups enabled in Coolify for that app specifically (the preview lanes deliberately skip
+Coolify Backups as not worth the 20% cost for fully-reproducible state; production is not
+reproducible and must not skip this). See `docs/rollouts/2026-07-06-coolify-migration.md`.
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
 
 Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that

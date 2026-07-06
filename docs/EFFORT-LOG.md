@@ -570,6 +570,21 @@ As of 2026-07-04.
 ---
 
 ## 🔨 In Progress
+- **Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane** (CLAUDE cloud,
+  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-06.**
+  Self-hosted Coolify (open-source PaaS) stood up on a Hetzner CX23 behind `jays.services` to
+  offload local agent/dev-server resource usage from the owner's 16GB M5 MacBook Air. API
+  token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
+  created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
+  corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
+  (port 4104, `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
+  create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
+  agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
+  onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
+  box) — production needs real secrets transfer, DB migration/cutover plan, and Coolify
+  Backups enabled (unlike the preview apps). See
+  `docs/rollouts/2026-07-06-coolify-migration.md`.
+
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
   was physically still sitting under the In Progress heading; relocated to Completed (issues mirror
