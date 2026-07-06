@@ -212,3 +212,107 @@ top of main tip `2a0f8eac`.
 Re-ran the full local quartet again: `npm run lint` (0 errors), `npx tsc --noEmit` (clean),
 `npm test` (252 files / 2455 tests, matching car 11's post-merge count exactly), `npm run build`
 (green). Landing via `scripts/land.sh` again next.
+
+## 2026-07-05 — calibration audit + fixes (owner-directed activation)
+
+Owner asked to make the runner actually offload safely. A live diagnosis found the feature
+was 100% inert: PR #372 unmerged, the publisher never started (repo var `VERIFY_RUNNER_STATE`
+still the `{"mode":"hosted","ts":0}` seed), and — critically — the availability metric could
+never open on the real hardware. The production Mac is **16 GB** and chronically swapping
+(measured ~11–20 GB swap used, `kern.memorystatus_vm_pressure_level == 2`), so the old
+`free+inactive > 6 GB` gate was both unsatisfiable AND the wrong signal (it undercounts
+reclaimable macOS cache yet is blind to swap/compressor — it can read "healthy" on a
+thrashing box). An adversarial audit (4 lenses) and a pre-land review (3 lenses) backed the
+following changes; this merge-forward (33 commits behind main) also had to re-resolve `ci.yml`
+against main's docs-only fast path (#370), the tokenless-install migration (`.npmrc` +
+`npm-ci-with-shared-deps.sh` both removed from main), and the dropped `agent/**` push trigger.
+
+### What changed
+
+`scripts/runner-availability.sh` — availability metric rewritten to a **pressure-based gate**
+(all required): `kern.memorystatus_vm_pressure_level == 1` (kernel says normal) AND
+`vm.page_free_wanted == 0` AND swap used `< 3 GB` AND compressor occupancy `/ RAM < 0.25` AND
+`free+inactive > 3 GB` (tertiary floor). CPU load ratio loosened `0.6 → 0.8` (every self-path
+command runs under `nice -n 19`, which protects CPU scheduling — but NOT memory, which is why
+the memory gate is the load-bearing safety term). Verified under Apple bash 3.2, ASCII-clean;
+correctly returns BUSY on the current box (pressure level 2) and AVAILABLE only when the box
+truly has headroom.
+
+`.github/workflows/ci.yml`:
+- **Router `ts` bug fix (was a latent merge-blocker):** `.ts // 0` does not coerce a
+  present-but-non-numeric `ts`; an operator typo like `{"ts":"oops"}` would flow a bad token
+  into `age=$(( now - ts ))` under `set -euo pipefail` and hard-fail the required check for
+  every PR. Now `(.ts | numbers) // 0` + an integer belt (`[ "$ts" -eq "$ts" ] || ts=0`).
+- Staleness window `300s → 180s` (publish interval is 60s, so 3 samples).
+- `verify-self`: **dropped `actions/setup-node`** — its npm-cache post-action wedges on the
+  long-lived self-hosted Mac (see `2026-06-29-self-hosted-ci-billing-block.md`); uses the
+  system node like `deploy.yml`. Install is tokenless `npm ci` (the stale
+  `npm-ci-with-shared-deps.sh` + deploy key are gone from main). Added
+  `NODE_OPTIONS=--max-old-space-size=3072` (job env) and `npm test -- --maxWorkers=2` to
+  **bound peak RSS** on the 16 GB box — the precondition that makes self-routing safe here.
+- `verify-hosted` (the arbiter): main's tokenless `npm ci`; dropped redundant per-step
+  docs-only guards (its job-level `if` already excludes docs-only); kept the nightly canary in
+  the cache-save condition.
+- Triggers: dropped `agent/**` push (main's cost decision — PRs already run `verify`); kept the
+  nightly hosted canary + `workflow_dispatch` re-kick lever.
+
+### Why this is safe to activate on the production trading box
+
+Defense in depth on the axis that matters (memory): the publisher only advertises `self` when
+the kernel reports normal pressure AND swap/compressor are low — i.e. only when the box has
+real headroom — and even then the self verify job is RSS-capped and `nice -n 19`. Any
+self-lane failure (including a system-node-version flake) triggers exactly one hosted arbiter
+re-run and the gate takes the hosted result, so a Mac hiccup can never block or fake-pass a
+merge. On the current memory-tight box the gate correctly stays closed (stays hosted); it opens
+only if the box is upsized or sheds resident services.
+
+### Verification
+
+- `runner-availability.sh`: `bash -n` clean under `/bin/bash` 3.2.57; `grep -nP '[^\x00-\x7F]'`
+  empty (ASCII); `check_available` run live returns BUSY (pressure level 2); swap/compressor/
+  free parsers exercised directly with no awk errors; healthy-box simulation returns available.
+- `ci.yml`: `python3 yaml.safe_load` OK; no conflict markers; `(.ts|numbers)//0` confirmed to
+  map `oops→0`, `1751742000→1751742000`, missing→0.
+- Full local gate (`tsc`/`test`/`build`) via `scripts/land.sh` at landing.
+- Adversarial reviews: calibration audit (4 lenses) + pre-land review (3 lenses:
+  workflow-semantics, shell-correctness, production-safety).
+
+### Follow-ups / activation
+
+After landing: start the publisher under pm2 on the production Mac
+(`pm2 start ~/apps/trading-live/scripts/runner-availability.sh --name runner-availability
+--interpreter bash && pm2 save`) and confirm it publishes a fresh `{"mode",...}` value. It will
+report `hosted` while the box is memory-tight (expected); offload activates automatically when
+the box has headroom.
+
+### Pre-land review (2026-07-05) — findings applied + known residual
+
+A 3-lens pre-land review (workflow-semantics, shell-correctness, production-safety) returned
+**GO to land / GO to activate, zero blockers**. Two hardenings were applied from it:
+- `runner-availability.sh` compressor term made **fail-closed** (it was the lone term that
+  skipped rather than returned busy when `hw.memsize`/the compressor `vm_stat` line was
+  unreadable — now `... || { log busy; return 1; }` like every sibling term).
+- swap parser now **asserts the `M` (megabyte) suffix** macOS emits; a future `G`/`K` units
+  change yields an empty value -> busy, instead of mis-scaling a large swap down into a false
+  "available".
+
+**Known residual (documented, not a blocker): a self-hosted queue-wait *stall* — never a
+fake-pass.** If `classify` routes `self` while `VERIFY_RUNNER_STATE` is still fresh (<180s) but
+the Runner.Listener has since died or is queued behind another self job (`verify-self-hosted`
+concurrency, `cancel-in-progress: false`), `verify-self` sits Queued; `verify-hosted` and
+`verify` gate on its `needs` completion, so the required check stays Pending and auto-merge does
+not fire. `timeout-minutes: 30` bounds execution, not queue-wait. The window is small (60s
+publish cadence + 180s staleness + the `pgrep Runner.Listener` availability check flip the state
+to `hosted` within ~180s of a runner death) and there is exactly ONE registered runner
+(`/Users/jay/actions-runner`, single Runner.Listener), so `verify-self` never runs concurrently
+with a `deploy` build. This can only *stall* a routed PR, never fake-pass or block via a wrong
+result. **Follow-up if ever observed:** a lightweight scheduled/dispatch watchdog that
+`gh run cancel`s a `verify-self` job still Queued after N minutes, which flips it to `cancelled`
+and fires `verify-hosted`'s `self.result != 'success'` arbiter branch promptly.
+
+Confirmed non-issues (reviewed, no change): the gate is fail-closed (`verify` uses
+`if: !cancelled()`, classify-fail -> exit 1, self accepted only when `HOSTED==skipped &&
+SELF==success`); dropping `setup-node` for system node only ever makes verify-self *fail* ->
+hosted arbiter re-runs (never fake-pass); the RSS heap cap is belt-and-suspenders atop the
+load-bearing availability gate; `deploy.yml` already runs the same `npm ci`+`next build` on this
+identical runner every main push, so the self lane adds no new class of load.

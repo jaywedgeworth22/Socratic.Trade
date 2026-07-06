@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — Hybrid runner: calibration fixes + activation (owner-directed)
+Owner asked to make the runner actually offload. Live diagnosis: the feature was 100% inert
+(PR #372 unmerged, publisher never started, repo var still the `ts:0` seed, and the
+`free+inactive>6GB` metric was unsatisfiable on the 16GB swapping Mac). Merged the
+33-commit-stale branch forward (re-resolving `ci.yml` vs main's docs-only fast path, tokenless
+`npm ci` migration, dropped `agent/**` trigger) and applied fixes: router `ts` numeric-coercion
+(a latent merge-blocker), staleness 300s→180s, availability metric rewritten to a pressure-based
+gate (`kern.memorystatus_vm_pressure_level==1` + `page_free_wanted==0` + swap<3GB + compressor<25%
++ free floor), CPU 0.6→0.8, and `verify-self` made safe on the 16GB box (drop the cache-wedging
+`setup-node` for system node, tokenless `npm ci`, `NODE_OPTIONS=3072` + `--maxWorkers=2` RSS cap).
+Verified bash-3.2/ASCII + YAML + jq coercion; adversarial calibration audit (4 lenses) + pre-land
+review (3 lenses, GO/GO zero blockers, 2 fail-closed hardenings applied). Next: land via
+`land.sh`, then start the pm2 publisher on the production Mac (it will correctly report `hosted`
+while the box is memory-tight; offload activates only when the box has real headroom). Known
+residual: a self-hosted queue-wait can *stall* (never fake-pass) a routed PR — documented, watchdog
+is a follow-up. Rollout: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 sections).
+
 ## 2026-07-04 — Landing operator: #372 needed a double merge-forward (base moved twice mid-land)
 PR #372's base moved out from under it twice: once catching up to several cars/docs work that
 had landed since #370, and again mid-wait when PR #440 (Outcome Engine lane) landed first

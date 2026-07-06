@@ -117,8 +117,11 @@ check_available() {
 
   # (3) Absolute swap-used floor -- the single most predictive anti-thrash term. Parse
   # "total = X.XXM  used = Y.YYM  free = Z.ZZM" and compare used (GB) to the cap.
-  swap_used_gb="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used"){v=$(i+2); gsub(/M/,"",v); printf "%.2f", v/1024; exit}}')"
-  [ -n "$swap_used_gb" ] || { log "busy: cannot read vm.swapusage"; return 1; }
+  # Only accept the megabyte form macOS actually emits ("used = Y.YYM"). If a future macOS
+  # ever reports G/K units, the token won't match /M$/, swap_used_gb stays empty, and we
+  # fail busy -- never mis-scale a large swap down into a false "available".
+  swap_used_gb="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used"){v=$(i+2); if(v ~ /M$/){sub(/M$/,"",v); printf "%.2f", v/1024}; exit}}')"
+  [ -n "$swap_used_gb" ] || { log "busy: cannot read/parse vm.swapusage (non-MB units?)"; return 1; }
   swap_ok="$(awk -v u="$swap_used_gb" -v m="$MAX_SWAP_USED_GB" 'BEGIN{print (u+0 < m+0) ? 1 : 0}')"
   if [ "$swap_ok" != "1" ]; then
     log "busy: swap used ${swap_used_gb}GB >= ${MAX_SWAP_USED_GB}GB (under memory pressure)"
@@ -129,13 +132,14 @@ check_available() {
   # anon pages are not cheaply reclaimable, so a large compressor means little real headroom).
   memsize="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
   comp_pages="$(vm_stat | awk '/occupied by compressor/ {gsub(/\./,"",$NF); print $NF}')"
-  if [ -n "$comp_pages" ] && [ "$memsize" -gt 0 ] 2>/dev/null; then
-    comp_ok="$(awk -v c="$comp_pages" -v p="$pagesize" -v m="$memsize" -v t="$MAX_COMPRESSOR_FRAC" \
-      'BEGIN{print (c*p/m < t) ? 1 : 0}')"
-    if [ "$comp_ok" != "1" ]; then
-      log "busy: compressor occupies >= ${MAX_COMPRESSOR_FRAC} of physical RAM"
-      return 1
-    fi
+  # Fail-closed like every other term: unreadable compressor/memsize -> busy, never skip the
+  # check (this is the load-bearing memory safety gate).
+  { [ -n "$comp_pages" ] && [ "$memsize" -gt 0 ] 2>/dev/null; } || { log "busy: cannot read compressor pages / memsize"; return 1; }
+  comp_ok="$(awk -v c="$comp_pages" -v p="$pagesize" -v m="$memsize" -v t="$MAX_COMPRESSOR_FRAC" \
+    'BEGIN{print (c*p/m < t) ? 1 : 0}')"
+  if [ "$comp_ok" != "1" ]; then
+    log "busy: compressor occupies >= ${MAX_COMPRESSOR_FRAC} of physical RAM"
+    return 1
   fi
 
   # (5) Tertiary raw-headroom floor: free+inactive still above a small absolute minimum.
