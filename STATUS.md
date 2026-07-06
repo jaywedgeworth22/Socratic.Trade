@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Persistent candlestick header logo (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+Follow-up to the merged console intro splash (#876). Replaced the typed "Socratic.Trade" brand text
+in the console top bar with a live candlestick "SOCRATIC TRADE" logo that ticks forever, and made
+the intro shrink into and hand off to that exact element. New `app/console/ui/candle-ticker.ts`
+(shared wordmark sampler + 12-unit ticker + `drawTicker`, so intro and logo can't drift) and
+`app/console/ui/header-logo.tsx` (`<HeaderLogo>`, ~248×18px, ticks one column/sec, theme-independent
+candles on the header surface, reduced-motion-safe). `shell.tsx` renders `<HeaderLogo/>` in place of
+the text span. `intro-canvas.tsx`: transparent background (owner choice — console/theme shows
+through), final candles measured onto the real `[data-brand-logo]` box for a seamless handoff, header
+shrunk to ~18px, and `END = T4 + 0.2` so the overlay fades at once instead of double-drawing.
+Gate green (tsc/lint/build); driven live (settled logo + handoff, dark + forced-light). Blocker:
+none. Open question surfaced to owner: transparent splash reveals the loading console + first-visit
+consent modal behind the candles — offered a one-line switch to `var(--con-bg)` (theme fill) if a
+cleaner splash is wanted. See `docs/rollouts/2026-07-06-persistent-header-logo.md`.
 ## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
 Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
 doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the

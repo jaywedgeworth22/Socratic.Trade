@@ -181,6 +181,17 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Persistent candlestick header logo (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
+  IN PROGRESS 2026-07-06, PR open.** Follow-up to the merged console intro splash (#876). Replaced the
+  typed "Socratic.Trade" top-bar brand with a live candlestick "SOCRATIC TRADE" `<HeaderLogo>` that
+  ticks forever (one column/sec), and made the intro shrink into and hand off to that exact element.
+  New shared `app/console/ui/candle-ticker.ts` (wordmark sampler + 12-unit ticker + `drawTicker`, so
+  intro and logo can't drift) + `app/console/ui/header-logo.tsx` (~248×18px, theme-independent candles
+  on the header surface, reduced-motion-safe). `intro-canvas.tsx`: transparent bg (owner choice), final
+  candles measured onto the real `[data-brand-logo]` box (seamless handoff), header shrunk to ~18px,
+  `END=T4+0.2` (fade at once, no double-draw). tsc/lint/build green + driven live (dark + light).
+  Owner open question: transparent splash shows the console+consent modal behind the candles — offered
+  a one-line switch to `var(--con-bg)`. See `docs/rollouts/2026-07-06-persistent-header-logo.md`.
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
   builds with the app's real components. Render check 30/30 clean; conventions header shipped.
