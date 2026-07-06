@@ -8,6 +8,59 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
+
+Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to
+`main`; this section is the summary pointer, the four detailed per-lane entries lower in this file
+(and their linked rollout notes) remain the technical record.
+
+**(a) What landed (one line per PR):**
+- **PR #816** (squash `041b73b2`) — prompt-safety fencing + deterministic injection/age receipts
+  for the money-path (Bull/Bear/post-mortem) prompts; advisory only, detection never blocks.
+- **PR #819** (squash `f28322fe`) — wired the previously-dormant usage-budget Phase 2 building
+  block into `runStrategyOnce`: advisory receipts always on, enforcement opt-in via
+  `USAGE_BUDGET_ENFORCE` (default off).
+- **PR #820** (squash `e90db1a8`) — durable due-jobs substrate (`due_jobs` table + `db-jobs.ts`,
+  lease/reclaim) so 15m/1h intraday outcome sampling survives process downtime.
+- **PR #822** (squash `d97b7c71`) — HyDE + evidence-derived multi-query retrieval for the filings
+  RAG pass, both flags (`RAG_MULTIQUERY`/`RAG_HYDE`) default off, byte-identical when off.
+
+**(b) Triage findings — 3 board rows proved already done, not re-implemented:**
+- RAG retrieval-quality eval harness + its two prerequisite rows (golden-set anti-leakage lint;
+  retrieval regression net) — already shipped via PRs #297/#299.
+- Bull/Bear prompt eval + versioning harness — already shipped 2026-07-01 on the money-path
+  landing (`STRATEGY_PROMPT_VERSION` + `npm run eval:strategy-offline`).
+- Per-user/day token-budget ceiling at trigger/strategy entry — already shipped via the PR #316
+  series; the "deferred" comment remaining in `triggers.ts` refers to run-count caps, not the
+  token-budget ceiling itself.
+
+See `docs/EFFORT-LOG.md` for the annotated rows (each carries a
+"(triage 2026-07-05: already done — ...)" note in place, not deleted).
+
+**(c) Adversarial-review blockers caught pre-merge (all fixed + regression-tested before landing):**
+- **Usage-budget (#819):** the enforcement block mutated the run's shared `policy` object in
+  place, so a same-run cap-breach demotion's `setPolicy(...)` would have persisted the transient
+  model downgrade to the DB permanently — fixed with a separately-carried `runLlmOverride`/
+  `runPolicy` never passed to any `setPolicy`/`autoRevertOnCapBreach` call site.
+- **Due-jobs (#820):** a lost-update race — `measureCase` held an outcomes snapshot across awaits,
+  so its wholesale write could erase a 15m/1h row the due-jobs worker had already persisted
+  concurrently — fixed by re-merging against a fresh DB read immediately before every
+  terminal/partial write.
+- **HyDE/multi-query (#822):** the fan-out was fail-CLOSED, not fail-open — one variant's rejected
+  Voyage/Pinecone call discarded every other variant's already-successful results via a bare
+  `Promise.all`, returning empty filings context instead of falling back to single-query retrieval
+  — fixed so each fan-out call is caught individually with a single-query fallback on total failure.
+
+**(d) Next actions for the CLAUDE lane:**
+- Remaining itemized RAG-hygiene rows still on the board (see `docs/EFFORT-LOG.md` Planned
+  section, "RAG, ingestion & embedded memory" and "Deep-sweep additions" groups) — none of the
+  three triaged-done rows above are among them; those groups' other rows are still open.
+- RAG golden-eval expansion row ("Expand the RAG golden eval with episodic-analog queries and hard
+  negatives") — separate from the harness-already-done row above; still open, still blocking
+  decay/hybrid/ranking tuning per its own note.
+- `RAG_MULTIQUERY` / `RAG_HYDE` ship default OFF pending eval evidence — no retrieval-quality eval
+  yet compares single-query vs. multi-query vs. multi-query+HyDE recall@k/MRR before either flag
+  is flipped on by default; flagged as a follow-up in `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
 ## 2026-07-05 — Hybrid runner: calibration fixes + activation (owner-directed)
 Owner asked to make the runner actually offload. Live diagnosis: the feature was 100% inert
 (PR #372 unmerged, publisher never started, repo var still the `ts:0` seed, and the
