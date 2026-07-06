@@ -72,6 +72,21 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🚧 In Progress
 
+- **RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822) (CLAUDE),
+  worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`.** Test/
+  fixture/docs only, no production code changed. Added 10 new fixture cases to
+  `test/fixtures/rag-retrieval-eval-fixture.ts` covering `EPISODIC_DOC_TYPES`
+  (`socratic-decision`/`coach-note`/`lesson`) — the prior 462-line fixture had zero non-filings
+  cases, so the harness reportedly saturated at recall 1.0. Each new case has near-miss hard
+  negatives (same symbol/regime, wrong thesis or side) so it's actually discriminating. Added two
+  `describe` blocks to `test/rag-retrieval-eval.test.ts`: an episodic recall@k/MRR suite (reuses
+  the existing scorer via a minimal additive `cases` option on `runFixture`, filings behavior
+  byte-identical) and a single-query-vs-multi-query suite exercising
+  `RetrieveOptions.queries`/`rrfFuse` (#822) directly against `retrieveContextDetailed`, asserting
+  no-regression + that the fused pool draws from multiple query lists (one `mocks.query` call per
+  fan-out variant). No RAG env flag defaults touched. tsc clean; focused
+  `test/rag-retrieval-eval.test.ts` + `test/rag-retrieval-regression.test.ts` = 36/36 passing (17
+  new). Rollout: `docs/rollouts/2026-07-06-rag-golden-eval-episodic.md`.
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
   builds with the app's real components. Render check 30/30 clean; conventions header shipped.

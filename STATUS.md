@@ -8,6 +8,39 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+
+Worktree `~/apps/trading-wt-golden-eval`, branch `claude/rag-golden-eval-episodic`. Test/fixture/
+docs only, no production code touched.
+
+**What changed:** `test/fixtures/rag-retrieval-eval-fixture.ts` gained 10 new cases covering
+`EPISODIC_DOC_TYPES` (`socratic-decision`/`coach-note`/`lesson`, `src/lib/experience-memory.ts:44`)
+— the prior fixture (462 lines, 29 cases) had zero non-filings cases, so the harness reportedly
+saturated at recall 1.0. Each new case ships >=1 near-miss hard negative (same symbol/regime, wrong
+thesis or direction) so recall is a real signal, not a giveaway; one case (`episodic-asof-guard-
+analog`) exercises the point-in-time guard on an episodic doc_type the same way the existing
+`aapl-8k-asof-guard` case does for filings.
+
+`test/rag-retrieval-eval.test.ts` gained two `describe` blocks:
+1. Episodic recall@k/MRR eval — reuses the existing scorer functions via a minimal additive
+   `cases?: FixtureCase[]` option threaded onto `runFixture` (defaults to the full fixture, so
+   every existing call site is byte-for-byte unchanged).
+2. Single-query-vs-multi-query fan-out exercising `RetrieveOptions.queries`/`rrfFuse` (#822)
+   directly against `retrieveContextDetailed` — no flag flips, no production code changes. Because
+   the mock returns the identical recorded pool for every fan-out variant, the assertions are
+   no-regression (multi-query recall >= single-query recall) plus a plumbing check that
+   `mocks.query` fires once per fan-out variant and the fused pool is a de-duplicated union across
+   variants — not a claimed strict improvement (documented inline; the mock can't manufacture a
+   variant-specific gain by construction).
+
+**Verification:** `npx tsc --noEmit` clean. `npx vitest run test/rag-retrieval-eval.test.ts
+test/rag-retrieval-regression.test.ts` → 36/36 passing (17 new: 10 fixture cases + 4 episodic eval
+`it`s + 3 multi-query `it`s). Full `npm test`/`npm run build` intentionally NOT run per this lane's
+scope (test/fixture/docs only).
+
+**Next:** none planned for this lane; see rollout note `docs/rollouts/2026-07-06-rag-golden-eval-
+episodic.md` for exact touched files and follow-ups.
+
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
 Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to
