@@ -64,6 +64,7 @@ import {
   recordPortfolioSnapshot
 } from "./performance";
 import { applyMissedOpportunityNudge, summarizeMissedOpportunities } from "./strategy-tuning";
+import { fractionalKellySuggestion } from "./kelly";
 import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
@@ -2418,6 +2419,63 @@ export function applyDeterministicSizing(
       ? 0
       : Math.max(floor, Math.min(ceiling, multiplier));
 
+  // Fractional-Kelly sizing on realized payoff (downside-dispersion-aware, advisory). Runs BESIDE
+  // the Kelly-lite heuristic above (never replaces it): computes a suggested multiplier from the
+  // bucket's realized win/loss payoff split (avgWinPct/avgLossPct) and downside-dispersion
+  // penalty (downsideDeviationPct), added to performance.ts's aggregateClosedLots alongside this
+  // feature. A receipt is appended whenever the bucket clears the sample gate AND the payoff ratio
+  // is computable (informational only) — the size itself only changes when
+  // policy.tuning.fractionalKellySizing is explicitly on, and even then Kelly may only REDUCE size
+  // vs today (min of the existing multiplier and the Kelly suggestion), never increase it.
+  // Validate/clamp to a finite [0,1] fraction: a non-finite or out-of-range policy value must not
+  // leak into the sizing math or print a misleading "NaN-Kelly" receipt. Falls back to 0.5 when unset
+  // or non-finite; clamps stray >1 / <0 values into range.
+  const kellyFractionRaw = policy.tuning?.kellyFraction ?? 0.5;
+  const kellyFractionSetting = Number.isFinite(kellyFractionRaw) ? Math.max(0, Math.min(1, kellyFractionRaw)) : 0.5;
+  const kellySuggestion = fractionalKellySuggestion(
+    {
+      winRate,
+      avgWinPct: stat?.avgWinPct,
+      avgLossPct: stat?.avgLossPct,
+      downsideDeviationPct: stat?.downsideDeviationPct,
+      avgReturnPct: avgReturn,
+      trades: sampleTrades
+    },
+    { fraction: kellyFractionSetting, minTrades: minLotsForSizing }
+  );
+  // Calibration (and by extension this Kelly payoff split) is long-only — getConfidenceCalibration
+  // filters side==='long'. Shorts have no calibration curve to lean on, so the receipt says so
+  // rather than silently presenting the raw split as if it were calibrated the same way.
+  const kellyUncalibratedShort = proposal.side === "short";
+  let kellyNote = "";
+  let kellyApplied = false;
+  let finalMultiplier = boundedMultiplier;
+  if (kellySuggestion && !("insufficient" in kellySuggestion)) {
+    const { suggestedPctOfCeiling, p, b, penalty } = kellySuggestion;
+    const applyKelly = policy.tuning?.fractionalKellySizing === true && suggestedPctOfCeiling < boundedMultiplier;
+    if (applyKelly) {
+      // Kelly is allowed to cut BELOW the normal sizingFloorPct — that is the entire point of the
+      // "reduce, never increase" guardrail (a poor risk-adjusted edge should be able to shrink size
+      // past the ordinary exploratory floor). Only clamp to sane absolute bounds: never negative,
+      // never above the ceiling, and never above the multiplier Kelly is replacing.
+      finalMultiplier = Math.max(0, Math.min(ceiling, Math.min(boundedMultiplier, suggestedPctOfCeiling)));
+      kellyApplied = true;
+    }
+    kellyNote = `\n\n[Sizing] Fractional-Kelly (p=${p.toFixed(2)}, b=${b.toFixed(2)}, σ_down=${(stat?.downsideDeviationPct ?? 0).toFixed(2)}%, penalty=${penalty.toFixed(2)}): suggests ${Math.round(suggestedPctOfCeiling * 100)}% of max (${kellyFractionSetting}-Kelly)${kellyApplied ? " — applied" : " — informational only, not applied"}${kellyUncalibratedShort ? " (short: uncalibrated)" : ""}`;
+    if (kellyApplied) {
+      audit("sizing_fractional_kelly_applied", {
+        symbol: proposal.symbol,
+        thesisTag: proposal.tradeThesisTag,
+        p: Number(p.toFixed(4)),
+        b: Number(b.toFixed(4)),
+        penalty: Number(penalty.toFixed(4)),
+        suggested: Number(suggestedPctOfCeiling.toFixed(4)),
+        previousMultiplier: Number(boundedMultiplier.toFixed(4)),
+        applied: Number(finalMultiplier.toFixed(4))
+      }, userId);
+    }
+  }
+
   const openingCapacity = openingRiskCapacity(proposal, policy, portfolio, positions, marketScan);
   const policyHeadroomCap = applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, portfolio));
   const rawOpeningCap = Math.min(openingCapacity.cap, policyHeadroomCap);
@@ -2440,7 +2498,7 @@ export function applyDeterministicSizing(
   // later policy review rejects it instead of skipping the broker bracket. (Review: PR #278.)
   let effectiveOpeningCap = openingSizingCap;
   const fallbackBase = Number.isFinite(openingCapacity.cap) ? openingCapacity.cap : (policy.maxOrderNotional ?? 0);
-  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * boundedMultiplier);
+  const fallbackNotional = Math.floor(Math.max(0, fallbackBase) * finalMultiplier);
   const advisedNotional = estimateOpeningProposalNotional(proposal, marketScan);
   let targetNotional = advisedNotional && advisedNotional > 0
     ? Math.min(Math.floor(advisedNotional), openingSizingCap)
@@ -2555,7 +2613,7 @@ export function applyDeterministicSizing(
     : "";
   const fallbackSizeNote = advisedNotional && advisedNotional > 0
     ? ""
-    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(boundedMultiplier * 100)}% of max)`;
+    : `\n\n[Sizing] No explicit opening size from the LLM; fallback sized to ${formatWholeDollars(targetNotional)} (${Math.round(finalMultiplier * 100)}% of max)`;
 
   return {
     ...proposal,
@@ -2563,7 +2621,7 @@ export function applyDeterministicSizing(
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
     rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
-      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote
+      : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
   };
 }
 
