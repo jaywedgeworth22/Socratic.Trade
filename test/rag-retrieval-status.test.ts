@@ -244,4 +244,18 @@ describe("typed retrieval-status receipt (RetrievalStatus)", () => {
     expect(chunks).toEqual([]);
     expect(status).toBe("lookup_failed");
   });
+
+  it("a throwing caller-supplied onStatus does not break retrieveContextDetailedWithStatus", async () => {
+    const { retrieveContextDetailedWithStatus } = await freshVectorDb();
+    mocks.query.mockResolvedValue({ matches: [HEALTHY_MATCH] });
+    const throwingOnStatus = vi.fn(() => {
+      throw new Error("boom — a broken receipt callback must never break retrieval");
+    });
+    const { chunks, status } = await retrieveContextDetailedWithStatus("query", "AAPL", 3, "local", {
+      onStatus: throwingOnStatus
+    });
+    expect(chunks.map((c) => c.id)).toEqual(["chunk-1"]);
+    expect(status).toBe("ok");
+    expect(throwingOnStatus).toHaveBeenCalledWith("ok");
+  });
 });

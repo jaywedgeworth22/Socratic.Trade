@@ -99,8 +99,9 @@
   `test/socratic-memory.test.ts`, `test/strategy-episodic-injection.test.ts`,
   `test/strategy-rag-quickwins-wiring.test.ts`, `test/run-strategy-offline.test.ts` — 26/26
   passed. The full `vector-db-*`/`rag-*` family (15 files) — 171/171 passed.
-- Full `npm test` / `npm run build` intentionally NOT run — out of scope for this worktree lane
-  per the task instructions (a central operator lands sequentially and runs the full gate).
+- The `land.sh` gate ran the full suite at land time: `npx tsc --noEmit` clean, full `npm test`
+  2711/2711 passed across 272 files, and `npm run build` clean (confirmed via the PR's
+  `verify`/`verify-hosted` CI logs).
 
 ## Follow-ups
 

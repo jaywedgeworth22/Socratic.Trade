@@ -36,8 +36,9 @@ Verification: `npx tsc --noEmit` clean; `npx vitest run test/rag-retrieval-statu
 test/rag-retrieval-eval.test.ts` — 21/21 passed. Also spot-ran the broader RAG/vector-db/strategy
 suites most likely to touch this code path (experience-memory, socratic-runtime, socratic-memory,
 strategy-episodic-injection, strategy-rag-quickwins-wiring, run-strategy-offline, and the full
-`vector-db-*`/`rag-*` families) — 171 + 26 passed, all green. Full `npm test`/`npm run build` were
-NOT run per this lane's scope (a central operator lands sequentially).
+`vector-db-*`/`rag-*` families) — 171 + 26 passed, all green. The `land.sh` gate ran the full
+suite at land time: `npx tsc --noEmit` clean, `npm test` 2711/2711 passed across 272 files, and
+`npm run build` clean (confirmed via the PR's `verify`/`verify-hosted` CI logs).
 
 See `docs/rollouts/2026-07-06-typed-retrieval-status.md` for the full note.
 

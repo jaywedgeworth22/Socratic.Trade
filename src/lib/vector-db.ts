@@ -2006,7 +2006,15 @@ export async function retrieveContextDetailedWithStatus(
     ...options,
     onStatus: (s) => {
       status = s;
-      options?.onStatus?.(s);
+      // Forward to the caller-supplied callback best-effort — a throwing callback must never
+      // break retrieval. This mirrors the same guarantee `reportRetrievalStatus` already gives
+      // internally; guarded explicitly here too since this closure is itself what gets invoked
+      // through that internal call chain, and a receipt callback must never propagate a throw.
+      try {
+        options?.onStatus?.(s);
+      } catch {
+        // advisory receipt only — never let a callback failure affect retrieval
+      }
     }
   });
   return { chunks, status };
