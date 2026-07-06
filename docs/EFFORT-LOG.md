@@ -989,7 +989,7 @@ As of 2026-07-04.
   with subagent exploration/verification; do not touch AG backend-health lane, Monet risk lanes,
   Claude memory/RAG lanes, or Cursor security/perf rows.
 
-- **PR #853 - sync effort-log mirror with live board (AG, S) — new row, IN PROGRESS 2026-07-05
+- **PR #853 - sync effort-log mirror with live board (AG, S) — ✅ COMPLETED via PR #853 2026-07-05
   (CLAUDE audit-c3).** Branch `ag/effort-log-sync`. `gh pr view 853`: OPEN, mergeStateStatus
   BLOCKED, all CI green, no auto-merge armed, reviewDecision empty. Docs-only board sync; blocked
   only by the ruleset review gate. Open since 07-05 20:38. action=land-it.
