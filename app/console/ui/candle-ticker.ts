@@ -31,9 +31,9 @@ function offscreen(): [HTMLCanvasElement, CanvasRenderingContext2D] {
 }
 
 /** Rasterize `text` (bold) and slice it into candle cells at a fixed column
- *  pitch, using a coverage threshold so bold stems read at even weight. Matches
- *  the intro's sampler exactly so both share one letter layout. */
-function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
+ *  pitch, using a coverage threshold so bold stems read at even weight. The
+ *  single letter sampler shared by the intro splash and the header logo. */
+export function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
   const [off, octx] = offscreen();
   const font = `700 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
   octx.font = font;

@@ -52,9 +52,10 @@ export function HeaderLogo({ height = 18 }: { height?: number }) {
       data-brand-logo
       role="img"
       aria-label="Socratic Trade"
-      // initial size estimate (≈ wordmark aspect ratio) so the bar reserves the
-      // right space before the effect measures the exact ratio; avoids a flash.
-      style={{ display: "block", height: `${height}px`, width: `${Math.round(height * 11.7)}px` }}
+      // initial size estimate using the measured "SOCRATIC TRADE" aspect ratio
+      // (≈13.8) so the bar reserves the right space before the effect sets the
+      // exact width from wm.ar; keeps the reserved box within a couple px.
+      style={{ display: "block", height: `${height}px`, width: `${Math.round(height * 13.8)}px` }}
     />
   );
 }

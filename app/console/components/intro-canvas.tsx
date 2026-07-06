@@ -6,6 +6,7 @@
  *  per tab session; skipped for prefers-reduced-motion. Click to dismiss. */
 
 import { useEffect, useRef, useState } from "react";
+import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS } from "../ui/candle-ticker";
 
 type Cell = { nx: number; ntop: number; nh: number };
 type Geo = { x: number; bt: number; bb: number; wt: number; wb: number; bw: number; col?: string; up?: boolean };
@@ -41,34 +42,8 @@ function buildModel(): Model {
     return m + s * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
 
-  const off = document.createElement("canvas");
-  const octx = off.getContext("2d", { willReadFrequently: true })!;
-  function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
-    const font = `700 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
-    octx.font = font;
-    const widths = [...text].map((ch) => (ch === " " ? fontPx * 0.45 : octx.measureText(ch).width));
-    const total = widths.reduce((a, b) => a + b, 0) + tracking * (text.length - 1);
-    const padX = Math.ceil(fontPx * 0.35), H = Math.ceil(fontPx * 1.5);
-    off.width = Math.ceil(total) + padX * 2; off.height = H;
-    octx.clearRect(0, 0, off.width, off.height);
-    octx.fillStyle = "#fff"; octx.textBaseline = "alphabetic"; octx.font = font;
-    let x = padX; const topY = Math.round(fontPx * 1.1);
-    for (let i = 0; i < text.length; i++) { if (text[i] !== " ") octx.fillText(text[i], x, topY); x += widths[i] + tracking; }
-    const img = octx.getImageData(0, 0, off.width, off.height).data, W = off.width;
-    let x0 = W, x1 = 0, y0 = H, y1 = 0;
-    for (let yy = 0; yy < H; yy++) for (let xx = 0; xx < W; xx++) {
-      if (img[(yy * W + xx) * 4 + 3] > 128) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; }
-    }
-    const cells: { cx: number; top: number; h: number }[] = [];
-    const half = Math.floor((pitch - 4) / 2);
-    for (let cx = x0 + 2; cx < x1; cx += pitch) {
-      const colv: number[] = [];
-      for (let yy = 0; yy < H; yy++) { let s = 0, n = 0; for (let xx = cx; xx < cx + pitch - 4 && xx < W; xx++) { s += img[(yy * W + xx) * 4 + 3]; n++; } colv.push(n ? s / n / 255 : 0); }
-      let yy = 0;
-      while (yy < H) { if (colv[yy] > 0.42) { const s = yy; while (yy < H && colv[yy] > 0.42) yy++; if (yy - s >= Math.round(fontPx * 0.03)) cells.push({ cx: cx - x0 + half, top: s - y0, h: yy - s }); } else yy++; }
-    }
-    return { cells, w: x1 - x0, h: y1 - y0 };
-  }
+  // sampleCells is the shared letter sampler from candle-ticker.ts — the single
+  // source used by both this splash and the persistent HeaderLogo.
 
   const SOC = sampleCells("SOCRATIC", 200, 10, 15), TRD = sampleCells("TRADE", 200, 10, 15);
   const gap = 200 * 0.34, blockW = Math.max(SOC.w, TRD.w), blockH = SOC.h + gap + TRD.h;
@@ -102,7 +77,7 @@ function buildModel(): Model {
     const wv = WAMP * (0.6 * Math.sin(2 * Math.PI * 1.5 * u - t * 1.6) + 0.4 * Math.sin(2 * Math.PI * 2.6 * u - t * 1.05 + 0.7));
     return Math.max(0.02, Math.min(0.98, trend + wob + wv));
   };
-  const G = ["#0e9358", "#12a565", "#18b271"], RDc = ["#c22648", "#d3365a", "#dd4076"];
+  const G = TICKER_GREENS, RDc = TICKER_REDS;
   const BL: number[] = [], FD: number[] = [], AR: number[] = [], WX2: number[] = [], WY2: number[] = [], P4s: number[] = [], P4e: number[] = [], WX4: number[] = [], WY4: number[] = [], INFRAC: number[] = [], INCOL: string[] = [];
   for (let j = 0; j < M; j++) {
     BL.push(rnd(1.2, 2.6)); FD.push(rnd(2.6, 3.3)); AR.push(BL[j] + FD[j]);
@@ -117,15 +92,11 @@ function buildModel(): Model {
   // instead of holding and double-drawing the wordmark.
   const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 0.2;
 
-  // Header ticker: a small green-biased price walk of P candle "units" (color + body
-  // fraction + vertical offset), matching the approved candle-tick reference. Each header
-  // column shows one unit; the pattern marches one column left per second, so neighbouring
-  // columns differ — a lively, varied red/green ticker, never one big block of each color.
-  const P = 12, hr = mulberry32(9);
-  const hgauss = (m: number, sd: number) => { let u = 0, v = 0; while (!u) u = hr(); while (!v) v = hr(); return m + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-  const hprice: number[] = [0]; for (let i = 0; i < P; i++) hprice.push(hprice[hprice.length - 1] + hgauss(0.16, 0.9));
-  const hrets = hprice.slice(1).map((v, i) => v - hprice[i]), hmx = Math.max(...hrets.map(Math.abs)) || 1;
-  const UNITS = hrets.map((r) => { const up = r >= 0, mag = Math.abs(r) / hmx; return { col: (up ? G : RDc)[Math.min(2, Math.floor(mag * 3))], frac: 0.4 + 0.45 * mag, off: up ? 0.3 : 0.62 }; });
+  // Header ticker units — the shared green-biased walk from candle-ticker.ts, so the
+  // splash's final ticker and the persistent HeaderLogo march through the identical
+  // colours. Each header column shows one unit; the pattern marches one column left
+  // per second (see headerTick), so neighbouring columns differ — never a solid block.
+  const UNITS = buildTickerUnits(), P = UNITS.length;
   const hxKey = (nx: number) => Math.round(nx * 1000);
   const uniqHx = [...new Set(HEADER.map((c) => hxKey(c.nx)))].sort((a, b) => a - b);
   const hColMap = new Map(uniqHx.map((v, i) => [v, i]));
