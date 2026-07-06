@@ -10,15 +10,19 @@ steps materially change.
 
 ## 2026-07-06 — persist-candidate-pool: full retrieved candidate set, flag-gated (CLAUDE, branch `claude/persist-candidate-pool`)
 
-Persists the FULL post-recall/post-dedupe candidate pool `retrieveContextDetailed` produces —
+Persists the post-recall/post-dedupe candidate pool `retrieveContextDetailed` produces —
 including chunks that survived floor/asOf/hybrid/rerank/dedupe but were cut only by the final
-top-`limit` slice — so "what did we retrieve but not inject" is analyzable. New flag
+top-`limit` slice — so "what did we retrieve but not inject" is analyzable, **within a known
+limitation**: it reads `rankPool`'s OUTPUT (`ordered`), which is already post-floor/asOf/hybrid/
+rerank/dedupe, so candidates dropped upstream by those gates are NOT captured at all (not even as
+`used:false`). Worse, in the flagship production caller (`strategy.ts`'s filings pass, dedupe 0.6 +
+limit 3), `dedupeSimilar`/`rerankMatches` already hard-cap output at `limit`, so `ordered.length <=
+limit` there and `finalSlice === ordered` — essentially every persisted row is `used:true` in
+exactly the path this feature targets. A pre-rankPool v2 with per-stage drop reasons is the
+follow-up if "why was X dropped" is the actual goal (see rollout note). New flag
 `RAG_PERSIST_CANDIDATE_POOL` (envFlagOn-parsed, **default OFF**; mirrors the
 `RAG_RETRIEVAL_TELEMETRY` precedent) gates a single capture block in `vector-db.ts`, inserted
-right before the existing `.slice(0, limit)` cut (i.e. reading `rankPool`'s return value, `ordered`
-— which is already post-floor/asOf/hybrid/rerank/dedupe, so a candidate dropped upstream by those
-gates is correctly absent; only candidates that survive the full pipeline but lose the final
-top-N cut are the "not used" ones this feature surfaces). Persists via a new
+right before the existing `.slice(0, limit)` cut. Persists via a new
 `recordCandidatePool` (`src/lib/rag/candidate-pool.ts`) → `audit("rag_candidate_pool", ...)` — no
 new table. IDs/scores/relevanceScore/docType/asOf/`used` only — never raw chunk text, matching the
 existing `hashQuery` "never persist raw query text" posture. `RetrieveOptions.runId` added

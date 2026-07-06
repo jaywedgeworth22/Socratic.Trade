@@ -72,6 +72,21 @@
 
 ## Follow-ups
 
+- **Known limitation (found in 2026-07-06 hardening pass — read before relying on this for "why
+  did we drop X" analysis):** the capture reads `ordered`, `rankPool`'s OUTPUT pool — already
+  post-minScore/asOf/hybrid/rerank/dedupe. So `used:false` rows are ONLY final-top-N-slice cuts of
+  survivors; candidates dropped upstream by minScore/asOf/dedupe never appear at all, `used:false`
+  or otherwise. Worse, the FLAGSHIP production caller — `strategy.ts`'s filings retrieval pass
+  (~line 719-731) — passes `dedupeSimilarity: defaultDedupeSimilarity()` (0.6, non-null) with
+  `limit: 3`, and both `dedupeSimilar` and `rerankMatches` already hard-cap their output at
+  `limit`. So in that DEFAULT strategy config, `ordered.length <= limit` always holds, meaning
+  `finalSlice === ordered` and essentially every persisted row is `used:true` — zero/near-zero
+  `used:false` rows in exactly the path this feature was meant to illuminate. The genuinely
+  interesting minScore/asOf/dedupe drops are simply not captured by this feature as shipped. A v2
+  that instead captures the PRE-rankPool `matches` pool with a per-stage drop reason (minScore /
+  asOf / dedupe / final-slice) is the real follow-up if "why did we drop this candidate" is the
+  actual goal — this v1 only ever tells you "did the final top-N cut lose an otherwise-qualified
+  candidate", and in the shipped default config it rarely even shows that.
 - Sibling lane `claude/typed-retrieval-status` also edits `retrieveContextDetailed` in
   `vector-db.ts` (the early-return/classification region, not touched here). This lane lands
   AFTER it per the coordination note; if the merge isn't clean, re-verify the capture block still

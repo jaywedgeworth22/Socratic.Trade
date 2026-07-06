@@ -1933,18 +1933,40 @@ export async function retrieveContextDetailed(
     // true no-op (not just a suppressed write) when RAG_PERSIST_CANDIDATE_POOL is off — default
     // retrieval is byte-for-byte unchanged. Runs for both the single-query and the #822 fused
     // multi-query path alike, since `ordered` is already the one fused pool by this point.
+    //
+    // HONESTY NOTE (2026-07-06 hardening pass): this captures rankPool's OUTPUT pool (`ordered`) —
+    // i.e. post floor/asOf/hybrid/rerank/dedupe. Candidates dropped UPSTREAM of `ordered` by
+    // minScore/asOf/dedupe are NOT here; this only ever answers "of what survived the full quality
+    // pipeline, what got cut by the final top-N slice". With the FLAGSHIP production caller
+    // (strategy.ts's filings retrieval pass, ~line 719-731 — dedupeSimilarity=defaultDedupeSimilarity()
+    // = 0.6 non-null, limit=3), both `dedupeSimilar` and `rerankMatches` already hard-cap their
+    // output at `limit`, so in that default config `ordered.length <= limit` — `finalSlice ===
+    // ordered` and every persisted row is `used:true`. The interesting minScore/asOf/dedupe drops
+    // are simply invisible to this feature in exactly the path it's meant to illuminate; `used:false`
+    // rows are rare/absent there. A v2 that instead captures the PRE-rankPool `matches` pool with a
+    // per-stage drop reason (minScore / asOf / dedupe / final-slice) is the real follow-up if "why
+    // did we drop this candidate" is the actual goal — see docs/rollouts/2026-07-06-persist-candidate-pool.md.
     if (candidatePoolPersistEnabled()) {
-      const finalIds = new Set(finalSlice.map((m) => String(m?.id ?? "")));
+      // Id-less collision hardening (2026-07-06 hardening pass): a Pinecone match without a real
+      // `id` would otherwise key on the literal empty string `""`, so multiple id-less matches in
+      // `ordered` would collapse onto the same `finalIds` membership test and a non-sliced id-less
+      // candidate could be mislabeled `used:true` just because SOME id-less candidate happened to
+      // land in `finalSlice`. Mirror the #822 fan-out fusion code's guard above (`rankedIdLists`):
+      // when a match's id is empty, use a per-position synthetic key instead, scoped to `ordered`'s
+      // own indices so it can never collide with a real Pinecone id or another id-less candidate.
+      const orderedKeys = ordered.map((m, i) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__cand_${i}__`));
+      const finalSliceKeySet = new Set(orderedKeys.slice(0, finalSlice.length));
       recordCandidatePool(
         {
           runId: options?.runId,
           symbol,
           queryHash: hashQuery(query),
           asOf: options?.asOf,
-          candidates: ordered.map((m) => {
+          candidates: ordered.map((m, i) => {
             const md = (m?.metadata ?? {}) as Record<string, unknown>;
             const asOfStamp = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
             const rerankScore = (m as { _rerankScore?: unknown } | undefined)?._rerankScore;
+            const key = orderedKeys[i]!;
             const id = String(m?.id ?? "");
             return {
               id,
@@ -1952,7 +1974,7 @@ export async function retrieveContextDetailed(
               ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {}),
               ...(typeof md.doc_type === "string" ? { docType: md.doc_type } : {}),
               ...(asOfStamp != null ? { asOf: String(asOfStamp) } : {}),
-              used: finalIds.has(id)
+              used: finalSliceKeySet.has(key)
             };
           })
         },

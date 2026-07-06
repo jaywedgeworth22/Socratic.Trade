@@ -19,6 +19,10 @@
  *     minScore/asOf/dedupe upstream of `ordered` is correctly NOT present at all.
  *  3. A #822 multi-query case (`options.queries` non-empty): still exactly ONE fused-pool record,
  *     covering ids surfaced by every query variant (not one record per variant).
+ *  4. Id-less collision hardening: two matches lacking a Pinecone `id` (both key on the literal
+ *     empty string `""`) must still get distinct `used` flags per their own final-slice membership,
+ *     mirroring the synthetic per-position key the #822 fan-out fusion code already uses for the
+ *     same "empty id" hazard.
  *
  * Mocking pattern mirrors test/rag-multi-query-retrieval.test.ts / test/rag-retrieval-eval.test.ts
  * (full Pinecone/Voyage mock, no live network, `audit` mocked so we can assert on its call args).
@@ -235,6 +239,42 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
     const byId = new Map(candidates.map((c) => [c.id, c]));
     expect(byId.get("third")).toMatchObject({ used: false, relevanceScore: 0.6, asOf: "2026-03-01" });
     expect(byId.get("top")).toMatchObject({ used: true, relevanceScore: 0.95 });
+  });
+
+  it("flag ON: two id-less matches (one in the final slice, one not) get distinct `used` flags instead of colliding on key \"\"", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        // No `id` field at all — both would key on the literal empty string "" if the capture
+        // block didn't scope a synthetic per-position key the way the #822 fusion code does.
+        { score: 0.9, metadata: { text: "id-less kept", userId: "local", scope: "shared" } },
+        { score: 0.8, metadata: { text: "id-less not kept", userId: "local", scope: "shared" } }
+      ]
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("q", "AAPL", 1, "local", { minScore: 0.5 });
+
+    // Only the higher-scored id-less match survives the top-1 slice.
+    expect(result.length).toBe(1);
+    expect(result[0]!.text).toContain("id-less kept");
+
+    const calls = candidatePoolCalls();
+    expect(calls.length).toBe(1);
+    const candidates = (calls[0]![1] as any).candidates as Array<Record<string, unknown>>;
+    // Both id-less candidates are present in the captured pool (both survived the pipeline; only
+    // the final top-1 slice differs), and their `id` field is the literal empty string for both —
+    // exercising the exact collision the synthetic per-position key must prevent.
+    expect(candidates.length).toBe(2);
+    expect(candidates.every((c) => c.id === "")).toBe(true);
+    const usedFlags = candidates.map((c) => c.used);
+    // If the two id-less rows collided on key "", both would carry the SAME used flag (both true,
+    // since `finalIds.has("")` would be true once any id-less candidate lands in the slice). They
+    // must instead be distinct: exactly one used:true (the top-scored, sliced-in candidate) and one
+    // used:false (the one the final top-1 slice cut).
+    expect(usedFlags).toEqual(expect.arrayContaining([true, false]));
+    expect(usedFlags.filter(Boolean).length).toBe(1);
   });
 
   it("flag ON + multi-query (#822 fused pool): exactly ONE candidate-pool record covering ids from every query variant", async () => {

@@ -72,10 +72,14 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🚧 In Progress
 
-- **Persist full retrieved candidate pool for RAG analyzability (CLAUDE, branch
-  `claude/persist-candidate-pool`).** Captures the full post-recall/post-dedupe candidate pool from
+- **Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Captures the post-recall/post-dedupe candidate pool from
   `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the final top-`limit`
-  slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF, byte-identical when off). New
+  slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF, byte-identical when off).
+  **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so candidates dropped upstream
+  by minScore/asOf/dedupe are never present, and in the flagship production caller (dedupe 0.6 +
+  limit 3, both of which already hard-cap output at `limit`) `used:false` rows are rare/absent —
+  a pre-rankPool v2 with per-stage drop reasons is the real follow-up (see rollout note). New
   `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
   new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
   added (additive) and threaded from both `strategy.ts` retrieval call sites +
