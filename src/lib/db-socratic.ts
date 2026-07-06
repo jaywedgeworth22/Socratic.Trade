@@ -280,7 +280,7 @@ export function listSocraticDecisionCases(
   }
   args.push(limit);
   const rows = getDb()
-    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
+    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
     .all(...args) as DecisionRow[];
   return rows.map(rowToDecision);
 }
@@ -381,7 +381,7 @@ export function listSocraticDecisionCasesNeedingOutcome(
   }
   args.push(limit);
   const rows = getDb()
-    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at ASC LIMIT ?`)
+    .prepare(`SELECT * FROM socratic_decisions WHERE ${clauses.join(" AND ")} ORDER BY created_at ASC, rowid ASC LIMIT ?`)
     .all(...args) as DecisionRow[];
   return rows.map(rowToDecision);
 }
@@ -555,7 +555,7 @@ export function listSocraticFrameworkProposals(
   }
   args.push(limit);
   const rows = getDb()
-    .prepare(`SELECT * FROM socratic_framework_proposals WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
+    .prepare(`SELECT * FROM socratic_framework_proposals WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
     .all(...args) as FrameworkRow[];
   return rows.map(rowToFramework);
 }

@@ -99,6 +99,7 @@ import {
   type UntrustedPromptField
 } from "./prompt-safety";
 import { debateProposal } from "./red-team";
+import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel } from "./market-regime";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText, summarizeTradeProposals } from "./telemetry-sanitize";
@@ -1123,7 +1124,9 @@ export async function runStrategyOnce(
           // persisted so the approval card's red-team badge doesn't drift with later policy edits.
           ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
           // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
-          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {})
+          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {}),
+          // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
+          ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
         };
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
@@ -1202,9 +1205,30 @@ export async function runStrategyOnce(
             continue;
           }
         } else if (!redTeamResult.available) {
-          console.warn(`[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`);
-          proposal.rationale += `\n\nRed Team review was REQUIRED (high conviction) but unavailable (${redTeamResult.reason}); routed to human approval.`;
-          requiresHumanReview.add(proposal);
+          // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
+          // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
+          // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
+          // has opted in via policy.tuning.deRiskExitsOnAdversaryUnavailable — default OFF, so default
+          // behavior is byte-identical to main's unconditional requiresHumanReview.add for every side.
+          // Audit parity with strategy_bear_review_unavailable.
+          const routing = routeOnAdversaryUnavailable(
+            proposal.side,
+            redTeamResult.failureKind,
+            redTeamResult.reason,
+            policy.tuning?.deRiskExitsOnAdversaryUnavailable,
+            policy.strategyAuthority === "decide"
+          );
+          console.warn(
+            `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
+          );
+          proposal.rationale += routing.note;
+          if (routing.holdForHuman) requiresHumanReview.add(proposal);
+          audit(
+            "strategy_red_team_unavailable",
+            { runId, symbol: proposal.symbol, side: proposal.side, reason: redTeamResult.reason, failureKind: redTeamResult.failureKind, heldForHuman: routing.holdForHuman },
+            userId,
+            connectedAccountId
+          );
         } else {
           proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
         }
@@ -1634,6 +1658,12 @@ export async function runStrategyOnce(
       }
 
       if (policy.strategyAuthority === "propose") {
+        // Under "propose" authority EVERY proposal already becomes a pending-approval card
+        // regardless of Red Team outcome. The Red-Team-unavailable signal is already on the
+        // rationale via routeOnAdversaryUnavailable's note (appended in the debate loop above),
+        // which is authority-aware — held/openings read "routed to human approval" and an opt-in
+        // de-risk exit reads "surfaced for your approval" under propose authority (never falsely
+        // "proceeding") — so no separate corrective note is needed here.
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
@@ -1649,13 +1679,16 @@ export async function runStrategyOnce(
       // routed to a human instead of auto-executed with real capital.
       if (requiresHumanReview.has(proposal)) {
         const proposalId = crypto.randomUUID();
+        const failureKindSuffix = normalizedProposal.redTeamVerdict?.failureKind
+          ? ` (${describeRedTeamFailureKind(normalizedProposal.redTeamVerdict.failureKind)})`
+          : "";
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
           { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
           { policy, userId }
         );
-        results.push({ proposal: normalizedProposal, status: "proposed", reasons: ["Red Team review unavailable; routed to human approval."] });
+        results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
         continue;
       }
 

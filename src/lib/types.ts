@@ -447,6 +447,16 @@ export interface TuningSettings {
    * 4, still supplies a floor). A positive value raises the distinct-test-date floor above that env default.
    */
   minOosTestDates?: number;
+  /**
+   * OPT-IN (DEFAULT false): when true, a debate-unavailable EXIT (sell/cover) is routed by
+   * `routeOnAdversaryUnavailable`'s de-risk-only rule — NOT held for human review, just annotated
+   * with a loud "RED TEAM FAILED" rationale note and the parity audit event. Default false: default
+   * behavior is byte-identical — every proposal (buy/short/sell/cover) is still added to
+   * `requiresHumanReview` when the Red Team debate could not run, exactly like today's unconditional
+   * hold in strategy.ts's debate-unavailable branch. Flip this on to let risk-reducing exits proceed
+   * autonomously through an adversary outage instead of freezing behind an approval queue.
+   */
+  deRiskExitsOnAdversaryUnavailable?: boolean;
 
   // ── Volatility-targeting sizing + portfolio-heat budget (continuous taper, advisory) ──────────
   /**
@@ -953,6 +963,13 @@ export interface TradeProposal {
      * strategy.ts (the Red Team veto branch + the preVetoReasons fold-in before resolveSocraticOverride).
      */
     overridden?: boolean;
+    /**
+     * Structured reason the debate was unavailable (`available: false`) — mirrors
+     * `RedTeamDebateResult.failureKind` (src/lib/red-team.ts), persisted onto the decision case so
+     * the "RED TEAM FAILED" signal survives beyond the run (dashboard badge, audit correlation).
+     * Absent when `available: true`.
+     */
+    failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
   };
   /**
    * Advisory PRE-POLICY veto reasons (deterministic-bear filter, approval-time Red Team) attached to a
