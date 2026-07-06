@@ -56,12 +56,112 @@ to `socratictrade.com`, record the release commit + date here._
   `socratictrade.com`. Includes explicit `Test Account - Local Mock Paper Account`
   restore and Pinecone/Voyage/provider cap email alerts; production health 200 after
   deployment.
+- **2026-07-04** — `trading-live` contains `94669873` (PR #442) and current
+  production HEAD `1e1a15bc` on `socratictrade.com`. Includes the Codex
+  console/UI swimlane: approval provenance/citations, mobile LIVE phrase parity,
+  Sheet focus trap, read-only decision trace, ticker drawer parity, and Strategy
+  custom-model select parity. Verified Deploy workflow success, PM2 `trading`
+  online, `/api/health` 200, and built route/page artifacts present under
+  `.next/server/app`.
+- **2026-07-04** — `trading-live` published at `1e1a15bc` (PR #444) on
+  `socratictrade.com`. Includes the tokenless public HTTPS
+  `congress-trading-shared` dependency path; production health 200 after
+  deployment.
 
 ---
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
-- **#370** — CI Actions efficiency: docs-only fast path on the required `verify` check (gate-job pattern, fail-closed: `--no-renames` rename coverage + `!cancelled()` classify guard per Codex review), `.next/cache` restore/save split (PR runs restore-only; only `main` pushes save), new `cleanup-caches.yml` (PR-close cache delete + daily prune backstop via `scripts/prune-stale-actions-caches.py`), full workflow audit table in `docs/rollouts/2026-07-04-ci-actions-efficiency.md`. Merged 2026-07-04; follow-up hybrid runner-routing lane continues as `claude/ci-hybrid-runner-verify` (PR #372, In Progress).
+- **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
+  2026-07-05 as squash `0bfa4f1e`. Focused slice for issue #470: `/console/approvals`
+  sort/filter, visible-row multi-select, bulk reject, safe non-LIVE bulk approve through existing
+  per-item proposal endpoints, and a reusable alert-center surface backed by existing
+  notifications/activity data. CI green: classify, smoke, gitleaks, verify. See
+  `docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
+- **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
+  landing by CLAUDE-CLOUD, owner-directed).** Merged to `main` 2026-07-05 as squash `546c451`
+  (verify x2/smoke/gitleaks green; relands #367, whose branch heads never received CI runs from
+  cloud-proxy pushes). Ships `scripts/slack-sync.sh` (curl engine: read/thread/post/reply/test/
+  hook; 0600 `curl --config` token handling; untrusted-data envelope; silent no-op without
+  `SLACK_BOT_TOKEN`; per-session hook dedup), `scripts/setup-slack-sync.sh` (idempotent global
+  installer), `cloud-setup.sh` wiring (verified end-to-end in a cloud container: npm ci +
+  `.env.local` seed + hook install with valid JSON), `docs/slack-coordination.md`, and a
+  `workflow_dispatch` re-kick lever on ci.yml (cloud-proxy pushes were firing no pull_request
+  workflow runs, stranding the required `verify` check). Owner state: `SLACK_BOT_TOKEN` set as a
+  cloud Runtime Secret; env setup-script field points at `bash scripts/cloud-setup.sh`.
+  **Follow-ups (Monet lane): 8 resolved-to-land Codex P2 threads on #798** (no-python3 JSON
+  fallback escaping, unrelated-hook preservation, cross-repo hook help path, non-zero exit for
+  token-less writes, envelope-delimiter escaping, thread visibility/order/pagination in reads) +
+  Mac-side installer run + bot `/invite`. Rollouts:
+  `docs/rollouts/2026-07-04-slack-sync-default-setup.md`,
+  `docs/rollouts/2026-07-05-slack-sync-pr367-landing.md`.
+- **PR #694 - Effort-issues sync secondary-rate-limit hardening (CLAUDE).** Merged to `main`
+  2026-07-05 (verify/smoke/gitleaks green, auto-merge). `scripts/sync-effort-issues.py` now
+  survives GitHub secondary rate limits: 2.5s creation throttle, Retry-After/exponential-backoff
+  retries under a bounded 300s per-run retry budget, and exit-0 "PARTIAL SYNC - resume on next
+  run" summary on budget exhaustion instead of a red workflow run (the sync is idempotent, so
+  the next run resumes cleanly; non-rate-limit failures still exit 1). Validated live on merge:
+  the previously hard-failing bulk run completed green (created=101 updated=305, exit 0).
+  Follow-up refinements from Codex PR review (Congress.Trade #162): initial issue listing
+  covered by the same partial handling, server-sent Retry-After honored uncapped, 1s update
+  throttle for bulk PATCH runs. Propagated verbatim to congress-trading-shared (PR #27),
+  api-usage-monitor (PR #38), and Congress.Trade (PR #162). Rollout:
+  `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+- **PR #814 - Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up).** Merged to `main`
+  2026-07-05T10:17:03Z (verify+smoke green). _2026-07-05 (CLAUDE next-wave): CORRECTION — this row
+  was previously logged under In Progress as "PR pending"; #814 has since merged. Moved to
+  Completed._ Branch `claude/veto-advisory-overridable`, isolated worktree. Deterministic bear
+  filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with `preVetoReasons` instead
+  of dropping; folded into the single sized PolicyDecision → #799's `resolveSocraticOverride`
+  (openings, subject to socraticOverrideMode + cap). Rule 1 stays hard; Rule 4
+  overridable-but-flagged for owner ratification. FIX #1 (no counterfactual on override path —
+  protects getRedTeamEfficacy), FIX #2b (durable deterministic_bear_veto audit), FIX #3
+  (propose-mode pre-route before sell-to-fund). An independent 3-lens adversarial verify caught +
+  fixed 2 money-path bugs the green suite missed: severe phantom-funding-sell (new
+  `preVetoTaggedOpeningWillPlace` gates the funding notional) + free-text hard-gate
+  misclassification (`isHardGateReason` prefix short-circuit); both regression-tested. Gate:
+  tsc/lint-0/258 files-2540 tests/build. Overlapped unlanded `claude/redteam-policy-aware-routing`
+  (coordinated on #agent-sync; rebase at land). See
+  `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
+- **PR #812 - Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge (CLAUDE, S).**
+  Merged to `main` 2026-07-05T08:46:56Z (verify/smoke/gitleaks green). _2026-07-05 (CLAUDE
+  next-wave): CORRECTION — this row was previously logged under In Progress with no merge note;
+  #812 has since merged. Moved to Completed._ Worktree `~/apps/trading-claude`, branch
+  `agent/claude`. Root causes (not timeout-tuning): `executeProposal` tests ran a REAL market scan
+  (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12s/test solo, past 30s
+  under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class); hoist
+  the orchestrator import into `beforeAll` with an explicit long hook budget. Full suite 256 files
+  / 2506 tests green in 20.77s wall. See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+- **PR #799 - Guardrails → overridable preferences (denylist) (MONET risk lane).** Merged to `main`
+  2026-07-05T06:02:51Z. _2026-07-05 (CLAUDE next-wave): CORRECTION — this row was previously
+  logged under In Progress as "PR open"; #799 has since merged. Moved to Completed._ Worktree
+  `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`. Owner directive: only the
+  account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
+  policy block is a light preference the agent may self-override with a logged `autonomyOverride`
+  thesis. Inverted the Socratic override classifier allowlist → **denylist**: new
+  `HARD_GATE_REASON_PATTERNS` + `isHardGateReason` source-of-truth in `policy.ts` (risk engine);
+  `socratic-runtime.ts` `overrideableReason` = `!isHardGateReason`. Reclassified short-stop-required
+  / bracket-required / policy-level short-disabled from hard → overridable; unlisted/new gates now
+  default overridable. Advisory-only (nothing auto-overrides; broker/account/regulatory hard gates
+  untouched). New `test/hard-gate-classification.test.ts` pins the matrix. Cross-lane touch to
+  `socratic-runtime.ts` (Claude's file) coordinated on `#agent-sync`. Follow-ups: extend override
+  to exits; make the pre-policy vetoes (bear filter, Red Team) advisory (done — see #814 above).
+  See `docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+- **PR #811 - Console live-data build-out (CODEX, L).** Merged to `main` 2026-07-05T07:37:48Z
+  (verify/smoke/gitleaks green, auto-merge). _2026-07-05 (CLAUDE next-wave): CORRECTION — this row
+  was previously logged under In Progress ("2026-07-05 status: merged current origin/main..." with
+  no merge note of its own); #811 has since merged, verification quartet was green pre-merge. Moved
+  to Completed with the merge timestamp._ SSE wiring + mark-to-market, positions blotter streaming,
+  live risk-utilization board, intraday charts (existing component slice first; no
+  lightweight-charts dependency in this pass). Worktree
+  `/Users/jay/.codex/worktrees/socratic-console-live-data`, branch `codex/console-live-data`.
+  Console snapshot refresh consumes `/api/events/stream`, surfaces stream/freshness state, and adds
+  overview mark-to-market / risk / blotter upgrades with scoped tests. Verification pre-merge:
+  `npm run lint -- --quiet`, focused live-data vitest (`4`), full `npm test` (`257` files / `2510`
+  tests), `npm run build`, `npx tsc --noEmit` (after build regenerated `.next/types`). Subsumes the
+  SSE learned-context-inbox row above. (expert reviews)
 ### Console parity port — legacy `app/ui/*` rebuilt as `/console` (2026-07-02)
 - **#321** — parity-port foundation: logo/model/drilldown primitives, nav scaffolding, model-attribution approval card.
 - **#322** — Settings expansions: brokers, API keys, LLM model picker, delivery channels, glossary.
@@ -198,59 +298,188 @@ to `socratictrade.com`, record the release commit + date here._
 ---
 
 ## 🔨 In Progress
+- **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
+  `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
+  fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
+  `deriveQueryVariants()` (2-4 facet sub-queries from evidence/sector/dominant-factor) +
+  `generateHydePassages()` (one cheap fail-open LLM call, HyDE passages, salience-llm.ts pattern).
+  Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both default OFF — **not
+  independent**: `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY` (docstring fixed in review
+  pass). `vector-db.ts` `RetrieveOptions.queries?: string[]`: per-query embed+match (now including
+  the original `query` alongside variants), RRF-fused (`rag/hybrid.ts` `rrfFuse`) into the existing
+  `rankPool` pipeline unchanged. `strategy.ts` filings-RAG block wired behind both flags +
+  budget-degrade check; flags-off is byte-identical (pinned by a dedicated regression test).
+  **Review-fix pass (same day):** fixed a BLOCKER — the multi-query fan-out was fail-CLOSED (one
+  variant's rejected Voyage/Pinecone call discarded every other variant's results via a bare
+  `Promise.all`, returning `[]` instead of falling back to the single-query path) — now each
+  fan-out call is caught individually and an all-fail case falls back to plain single-query
+  retrieval. Also fixed: first-occurrence-wins id resolution could keep a lower cosine score (now
+  higher-score wins); HyDE's endpoint/model could disagree (endpoint resolved from
+  `policy.llmModel`, model sent was the separate `hydeModel()` — could route an OpenAI model to
+  `api.anthropic.com` under an Anthropic policy; now resolved coherently, and non-OK responses now
+  audit `rag_hyde_failed`); HyDE spend wasn't gated on the daily LLM budget (now gated via
+  `isOverLlmBudget`, read-only import from `llm-budget.ts`). Tests: 34 total across the 3 new files
+  (`test/rag-multi-query.test.ts` 14, `test/rag-hyde.test.ts` 12,
+  `test/rag-multi-query-retrieval.test.ts` 8). Verification: tsc clean, focused RAG/strategy suite
+  green (33 files / 384 tests). See `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`
+  (incl. its "Review fixes" section). Local-worktree HARD RULE: commit only, no push/PR — central
+  landing operator handles integration with `origin/main` (7 commits ahead incl. sibling lanes
+  `claude/due-jobs-substrate`, `claude/prompt-safety-fencing`).
 
-- **`claude/ci-hybrid-runner-verify` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) —
-  moved from Planned 2026-07-04 after PR #370 merged.** Hybrid resource-aware runner routing for
-  the required `verify` check, owner re-confirmed with design after the tradeoff escalation
-  (verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
-  available"). `ci.yml` 2 jobs → 4: `classify` (+`route` output; self only for fresh <5 min
-  publisher state on same-repo pull_request/push; everything else → hosted), `verify-self`
-  (opportunistic macOS lane: [self-hosted, trading-live], timeout 30, concurrency-1,
-  untrusted-source guard, node fail-fast, `nice -n 19`, macOS cache namespace via runner.os),
-  `verify-hosted` (Linux lane: routed-hosted runs + exactly-one automatic re-run when
-  verify-self did not succeed; saves Linux .next cache on main pushes AND the new nightly
-  schedule), `verify` (REQUIRED check, pure gate: fail-closed on classify failure; hosted
-  result wins on disagreement — Linux arbiter; per-run environment annotation). Nightly hosted
-  canary cron 47 7 * * * UTC. New owner-run `scripts/runner-availability.sh` (ASCII,
-  bash-3.2-verified) publishes `VERIFY_RUNNER_STATE` every 60s (load<0.6/cpu, RAM>6GB
-  free+inactive, runner alive, pm2 trading online; 2-check hysteresis to self, instant hosted
-  on busy, EXIT-trap hosted publish). Repo var pre-created as {"mode":"hosted","ts":0} — safe
-  rollout, no behavior change until the owner starts the publisher (pm2 one-liner in the
-  rollout note). smoke/gitleaks/check-pin stay hosted. History + gate decision table +
-  failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`. STATUS:
-  implemented; verification (yaml-lint, bash 3.2 -n + ASCII, 8-case route test, read-only Mac
-  probes, local quartet) green; PR #372 open, auto-merge armed; merge-forwarded three times now
-  as sibling cars (#440, #442) landed ahead of it in the multi-agent push burst (landing operator,
-  docs-only conflicts each time, keep-both-newest-first).
+- **Durable due-jobs substrate for 15m/1h intraday outcome sampling** (CLAUDE, worktree
+  `trading-wt-due-jobs`, branch `claude/due-jobs-substrate`) — **IN PROGRESS 2026-07-05, review
+  fixes applied (2nd commit) + account-deletion coverage fix (3rd commit), verified locally,
+  landing now.** New `due_jobs` table (migration v11, `src/lib/db.ts`) + `src/lib/db-jobs.ts`
+  (lease/reclaim claimable queue — fixes the crashed-row-stuck-forever gap `mobile_commands` has).
+  `counterfactual-learning.ts` + `outcome-engine.ts`'s `measureCase` enqueue
+  `sample_intraday_horizon` jobs once a case's basis (fill or ref price) resolves; new
+  `drainDueIntradaySampleJobs` worker in `outcome-engine.ts` drains them through the SAME
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows — documented in `mergeHorizonRows`'s doc comment). One fire-and-forget call
+  added to `scheduler.ts` `tick()`. Tests: `test/db-jobs.test.ts` (10) +
+  `test/outcome-engine-due-jobs.test.ts` (5), tsc clean. **Review-fix pass (2nd commit, same
+  branch):** fixed a lost-update race (write-time re-merge in `writeSocraticDecisionOutcome` /
+  `markSkippedCounterfactualMatured` / `markSkippedCounterfactualUnresolvable`), claimant-fenced
+  the three terminal-transition functions in `db-jobs.ts`, renamed the drain receipt's `failed`
+  counter to `erroredRetried` + removed the dead `'failed'` `DueJobStatus` value, and replaced the
+  worker's `caseId.split(":")` counterfactual lookup with an exact `runId`/`horizonDays`-keyed
+  lookup. 33/33 targeted tests green, tsc clean, lint 0 errors, build succeeds; full suite
+  2529/2530 (1 pre-existing unrelated failure re: `due_jobs` missing from account-deletion
+  coverage, flagged separately). **Account-deletion coverage pass (3rd commit):** added `due_jobs`
+  to the account-deletion drift guard + dedicated coverage test. See
+  `docs/rollouts/2026-07-05-durable-due-jobs.md` (including its "Review fixes" section).
+- **Wire `usage-budget` Phase-2 (advisory-first, owner-overridable enforcement) into
+  `runStrategyOnce`** (CLAUDE, worktree `~/apps/trading-wt-budget-advisory`, branch
+  `claude/usage-budget-advisory-wiring`) — **IN PROGRESS 2026-07-05.** Moved from Planned (see the
+  "Unassigned/CLAUDE lane" row below, now marked moved). ADVISORY (always on when the monitor is
+  configured): `usage_budget_status` audit receipt every run + a `formatBudgetAdvisory` line
+  injected into the Bull userContent next to `drawdownAdvisory`. ENFORCEMENT (opt-in,
+  `USAGE_BUDGET_ENFORCE`, default off) at the per-user/day LLM budget choke point: skip ends the run
+  before any LLM call (audit + `notifyBudgetSkip`); downgrade swaps `policy.llmModel`/
+  `redTeamLlmModel` on the in-memory run policy only. `debateProposal` gained an optional
+  `policyOverride` param so the Bear picks up the same transient downgrade. New
+  `test/usage-budget-strategy-integration.test.ts` (4 e2e tests) + 4 new `formatBudgetAdvisory` unit
+  tests. Verification: `tsc --noEmit` clean; focused vitest (usage-budget + strategy + red-team +
+  budget-adjacent files) 175/175 green. **Review-fix commit (same day):** fixed a BLOCKER — the
+  enforcement block was mutating the shared `policy` object in place, so a same-run cap-breach
+  demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would have persisted the
+  downgraded models permanently; replaced with a separately-carried `runLlmOverride`/`runPolicy`
+  never passed to `setPolicy`/`autoRevertOnCapBreach`. Also: scoped the enforcement try/catch so a
+  post-audit throw in the skip path can't be swallowed into the full LLM path; threaded the
+  downgrade into `generateReflectionSummary` (with the outcome-engine lesson pass left as a
+  documented intentional exemption — it's fire-and-forget and outlives the run); reused the
+  already-fetched budget status instead of double-fetching; extended the downgrade test to also
+  assert the Red Team request body's model. `tsc --noEmit` clean; targeted vitest 36/36 green; full
+  `npm test` 2521/2521 green; `npm run build` clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md` ("Review fixes" section).
 
-- **CODEX console/UI swimlane (Codex, worktree `/Users/jay/apps/trading-codex-ui-swimlane`,
-  branch `codex/console-ui-swimlane`) — claimed 2026-07-04 from sync-21.** Priority:
-  approvals surface pack first (approval-card provenance, red-team trigger chip, R:R geometry,
-  mobile LIVE phrase-gate parity, Sheet focus-trap), then `/console/decisions/[id]` decision-trace
-  inspector over W2 case shapes, coach-on-trace UI, and the reserved ticker/settings/model parity
-  trio. KEEPOUT: Claude memory/RAG internals and Monet risk gates. **Status 2026-07-04:** implemented
-  and locally verified on branch; PR pending. Delivered approval provenance/citations, mobile LIVE
-  phrase parity, Sheet focus trap, read-only decision trace + coach notes/framework `ownerResponse`,
-  top ticker drawer gaps, and Strategy custom-model select parity. Verification: lint 0 errors / 308
-  warnings, tsc, 253-file/2457-test suite, build.
+- **Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path prompts**
+  (CLAUDE backlog lane, worktree `~/apps/trading-wt-prompt-safety`, branch
+  `claude/prompt-safety-fencing`) — **IN PROGRESS 2026-07-05, committed locally, awaiting central
+  landing.** Advisory ONLY (owner philosophy: receipts, never blocks). Slice: (1) fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt enumerating all
+  untrusted blocks (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent;
+  STRATEGY_PROMPT_VERSION 1.4.0→1.5.0; (2) reflection_summary MOVED out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; (3) new leaf `src/lib/prompt-safety.ts`
+  deterministic scanner → `audit('prompt_injection_suspected')` + kind-'safety' decision-case
+  evidence; (4) learned-context lines carry inline provenance `[origin= source= asserted= conf=]`;
+  (5) same-day high-relevance RAG chunk / same-day fact → one aggregated
+  `audit('evidence_age_anomaly')` + 'safety' evidence item; (6) post-mortem reflection WRITER fenced
+  at source. Tests: `test/prompt-safety.test.ts` (25), `test/strategy-prompt-safety.test.ts` (4 incl.
+  outcome-engine 'safety'-kind tolerance), learned-context provenance extension. tsc clean; focused +
+  adjacent strategy/chat/socratic suites green. See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+
+- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
+  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
+  ticker-drawer parity if the scan surface needs it. Keepout: no broad
+  settings/approvals/live-data/coach/tooltip conversions in this lane. PR #806 open with
+  auto-merge enabled; merge-forward after PR #807 pushed. Codex review follow-up pins `symbol` as
+  the first/sticky column during saved-state sanitization and column reordering; second review
+  follow-up defers saved `localStorage` column state until after mount to avoid hydration mismatch.
+  Verification before review follow-up: focused scan-column test (4), lint 0 errors / 308 existing
+  warnings, land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up
+  verification: focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration
+  follow-up verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check` clean.
+
+- **Coach chat → framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
+  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
+  can optionally promote into lesson/framework primitives, framework review now carries explicit
+  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
+  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
+  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
+  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
+  squash auto-merge is armed pending `verify`.
+
+- **Logo concept exploration (branding, docs-only)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **PR open**. Owner-requested logo ideas for
+  Socratic Trade / Socratic.Trade: ten concept comps (five wordmark-led where the name fills the
+  logo, five mark-led with a favicon-capable symbol), built on the existing product palette (ink
+  `#0f1722`, green `#0e9f6e`, mint `#63e6be`) — new `docs/branding/` (README + `logo-concepts.html`
+  board + standalone SVGs). No app code touched; `public/icon.svg` unchanged. Round 2 same-day:
+  owner shared four Adobe Firefly comps (candlestick letterforms, owl, red/green) and asked for a
+  more professional take — added concepts K–N (candlestick-owl lockup, owl seal, candle-I wordmark,
+  three-candle cluster), 14 SVGs total. Round 3: owner saved B/E/H/I + the parallel session's three
+  picks (Examined/Dialectic/Stoa from `claude/logo-ideas-c5n61b`) + the four Firefly comps
+  (backgrounds removed for light/dark use) into one combined board `docs/branding/shortlist.html`
+  with assets in `docs/branding/firefly/`. Next: owner narrows the combined shortlist to a final
+  direction, then redraw with outlined letterforms + favicon/app-icon variants. Round 4: upright vector remake of the candle-letters wordmark (F5, `docs/branding/firefly/candle-wordmark-upright.svg`). Round 5: 18s SVG+CSS morph animation - same candles alternate SOCRATIC/TRADE (F6, `docs/branding/firefly/candle-morph.svg`). Round 6: portable exports of the morph - MP4, GIF, and Live-Photo-ready MOV+JPG (`docs/branding/firefly/candle-morph.{mp4,gif}`, `candle-morph-livephoto.{mov,jpg}`). Round 7: transparent video exports (VP9-alpha WebM + animated WebP committed; ProRes 4444 delivered off-repo). Round 8: console-intro animation - chart candles fly up into the header logo (`docs/branding/firefly/console-intro.svg`, shortlist card F7).
+  See `docs/rollouts/2026-07-05-logo-concepts.md`.
+  _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
+  container — owner/next local agent should mirror this row there._
+
+- **Eliminate redundant fill-history fetch/replay (AG, M) — IN PROGRESS 2026-07-05, PR open.** Worktree `~/apps/trading-antigravity`, branch `agent/antigravity/fill-history-dedupe` (PR #850). Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
+
+- **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
+  `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
+  three deterministic risk gates now classify the persisted regime label through the shared typed
+  `MarketRegime` source of truth (`market-regime.ts`) instead of three independent
+  substring/`startsWith` rules: crisis/inverted opening-exposure cap (`policy.ts`
+  `isCrisisOrInvertedRegime`), bear-filter risk-off veto (`strategy.ts` `deterministicBearFilter` —
+  the site whose in-code comment reserved the conversion for the risk lane), and the escalation gate
+  (`regime-watch.ts` `isEscalationRegime`, also feeding `strategy.ts`'s dissent trigger). This is the
+  "one-line adoption" the w1-regime-data lane (#368) exported the typed predicates and pinned
+  `test/market-regime.test.ts` for. Correctness hardening only — canonical-label behavior is
+  byte-identical (a relabel can no longer silently desync one gate from another); the one intended
+  change is that a non-canonical free-text label now reads non-escalating rather than accidentally
+  substring-matching. Imports from `./market-regime` (not `./macro`) so the whole-module macro mock
+  in `test/regime-watch.test.ts` still exercises the real classifier. New gate-level regression
+  `test/regime-gate-adoption.test.ts` (+ a `policy.test.ts` hardening case). Gate green: tsc clean,
+  lint 0 errors, 254 files/2465 tests, build ok. See
+  `docs/rollouts/2026-07-04-regime-enum-risk-gate-adoption.md`.
+  _2026-07-04 (CLAUDE): PR #449 merged to `main` (`c3553ebb`) — row ready to move to Completed on
+  Monet's next pass; noted here rather than moved, per never-move-another-agent's-row etiquette._
+
+- **Wave-3 memory/RAG (CLAUDE swimlane, 3-lane team) — IN PROGRESS 2026-07-04** _(row previously
+  existed only on the live board; mirrored here 2026-07-05 so the issues mirror sees it)_:
+  w3-schema-dissent (frontier tier: belief/iMayBeWrongIf/reversalTriggers/evidenceRefs schema
+  fields w/ Bear round-trip, structured Red Team verdict + removed[], non-action case files,
+  debate transcript persistence); w3-permodel-loop (mid tier: per-model scoreboard/calibration/
+  deterministic assignment + structured-output conformance recording); w3-retrieval-usefulness
+  (mid tier: ragAttribution+analog-id joins to matured outcomes, per-source usefulness data,
+  learned-fact injection efficacy w/ per-run fact-id stamping). Gated on the Wave-2 lanes
+  reaching `main`.
 
 - **Wave-2 composite-review — Outcome Engine lane** (Claude, branch `claude/w2-outcome-engine`,
-  worktree `~/apps/trading-wt-w2-outcome`) — **merged** (PR #440). Four §A items: (1) THE OUTCOME
-  WRITER: new scheduled job `src/lib/outcome-engine.ts` on the counterfactual cadence; placed
-  decisions join fill_events/closed lots, blocked/rejected (incl. Bear vetoes) join counterfactual
-  refPrice; writes `outcome`+`measuredAt`, per-case receipt, awaited vector-memory re-index. (2)
-  Multi-horizon outcome schema `outcomes[] {15m|1h|1d|1w, returnPct, spyExcessPct, priceBasis,
-  resolution ok|unresolvable(reason)}` on decision cases AND skipped-counterfactual rows; 1d/1w
-  from the daily cascade SPY-relative (trading-day arithmetic); 15m/1h only via an actually-sampled
-  live quote, else honest `unresolvable(no_intraday_source)`. (3) Kill-survivorship: terminal
-  `unresolvable` after a bounded 10-trading-day recheck; coverage disclosures on job receipts,
-  `getRedTeamEfficacy`, missed-opportunity summary, `certifyForwardResolution`. (4) Budget-gated,
-  batch-capped LLM post-mortem lessons at maturation (direction-tagged +
-  verdictOnBelief/whichDissentMattered), routed through `ingestLearned` origin `autonomous`; all
-  skips receipted. Landing-operator merge-forward caught a real semantic conflict `tsc` flagged
-  (git's line-merge had silently duplicated `RedTeamEfficacy`/`getRedTeamEfficacy` in
-  `performance.ts` — resolved by keeping the newer Codex-reviewed version). Gate green: lint 0
-  errors, tsc clean, 2455 tests / 252 files, build green. See
+  worktree `~/apps/trading-wt-w2-outcome`, based on `claude/w1-learning-loops`) — four §A items:
+  (1) THE OUTCOME WRITER: new scheduled job `src/lib/outcome-engine.ts` on the counterfactual
+  cadence; placed decisions join fill_events/closed lots, blocked/rejected (incl. Bear vetoes)
+  join counterfactual refPrice; writes `outcome`+`measuredAt`, per-case receipt, awaited
+  vector-memory re-index. (2) Multi-horizon outcome schema `outcomes[] {15m|1h|1d|1w, returnPct,
+  spyExcessPct, priceBasis, resolution ok|unresolvable(reason)}` on decision cases AND
+  skipped-counterfactual rows; 1d/1w from the daily cascade SPY-relative (trading-day
+  arithmetic); 15m/1h only via an actually-sampled live quote, else honest
+  `unresolvable(no_intraday_source)`. (3) Kill-survivorship: terminal `unresolvable` after a
+  bounded 10-trading-day recheck; coverage disclosures on job receipts, `getRedTeamEfficacy`,
+  missed-opportunity summary, `certifyForwardResolution`. (4) Budget-gated, batch-capped LLM
+  post-mortem lessons at maturation (direction-tagged + verdictOnBelief/whichDissentMattered),
+  routed through `ingestLearned` origin `autonomous`; all skips receipted. Gate green: lint 0
+  errors, tsc clean, 2383 tests / 246 files, build green. **LANDED on `main`** _(2026-07-05 CLAUDE
+  next-wave correction: this line previously said "Pushed; NO PR — lands via the landing train
+  after the base branch", which is now stale — merged via the 2026-07-04 landing train)_. See
   `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
 
 
@@ -358,14 +587,19 @@ to `socratictrade.com`, record the release commit + date here._
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
   see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
 
-- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
-  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
-  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
-  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
-  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
-  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
-  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
-  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
+- **PR #360 - Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — Merged to `main` 2026-07-04T16:15:44Z.
+  _2026-07-05 (CLAUDE next-wave): CORRECTION — this row said "PR pending" with auto-merge armed;
+  #360 has since merged. Moved to Completed status (row left in place chronologically; its
+  follow-on, regime-enum adoption in the risk gates, landed separately as PR #449, see above)._
+  Owner reassigned this lane to Monet (swap: Fable → memory/RAG, Monet → risk engine; coordinated
+  on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default to the owner's actual
+  philosophy ("nothing is hard except which account to work in; agent decides, logs everything"):
+  `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** — on
+  breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent
+  decides), NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375
+  tests/build green. Follow-up: advisory into the Bear context; broader per-gate sweep → owner
+  questions first.
 
 - **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
   `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
@@ -395,34 +629,18 @@ to `socratictrade.com`, record the release commit + date here._
   lint 0 errors, tsc clean, **2377 tests / 245 files**, build green. See
   `docs/rollouts/2026-07-04-w1-learning-loops.md`.
 
-- **Wave-1 quick wins from the composite expert review** (Claude coordinator, 4 Sonnet lanes,
-  push-only branches; landing via the active train):
-  - `claude/w1-llm-fixes` — Bear schema `confidenceScore` fix (live bug: strict Bear
-    schema previously stripped confidence, zeroing the approval-time debate trigger and degrading
-    sizing); per-provider reasoning-token headroom for xAI/Gemini/Mistral/DeepSeek chat-completions
-    (previously OpenAI-only); cross-family Bear default (only when a cross-family credential exists)
-    + non-zero adversary temperature (0.7) for the Bear/debate roles via `withLlmRequestBounds`;
-    reward-abstention line in the Bull system prompt; stakes-scaled Red Team dissent trigger
-    (notional %-of-NAV, live opening, escalation regime, or a requested autonomyOverride — not
-    confidence alone). `STRATEGY_PROMPT_VERSION` bumped to `agentic-strategy@1.4.0`. Advisory-only,
-    no new hard gates. **Merged** (PR #364).
-  - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index
-    decision memory on lifecycle changes; trading-day horizon arithmetic; Codex review fixes
-    (market-day horizons, kind-scoped veto audits, evidence backfill). **Merged** (PR #365).
-  - `claude/w1-rag-quickwins` — dormant relevance-floor + near-dup dedupe wired into
-    `strategy.ts`/`chat/orchestrator.ts`; provenance headers (`formatChunkWithProvenance`) prepended
-    onto the joined RAG context; widened `hashContent` 16→32 hex chars (64→128-bit); stamped
-    `embed_model`/`embed_rev` on every new vector; env-tunable rerank over-fetch cap
-    (`VECTOR_RERANK_OVERFETCH_K`, default 150). **Merged** (PR #366).
-  - `claude/w1-regime-data` — typed regime enum + numeric severity; live ^VIX off the 24h macro
-    cache; per-data-class TTLs + asOf on Alpaca snapshot. **Merged** (PR #368).
-
 - **Wave-2 memory/RAG core** (Claude/Fable coordinator — OWNER-ASSIGNED swimlane; lanes stacked on
   their w1 dependency branches, push-only, landing via the train). Lanes: `outcome-engine`,
   `episodic-retrieval`, `coaching-durable`, `reflection-decompose` (full lane list on the live board
   `/Users/jay/apps/TRADING-EFFORT-LOG.md`).
-  - `claude/w2-episodic-retrieval` (this lane) — **done, pushed, awaiting the landing train** (base:
-    `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
+  _2026-07-05 (CLAUDE next-wave): CORRECTION — `outcome-engine` and `episodic-retrieval` are LANDED
+  on `main` (both merged 2026-07-04, episodic-retrieval as **PR #437** merged 2026-07-04T21:05:02Z);
+  the sub-lane text below still said "done, pushed, awaiting the landing train" / "no PR", which is
+  now stale. `coaching-durable` and `reflection-decompose` remain genuinely unlanded — no PR opened
+  for either since 2026-07-04 — see the new "Open PRs for the stalled w2-coaching-durable and
+  w2-reflection-decompose branches" Planned row on the live board for the explicit landing action._
+  - `claude/w2-episodic-retrieval` (this lane) — **LANDED as PR #437 (merged 2026-07-04T21:05:02Z)**
+    (base: `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
     `src/lib/experience-memory.ts` — closed-lot experience writer hooked fire-and-forget in
     `performance.recordFillFromProposal` (state vector: 8 factor sub-scores + entryMarketRegime +
     breadth snapshot + thesisTag + sector + entry rationale; realized
@@ -461,21 +679,50 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 📋 Planned
 
+- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
+  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
+  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
+  owner, answering the objections raised when this was first proposed): (1) Mac-side
+  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
+  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
+  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
+  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
+  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
+  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
+  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
+  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
+  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
+  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
+  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
+  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
+  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
+  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
+  hosted-only default stands; resource-aware routing stays opt-in per repo.
+
 ### Socratic console parity sub-lanes — reserved before implementation
 - **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
   open the shared drilldown/drawer consistently across scan, home, evidence cards, proposals, orders,
   and other console surfaces. Reserved under the broader Codex parity effort so parallel agents do not
   start a duplicate ticker-detail lane. Initial high-signal gaps covered by `codex/console-ui-swimlane`;
   new console surfaces should default to `SymbolButton` for actionable tickers.
+  _2026-07-04 assignment: CODEX._
 - **Settings affordance and tooltip pass** — add clearer option descriptions/tooltips, replace confusing
   loose/tight wording with lock/unlock-style affordances, and turn absolute-vs-percent pairs into a
   polished mode switch where the pair represents alternative ways to express one constraint.
+  _2026-07-04 assignment: CODEX._
 - **Model/provider control parity** — move strategy model controls toward curated dropdowns with
   provider-aware settings, showing reasoning controls only for models that actually support them.
   Initial Strategy custom-model selected-state parity covered by `codex/console-ui-swimlane`.
+  _2026-07-04 assignment: CODEX._
 - **Admin connection health and backend-failure notification pass** — surface every backend dependency
   including Pinecone/Voyage, distinguish global backend failures from user-key failures, and route
   global failures to admin email/health while user-key failures become user notifications.
+  _2026-07-04 assignment: AG (Antigravity), incl. a per-provider failure-injection test proving global-vs-user-key routing._
+  _2026-07-05 (CLAUDE next-wave): status update — implemented on branch `cursor/session-2026-07-05`
+  as **open PR #805**, mergeable state **CONFLICTING** (not merged; do not treat as done). #805's
+  branch also carries an unrelated Cursor P0/P1 commit (`0ce39474`), so landing it needs either a
+  split into two PRs or an honest combined PR description — see the live board's "Admin connection
+  health..." In Progress row and the new "Disentangle PR #805" Planned row for detail._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
@@ -488,24 +735,534 @@ to `socratictrade.com`, record the release commit + date here._
     NOTE: built before the decision-record correction landed; re-scope pending owner review.
   - **Prompt-expected stop-losses** — REMAINING: strengthen the strategist prompt + schema to expect a
     stop on opening proposals, with policy validation (NOT a schema hard-requirement, per owner).
+    _2026-07-04 assignment: MONET (risk lane)._
   - Build/test against a **connected broker account** (paper or live); the removed local Test mode /
     `paperMode` default is gone (#342). Keep the existing typed-confirm ritual before any live toggle.
 - **Manager-model A/B** — wire the shortlisted models via the OpenAI-compatible path (base-URL swap;
   DeepSeek/xAI/Qwen/Gemini) + the existing Anthropic path, run in paper mode, compare per-model Results.
   See `docs/manager-model-options.md`.
+  _2026-07-04 assignment: CLAUDE._
 
 ### Planned — actionable, not yet started
 - **Per-model hit rates on Results** — now that `proposedByModel` persists (#334), surface realized
   win/return grouped by served model. _(Directly enables the Manager-model A/B above.)_
+  _2026-07-04 assignment: CODEX (Results UI; joins `proposedByModel` + `getRedTeamEfficacy`)._
 - **Per-field FRED sourcing** — a partially-failing FRED fetch still placeholder-fills individual
   series while the suite is flagged sourced; close with per-series flags (#326/#334 follow-up).
+  _2026-07-04 assignment: AG (Antigravity)._
 - **SSE for the learned-context inbox** — replace the 60s poll if the console gains an event stream.
+  _2026-07-04 assignment: CODEX (fold into the console live-data build-out row below)._
 - **`MarketQuoteSummary` factor bars for all scanned symbols** — #335 carried factor fields into the
   summary tier; confirm drilldown factor bars now populate for every scanned symbol, not just top candidates.
+  _2026-07-04 assignment: CURSOR (DeepSeek)._
 
----
+### 2026-07-04 backlog exhaustiveness pass — promoted items with assigned lanes
+_Owner-directed promotion of every still-open review-doc item into individually tracked rows.
+Sources: `docs/reviews/2026-06-30-improvement-audit.md` (11-expert audit), the two 2026-07-04
+expert/composite reviews, `docs/reviews/2026-07-03-console-parity-open-items.md`, `PLAN.md`, and a
+code sweep. Assignment tags: CURSOR = Cursor background agents (DeepSeek v4 Pro), CODEX = Codex,
+AG = Antigravity/Gemini, MONET = Claude Monet (Opus, risk lane), CLAUDE = Claude Code (memory/RAG
+lane). Unassigned rows await an owner decision or scheduling. Assignments are reservations, not
+locks — re-negotiate in #agent-sync._
 
-## Changelog of this log
+#### CURSOR (DeepSeek v4 Pro) lane
+- **Rate-limit `/api/chat` and `/api/scan` (CURSOR, S)** — apply the existing rate-limiter to both
+  routes; cost-exhaustion vector when operator LLM fallback is enabled. (improvement-audit S-1)
+- **Encrypt Robinhood OAuth tokens at rest (CURSOR, S)** — `setMcpOAuthTokens` bypasses the
+  `encryptValue` path used for other stored secrets. (improvement-audit S-2)
+- **Constant-time admin token comparison (CURSOR, S)** — `src/lib/auth/admin.ts` compares with
+  `===`; switch to `timingSafeEqual`. (improvement-audit S-3)
+- **Security response headers (CURSOR, S)** — add CSP / X-Frame-Options / Referrer-Policy via
+  middleware. (improvement-audit S-5)
+- **Delete dead Anthropic branch in `resolveLlmEndpoint` (CURSOR, S)** — unreachable code +
+  wrong provider tag in `llm-provider.ts`. (improvement-audit §4)
+- **Code-split StrategyFlow and the price chart (CURSOR, M)** — `next/dynamic({ssr:false})` for
+  `@xyflow/react` (~3.9MB first-load win). (improvement-audit §3.10)
+- **Synthetic bid/ask provenance fix (CURSOR, S)** — drop or tag `yahoo-finance-synthetic` bid/ask
+  in `toQuoteOnlyMarketQuote` and exclude it from `hasAskData` so limit-price math never anchors on
+  fabricated spreads. (improvement-audit §3.5)
+- **`daysToEarnings` enrichment field (CURSOR, S)** — earnings-calendar wiring through the full
+  per-field sourcing chain (see the AGENTS.md enrichment trap). (improvement-audit §4)
+- **`institutionOwnership` enrichment field (CURSOR, S)** — already-authenticated Yahoo
+  quoteSummary module. (improvement-audit §4)
+- **Adopt `EmptyState`/skeleton primitives on dashboard empty states (CURSOR, S)** — primitives
+  exist but are unused. (improvement-audit §4)
+- **Voyage query-embedding LRU cache (CURSOR, S)** — cache repeated query embeddings; est. 50-80%
+  query-embed cost cut. (improvement-audit completeness §D)
+- **Account-deletion table-list drift guard (CURSOR, S)** — a test that fails when a new `db-*`
+  table is missing from the deletion scope. (improvement-audit completeness §F)
+- **Global symbol omnibox (CURSOR, S)** — type any ticker anywhere to open the drilldown drawer.
+  (expert reviews quick-wins)
+- **Scheduler single-leader ON in prod + `/api/health` hard threshold (CURSOR, S)** — currently
+  opt-in. (improvement-audit A-5)
+- **Global operator LLM spend ceiling + unpriced-model default price (CURSOR, S)** — operator-wide
+  ceiling distinct from per-user budgets; unknown model ids get a conservative default price so
+  cost never silently undercounts. (expert reviews quick-wins)
+- **Effort-mirror orphan report (CURSOR, S)** — periodic report of mirror issues orphaned by
+  reworded board rows so they don't accumulate open forever. (issues-mirror rollout follow-up)
+- **Litestream restore drill + PITR retention config (CURSOR, S)** — actually exercise a restore;
+  make the retention window configurable. (completeness §F + quick-wins)
+
+#### CODEX lane (adds to the annotated parity rows above)
+- **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
+  streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
+  the SSE learned-context-inbox row above. (expert reviews)
+- **`/console/settings` second IA pass (CODEX, M)** — account identity/authority/keys/
+  notifications/admin-links reorg. (console-parity-open-items)
+- **Accessible tooltip/popover primitive everywhere (CODEX, S)** — retire native `title`;
+  universal coverage across controls/metrics/cells. (expert reviews + console-parity)
+
+#### AG (Antigravity/Gemini) lane
+- **Eliminate redundant fill-history fetch/replay (AG, M)** — fills fetched/replayed 7-9x per
+  request; fetch once and thread through. (improvement-audit §3.7)
+- **Wire congress-score-eval go/no-go into scan scoring (AG, M)** — the most rigorous evaluator
+  currently has no production consumer. (improvement-audit §3.8)
+- **Robinhood option-chain IV / put-call enrichment (AG, M)** — wire the connected MCP option
+  tools for near-the-money IV + put/call ratio. (improvement-audit §6.7)
+- **E2E money-path integration test (AG, M)** — mock LLM+broker through `runStrategyOnce`
+  proposal→evaluate→execute→record. (improvement-audit A-2)
+- **Concurrency/property/fault-injection test suite (AG, M)** — target the single-writer SQLite
+  hazard and crash-mid-write paths. (expert reviews cross-cutting)
+- **Horizon-matched multi-horizon IC in the factor tuner (AG, M)** — IC currently fixed at 5-day
+  vs multi-week theses. (expert reviews cross-cutting)
+- **Congress push/SSE contract repair (AG, M, cross-app)** — App A pushes a shape App B never
+  accepts; the push path is dead today. Paired row on the Congress.Trade board. (PLAN
+  Integrations + improvement-audit §6.8)
+
+#### MONET (Opus, risk lane)
+_(A sixth row — typed regime-enum adoption in the risk gates — was drafted here but Monet already
+shipped it as PR #449 while this pass was being written; see its In Progress row above.)_
+- **Bear/Red-Team unavailable → policy-aware routing for ALL failure modes (MONET, M)** — complete
+  the mode-aware policy (propose→human-approval; autonomous→de-risk-only + "RED TEAM FAILED" flag)
+  across timeout/429/malformed-JSON, replacing the remaining fail-open paths. (improvement-audit
+  §3.1 + the recorded Red-Team policy decisions)
+- **Volatility-targeting sizing + portfolio-heat budget (MONET, L)** — continuous exposure taper
+  instead of binary caps; advisory-style and owner-overridable per the guardrail philosophy.
+  (expert reviews big-bets)
+- **Correlation gate + event blackouts + pre-trade stress scenario (MONET, M)** — EWMA/downside
+  correlation, earnings/macro-event blackout windows, scenario stress on proposals — all advisory
+  receipts, never cages. (expert reviews)
+- **Fractional-Kelly sizing on realized payoff (MONET, M)** — downside-dispersion-aware; aligns
+  sizing with realized edge. (expert reviews cross-cutting)
+- **Multi-signal regime scorer (MONET, M)** — credit spreads, VIX term structure, breadth →
+  severity feeding caps/learning. (expert reviews critical-path)
+
+#### CLAUDE lane (memory/RAG + already-reserved infra)
+- **Wire `usage-budget` Phase-2 enforcement into `runStrategyOnce` (CLAUDE, M)** —
+  `evaluateBudgetForRun`/`cheaperModel` are built and tested but never called; flagship
+  "built-but-unwired" item. (code sweep) **MOVED to In Progress 2026-07-05** — see the
+  In Progress section above (branch `claude/usage-budget-advisory-wiring`).
+- **RAG retrieval-quality eval harness (CLAUDE, M)** — 25-40 golden query→expected-chunk tuples +
+  vitest recall@k/MRR scorer. (improvement-audit §3.4)
+- **Bull/Bear prompt eval + versioning harness (CLAUDE, L)** — offline eval + PROMPT_VERSION
+  discipline for the money-path prompts. (improvement-audit §3.3)
+- **HyDE + evidence-derived multi-query retrieval (CLAUDE, M)** — retrieval-quality upgrade.
+  (expert reviews)
+- **Durable due-jobs substrate (CLAUDE, M)** — sub-day outcome sampling that survives process
+  downtime; explicitly deferred from w2-outcome-engine. (expert reviews critical-path)
+- **Per-user/day token-budget ceiling at trigger/strategy entry (CLAUDE, M)** — enforcement
+  deferred in `triggers.ts`; per-user policy caps replace env-only config. (completeness §D)
+
+#### Unassigned — owner decision or scheduling needed
+- **Split `strategy.ts` god-module (unassigned, L)** — 2,902 lines → proposal-generation/
+  execution/reconciliation/learning modules (db.ts split precedent). High merge-conflict surface —
+  schedule in a quiet window. (improvement-audit A-1)
+- **Repository layer + write-queue over SQLite (unassigned, L)** — both expert reviews sequence
+  this BEFORE more write-heavy features; Postgres option, per-provider quota buckets,
+  SQLite-backed enrichment cache. (cross-cutting)
+- **Factor-weight learning auto-apply (unassigned, L, needs owner sign-off)** — scheduled cadence
+  → OOS gate → clamp → persist, opt-in flag. (improvement-audit §3.6)
+- **Overlap-aware IC SE + Deflated-Sharpe/PBO on auto-apply gates (unassigned, L)** — statistical
+  honesty before any learning loop auto-applies. (expert reviews)
+- **CPCV multi-fold + point-in-time universe for backtests (unassigned, L)** — survivorship fix.
+  (expert reviews big-bets)
+- **Joint portfolio construction over the batch (unassigned, L)** — cluster/diversify/allocate as
+  a true Manager step. (expert reviews big-bets)
+- **Active hedging / net-exposure reduction on vol brake (unassigned, L)** — protect the existing
+  book, not just stop entries. (expert reviews big-bets)
+- **Earnings-transcript + news point-in-time ingestion (unassigned, L)** — fill the dead doc_types
+  retrieval already asks for. (expert reviews)
+- **Groundedness/faithfulness advisory gate (unassigned, M)** — flags ungrounded claims into the
+  approval inbox (shared strategy+chat). (expert reviews cross-cutting)
+- **End-to-end point-in-time leakage certificate (unassigned, M)** — certifies no data class
+  leaked hindsight into an auto-apply gate. (expert reviews cross-cutting)
+- **Tamper-evident audit chain (unassigned, L)** — make receipts unforgeable. (expert reviews)
+- **Model/prompt registry + promotion gate + input-drift monitor (unassigned, L)** — ops maturity
+  for model swaps. (expert reviews)
+- **Decision-bundle persistence + replay substrate (unassigned, M)** — seeds + run-level Langfuse
+  trace tree + online eval sampler. (expert reviews)
+- **Multi-user fill streaming (unassigned, M)** — the Alpaca trade-updates stream is
+  operator-only today (`alpaca-trade-updates-stream.ts`). (code sweep)
+- **`admin.socratictrade.com` dedicated admin host (unassigned, M)** — DNS/routing/middleware
+  split. (console-parity-open-items)
+
+### 2026-07-05 full itemization — every remaining review finding, individually tracked
+_Owner-directed follow-up to the exhaustiveness pass: two enumeration agents classified EVERY
+discrete finding in the 147-finding expert design review (EDR-*), the composite review (CR-*), and
+the full 2026-06-30 improvement audit (U-*) against this board; everything not DONE, in an
+In Progress lane's stated scope, or already an individual row below is promoted here. Same lane
+tags as above. Items covered by the Wave-3 In Progress lanes (belief/dissent schema, structured
+Red Team verdict + removed[], debate-transcript persistence, per-model conformance recording) were
+deliberately NOT re-promoted. VERIFY-BEFORE-BUILD note: the 07-04 reviews' current-state text says
+a RAG golden eval harness, a Voyage query-embed LRU cache, and an `auto-tune-scheduler.ts`
+OOS/ledger/shadow path may already exist — assignees of those earlier rows must verify and, if
+built, move the row to Completed with evidence instead of re-building._
+
+#### Memory & learning
+- **Hierarchical partial-pooling across account scorecards (AG, L)** — empirical-Bayes/James-Stein shrinkage toward a population prior so thin accounts borrow strength. (EDR-A9)
+- **Drift/change-point detection + time-decay weighting on scorecards (AG, M)** — ~60-90 trading-day half-life decay + CUSUM/Page-Hinkley on rolling OOS IC/win-rate. (EDR-A10)
+- **Exploration budget + inverse-propensity de-biasing of the eval stack (unassigned, L)** — epsilon/Thompson floor + IPS/doubly-robust weighting; the whole measurement stack is self-selected today. (EDR-A11)
+- **Symmetric, OOS-gated, SPY-relative missed-opportunity nudge (AG, S)** — also down-weight factors dominating skipped losers; raise the 2-winner trigger; market-adjust; persist through the OOS gate instead of this-run-only. (EDR-A12, U-25, U-27)
+- **Promote signal_snapshot to a first-class indexed table (CURSOR, M)** — factor attribution off the 500-row audit ring so long-horizon trades keep context. (EDR-A14)
+- **Route MAE/MFE excursions through the OHLC cascade and into stop/TP tuning (AG, M)** — direct Yahoo call bypasses cache/PIT guard; capturePct stats feed nothing. (EDR-A15, U-28)
+- **Brier/ECE reliability + default-on continuous confidence calibration incl. shorts (AG, M)** — isotonic/Platt on the continuous fit; make monotone recalibration the sizing default. (EDR-A16, U-30)
+- **Weighted multi-factor entry attribution instead of argmax dominantFactor (AG, M)** — proportional credit across factorBreakdown so non-momentum factors aren't starved. (CR-A)
+- **Stop defaulting unresolved factor attribution to momentum (CURSOR, S)** — missing entry factors silently corrupt per-factor tuning stats. (U-26)
+- **Re-validate and decay qualitative track-record facts each reflection cycle (CLAUDE, M)** — recompute live `track_record:*` subjects; supersede flipped verdicts; require sign-stability. (CR-A)
+- **Stamp sample-size/window/shrunk-band metadata on track-record facts (CLAUDE, S)** — a 5-lot fact must not read like an 80-lot fact; adds the missing overfitting guard. (CR-A, U-29)
+- **Kind-aware TTLs + regime-shift down-ranking for learned facts (CLAUDE, M)** — `expiresAt` is null at every write site; event 90d / structural 365d defaults; down-rank, never delete. (CR-A)
+- **Contradiction detection across differently-keyed learned facts (CLAUDE, M)** — same-symbol embedding+LLM check at write time; link as contested, surface disagreement. (CR-A)
+- **Outcome-driven confidence updates on learned_context facts (CLAUDE, M)** — nudge stored confidence with the shrunk win-association from the usefulness join. (CR-A)
+- **Account-scoped memory retrieval as a receipted policy choice (CLAUDE, S)** — opt-in `memoryScope` field + label retrieved memories by source account. (CR-A)
+- **Exclude mechanical pseudo-regimes from learning buckets (AG, S)** — 'Funding'/'Risk Exit' tags dilute thesis×regime stats; route to a mechanical-exits scorecard. (CR-A)
+- **Window-coverage disclosure on every learning aggregate read (CURSOR, S)** — return `{windowRowsScanned, windowOldestAt, totalRowsAvailable}` on capped aggregates. (CR-A)
+- **Calibrate the paper execution-cost model against realized live slippage (MONET, M)** — the 1bps+sqrt-impact constants are uncompared guesses; add a calibration report. (CR-A, U-34)
+- **Shadow-weight forward report for the tuner's auto-apply on-ramp (AG, M)** — compute would-have-applied vs active so "watch it be right for a month" is possible. (CR-A)
+- **Graduate regime-conditioned calibration/missed-opportunity stats to gated application (AG, L)** — add the regime dimension with thin-bucket fallback. (CR-A)
+- **Post-apply degradation receipts on autonomous weight changes (AG, L)** — tag closed lots with the weight-vector id; propose an advisory revert on detected degradation. (CR-A)
+- **Per-regime factor-weight vectors in the OOS harness and policy (unassigned, L)** — single global IC vector today; gate by per-regime sample size. (U-31)
+- **Weekly memory rollup + default-on dedupe for blocked-case noise (CLAUDE, M)** — chatty weeks flood the namespace; add an LLM lesson-rollup journal doc. (CR-A)
+- **Attach testable predictions to lessons/coach notes and score them at maturation (CLAUDE, M)** — flag UNTESTED and repeatedly-refuted lessons for retirement. (CR-A)
+- **Consolidate the two parallel memory-ingestion pipelines (CLAUDE, M)** — chat memory vs learned-context duplicate extract→score→reconcile + PII regexes. (CR-A)
+
+#### LLM prompting
+- **Structured-output repair loop on parse failure (CURSOR, M)** — one "your output failed with <error>" round-trip before fallback/degrade. (EDR-B4)
+- **Runtime schema validation of parsed LLM output via ajv/zod (CURSOR, M)** — `sanitizeProposals` only checks symbol/side/type today. (EDR-B5)
+- **Restructure prompt caching: static system prompt + multi-breakpoint + cache-token accounting (CLAUDE, M)** — move volatile values to the user message; price cached/cache-write tokens correctly. (EDR-B6)
+- **Manager/judge synthesis turn over Bull-vs-Bear disagreement (CLAUDE, M)** — reconciled decision + calibrated size multiplier; deterministic gate stays the backstop. (EDR-B9)
+- **Truncation auto-recovery + output-cap scaling (CURSOR, M)** — bounded re-issue at a larger cap/failover model for Bull AND Bear; today a truncated Bull degrades to zero proposals. (EDR-B14, U-22)
+- **Bounded agentic evidence tool-loop for the Bull (CLAUDE, L)** — get_filing/rag_search/memory_analogs/price_history, hard-capped ~6 calls. (EDR-B15)
+- **Fence + version the debate prompt; consolidate the two adversary paths (CLAUDE, M)** — versioned `strategy-prompts.ts`, force-tool verdict schema, delete the Anthropic-only fork. (EDR-B16, U-24)
+- **Bandit-based automatic model selection from per-model realized scorecards (unassigned, L)** — Thompson sampling within an owner allowlist; follow-on to the w3-permodel-loop lane. (EDR-B19)
+- **Self-consistency k-sample ensembling with disagreement as measured uncertainty (unassigned, L)** — N=3 sampling for stakes-crossing proposals. (CR-B)
+- **Evidence parity for Bear/debate (CLAUDE, M)** — the critic argues from strictly less information than the proposer today. (CR-B)
+- **Probabilistic forecast elicitation + Brier scoring (CLAUDE, M)** — `{pPositive1d, pPositive1w, expectedMaxDrawdownPct}` scored against the outcome writer. (CR-B)
+- **`strongestCounterRead` self-dissent field on the Bull call (CLAUDE, S)** — state the strongest bearish read of its own evidence and why rejected. (CR-B)
+- **Stated hold-through-earnings intent on the dissent block (CLAUDE, M)** — require `earningsIntent` when earnIn ≤ horizon; tag closed lots heldThroughEarnings. (CR-B)
+- **Partial-action vocabulary: probe sizes + staged entries (CLAUDE, S)** — doctrine language + persisted completion plan so probes aren't scored as timidity. (CR-B)
+- **Session/time-of-day context + entrySession outcome bucketing (CURSOR, S)** — first-30-minutes behavior becomes a learnable bucket. (CR-B)
+- **Tax YTD realized-ledger context in the prompt (CURSOR, S)** — `getTaxSummary` totals never reach the agent though Nov-Dec decisions depend on them. (CR-B)
+- **Fix the hardcoded "Robinhood brokerage account" fact in the Bull system prompt (CURSOR, S)** — parameterize from the active account. (CR-B)
+- **Measure the LLM replay self-flip noise floor before trusting the manager A/B (AG, M)** — persist response fingerprints, send seed, K=3 baseline repeats. (CR-B)
+- **Shadow-mode paired manager A/B on identical inputs (AG, M)** — replay the same userContent against challenger models in a paper shadow lane. (CR-B)
+- **Gate strategy runs on the rationale-diversity collapse signal (CLAUDE, M)** — `computeRationaleDiversity` computes but only reports today. (U-21)
+- **Extend failover parity to Bear, debate, revalidation, and post-mortem calls (CURSOR, M)** — the failover chain is Bull-only; one 429 fails other roles to bearUnavailable/skip. (U-23)
+
+#### RAG, ingestion & embedded memory
+- **MMR embedding-space diversity pass replacing lexical-only dedupe (CLAUDE, M)** — semantically-redundant chunks crowd the small chunk budget. (EDR-C9)
+- **Preserve HTML heading structure through filing text extraction (CLAUDE, M)** — most 10-K subsections collapse to section='General' today. (EDR-C12)
+- **Persist chunk text/date/model/vector-id — SQLite as reconstructable system of record (CLAUDE, M)** — unblocks corpus-wide hybrid, model migration, supersede, rebuild. (EDR-C21)
+- **Reconcile amended/superseded SEC filings (CLAUDE, M)** — 10-K/A / 10-Q/A / 8-K/A supersede prior accessions' vectors. (EDR-C24)
+- **Event-driven material-filing + Form-4 ingestion off the EDGAR latest-filings feed (AG, M)** — short-interval poll of watched CIKs with immediate targeted ingest; replaces TTL cadence. (EDR-C25, CR-D)
+- **Wire the structured-output LLM memory extractor as the primary salience path (CLAUDE, M)** — the regex stand-in matches any 1-5 uppercase token and misses most natural-language constraints. (EDR-C26, U-18)
+- **Expand the RAG golden eval with episodic-analog queries and hard negatives (CLAUDE, M)** — the harness is saturated at 1.0 with zero memory-doc-type cases; must land before tuning decay/hybrid/ranking. (CR-C)
+- **Recency-decay ranking prior for time-sensitive doc types (CLAUDE, M)** — per-docType exponential decay for 8-K/news/decisions/coach-notes, never fundamentals. (CR-C, U-19)
+- **Typed retrieval-status receipt (no-memory vs lookup-failed vs budget-skipped) (CLAUDE, S)** — an empty Memory panel becomes a receipt, not a blank. (CR-C)
+- **"Search my decisions" tool for the console assistant (CODEX, S)** — searchDecisions over decision/coach/lesson doc types with SQLite fallback. (CR-C)
+- **Relevance-scored retrieval for the chat user_memory store (CLAUDE, M)** — currently 12 most-recent regardless of the conversation. (CR-C)
+- **Fix `matchToChunk` omitting published_at from as-of resolution (CURSOR, S)** — use the `resolveAsOfStamp` precedence. (CR-C)
+- **Align the 2400-char storeContexts trim with the token-based chunker (CURSOR, S)** — char cap cuts structure-aware chunks and atomic tables. (U-15)
+- **Normalize RAG doc_type casing at the ingest boundary (CURSOR, S)** — casing depends on caller; patched only at query time. (U-16)
+- **Owner decision: enable full-corpus RAG ingest (paid Voyage, 8-K bodies, disclosures) (unassigned, M)** — corpus size is the binding RAG constraint; cost decision. (U-17)
+- **Corpus-wide hybrid sparse retrieval via FTS5 or Pinecone sparse-dense (CLAUDE, L)** — hybrid is off by default with IDF over the ≤50-doc dense pool. (U-20)
+
+#### Data providers & connectivity
+- **In-flight request coalescing (single-flight) for concurrent enrichment fetches (AG, M)** — per-(provider,symbol) promise table. (EDR-D3)
+- **Generalized negative-caching for no-data symbols (AG, S)** — short negative-TTL on genuine empty results across providers. (EDR-D4)
+- **SQLite-backed enrichment cache surviving restarts (AG, M)** — no cold-start provider storm after deploys. (EDR-D5)
+- **Per-provider proactive quota token buckets (AG, M)** — Finnhub/AlphaVantage/Tiingo/TwelveData/Intrinio degrade gracefully instead of 429ing. (EDR-D9)
+- **Keyless fundamentals redundancy tier (AG, M)** — SEC-XBRL EPS/revenue/shares + Stooq quotes below keyed tiers, above Yahoo. (EDR-D12)
+- **Bulk endpoints instead of per-symbol N+1 fan-out (AG, M)** — incl. collapsing Finnhub's 5-call-per-symbol scan pattern behind the 25s timeout. (EDR-D13, U-13)
+- **Gate Alpaca IEX first-wins by snapshot freshness/liquidity (AG, M)** — stale thin IEX prints must not beat fresher consolidated quotes. (EDR-D14)
+- **Surface FINRA short-interest settlement-date age (AG, S)** — annotate value age in the disagreement bulletin. (EDR-D16)
+- **Second short-interest source with disagreement flag (AG, S)** — shortPercentOfFloat is Yahoo-only; add FMP backup. (U-10)
+- **Cross-provider plausibility/consensus check on price, P/E, beta, marketCap (AG, M)** — extend the median/MAD disagreement-bulletin pattern beyond short interest. (CR-D)
+- **Finance-tuned news sentiment replacing the keyword-bag scorer (AG, M)** — FinBERT/ONNX, batched LLM scoring, or Finnhub news-sentiment. (CR-D)
+- **Per-field coverage/fill-rate telemetry with a low-coverage alert (CURSOR, S)** — a field going dark is invisible today. (CR-D)
+- **Corporate-action-consistent forward returns for matured outcomes (AG, M)** — mixed adjustment bases can inject phantom split returns; else mark unresolvable. (CR-D)
+- **Deep historical OHLC backfill via nightly grouped-daily append (AG, L)** — local daily_bars table for analog search + backtest depth. (CR-D)
+- **Fold streamed intraday minute bars into scan-time momentum (AG, M)** — VWAP/slope feature from already-streamed bars. (CR-D)
+- **13F institutional holder-delta evidence bulletins (AG, L)** — quarterly top-N manager deltas from free EDGAR filings. (CR-D)
+- **RSP-vs-SPY narrow-leadership dislocation signal (AG, S)** — regime tell missed by breadth% alone. (CR-D)
+- **Adopt shared resolveTickerAlias in Congress outbound + App A import (AG, S, cross-app)** — neither app applies the shared alias map; pairs with the rename-vs-acquisition split. (U-09)
+- **Add App B readers for App A insider/short-volume paths or remove them (AG, S)** — implemented API paths never consumed by the peer app. (U-11)
+- **Drop rows failing Congress outbound SharePayload validation (CURSOR, S)** — safeParse result is discarded with a console.warn. (U-12)
+- **Provider-health circuit breaker skipping stoppedWorking lanes (AG, M)** — db-health computes stoppedWorking for display only. (U-14)
+
+#### Decision-making & risk (MONET lane unless noted)
+- **Changepoint self-throttle on the account's own realized edge (MONET, M)** — CUSUM on rolling win-rate/IC raises dissent threshold and shrinks sizing on a downward break. (EDR-E13)
+- **Size on outcome dispersion/skew, not just mean edge (MONET, M)** — per-thesis downside deviation/Sortino penalty. (EDR-E19)
+- **Advisory earnings-proximity opening-size gate (MONET, M)** — owner-overridable; skip when the date is unknown. (CR-E)
+- **Reversal-trigger / invalidation watcher on open positions (MONET, L)** — structured triggers on every opening + a scheduler tick that escalates "thesis challenged". (CR-E)
+- **Cadence-gated held-position thesis review pass (MONET, M)** — daily hold/trim/exit/re-underwrite logged as a non-action case. (CR-E)
+- **Escalation-regime decision-depth playbook (MONET, M)** — raise retrieval k, force debate on all openings, include the flip audit trail when Crisis/Risk-Off fires. (CR-E)
+- **Per-regime owner-editable doctrine sections (unassigned, L)** — the Belief step cites the active regime's doctrine or explicitly dissents. (CR-E)
+- **Novelty/out-of-distribution composite score as decision input + receipt field (unassigned, L)** — structurally novel tapes should not size like a normal day. (CR-E)
+- **Sizing-vs-conviction waterfall receipt (MONET, M)** — expose confidence → calibration → caps → Kelly → override chain. (CR-E)
+- **SPY-relative excess return on per-trade stats and scorecards (AG, M)** — feed excess, not raw, into the tuner once samples suffice. (CR-E)
+- **Generic "agent asks a question" escalation primitive (CODEX, L)** — one escalation object rendered as a conversational card; generalizes wash-sale-ask. (CR-E)
+- **Max-pairwise correlation receipt on every candidate (MONET, M)** — inject "corr 0.91 w/ NVDA (18% of book)" into the prompt entry. (CR-E)
+- **ATR-multiple trailing stops (MONET, M)** — volatility-blind flat percent corrupts thesis stats with noise-stops. (CR-E)
+- **Working-order lifecycle: limit repricing as a logged decision with stated patience (MONET, M)** — optional workingIntent executed by a scheduler pass. (CR-E)
+- **Agent-judgment sell-to-fund replacing the biggest-loser sort (MONET, M)** — annotated candidate table (wash-lock, ST/LT, thesis quality); deterministic sort stays fallback. (CR-E)
+- **Stated cash-allocation judgment + cash-drag attribution (MONET, M)** — justify cash level; attribute underperformance to undeployed cash. (CR-E)
+- **End-of-day/weekend carry receipt with carry-or-trim judgment (MONET, M)** — mark the session boundary before the book goes overnight. (CR-E)
+- **Risk-adjusted account statistics beside the SPY comparison (AG, M)** — max drawdown, Sharpe/Sortino, vol on Results. (CR-E)
+- **Deterministic evidence-quality score on every receipt (MONET, M)** — quote age, source count, disagreement flags, RAG hits — separate from stated confidence. (CR-E)
+- **"Waited" as a scored decision alternative with realized counterfactual (AG, M)** — compute the +1d/+1w waited-entry counterfactual as calibration feedback. (CR-E)
+- **Drawdown-halt breach becomes a captured Socratic post-mortem case (MONET, M)** — auto-generate the halt case file instead of a bare state flip. (CR-E)
+- **Split Unknown-data-missing from Unclassified-genuinely-novel regime states (CURSOR, S)** — epistemically opposite states are conflated. (CR-E)
+- **Aggregate per-run/day Socratic override budget (MONET, S)** — the per-proposal cap lets simultaneous overrides jointly exceed the deviation budget. (CR-E)
+- **Deviation scoreboard: override receipts vs matured outcomes vs blocked baseline (MONET, M)** — answers "is the agent's judgment beating my guardrails?". (CR-E)
+- **Render dissent honestly as three distinguishable states (CODEX, S)** — stop padding fake "Policy counterargument" entries when no critic ran. (CR-E)
+- **Scale the marketable-limit buffer with observed spread (MONET, M)** — flat 15bps under-fills wide names and overpays tight ones. (CR-E)
+- **Paper limit-fill touch test (AG, M)** — instant limit-price fills without a touch inflate paper win-rates and poison tuner data. (CR-E)
+- **Tighten dailyExecutionStats to placed-only for live accounts (CURSOR, S)** — verify post-#342 semantics first. (U-32)
+- **Re-baseline risk-breaker durability: HWM restart, surfacing, close_only proof (MONET, M)** — verify restart behavior and that blocked evidence is real. (U-33)
+- **Audit the un-reviewed risk-module family: sell-to-fund, synthetic stops, held orders (MONET, M)** — never assessed by any review; the KO 403 prod bug lived here. (U-35)
+
+#### Console & UI (CODEX lane unless noted)
+- **Actions as master pane with Evidence/Dissent as detail (CODEX, M)** — multi-decision runs currently show only primaryDecision's evidence. (CR-F)
+- **Non-action/pass cases as first-class Actions rows (CODEX, M)** — render "considered X, declined because Y, would reconsider if Z". (CR-F)
+- **Unified owner inbox: trades + learned-context + framework proposals + escalations (CODEX, M)** — the Approvals badge undercounts what awaits the owner. (CR-F)
+- **Chat streaming + optimistic coach-note echo + skeletons + optimistic approve/reject (CODEX, M)** — perceived-performance pass. (CR-F)
+- **Centralize LLM provider label formatting (CURSOR, S)** — ≥8 inconsistent call sites. (CR-F)
+- **Reconcile Socratic nav names with legacy page h1s across 7 screens (CODEX, S)** — Journal/Evidence/Regime vs Activity/Scan/Macro etc. (CR-F)
+- **Rewrite Mandates/Guardrails copy to advisory-input framing (CODEX, S)** — the UI's words contradict the decided guardrail philosophy. (CR-F)
+- **Link Journal runs/proposals to their Socratic case files (CODEX, S)** — no path from a run row to its evidence/dissent/coach trail. (CR-F)
+- **Coach affordance on closed-lot outcomes (CODEX, S)** — the canonical coaching moment has no writer or renderer. (CR-F)
+- **Coaching pipeline visibility + split Coach vs Assistant naming (CODEX, M)** — show note → rule → in-prompt lifecycle; "Coach" nav must not point at generic chat. (CR-F)
+- **Per-model and post-coaching cohort sections on Results (CODEX, M)** — with honest n labels. (CR-F)
+- **One shared confidence-rendering primitive (CODEX, S)** — conviction renders three inconsistent ways. (CR-F)
+- **Stop title-casing machine thesis tags into fake prose (CURSOR, S)** — formatting artifact reads as agent-written thesis. (CR-F)
+- **Fix the assistant page's two competing h1s (CURSOR, S)** — "Coach Socratic Trade" vs "Assistant". (CR-F)
+- **Per-decision LLM cost/latency on the trace (CODEX, M)** — receipts never state what a decision cost. (CR-F)
+- **Inline quantitative-signal visualizations (CODEX, S)** — confidence gauge, mini factor bars, macro sparklines. (CR-F)
+- **Conditional-GET (ETag/304) on the console poll (CODEX, M)** — plus first-paint skeletons. (CR-F)
+- **Operator density toggle + optional multi-pane Desk layout (CODEX, L)** — react-resizable-panels is an unused dependency today. (CR-F)
+- **Visible command-palette affordance with ⌘K hint (CODEX, S)** — keyboard-only today; re-scope to /console. (U-01)
+- **Update phase-8-cockpit-ui.md to the real console IA or mark superseded (CURSOR, S)** — doc drift. (U-02)
+- **Click/tap-to-expand rationale instead of hover-only truncation (CODEX, S)** — unreachable on touch. (U-03)
+- **Collapse icon sizing to a 3-step semantic scale (CURSOR, S)** — 11 distinct sizes today. (U-04)
+- **Decide Recharts/Motion intent: retire from docs or adopt (CODEX, S)** — design intent eroded. (U-05)
+- **Write docs/design/visual-system.md for the real token system (CODEX, S)** — tokens exist, undocumented. (U-06)
+- **redTeamVerdict proposal field + rendered Bear Review block (CODEX, M)** — the core differentiator is appended into a clamped rationale string today. (U-07)
+- **Named spacing/blur elevation tiers + drift sweep (CURSOR, S)** — p-2…p-6 and backdrop-blur drifted ad-hoc. (U-08)
+
+#### Systems, evaluation, security-hardening & ops
+- **Queryable audit trail: generated columns or a typed decision_log table (CURSOR, M)** — payloads are opaque TEXT JSON requiring full-table scans. (EDR-G7)
+- **Run-level Langfuse trace tree + online eval-in-prod sampler (CURSOR, M)** — one parent span stitching scan→Bull→Bear→placement. (EDR-G11)
+- **Doctrine regression replay harness (unassigned, L)** — "which of my last 60 decisions flip under the proposed doctrine, and did the flips help?". (CR-G)
+- **Fidelity-tier contract for validation use-cases (AG, S)** — pin each question type to the cheapest sufficient simulation tier. (CR-G)
+- **Factor/beta-adjusted alpha via Fama-French regression (AG, M)** — famafrench.ts is unwired; "beating SPY" can be pure beta. (CR-G)
+- **Fence every untrusted-text field entering money-path prompts (CLAUDE, M)** — headlines/bulletins/RAG chunks arrive raw with no data-not-command clause. (CR-H)
+- **Injection-attempt detection as a receipt/dissent field (CLAUDE, M)** — deterministic scanner; detection IS the control under advisory philosophy — never a block. (CR-H)
+- **Flip the Socratic override lane's shipped default to propose + daily override-budget facts (MONET, M)** — execute/100%-NAV default is a poisoned-headline blast radius. (CR-H)
+- **Move reflection_summary out of the SYSTEM prompt into a fenced data block (CLAUDE, M)** — unreviewed persistent SYSTEM-role write laundered from untrusted rationale. (CR-H)
+- **Stated-confidence vs realized-calibration anomaly receipt (MONET, M)** — confidenceScore is attacker-influenceable input to gates and sizing. (CR-H)
+- **Trust-tier metadata on the RAG corpus + laundered-chunk quarantine (CLAUDE, L)** — filings, LLM summaries, and rationales share one untiered namespace. (CR-H)
+- **Trust-tier labels in the Evidence panel (CODEX, M)** — deterministic vs third-party vs LLM-derived vs owner. (CR-H)
+- **Evidence-age anomaly receipts (CLAUDE, S)** — flag decisions leaning on sources first seen today (plant-then-pump pattern). (CR-H)
+- **Render learned-fact provenance inline in money prompts (CLAUDE, S)** — origin/source/assertedAt/confidence on every retrieved fact line. (CR-H)
+- **Sanitize AI-LEARNED doctrine block delimiters (CURSOR, S)** — a value containing the closing delimiter orphans doctrine text permanently. (CR-H)
+- **HMAC-SHA256 + timestamp on the congress push webhook (AG, S, cross-app)** — a leaked static bearer allows forged cluster-BUY payloads. (CR-H)
+- **Confirmation chip before minting hard constraints from chat text (CODEX, S)** — regexes mint permanent hard:true rows from any paste. (CR-H)
+- **SQLite↔Pinecone dirty-flag reconciliation sweep (CLAUDE, M)** — an outage during a run permanently drops decisions from analog retrieval. (CR-H)
+- **Durable retry on Socratic case-write failure (CURSOR, S)** — a live order can exist with no case and no receipt today. (CR-H)
+- **Wire Socratic case status transitions into the order lifecycle (CURSOR, M)** — cases stay 'proposed' forever after fills. (CR-H)
+- **Periodic broker-truth reconciliation of positions/cash/lots (MONET, M)** — crossCheckRealizedPnl has zero production callers; manual trades desync learning silently. (CR-H)
+- **In-app receipt when the agent silently stops running (CURSOR, M)** — boot-halt + cadence-aware missed-run detection, Sentry-independent. (CR-H)
+- **Propagate account deletion to Pinecone (CURSOR, S)** — embedded artifacts survive deletion today. (CR-H)
+- **Admin rebuild-from-SQLite route for the vector corpus (CLAUDE, L)** — the corpus's only copy lives in a third-party index. (CR-H)
+- **Documented Mac keep-awake posture + tick-gap detection (CURSOR, S)** — a lid close silently drops synthetic-stop protection. (CR-H)
+- **Sweep crashed runs stuck at status='running' (CURSOR, S)** — process kill mid-run leaves a phantom in-progress run forever. (CR-H)
+- **Disk headroom + WAL growth in health/ops-snapshot (CURSOR, S)** — a full disk silently breaks order-writes and replication. (CR-H)
+- **Reject legacy-plaintext key decrypt + audit LLM endpoint host overrides (CURSOR, S)** — decryptValue accepts plaintext forever; env can silently redirect money-path prompts. (CR-H)
+- **Batch proposal-linked point queries in the dashboard feed builders (CURSOR, S)** — per-row SELECTs → one WHERE IN. (U-36)
+- **Cap buildUnifiedFeed output at the source (CURSOR, S)** — server builds uncapped, client renders 50. (U-37)
+- **Cache .next build output for Playwright e2e CI runs (CURSOR, S)** — e2e.yml pays a cold build every run; #370 covered ci.yml only. (U-38)
+- **Tune better-sqlite3 cache_size/mmap_size pragmas (CURSOR, S)** — sequence after the fill-replay fix. (U-39)
+- **Default checkAdmin allowNonProd=false for write/admin routes (CURSOR, S)** — /api/admin/* is unauthenticated whenever NODE_ENV!=production. (U-40)
+- **Re-scope /api/ops + /strategy public prefixes and split the ops token (CURSOR, S)** — ops snapshot exposes multi-user data behind one fallback-shared token. (U-41)
+- **Make the rate limiter multi-process-safe or fail-closed (CURSOR, M)** — tie to the single-leader decision before scale-out. (U-42)
+- **Characterization tests for strategy.ts order construction + broker gateways (AG, M)** — pin limit-price math and short/cover sides BEFORE the god-module split. (U-43)
+- **Wire the usageTelemetry push client into recordLlmUsage/recordRagUsage (CURSOR, S)** — fully-built shared client + working ingest, zero callers. (U-44)
+- **Emit Bear-veto and diversity-collapse events as Langfuse observations (CURSOR, S)** — the Langfuse layer exists; guardrail events never reach it. (U-45)
+- **Push-from-app as the primary monitor channel for Anthropic/Voyage/Robinhood (AG, M, cross-app)** — poll adapters are structurally blind to this app's real cost drivers. (U-46)
+- **Market-data/broker call-volume telemetry via the push path (AG, M, cross-app)** — closes the shared-rate-limit blind spot. (U-47)
+- **Monitor→app cost feedback loop: alerts into the app's notification pipe (unassigned, L, cross-app)** — distinct from the tracked in-app ceilings. (U-48)
+
+#### Deep-sweep additions (2026-07-01 learning-loop/RAG expansion backlogs + June residuals)
+_Basket caveats recorded by the sweep: the "Factor-weight learning auto-apply" row must land WITH
+its safety prerequisites (now individually tracked below: patch-scope restriction, invariant
+guard, mutation ledger, dry-run); the "RAG retrieval-quality eval harness" row's prerequisites
+(anti-leakage lint, regression net) are below; "Approvals triage upgrades" includes the
+portfolio-impact preview; "Global symbol omnibox" means search-anywhere, not click-a-row._
+
+- **Fail-closed as-of strict mode for undated chunks (CLAUDE, S)** — opt-in `VECTOR_ASOF_STRICT` drops undated chunks under an active asOf, with a drop-count audit. (rag-expansion)
+- **Embedding integrity guard before upsert (CURSOR, S)** — assert length===1024 + all-finite; drop-and-audit malformed vectors. (rag-expansion)
+- **Pinecone index-metric cosine assertion at bootstrap (CURSOR, S)** — every cosine floor is meaningless if the metric isn't cosine. (rag-expansion)
+- **Shared fail-closed env-flag parser for RAG flags (CURSOR, S)** — flags disagree on accepted truthy values today. (rag-expansion)
+- **Fix salience first-match-only ticker mis-binding (CURSOR, S)** — `text.match()` binds the first token (`I`, `CEO`); matchAll + validation. (rag-expansion)
+- **Golden-set anti-leakage + hard-negative lint (CLAUDE, S)** — prerequisite that must land with/before the eval harness row. (rag-expansion R3)
+- **Retrieval regression net for as-of/rerank/hybrid fail-safe paths (CLAUDE, S)** — network-free tests pinning the fail-open/fail-closed behaviors. (rag-expansion R4)
+- **Fix train/serve embedding text skew (CLAUDE, M)** — chunks embed with a `[Published: …]` prefix, queries don't; flag-gated since it invalidates vector comparability. (rag-expansion)
+- **Per-run corpus-coverage receipt for requested-but-empty doc types (CLAUDE, S)** — `earnings-transcript` is requested with zero producers and nothing says so. (rag-expansion)
+- **Persist the full retrieved candidate set including unused chunks (CLAUDE, M)** — the RAG snapshot is triple-lossy; "what I ignored" analysis is impossible. (rag-expansion)
+- **Offline corpus coverage & freshness report script (CURSOR, M)** — counts by doc_type, as-of ranges, watchlist symbols with zero coverage. (rag-expansion)
+- **Contextual-retrieval situating prefixes for high-value chunks (CLAUDE, L)** — optional ingest-time LLM preamble beyond the static provenance header. (rag-expansion)
+- **Server-side numeric as-of epoch filter in Pinecone (CLAUDE, M)** — post-fetch cuts silently empty small pools today. (rag-expansion)
+- **FRED ALFRED vintages for point-in-time macro backtests (AG, M)** — revised values leak into historical backtests. (rag-expansion)
+- **Ingest-time semantic near-dup gate via MinHash/SimHash (CLAUDE, M)** — exact-hash-only dedup misses boilerplate near-dupes before embedding cost. (rag-expansion)
+- **Eval-gated embedding-model/quantization benchmark (CLAUDE, M)** — voyage-finance-2 is frozen with no compared alternative. (rag-expansion)
+- **Pinecone namespaces for per-user isolation (CLAUDE, M)** — isolation rides entirely on metadata filters in one namespace today. (rag-expansion)
+- **Stale 8-K vector eviction policy in the ingest path (CLAUDE, M)** — June finding never revisited. (2026-06-18)
+- **Embed FRED macro narratives as retrievable as-of-dated docs (CLAUDE, M)** — "what was the macro backdrop" analogs are unretrievable today. (rag-expansion)
+- **Options-flow/unusual-activity ingestion connector (AG, M)** — skew/OI/unusual-options as an alt-data doc type. (rag-expansion)
+- **Coverage-driven ingestion prioritization + just-in-time ingest (CLAUDE, M)** — held > watchlist > top candidates; JIT on demand. (rag-expansion)
+- **Owner decision: multi-symbol learned-fact schema — symbol vs symbols[] (unassigned, S)** — R8, explicitly left open 2026-07-01, never resolved. (rag-expansion)
+- **Lazy fallback-body construction in the LLM client (CURSOR, S)** — fallback bodies are built eagerly even when the primary succeeds. (composite)
+- **Bear visibility into top non-proposed candidates (CLAUDE, S)** — the critic can't say "you picked the wrong name". (composite)
+- **Treat parse/schema failure as retryable inside the failover loop (CURSOR, M)** — failover fires only on transport errors today. (composite)
+- **Adaptive reasoning-effort/model-tier routing by decision difficulty (unassigned, M)** — escalate only on disagreement/borderline cases. (composite)
+- **Input-side token-budget pre-flight guard (CURSOR, M)** — trim lowest-value context to a target budget before sending. (composite)
+- **Scout-then-analyst two-stage evidence pre-pass (CLAUDE, L)** — cheap scout gates deep enrichment/retrieval/expensive-Bull; pairs with the agentic tool-loop row. (both reviews)
+- **Cross-provider field-demand planner (AG, L)** — stop fetching every field from every provider; paid tiers skip already-satisfied fields. (composite)
+- **Timestamped, sourced news objects (AG, M)** — `{publishedAt, source, url, id}` instead of bare headline strings. (composite)
+- **Trading-halt/LULD feed + stop-suppression receipts (AG, M)** — receipt whenever a protective stop is suppressed by a halt. (composite)
+- **Auto-subscribe held positions on the real-time price stream (CURSOR, S)** — only watched/scanned symbols are subscribed today. (composite)
+- **Daily market-state snapshot table for "days like today" analogs (AG, M)** — no persisted daily market-state row exists. (composite)
+- **Fix ADV using partial-day cumulative volume (AG, M)** — morning runs mis-size the impact/cap model; use a true trailing 20-day average. (composite — live bug)
+- **Intraday-bars module + decision-time snapshot job (AG, L)** — makes 15m/1h multi-horizon outcomes computable instead of unresolvable. (composite)
+- **Tradier options/IV enrichment + persisted daily IV series (AG, M)** — the Tradier key is plumbed but unused; distinct from the Robinhood option-chain row. (composite)
+- **Keyless intraday credit-stress proxy from HYG/LQD vs IEF quotes (AG, S)** — free high-frequency credit signal from already-fetched ETFs. (composite)
+- **Breadth-internals expansion from data already in memory (AG, S)** — net new-highs/lows, up-volume %. (composite)
+- **Forward economic-event calendar as advisory prompt context (AG, S)** — FOMC/CPI/NFP; distinct from the reactive blackout gate. (composite)
+- **Parse ex-dividend/corporate-action dates from the already-fetched Yahoo payload (CURSOR, S)** — unused fields for tax/timing receipts. (composite)
+- **PDT / Reg-T awareness gate (MONET, M)** — advisory, owner-overridable; flagged since 2026-06-21, never built. (June residual)
+- **VIX term-structure backwardation as a persistence-gated soft de-risk trigger (MONET, S)** — shown to the LLM today, never a deterministic input. (composite)
+- **Factor-exposure aggregation & crowding caps across the book (MONET, L)** — only market beta is aggregated today. (both reviews)
+- **Advisory non-null default account circuit breakers (MONET, S)** — drawdown/daily-loss/crisis-cap ship null; give sensible advisory-mode defaults the owner can change. (composite)
+- **Overnight/halt gap-risk-aware sizing + stop-limit consideration (MONET, M)** — stops assume trigger-price fills; gap-prone names carry unmodeled risk. (composite)
+- **Restrict autonomous tuning applies to scoringWeights only (AG, S)** — `applyOosGate` doesn't gate the rest of the patch; an apply could silently loosen risk caps. SAFETY-CRITICAL prerequisite of the auto-apply row. (learning-expansion P0-1)
+- **Fail-closed tuning-config invariant guard (AG, S)** — validate hard safety couplings before any autonomous apply. (learning-expansion P0-3)
+- **Unified learning-mutation ledger + one-click revert across ALL learning subsystems (AG, M)** — today's ledger covers scoring_weights only. (learning-expansion P0-4)
+- **Deterministic dry-run/replay mode for the autonomous tuning decision (AG, S)** — zero-write `{before, after, wouldApply}`; the operator on-ramp. (learning-expansion P1-1)
+- **Purged & embargoed walk-forward split (AG, M)** — the 70/30 chronological split leaks at the boundary. (learning-expansion P1-2)
+- **Survivorship certification split: hard CI leakage test + labeled soft diagnostic (AG, M)** — (learning-expansion P1-4)
+- **Signed/directional top-bucket gate for the congress signal (AG, S)** — require positive excess return in the top quantile before promotion. (learning-expansion P2-3)
+- **Shrink IC-derived weights toward the prior by estimator noise (AG, M)** — a single high-IC factor on a thin fold gets outsized weight. (learning-expansion P2-4)
+- **Candidate-vs-baseline turnover/drawdown guardrail equity curves (AG, M)** — only one curve is built today, so the comparison is impossible. (learning-expansion P2-5)
+- **OOS test-window starvation guard (AG, M)** — decouple the OOS window from the 500-row audit cap. (learning-expansion P2-6)
+- **Reproducibility/provenance snapshot per autonomous apply (AG, S)** — snapshot exact inputs so a past apply's fold can be re-derived. (learning-expansion P2-7)
+- **Scheduled re-validation + decay-to-prior + staged canary ramp for applied weights (AG, L)** — re-run OOS on the live vector each cadence. (learning-expansion D-3)
+- **Owner decision: autonomous-tuning cadence + scope (unassigned, S)** — daily vs every-N-runs, per-account vs per-user; explicitly open since 2026-07-01. (learning-expansion B1)
+- **Verify decision-memory re-index covers outcome/lesson writes (CLAUDE, S)** — #365 wired the coach-note path only; the outcome writer now exists. (verify item)
+- **Include held-position symbols in RAG + learned-context retrieval scope (CLAUDE, S)** — sell/hold/trim decisions get zero retrieved memory today. (composite)
+- **Statistical-honesty receipts: n, Wilson CI, insufficient-evidence verdicts (AG, M)** — shared `evidenceVerdict()` helper on every surfaced learning number. (composite)
+- **Verify calendar-day math fully purged from both learners (CURSOR, S)** — spots beyond what PR #365's trading-day fix touched. (verify item)
+- **Exit-side counterfactuals: post-exit regret + size-ladder comparisons (AG, M)** — closed lots are never revisited for "sold too early" or 2x/0.5x-size counterfactuals. (composite)
+- **Run-level belief object + richer Live Thesis surface (CODEX, M)** — persist the thesis-of-the-day + revisions; render statement/scope/evidence/invalidation/scorecard instead of a tag-derived headline. (composite + console-parity)
+- **Doctrine version ledger stamped onto every decision (CLAUDE, M)** — replay a past decision against the doctrine that produced it. (composite)
+- **Framework proposals generated from broader outcome patterns (CLAUDE, L)** — recurring missed-opportunity/calibration-drift/dissent-was-right patterns should propose doctrine changes. (composite)
+- **Framework-proposal actuation: accepted → reviewable applied diff (CLAUDE, L)** — acceptance only flips a status enum today. (composite)
+- **One structured doctrine store with per-clause provenance (unassigned, L)** — kill the prompt soup: prompt text, reflection blob, learned rows, AI-LEARNED blocks unified. (composite)
+- **Unify the five disjoint memory stores behind one Memory surface/API (unassigned, L)** — user_memory, learned_context, reflection, AI-LEARNED, Pinecone. (composite)
+- **Memory as a first-class console panel (CODEX, L)** — analogs, counterexamples, what-I-ignored, real provenance. (composite)
+- **Deviations receipts page (CODEX, M)** — overrides are a string suffix on a proposal today. (composite)
+- **Reversal-trigger live hit/not-hit rendering (CODEX, M)** — UI half of the invalidation watcher (MONET row above). (composite)
+- **Fix coach-on-trace beyond decision #1 + dead quick-action chips (CODEX, S)** — reportedly non-functional past the first decision. (composite quick-win, verify vs #443)
+- **Verify positions/protection-status/needs-attention components are reachable (CURSOR, S)** — possible orphaned-component P0 regression. (composite)
+- **Port appearance/display preferences from the legacy dashboard (CODEX, S)** — console-parity residual. (console-parity)
+- **Improve admin/operator link discoverability (CODEX, S)** — console-parity residual. (console-parity)
+- **Production-verify `/old` + canonical `/console` routing post-deploy (CURSOR, S)** — local code alone is not proof. (console-parity)
+- **Live-device verification of the scan company-info drawer (CURSOR, S)** — desktop + mobile pass post-migration. (console-parity)
+- **Observe Pinecone budgets under real scheduler cadence post-index-switch (CURSOR, S)** — ops observation task. (console-parity)
+- **LLM pricing-table per-provider coverage audit (CURSOR, S)** — the completeness pass behind the unpriced-default fix. (console-parity)
+- **Real SEC EDGAR User-Agent (CURSOR, S)** — placeholder UA flagged 2026-06-21, never fixed. (June residual)
+- **Sweep ad-hoc live-broker probe scripts under test/ (CURSOR, S)** — route through the test-broker gateway. (June residual)
+- **Verify Robinhood-specific pending-fill reconciliation coverage (CURSOR, S)** — beyond the generic reconciler path. (June residual)
+- **Fix checkRegimeFlip non-atomic read-modify-write hardcoded to user 'local' (CURSOR, S)** — confirmed still present in `regime-watch.ts:41`; duplicate-broadcast risk. (June residual — live bug)
+- **Owner decision: /old legacy dashboard maintenance policy + residual-fix batch (unassigned, S)** — ~15 deferred legacy-only findings (dual scan fetches, leaked internal labels, policy-write race) tracked as one batch pending the keep-or-freeze call. (June residuals)
+
+### 2026-07-05 next-wave (cycle 2)
+_Added 2026-07-05 (CLAUDE next-wave). Sourced from a fresh cross-agent audit of the board against
+live PR/git state; see the stale-row corrections applied above in this same pass for the
+discrepancies that motivated these rows. Mirrored from the live board
+`/Users/jay/apps/TRADING-EFFORT-LOG.md`._
+
+- **Disentangle PR #805: land Cursor P0/P1 commit and AG health slice as separate merges (CURSOR, S)** —
+  Resolve #805's conflicts, split commit 0ce39474 (per-user regime keys, security headers, spend
+  ceiling) from the AG connection-health work, land both with honest PR records. _(why now: The
+  board's phantom 'PR #808 merged' hides that the P0 multi-user regime RMW race and the security
+  headers are still NOT on main; the only vehicle is a CONFLICTING two-lane PR.)_
+- **Migrate legacy regime:current row to per-user keys at first tick after the P0 fix lands (CURSOR, S)** —
+  Seed regime:current:${userId} from the old shared row (or tolerate absence) so the first
+  post-deploy tick doesn't fire false regime-flip notifications or lose escalation state. _(why now:
+  The checkRegimeFlip fix changes the settings key shape; without a migration every user's stored
+  regime resets on upgrade — a correctness gap the fix itself introduces.)_
+- **Owner ratification: Rule 4 fundamentals-veto overridability shipped in #814 (OWNER, S)** —
+  Decide whether the deliberately model-independent FCF/debt-equity veto should stay
+  agent-overridable or be re-hardened; the code flags this decision in-line. _(why now: #814 merged
+  with an explicit owner-ratification flag on Rule 4; leaving it unratified means a design decision
+  on the money path is implicitly made by default.)_
+- **Production release + post-deploy money-path verification of the 2026-07-05 batch (OWNER, M)** —
+  Run the ~/apps/trading-live release for the ~12 merged PRs, then verify on a real run: override
+  path behavior, new audit kinds emitted, alert center + live-data console slices working. _(why
+  now: Three money-path behavior changes (#799/#814/#816) plus major console work are beta-only;
+  nothing merged 07-05 has been verified in production, and the Deployed board section stops at
+  07-04.)_
+- **Render the new advisory audit kinds in the console alert center and activity feed (CODEX, S)** —
+  Label/filter deterministic_bear_veto, red_team_veto_overridden, prompt_injection_suspected, and
+  evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
+  whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
+  surfaces don't surface them; #807's alert center is the natural home and just merged.)_
+- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M)** — Surface the veto-efficacy
+  metrics (API/db-level since the w1-learning-loops landing) on the console, including
+  override-vs-non-override splits now that #814 protects the metric. _(why now: The w1 row
+  explicitly deferred UI wiring to the console lane and it was never tracked as its own row; #814's
+  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_
+- **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
+  first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
+  (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
+  names this as the one deliberately deferred surface; headlines are the highest-volume untrusted
+  input to the Bull prompt.)_
+- **Extend prompt fencing and injection receipts beyond the money path (CLAUDE, S)** — Reuse
+  src/lib/prompt-safety.ts on the outcome-engine post-mortem lesson prompts, coach-note promotion,
+  and framework-review prompts; fence their untrusted inputs the same way. _(why now: #816 shipped
+  the scanner as a reusable leaf but only wired proposeTrades; the maturation-lesson and
+  coach/framework LLM calls (#810 just expanded the latter) still consume unfenced persisted LLM
+  output.)_
+- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches (CLAUDE, S)** —
+  Merge-forward both pushed branches onto current main, run the gate, open PRs with auto-merge; they
+  have sat PR-less since 07-04 while their sibling lanes landed. _(why now: Durable coaching and
+  decomposed reflection lessons are finished, verified work rotting on origin; every day unlanded
+  increases merge-conflict cost against the fast-moving strategy.ts/learning files.)_
+- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M)** — Extend #807's
+  bulk actions to LIVE proposals with a single aggregate typed confirmation (per-item provenance
+  preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
+  bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
+  confirms are the exact ceremony the product philosophy says to minimize.)_
+- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — Audit every
+  hardcoded settings key (scheduler leader, system state, caches) for the same shared-row RMW
+  pattern checkRegimeFlip had; per-user-scope or single-writer-guard each hit. _(why now: The P0
+  regime race was found by inspection, not by a systematic pass; multi-user correctness is a stated
+  priority and the same pattern likely exists on other keys.)_
+- **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
+  2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,
+  vol-targeting) return to MONET; the five empty .claude/worktrees/monet-* worktrees are
+  reclaimable.
+
 - 2026-07-03 — Created (coordinator). Seeded from the 2026-07-02 landings (#321–#335) + the
   in-progress `sources.price` fix + blocked sovereign-design decisions.
 - 2026-07-03 — #336 merged (→ Completed). Recorded the four owner decisions (drawdown=hard-halt,
@@ -561,3 +1318,33 @@ to `socratictrade.com`, record the release commit + date here._
   boundary is the only hard rule. Decision 1 + the hardening scope updated accordingly. #343's
   hard-halt breaker was built off the wrong record before this correction landed; re-scope pending
   owner review. See `docs/rollouts/2026-07-03-guardrail-philosophy-correction.md`.
+- 2026-07-05 — **Full itemization pass (CLAUDE, owner-directed follow-up).** The owner flagged that
+  the exhaustiveness pass promoted only a curated subset. Three enumeration agents classified EVERY
+  finding in the 147-finding expert design review, the composite review, the full 2026-06-30
+  improvement audit, the 2026-07-01 learning-loop/RAG expansion backlogs, and the June residual
+  docs against this board; all ~220 remaining untracked findings are now individual Planned rows
+  (see the "2026-07-05 full itemization" + "Deep-sweep additions" subsections), incl. two live
+  bugs (partial-day ADV; checkRegimeFlip 'local' RMW) and the safety-critical prerequisites of the
+  factor-weight auto-apply lane. Items inside the Wave-3 In Progress lanes were not re-promoted.
+- 2026-07-04 — **Backlog exhaustiveness + assignment pass (CLAUDE, owner-directed).** Promoted every
+  still-open item from the review docs/PLAN/code-sweep into individually tracked Planned rows with
+  assigned lanes (CURSOR/DeepSeek large slate, CODEX + AG medium slates, MONET risk slate, CLAUDE
+  memory/RAG slate, unassigned owner-decision bucket); annotated the pre-existing Planned rows with
+  assignments (in row bodies, not first lines, to preserve mirror issue identity). Also deduped the
+  twice-logged "Wave-1 quick wins" In Progress row (the issues-mirror dry-run had flagged it) — the
+  removed copy's detail lives in PRs #364/#365/#366/#368 and their rollout notes. See
+  `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+- 2026-07-05 — **Next-wave cycle 2 corrections + new Planned rows (CLAUDE next-wave).** Cross-agent
+  audit of this mirror against live PR/git state found several stale rows: `claude/veto-advisory-overridable`
+  (#814), the full-suite test-determinism de-flake (#812), and the guardrails-denylist row (#799)
+  were relocated from In Progress to Completed (their text already said merged, but they were
+  physically mis-filed); the console live-data build-out row was relocated to Completed with #811's
+  merge timestamp; the drawdown-advisory-rescope row (#360) and the w2-episodic-retrieval /
+  w2-outcome-engine sub-lanes were updated from "PR pending"/"pushed, no PR" to their actual merged
+  state (PR #360, PR #437, and the outcome-engine landing train respectively); the AG
+  connection-health row was annotated with its real state (open PR #805, mergeable CONFLICTING,
+  entangled with an unrelated Cursor commit — not done); the Codex global-coordination row was
+  updated with the current Slack relay/consumer.mjs state (Socket Mode connects, but zero events
+  deliver pending an owner-side Slack Event Subscriptions toggle). Added the "2026-07-05 next-wave
+  (cycle 2)" Planned subsection (11 rows) mirrored from the live board. Full detail and the
+  matching live-board corrections: `/Users/jay/apps/TRADING-EFFORT-LOG.md`.

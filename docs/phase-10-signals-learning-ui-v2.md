@@ -14,6 +14,10 @@ See `docs/rollouts/2026-07-03-socratic-autonomy-ui.md`.
 As of 2026-07-04, `codex/console-ui-swimlane` adds the read-only decision trace inspector,
 coach-on-trace notes, approval receipt provenance/citations, and mobile LIVE phrase parity for
 those Socratic decision surfaces. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+As of 2026-07-04 later, `codex/coach-framework-primitives` lets the decision-trace coach flow
+promote directly into lesson/framework primitives, persists explicit framework rewrite verbs plus
+owner responses, and shows linked run metadata when the source `runId` is still resolvable. See
+`docs/rollouts/2026-07-04-coach-framework-primitives.md`.
 
 ## Status legend
 `[done]` shipped · `[todo]` not started · `[partial]` partly done.

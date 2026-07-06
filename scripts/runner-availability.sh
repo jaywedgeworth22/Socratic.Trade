@@ -8,11 +8,21 @@
 # fresh (<5 min). Anything else (busy, stale, absent) routes hosted instantly, so a
 # busy or asleep Mac never queues CI work.
 #
-# Availability definition (owner-specified, resource-aware):
+# Availability definition (resource-aware, pressure-based):
 #   available = (1-min loadavg / hw.ncpu < LOAD_THRESHOLD)
-#           AND (free+inactive RAM > MIN_FREE_RAM_GB)
+#           AND (kern.memorystatus_vm_pressure_level == 1  -- kernel says pressure is normal)
+#           AND (vm.page_free_wanted == 0                  -- kernel not actively reclaiming)
+#           AND (swap used < MAX_SWAP_USED_GB              -- absolute anti-thrash floor)
+#           AND (compressor occupancy / RAM < MAX_COMPRESSOR_FRAC)
+#           AND (free+inactive RAM > MIN_FREE_RAM_GB       -- tertiary raw-headroom floor)
 #           AND (GitHub Actions runner process alive)
 #           AND (pm2 app "trading" online)
+# Rationale: `free+inactive` alone is the wrong macOS signal -- it both under-counts
+# reclaimable cache AND is blind to swap/compressor, so it can read healthy on a thrashing
+# box. The kernel pressure level + swap/compressor terms encode "can this box take on a
+# multi-GB verify job WITHOUT paging the live trading process." On a memory-tight box these
+# terms correctly stay false (it keeps hosting on GitHub); they open only when the box
+# genuinely has headroom. The self-lane verify job is additionally RSS-capped in ci.yml.
 # Hysteresis: TWO consecutive available checks are required before flipping to
 # mode=self; any single busy check flips to mode=hosted immediately.
 # Self-path gate commands additionally run under `nice -n 19` (see ci.yml).
@@ -28,8 +38,19 @@ set -u
 REPO="${RUNNER_AVAILABILITY_REPO:-jaywedgeworth22/Socratic.Trade}"
 VAR_NAME="VERIFY_RUNNER_STATE"
 INTERVAL_SECONDS="${RUNNER_AVAILABILITY_INTERVAL:-60}"
-LOAD_THRESHOLD="${RUNNER_AVAILABILITY_LOAD_THRESHOLD:-0.6}"
-MIN_FREE_RAM_GB="${RUNNER_AVAILABILITY_MIN_FREE_RAM_GB:-6}"
+# CPU: 1-min loadavg / ncpu must be below this. Loosened from 0.6 to 0.8 because every
+# self-path gate command runs under `nice -n 19` (see ci.yml), so the live trading process
+# always outbids CI for CPU scheduling -- the CPU term does not need a large idle buffer.
+LOAD_THRESHOLD="${RUNNER_AVAILABILITY_LOAD_THRESHOLD:-0.8}"
+# Memory: gate on genuine PRESSURE, not raw free pages. On macOS `free+inactive` is a poor
+# availability signal (the OS keeps free low by design and much of "inactive"/file cache is
+# reclaimable) AND it is blind to swap/compressor, so it can read healthy while the box
+# thrashes. We instead require the kernel's own pressure verdict to be normal and swap +
+# compressor to be low. `nice -n 19` protects CPU scheduling but does NOTHING for memory,
+# so this is the load-bearing safety gate for the live trading process.
+MAX_SWAP_USED_GB="${RUNNER_AVAILABILITY_MAX_SWAP_USED_GB:-3}"
+MAX_COMPRESSOR_FRAC="${RUNNER_AVAILABILITY_MAX_COMPRESSOR_FRAC:-0.25}"
+MIN_FREE_RAM_GB="${RUNNER_AVAILABILITY_MIN_FREE_RAM_GB:-3}"
 HYSTERESIS_REQUIRED="${RUNNER_AVAILABILITY_HYSTERESIS:-2}"
 PM2_APP="${RUNNER_AVAILABILITY_PM2_APP:-trading}"
 RUNNER_PROCESS_PATTERN="${RUNNER_AVAILABILITY_RUNNER_PATTERN:-Runner.Listener}"
@@ -79,6 +100,45 @@ check_available() {
   fi
 
   pagesize="$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)"
+
+  # (1) Kernel pressure verdict must be normal (1). 2=warn, 4=critical. Unreadable -> busy.
+  pressure="$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 0)"
+  if [ "${pressure:-0}" != "1" ]; then
+    log "busy: kernel memory pressure level ${pressure:-unknown} (need 1=normal)"
+    return 1
+  fi
+
+  # (2) Kernel must not be actively trying to free pages right now.
+  free_wanted="$(sysctl -n vm.page_free_wanted 2>/dev/null || echo 1)"
+  if [ "${free_wanted:-1}" != "0" ]; then
+    log "busy: kernel actively reclaiming (vm.page_free_wanted=${free_wanted})"
+    return 1
+  fi
+
+  # (3) Absolute swap-used floor -- the single most predictive anti-thrash term. Parse
+  # "total = X.XXM  used = Y.YYM  free = Z.ZZM" and compare used (GB) to the cap.
+  swap_used_gb="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used"){v=$(i+2); gsub(/M/,"",v); printf "%.2f", v/1024; exit}}')"
+  [ -n "$swap_used_gb" ] || { log "busy: cannot read vm.swapusage"; return 1; }
+  swap_ok="$(awk -v u="$swap_used_gb" -v m="$MAX_SWAP_USED_GB" 'BEGIN{print (u+0 < m+0) ? 1 : 0}')"
+  if [ "$swap_ok" != "1" ]; then
+    log "busy: swap used ${swap_used_gb}GB >= ${MAX_SWAP_USED_GB}GB (under memory pressure)"
+    return 1
+  fi
+
+  # (4) Compressor occupancy must be a small fraction of physical RAM (already-compressed
+  # anon pages are not cheaply reclaimable, so a large compressor means little real headroom).
+  memsize="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+  comp_pages="$(vm_stat | awk '/occupied by compressor/ {gsub(/\./,"",$NF); print $NF}')"
+  if [ -n "$comp_pages" ] && [ "$memsize" -gt 0 ] 2>/dev/null; then
+    comp_ok="$(awk -v c="$comp_pages" -v p="$pagesize" -v m="$memsize" -v t="$MAX_COMPRESSOR_FRAC" \
+      'BEGIN{print (c*p/m < t) ? 1 : 0}')"
+    if [ "$comp_ok" != "1" ]; then
+      log "busy: compressor occupies >= ${MAX_COMPRESSOR_FRAC} of physical RAM"
+      return 1
+    fi
+  fi
+
+  # (5) Tertiary raw-headroom floor: free+inactive still above a small absolute minimum.
   pages_free="$(vm_stat | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')"
   pages_inactive="$(vm_stat | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')"
   [ -n "$pages_free" ] && [ -n "$pages_inactive" ] || { log "busy: cannot read vm_stat"; return 1; }
@@ -111,7 +171,7 @@ check_available() {
   return 0
 }
 
-log "starting: repo=${REPO} interval=${INTERVAL_SECONDS}s load<${LOAD_THRESHOLD} ram>${MIN_FREE_RAM_GB}GB hysteresis=${HYSTERESIS_REQUIRED}"
+log "starting: repo=${REPO} interval=${INTERVAL_SECONDS}s load<${LOAD_THRESHOLD} pressure=normal swap<${MAX_SWAP_USED_GB}GB compressor<${MAX_COMPRESSOR_FRAC} free>${MIN_FREE_RAM_GB}GB hysteresis=${HYSTERESIS_REQUIRED}"
 
 consecutive_available=0
 current_mode="hosted"

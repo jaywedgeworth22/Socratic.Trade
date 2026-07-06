@@ -161,14 +161,17 @@ describe("maxPortfolioBeta cap", () => {
 
 describe("deterministicBearFilter fundamentals veto", () => {
   const positions: EquityPosition[] = [];
-  it("vetoes a buy whose FCF yield is below the floor", () => {
+  it("TAGS (advisory, keeps) a buy whose FCF yield is below the floor", () => {
     const { kept, vetoed } = deterministicBearFilter([buy({ symbol: "NVDA" })], positions, [quote({ symbol: "NVDA", fcfYield: -5 })], "Bull", { fcfYieldFloorPct: 0 });
-    expect(kept).toHaveLength(0);
+    // Advisory pre-veto (tag-not-drop): KEPT + tagged, still reported in `vetoed` for telemetry.
+    expect(kept).toHaveLength(1);
+    expect(kept[0].preVetoReasons?.[0]).toMatch(/^deterministic_bear_veto: Fundamentals veto: FCF yield/);
     expect(vetoed[0].reason).toContain("FCF yield");
   });
-  it("vetoes a buy whose debt/equity exceeds the ceiling", () => {
+  it("TAGS (advisory, keeps) a buy whose debt/equity exceeds the ceiling", () => {
     const { kept, vetoed } = deterministicBearFilter([buy({ symbol: "NVDA" })], positions, [quote({ symbol: "NVDA", fcfYield: 5, debtToEquity: 4 })], "Bull", { debtToEquityCeiling: 3 });
-    expect(kept).toHaveLength(0);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].preVetoReasons?.[0]).toMatch(/^deterministic_bear_veto: Fundamentals veto: debt\/equity/);
     expect(vetoed[0].reason).toContain("debt/equity");
   });
   it("keeps a buy when the fundamentals field is unavailable (no false veto)", () => {
@@ -241,7 +244,7 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
     const withSyntheticAsk: MarketScan = {
       ...marketScan,
       quotesBySymbol: {
-        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, sources: { ask: "yahoo-finance-synthetic" } }
+        TSLA: { symbol: "TSLA", price: 100, ask: 101, score: 50, syntheticAsk: true, sources: { ask: "yahoo-finance-synthetic" } }
       }
     };
     const p = enrichOpeningProposal(
@@ -265,7 +268,7 @@ describe("enrichOpeningProposal (broker brackets + entry anchor)", () => {
           ask: 101,
           bid: 99,
           score: 50,
-          sources: { ask: "alpaca", bid: "yahoo-finance-synthetic" }
+          sources: { ask: "alpaca", bid: "yahoo-finance-synthetic" }, syntheticBid: true
         }
       }
     };

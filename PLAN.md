@@ -5,6 +5,44 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-05 - Console live-data build-out slice (Codex subagent, issue #471).** No roadmap
+> change. This branch is delivering the smallest reliable piece of the planned CODEX live-data row:
+> reuse the existing `/api/events/stream` for console push refreshes, surface stream/freshness
+> state, and improve overview mark-to-market / risk utilization / open-blotter / intraday equity
+> using existing components first. Merged forward to current `origin/main` and verified on the
+> current tree; lightweight-charts adoption and broader live-stream fanout stay deferred until
+> this slice lands cleanly.
+
+> **2026-07-04 - Shared public dependency hardening (Codex).** No roadmap scope change. Socratic
+> now consumes `congress-trading-shared` from the public HTTPS git tag instead of GitHub Packages,
+> and CI/deploy setup returns to plain `npm ci`. This removes package-read token requirements for
+> the shared contract dependency while preserving the cross-app pin check. Merged as PR #444 and
+> deployed to production at `1e1a15bc`.
+
+> **2026-07-04 - Console scan column customization parity (Codex subagent).** `/console/scan`
+> now matches the legacy dashboard's browser-local column behavior for the current console scan
+> columns: visibility toggles, reorder controls, Reset, and saved visible-column order/state.
+> No roadmap scope change; this closes the documented scan-column parity gap from
+> `docs/reviews/2026-07-03-console-parity-open-items.md`.
+> **2026-07-04 - Approvals triage + alert center focused slice (Codex).** No roadmap scope change.
+> `/console/approvals` now covers the first operational triage layer from issue #470: sort/filter,
+> visible-row multi-select, bulk reject, and safe non-LIVE bulk approve through the existing
+> proposal endpoints; LIVE typed-confirm remains per-item only. The console's alert history also
+> graduates into a reusable alert-center surface (summary buckets + search + better notification
+> labeling) backed by existing notification/activity data, shown compactly on Approvals and fully on
+> `Activity -> Alert center`. Remaining scope for the larger backlog row stays separate: unified
+> owner inbox across more object types, keyboard triage, and any broader console/live-data/settings
+> work.
+> **2026-07-04 - Coach/framework primitives slice (Codex, issue #473).** No roadmap scope change.
+> This branch is a focused primitive-wiring pass: the decision-trace coach flow can now attach a
+> note while optionally promoting it into a lesson or linked framework proposal, framework review
+> persists explicit owner rewrite/accept/reject verb semantics plus `ownerResponse`, and the trace
+> surfaces linked run metadata when the originating run exists. 2026-07-05 update: the branch is
+> now merge-forwarded to `origin/main` @ `0bfa4f1e` and fully green on focused + full verification
+> (`test/socratic-db`, `tsc`, quiet lint, full `npm test`, full build`). This closes a narrow part of the
+> console/coaching loop without touching live-data, settings IA, tooltip, Monet risk, or Claude
+> memory/RAG lanes.
+
 > 2026-07-03 (`claude/washsale-advisory-defaults`, Claude): **Wash-sale gate defaults flipped to
 > non-blocking** — owner decision: `taxSettings.washSaleHandling` default `"block"` → `"auto"`,
 > `taxSettings.iraWashSaleHandling` default `"block"` → `"disregard"`. Mid-task correction: "auto"
@@ -41,7 +79,8 @@ filling the missing pieces.
 > LIVE phrase-gate parity, Sheet focus trap, read-only `/console/decisions/[id]` trace inspector with
 > coach notes/framework `ownerResponse`, high-signal ticker drawer affordances, and Strategy custom
 > model select parity. No roadmap scope change; this hardens the existing Autonomy Desk/console
-> parity track. See `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
+> parity track. Merged as PR #442 and live in production HEAD `1e1a15bc`. See
+> `docs/rollouts/2026-07-04-console-ui-swimlane.md`.
 
 > **2026-07-03 - Socratic admin/RAG/settings parity pass (Codex).** The
 > branch `codex/live-thesis-portfolio-framing` is the current broad follow-up

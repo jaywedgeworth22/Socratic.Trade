@@ -33,10 +33,25 @@ on:
   push:
     branches:
       - main
-      - "agent/**"
+  # Cost note (2026-07-05): dropped the `agent/**` push trigger. Every agent branch
+  # that lands has an open PR, so the `pull_request` trigger already runs `verify`
+  # on it — the extra `push` run was a duplicate of the PR run (different ref, so
+  # concurrency never deduped them). `push: main` still covers merges/merge_group.
+  # (Cloud-proxy pushes that generate no pull_request event use the workflow_dispatch
+  # re-kick lever below, exactly as documented for that edge.)
+  # Manual re-kick lever. Pushes/PRs made through the Claude cloud git proxy
+  # generate NO pull_request/synchronize workflow runs (observed on PR #367/#798:
+  # zero check runs on any head after the proxy pushed), which strands the
+  # required `verify` check as "expected" forever and auto-merge never fires.
+  # Dispatching this workflow on the PR branch attaches a `verify` check run to
+  # the branch-head SHA, which satisfies the ruleset. Trigger from a cloud
+  # session with the GitHub MCP actions_run_trigger tool, or:
+  #   gh workflow run ci.yml --ref <branch>
+  workflow_dispatch:
   schedule:
-    # Nightly hosted full-gate canary on main (continuous Linux baseline for the hybrid
-    # design above; also refreshes the Linux .next cache even when main pushes route self).
+    # Nightly hosted full-gate canary on main: a continuous Linux baseline for the hybrid
+    # routing, and it refreshes the Linux .next cache during stretches where main pushes
+    # route to the Mac. schedule events always route hosted (see the route step below).
     - cron: "47 7 * * *"
 
 # Cancel a superseded run for the same branch/PR instead of letting it queue
@@ -129,13 +144,18 @@ jobs:
             reason="VERIFY_RUNNER_STATE variable absent — Mac publisher not running"
           else
             mode="$(printf '%s' "$STATE" | jq -r '.mode // "hosted"' 2>/dev/null || echo hosted)"
-            ts="$(printf '%s' "$STATE" | jq -r '.ts // 0' 2>/dev/null || echo 0)"
+            # numbers filter + regex belt: a present-but-non-numeric ts (e.g. an operator
+            # typo like {"ts":"oops"}) must default to 0 -> stale -> hosted, NOT crash the
+            # arithmetic below under `set -euo pipefail` and hard-fail this required check
+            # for every PR. `.ts // 0` alone does NOT coerce a non-null string.
+            ts="$(printf '%s' "$STATE" | jq -r '(.ts | numbers) // 0' 2>/dev/null || echo 0)"
+            [ "$ts" -eq "$ts" ] 2>/dev/null || ts=0
             now="$(date +%s)"
             age=$(( now - ts ))
             if [ "$mode" != "self" ]; then
               reason="Mac publisher reports mode=$mode"
-            elif [ "$age" -gt 300 ] || [ "$age" -lt 0 ]; then
-              reason="state stale (age ${age}s > 300s) — treating the Mac as unavailable"
+            elif [ "$age" -gt 180 ] || [ "$age" -lt 0 ]; then
+              reason="state stale (age ${age}s > 180s) — treating the Mac as unavailable"
             else
               route=self
               reason="Mac publisher reports mode=self and state is fresh (age ${age}s)"
@@ -159,13 +179,22 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # Bound the self-lane's memory on the 16 GB production box: cap each Node process heap
+    # so a verify run cannot page-storm the live trading process even in a low-pressure
+    # window (the availability gate already requires headroom before routing here; this is
+    # defense in depth on the memory axis, which `nice` does NOT protect). If a cap makes a
+    # step OOM, the job fails and the hosted arbiter re-runs it — safe, just wasteful.
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
     steps:
       - name: Refuse untrusted PR source
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
+          # This lane runs the PR's code (test/build) on the PRODUCTION Mac, so only
+          # same-repo, human-or-trusted-bot PRs may execute here.
           if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "::error::Fork PRs cannot run this job (it installs deps with a private-repo deploy key secret)."
+            echo "::error::Fork PRs cannot run on the self-hosted production runner."
             exit 1
           fi
           actor="${{ github.actor }}"
@@ -175,7 +204,7 @@ jobs:
                 echo "Trusted same-repo bot: $actor"
                 ;;
               *)
-                echo "::error::Bot PRs cannot run package installs with this secret (untrusted bot: $actor)."
+                echo "::error::Untrusted bot PR ($actor) cannot run on the self-hosted production runner."
                 exit 1
                 ;;
             esac
@@ -186,10 +215,9 @@ jobs:
           command -v node >/dev/null 2>&1 || { echo "::error::node missing on the self-hosted runner — failing fast (hosted re-run will cover this)."; exit 1; }
           echo "node: $(node -v)"
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
+      # NOTE: deliberately NO actions/setup-node here. The production Mac uses its system
+      # node (same as deploy.yml), and setup-node's npm cache post-action wedges on this
+      # long-lived self-hosted runner (see docs/rollouts/2026-06-29-self-hosted-ci-billing-block.md).
       - name: Restore Next.js build cache
         # runner.os = macOS here, so this is a separate cache namespace from the Linux
         # lineage — macOS restores never poison Linux builds and vice versa.
@@ -200,17 +228,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
             ${{ runner.os }}-nextjs-
+      # Everything on the self path runs under `nice -n 19` so a live trading process always
+      # outbids CI for CPU on the production box. Install is tokenless `npm ci` (the shared
+      # dependency resolves over public HTTPS now — no deploy key needed, matching deploy.yml).
       - name: Install dependencies (nice -19)
-        shell: bash
-        env:
-          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        # Everything on the self path runs under `nice -n 19` so a live trading process
-        # always outbids CI for CPU on the production box.
-        run: nice -n 19 bash scripts/npm-ci-with-shared-deps.sh
+        run: nice -n 19 npm ci
       - run: nice -n 19 npm run lint
       - run: nice -n 19 npx tsc --noEmit
-      - run: nice -n 19 npm test
+      # maxWorkers=2 (below the config default of 4) to further bound peak memory on the Mac.
+      - run: nice -n 19 npm test -- --maxWorkers=2
       - run: nice -n 19 npm run build
       - name: Save Next.js build cache (main only)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -268,22 +294,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
             ${{ runner.os }}-nextjs-
+      # verify-hosted only runs when docs-only is false (job-level `if` above), so per-step
+      # docs-only guards are unnecessary here. Tokenless `npm ci` — the shared dependency
+      # resolves over public HTTPS now (no deploy key), matching main's verify + deploy.yml.
       - name: Install dependencies
-        shell: bash
-        env:
-          CONGRESS_TRADING_SHARED_DEPLOY_KEY: ${{ secrets.CONGRESS_TRADING_SHARED_DEPLOY_KEY }}
-          # Drop GH_PAT from this chain: it is the Codex-Autofix PAT (repo + workflow scope, no
-          # read:packages), so preferring it over the packages-scoped job GITHUB_TOKEN makes the
-          # private-package install 403 when only GH_PAT is configured. (Review: PR #279.)
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: bash scripts/npm-ci-with-shared-deps.sh
+        run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
       - run: npm run build
       - name: Save Next.js build cache (main push + nightly canary)
-        # The schedule leg keeps the Linux cache fresh even during stretches where every
-        # main push routes to the Mac.
+        # Only main pushes and the nightly schedule canary persist a new entry — PR/
+        # merge_group runs restore from the latest main entry above but never write their own,
+        # so cache storage stays one rolling lineage per OS. The schedule leg keeps the Linux
+        # cache fresh during stretches where main pushes route to the Mac.
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
         uses: actions/cache/save@v4
         with:

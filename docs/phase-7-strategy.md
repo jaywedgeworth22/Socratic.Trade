@@ -101,6 +101,16 @@ adversarial-debate lenses before making a decision.
   1-3 direction-tagged lessons (+`verdictOnBelief`/`whichDissentMattered`), re-indexes the case
   vector, and routes each lesson through `ingestLearned` (origin `autonomous`); every skip is
   receipted. See `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+- **Durable due-jobs substrate for 15m/1h sampling (2026-07-05):** the 15m/1h sample no longer
+  depends on a `runStrategyOnce` cadence run coincidentally landing inside the tolerance window. A
+  generic claimable job queue (`due_jobs` table, `src/lib/db-jobs.ts`, lease/reclaim so a crashed
+  claim is never stuck) is enqueued the moment a case's entry basis (fill or ref price) is known;
+  `outcome-engine.ts`'s `drainDueIntradaySampleJobs` worker (called from `scheduler.ts`'s `tick()`)
+  drains due jobs, samples a live quote, and writes through the exact same
+  `mergeHorizonRows`/write path the inline sampling uses — so whichever side resolves a horizon
+  first wins and the other is a documented no-op, never a duplicate row. The inline sampling path
+  described above is unchanged and still runs; this is additive redundancy, not a replacement. See
+  `docs/rollouts/2026-07-05-durable-due-jobs.md`.
 
 ---
 
