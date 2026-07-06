@@ -112,7 +112,10 @@ function buildModel(): Model {
     const o = chartPrice(j, BL[j]), c = chartPrice(Math.min(j + 1, M), BL[j]), mag = Math.min(1, Math.abs(c - o) / 0.12);
     INFRAC.push(0.34 + 0.6 * mag); INCOL.push((c < o ? G : RDc)[Math.min(2, Math.floor(mag * 3))]);
   }
-  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 1.6;
+  // END: fade begins right after the candles land on the header logo (T4) — the
+  // persistent HeaderLogo owns the forever-tick, so the overlay hands off at once
+  // instead of holding and double-drawing the wordmark.
+  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 0.2;
 
   // Header ticker: a small green-biased price walk of P candle "units" (color + body
   // fraction + vertical offset), matching the approved candle-tick reference. Each header
@@ -132,7 +135,9 @@ function buildModel(): Model {
     const portrait = vh > vw;
     const stackW = Math.min(portrait ? vw * 0.9 : vw * 0.8, vh * STACK_AR * 0.62), stackH = stackW / STACK_AR;
     const cm = Math.max(18, vw * 0.03);
-    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.05, 24), 42, (vw - 2 * pad) / HEADER_AR);
+    // Fallback header box (used only until the real top-bar logo can be measured):
+    // small, top-left, matching the persistent HeaderLogo's ~18px height.
+    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.024, 16), 22, (vw - 2 * pad) / HEADER_AR);
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
       chart: { x0: cm, x1: vw - cm, midY: vh * (portrait ? 0.42 : 0.5), amp: vh * (portrait ? 0.34 : 0.4) },
@@ -218,7 +223,18 @@ export function ConsoleIntro() {
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false, fadeTimer = 0;
-    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); };
+    // The intro's final candles land on the REAL top-bar brand logo so the splash
+    // hands off seamlessly into it. We measure [data-brand-logo] (in the DOM behind
+    // this overlay) and use its viewport rect as the header box; until it exists
+    // (e.g. still loading) we fall back to the small computed top-left box.
+    let headerBox: { x: number; y: number; w: number; h: number } | null = null;
+    const measureHeader = () => {
+      const el = document.querySelector<HTMLElement>("[data-brand-logo]");
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 2 && r.height > 2) headerBox = { x: r.left, y: r.top, w: r.width, h: r.height };
+    };
+    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); measureHeader(); };
     resize();
     window.addEventListener("resize", resize);
 
@@ -236,6 +252,8 @@ export function ConsoleIntro() {
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
       const t = (now - introStart) / 1000;
+      if (!headerBox) measureHeader();      // the top bar may mount after the intro starts
+      if (headerBox) L.header = headerBox;  // land the shrinking candles on the real logo box
       ctx.clearRect(0, 0, VW, VH);
       for (let j = 0; j < model.M; j++) {
         const c = model.candleAt(j, t, L); const col = c.col || "#18b271";
@@ -256,7 +274,7 @@ export function ConsoleIntro() {
     <div
       ref={wrapRef}
       aria-hidden
-      style={{ position: "fixed", inset: 0, zIndex: 200, background: "#0b1018", transition: "opacity .7s ease", cursor: "pointer" }}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "transparent", transition: "opacity .7s ease", cursor: "pointer" }}
     >
       <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
     </div>
