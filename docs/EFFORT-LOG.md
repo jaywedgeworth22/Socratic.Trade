@@ -70,6 +70,17 @@ to `socratictrade.com`, record the release commit + date here._
 
 ---
 
+## 🚧 In Progress
+
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
 ## ✅ Completed (merged to `main`, on beta/integration)
 
 - **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
@@ -150,6 +161,15 @@ to `socratictrade.com`, record the release commit + date here._
   wasn't gated on the daily LLM budget (now gated via `isOverLlmBudget`). Full local gate: 2619
   tests across 264 files, all green; build clean. See
   `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+- **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
+
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
+- **PR #807 - Approvals triage upgrades + alert center (CODEX).** Merged to `main`
+  2026-07-05 as squash `0bfa4f1e`. Focused slice for issue #470: `/console/approvals`
+  sort/filter, visible-row multi-select, bulk reject, safe non-LIVE bulk approve through existing
+  per-item proposal endpoints, and a reusable alert-center surface backed by existing
+  notifications/activity data. CI green: classify, smoke, gitleaks, verify. See
+  `docs/rollouts/2026-07-04-approvals-alert-center-slice.md`.
 - **PR #798 - Slack coordination sync on by default for all sessions/repos (Monet, cloud;
   landing by CLAUDE-CLOUD, owner-directed).** Merged to `main` 2026-07-05 as squash `546c451`
   (verify x2/smoke/gitleaks green; relands #367, whose branch heads never received CI runs from
@@ -179,6 +199,61 @@ to `socratictrade.com`, record the release commit + date here._
   throttle for bulk PATCH runs. Propagated verbatim to congress-trading-shared (PR #27),
   api-usage-monitor (PR #38), and Congress.Trade (PR #162). Rollout:
   `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+- **PR #814 - Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up).** Merged to `main`
+  2026-07-05T10:17:03Z (verify+smoke green). _2026-07-05 (CLAUDE next-wave): CORRECTION — this row
+  was previously logged under In Progress as "PR pending"; #814 has since merged. Moved to
+  Completed._ Branch `claude/veto-advisory-overridable`, isolated worktree. Deterministic bear
+  filter (Rules 3/4) + approval-time Red Team veto now TAG candidates with `preVetoReasons` instead
+  of dropping; folded into the single sized PolicyDecision → #799's `resolveSocraticOverride`
+  (openings, subject to socraticOverrideMode + cap). Rule 1 stays hard; Rule 4
+  overridable-but-flagged for owner ratification. FIX #1 (no counterfactual on override path —
+  protects getRedTeamEfficacy), FIX #2b (durable deterministic_bear_veto audit), FIX #3
+  (propose-mode pre-route before sell-to-fund). An independent 3-lens adversarial verify caught +
+  fixed 2 money-path bugs the green suite missed: severe phantom-funding-sell (new
+  `preVetoTaggedOpeningWillPlace` gates the funding notional) + free-text hard-gate
+  misclassification (`isHardGateReason` prefix short-circuit); both regression-tested. Gate:
+  tsc/lint-0/258 files-2540 tests/build. Overlapped unlanded `claude/redteam-policy-aware-routing`
+  (coordinated on #agent-sync; rebase at land). See
+  `docs/rollouts/2026-07-05-pre-policy-veto-advisory.md`.
+- **PR #812 - Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge (CLAUDE, S).**
+  Merged to `main` 2026-07-05T08:46:56Z (verify/smoke/gitleaks green). _2026-07-05 (CLAUDE
+  next-wave): CORRECTION — this row was previously logged under In Progress with no merge note;
+  #812 has since merged. Moved to Completed._ Worktree `~/apps/trading-claude`, branch
+  `agent/claude`. Root causes (not timeout-tuning): `executeProposal` tests ran a REAL market scan
+  (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12s/test solo, past 30s
+  under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class); hoist
+  the orchestrator import into `beforeAll` with an explicit long hook budget. Full suite 256 files
+  / 2506 tests green in 20.77s wall. See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+- **PR #799 - Guardrails → overridable preferences (denylist) (MONET risk lane).** Merged to `main`
+  2026-07-05T06:02:51Z. _2026-07-05 (CLAUDE next-wave): CORRECTION — this row was previously
+  logged under In Progress as "PR open"; #799 has since merged. Moved to Completed._ Worktree
+  `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`. Owner directive: only the
+  account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
+  policy block is a light preference the agent may self-override with a logged `autonomyOverride`
+  thesis. Inverted the Socratic override classifier allowlist → **denylist**: new
+  `HARD_GATE_REASON_PATTERNS` + `isHardGateReason` source-of-truth in `policy.ts` (risk engine);
+  `socratic-runtime.ts` `overrideableReason` = `!isHardGateReason`. Reclassified short-stop-required
+  / bracket-required / policy-level short-disabled from hard → overridable; unlisted/new gates now
+  default overridable. Advisory-only (nothing auto-overrides; broker/account/regulatory hard gates
+  untouched). New `test/hard-gate-classification.test.ts` pins the matrix. Cross-lane touch to
+  `socratic-runtime.ts` (Claude's file) coordinated on `#agent-sync`. Follow-ups: extend override
+  to exits; make the pre-policy vetoes (bear filter, Red Team) advisory (done — see #814 above).
+  See `docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+- **PR #811 - Console live-data build-out (CODEX, L).** Merged to `main` 2026-07-05T07:37:48Z
+  (verify/smoke/gitleaks green, auto-merge). _2026-07-05 (CLAUDE next-wave): CORRECTION — this row
+  was previously logged under In Progress ("2026-07-05 status: merged current origin/main..." with
+  no merge note of its own); #811 has since merged, verification quartet was green pre-merge. Moved
+  to Completed with the merge timestamp._ SSE wiring + mark-to-market, positions blotter streaming,
+  live risk-utilization board, intraday charts (existing component slice first; no
+  lightweight-charts dependency in this pass). Worktree
+  `/Users/jay/.codex/worktrees/socratic-console-live-data`, branch `codex/console-live-data`.
+  Console snapshot refresh consumes `/api/events/stream`, surfaces stream/freshness state, and adds
+  overview mark-to-market / risk / blotter upgrades with scoped tests. Verification pre-merge:
+  `npm run lint -- --quiet`, focused live-data vitest (`4`), full `npm test` (`257` files / `2510`
+  tests), `npm run build`, `npx tsc --noEmit` (after build regenerated `.next/types`). Subsumes the
+  SSE learned-context-inbox row above. (expert reviews)
 ### Console parity port — legacy `app/ui/*` rebuilt as `/console` (2026-07-02)
 - **#321** — parity-port foundation: logo/model/drilldown primitives, nav scaffolding, model-attribution approval card.
 - **#322** — Settings expansions: brokers, API keys, LLM model picker, delivery channels, glossary.
@@ -336,38 +411,66 @@ to `socratictrade.com`, record the release commit + date here._
   inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the `market.ts` module boundary
   in `order-confirmation-status` + `approval-lock` (same class); hoist the orchestrator import into
   `beforeAll` with an explicit long hook budget.
+- **Hybrid resource-aware runner routing for `verify` — calibration fixes + activation** (CLAUDE,
+  worktree `~/apps/trading-wt-ci-efficiency`, branch `claude/ci-hybrid-runner-verify`, PR #372) —
+  **IN PROGRESS 2026-07-05 (owner-directed).** Live audit found the feature 100% inert (PR
+  unmerged, publisher never started, metric unsatisfiable on the 16GB swapping Mac). Merged
+  33-commits-stale branch forward and applied fixes: router `ts` numeric-coercion (was a latent
+  merge-blocker), staleness 300s→180s, availability metric rewritten free+inactive→pressure-based
+  (`kern.memorystatus_vm_pressure_level==1` + swap/compressor/page-free-wanted terms), CPU 0.6→0.8,
+  `verify-self` drops the cache-wedging `setup-node` for system node + tokenless `npm ci` + RSS cap
+  (`NODE_OPTIONS` 3072 + `--maxWorkers=2`). Verified bash-3.2/ASCII + YAML + adversarial reviews.
+  Next: land via `land.sh`, then start the pm2 publisher on the production Mac. Rollout:
+  `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 section).
 
-- **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
-  `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
-  only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
-  policy block is a light preference the agent may self-override with a logged `autonomyOverride` thesis.
-  Inverted the Socratic override classifier allowlist → **denylist**: new `HARD_GATE_REASON_PATTERNS` +
-  `isHardGateReason` source-of-truth in `policy.ts` (risk engine); `socratic-runtime.ts` `overrideableReason`
-  = `!isHardGateReason`. Reclassified short-stop-required / bracket-required / policy-level short-disabled
-  from hard → overridable; unlisted/new gates now default overridable. Advisory-only (nothing
-  auto-overrides; broker/account/regulatory hard gates untouched). New `test/hard-gate-classification.test.ts`
-  pins the matrix. Cross-lane touch to `socratic-runtime.ts` (Claude's file) coordinated on `#agent-sync`.
-  Follow-ups: extend override to exits; make the pre-policy vetoes (bear filter, Red Team) advisory. See
-  `docs/rollouts/2026-07-05-guardrail-denylist-overridable-preferences.md`.
+_(2026-07-05 closeout note: the HyDE/multi-query retrieval, durable due-jobs substrate, usage-budget
+Phase 2, and prompt-safety fencing lanes previously tracked here as "IN PROGRESS...landing now" have
+all merged — PRs #822/#820/#819/#816 respectively. See the **✅ Completed** section above; entries
+removed from here to avoid duplication.)_
 
-- **Approvals triage upgrades + alert center (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-approvals-alert-center`, branch
-  `codex/approvals-alert-center`. Focused slice only: pending-approval sort/filter, bulk safe
-  actions via existing per-item proposal endpoints, and a console alert center built from existing
-  notifications/activity data. Keepout: settings/model/live-data/coach/tooltip broad conversions,
-  Monet risk files, Claude memory/RAG files, workflows, AGENTS, and Slack scripts. Verification
-  green: tsc clean, focused approvals/dashboard tests 24, full suite 2467 tests / 255 files, lint
-  0 errors, build green.
+- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
+  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
+  ticker-drawer parity if the scan surface needs it. Keepout: no broad
+  settings/approvals/live-data/coach/tooltip conversions in this lane. PR #806 open with
+  auto-merge enabled; merge-forward after PR #807 pushed. Codex review follow-up pins `symbol` as
+  the first/sticky column during saved-state sanitization and column reordering; second review
+  follow-up defers saved `localStorage` column state until after mount to avoid hydration mismatch.
+  Verification before review follow-up: focused scan-column test (4), lint 0 errors / 308 existing
+  warnings, land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up
+  verification: focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration
+  follow-up verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check` clean.
 
-- **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
-  streaming, live risk-utilization board, intraday charts (existing component slice first; no
-  lightweight-charts dependency in this pass). **2026-07-05 status:** merged current `origin/main`
-  into `codex/console-live-data` in `/Users/jay/.codex/worktrees/socratic-console-live-data`;
-  console snapshot refresh now consumes `/api/events/stream`, surfaces stream/freshness state, and
-  adds overview mark-to-market / risk / blotter upgrades with scoped tests. Verification on the
-  merged branch is green: `npm run lint -- --quiet`, focused live-data vitest (`4`), full `npm test`
-  (`257` files / `2510` tests), `npm run build`, then `npx tsc --noEmit` after build regenerated
-  `.next/types`. Subsumes the SSE learned-context-inbox row above. (expert reviews)
+- **Coach chat → framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
+  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
+  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
+  can optionally promote into lesson/framework primitives, framework review now carries explicit
+  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
+  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
+  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
+  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
+  squash auto-merge is armed pending `verify`.
+
+- **Logo concept exploration (branding, docs-only)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **PR open**. Owner-requested logo ideas for
+  Socratic Trade / Socratic.Trade: ten concept comps (five wordmark-led where the name fills the
+  logo, five mark-led with a favicon-capable symbol), built on the existing product palette (ink
+  `#0f1722`, green `#0e9f6e`, mint `#63e6be`) — new `docs/branding/` (README + `logo-concepts.html`
+  board + standalone SVGs). No app code touched; `public/icon.svg` unchanged. Round 2 same-day:
+  owner shared four Adobe Firefly comps (candlestick letterforms, owl, red/green) and asked for a
+  more professional take — added concepts K–N (candlestick-owl lockup, owl seal, candle-I wordmark,
+  three-candle cluster), 14 SVGs total. Round 3: owner saved B/E/H/I + the parallel session's three
+  picks (Examined/Dialectic/Stoa from `claude/logo-ideas-c5n61b`) + the four Firefly comps
+  (backgrounds removed for light/dark use) into one combined board `docs/branding/shortlist.html`
+  with assets in `docs/branding/firefly/`. Next: owner narrows the combined shortlist to a final
+  direction, then redraw with outlined letterforms + favicon/app-icon variants. Round 4: upright vector remake of the candle-letters wordmark (F5, `docs/branding/firefly/candle-wordmark-upright.svg`). Round 5: 18s SVG+CSS morph animation - same candles alternate SOCRATIC/TRADE (F6, `docs/branding/firefly/candle-morph.svg`). Round 6: portable exports of the morph - MP4, GIF, and Live-Photo-ready MOV+JPG (`docs/branding/firefly/candle-morph.{mp4,gif}`, `candle-morph-livephoto.{mov,jpg}`). Round 7: transparent video exports (VP9-alpha WebM + animated WebP committed; ProRes 4444 delivered off-repo). Round 8: console-intro animation - chart candles fly up into the header logo (`docs/branding/firefly/console-intro.svg`, shortlist card F7).
+  See `docs/rollouts/2026-07-05-logo-concepts.md`.
+  _Note: `/Users/jay/apps/TRADING-EFFORT-LOG.md` (live board) not reachable from this cloud
+  container — owner/next local agent should mirror this row there._
+
+- **Eliminate redundant fill-history fetch/replay (AG, M) — IN PROGRESS 2026-07-05, PR open.** Worktree `~/apps/trading-antigravity`, branch `agent/antigravity/fill-history-dedupe` (PR #850). Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
 
 - **Regime-enum adoption inside the risk gates** (MONET risk lane, branch
   `claude/regime-enum-risk-gates`) — **merged as PR #449 (`c3553ebb`); moved to Completed on the live board**. The
@@ -413,8 +516,10 @@ to `socratictrade.com`, record the release commit + date here._
   missed-opportunity summary, `certifyForwardResolution`. (4) Budget-gated, batch-capped LLM
   post-mortem lessons at maturation (direction-tagged + verdictOnBelief/whichDissentMattered),
   routed through `ingestLearned` origin `autonomous`; all skips receipted. Gate green: lint 0
-  errors, tsc clean, 2383 tests / 246 files, build green. **Pushed; NO PR — lands via the
-  landing train after the base branch.** See `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
+  errors, tsc clean, 2383 tests / 246 files, build green. **LANDED on `main`** _(2026-07-05 CLAUDE
+  next-wave correction: this line previously said "Pushed; NO PR — lands via the landing train
+  after the base branch", which is now stale — merged via the 2026-07-04 landing train)_. See
+  `docs/rollouts/2026-07-04-w2-outcome-engine.md`.
 
 
 - **`claude/ci-actions-efficiency` (Claude, worktree `~/apps/trading-wt-ci-efficiency`) → PR #370.**
@@ -521,14 +626,19 @@ to `socratictrade.com`, record the release commit + date here._
   NOTE: built before the decision-record correction landed (decision #1 is ADVISORY, not hard-halt —
   see Owner decisions below). **RE-SCOPED (2026-07-04, Monet):** see the row below.
 
-- **Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
-  `claude/drawdown-advisory-rescope`) — owner reassigned this lane to Monet (swap: Fable → memory/RAG,
-  Monet → risk engine; coordinated on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default
-  to the owner's actual philosophy ("nothing is hard except which account to work in; agent decides, logs
-  everything"): `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** —
-  on breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent decides),
-  NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375 tests/build green.
-  **PR pending.** Follow-up: advisory into the Bear context; broader per-gate sweep → owner questions first.
+- **PR #360 - Drawdown breaker → ADVISORY default (re-scope of #343)** (Monet, cloud, branch
+  `claude/drawdown-advisory-rescope`) — Merged to `main` 2026-07-04T16:15:44Z.
+  _2026-07-05 (CLAUDE next-wave): CORRECTION — this row said "PR pending" with auto-merge armed;
+  #360 has since merged. Moved to Completed status (row left in place chronologically; its
+  follow-on, regime-enum adoption in the risk gates, landed separately as PR #449, see above)._
+  Owner reassigned this lane to Monet (swap: Fable → memory/RAG, Monet → risk engine; coordinated
+  on Slack `#claude-monet-sync`). Reverts the mistaken hard-halt default to the owner's actual
+  philosophy ("nothing is hard except which account to work in; agent decides, logs everything"):
+  `drawdownBreakerAction` now `"advisory" | "close_only" | "halt"`, **default `"advisory"`** — on
+  breach it writes a receipt + threads `drawdownAdvisory` into the strategist prompt (agent
+  decides), NO `systemState` change; `close_only`/`halt` are explicit opt-ins. tsc/lint/2375
+  tests/build green. Follow-up: advisory into the Bear context; broader per-gate sweep → owner
+  questions first.
 
 - **Expert design review — 147-finding improvement backlog** (Monet, cloud, branch
   `claude/expert-design-review`) — an 8-expert agent panel (ML/learning, RAG/embeddings, LLM-prompting,
@@ -562,8 +672,14 @@ to `socratictrade.com`, record the release commit + date here._
   their w1 dependency branches, push-only, landing via the train). Lanes: `outcome-engine`,
   `episodic-retrieval`, `coaching-durable`, `reflection-decompose` (full lane list on the live board
   `/Users/jay/apps/TRADING-EFFORT-LOG.md`).
-  - `claude/w2-episodic-retrieval` (this lane) — **done, pushed, awaiting the landing train** (base:
-    `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
+  _2026-07-05 (CLAUDE next-wave): CORRECTION — `outcome-engine` and `episodic-retrieval` are LANDED
+  on `main` (both merged 2026-07-04, episodic-retrieval as **PR #437** merged 2026-07-04T21:05:02Z);
+  the sub-lane text below still said "done, pushed, awaiting the landing train" / "no PR", which is
+  now stale. `coaching-durable` and `reflection-decompose` remain genuinely unlanded — no PR opened
+  for either since 2026-07-04 — see the new "Open PRs for the stalled w2-coaching-durable and
+  w2-reflection-decompose branches" Planned row on the live board for the explicit landing action._
+  - `claude/w2-episodic-retrieval` (this lane) — **LANDED as PR #437 (merged 2026-07-04T21:05:02Z)**
+    (base: `origin/claude/w1-rag-quickwins`). Composite review A1 ([Both], the highest-leverage item): new
     `src/lib/experience-memory.ts` — closed-lot experience writer hooked fire-and-forget in
     `performance.recordFillFromProposal` (state vector: 8 factor sub-scores + entryMarketRegime +
     breadth snapshot + thesisTag + sector + entry rationale; realized
@@ -602,25 +718,10 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 📋 Planned
 
-- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
-  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
-  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
-  owner, answering the objections raised when this was first proposed): (1) Mac-side
-  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
-  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
-  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
-  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
-  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
-  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
-  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
-  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
-  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
-  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
-  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
-  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
-  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
-  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
-  hosted-only default stands; resource-aware routing stays opt-in per repo.
+- _(Moved to In Progress 2026-07-05: **Hybrid resource-aware runner routing for `verify`** — see
+  the In Progress section. The original availability metric was changed from `free+inactive > 6 GB`
+  to a pressure-based gate during calibration; `workflow_call`/reusable cross-repo remains deferred
+  until this lands and proves itself, hosted-only default stands.)_
 
 ### Socratic console parity sub-lanes — reserved before implementation
 - **Universal ticker detail drawer parity** — restore old-site discoverability by making ticker symbols
@@ -641,6 +742,11 @@ to `socratictrade.com`, record the release commit + date here._
   including Pinecone/Voyage, distinguish global backend failures from user-key failures, and route
   global failures to admin email/health while user-key failures become user notifications.
   _2026-07-04 assignment: AG (Antigravity), incl. a per-provider failure-injection test proving global-vs-user-key routing._
+  _2026-07-05 (CLAUDE next-wave): status update — implemented on branch `cursor/session-2026-07-05`
+  as **open PR #805**, mergeable state **CONFLICTING** (not merged; do not treat as done). #805's
+  branch also carries an unrelated Cursor P0/P1 commit (`0ce39474`), so landing it needs either a
+  split into two PRs or an honest combined PR description — see the live board's "Admin connection
+  health..." In Progress row and the new "Disentangle PR #805" Planned row for detail._
 
 ### Ready to build — decisions in
 - **Live-execution hardening (next major build).** Now unblocked by decisions 1–2:
@@ -722,17 +828,11 @@ locks — re-negotiate in #agent-sync._
   make the retention window configurable. (completeness §F + quick-wins)
 
 #### CODEX lane (adds to the annotated parity rows above)
-- **Scan table column customization parity (CODEX, M)** — visibility/ordering/reset/saved state vs
-  the legacy dashboard. (console-parity-open-items)
-- **Approvals triage upgrades + alert center (CODEX, M)** — bulk actions, sort/filter, and a
-  console alert center. (expert reviews)
 - **Console live-data build-out (CODEX, L)** — SSE wiring + mark-to-market, positions blotter
   streaming, live risk-utilization board, intraday charts (lightweight-charts adoption). Subsumes
   the SSE learned-context-inbox row above. (expert reviews)
 - **`/console/settings` second IA pass (CODEX, M)** — account identity/authority/keys/
   notifications/admin-links reorg. (console-parity-open-items)
-- **Coach chat → framework primitives (CODEX, M)** — attach note to decision, promote lesson, show
-  consuming run; framework `rewrite` verb + ownerResponse. (console-parity + composite review)
 - **Accessible tooltip/popover primitive everywhere (CODEX, S)** — retire native `title`;
   universal coverage across controls/metrics/cells. (expert reviews + console-parity)
 
@@ -1125,6 +1225,75 @@ portfolio-impact preview; "Global symbol omnibox" means search-anywhere, not cli
 - **Verify Robinhood-specific pending-fill reconciliation coverage (CURSOR, S)** — beyond the generic reconciler path. (June residual)
 - **Fix checkRegimeFlip non-atomic read-modify-write hardcoded to user 'local' (CURSOR, S)** — confirmed still present in `regime-watch.ts:41`; duplicate-broadcast risk. (June residual — live bug)
 - **Owner decision: /old legacy dashboard maintenance policy + residual-fix batch (unassigned, S)** — ~15 deferred legacy-only findings (dual scan fetches, leaked internal labels, policy-write race) tracked as one batch pending the keep-or-freeze call. (June residuals)
+
+### 2026-07-05 next-wave (cycle 2)
+_Added 2026-07-05 (CLAUDE next-wave). Sourced from a fresh cross-agent audit of the board against
+live PR/git state; see the stale-row corrections applied above in this same pass for the
+discrepancies that motivated these rows. Mirrored from the live board
+`/Users/jay/apps/TRADING-EFFORT-LOG.md`._
+
+- **Disentangle PR #805: land Cursor P0/P1 commit and AG health slice as separate merges (CURSOR, S)** —
+  Resolve #805's conflicts, split commit 0ce39474 (per-user regime keys, security headers, spend
+  ceiling) from the AG connection-health work, land both with honest PR records. _(why now: The
+  board's phantom 'PR #808 merged' hides that the P0 multi-user regime RMW race and the security
+  headers are still NOT on main; the only vehicle is a CONFLICTING two-lane PR.)_
+- **Migrate legacy regime:current row to per-user keys at first tick after the P0 fix lands (CURSOR, S)** —
+  Seed regime:current:${userId} from the old shared row (or tolerate absence) so the first
+  post-deploy tick doesn't fire false regime-flip notifications or lose escalation state. _(why now:
+  The checkRegimeFlip fix changes the settings key shape; without a migration every user's stored
+  regime resets on upgrade — a correctness gap the fix itself introduces.)_
+- **Owner ratification: Rule 4 fundamentals-veto overridability shipped in #814 (OWNER, S)** —
+  Decide whether the deliberately model-independent FCF/debt-equity veto should stay
+  agent-overridable or be re-hardened; the code flags this decision in-line. _(why now: #814 merged
+  with an explicit owner-ratification flag on Rule 4; leaving it unratified means a design decision
+  on the money path is implicitly made by default.)_
+- **Production release + post-deploy money-path verification of the 2026-07-05 batch (OWNER, M)** —
+  Run the ~/apps/trading-live release for the ~12 merged PRs, then verify on a real run: override
+  path behavior, new audit kinds emitted, alert center + live-data console slices working. _(why
+  now: Three money-path behavior changes (#799/#814/#816) plus major console work are beta-only;
+  nothing merged 07-05 has been verified in production, and the Deployed board section stops at
+  07-04.)_
+- **Render the new advisory audit kinds in the console alert center and activity feed (CODEX, S)** —
+  Label/filter deterministic_bear_veto, red_team_veto_overridden, prompt_injection_suspected, and
+  evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
+  whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
+  surfaces don't surface them; #807's alert center is the natural home and just merged.)_
+- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M)** — Surface the veto-efficacy
+  metrics (API/db-level since the w1-learning-loops landing) on the console, including
+  override-vs-non-override splits now that #814 protects the metric. _(why now: The w1 row
+  explicitly deferred UI wiring to the console lane and it was never tracked as its own row; #814's
+  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_
+- **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
+  first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
+  (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
+  names this as the one deliberately deferred surface; headlines are the highest-volume untrusted
+  input to the Bull prompt.)_
+- **Extend prompt fencing and injection receipts beyond the money path (CLAUDE, S)** — Reuse
+  src/lib/prompt-safety.ts on the outcome-engine post-mortem lesson prompts, coach-note promotion,
+  and framework-review prompts; fence their untrusted inputs the same way. _(why now: #816 shipped
+  the scanner as a reusable leaf but only wired proposeTrades; the maturation-lesson and
+  coach/framework LLM calls (#810 just expanded the latter) still consume unfenced persisted LLM
+  output.)_
+- **Open PRs for the stalled w2-coaching-durable and w2-reflection-decompose branches (CLAUDE, S)** —
+  Merge-forward both pushed branches onto current main, run the gate, open PRs with auto-merge; they
+  have sat PR-less since 07-04 while their sibling lanes landed. _(why now: Durable coaching and
+  decomposed reflection lessons are finished, verified work rotting on origin; every day unlanded
+  increases merge-conflict cost against the fast-moving strategy.ts/learning files.)_
+- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M)** — Extend #807's
+  bulk actions to LIVE proposals with a single aggregate typed confirmation (per-item provenance
+  preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
+  bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
+  confirms are the exact ceremony the product philosophy says to minimize.)_
+- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — Audit every
+  hardcoded settings key (scheduler leader, system state, caches) for the same shared-row RMW
+  pattern checkRegimeFlip had; per-user-scope or single-writer-guard each hit. _(why now: The P0
+  regime race was found by inspection, not by a systematic pass; multi-user correctness is a stated
+  priority and the same pattern likely exists on other keys.)_
+- **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
+  2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,
+  vol-targeting) return to MONET; the five empty .claude/worktrees/monet-* worktrees are
+  reclaimable.
+
 - 2026-07-03 — Created (coordinator). Seeded from the 2026-07-02 landings (#321–#335) + the
   in-progress `sources.price` fix + blocked sovereign-design decisions.
 - 2026-07-03 — #336 merged (→ Completed). Recorded the four owner decisions (drawdown=hard-halt,
@@ -1196,3 +1365,17 @@ portfolio-impact preview; "Global symbol omnibox" means search-anywhere, not cli
   twice-logged "Wave-1 quick wins" In Progress row (the issues-mirror dry-run had flagged it) — the
   removed copy's detail lives in PRs #364/#365/#366/#368 and their rollout notes. See
   `docs/rollouts/2026-07-04-backlog-exhaustiveness-assignments.md`.
+- 2026-07-05 — **Next-wave cycle 2 corrections + new Planned rows (CLAUDE next-wave).** Cross-agent
+  audit of this mirror against live PR/git state found several stale rows: `claude/veto-advisory-overridable`
+  (#814), the full-suite test-determinism de-flake (#812), and the guardrails-denylist row (#799)
+  were relocated from In Progress to Completed (their text already said merged, but they were
+  physically mis-filed); the console live-data build-out row was relocated to Completed with #811's
+  merge timestamp; the drawdown-advisory-rescope row (#360) and the w2-episodic-retrieval /
+  w2-outcome-engine sub-lanes were updated from "PR pending"/"pushed, no PR" to their actual merged
+  state (PR #360, PR #437, and the outcome-engine landing train respectively); the AG
+  connection-health row was annotated with its real state (open PR #805, mergeable CONFLICTING,
+  entangled with an unrelated Cursor commit — not done); the Codex global-coordination row was
+  updated with the current Slack relay/consumer.mjs state (Socket Mode connects, but zero events
+  deliver pending an owner-side Slack Event Subscriptions toggle). Added the "2026-07-05 next-wave
+  (cycle 2)" Planned subsection (11 rows) mirrored from the live board. Full detail and the
+  matching live-board corrections: `/Users/jay/apps/TRADING-EFFORT-LOG.md`.

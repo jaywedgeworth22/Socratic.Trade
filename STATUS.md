@@ -61,6 +61,165 @@ See `docs/EFFORT-LOG.md` for the annotated rows (each carries a
 - `RAG_MULTIQUERY` / `RAG_HYDE` ship default OFF pending eval evidence — no retrieval-quality eval
   yet compares single-query vs. multi-query vs. multi-query+HyDE recall@k/MRR before either flag
   is flipped on by default; flagged as a follow-up in `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+## 2026-07-05 — Hybrid runner: calibration fixes + activation (owner-directed)
+Owner asked to make the runner actually offload. Live diagnosis: the feature was 100% inert
+(PR #372 unmerged, publisher never started, repo var still the `ts:0` seed, and the
+`free+inactive>6GB` metric was unsatisfiable on the 16GB swapping Mac). Merged the
+33-commit-stale branch forward (re-resolving `ci.yml` vs main's docs-only fast path, tokenless
+`npm ci` migration, dropped `agent/**` trigger) and applied fixes: router `ts` numeric-coercion
+(a latent merge-blocker), staleness 300s→180s, availability metric rewritten to a pressure-based
+gate (`kern.memorystatus_vm_pressure_level==1` + `page_free_wanted==0` + swap<3GB + compressor<25%
++ free floor), CPU 0.6→0.8, and `verify-self` made safe on the 16GB box (drop the cache-wedging
+`setup-node` for system node, tokenless `npm ci`, `NODE_OPTIONS=3072` + `--maxWorkers=2` RSS cap).
+Verified bash-3.2/ASCII + YAML + jq coercion; adversarial calibration audit (4 lenses) + pre-land
+review (3 lenses, GO/GO zero blockers, 2 fail-closed hardenings applied). Next: land via
+`land.sh`, then start the pm2 publisher on the production Mac (it will correctly report `hosted`
+while the box is memory-tight; offload activates only when the box has real headroom). Known
+residual: a self-hosted queue-wait can *stall* (never fake-pass) a routed PR — documented, watchdog
+is a follow-up. Rollout: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md` (2026-07-05 sections).
+
+## 2026-07-04 — Landing operator: #372 needed a double merge-forward (base moved twice mid-land)
+PR #372's base moved out from under it twice: once catching up to several cars/docs work that
+had landed since #370, and again mid-wait when PR #440 (Outcome Engine lane) landed first
+(`mergeStateStatus` flipped `BLOCKED` -> `DIRTY`). Both merges resolved in this worktree
+(`~/apps/trading-wt-ci-efficiency`); the second conflict was `docs/EFFORT-LOG.md`'s "In
+Progress" section (this branch's own status line vs. the Outcome Engine's entry in the same
+slot) — resolved keep-both-newest-first, updating the Outcome Engine entry's status to
+"merged (PR #440)". Full quartet green both times (final: lint 0 errors, tsc clean, 252 files /
+2455 tests, build green). See both addenda in
+`docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+
+## 2026-07-04 — Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370)
+Branch `claude/ci-hybrid-runner-verify`, worktree `~/apps/trading-wt-ci-efficiency`, off
+`origin/main`@`370692cf` (post-#370). Owner re-confirmed hybrid AFTER the tradeoff escalation,
+verbatim intent: "hybrid so that it only uses local when there is sufficient extra CPU/RAM
+available." `ci.yml` restructured 2 jobs → 4: `classify` (+ new `route` output: self only for
+fresh (<5 min) publisher state on same-repo pull_request/push; merge_group/schedule/fork/stale/
+corrupt/absent all → hosted), `verify-self` (opportunistic macOS lane — [self-hosted,
+trading-live], timeout 30, concurrency-1 group, untrusted-source guard, node fail-fast, `nice
+-n 19` on every heavy command, macOS-namespaced caches via runner.os), `verify-hosted` (Linux
+lane — routed-hosted runs PLUS exactly-one automatic re-run whenever verify-self did not
+succeed; also saves the Linux .next cache on the new nightly schedule leg), and `verify` (the
+REQUIRED check, now a pure gate job: fail-closed on classify failure, docs-only short-circuit,
+hosted result wins on disagreement — Linux is the arbiter, a Mac flake can never block or
+fake-fail a merge; per-run environment annotation to $GITHUB_STEP_SUMMARY). Nightly hosted
+full-gate canary on main via new `schedule` cron (47 7 * * * UTC). New owner-run
+`scripts/runner-availability.sh` (ASCII, Apple-bash-3.2-verified): every 60s publishes repo var
+`VERIFY_RUNNER_STATE` {"mode","ts"} from load(<0.6/cpu)+RAM(>6GB free+inactive)+runner-alive+
+pm2-trading-online with 2-check hysteresis to self / instant flip to hosted + EXIT-trap hosted
+publish. **Safe rollout: var pre-created as {"mode":"hosted","ts":0} — merging changes nothing
+until the owner runs the pm2 one-liner** (in the rollout note). smoke/gitleaks/check-pin stay
+hosted. Full history (2026-07-01 move-off, the objections, the re-confirmation), gate decision
+table, and failure-mode table: `docs/rollouts/2026-07-04-ci-hybrid-runner-verify.md`.
+Verification: yaml-lint, /bin/bash 3.2 -n + ASCII check, 8-case route-logic test (every
+non-happy path → hosted), read-only availability probes on the real Mac (correctly said "busy"
+during an active agent build), full local quartet green.
+## 2026-07-05 — Push account status metrics to Usage Monitor (AG)
+Implemented telemetry for tech account balances and limits. Socratic.Trade now pushes metricTypes `"balance"` and `"limit"` via `pushBrokerBalance` in `src/lib/usage-monitor-push.ts`. This allows tracking caps and credits for the API Usage Monitor. The hooks were wired into Alpaca and Robinhood `getPortfolio` calls. All tests passed and code was verified locally.
+
+## 2026-07-05 — Coach/framework primitives slice ready to land (Codex, issue #473)
+Branch `codex/coach-framework-primitives`, worktree
+`/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, now merge-forwarded to
+`origin/main` @ `0bfa4f1e` without scope creep. The branch-owned slice is complete: coach-note
+POST can optionally promote into lesson/framework primitives, framework review persists explicit
+`accept`/`rewrite`/`reject` owner verbs plus `ownerResponse`, and decision traces include linked
+run metadata through a direct run lookup instead of the earlier 200-run scan cap. Route-level
+tests now cover coach promotion and rewrite validation.
+
+Verification in this worktree is fully green: `npm test -- test/socratic-db.test.ts` (1 file,
+3 tests), `./node_modules/.bin/tsc --noEmit --pretty false`, `./node_modules/.bin/eslint .
+--quiet`, `npm test` (256 files / 2507 tests), and `npm run build` (passes; `/api/socratic/*`,
+`/console`, and `/console/decisions/[id]` all present in the build output). PR #810 is open as
+READY with squash auto-merge armed; next action is just letting GitHub `verify` go green and land it.
+## 2026-07-05 — Logo concept exploration (Claude cloud, docs-only)
+Owner asked for a set of logo ideas for Socratic Trade / Socratic.Trade, favoring options that
+aren't busy and where the words carry the logo. Round 2 (same day): owner shared four Adobe
+Firefly comps (letters made of candlesticks, an owl, market red/green) and asked for a more
+professional version — added four refined concepts K–N that keep those motifs but use the
+candlestick exactly once each: K candlestick-owl lockup (suggested primary), L circular owl seal,
+M candle-as-the-I wordmark, N three-candle up/down/up cluster (only concept keeping red).
+Round 3 (same day): owner saved B/E/H/I, combined with the parallel session's three picks
+(Examined Trade, Dialectic, Stoa — copied from branch `claude/logo-ideas-c5n61b`), plus the four
+Firefly comps processed into light/dark-ready transparent assets — all in one board at
+`docs/branding/shortlist.html` (assets in `docs/branding/firefly/`).
+Round 4 (same day): upright vector remake of the candlestick wordmark — SOCRATIC TRADE with every
+letter built from red/green candles, vertically normal (not tilted) — generated via
+Pillow glyph masks → SVG; on the shortlist board as F5 with light/dark PNG exports in
+`docs/branding/firefly/`.
+Round 5 (same day): animated morph — the same 110 candlesticks spell SOCRATIC (3s), drift
+semi-naturally (6s) into TRADE (3s), and morph back (18s loop); pure SVG+CSS at
+`docs/branding/firefly/candle-morph.svg`, card F6 on the shortlist board.
+Round 6 (same day): morph exports — MP4 (18s loop), palette-optimized GIF, and a 3s one-way
+Live-Photo-ready MOV+JPG pair (bounce-friendly) in `docs/branding/firefly/`; site keeps SVG+CSS.
+Rounds 7-8 (same day): transparent video exports (VP9-alpha WebM + animated WebP in
+`docs/branding/firefly/`; ProRes 4444 delivered off-repo, 113 MB) and the console-intro
+animation - an unnamed-asset candlestick chart whose 182 candles fly up-left and settle as the
+SOCRATIC TRADE header wordmark (`console-intro.svg`, one-shot SVG+CSS, shortlist card F7).
+Round 1 remains: ten concept comps — five
+wordmark-led (Full Stop "Socratic.Trade", Inscription, Dialogue, Trendline, Delta) and five
+mark-led (Open Question, Sigma, Argument bubble, S.T monogram, Continuity lockup around the
+existing favicon) — as `logo-concepts.html` (side-by-side light/dark board with rationale) plus 10
+standalone SVGs and a README. Palette derives from existing tokens (`#0f1722`/`#0e9f6e`/`#63e6be`);
+no app code touched, `public/icon.svg` unchanged. Blocker: none. Next action: owner picks a
+direction (suggested shortlist A/D/F/G); winner gets redrawn with outlined letterforms + favicon/
+app-icon/mono variants. See `docs/rollouts/2026-07-05-logo-concepts.md`.
+## 2026-07-04 — Scan table column customization parity (Codex subagent)
+Worktree `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
+`codex/scan-column-customization`. `/console/scan` now mirrors the legacy dashboard's
+browser-local column behavior for the existing console scan columns: visible-column order is
+persisted in `localStorage`, columns can be shown/hidden from a chooser popover, visible
+columns can be moved earlier/later, Reset restores the default set/order, and sort falls back
+to a visible column if a saved/hidden state removes the active sort key. Scope stayed tight:
+`app/console/scan/{scan-table,columns}.tsx` plus the pure-helper regression
+`test/scan-table-columns.test.ts`; no broader settings/live-data/tooltip conversions. Board
+state mirrored to `/Users/jay/apps/TRADING-EFFORT-LOG.md` + `docs/EFFORT-LOG.md`, and
+`#agent-sync` claim posted as `[CODEX->FLEET] sync-1`.
+
+Verification green in this isolated worktree: focused
+`npm test -- --run test/scan-table-columns.test.ts` (4 tests), `npm run lint` (0 errors /
+308 existing warnings), and `scripts/land.sh` (`npx tsc --noEmit`, full `npm test` 256 files /
+2508 tests, `npm run build`). PR #806 is open with auto-merge enabled; after PR #807 merged, this
+branch was merge-forwarded and pushed. 2026-07-05 Codex PR review follow-up pins `symbol` as the
+first/sticky column during saved-state sanitization and column reordering; focused regression rerun
+passed and TypeScript is clean. A second Codex review follow-up defers saved `localStorage` column
+state until after mount to keep the server render and first client render identical; verification
+rerun passed (focused scan-column test, TypeScript, lint, diff check).
+## 2026-07-05 — Board next-wave cycle 2: stale-row corrections (incl. phantom #808) + new Planned rows (CLAUDE)
+Cross-agent audit of `docs/EFFORT-LOG.md` and `/Users/jay/apps/TRADING-EFFORT-LOG.md` against live
+PR/git state, applying stale-row corrections from the socratic-trade and fleet-infra next-wave
+specs. Key findings:
+
+- **The 2026-07-05 merge batch (#799, #807, #811, #812, #814, #816, #819, #820, plus #694/#449/
+  #374/#371/#370 from the prior day) is merged to `main` and live on beta/integration
+  (`trading-beta.jays.services`) — it is NOT yet in production.** Nothing from this batch has been
+  released via the owner-run `~/apps/trading-live` step, and the board's Deployed section still
+  stops at 2026-07-04. Production release + post-deploy money-path verification of this batch is
+  now a tracked Planned row (owner action).
+- **Phantom "PR #808 merged" correction:** the live board previously recorded "PR #808 - Cursor
+  session: P0 checkRegimeFlip RMW fix + P1 backlog exhaustiveness" as Completed/merged to `main`.
+  **PR #808 does not exist** (`gh pr view 808` returns "Could not resolve to a PullRequest"). The
+  real work is commit `0ce39474` on branch `cursor/session-2026-07-05`, entangled inside **open PR
+  #805** ("Admin connection health...", AG's row) whose mergeable state is **CONFLICTING**.
+  `0ce39474` is confirmed NOT an ancestor of `origin/main`. **The P0 multi-user `regime:current`
+  read-modify-write race described in that commit is still live on `main` today** — it has not
+  landed, nor have the claimed P1 items (security response headers, unpriced-model cost fallback,
+  synthetic bid/ask provenance, scheduler health threshold, operator LLM spend ceiling,
+  effort-mirror orphan report, Litestream PITR retention). Both boards now carry this row under
+  In Progress with the honest correction; a new Planned row tracks disentangling PR #805 into two
+  separate, honestly-described merges.
+- Several other rows were mis-filed as In Progress despite already being merged (PR #811 console
+  live-data, PR #812 full-suite test determinism, PR #814 pre-policy-vetoes, PR #799
+  guardrails-denylist, PR #360 drawdown-advisory-rescope, PR #437 w2-episodic-retrieval, and the
+  w2-outcome-engine landing) — all relocated to Completed with merge timestamps. The AG
+  connection-health row was similarly corrected the other direction: it was marked Completed but is
+  actually open PR #805, CONFLICTING, not landed.
+- The next-wave cycle-2 Planned rows (11 new items, e.g. disentangling #805, Rule-4 fundamentals-veto
+  owner ratification from #814, wiring the new advisory audit kinds into the console, landing the
+  stalled w2-coaching-durable/w2-reflection-decompose branches) were added to both boards under a
+  "### 2026-07-05 next-wave (cycle 2)" subsection.
+
+Full detail: `/Users/jay/apps/TRADING-EFFORT-LOG.md` and `docs/EFFORT-LOG.md` (this pass's edits),
+plus `docs/rollouts/2026-07-05-board-nextwave-cycle2.md`.
 
 ## 2026-07-05 — HyDE + evidence-derived multi-query retrieval for filings RAG (CLAUDE, worktree `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`)
 New `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 evidence/sector/dominant-factor
@@ -329,6 +488,17 @@ folded back into the canonical file and re-propagated: the initial issue listing
 inside the same partial handling, a server-sent `Retry-After` is honored uncapped (only
 our own backoff guess is capped at 120s), and bulk updates get a 1s throttle. See
 `docs/rollouts/2026-07-04-effort-sync-rate-limit-hardening.md`.
+## 2026-07-04 — Coach/framework primitives slice (Codex, issue #473)
+Branch `codex/coach-framework-primitives`, worktree
+`/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`. Focused in-repo slice only:
+decision-trace coaching can now stay attached to the case while optionally promoting into a
+durable lesson or linked framework proposal; framework review persists explicit owner
+`rewrite`/`accept`/`reject` verb semantics plus `ownerResponse`; and the decision-trace route/UI
+surfaces linked run metadata when the originating `runId` exists. Keepout respected:
+no live-data/settings/tooltip sweeps, Monet risk files, Claude memory/RAG files, workflows,
+AGENTS, or Slack scripts. Targeted verification is green on `test/socratic-db.test.ts`; broader
+repo gates are now green for `tsc` / `lint` / `test`; `npm run build` stalled without emitting a
+failure in this worktree and was interrupted, so build verification is the remaining blocker.
 ## 2026-07-05 — Console live-data build-out slice (Codex subagent, issue #471)
 Branch `codex/console-live-data`, worktree `/Users/jay/.codex/worktrees/socratic-console-live-data`.
 Merged current `origin/main` (`0bfa4f1e`) into the branch, resolved only the effort-log overlap,

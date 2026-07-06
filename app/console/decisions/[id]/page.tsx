@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, BookOpen, Brain, Database, GitBranch, MessageSquare, Swords, TrendingUp } from "lucide-react";
-import type { SocraticDecisionCase, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution } from "@/lib/types";
+import type { SocraticDecisionCase, SocraticDecisionTrace, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution, StrategyRunRow } from "@/lib/types";
 import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
 import { Btn, Card, Chip, SignedText, TextArea } from "../../ui/primitives";
 import { SymbolButton } from "../../ui/symbol-drilldown";
@@ -12,7 +12,7 @@ import { SymbolButton } from "../../ui/symbol-drilldown";
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; decision: SocraticDecisionCase; framework: SocraticFrameworkProposal[] };
+  | { status: "ready"; decision: SocraticDecisionCase; framework: SocraticFrameworkProposal[]; run?: StrategyRunRow };
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
 
@@ -23,6 +23,7 @@ export default function DecisionTracePage() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [coachMode, setCoachMode] = useState<"note" | "lesson" | "framework">("note");
 
   const load = useCallback(
     async () => {
@@ -32,12 +33,14 @@ export default function DecisionTracePage() {
           fetch("/api/socratic/framework?limit=100", { cache: "no-store" })
         ]);
         if (!decisionRes.ok) throw new Error(await decisionRes.text());
-        const decision = (await decisionRes.json()) as SocraticDecisionCase;
+        const payload = (await decisionRes.json()) as SocraticDecisionTrace;
+        const decision = payload.decision;
         const framework = frameworkRes.ok ? ((await frameworkRes.json()) as SocraticFrameworkProposal[]) : [];
         setState({
           status: "ready",
           decision,
-          framework: framework.filter((proposal) => proposal.decisionId === decision.id)
+          framework: framework.filter((proposal) => proposal.decisionId === decision.id),
+          ...(payload.run ? { run: payload.run } : {})
         });
       } catch (error) {
         setState({ status: "error", message: error instanceof Error ? error.message : "Could not load decision trace." });
@@ -50,20 +53,49 @@ export default function DecisionTracePage() {
     queueMicrotask(() => void load());
   }, [load]);
 
+  const buildCoachPayload = () => {
+    const trimmed = note.trim();
+    if (!trimmed || state.status !== "ready") return null;
+    if (coachMode === "framework") {
+      return {
+        note: trimmed,
+        promoteTo: "framework" as const,
+        framework: {
+          subsystem: "coaching",
+          priority: "medium",
+          title: `Coach rewrite for ${state.decision.symbol ?? state.decision.thesis ?? "decision"}`,
+          rationale: trimmed,
+          proposedChange: trimmed
+        }
+      };
+    }
+    if (coachMode === "lesson") {
+      return {
+        note: trimmed,
+        promoteTo: "lesson" as const,
+        lessonText: trimmed
+      };
+    }
+    return { note: trimmed };
+  };
+
   const saveNote = async () => {
     const trimmed = note.trim();
     if (!trimmed || state.status !== "ready") return;
+    const payload = buildCoachPayload();
+    if (!payload) return;
     setBusy(true);
     setMessage(null);
     try {
       const response = await fetch(`/api/socratic/decisions/${encodeURIComponent(state.decision.id)}/coach`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ note: trimmed })
+        body: JSON.stringify(payload)
       });
       if (!response.ok) throw new Error(await response.text());
       setNote("");
-      setMessage("Saved to this decision case.");
+      setCoachMode("note");
+      setMessage(coachMode === "note" ? "Saved to this decision case." : coachMode === "lesson" ? "Saved and promoted into lessons." : "Saved and promoted into framework review.");
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save note.");
@@ -93,7 +125,7 @@ export default function DecisionTracePage() {
     );
   }
 
-  const { decision, framework } = state;
+  const { decision, framework, run } = state;
   const outcome = decision.outcome;
 
   return (
@@ -134,6 +166,7 @@ export default function DecisionTracePage() {
             {decision.thesisTag && <Chip tone="muted">{decision.thesisTag}</Chip>}
             {decision.regime && <Chip tone="muted">{decision.regime}</Chip>}
             {typeof decision.confidenceScore === "number" && <Chip tone="pos">confidence {decision.confidenceScore}</Chip>}
+            {run && <Chip tone="muted">run {timeAgo(run.startedAt)}</Chip>}
           </div>
         </div>
 
@@ -219,6 +252,12 @@ export default function DecisionTracePage() {
               </span>
             }
           >
+            {run ? (
+              <div className="mb-3 rounded-md border border-[color:var(--con-line)] bg-[color:color-mix(in_srgb,var(--con-bg-elev)_80%,transparent)] p-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                Source run {timeAgo(run.startedAt)} · {run.status} · {run.totalCount} proposal{run.totalCount === 1 ? "" : "s"}
+                {run.summary ? ` · ${run.summary}` : ""}
+              </div>
+            ) : null}
             {decision.coachNotes.length > 0 ? (
               <div className="mb-3 flex flex-col gap-2">
                 {decision.coachNotes.slice(-4).map((coachNote, index) => (
@@ -228,11 +267,28 @@ export default function DecisionTracePage() {
                 ))}
               </div>
             ) : null}
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button type="button" className={`con-chip ${coachMode === "note" ? "con-chip-accent" : ""}`} onClick={() => setCoachMode("note")}>
+                Attach note
+              </button>
+              <button type="button" className={`con-chip ${coachMode === "lesson" ? "con-chip-accent" : ""}`} onClick={() => setCoachMode("lesson")}>
+                Promote lesson
+              </button>
+              <button type="button" className={`con-chip ${coachMode === "framework" ? "con-chip-accent" : ""}`} onClick={() => setCoachMode("framework")}>
+                Promote framework
+              </button>
+            </div>
             <TextArea
               rows={4}
               value={note}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="What should Socratic Trade remember about this decision?"
+              placeholder={
+                coachMode === "framework"
+                  ? "What framework change should this decision propose?"
+                  : coachMode === "lesson"
+                    ? "What durable lesson should Socratic Trade keep?"
+                    : "What should Socratic Trade remember about this decision?"
+              }
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Btn variant="primary" size="sm" disabled={busy || !note.trim()} onClick={() => void saveNote()}>
@@ -258,7 +314,12 @@ export default function DecisionTracePage() {
                       <span>{proposal.status}</span>
                     </div>
                     <p>{proposal.proposedChange}</p>
-                    {proposal.ownerResponse && <p className="mt-1 text-[color:var(--con-faint)]">Owner: {proposal.ownerResponse}</p>}
+                    {proposal.ownerResponse && (
+                      <p className="mt-1 text-[color:var(--con-faint)]">
+                        {proposal.ownerVerb ? `${proposal.ownerVerb}: ` : "Owner: "}
+                        {proposal.ownerResponse}
+                      </p>
+                    )}
                   </article>
                 ))}
               </div>

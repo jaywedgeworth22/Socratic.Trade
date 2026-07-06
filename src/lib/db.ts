@@ -13,7 +13,7 @@ import type { TradingPolicy } from "./types";
 let db: Database.Database | undefined;
 const SP500_DEFAULT_UNIVERSE_MIGRATION_KEY = "migration:sp500_default_universe:2026-06-19";
 
-function databasePath(): string {
+export function databasePath(): string {
   const value = process.env.DATABASE_URL ?? "file:./data/app.db";
   return resolve(value.replace(/^file:/, ""));
 }
@@ -310,6 +310,31 @@ const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_due_jobs_status_due ON due_jobs (status, due_at);
         CREATE INDEX IF NOT EXISTS idx_due_jobs_type_status ON due_jobs (job_type, status);
+      `);
+    }
+  },
+  {
+    // Framework review now persists the owner's explicit verb ("accept" vs "rewrite" vs "reject")
+    // alongside the free-text response so the console can distinguish a straight accept from an
+    // accepted-with-rewrite outcome. Nullable for legacy rows.
+    version: 12,
+    name: "socratic_framework_owner_verb",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(socratic_framework_proposals)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "owner_verb")) {
+        database.exec("ALTER TABLE socratic_framework_proposals ADD COLUMN owner_verb TEXT");
+      }
+    }
+  },
+  {
+    version: 13,
+    name: "processed_webhooks",
+    up: (database) => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS processed_webhooks (
+          id TEXT PRIMARY KEY,
+          processed_at TEXT NOT NULL
+        );
       `);
     }
   }
@@ -989,6 +1014,7 @@ function migrate(database: Database.Database): void {
       rationale TEXT NOT NULL,
       proposed_change TEXT NOT NULL,
       evidence TEXT NOT NULL DEFAULT '[]',
+      owner_verb TEXT,
       owner_response TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL

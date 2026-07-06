@@ -23,6 +23,8 @@ import { fetchChatProviders } from "./lib";
 interface ModelOption {
   value: string;
   label: string;
+  recommendedGreen?: boolean;
+  recommendedRed?: boolean;
 }
 
 interface ModelGroup {
@@ -37,7 +39,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost OpenAI · $" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$" },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true },
       { value: "gpt-5.4", label: "gpt-5.4 — stronger analysis · $$$" },
       { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" }
     ]
@@ -47,7 +49,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Anthropic (Claude)",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast Claude review · $" },
-      { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6 — balanced Claude analysis · $$" },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
       { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude critique · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
@@ -65,8 +67,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$" },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$" }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$", recommendedRed: true }
     ]
   },
   {
@@ -82,7 +84,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash — fast DeepSeek V4 · $" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$" }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedGreen: true, recommendedRed: true }
     ]
   }
 ];
@@ -96,6 +98,7 @@ function ModelSelect({
   emptyTitle,
   providers,
   title,
+  role,
   onChange
 }: {
   id: string;
@@ -104,6 +107,7 @@ function ModelSelect({
   emptyTitle: string;
   providers: Record<string, boolean> | null;
   title: string;
+  role?: "proposer" | "red-team" | "coach";
   onChange: (next: string) => void;
 }) {
   // A stored model id outside the catalog (typed on the Strategy screen or by
@@ -124,11 +128,19 @@ function ModelSelect({
         const hasKey = providers === null ? true : Boolean(providers[group.provider]);
         return (
           <optgroup key={group.provider} label={hasKey ? group.label : `${group.label} — no key`}>
-            {group.options.map((option) => (
-              <option key={option.value} value={option.value} disabled={!hasKey && option.value !== value}>
-                {hasKey ? option.label : `${option.label} (no key configured)`}
-              </option>
-            ))}
+            {group.options.map((option) => {
+              const baseLabel = hasKey ? option.label : `${option.label} (no key configured)`;
+              const label = role === "proposer" && option.recommendedGreen
+                ? `${baseLabel} (Rec Proposer)`
+                : role === "red-team" && option.recommendedRed
+                ? `${baseLabel} (Rec Reviewer)`
+                : baseLabel;
+              return (
+                <option key={option.value} value={option.value} disabled={!hasKey && option.value !== value}>
+                  {label}
+                </option>
+              );
+            })}
           </optgroup>
         );
       })}
@@ -174,8 +186,8 @@ export function ModelsCard() {
   };
 
   const policy = snapshot?.policy;
-  const green = draft?.llmModel ?? policy?.llmModel ?? "";
-  const red = draft?.redTeamLlmModel ?? policy?.redTeamLlmModel ?? "";
+  const green = draft?.llmModel !== undefined ? draft.llmModel : (policy?.llmModel ?? "");
+  const red = draft?.redTeamLlmModel !== undefined ? draft.redTeamLlmModel : (policy?.redTeamLlmModel ?? "");
 
   const selectedNoKey = useMemo(() => {
     if (!providers) return [];
@@ -209,6 +221,9 @@ export function ModelsCard() {
       setBusy(false);
     }
   };
+
+  const isCurated = (m: string) => !m || CATALOG_IDS.has(m);
+  const showCustomWarning = (green && !isCurated(green)) || (red && !isCurated(red));
 
   return (
     <Card
@@ -253,6 +268,7 @@ export function ModelsCard() {
             emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
             providers={providers}
             title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
+            role="proposer"
             onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
           />
         </Field>
@@ -268,6 +284,7 @@ export function ModelsCard() {
             emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
             providers={providers}
             title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
+            role="red-team"
             onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
           />
         </Field>
@@ -283,10 +300,21 @@ export function ModelsCard() {
             emptyTitle="No browser override — the Coach uses the app default chat model."
             providers={providers}
             title="The model that answers on the Coach page. Use the Usage & Cost link to see spend history by model and workflow."
+            role="coach"
             onChange={pickCoachModel}
           />
         </Field>
       </div>
+      {showCustomWarning && (
+        <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">
+          <svg className="h-4 w-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+          <div>
+            Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
+          </div>
+        </div>
+      )}
       {selectedNoKey.length > 0 && (
         <p className="mt-2 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
           {selectedNoKey.join(" and ")} currently has no resolvable key for you — runs with this selection will fail
