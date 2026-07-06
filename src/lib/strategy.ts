@@ -726,6 +726,7 @@ export async function runStrategyOnce(
               minRelevanceScore: defaultRelevanceFloor(),
               dedupeSimilarity: defaultDedupeSimilarity(),
               connectedAccountId: policy.connectedAccountId,
+              runId,
               ...(variants.length > 0 ? { queries: variants } : {})
             });
             return { sym, query, chunks };

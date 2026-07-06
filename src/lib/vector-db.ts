@@ -11,6 +11,7 @@ import { dedupeSimilar } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
+import { candidatePoolPersistEnabled, recordCandidatePool } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
@@ -1631,6 +1632,13 @@ export interface RetrieveOptions {
    * matches are recalled. Omitted/empty = current single-query behavior, byte-for-byte unchanged.
    */
   queries?: string[];
+  /**
+   * persist-candidate-pool (2026-07-06): current strategy run id, threaded through purely so an
+   * opt-in candidate-pool persistence record (see rag/candidate-pool.ts, RAG_PERSIST_CANDIDATE_POOL)
+   * can be joined back to the run that produced it. Additive/optional — omitted has zero effect on
+   * retrieval behavior either way.
+   */
+  runId?: string;
 }
 
 /**
@@ -1917,8 +1925,41 @@ export async function retrieveContextDetailed(
       dedupeSimilarity: options?.dedupeSimilarity,
       userId
     });
-    return ordered
-      .slice(0, limit)
+    const finalSlice = ordered.slice(0, limit);
+    // persist-candidate-pool (2026-07-06): capture the FULL post-recall/post-dedupe candidate pool
+    // (every candidate that survived floor/asOf/hybrid/rerank/dedupe — including ones NOT making
+    // this final top-`limit` slice), so "what did we retrieve but not inject" is analyzable later.
+    // The flag check is the FIRST thing this block does, before any mapping/hashing, so this is a
+    // true no-op (not just a suppressed write) when RAG_PERSIST_CANDIDATE_POOL is off — default
+    // retrieval is byte-for-byte unchanged. Runs for both the single-query and the #822 fused
+    // multi-query path alike, since `ordered` is already the one fused pool by this point.
+    if (candidatePoolPersistEnabled()) {
+      const finalIds = new Set(finalSlice.map((m) => String(m?.id ?? "")));
+      recordCandidatePool(
+        {
+          runId: options?.runId,
+          symbol,
+          queryHash: hashQuery(query),
+          asOf: options?.asOf,
+          candidates: ordered.map((m) => {
+            const md = (m?.metadata ?? {}) as Record<string, unknown>;
+            const asOfStamp = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
+            const rerankScore = (m as { _rerankScore?: unknown } | undefined)?._rerankScore;
+            const id = String(m?.id ?? "");
+            return {
+              id,
+              score: typeof m?.score === "number" ? m.score : undefined,
+              ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {}),
+              ...(typeof md.doc_type === "string" ? { docType: md.doc_type } : {}),
+              ...(asOfStamp != null ? { asOf: String(asOfStamp) } : {}),
+              used: finalIds.has(id)
+            };
+          })
+        },
+        userId
+      );
+    }
+    return finalSlice
       .map(matchToChunk)
       .filter((c) => c.text);
   } catch (err) {

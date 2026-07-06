@@ -72,6 +72,19 @@ to `socratictrade.com`, record the release commit + date here._
 
 ## 🚧 In Progress
 
+- **Persist full retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Captures the full post-recall/post-dedupe candidate pool from
+  `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the final top-`limit`
+  slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF, byte-identical when off). New
+  `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
+  new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
+  added (additive) and threaded from both `strategy.ts` retrieval call sites +
+  `experience-memory.ts`. Coordinates with sibling lane `claude/typed-retrieval-status` (same file,
+  disjoint region — this lane owns only the block right before the final slice; lands after it).
+  Local verify: `tsc --noEmit` clean, `test/persist-candidate-pool.test.ts` (new) +
+  `test/rag-retrieval-regression.test.ts` 26/26 green, plus spot-checked adjacent RAG/strategy/
+  experience-memory suites, no regressions. Rollout:
+  `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
 - **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
   (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
   builds with the app's real components. Render check 30/30 clean; conventions header shipped.

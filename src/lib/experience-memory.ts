@@ -434,7 +434,8 @@ export async function retrieveDecisionExperiences(
         matchAllSymbols: true,
         asOf,
         minScore: defaultMinScore(),
-        connectedAccountId: input.connectedAccountId
+        connectedAccountId: input.connectedAccountId,
+        runId: input.runId
       }
     );
     // Same-run / future-neighbor exclusion: a case this run just indexed (decision run OR exit

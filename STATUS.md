@@ -8,6 +8,47 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — persist-candidate-pool: full retrieved candidate set, flag-gated (CLAUDE, branch `claude/persist-candidate-pool`)
+
+Persists the FULL post-recall/post-dedupe candidate pool `retrieveContextDetailed` produces —
+including chunks that survived floor/asOf/hybrid/rerank/dedupe but were cut only by the final
+top-`limit` slice — so "what did we retrieve but not inject" is analyzable. New flag
+`RAG_PERSIST_CANDIDATE_POOL` (envFlagOn-parsed, **default OFF**; mirrors the
+`RAG_RETRIEVAL_TELEMETRY` precedent) gates a single capture block in `vector-db.ts`, inserted
+right before the existing `.slice(0, limit)` cut (i.e. reading `rankPool`'s return value, `ordered`
+— which is already post-floor/asOf/hybrid/rerank/dedupe, so a candidate dropped upstream by those
+gates is correctly absent; only candidates that survive the full pipeline but lose the final
+top-N cut are the "not used" ones this feature surfaces). Persists via a new
+`recordCandidatePool` (`src/lib/rag/candidate-pool.ts`) → `audit("rag_candidate_pool", ...)` — no
+new table. IDs/scores/relevanceScore/docType/asOf/`used` only — never raw chunk text, matching the
+existing `hashQuery` "never persist raw query text" posture. `RetrieveOptions.runId` added
+(additive/optional) and threaded from both `strategy.ts` retrieval call sites (filings pass ~line
+719/730 and the episodic pass via `experience-memory.ts`'s `retrieveDecisionExperiences`, which
+already received `runId` as an input) so persisted records are joinable back to the run. Also
+correctly produces exactly ONE fused-pool record for the #822 multi-query/HyDE case (`ordered` is
+already the one fused pool the multi-query fan-out builds, by the time this capture runs).
+
+Coordinates with sibling lane `claude/typed-retrieval-status` (also edits `retrieveContextDetailed`
+in `vector-db.ts`) — this change is a single localized block right before the final slice, and
+does not touch the early-return/classification region that lane owns. Lands after it; will
+merge-forward if needed.
+
+Files: `src/lib/rag/candidate-pool.ts` (new), `src/lib/vector-db.ts` (import + `RetrieveOptions.runId`
++ capture block), `src/lib/strategy.ts` (thread `runId` into the filings retrieval call),
+`src/lib/experience-memory.ts` (thread `input.runId` into its internal `retrieveContextDetailed`
+call), `test/persist-candidate-pool.test.ts` (new).
+
+Verification: `npx tsc --noEmit` clean. `npx vitest run test/persist-candidate-pool.test.ts
+test/rag-retrieval-regression.test.ts` — 26/26 passed. Also spot-checked
+`test/rag-multi-query-retrieval.test.ts`, `test/rag-multi-query.test.ts`,
+`test/rag-retrieval-eval.test.ts`, `test/rag-metering.test.ts`, `test/rag-env-flag.test.ts`,
+`test/strategy-rag-quickwins-wiring.test.ts`, `test/rag-hyde.test.ts`,
+`test/experience-memory.test.ts`, `test/strategy-episodic-injection.test.ts` — all green (no
+regressions from the additive `RetrieveOptions.runId` field or the flag-off no-op capture block).
+Full `npm test` / `npm run build` intentionally NOT run per this lane's scope (focused tests only;
+a central operator lands sequentially). Rollout note:
+`docs/rollouts/2026-07-06-persist-candidate-pool.md`.
+
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
 Closeout of a same-day, triage-first CLAUDE-lane backlog train. All four lanes are merged to
