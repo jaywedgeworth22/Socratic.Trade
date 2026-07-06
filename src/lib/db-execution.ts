@@ -238,6 +238,42 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
 }
 
 /**
+ * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
+ * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
+ * within STALE_THRESHOLD_MS (default 10 min) is marked failed with a receipted reason.
+ *
+ * Returns the number of repaired rows for logging/auditing.
+ */
+const STALE_RUN_THRESHOLD_MS = 10 * 60_000; // 10 min — a tick-cadence run takes ~1-2 min at most
+export function markStaleRunningRuns(now: number = Date.now()): number {
+  const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
+  const db = getDb();
+  const stale = db
+    .prepare(
+      `SELECT id, user_id, started_at FROM strategy_runs
+       WHERE status = 'running' AND started_at < ?`
+    )
+    .all(cutoff) as Array<{ id: string; user_id: string; started_at: string }>;
+  let count = 0;
+  for (const row of stale) {
+    db.prepare(
+      `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
+       WHERE id = ? AND status = 'running'`
+    ).run(new Date().toISOString(), row.started_at, row.id);
+    // Import audit only when needed (circular dependency: db-execution → db → db-execution)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { audit } = require("./db") as { audit: typeof import("./db").audit };
+    audit(
+      "strategy_run_crashed",
+      { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
+      row.user_id
+    );
+    count++;
+  }
+  return count;
+}
+
+/**
  * Most recent strategy-run start time for a user (ISO string), or null if none. The scheduler
  * rehydrates its in-memory cadence clock from this on boot so a restart/HMR/deploy doesn't fire an
  * immediate run regardless of the configured cadence (userSchedules starts empty each process).

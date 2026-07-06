@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `main`)
+Materialized the previously-claimed ~45 CURSOR rows from the "full itemization" pass as 27
+individual discrete rows in `docs/EFFORT-LOG.md` (P0 Security 5, P1 Mechanical 9, P2 Ops 9,
+P3 Observability 4). Verified 9 already-done items; implemented 2 new fixes today (crashed-run
+stale-row sweep in `db-execution.ts`/`scheduler.ts`, `socratic_case_write_failed` audit receipt
+in `strategy.ts`). 16 items remain unstarted — see the "CURSOR individual rows" subsection in
+the effort log. Verification: lint/tsc/test/build all green. See
+`docs/rollouts/2026-07-06-cursor-full-itemization.md`.
+
 ## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
 Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
 doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the

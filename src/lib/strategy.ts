@@ -1585,7 +1585,16 @@ export async function runStrategyOnce(
         const framework = frameworkProposalFromDecision(caseFile);
         if (framework) createSocraticFrameworkProposal(framework);
       } catch (err) {
-        console.warn("[strategy] Socratic decision recording failed:", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("[strategy] Socratic decision recording failed:", message);
+        try {
+          audit(
+            "socratic_case_write_failed",
+            { runId, proposalId: input.proposalId, symbol: input.proposal.symbol, status: input.status, error: message },
+            userId,
+            connectedAccountId
+          );
+        } catch { /* audit itself must not throw */ }
       }
     };
 
