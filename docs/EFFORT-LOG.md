@@ -570,6 +570,29 @@ As of 2026-07-04.
 ---
 
 ## 🔨 In Progress
+- **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
+  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **COMPLETED 2026-07-05, merged
+  PR #812.** Root causes (measured, not timeout-tuning): `executeProposal` tests ran a REAL market
+  scan (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12-13s/test solo,
+  past 30s under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class — its
+  2026-06-21 fix only padded timeouts); hoist the orchestrator import into `beforeAll(…, 120_000)`.
+  After: full suite 256 files / 2506 tests green in 20.77s wall; the three files ~1s of test time.
+  See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
+  at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
+
+- **Learned-context UX: copy fix + "learned facts" browse/delete archive** (CLAUDE, worktree
+  `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-06.** Owner spotted awkward
+  empty-state copy on the Learned Context approval queue and asked why the AI doesn't auto-learn and
+  let the user review/delete afterward — it mostly already does (the `fact` tier is silent-passthrough,
+  never queued; only `risk`/`strategy-directive` confirms first, by design). Building both: reworded
+  copy in `app/console/approvals/learned-context.tsx`; new `deleteLearnedContext` in
+  `src/lib/db-learning.ts` + `GET /api/learned-context` + `DELETE /api/learned-context/[id]` + client
+  helpers + a new `LearnedFactsArchive` browse/delete component wired into
+  `app/console/approvals/page.tsx`. New `test/learned-context-delete.test.ts` (7 tests). Verify in
+  progress; will land via `land.sh` and release to production this pass.
+
 - **Mobile console width overflow — autonomy-desk home (CLAUDE cloud, branch
   `claude/mobile-console-width-overflow`) — PR open (#992).** Owner-reported: on mobile, every section
   after the Live-thesis hero rendered wider than the viewport (content clipped off the right edge).
@@ -588,7 +611,9 @@ As of 2026-07-04.
   token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
   created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
   corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
-  (port 4104, `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
+  (port 4103 [corrected from an earlier 4104 typo in this row — owner confirmed 2026-07-06 "Monet
+  should be 4104 since cursor is 4103"; AGENTS.md's fleet table is the corrected source of truth],
+  `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
   create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
   agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
   onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
@@ -1093,6 +1118,36 @@ As of 2026-07-04.
   - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index decision memory on lifecycle changes; trading-day horizon arithmetic; + Codex second-pass review fixes (market-day horizon anchoring via new `market-calendar.marketDateOf`, kind-scoped veto audit queries + keyed efficacy joins, NULL-evidence backfill on `insertSkippedCounterfactualCandidate`). STATUS: **MERGED (PR #365)**. `getRedTeamEfficacy()` remains API/db-level only (console lane owns UI wiring). Deferred: `skipped_candidate_counterfactuals` has no `side` column, so vetoed SHORTs still read as long moves in the GENERIC missed-opportunity path (efficacy path side-adjusts) — candidate for the w2-outcome-engine lane's schema pass.
   - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap. STATUS: **MERGED (PR #366)**.
   - `claude/w1-regime-data` — typed regime enum + numeric severity (new dependency-free `src/lib/market-regime.ts`); live ^VIX off the 24h macro cache; per-data-class TTLs + asOf on Alpaca snapshot. STATUS: **MERGED (PR #368)**. NOTE (correction to the earlier row text): the crisis cap (policy.ts) and bear filter (strategy.ts) deliberately KEPT their substring checks per the Fable/Monet swimlane keepout — enum adoption inside risk gates is Monet's (#360 landed with them intact); only the console regime card adopted the enum.
+
+- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray `.codex/`
+  (FLEET, XS) — MOSTLY RESOLVED 2026-07-06.** Owner confirmed 2026-07-05: MONET preview = 4104,
+  CURSOR = 4103. The Monet-port line (4103→4104) landed on `agent/claude` (31d8da7). **CURSOR has
+  since documented its own 4103 row** (`~/apps/trading-cursor`, `agent/cursor`, pm2
+  `trading-cursor`, `cursor.jays.services`) — folded in as part of resolving a same-file merge
+  overlap on 2026-07-06 (also corrected a 4104 typo in the Coolify-migration effort row's prose to
+  4103 to match). Still open: MONET confirming its lane/tooling expects 4104; CODEX
+  claiming/relocating or approving deletion of untracked `.codex/{setup.sh,maintenance.sh}` still
+  sitting in `~/apps/trading-claude`.
+
+- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
+  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
+  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
+  owner, answering the objections raised when this was first proposed): (1) Mac-side
+  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
+  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
+  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
+  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
+  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
+  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
+  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
+  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
+  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
+  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
+  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
+  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
+  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
+  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
+  hosted-only default stands; resource-aware routing stays opt-in per repo.
 
 - 2026-07-04 landing train (Fable operator) — also landed: `claude/console-small-fixes` (**PR #361**), `claude/washsale-advisory-defaults` (**PR #362**), `claude/socratic-expert-review-doc` (**PR #363**), `claude/agent-sync-protocol-docs` (**PR #369**). Wave-2 lanes landed sequentially: `w2-episodic-retrieval` (**PR #437, merged 2026-07-04T21:05:02Z**), `w2-outcome-engine` (merged, see the corrected sub-lane rows above), `w2-coaching-durable`, `w2-reflection-decompose`. _(2026-07-05 CLAUDE next-wave correction: this line said "PR #437 in flight"; #437 has since merged. `w2-coaching-durable`/`w2-reflection-decompose` remain the two genuinely unlanded sub-lanes — no PR opened for either since 07-04.)_
 

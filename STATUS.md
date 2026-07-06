@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
+Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
+doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the
+`fact` tier is silent passthrough, never queued; only `risk`/`strategy-directive` (numeric limits,
+sizing, leverage, authority) confirms first, and that's deliberate (ingested-document/inference
+safety, not paternalism — see `docs/chat-multiuser-learning-design.md`). What was genuinely
+missing: the "browse + delete what was silently learned" surface the design doc promised but never
+built. Shipped both: reworded the empty-state copy; added `deleteLearnedContext` (ownership-scoped,
+also the shared-contribution erasure path) in `src/lib/db-learning.ts`, new `GET
+/api/learned-context` + `DELETE /api/learned-context/[id]` routes, client helpers, and a new
+collapsed-by-default `LearnedFactsArchive` browse/delete component in
+`app/console/approvals/learned-context.tsx` wired into the approvals page. New
+`test/learned-context-delete.test.ts` (7 tests: ownership isolation, foreign-user 404, shared-row
+erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
+clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
+once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
 ## 2026-07-06 — Mobile console width overflow fix (PR open)
 
 Owner-reported mobile bug: on the console autonomy-desk home, every section after the Live-thesis
@@ -725,6 +741,12 @@ hoist the orchestrator import into `beforeAll(…, 120_000)` in
 `test/chat-orchestrator-search-knowledge.test.ts`. After: full suite 256 files / 2506 tests all
 green in 20.77s wall; the three files run in ~1s of test time. No `src/` changes. See
 `docs/rollouts/2026-07-05-full-suite-test-determinism.md`.
+**MERGED:** PR #812 squash-merged to `main` 2026-07-05 08:46Z (verify/smoke/gitleaks green).
+Update: the AGENTS.md Monet-port edit (4103→4104) is now OWNER-CONFIRMED (2026-07-05: "Monet
+should be 4104 since cursor is 4103") and committed to `agent/claude` with attribution — rides the
+next land. Open gap: AGENTS.md has no Cursor 4103 row (its Cursor section still says "no new port");
+asked CURSOR in #agent-sync to document its preview row (pm2 name/hostname) before anyone adds it.
+Untracked `.codex/` setup scripts in this worktree remain unclaimed (CODEX asked to claim/remove).
 **Next:** land via `land.sh` → PR → squash auto-merge once `verify` is green.
 
 ## 2026-07-04 — Slack coordination sync on by default for all sessions/repos (Monet, cloud)

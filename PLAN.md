@@ -5,6 +5,14 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
+> Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
+> (`app/console/approvals/learned-context.tsx`) and built the "browse + delete what was silently
+> learned" surface the 2026-07-02 learned-context design doc promised but never shipped: a new
+> `GET /api/learned-context` + `DELETE /api/learned-context/[id]`, an ownership-scoped
+> `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
+> `LearnedFactsArchive` component on the Approvals page. See
+> `docs/rollouts/2026-07-06-learned-context-archive.md`.
 > **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
 > (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
 > stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
