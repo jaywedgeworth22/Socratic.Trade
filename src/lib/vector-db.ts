@@ -1999,7 +1999,9 @@ export async function retrieveContextDetailed(
       // candidate could be mislabeled `used:true` just because SOME id-less candidate happened to
       // land in `finalSlice`. Mirror the #822 fan-out fusion code's guard above (`rankedIdLists`):
       // when a match's id is empty, use a per-position synthetic key instead, scoped to `ordered`'s
-      // own indices so it can never collide with a real Pinecone id or another id-less candidate.
+      // own indices so it won't collide with another id-less candidate. (Pinecone ids are arbitrary
+      // strings, so a real id shaped like `__cand_${i}__` is not impossible — just vanishingly
+      // unlikely; this guard disambiguates id-less matches, it is not a hard uniqueness proof.)
       const orderedKeys = ordered.map((m, i) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__cand_${i}__`));
       const finalSliceKeySet = new Set(orderedKeys.slice(0, finalSlice.length));
       recordCandidatePool(

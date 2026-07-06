@@ -1,8 +1,13 @@
 /**
- * persist-candidate-pool (2026-07-06): persist the FULL retrieved candidate set — including
- * chunks that survived Pinecone recall but were later dropped by the score floor / as-of guard /
- * dedup, or simply didn't make the final top-`limit` slice — so "what did we retrieve but not
- * inject" is analyzable after the fact. Today only the post-selection top-N chunks that actually
+ * persist-candidate-pool (2026-07-06): persist `rankPool`'s OUTPUT candidate pool — every
+ * candidate that survived the score floor / as-of guard / hybrid / rerank / dedupe pipeline —
+ * split into used (final top-`limit` slice) vs not-used, so "what did we retrieve but not inject"
+ * is analyzable after the fact. IMPORTANT (matches the HONESTY NOTE at the capture site in
+ * vector-db.ts): this captures the pool AFTER those upstream filters, so candidates DROPPED by
+ * minScore / as-of / dedupe are NOT here — only survivors. With the default strategy caller
+ * (dedupe 0.6, limit 3) `ordered` is already <= limit, so `used:false` rows are rare/absent there;
+ * a v2 capturing the pre-`rankPool` `matches` pool with per-stage drop reasons is the follow-up if
+ * "why did we drop this" is the goal. Today only the post-selection top-N chunks that actually
  * reach a prompt get persisted (`ragAttributionsFromChunks` in socratic-runtime.ts slices to 5,
  * and `socraticRagAttributions` in strategy.ts is built from the already-final `context.chunks`).
  * The pre-slice candidate pool `rankPool` produces is otherwise discarded in-function.
