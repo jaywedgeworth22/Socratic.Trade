@@ -4501,6 +4501,7 @@ Branch: claude/magical-faraday-uce1uy
 
 ## Current State
 
+- 2026-07-06: **Shared Dependency Bump to ^1.3.0 and HTTPS Lockfile** — bumped `@jaywedgeworth22/congress-trading-shared` to `^1.3.0` and normalized the lockfile to use `git+https` instead of `git+ssh` to satisfy the `.github/workflows/shared-package-pin-check.yml` guard and fix CI installation issues in tokenless environments. See `docs/rollouts/2026-07-06-bump-shared-dependency.md`.
 - App: local-only Next.js agentic trading dashboard with honest
   **Test / Paper (Alpaca) / Brokerage** execution modes driven by the active
   connected account, policy gating, equity-only execution, and a phase-based
