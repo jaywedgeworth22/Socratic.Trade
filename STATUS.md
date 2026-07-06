@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Learned-context copy fix + browse/delete archive (CLAUDE, `agent/claude`)
+Owner flagged awkward empty-state copy on the Learned Context approval queue and asked why the AI
+doesn't auto-learn and let the user review/delete afterward. Answer: it mostly already does — the
+`fact` tier is silent passthrough, never queued; only `risk`/`strategy-directive` (numeric limits,
+sizing, leverage, authority) confirms first, and that's deliberate (ingested-document/inference
+safety, not paternalism — see `docs/chat-multiuser-learning-design.md`). What was genuinely
+missing: the "browse + delete what was silently learned" surface the design doc promised but never
+built. Shipped both: reworded the empty-state copy; added `deleteLearnedContext` (ownership-scoped,
+also the shared-contribution erasure path) in `src/lib/db-learning.ts`, new `GET
+/api/learned-context` + `DELETE /api/learned-context/[id]` routes, client helpers, and a new
+collapsed-by-default `LearnedFactsArchive` browse/delete component in
+`app/console/approvals/learned-context.tsx` wired into the approvals page. New
+`test/learned-context-delete.test.ts` (7 tests: ownership isolation, foreign-user 404, shared-row
+erasure, audit trail, superseded-row exclusion). Full suite 258 files / 2518 tests green, tsc
+clean, lint 0 errors. Owner asked for production release this pass — see PR/deploy details below
+once landed. See `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 ## 2026-07-05 — Full-suite test determinism fix (CLAUDE, `agent/claude`)
 Fixed the 2026-07-05 land.sh flake (3 timeouts full-suite, pass solo). Root causes, measured:
 `executeProposal` tests ran a REAL market scan (Nasdaq/Yahoo, 6–8s abort timeouts + 429 backoff;

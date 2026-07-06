@@ -728,6 +728,18 @@ export function supersedeLearnedContext(oldId: string, newId: string): void {
   getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
 }
 
+/**
+ * Erase a learned-context row the user no longer wants remembered. Scoped to `user_id` — the
+ * ORIGINAL contributor, never a reader — so this also serves as the erasure path for a user's own
+ * shared-scope contributions (a shared row's `user_id` stays its author; another user who merely
+ * reads it via `includeShared` can never delete it). Returns false on a no-op (missing id or
+ * foreign ownership) so the route can 404 instead of silently succeeding.
+ */
+export function deleteLearnedContext(id: string, userId: string): boolean {
+  const result = getDb().prepare("DELETE FROM learned_context WHERE id = ? AND user_id = ?").run(id, userId);
+  return result.changes > 0;
+}
+
 // ── RAG ingestion de-dup helpers ──────────────────────────────────────────────
 // Keyed by (accession, doc_type) — globally unique for SEC filings, so no user scoping needed.
 

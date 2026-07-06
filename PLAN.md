@@ -5,6 +5,15 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
+> Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
+> (`app/console/approvals/learned-context.tsx`) and built the "browse + delete what was silently
+> learned" surface the 2026-07-02 learned-context design doc promised but never shipped: a new
+> `GET /api/learned-context` + `DELETE /api/learned-context/[id]`, an ownership-scoped
+> `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
+> `LearnedFactsArchive` component on the Approvals page. See
+> `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 > **2026-07-05 - Console live-data build-out slice (Codex subagent, issue #471).** No roadmap
 > change. This branch is delivering the smallest reliable piece of the planned CODEX live-data row:
 > reuse the existing `/api/events/stream` for console push refreshes, surface stream/freshness

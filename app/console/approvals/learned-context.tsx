@@ -15,14 +15,17 @@
  *  every card, non-blocking error notices, light/dark via --con-* tokens. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, RefreshCw } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import {
   approvePendingLearnedContext,
+  deleteLearnedContextItem,
   directiveBlockPreview,
+  fetchLearnedContext,
   fetchPendingLearnedContext,
   rejectPendingLearnedContext,
   type PendingLearnedItem
 } from "../lib/learned-context";
+import type { LearnedContextRow } from "@/lib/types";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip } from "../ui/primitives";
@@ -327,11 +330,14 @@ export function LearnedContextInbox() {
       {items !== null && items.length === 0 && !error && (
         <Card>
           <div className="py-6 text-center">
-            <p className="font-semibold">Nothing learned is waiting on you.</p>
+            <p className="font-semibold">Nothing's waiting for your review.</p>
             <p className="mx-auto mt-1 max-w-md text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-              When an autonomous run or an ingested document makes the system infer something it wants to remember — a
-              risk observation or a strategy directive — it queues here first. You decide what sticks: nothing
-              influences the AI until you approve it, and approvals never touch your numeric risk limits.
+              When an autonomous run or an ingested document makes the system infer something about risk or
+              strategy — a position-size change, a new stop/take-profit rule, an autonomy-level shift — it queues
+              here first. You decide what sticks: nothing takes effect until you approve it, and approving never
+              changes a numeric risk limit directly (that still only happens when you edit it yourself in
+              Guardrails). Most of what the AI learns — plain facts and patterns — never needs your approval at all;
+              see everything it's recorded so far below.
             </p>
           </div>
         </Card>
@@ -390,6 +396,269 @@ export function LearnedContextInbox() {
           </div>
         )}
       </Sheet>
+    </section>
+  );
+}
+
+// ── The learned-facts archive (browse + delete what's actually been recorded) ──
+//
+// This is the OTHER side of learning: most of what the AI records — plain facts and patterns —
+// never touches the queue above at all (silent passthrough, see classify.ts). This section is
+// where that silent majority becomes visible and erasable, alongside anything approved above.
+// Read + delete only; nothing here is applied by viewing it, and deleting is immediate/permanent.
+
+const ARCHIVE_POLL_MS = 120_000;
+
+function factTierChipTone(tier: LearnedContextRow["riskTier"]): "accent" | "warn" {
+  return tier === "fact" ? "accent" : "warn";
+}
+
+function factTierChipLabel(tier: LearnedContextRow["riskTier"]): string {
+  if (tier === "risk") return "Risk observation";
+  if (tier === "strategy-directive") return "Strategy directive";
+  return "Fact";
+}
+
+function LearnedFactCard({
+  item,
+  busy,
+  onDelete
+}: {
+  item: LearnedContextRow;
+  busy: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="con-card overflow-hidden transition-colors hover:bg-[color:var(--con-surface-2)] focus-within:bg-[color:var(--con-surface-2)]">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-[color:var(--con-line)] px-4 py-3">
+        <Chip tone={factTierChipTone(item.riskTier)} title="How this row was classified when it was recorded.">
+          <Brain size={11} /> {factTierChipLabel(item.riskTier)}
+        </Chip>
+        <span className="min-w-0 break-words text-[length:var(--con-fs-sm)] font-semibold" title="What this row is about.">
+          {item.subject}
+        </span>
+        {item.symbol && (
+          <span className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]" title="The ticker this row is about.">
+            <SymbolButton symbol={item.symbol} showLogo={false} />
+          </span>
+        )}
+        {item.scope === "shared" && (
+          <Chip tone="muted" title="Contributed to the shared pool other opted-in users can read. Deleting it removes it for them too.">
+            Shared
+          </Chip>
+        )}
+        <div className="flex-1" />
+        <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          <Ago iso={item.assertedAt} />
+        </span>
+      </header>
+
+      <div className="flex flex-col gap-2 px-4 py-3">
+        <p className="text-[length:var(--con-fs-sm)] leading-relaxed" title="The learned statement, verbatim.">
+          {item.value}
+        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          <span title="Which part of the system produced this row.">
+            From <span className="text-[color:var(--con-muted)]">{ORIGIN_LABEL[item.origin] ?? item.origin}</span>
+          </span>
+          <span title="What the producer cited as the basis for this row.">
+            Source <span className="text-[color:var(--con-muted)]">{item.source}</span>
+          </span>
+          <span title="The type of learned row: a pattern, a decision, or a fact.">
+            Kind <span className="text-[color:var(--con-muted)]">{item.kind}</span>
+          </span>
+        </div>
+      </div>
+
+      <footer className="flex items-center gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
+        <Btn
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={onDelete}
+          title="Erase this row. The AI stops seeing it immediately; if it was shared, other users lose it too."
+        >
+          Delete
+        </Btn>
+      </footer>
+    </article>
+  );
+}
+
+export function LearnedFactsArchive() {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<LearnedContextRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<LearnedContextRow | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  /** IDs this session has confirmed deleted. A load that started BEFORE a delete can resolve AFTER
+   *  it — filtering these out stops a stale response from resurrecting an already-deleted card. */
+  const resolvedIds = useRef<Set<string>>(new Set());
+
+  const load = useCallback(async () => {
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+    try {
+      const data = await fetchLearnedContext(controller.signal);
+      if (!mounted.current || controller.signal.aborted) return;
+      setItems(data.filter((i) => !resolvedIds.current.has(i.id)));
+      setError(null);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (!mounted.current) return;
+      setError(err instanceof Error ? err.message : "Could not load learned context.");
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      inFlight.current?.abort();
+    };
+  }, []);
+
+  // Only fetch/poll while the archive is expanded — it's secondary to the approval queue above,
+  // so there's no reason to pay the request cost while it's collapsed.
+  useEffect(() => {
+    if (!open) return;
+    void load();
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void load();
+    }, ARCHIVE_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [open, load]);
+
+  const doDelete = async (item: LearnedContextRow) => {
+    setConfirmingDelete(null);
+    setBusyId(item.id);
+    inFlight.current?.abort(); // a load already in flight predates this action — never let it resurrect the row
+    setItems((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev)); // optimistic
+    try {
+      await deleteLearnedContextItem(item.id);
+      resolvedIds.current.add(item.id); // confirmed deleted — stale loads must not resurrect it
+      toast.push("info", `Deleted "${item.subject}"`, "Removed. The AI no longer sees this row.");
+    } catch (err) {
+      toast.push("neg", "Delete failed", err instanceof Error ? err.message : String(err));
+      void load(); // reconcile with the server's truth (restores the card if the delete didn't land)
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const count = items?.length ?? 0;
+
+  return (
+    <section className="mt-2 flex flex-col gap-3" aria-label="Learned context recorded so far">
+      <button
+        type="button"
+        className="flex items-center gap-2 text-[length:var(--con-fs-md)] font-bold"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="Everything the AI has actually recorded — silent facts it never needed to ask about, plus anything you approved above. Read and delete only; nothing here gets re-applied by viewing it."
+      >
+        {open ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
+        What the AI has learned so far
+        {open && count > 0 && <span className="con-num text-[color:var(--con-accent)]">({count})</span>}
+      </button>
+
+      {open && (
+        <>
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+              onClick={() => void load()}
+              aria-label="Refresh learned-context archive"
+              title="Re-check the server for recorded learned context now (it also refreshes automatically while open)."
+            >
+              <RefreshCw size={12} aria-hidden /> Refresh
+            </button>
+          </div>
+
+          {error && (
+            <Card>
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-warn)]">
+                <strong>Couldn&apos;t refresh this list.</strong> {error}{" "}
+                {items && items.length > 0 ? "The list below may be stale." : ""}
+              </p>
+            </Card>
+          )}
+
+          {items === null && !error && (
+            <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-faint)]">Loading learned context…</p>
+          )}
+
+          {items !== null && items.length === 0 && !error && (
+            <Card>
+              <p className="py-4 text-center text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                Nothing recorded yet. As the AI infers facts, patterns, or you approve items above, they&apos;ll show
+                up here.
+              </p>
+            </Card>
+          )}
+
+          {items?.map((item) => (
+            <LearnedFactCard key={item.id} item={item} busy={busyId === item.id} onDelete={() => setConfirmingDelete(item)} />
+          ))}
+
+          {/* Delete is permanent, unlike reject above (which discards a candidate that was never
+              applied) — so it gets the same confirm-before-commit treatment as approve. */}
+          <Sheet
+            open={confirmingDelete !== null}
+            onClose={() => setConfirmingDelete(null)}
+            title={confirmingDelete ? "Delete this learned row?" : undefined}
+          >
+            {confirmingDelete && (
+              <div className="flex flex-col gap-3">
+                <p className="text-[length:var(--con-fs-sm)] leading-relaxed">
+                  <span className="font-semibold">{confirmingDelete.subject}</span>
+                  {confirmingDelete.symbol ? (
+                    <span className="con-mono text-[color:var(--con-muted)]">
+                      {" "}
+                      · <SymbolButton symbol={confirmingDelete.symbol} showLogo={false} />
+                    </span>
+                  ) : null}
+                </p>
+                <p className="text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">
+                  {confirmingDelete.value}
+                </p>
+                <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+                  This is permanent. The AI stops seeing this row immediately
+                  {confirmingDelete.scope === "shared"
+                    ? " — including other users who read it from the shared pool."
+                    : "."}
+                </p>
+                <div className="mt-1 flex items-center justify-end gap-2">
+                  <Btn variant="ghost" onClick={() => setConfirmingDelete(null)} title="Close without deleting anything.">
+                    Cancel
+                  </Btn>
+                  <Btn
+                    variant="primary"
+                    disabled={busyId === confirmingDelete.id}
+                    onClick={() => void doDelete(confirmingDelete)}
+                    title="Erase this row now. This cannot be undone."
+                  >
+                    Delete
+                  </Btn>
+                </div>
+              </div>
+            )}
+          </Sheet>
+        </>
+      )}
     </section>
   );
 }

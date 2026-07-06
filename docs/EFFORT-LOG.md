@@ -249,6 +249,17 @@ to `socratictrade.com`, record the release commit + date here._
   See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
   at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
 
+- **Learned-context UX: copy fix + "learned facts" browse/delete archive** (CLAUDE, worktree
+  `~/apps/trading-claude`, branch `agent/claude`) — **IN PROGRESS 2026-07-06.** Owner spotted awkward
+  empty-state copy on the Learned Context approval queue and asked why the AI doesn't auto-learn and
+  let the user review/delete afterward — it mostly already does (the `fact` tier is silent-passthrough,
+  never queued; only `risk`/`strategy-directive` confirms first, by design). Building both: reworded
+  copy in `app/console/approvals/learned-context.tsx`; new `deleteLearnedContext` in
+  `src/lib/db-learning.ts` + `GET /api/learned-context` + `DELETE /api/learned-context/[id]` + client
+  helpers + a new `LearnedFactsArchive` browse/delete component wired into
+  `app/console/approvals/page.tsx`. New `test/learned-context-delete.test.ts` (7 tests). Verify in
+  progress; will land via `land.sh` and release to production this pass.
+
 - **Guardrails → overridable preferences (denylist)** (MONET risk lane, worktree
   `~/apps/trading-monet`, branch `monet/guardrail-overridable-denylist`) — **PR open**. Owner directive:
   only the account boundary + physical/broker/regulatory/accounting impossibilities stay hard; every other
