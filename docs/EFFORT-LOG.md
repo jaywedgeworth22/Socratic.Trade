@@ -1571,3 +1571,71 @@ Jul 8 18:10 CT)._
 - 2026-07-05 — **UI audit + design-system unification review (CLAUDE, docs/design only; no code landed).** 7-lens expert panel (adversarially verified) over the live UI + decode of the claude.ai/design "Socratic Trade UI Kit". Key facts: app runs TWO disjoint design systems (ui glass-token `app/ui` vs console `con-*` `app/console`); the UI Kit is a faithful hash-tied EXPORT of both (30 leaf primitives, no composites), NOT a redesign. 55 verified findings (1 P0: money-reality LIVE/PAPER banner hardcoded dark-only Tailwind → wrong in default light theme, `app/dashboard-client.tsx:443`). Direction: "two renderers, one brand core" — unify token values + tone vocab (`pos/neg`), keep both render methodologies, defer the L-effort primitive merge; grow the Kit with `con-table` + modal/sheet family first. Deliverables: `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md` + interactive artifact `https://claude.ai/code/artifact/792a356c-79df-4bb1-b413-5979dd67a909`. State: **Completed (analysis/plan deliverable)**; implementation **Planned** — owner to sequence (Phase 0 P0 first). Not deployed (no code).
 
 - 2026-07-06 - **Console de-alarm + optional confirmation + legacy /old removal + Cmd-K + admin hub (CLAUDE).** One PR on `claude/vigorous-lederberg-5b6d55`: removed the real-money banner + "START LIVE" typed ritual; added `policy.requireTypedConfirmation` (Settings -> Advanced action confirmation, default ON; OFF = one-click approve/replace/loosen, enforced server+console+mobile); deleted the legacy `/old` dashboard (~14 exclusive files + 2 dead tests; Strategy Flow dropped, legacy palette replaced by a native Cmd-K palette); added an operator admin hub (/admin) + env-gated admin.socratictrade.com scaffold (ADMIN_HOST + AUTH_COOKIE_DOMAIN); fixed a pre-existing flaky socratic-db ordering test (rowid tiebreakers). Verified: tsc clean, npm test 2642/2642, build green. Rollout: docs/rollouts/2026-07-06-console-de-alarm-confirmation-toggle-legacy-removal-cmdk-admin.md. State: Completed (in PR).
+
+## 2026-07-06 - UI expert-panel backlog: all 55 findings (CLAUDE)
+
+Source: `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md` (7-lens panel, adversarially
+verified). Per owner: EVERY finding is logged. Findings where CLAUDE has no strong opinion on the best fix
+are marked **TBD (owner/design decision)** rather than given a fabricated confident action. Severity in
+brackets; effort S/M/L.
+
+### Resolved by PR #1018 (no further action)
+- [P0][Visual] Money-reality banner hardcoded dark-only -> DONE: banner removed entirely (real money = normal, no banner).
+- [P1][UX] Command palette never wired into console -> DONE: native Cmd+K palette added.
+- [P3][FE] app/old second dashboard -> DONE: deleted (redirects to /console).
+- [P2][A11y] ConfirmationModal typed-gate aria-live -> MOOT: ConfirmationModal deleted with the legacy dashboard.
+- [P2][A11y] Framer overlays ignore prefers-reduced-motion -> MOSTLY MOOT: those app/ui overlays deleted; the new console Cmd+K palette uses reduced-motion-safe CSS.
+- [P2][DS] Duplicated symbol-drilldown/ticker-logo drifted forks -> RESOLVED: app/ui copies deleted; only console/ui versions remain.
+- [P3][FE] ticker-logo monogram duplication -> RESOLVED (same deletion).
+- [P2][Visual] dashboard-client type-scale bracket drift -> MOOT: dashboard-client.tsx deleted.
+- [P2][Visual] dashboard-client backdrop-blur vs elev-* -> MOOT: dashboard-client.tsx deleted (apply elev-* discipline to remaining app/ui data surfaces if any).
+
+### Action - clear recommendation (Planned)
+- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons.
+- [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers.
+- [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header.
+- [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons.
+- [P1][UX][S] Decision-trace back always returns to /console -> router.back() guarded, fallback to Journal.
+- [P1][UX][S] Scan has no add-to-watchlist -> per-row Watch button -> POST /api/watchlist (or ?add=SYMBOL prefill).
+- [P1][Visual][S] Capability badges 9-hue rainbow -> collapse to --info chips (+icons), --warn only for OAuth-needed.
+- [P2][DS][S] pos/neg vs up/down tone vocab -> standardize on pos/neg across both systems (keystone unification).
+- [P2][DS][S] Console lacks Segmented primitive -> port a console Segmented; refactor policy-form to use it.
+- [P2][DS][S] Radius scales unmapped -> agree one card-corner + one control-corner value both systems reference.
+- [P2][DS][M] Primitive parity gaps -> build a parity matrix; port IconButton + RawNumInput both ways.
+- [P2][A11y][S] Console Sheet has no accessible name -> useId heading id + aria-labelledby.
+- [P2][Mobile][M] Wide tables no mobile layout -> lg:hidden card-list per row for Scan/Orders/Positions.
+- [P2][Mobile][S] apple-touch-icon SVG-only -> add 180x180 + 192/512 PNG icons.
+- [P2][Mobile][S] FreshnessStrip behind tab bar -> surface daily-spend + data-as-of in sticky top chrome on mobile.
+- [P2][Mobile][S] Mobile "More" flat list -> group into Monitor/Configure/Review clusters.
+- [P2][Data][S] Equity chart exaggerates flat moves -> minimum +/-0.5% Y-span.
+- [P2][Data][M] Guardrails caps show no utilization -> inline deriveRiskUtilization meter/sub-label per row.
+- [P2][Data][S] Meter caps at 100%, hides breach -> hatched breach fill + "+$X over" when value>max.
+- [P2][Data][S] Orders last-price staleness only on hover -> persistent "scan Nm ago" age suffix.
+- [P2][UX][S] Bulk-reject no confirm -> one-click inline confirm (NO typed phrase; philosophy-aligned).
+- [P2][UX][S] Nav noun collision Decisions vs /decisions/[id] -> rename to resolve the clash, keep branded names.
+- [P2][FE][M] page.tsx/strategy monoliths -> extract pure derive* into lib/derive.ts + presentational sub-components.
+- [P2][FE][S] Repeated !snapshot guards -> narrowed useConsoleSnapshot() hook for top-level pages.
+- [P2][Visual][M] Marketing pages text-only -> add a console decision-trace mock (welcome) + loop diagram (how-it-works).
+- [P3][DS][S] ui Switch lacks disabled -> add disabled to Switch.
+- [P3][FE][S] Console 3 tone->token maps -> one exported TONE_VAR map.
+- [P3][UX][S] Approvals header vs nav badge disagree -> show learned-context count in the header + jump anchor.
+- [P3][UX][M] Guardrails framing inconsistent -> give equally-consequential settings the same one-sentence note.
+- [P3][Mobile][S] Mobile no offline handling -> navigator.onLine offline banner.
+- [P3][Data][S] No short-P&L sign test -> add the unit test.
+- [P3][Data][S] Allocation no concentration cue -> warn/neg tint on segments over maxSymbolExposurePct.
+- [P3][UX][S] Scan tab switcher no ARIA -> role=tablist/tab/tabpanel + aria-selected.
+- [P3][Visual][S] Login border-border undefined class -> border-line; Apple button -> bg-fg text-bg tokens.
+- [P3][Visual][S] Thesis-hero gradient wash -> drop it / reduce to a 3px accent left-rule (flat surface for reasoning text).
+
+### TBD - no strong CLAUDE opinion; owner/design decision
+- [P1][DS][S] Brand accent green vs teal: the MECHANISM is clear (both derive from one --brand-accent), but the HUE is an owner brand call. TBD (lean: green, the documented brand color).
+- [P1][Visual][M] Fourth palette at /design/socratic-trade: delete vs rebuild-on-tokens. TBD (is that showcase route wanted? lean: delete).
+- [P2][DS][M] Dark-mode dual mechanism (.dark vs data-theme) can desync: consistency nicety, unclear ROI (each renders fine alone). TBD.
+- [P2][DS][L] console.css -> @theme migration (full token/utility unification): large epic; design direction recommends DEFER. TBD (scope as its own project or drop).
+- [P2][FE][L] app/ui vs console/ui full primitive merge: out of scope per console's own charter. TBD (share a headless pos/neg Tone vocab; defer the merge).
+- [P2][Mobile][S] Mobile primary-3 tabs chosen by array index: which 3 to prioritize is a usage/product judgment. TBD (owner: which 3?).
+- [P2][Data][M] Scan "Vol" column blended semantics: fix depends on whether the enrichment layer carries a per-row semantic flag (unverified). TBD (needs data-layer check first).
+- [P2][UX][S] No manual/discretionary order-entry path: is manual trading in scope? TBD (owner). If not, add a note that orders originate from approved proposals only.
+- [P3][FE][M] Zero React.memo/useMemo perf: "low priority given small data volumes" per the finding. TBD (defer unless refresh-flicker appears).
+- [P3][FE][S] useConsoleData unconditional abort of in-flight refresh: TBD (defer unless refresh-storm symptoms appear).
+- [P3][Data][S] Partial/stale/status spread across 3 order columns: optional; row already highlights when stale. TBD (low value).
