@@ -182,20 +182,50 @@ As of 2026-07-04.
 ## 🚧 In Progress
 
 - **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
-  PROGRESS 2026-07-07, gates green, adversarial review → land.** Owner-directed after prod forensics
-  on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout — no
-  silent `medium→high` reasoning upgrade (fast/opt-in thinking + UI shows true effort) and a
-  reasoning-class-aware env-tunable timeout (150s) on the Green/Bear calls, no fallback model; (2) MU
-  exit deadlock — protective Risk-Exits route as MARKET (`coerceProtectiveExitToMarket`) +
-  `autoRemediateStaleExitOrders` cancel-replaces a stale EXIT limit at the 15m tick (exits only,
-  defers to human on live typed-confirm, `policy.autoRemediateStaleExits` default on); (3) per-trade
-  stops — `atrStops`/`betaScaledStops` default ON, Bull/Bear schemas expose
-  `bracketStopLoss`/`bracketTakeProfit` + prompt, `enrichOpeningProposal` validates + per-symbol
-  fallback (ATR>beta>flat); (4) removed the historic `ALLOW_LIVE_TRADING` opt-in gate (now opt-out
-  escape hatch — live trades on its environment) + notification retry on transient failures. Verify:
-  tsc 0 / lint 0 / 2885 tests / build. Deferred: per-symbol synthetic *trailing* stop. See
+  PROGRESS 2026-07-07, gates green + adversarial review done, landing.** Owner-directed after prod
+  forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout
+  — no silent `medium→high` reasoning upgrade (fast/opt-in thinking + UI shows true effort), a
+  reasoning-class-aware env-tunable timeout (150s) on the Green/Bear calls (no fallback model), PLUS
+  latency capture: `llmFetchCapturing` soft timeout never severs a paid reply — every call audits
+  `llm_call_latency` and a late reply is drained into `llm_late_response` (snippet + usage + duration)
+  for debug; (2) MU exit deadlock — protective Risk-Exits route as MARKET
+  (`coerceProtectiveExitToMarket`) + `autoRemediateStaleExitOrders` cancel-replaces a stale EXIT limit
+  at the 15m tick (exits only, defers to human on live typed-confirm, `policy.autoRemediateStaleExits`
+  default on) + double-sell guard (in-flight set + 5-min per-order cooldown; adversarial-review HIGH
+  finding, fixed + tested); (3) per-trade stops — `atrStops`/`betaScaledStops` default ON, Bull/Bear
+  schemas expose `bracketStopLoss`/`bracketTakeProfit` + prompt, `enrichOpeningProposal` validates +
+  per-symbol fallback (ATR>beta>flat); (4) removed the historic `ALLOW_LIVE_TRADING` opt-in gate (now
+  opt-out escape hatch — live trades on its environment) + notification retry on transient failures.
+  Verify: tsc 0 / lint 0 / 2888 tests / build. Deferred: per-symbol synthetic *trailing* stop. See
   `docs/rollouts/2026-07-07-strategy-exec-stops-llm-fixes.md`.
 
+- **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
+  `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
+  `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row
+  moves to Completed on merge).** Executed the deferred operational follow-up from CLAUDE's #1019:
+  `scripts/backfill-asof-epoch.ts` vs the shared default Pinecone index, operator ("local") key —
+  dry-run → real run → idempotency re-run. Counts: 341 scanned / **309 updated** / 32 already
+  epoch'd (post-#1019 ingests) / **0 undated / 0 errors**; re-run = 341/341 skippedHasEpoch,
+  0 updated. Corpus fully epoch-stamped: `VECTOR_ASOF_SERVER_FILTER=on` is now safe AND effective;
+  `VECTOR_ASOF_STRICT=on` would currently drop nothing (no undated vectors). NOT done here (owner
+  prod step): flipping either flag — both remain default OFF. See
+  `docs/rollouts/2026-07-07-asof-epoch-backfill-run.md`.
+
+- **Per-account/broker LLM usage attribution (MONET, worktree `~/apps/trading-monet-llmusage`, branch
+  `monet/llm-usage-per-account`) — IN PROGRESS 2026-07-07, PR pending via land.sh.** Owner-requested:
+  make LLM usage/cost filterable + trackable per connected account/broker. Migration 14
+  (`llm_usage_connected_account`) adds nullable `connected_account_id` via a versioned ALTER (never the
+  baseline CREATE TABLE — respects the 2026-07-02 boot-crash scar); `recordLlmUsage` takes an optional
+  `connectedAccountId`; `getLlmUsageSummary` LEFT-JOINs `connected_accounts` for broker/environment/label
+  + adds `connectedAccountId`/`broker` filters; threaded into the 4 account-context call sites
+  (post-mortem, outcome-postmortem, proposal-revalidation, strategy-tuning) via `policy.connectedAccountId`;
+  `/api/llm-usage` + `/api/admin/llm-usage` accept `accountId`/`broker`; shared usage UI splits per account
+  + adds a filter + account badge ("Unattributed" for account-less rows). LOCAL only (external
+  usage-monitor push untouched); budget enforcement UNCHANGED (global-vs-per-account cap deferred as an
+  owner cost-policy decision). DEFERRED: `strategy`/`strategy-bear`/`red-team` attribution (CLAUDE-Cowork
+  keepout) — one-liner each once its single-adversary consolidation lands; flagged on #agent-sync. Gate
+  green (tsc 0 / 2875 tests + 4 new / build ok / lint 0-err). See
+  `docs/rollouts/2026-07-07-llm-usage-per-account.md`.
 - **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
   intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)
@@ -724,21 +754,22 @@ As of 2026-07-04.
   contained; table now scrolls inside its card). See
   `docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
 - **Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane** (CLAUDE cloud,
-  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-06.**
-  Self-hosted Coolify (open-source PaaS) stood up on a Hetzner CX23 behind `jays.services` to
-  offload local agent/dev-server resource usage from the owner's 16GB M5 MacBook Air. API
-  token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
-  created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
-  corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
-  (port 4103 [corrected from an earlier 4104 typo in this row — owner confirmed 2026-07-06 "Monet
-  should be 4104 since cursor is 4103"; AGENTS.md's fleet table is the corrected source of truth],
-  `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
-  create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
-  agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
-  onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
-  box) — production needs real secrets transfer, DB migration/cutover plan, and Coolify
-  Backups enabled (unlike the preview apps). See
-  `docs/rollouts/2026-07-06-coolify-migration.md`.
+  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-07 (4/6
+  lanes live).** Self-hosted Coolify (open-source PaaS) on a Hetzner CX23 (4 GB) behind
+  `jays.services`, offloading local agent/dev-server load from the owner's 16 GB M5 MBA. Doc
+  correction landed via PR #878 (Cursor = full peer lane; `agent/antigravity`/`agent/cursor`
+  created; ports cursor=4103/monet=4104). Six preview apps created (GitHub-App source, nixpacks,
+  :3000, `http://<host>`). **Deployed + running (4):** `main`→`trading.jays.services`
+  (integration), `agent/claude`→`claude.`, `agent/cursor`→`cursor.`, `agent/antigravity`→
+  `antigravity.` — all `✓ Ready` on :3000. **Parked (2):** `agent/codex` (ancient snapshot) +
+  `agent/monet` (401 on private GitHub-Packages `congress-trading-shared@^1.2.0`, predates the
+  #444 public-git-tag switch) — owner decision: leave for Codex/Monet to merge-forward, do NOT
+  reset. **Incident:** 2 concurrent `next build`s OOM-wedged the 4 GB box (console reboot
+  needed); fixed by pinning `concurrent_builds=1`. New scheme: `trading.jays.services`=
+  integration (retire `trading-beta`), `socratictrade.com`=prod-only. **Next (owner):** repoint
+  Cloudflare Tunnel routes to `http://91.98.44.8:80`; then final URL verification. Production
+  colocation reassessment pending (the wedge is evidence for the noisy-neighbor risk). See
+  `docs/rollouts/2026-07-07-coolify-lane-deploys.md` (+ `2026-07-06-coolify-migration.md`).
 
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
