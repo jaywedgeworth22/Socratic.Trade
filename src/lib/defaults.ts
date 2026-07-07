@@ -56,6 +56,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // broadened to other indexes / the wider screener. Tunable in settings.
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
+  // Typed confirmation for high-impact live actions is ON by default; the owner can switch it off in
+  // Settings → Advanced action confirmation (an adjustable preference, not a hard gate).
+  requireTypedConfirmation: true,
   socraticOverrideMode: "execute",
   socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
