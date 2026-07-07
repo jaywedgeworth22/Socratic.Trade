@@ -14,6 +14,7 @@ type Model = {
   M: number;
   candleAt: (j: number, t: number, L: Layout) => Geo;
   layout: (vw: number, vh: number) => Layout;
+  LIFT: number; // when the first candle breaks off the chart and starts moving up
   END: number;
 };
 type Layout = {
@@ -91,6 +92,10 @@ function buildModel(): Model {
   // persistent HeaderLogo owns the forever-tick, so the overlay hands off at once
   // instead of holding and double-drawing the wordmark.
   const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 0.2;
+  // LIFT: the earliest candle breakaway — the moment candles start moving up. The
+  // solid backdrop holds until here, then dissolves so the console reveals behind
+  // the rising candles.
+  const LIFT = Math.min(...BL);
 
   // Header ticker units — the shared green-biased walk from candle-ticker.ts, so the
   // splash's final ticker and the persistent HeaderLogo march through the identical
@@ -162,7 +167,7 @@ function buildModel(): Model {
     if (t < T4) waveRipple(s, t, L); else headerTick(s, j, t);
     return s;
   };
-  return { M, candleAt, layout, END };
+  return { M, candleAt, layout, LIFT, END };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -175,6 +180,7 @@ export function ConsoleIntro() {
   const [hidden, setHidden] = useState(introDone);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const bgRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (introDone) return;
@@ -185,7 +191,7 @@ export function ConsoleIntro() {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (sessionShown || reduce) { hide(); return; }
 
-    const canvas = canvasRef.current, wrap = wrapRef.current;
+    const canvas = canvasRef.current, wrap = wrapRef.current, bg = bgRef.current;
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) { hide(); return; }
@@ -220,9 +226,13 @@ export function ConsoleIntro() {
     wrap.addEventListener("click", skip);
     window.addEventListener("keydown", onKey);
 
+    let dissolved = false;
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
       const t = (now - introStart) / 1000;
+      // Solid backdrop holds until the first candle lifts off, then dissolves so the
+      // console/page reveals behind the rising candles (the canvas stays opaque).
+      if (!dissolved && t >= model.LIFT) { dissolved = true; if (bg) bg.style.opacity = "0"; }
       if (!headerBox) measureHeader();      // the top bar may mount after the intro starts
       if (headerBox) L.header = headerBox;  // land the shrinking candles on the real logo box
       ctx.clearRect(0, 0, VW, VH);
@@ -247,7 +257,10 @@ export function ConsoleIntro() {
       aria-hidden
       style={{ position: "fixed", inset: 0, zIndex: 200, background: "transparent", transition: "opacity .7s ease", cursor: "pointer" }}
     >
-      <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
+      {/* Solid theme backdrop that covers the page until the candles lift off, then
+          dissolves (opacity → 0) to reveal the console behind the rising candles. */}
+      <div ref={bgRef} style={{ position: "absolute", inset: 0, background: "var(--con-bg)", transition: "opacity .9s ease" }} />
+      <canvas ref={canvasRef} style={{ position: "relative", display: "block", width: "100%", height: "100%" }} />
     </div>
   );
 }
