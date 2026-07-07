@@ -12,6 +12,15 @@ const CANCEL_SETTLE_MS = 750;
 const MARKET_REPLACE_TYPES = new Set(["limit", "stop_limit"]);
 const POST_CANCEL_ACTIVE_STATES = new Set(["done_for_day", "stopped", "calculated"]);
 
+// Per-order cooldown for auto-remediation: once a stale EXIT limit is cancel-replaced, do not remediate
+// the SAME order again for this long. A slow broker can keep listing the just-cancelled order as
+// "working" past the next 60s tick; without this a second market sell would fire for the same shares
+// (double-sell / accidental short). globalThis-hosted so Next.js HMR module duplication can't split it.
+const REMEDIATION_COOLDOWN_MS = 5 * 60_000;
+const remediationHost = globalThis as unknown as { __recentlyRemediatedExits?: Map<string, number> };
+const recentlyRemediatedExits: Map<string, number> =
+  remediationHost.__recentlyRemediatedExits ?? (remediationHost.__recentlyRemediatedExits = new Map<string, number>());
+
 export interface MarketReplaceConfirmation {
   orderId?: string | null;
   accountNumber?: string | null;
@@ -236,6 +245,10 @@ export async function autoRemediateStaleExitOrders(input: {
   if (!executionState.submitsBrokerOrders || !executionState.mode) return out;
   const liveNeedsHuman = executionState.mode === "broker/live" && input.policy.requireTypedConfirmation !== false;
 
+  const nowMs = (input.now ?? new Date()).getTime();
+  // Prune expired cooldown markers so the map can't grow unbounded.
+  for (const [k, t] of recentlyRemediatedExits) if (nowMs - t > REMEDIATION_COOLDOWN_MS) recentlyRemediatedExits.delete(k);
+
   const orders = input.orders ?? (await input.gateway.getEquityOrders(input.policy.accountNumber));
   const stale = listStaleLimitOrders(orders, input.policy, input.now ?? new Date());
 
@@ -253,6 +266,21 @@ export async function autoRemediateStaleExitOrders(input: {
       );
       continue;
     }
+    // Double-sell guard: skip an order we already cancel-replaced within the cooldown — a slow broker
+    // may still list the just-cancelled order as working, and a second market sell for the same shares
+    // would flip the position short / be rejected.
+    const remKey = `${input.policy.accountNumber}:${item.order.id}`;
+    const lastAttempt = recentlyRemediatedExits.get(remKey);
+    if (lastAttempt != null && nowMs - lastAttempt < REMEDIATION_COOLDOWN_MS) {
+      audit(
+        "stale_exit_auto_remediation_skipped_cooldown",
+        { orderId: item.order.id, symbol, side, sinceMs: nowMs - lastAttempt },
+        userId,
+        input.policy.connectedAccountId
+      );
+      continue;
+    }
+    recentlyRemediatedExits.set(remKey, nowMs); // mark BEFORE the attempt — favor no-double-sell over a fast retry
     out.attempted++;
     try {
       const result = await replaceStaleLimitOrderWithMarket({

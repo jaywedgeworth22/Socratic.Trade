@@ -174,6 +174,24 @@ describe("autoRemediateStaleExitOrders — MU deadlock backstop", () => {
     expect(out).toMatchObject({ attempted: 0, remediated: 0, deferred: 0 });
     expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
   });
+
+  it("does NOT remediate the same stale EXIT twice within the cooldown (double-sell guard)", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const staleSell = order({ id: "sell-cooldown", side: "sell", quantity: 5, filledQuantity: 0, state: "accepted", createdAt: "2026-01-01T00:00:00.000Z" });
+    const canceled = order({ id: "sell-cooldown", side: "sell", quantity: 5, filledQuantity: 0, state: "canceled" });
+    const gateway = gatewayMock({ orders: [[staleSell], [canceled]], execution: { orderId: "mkt-cd", refId: "r", state: "accepted", raw: {} } });
+
+    // First pass cancel-replaces once.
+    const first = await autoRemediateStaleExitOrders({ userId: "local", policy: paperPolicy(), activeAccount: account("paper"), gateway, orders: [staleSell] });
+    expect(first).toMatchObject({ attempted: 1, remediated: 1 });
+    expect(gateway.placeEquityOrder).toHaveBeenCalledTimes(1);
+
+    // The broker is slow to reflect the cancel, so the order still appears working on the next tick.
+    // The cooldown must SKIP it — no second market sell for the same shares (the Finding-1 double-sell).
+    const second = await autoRemediateStaleExitOrders({ userId: "local", policy: paperPolicy(), activeAccount: account("paper"), gateway, orders: [staleSell] });
+    expect(second).toMatchObject({ attempted: 0, remediated: 0 });
+    expect(gateway.placeEquityOrder).toHaveBeenCalledTimes(1); // still exactly one
+  });
 });
 
 function paperPolicy() {
