@@ -11,7 +11,7 @@ import { dedupeSimilar } from "./rag/dedupe-similar";
 import { getCachedQueryEmbedding, setCachedQueryEmbedding } from "./rag/query-embed-cache";
 import { recordRagOperation, shouldDegradeForBudget } from "./rag/run-budget";
 import { getRagUsageSummary, hashQuery, meterEmbed, meterPineconeQuery, meterPineconeUpsert, meterRerank, recordRetrievalQuality, retrievalTelemetryEnabled } from "./rag-metering";
-import { candidatePoolPersistEnabled, recordCandidatePool } from "./rag/candidate-pool";
+import { candidatePoolPersistEnabled, recordCandidatePool, candidatePoolFullPersistEnabled, recordCandidatePoolFull, type CandidateDisposition } from "./rag/candidate-pool";
 import { isOverLlmBudget } from "./llm-budget";
 import { sendNotification } from "./notifications";
 import { notify } from "./notify";
@@ -1957,6 +1957,12 @@ export async function retrieveContextDetailed(
     const wantDefaultFloors = Boolean(options?.applyDefaultFloors) || envFlagOn("RAG_APPLY_DEFAULT_FLOORS", false);
     const effectiveMinScore = options?.minScore ?? (wantDefaultFloors ? defaultMinScore() : undefined);
 
+    // persist-pool-v2 (2026-07-06): the flag check happens BEFORE any work (no hook is even
+    // constructed when off), mirroring v1's "no-op, not a suppressed write" posture — off means
+    // `rankPool` gets no `onDispositions` at all, so it runs its exact pre-v2 pure-function path.
+    const wantFullPool = candidatePoolFullPersistEnabled();
+    let capturedDispositions: Map<string, CandidateDisposition> | undefined;
+
     // Pipeline: cosine recall → score floor → point-in-time guard → hybrid fuse → cross-encoder
     // rerank → post-rerank floor → top-limit. Factored into the pure `rankPool` helper (R4,
     // 2026-07-01 expert-review follow-up) so a network-free regression test can drive the exact
@@ -1969,7 +1975,8 @@ export async function retrieveContextDetailed(
       rerank: wantRerank ? (q, m, k) => rerankMatches(voyage, q, m, k, userId, voyageSource) : undefined,
       strictAsOf: asOfStrictEnabled(),
       dedupeSimilarity: options?.dedupeSimilarity,
-      userId
+      userId,
+      onDispositions: wantFullPool ? (d) => { capturedDispositions = d; } : undefined
     });
     const finalSlice = ordered.slice(0, limit);
     // persist-candidate-pool (2026-07-06): capture the FULL post-recall/post-dedupe candidate pool
@@ -2023,6 +2030,84 @@ export async function retrieveContextDetailed(
               ...(typeof md.doc_type === "string" ? { docType: md.doc_type } : {}),
               ...(asOfStamp != null ? { asOf: String(asOfStamp) } : {}),
               used: finalSliceKeySet.has(key)
+            };
+          })
+        },
+        userId
+      );
+    }
+
+    // persist-pool-v2 (2026-07-06): capture the PRE-`rankPool` `matches` pool (raw Pinecone
+    // recall, or the #822 fused pool when multi-query fan-out ran — either way, ONE record for the
+    // whole call, matching v1's "one record per retrieveContextDetailed call" contract) together
+    // with the per-candidate DISPOSITION `rankPool` computed via `onDispositions` above. This is
+    // what actually answers "why did we drop this candidate": v1 only ever sees `ordered` (post
+    // floor/asOf/hybrid/rerank/dedupe), so a minScore/asOf/dedupe/rerank-truncate drop is invisible
+    // to it; here every candidate in `matches` gets exactly one disposition, including the ones v1
+    // can never show. Flag-gated by a DISTINCT flag (RAG_PERSIST_CANDIDATE_POOL_FULL, checked via
+    // `wantFullPool` above BEFORE `rankPool` even runs) so v1/v2 toggle independently; `wantFullPool`
+    // false means `capturedDispositions` stays undefined and this block is a pure no-op.
+    if (wantFullPool && capturedDispositions) {
+      const dispositions = capturedDispositions;
+      // Same id-less collision hardening as v1 (and the same key scheme `rankPool` uses
+      // internally via its own `resolveKey`): a match's real Pinecone `id` when non-empty, else a
+      // synthetic `__cand_<index>__` key scoped to THIS `matches` array's own indices — the exact
+      // key space `rankPool`'s `dispositions` map is keyed in, since it was built from this same
+      // `matches` array.
+      const matchKeys = matches.map((m, i) => (typeof m?.id === "string" && m.id.length > 0 ? m.id : `__cand_${i}__`));
+      // Real-id final-slice membership: straightforward id-set test (a finalSlice entry may be a
+      // rerank-produced copy — new object reference, same `id` FIELD — so this must be an id
+      // comparison, not `===`).
+      const finalSliceRealIds = new Set(
+        finalSlice.filter((m) => typeof m?.id === "string" && m.id.length > 0).map((m) => m.id as string)
+      );
+      // Id-less final-slice membership: an id-less match is never copied by rerank without also
+      // losing its "no id" status (rerank only ever ADDS `_rerankScore` via a spread, it can't
+      // invent an id), and `fuseHybrid`/`dedupeSimilar` both preserve object identity — so an
+      // id-less `finalSlice` entry is always `===` one of the original id-less `matches` entries.
+      const finalSliceIdentitySet = new Set(finalSlice.filter((m) => !(typeof m?.id === "string" && m.id.length > 0)));
+      // `rerankMatches` (when it ran) returns NEW spread objects carrying `_rerankScore` — the
+      // ORIGINAL `matches` entry never has that field. Recover it from `ordered` (rankPool's
+      // return value, which IS the post-rerank pool) via the same real-id / identity split used
+      // for final-slice membership above, so a candidate that survived to be reranked reports its
+      // real relevanceScore instead of silently omitting it.
+      const rerankScoreByRealId = new Map<string, number>();
+      const rerankScoreByIdentity = new Map<any, number>();
+      for (const m of ordered) {
+        const s = (m as { _rerankScore?: unknown } | undefined)?._rerankScore;
+        if (typeof s !== "number") continue;
+        if (typeof m?.id === "string" && m.id.length > 0) rerankScoreByRealId.set(m.id, s);
+        else rerankScoreByIdentity.set(m, s);
+      }
+      // `used` is a strictly finer-grained disposition than `kept_not_used`: rankPool can only ever
+      // report a survivor as `kept_not_used` (it doesn't know the caller's final top-`limit`
+      // slice) — upgrade the ones actually present in `finalSlice` here, mirroring v1's
+      // `finalSliceKeySet` upgrade logic but against the PRE-rankPool `matches` pool.
+      recordCandidatePoolFull(
+        {
+          runId: options?.runId,
+          symbol,
+          queryHash: hashQuery(query),
+          asOf: options?.asOf,
+          candidates: matches.map((m, i) => {
+            const md = (m?.metadata ?? {}) as Record<string, unknown>;
+            const asOfStamp = md.acceptance_datetime ?? md.as_of ?? md.timestamp;
+            const key = matchKeys[i]!;
+            const id = String(m?.id ?? "");
+            const hasRealId = typeof m?.id === "string" && m.id.length > 0;
+            const inFinalSlice = hasRealId ? finalSliceRealIds.has(m.id) : finalSliceIdentitySet.has(m);
+            const rerankScore = hasRealId ? rerankScoreByRealId.get(m.id) : rerankScoreByIdentity.get(m);
+            const stageDisposition = dispositions.get(key);
+            const disposition: CandidateDisposition = stageDisposition === "kept_not_used" && inFinalSlice
+              ? "used"
+              : (stageDisposition ?? "kept_not_used");
+            return {
+              id,
+              score: typeof m?.score === "number" ? m.score : undefined,
+              ...(typeof rerankScore === "number" ? { relevanceScore: rerankScore } : {}),
+              ...(typeof md.doc_type === "string" ? { docType: md.doc_type } : {}),
+              ...(asOfStamp != null ? { asOf: String(asOfStamp) } : {}),
+              disposition
             };
           })
         },
@@ -2110,6 +2195,22 @@ export interface RankPoolOptions {
    * back-filled from later candidates. Omitted (undefined) = current behavior, no dedup pass.
    */
   dedupeSimilarity?: number;
+  /**
+   * persist-pool-v2 (2026-07-06): OPTIONAL per-candidate disposition capture hook. When supplied,
+   * `rankPool` tracks every input candidate through each filtering stage (minScore -> asOf ->
+   * rerank-truncate -> post-rerank floor -> dedupe) and invokes this callback exactly once with a
+   * `Map` from a stable per-candidate key (the match's real Pinecone `id`, or a synthetic
+   * `__cand_<inputIndex>__` key when the id is empty/missing — same id-less collision hardening
+   * `retrieveContextDetailed`'s v1 capture already uses) to its `CandidateDisposition`. Every
+   * candidate present in the original `matches` input gets exactly one entry; candidates that
+   * survive every stage are recorded as `kept_not_used` here (the caller, which alone knows the
+   * final top-`limit` slice, upgrades the ones actually used to `used`).
+   *
+   * Omitted (the default for every existing call site): zero extra work — no map allocation, no
+   * key computation, no extra pass over the pool. `rankPool` remains a pure function with
+   * byte-identical behavior/return value whether or not this option existed.
+   */
+  onDispositions?: (dispositions: Map<string, CandidateDisposition>) => void;
 }
 
 /**
@@ -2131,11 +2232,60 @@ export async function rankPool(
   options: RankPoolOptions = {}
 ): Promise<any[]> {
   const candidates = matches.length;
+
+  // persist-pool-v2 (2026-07-06): disposition tracking is entirely opt-in via `onDispositions`.
+  // When absent (every existing call site), none of this block's code runs — `trackDrop`/
+  // `keyFor` are never called, no Map is allocated — so `rankPool` is byte-identical in behavior
+  // and cost to its pre-v2 form. Keys mirror the id-less collision hardening the v1 capture site
+  // in `retrieveContextDetailed` already uses: a match's real Pinecone `id` when non-empty,
+  // else a synthetic `__cand_<originalInputIndex>__` key scoped to the ORIGINAL `matches` array
+  // position (stable across every filtering stage, unlike a re-computed post-filter index).
+  const wantDispositions = typeof options.onDispositions === "function";
+  const keyFor = (match: any, originalIndex: number): string =>
+    typeof match?.id === "string" && match.id.length > 0 ? match.id : `__cand_${originalIndex}__`;
+  // Two lookup tables, both built once up front (only when a hook is supplied): object identity
+  // -> key, for matches that still carry their ORIGINAL object reference (true through minScore/
+  // asOf filtering and `fuseHybrid`'s reordering, which reuses the same objects — see
+  // `fuseHybrid`'s `idToMatch.get(id)` returning `matches[i]` directly, never a copy); and real-id
+  // -> key, for post-rerank objects, since `rerankMatches` returns NEW spread objects
+  // (`{ ...matches[idx], _rerankScore }`) that keep the same `id` FIELD value but are no longer
+  // `===` their pre-rerank counterpart. An id-less match can never reach `ordered` as a "new
+  // object" surviving rerank without its id (rerank only adds `_rerankScore`, never invents an
+  // id), so the identity map alone is sufficient for anything rerank did NOT reorder-copy, and the
+  // id map recovers the rest.
+  const keyByIdentity = new Map<any, string>();
+  const keyByRealId = new Map<string, string>();
+  if (wantDispositions) {
+    matches.forEach((m, i) => {
+      const key = keyFor(m, i);
+      keyByIdentity.set(m, key);
+      if (typeof m?.id === "string" && m.id.length > 0) keyByRealId.set(m.id, key);
+    });
+  }
+  const resolveKey = (match: any): string => {
+    const byIdentity = keyByIdentity.get(match);
+    if (byIdentity) return byIdentity;
+    const byId = typeof match?.id === "string" && match.id.length > 0 ? keyByRealId.get(match.id) : undefined;
+    // Should be unreachable for any candidate that originated in `matches`, but fail safe rather
+    // than throw: fall back to the id itself (still stable/unique in practice) if somehow neither
+    // lookup hits.
+    return byId ?? String(match?.id ?? "");
+  };
+  const dispositions = wantDispositions ? new Map<string, CandidateDisposition>() : undefined;
+  const trackDrop = (match: any, disposition: CandidateDisposition) => {
+    if (!dispositions) return;
+    dispositions.set(resolveKey(match), disposition);
+  };
+
   let pool = matches;
   let droppedByMinScore = 0;
   if (options.minScore != null) {
     const before = pool.length;
-    pool = pool.filter((match) => (typeof match?.score === "number" ? match.score : 0) >= options.minScore!);
+    pool = pool.filter((match) => {
+      const kept = (typeof match?.score === "number" ? match.score : 0) >= options.minScore!;
+      if (!kept) trackDrop(match, "dropped_minscore");
+      return kept;
+    });
     droppedByMinScore = before - pool.length;
   }
   let droppedByAsOf = 0;
@@ -2146,7 +2296,10 @@ export async function rankPool(
     pool = pool.filter((match) => {
       const md = match?.metadata as Record<string, unknown> | undefined;
       const kept = isWithinAsOf(md, options.asOf, strict);
-      if (!kept && strict && resolveAsOfStamp(md) == null) droppedUndated++;
+      if (!kept) {
+        if (strict && resolveAsOfStamp(md) == null) droppedUndated++;
+        trackDrop(match, "dropped_asof");
+      }
       return kept;
     });
     droppedByAsOf = before - pool.length;
@@ -2164,10 +2317,21 @@ export async function rankPool(
   }
   // Hybrid BM25 fusion (flag-gated): reorder the candidate pool by RRF(dense, BM25) before
   // cross-encoder rerank. Falls back to dense order when off or on error. Does not change
-  // overFetchK or the Pinecone query — purely a post-retrieval reordering step.
+  // overFetchK or the Pinecone query — purely a post-retrieval reordering step. Never drops.
   const fusedPool = options.hybrid && pool.length > 1 ? fuseHybrid(query, pool) : pool;
   const rerankRan = Boolean(options.rerank) && fusedPool.length > limit;
   const ordered = rerankRan ? await options.rerank!(query, fusedPool, limit) : fusedPool;
+  if (wantDispositions && rerankRan) {
+    // Voyage's rerank call is itself invoked with `topK: Math.min(limit, fusedPool.length)`
+    // (see `rerankMatches`), so any candidate in `fusedPool` that did NOT come back in `ordered`
+    // was truncated by that top-K cut, not by a relevance-floor comparison (the floor runs next,
+    // against `ordered` only). Compare by `resolveKey` (not `===`) since `rerankMatches` returns
+    // NEW spread objects for reordered items — see the identity/real-id lookup note above.
+    const orderedKeys = new Set(ordered.map((m: any) => resolveKey(m)));
+    for (const match of fusedPool) {
+      if (!orderedKeys.has(resolveKey(match))) trackDrop(match, "dropped_rerank_truncate");
+    }
+  }
   // Post-rerank relevance floor (opt-in via minRelevanceScore), applied AFTER rerank but BEFORE the
   // final slice-to-limit — matches carrying no relevanceScore (rerank off/failed/didn't return one
   // for this item) are FAIL-OPEN kept, never treated as a 0: a transient Voyage 429 (which makes
@@ -2177,7 +2341,9 @@ export async function rankPool(
   const floored = options.minRelevanceScore != null
     ? ordered.filter((match) => {
         const s = (match as { _rerankScore?: unknown } | undefined)?._rerankScore;
-        return typeof s !== "number" || s >= options.minRelevanceScore!;
+        const kept = typeof s !== "number" || s >= options.minRelevanceScore!;
+        if (!kept) trackDrop(match, "dropped_rerank_floor");
+        return kept;
       })
     : ordered;
 
@@ -2186,6 +2352,23 @@ export async function rankPool(
   // the RETURNED pool, so dedup must have already narrowed it here to have any effect). No-op
   // unless `dedupeSimilarity` is set.
   const deduped = options.dedupeSimilarity != null ? dedupeSimilar(floored, limit, options.dedupeSimilarity) : floored;
+  if (wantDispositions && options.dedupeSimilarity != null) {
+    const dedupedSet = new Set(deduped);
+    for (const match of floored) {
+      if (!dedupedSet.has(match)) trackDrop(match, "dropped_dedupe");
+    }
+  }
+
+  if (dispositions) {
+    // Everything still in `deduped` survived every rankPool-internal filter. `rankPool` itself
+    // doesn't know the final top-`limit` slice (the caller applies that), so record every
+    // survivor as `kept_not_used` here — the caller's `onDispositions` handler upgrades the ones
+    // actually in its final slice to `used`.
+    for (const match of deduped) {
+      dispositions.set(resolveKey(match), "kept_not_used");
+    }
+    options.onDispositions!(dispositions);
+  }
 
   // R5 consolidated retrieval-quality telemetry (2026-07-01 RAG backlog): default OFF via
   // RAG_RETRIEVAL_TELEMETRY. The flag check happens BEFORE any work (hashing, score scanning) so

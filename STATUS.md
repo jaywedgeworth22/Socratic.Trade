@@ -8,6 +8,52 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE, worktree `trading-wt-pool-v2`, branch `claude/persist-pool-v2`)
+Follow-up to #979 (`RAG_PERSIST_CANDIDATE_POOL`, "persist-candidate-pool"), which honestly
+captures only `rankPool`'s OUTPUT pool (`ordered` — post minScore/asOf/hybrid/rerank/dedupe), so
+candidates dropped UPSTREAM of that were invisible: "why did we drop this candidate" could not be
+answered. v2 closes that gap.
+
+`rankPool` (`src/lib/vector-db.ts`) gained an OPTIONAL `onDispositions?: (dispositions: Map<string,
+CandidateDisposition>) => void` param. When supplied, `rankPool` tracks every input candidate
+through each stage (minScore floor → as-of guard → rerank-truncate (Voyage's own `topK` cut) →
+post-rerank relevance floor → dedupe → `kept_not_used`/caller-upgraded `used`) and invokes the hook
+once with the full map. Every EXISTING call site passes no hook, so `rankPool` remains byte-
+identical/zero-extra-cost for them — no Map allocation, no key computation, same return value.
+`retrieveContextDetailed` wires a NEW, independent flag `RAG_PERSIST_CANDIDATE_POOL_FULL` (default
+OFF, `envFlagOn`, checked BEFORE `rankPool` even runs) that captures the PRE-`rankPool` `matches`
+pool (raw Pinecone recall, or the #822 fused multi-query pool — still exactly ONE record per call)
+together with the disposition map, persisted via a new `recordCandidatePoolFull` in
+`src/lib/rag/candidate-pool.ts` (`audit("rag_candidate_pool_full", ...)`, distinct from v1's
+`rag_candidate_pool` kind — the two flags/records toggle independently). Same "never persist raw
+text" posture as v1: candidates carry id/score/relevanceScore/docType/asOf/disposition only.
+
+Dispositions: `dropped_minscore`, `dropped_asof`, `dropped_rerank_truncate`,
+`dropped_rerank_floor`, `dropped_dedupe`, `kept_not_used`, `used`. Id-less-collision hardening
+mirrors v1/the #822 fan-out code (synthetic `__cand_<index>__` keys); a separate identity/real-id
+lookup recovers `_rerankScore`/final-slice membership across rerank's object-copying step.
+
+Coordinates with sibling lane `claude/server-asof-filter` (also edits `rankPool`'s as-of stage,
+lands first) — this lane's `dropped_asof` disposition wraps whatever `isWithinAsOf`/asOf-guard
+logic exists rather than re-deriving it, so the merge-forward should be mechanical. Touched
+regions in `vector-db.ts`: (1) `RankPoolOptions` + the `rankPool` function body (disposition
+tracking threaded through the existing minScore/asOf/hybrid/rerank/floor/dedupe stages — the as-of
+block specifically wraps the existing `isWithinAsOf` call, doesn't replace it); (2) the
+`retrieveContextDetailed` capture block, placed immediately AFTER v1's existing capture block
+(distinct region from the query-filter-building code earlier in the function).
+
+Local verify: `npx tsc --noEmit` clean. `npx vitest run test/persist-candidate-pool.test.ts` (v1,
+still green, 8/8) `test/persist-candidate-pool-v2.test.ts` (new, 9/9)
+`test/rag-retrieval-regression.test.ts` (extended with a `persist-pool-v2` describe block, +7
+tests, 26/26 total) — 43/43 across the three files, all green. Also spot-checked (beyond the task's
+required set, still scoped — not full `npm test`): `rag-retrieval-eval`, `rag-retrieval-status`,
+`vector-db-rerank-floor`, `vector-db-rerank-overfetch`, `vector-db-hybrid`, `vector-db-asof-strict`,
+`rag-multi-query-retrieval`, `rag-multi-query`, `rag-dedupe-similar`, `vector-db`,
+`vector-db-retrieval`, `vector-db-provenance` — 138/138 additional tests green, no regressions.
+Full `npm test`/`npm run build` intentionally NOT run per task scope. Committed locally on
+`claude/persist-pool-v2`; NOT pushed, no PR opened (per task instructions — owner/another session
+will land). See `docs/rollouts/2026-07-06-persist-pool-v2.md`.
+
 ## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
 Owner repeatedly hit `Setup script failed with exit code 127. bash:
 scripts/cloud-setup.sh: No such file or directory` when creating brand-new
