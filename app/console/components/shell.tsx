@@ -17,6 +17,7 @@ import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { SymbolDrawerProvider } from "../ui/symbol-drawer";
 import { ToastProvider } from "../ui/toast";
 import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
+import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
 import { DesktopRail, MobileTabBar } from "./nav";
 
@@ -121,6 +122,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
           {/* Blocking shared-data-pool consent gate — same semantics as the
               legacy dashboard gate; renders nothing once answered. */}
           <ConsentGate />
+          {/* ⌘K / Ctrl+K command palette — from-anywhere jump to any console screen. */}
+          <CommandPalette />
         </ToastProvider>
       </SymbolDrawerProvider>
     </div>
@@ -143,6 +146,9 @@ function ChromeBar({
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />
+        <div className="hidden md:block">
+          <CommandPaletteTrigger />
+        </div>
         <ThemeToggle theme={theme} cycle={cycleTheme} />
         <UserMenu snapshot={snapshot} />
         <div className="hidden sm:block">

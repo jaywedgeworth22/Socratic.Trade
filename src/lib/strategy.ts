@@ -2542,8 +2542,13 @@ function assertLiveApprovalConfirmation(input: {
   accountNumber: string;
   proposal: TradeProposal;
   estimatedNotional?: number;
+  requireTypedConfirmation: boolean;
 }): void {
   if (input.executionMode !== "broker/live") return;
+  // Owner-adjustable preference (policy.requireTypedConfirmation): when the owner has turned typed
+  // confirmation off, a live approval is a one-click action like any other — no phrase required.
+  // Real money is the app's normal, in-domain case, not a gated exception.
+  if (!input.requireTypedConfirmation) return;
   const expectedText = liveApprovalText(input.proposal.symbol);
   const confirmation = input.confirmation;
   const reasons: string[] = [];
@@ -2622,7 +2627,8 @@ export async function executeProposal(
     proposalId,
     accountNumber: row.accountNumber,
     proposal,
-    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional
+    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional,
+    requireTypedConfirmation: policy.requireTypedConfirmation !== false
   });
 
   // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
