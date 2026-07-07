@@ -768,6 +768,20 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
+- **Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, server-asof-filter) — IN
+  PROGRESS 2026-07-06.** Worktree `trading-wt-asof-server`, branch `claude/server-asof-filter` off
+  `origin/main@b76b11ae`. Pushes the backtest `asOf` constraint INTO the Pinecone query so topK is
+  filled with eligible (pre-asOf) candidates instead of being decimated by the post-fetch as-of drop
+  (the empty/small-pool bug). Ingest: `cleanMetadata` additively stamps a numeric `as_of_epoch_ms`
+  (absent when undated). Query: new flag `VECTOR_ASOF_SERVER_FILTER` (default OFF) AND-combines a
+  server epoch clause — FAIL-OPEN `$or:[{$lte},{$exists:false}]` by default (keeps un-epoch'd so an
+  un-backfilled corpus isn't dropped), FAIL-CLOSED plain `{$lte}` under existing `VECTOR_ASOF_STRICT`.
+  Post-fetch `isWithinAsOf` guard stays as the leakage backstop (defense in depth). Idempotent
+  backfill `scripts/backfill-asof-epoch.ts` + `backfillAsOfEpoch()`. Pinecone `$exists` verified
+  supported (client v8 forwards the opaque filter object). tsc clean; new
+  `test/vector-db-asof-server-filter.test.ts` (10) + strict + regression green (34), 114 across core
+  vector-db/RAG suites. Committed locally, NOT landed. Next: `scripts/land.sh` + PR; run backfill in
+  prod before enabling the flag. See `docs/rollouts/2026-07-06-server-asof-filter.md`.
 - **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
   2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
   `docs/slack-coordination.md` documented `bash scripts/cloud-setup.sh` as the Claude Code Cloud
