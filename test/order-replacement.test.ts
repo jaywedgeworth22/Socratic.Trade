@@ -111,6 +111,71 @@ describe("market replacement for stale limit orders", () => {
   });
 });
 
+describe("autoRemediateStaleExitOrders — MU deadlock backstop", () => {
+  it("auto-cancel-replaces a stale EXIT (sell) limit with a market order on paper", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const staleSell = order({ id: "sell-1", side: "sell", quantity: 5, filledQuantity: 0, state: "accepted", createdAt: "2026-01-01T00:00:00.000Z" });
+    const canceled = order({ id: "sell-1", side: "sell", quantity: 5, filledQuantity: 0, state: "canceled" });
+    const gateway = gatewayMock({ orders: [[staleSell], [canceled]], execution: { orderId: "mkt-sell-1", refId: "r", state: "accepted", raw: {} } });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: paperPolicy(),
+      activeAccount: account("paper"),
+      gateway,
+      orders: [staleSell]
+    });
+
+    expect(out).toMatchObject({ attempted: 1, remediated: 1, deferred: 0 });
+    expect(gateway.placeEquityOrder).toHaveBeenCalledWith(expect.objectContaining({ symbol: "AAPL", side: "sell", type: "market", quantity: 5 }));
+  });
+
+  it("never auto-forces a stale ENTRY (buy) limit to market", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const staleBuy = order({ id: "buy-1", side: "buy", state: "accepted", createdAt: "2026-01-01T00:00:00.000Z" });
+    const gateway = gatewayMock({ orders: [[staleBuy]] });
+
+    const out = await autoRemediateStaleExitOrders({ userId: "local", policy: paperPolicy(), activeAccount: account("paper"), gateway, orders: [staleBuy] });
+
+    expect(out).toMatchObject({ attempted: 0, remediated: 0 });
+    expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
+  });
+
+  it("defers a live stale EXIT to the human when typed confirmation is required", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const staleSell = order({ id: "sell-live", side: "sell", state: "accepted", createdAt: "2026-01-01T00:00:00.000Z" });
+    const gateway = gatewayMock({ orders: [[staleSell]] });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: { ...livePolicy(), requireTypedConfirmation: true },
+      activeAccount: account("live"),
+      gateway,
+      orders: [staleSell]
+    });
+
+    expect(out).toMatchObject({ deferred: 1, attempted: 0, remediated: 0 });
+    expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when autoRemediateStaleExits is disabled", async () => {
+    const { autoRemediateStaleExitOrders } = await import("../src/lib/order-replacement");
+    const staleSell = order({ id: "sell-off", side: "sell", state: "accepted", createdAt: "2026-01-01T00:00:00.000Z" });
+    const gateway = gatewayMock({ orders: [[staleSell]] });
+
+    const out = await autoRemediateStaleExitOrders({
+      userId: "local",
+      policy: { ...paperPolicy(), autoRemediateStaleExits: false },
+      activeAccount: account("paper"),
+      gateway,
+      orders: [staleSell]
+    });
+
+    expect(out).toMatchObject({ attempted: 0, remediated: 0, deferred: 0 });
+    expect(gateway.placeEquityOrder).not.toHaveBeenCalled();
+  });
+});
+
 function paperPolicy() {
   return {
     ...DEFAULT_POLICY,

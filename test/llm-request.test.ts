@@ -7,7 +7,9 @@ import {
   interactiveStrategyReasoningEffort,
   isDisallowedInteractiveStrategyReasoningConfig,
   reasoningCapabilityForModel,
-  normalizeReasoningEffortForModel
+  normalizeReasoningEffortForModel,
+  strategyLlmTimeoutMs,
+  LLM_TIMEOUT_MS
 } from "../src/lib/llm-request";
 
 describe("llm-request — model resolution", () => {
@@ -56,9 +58,32 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
     expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");
-    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("high");
-    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("high");
+    // DeepSeek high-effort thinking is OPT-IN: a sub-high request (incl. the undefined default and the
+    // app's "medium") resolves to the FAST "none" tier, NOT a silent upgrade to the slow "high" tier
+    // that spends a long hidden-reasoning phase and blew the 60s request timeout. Only an explicit
+    // high/xhigh/max enables thinking. The settings UI resolves through this same function, so the
+    // effort shown always equals the effort sent.
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "medium")).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "high")).toBe("high");
     expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "xhigh")).toBe("max");
+  });
+
+  it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
+    // Non-reasoning model: base bound regardless of the requested effort.
+    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
+    // DeepSeek at the default (medium => none, thinking OFF): base bound (fast, no widening).
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "medium")).toBe(LLM_TIMEOUT_MS);
+    // DeepSeek with an explicit high effort (thinking ON): widened past the base.
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // OpenAI reasoning model actually thinking at medium: widened.
+    expect(strategyLlmTimeoutMs("gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // Both bounds are env-tunable.
+    vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
+    vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
+    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(30000);
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
   });
 });
 

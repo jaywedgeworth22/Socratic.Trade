@@ -8,6 +8,25 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`)
+Owner-directed after prod forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes; all gates
+green (tsc 0 / lint 0 / **2885 tests** / build). (1) **DeepSeek Green/Bear 60s timeout** — stop the
+silent `medium→high` reasoning upgrade (DeepSeek thinking is now opt-in/fast by default and the
+settings UI shows the true effort sent) + a reasoning-class-aware, env-tunable timeout (150s when
+thinking is on) threaded into the Green/Bear calls; no fallback model (owner refinement). (2) **MU
+exit deadlock** — protective Risk-Exits route as MARKET orders (`coerceProtectiveExitToMarket`) so
+they can't rest unfilled; `autoRemediateStaleExitOrders` cancel-replaces a stale EXIT limit at the
+15m tick (exits only; defers to human on live typed-confirm; `policy.autoRemediateStaleExits` default
+on). (3) **Per-trade stops** — `atrStops`/`betaScaledStops` default ON; Bull/Bear schemas now expose
+`bracketStopLoss`/`bracketTakeProfit` + prompt guidance; `enrichOpeningProposal` validates the LLM
+stop and makes the fallback per-symbol (ATR>beta>flat). (4) **Removed the historic
+`ALLOW_LIVE_TRADING` opt-in gate** (now an opt-out escape hatch — a live account trades on its
+environment; **owner: confirm the Robinhood live acct should start trading on deploy, else set
+`ALLOW_LIVE_TRADING=false`**) + **notification retry** on transient delivery failures (owner had been
+silently missing block/timeout alerts). Trailing-stop-per-symbol deferred (needs beta/ATR in the
+scheduler tick). Next: adversarial review → `land.sh` → PR. See
+`docs/rollouts/2026-07-07-strategy-exec-stops-llm-fixes.md`.
+
 ## 2026-07-06 — Console intro: solid backdrop that dissolves on liftoff (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
 Refinement to the merged intro splash (#876/#996). The intro now opens with a solid, theme-matched
 backdrop (`var(--con-bg)`) covering the page during the waving-chart phase, then dissolves (0.9s) to

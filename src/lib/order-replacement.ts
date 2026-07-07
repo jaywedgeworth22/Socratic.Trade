@@ -210,6 +210,77 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   };
 }
 
+/**
+ * Auto-remediate STALE EXIT limit orders by cancel-and-replacing them with a market order, so a
+ * protective exit that a resting limit failed to fill cannot strand the position. This is the backstop
+ * for the MU deadlock: a stale sell limit held all the shares and blocked every re-exit until the
+ * broker expired it a day later. Scoped to EXITS only (sell/cover) — an unfilled ENTRY limit is the
+ * owner's price discipline and is never forced to market. Respects the live typed-confirmation
+ * preference: on a live account with requireTypedConfirmation on it DEFERS to the human (the stale
+ * alert still fires) rather than auto-confirming a real-money market order; on paper (or live with
+ * confirmation off) it remediates automatically. Opt-out via policy.autoRemediateStaleExits = false.
+ */
+export async function autoRemediateStaleExitOrders(input: {
+  userId?: string;
+  policy: TradingPolicy & { accountNumber: string };
+  activeAccount?: ConnectedAccount;
+  gateway: BrokerGateway;
+  orders?: EquityOrder[];
+  now?: Date;
+}): Promise<{ remediated: number; attempted: number; deferred: number }> {
+  const userId = input.userId ?? "local";
+  const out = { remediated: 0, attempted: 0, deferred: 0 };
+  if (input.policy.autoRemediateStaleExits === false) return out;
+
+  const executionState = deriveExecutionState(input.policy, input.activeAccount);
+  if (!executionState.submitsBrokerOrders || !executionState.mode) return out;
+  const liveNeedsHuman = executionState.mode === "broker/live" && input.policy.requireTypedConfirmation !== false;
+
+  const orders = input.orders ?? (await input.gateway.getEquityOrders(input.policy.accountNumber));
+  const stale = listStaleLimitOrders(orders, input.policy, input.now ?? new Date());
+
+  for (const item of stale) {
+    const side = String(item.order.side ?? "").toLowerCase();
+    if (side !== "sell" && side !== "cover") continue; // EXITS only — never force an entry to market
+    const symbol = normalizeSymbol(item.order.symbol);
+    if (liveNeedsHuman) {
+      out.deferred++;
+      audit(
+        "stale_exit_auto_remediation_deferred",
+        { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, reason: "live account with requireTypedConfirmation on — human replace required" },
+        userId,
+        input.policy.connectedAccountId
+      );
+      continue;
+    }
+    out.attempted++;
+    try {
+      const result = await replaceStaleLimitOrderWithMarket({
+        userId,
+        policy: input.policy,
+        activeAccount: input.activeAccount,
+        gateway: input.gateway,
+        orderId: item.order.id
+      });
+      out.remediated++;
+      audit(
+        "stale_exit_auto_remediated",
+        { orderId: item.order.id, symbol, side, ageMinutes: item.ageMinutes, status: result.status, replacementOrderId: result.replacementOrderId },
+        userId,
+        input.policy.connectedAccountId
+      );
+    } catch (err) {
+      audit(
+        "stale_exit_auto_remediation_failed",
+        { orderId: item.order.id, symbol, side, error: err instanceof Error ? err.message : String(err) },
+        userId,
+        input.policy.connectedAccountId
+      );
+    }
+  }
+  return out;
+}
+
 function assertMarketReplaceConfirmation(input: {
   executionMode: ExecutionMode;
   confirmation?: MarketReplaceConfirmation;

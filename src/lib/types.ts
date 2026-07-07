@@ -821,6 +821,13 @@ export interface TradingPolicy {
    * 0 or undefined disables the stale-limit alert. Default 15.
    */
   staleLimitOrderMinutes?: number;
+  /**
+   * Auto-cancel-and-replace a STALE EXIT limit order (sell/cover) with a market order once it passes
+   * staleLimitOrderMinutes, so a protective exit a resting limit failed to fill cannot strand the
+   * position (the MU deadlock). Default ON. On a live account it defers to human typed confirmation
+   * when requireTypedConfirmation is on; entries are never auto-forced to market. Owner-tunable.
+   */
+  autoRemediateStaleExits?: boolean;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;

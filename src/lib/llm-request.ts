@@ -178,9 +178,17 @@ export function normalizeReasoningEffortForModel(
   const capability = reasoningCapabilityForModel(model);
   if (!capability) return undefined;
   if (capability.provider === "deepseek") {
-    if (effort === "none") return "none";
+    // DeepSeek V4 exposes only three tiers: thinking OFF ("none"), "high", and "max". A sub-high
+    // request (none/minimal/low/medium — including the app's "medium" DEFAULT) resolves to the FAST
+    // "none" tier, NOT a silent upgrade to "high". "high" spends a long, unbounded hidden-reasoning
+    // phase server-side before emitting any visible JSON; on a non-streaming whole-response await that
+    // routinely blew the 60s request timeout (Green/Bear "timed out after 60s using DeepSeek"). High-
+    // effort DeepSeek thinking is now OPT-IN: choose "high"/"xhigh"/"max" explicitly. The settings UI
+    // resolves the displayed effort through this SAME function, so the effort shown is always exactly
+    // the effort sent — the user can never select a value different from what actually runs.
     if (effort === "max" || effort === "xhigh") return "max";
-    return "high";
+    if (effort === "high") return "high";
+    return "none";
   }
   return normalizeReasoningEffortForOptions(capability.options, effort);
 }
@@ -247,6 +255,25 @@ export const LLM_TIMEOUT_MS = 60_000;
  */
 export function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
+}
+
+/**
+ * Wall-clock cap for a strategy Green/Bear LLM call, widened for a thinking-enabled reasoning model.
+ * A reasoning model that is ACTUALLY thinking (effort resolves to something other than "none") can
+ * legitimately spend well past the 60s default generating hidden reasoning tokens before it emits the
+ * visible JSON, so a non-streaming whole-response await would otherwise abort a call that was still
+ * making progress (this is the DeepSeek "timed out after 60s" failure). Both bounds are env-tunable —
+ * STRATEGY_LLM_TIMEOUT_MS for the base, STRATEGY_LLM_REASONING_TIMEOUT_MS for the thinking bound.
+ * Trade-off: a longer bound holds the per-user run lock longer (see LLM_TIMEOUT_MS), so the widening
+ * applies ONLY when the model is in a thinking mode the user explicitly opted into (never at the fast
+ * default). A non-reasoning or thinking-off model keeps the base 60s bound unchanged.
+ */
+export function strategyLlmTimeoutMs(model: string | undefined, effort: LlmReasoningEffort | undefined): number {
+  const base = Number(process.env.STRATEGY_LLM_TIMEOUT_MS) || LLM_TIMEOUT_MS;
+  const normalized = normalizeReasoningEffortForModel(model, effort);
+  const thinking = !!normalized && normalized !== "none";
+  if (!thinking) return base;
+  return Math.max(base, Number(process.env.STRATEGY_LLM_REASONING_TIMEOUT_MS) || 150_000);
 }
 
 /** HTTP statuses worth failing over to another provider (rate limit / transient upstream errors). */

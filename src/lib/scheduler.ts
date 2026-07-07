@@ -17,7 +17,9 @@ import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { checkMonthlyLlmSpendCeiling } from "./llm-budget";
 import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
+import type { TradingPolicy } from "./types";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
@@ -377,9 +379,16 @@ async function tick(): Promise<void> {
         const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
 
         if (brokerGateway) {
-          void brokerGateway.getEquityOrders(policy.accountNumber)
-            .then((orders) => notifyStaleLimitOrders({ userId, policy, orders }))
-            .catch((err) => console.error("[scheduler] stale-limit-order alert error:", err));
+          const gw = brokerGateway;
+          const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
+          void gw.getEquityOrders(policy.accountNumber)
+            .then(async (orders) => {
+              await notifyStaleLimitOrders({ userId, policy, orders });
+              // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
+              // when disabled; defers to the human on a live account with typed confirmation on.
+              await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
+            })
+            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err));
         }
 
         const protectiveState =

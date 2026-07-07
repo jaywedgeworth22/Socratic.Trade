@@ -181,6 +181,21 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
+  PROGRESS 2026-07-07, gates green, adversarial review → land.** Owner-directed after prod forensics
+  on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout — no
+  silent `medium→high` reasoning upgrade (fast/opt-in thinking + UI shows true effort) and a
+  reasoning-class-aware env-tunable timeout (150s) on the Green/Bear calls, no fallback model; (2) MU
+  exit deadlock — protective Risk-Exits route as MARKET (`coerceProtectiveExitToMarket`) +
+  `autoRemediateStaleExitOrders` cancel-replaces a stale EXIT limit at the 15m tick (exits only,
+  defers to human on live typed-confirm, `policy.autoRemediateStaleExits` default on); (3) per-trade
+  stops — `atrStops`/`betaScaledStops` default ON, Bull/Bear schemas expose
+  `bracketStopLoss`/`bracketTakeProfit` + prompt, `enrichOpeningProposal` validates + per-symbol
+  fallback (ATR>beta>flat); (4) removed the historic `ALLOW_LIVE_TRADING` opt-in gate (now opt-out
+  escape hatch — live trades on its environment) + notification retry on transient failures. Verify:
+  tsc 0 / lint 0 / 2885 tests / build. Deferred: per-symbol synthetic *trailing* stop. See
+  `docs/rollouts/2026-07-07-strategy-exec-stops-llm-fixes.md`.
+
 - **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
   intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)
