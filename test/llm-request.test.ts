@@ -9,7 +9,9 @@ import {
   reasoningCapabilityForModel,
   normalizeReasoningEffortForModel,
   strategyLlmTimeoutMs,
-  LLM_TIMEOUT_MS
+  llmFetchCapturing,
+  LLM_TIMEOUT_MS,
+  type LlmCallOutcome
 } from "../src/lib/llm-request";
 
 describe("llm-request — model resolution", () => {
@@ -231,5 +233,39 @@ describe("llm-request — withLlmRequestBounds", () => {
         ).toBeGreaterThanOrEqual(requestedCap);
       }
     }
+  });
+});
+
+describe("llm-request — llmFetchCapturing (latency capture, never sever a slow reply)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the response within the soft timeout and reports late=false", async () => {
+    vi.stubGlobal("fetch", (async () => new Response("fast", { status: 200 })) as unknown as typeof fetch);
+    const outcomes: LlmCallOutcome[] = [];
+    const res = await llmFetchCapturing("https://x/llm", { method: "POST" }, { softTimeoutMs: 1000, onOutcome: (o) => outcomes.push(o) });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 5)); // let the background outcome microtask run
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!).toMatchObject({ late: false, ok: true, status: 200 });
+  });
+
+  it("rejects at the soft timeout but STILL captures the late reply + its duration", async () => {
+    vi.stubGlobal("fetch", (async () => {
+      await new Promise((r) => setTimeout(r, 80));
+      return new Response("late-reply", { status: 200 });
+    }) as unknown as typeof fetch);
+    const outcomes: LlmCallOutcome[] = [];
+    // The caller (strategy tick) sees a timeout and moves on...
+    await expect(
+      llmFetchCapturing("https://x/llm", { method: "POST" }, { softTimeoutMs: 20, onOutcome: (o) => outcomes.push(o) })
+    ).rejects.toThrow(/soft timeout/i);
+    // ...but the request keeps running and the eventual reply is captured for debug.
+    await new Promise((r) => setTimeout(r, 130));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!.late).toBe(true);
+    expect(outcomes[0]!.ok).toBe(true);
+    expect(outcomes[0]!.durationMs).toBeGreaterThanOrEqual(20);
+    expect(outcomes[0]!.response).toBeDefined();
+    expect(await outcomes[0]!.response!.text()).toBe("late-reply");
   });
 });

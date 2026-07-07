@@ -276,6 +276,64 @@ export function strategyLlmTimeoutMs(model: string | undefined, effort: LlmReaso
   return Math.max(base, Number(process.env.STRATEGY_LLM_REASONING_TIMEOUT_MS) || 150_000);
 }
 
+/** The eventual result of an LLM call, reported once the request finally settles (fast OR late). */
+export interface LlmCallOutcome {
+  /** Wall-clock ms from request start to settle. */
+  durationMs: number;
+  /** True when it settled AFTER the soft timeout (i.e. the strategy tick had already given up on it). */
+  late: boolean;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  /** The eventual Response. On the LATE path the caller (which bailed at the soft timeout and never
+   *  read the body) may read this to capture the reply for debugging. Absent when the request errored. */
+  response?: Response;
+}
+
+/**
+ * A strategy LLM fetch that CAPTURES latency and never severs a slow reply. It resolves with the
+ * Response if it arrives within `softTimeoutMs`; otherwise it rejects with a TimeoutError — so the
+ * caller's existing timeout/fallback path runs and the tick moves on — BUT the underlying request
+ * keeps running (up to a generous `hardCapMs` leak backstop, default max(2×soft, 300s)) and its
+ * eventual outcome (duration, status, and the late Response) is reported via `onOutcome`. This is what
+ * lets us record how long a model like DeepSeek actually takes and keep the reply we already paid for,
+ * instead of aborting at the wall and discarding the evidence. Unlike `llmFetch`, no soft-timeout
+ * abort signal is attached to the fetch — only the hard cap.
+ */
+export function llmFetchCapturing(
+  url: string,
+  init: RequestInit,
+  opts: { softTimeoutMs: number; hardCapMs?: number; onOutcome?: (outcome: LlmCallOutcome) => void }
+): Promise<Response> {
+  const started = Date.now();
+  const softMs = opts.softTimeoutMs;
+  const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
+  const fetchPromise = fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) });
+
+  const emit = opts.onOutcome;
+  if (emit) {
+    fetchPromise.then(
+      (response) => {
+        const durationMs = Date.now() - started;
+        emit({ durationMs, late: durationMs > softMs, ok: response.ok, status: response.status, response });
+      },
+      (error) => {
+        const durationMs = Date.now() - started;
+        emit({ durationMs, late: durationMs > softMs, ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    );
+  }
+
+  let softTimer: ReturnType<typeof setTimeout> | undefined;
+  const softTimeout = new Promise<never>((_, reject) => {
+    softTimer = setTimeout(() => reject(new DOMException(`Strategy LLM soft timeout after ${softMs}ms`, "TimeoutError")), softMs);
+  });
+  // Clear the soft timer once the fetch settles so it can't reject a race nobody is watching anymore.
+  const clear = () => { if (softTimer) clearTimeout(softTimer); };
+  fetchPromise.then(clear, clear);
+  return Promise.race([fetchPromise, softTimeout]);
+}
+
 /** HTTP statuses worth failing over to another provider (rate limit / transient upstream errors). */
 const RETRYABLE_LLM_STATUSES = new Set([429, 500, 502, 503, 504]);
 export function isRetryableLlmStatus(status: number): boolean {

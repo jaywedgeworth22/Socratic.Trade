@@ -89,6 +89,33 @@ Production diagnosis (from the live DB + audit trail) found four real defects:
   connected live account (the Robinhood live acct) will place real orders without
   the flag — surfaced to the owner explicitly.
 
+### §1b LLM latency capture — soft timeout, never sever a paid reply (`llm-request.ts`, `strategy.ts`)
+Owner follow-up: "if the app is making the llm call and paying for it anyway then we should get the
+reply even if way later ... the response and the time it came in and/or how long it took." The old
+behavior `AbortSignal.timeout`-severed the connection at the wall, discarding both the reply and the
+evidence of how long the model actually needed (we could not answer "would 75s have finished it?").
+- New `llmFetchCapturing(url, init, {softTimeoutMs, hardCapMs, onOutcome})`: resolves normally within
+  the soft timeout; past it, REJECTS with TimeoutError (the tick's existing timeout/fallback path runs
+  unchanged) but the request KEEPS RUNNING (hard-cap leak backstop max(2×soft, 300s)) and the eventual
+  outcome — duration, status, and the late Response — is reported via `onOutcome`.
+- `recordLlmOutcome` in strategy.ts audits **every** Green/Bear call as `llm_call_latency`
+  (durationMs, softTimeoutMs, late, ok, status) — builds the real latency distribution so the timeout
+  can be tuned from data. On the LATE path only, it also drains the reply we paid for into an
+  `llm_late_response` audit (4000-char text snippet + token usage + duration). Fast responses are
+  never body-read by the recorder (the normal flow owns the body — reading twice was a review-caught
+  race that broke the 429-failover test).
+- Late replies are capture-for-debug ONLY — a stale proposal from a prior tick is never traded on
+  (confirmed default; owner can revisit).
+
+### §2-review Double-sell guard (adversarial-review Finding 1, HIGH)
+The stale-exit auto-remediation pass was fire-and-forget: a slow broker cancel (>60s tick) could let
+the next tick re-remediate the SAME order → a second market sell / accidental short. Two defenses:
+a per-account in-flight guard in the scheduler (`staleExitInFlight`, mirroring `stopMonitorInFlight`)
++ a per-order 5-min cooldown in `autoRemediateStaleExitOrders` (`recentlyRemediatedExits`, marked
+BEFORE the attempt). Test: a second pass on the same still-working order places NO second market sell.
+(Review Finding 2 — timeout derived from raw vs interactive-clamped effort — was a false positive:
+`strategyLlmTimeoutMs` is binary thinking-on/off and both efforts resolve to the same bucket.)
+
 ### §4b Notification delivery (`notify.ts`)
 - Per-channel **retry with backoff** on transient delivery failures (the ~7%
   "fetch failed"/timeout/5xx/429 seen in prod); permanent 4xx fail fast. Env
@@ -106,9 +133,12 @@ Production diagnosis (from the live DB + audit trail) found four real defects:
 
 ## Verification
 - `npx tsc --noEmit` — 0 errors.
-- `npm run lint` — 0 errors (334 grandfathered warnings).
-- `npx vitest run` — **2885 passed** (284 files), 0 failures.
+- `npm run lint` — 0 errors (grandfathered warnings only).
+- `npx vitest run` — **2888 passed** (284 files), 0 failures (final run incl. the double-sell-guard,
+  cooldown, and llmFetchCapturing fast/late tests).
 - `npm run build` — succeeds.
+- Adversarial review (independent agent over `git diff origin/main...HEAD`): 1 HIGH finding
+  (cross-tick double-sell) — fixed + tested; 1 LOW finding — analyzed as a false positive (see §2-review).
 
 ## Follow-ups / risks
 - Per-symbol synthetic **trailing** stop (needs beta/ATR in the monitor tick).

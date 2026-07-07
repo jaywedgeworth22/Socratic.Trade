@@ -34,7 +34,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, strategyLlmTimeoutMs } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
@@ -4190,15 +4190,22 @@ async function proposeTrades(input: {
           const isLast = i === bullAttempts.length - 1;
           const next = bullAttempts[i + 1];
           try {
-            const response = await llmFetch(attempt.url, {
-              method: "POST",
-              headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
-              body: JSON.stringify(attempt.body),
-              // Reasoning-class-aware wall-clock: a thinking-enabled model (e.g. an explicit
-              // high/max reasoning effort) gets the widened bound so it isn't aborted mid-thought;
-              // a fast/thinking-off model keeps the 60s default.
-              signal: AbortSignal.timeout(strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort))
-            });
+            const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
+            // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
+            // The request is NOT severed at the wall — if it's slow the tick moves on, but the eventual
+            // reply + its true latency are captured for debug (recordLlmOutcome), instead of discarded.
+            const response = await llmFetchCapturing(
+              attempt.url,
+              {
+                method: "POST",
+                headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+                body: JSON.stringify(attempt.body)
+              },
+              {
+                softTimeoutMs: bullSoftTimeoutMs,
+                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs })
+              }
+            );
 
             if (!response.ok) {
               const detail = await response.text();
@@ -4558,14 +4565,21 @@ async function proposeTrades(input: {
         }
       },
       async () => {
-        const bearResponse = await llmFetch(bearUrl, {
-          method: "POST",
-          headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
-          body: JSON.stringify(bearBody),
-          // Reasoning-class-aware wall-clock (see Green Team above): thinking-enabled Bear models get
-          // the widened bound; fast/thinking-off models keep the 60s default.
-          signal: AbortSignal.timeout(strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort))
-        });
+        const bearSoftTimeoutMs = strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort);
+        // Reasoning-class-aware SOFT wall-clock (see Green Team above); the request is not severed at
+        // the wall — a late reply + its latency are captured for debug rather than discarded.
+        const bearResponse = await llmFetchCapturing(
+          bearUrl,
+          {
+            method: "POST",
+            headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
+            body: JSON.stringify(bearBody)
+          },
+          {
+            softTimeoutMs: bearSoftTimeoutMs,
+            onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bear", provider: bearProvider, model: bearModel, softTimeoutMs: bearSoftTimeoutMs })
+          }
+        );
 
         if (!bearResponse.ok) {
           console.warn("Bear Agent API failed, falling back to Bull proposals");
@@ -4770,6 +4784,49 @@ export function coerceProtectiveExitToMarket(proposal: TradeProposal): TradeProp
     stopPrice: undefined,
     rationale: (proposal.rationale ?? "") + "\n\n[Risk] Protective Risk-Exit routed as a MARKET order so it actually fills — a resting limit can miss the exit in a fast/falling tape, and a stale unfilled exit then blocks every retry."
   };
+}
+
+/**
+ * Record the outcome of a strategy Green/Bear LLM call for observability. Fires for EVERY call (fast
+ * or late): an `llm_call_latency` audit captures the real duration so the timeout can be tuned from
+ * data instead of a guess. When the call was slow (the tick already moved on) or errored, it ALSO
+ * captures the eventual reply we paid for — text snippet + token usage — in an `llm_late_response`
+ * audit, rather than discarding it.
+ */
+function recordLlmOutcome(
+  outcome: LlmCallOutcome,
+  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number }
+): void {
+  audit(
+    "llm_call_latency",
+    { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, softTimeoutMs: ctx.softTimeoutMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error },
+    ctx.userId
+  );
+  // Only the LATE path reads the body: there the tick bailed at the soft timeout and never touched the
+  // response, so we alone can drain it. A FAST response (success, or a non-ok like a 429 that fails
+  // over) is read by the normal flow — recording must NOT also read it or the two race on the body.
+  if (!outcome.late) return;
+  void (async () => {
+    try {
+      let textSnippet: string | undefined;
+      let usage: unknown;
+      if (outcome.response) {
+        const payload = await outcome.response.json().catch(() => undefined);
+        if (payload) {
+          const text = extractLlmText(payload);
+          textSnippet = typeof text === "string" && text ? text.slice(0, 4000) : undefined;
+          usage = extractLlmUsage(payload);
+        }
+      }
+      audit(
+        "llm_late_response",
+        { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error, textSnippet, usage },
+        ctx.userId
+      );
+    } catch (err) {
+      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
+    }
+  })();
 }
 
 function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
