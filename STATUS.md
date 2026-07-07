@@ -8,6 +8,72 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE, worktree `trading-wt-pool-v2`, branch `claude/persist-pool-v2`)
+Follow-up to #979 (`RAG_PERSIST_CANDIDATE_POOL`, "persist-candidate-pool"), which honestly
+captures only `rankPool`'s OUTPUT pool (`ordered` — post minScore/asOf/hybrid/rerank/dedupe), so
+candidates dropped UPSTREAM of that were invisible: "why did we drop this candidate" could not be
+answered. v2 closes that gap.
+
+`rankPool` (`src/lib/vector-db.ts`) gained an OPTIONAL `onDispositions?: (dispositions: Map<string,
+CandidateDisposition>) => void` param. When supplied, `rankPool` tracks every input candidate
+through each stage (minScore floor → as-of guard → rerank-truncate (Voyage's own `topK` cut) →
+post-rerank relevance floor → dedupe → `kept_not_used`/caller-upgraded `used`) and invokes the hook
+once with the full map. Every EXISTING call site passes no hook, so `rankPool` remains byte-
+identical/zero-extra-cost for them — no Map allocation, no key computation, same return value.
+`retrieveContextDetailed` wires a NEW, independent flag `RAG_PERSIST_CANDIDATE_POOL_FULL` (default
+OFF, `envFlagOn`, checked BEFORE `rankPool` even runs) that captures the PRE-`rankPool` `matches`
+pool (raw Pinecone recall, or the #822 fused multi-query pool — still exactly ONE record per call)
+together with the disposition map, persisted via a new `recordCandidatePoolFull` in
+`src/lib/rag/candidate-pool.ts` (`audit("rag_candidate_pool_full", ...)`, distinct from v1's
+`rag_candidate_pool` kind — the two flags/records toggle independently). Same "never persist raw
+text" posture as v1: candidates carry id/score/relevanceScore/docType/asOf/disposition only.
+
+Dispositions: `dropped_minscore`, `dropped_asof`, `dropped_rerank_truncate`,
+`dropped_rerank_floor`, `dropped_dedupe`, `dropped_dedupe_truncate`, `kept_not_used`, `used`.
+Id-less-collision hardening mirrors v1/the #822 fan-out code (synthetic `__cand_<index>__` keys
+plus a `__poolKey` own-enumerable stamp that survives rerank's object-copying step — see review
+fixes below).
+
+Coordinates with sibling lane `claude/server-asof-filter` (also edits `rankPool`'s as-of stage,
+lands first) — this lane's `dropped_asof` disposition wraps whatever `isWithinAsOf`/asOf-guard
+logic exists rather than re-deriving it, so the merge-forward should be mechanical. Touched
+regions in `vector-db.ts`: (1) `RankPoolOptions` + the `rankPool` function body (disposition
+tracking threaded through the existing minScore/asOf/hybrid/rerank/floor/dedupe stages — the as-of
+block specifically wraps the existing `isWithinAsOf` call, doesn't replace it); (2) the
+`retrieveContextDetailed` capture block, placed immediately AFTER v1's existing capture block
+(distinct region from the query-filter-building code earlier in the function).
+
+**Review fixes (second commit, same day):** (1) `dedupeSimilar` drops candidates for two different
+reasons — genuine near-dup vs its own internal top-`limit` cap — that were conflated into one
+`dropped_dedupe` label; `dedupeSimilar` gained an optional `report` out-param and a new
+`dropped_dedupe_truncate` disposition now separates cap-truncated distinct candidates from real
+near-dups (fires on almost every flagship-config run: `strategy.ts`'s `limit=3`,
+`dedupeSimilarity=0.6`). (2) An id-less match that SURVIVES rerank was mislabeled
+`dropped_rerank_truncate` (losing its relevanceScore) because rerank's spread-copy breaks object
+identity for id-less survivors too, not just real-id ones — fixed via a `__poolKey` stamp that
+survives the copy, used consistently in both `rankPool`'s internal key resolution and the v2
+capture block. (3) Both the v1 and v2 observability-capture blocks are now wrapped in their own
+try/catch so a throw inside capture can never turn a successful retrieval into an empty one
+(previously relied only on the function's outer catch, which returns `[]`). (4)
+`recordCandidatePoolFull` now hard-caps persisted candidates at 500 (defensive backstop against an
+operator raising `VECTOR_RERANK_OVERFETCH_K` very high), while still honestly reporting the true
+pre-cap `candidateCount`. See `docs/rollouts/2026-07-06-persist-pool-v2.md`'s "Review fixes" section
+for full detail.
+
+Local verify: `npx tsc --noEmit` clean. `npx vitest run test/persist-candidate-pool.test.ts` (v1,
+9/9) `test/persist-candidate-pool-v2.test.ts` (14/14) `test/rag-retrieval-regression.test.ts`
+(28/28) — **51/51** across the three files, all green (up from the original landing's 43/43 by the
+review-fix tests). `test/rag-dedupe-similar.test.ts` — 15/15 (10 original + 5 new). `npx eslint` on
+every touched file — 0 errors (pre-existing-pattern `no-explicit-any` warnings only). Also
+spot-checked (beyond the task's required set, still scoped — not full `npm test`):
+`rag-retrieval-eval`, `rag-retrieval-status`, `vector-db-rerank-floor`, `vector-db-rerank-overfetch`,
+`vector-db-hybrid`, `vector-db-asof-strict`, `rag-multi-query-retrieval`, `rag-multi-query`,
+`vector-db`, `vector-db-retrieval`, `vector-db-provenance` — 128/128 additional tests green, no
+regressions. Full `npm test`/`npm run build` intentionally NOT run per task scope. Committed
+locally on `claude/persist-pool-v2` (two commits: the original landing + this review-fix commit);
+NOT pushed, no PR opened (per task instructions — owner/another session will land). See
+`docs/rollouts/2026-07-06-persist-pool-v2.md`.
+
 ## 2026-07-06 — Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, server-asof-filter)
 Branch `claude/server-asof-filter` (worktree `trading-wt-asof-server`). Fixed the empty/small
 backtest-pool problem: `retrieveContextDetailed` over-fetches candidates from Pinecone by pure

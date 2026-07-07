@@ -181,6 +181,41 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE, worktree
+  `trading-wt-pool-v2`, branch `claude/persist-pool-v2`) — IN PROGRESS 2026-07-06, committed
+  locally, not yet pushed/PR'd.** Follow-up to #979 (`RAG_PERSIST_CANDIDATE_POOL`), which honestly
+  captures only `rankPool`'s OUTPUT pool (post minScore/asOf/hybrid/rerank/dedupe) — candidates
+  dropped upstream were invisible. v2 closes that gap: `rankPool` (vector-db.ts) gained an OPTIONAL
+  `onDispositions` hook that tracks every candidate through each filtering stage
+  (minScore → asOf → rerank-truncate → post-rerank floor → dedupe → kept_not_used/used), byte-
+  identical/zero-cost when the hook is omitted (every existing call site). `retrieveContextDetailed`
+  wires a NEW, independent flag `RAG_PERSIST_CANDIDATE_POOL_FULL` (default OFF, envFlagOn) that
+  captures the PRE-`rankPool` `matches` pool (raw Pinecone recall, or the #822 fused multi-query
+  pool) plus the disposition map via `recordCandidatePoolFull` (new fn in
+  `src/lib/rag/candidate-pool.ts`, distinct audit kind `rag_candidate_pool_full`) — v1 and v2 toggle
+  independently. Same "never persist raw text" posture as v1 (ids/scores/relevanceScore/docType/
+  asOf/disposition only). Coordinates with sibling lane `claude/server-asof-filter` (also edits
+  `rankPool`'s as-of stage) — lands before this one; this lane wraps whatever asOf logic exists
+  rather than re-deriving it, so the merge-forward should be mechanical. Local verify: `tsc --noEmit`
+  clean; `test/persist-candidate-pool.test.ts` (v1, still green, 8/8),
+  `test/persist-candidate-pool-v2.test.ts` (new, 9/9), `test/rag-retrieval-regression.test.ts`
+  (extended +7 disposition-unit tests, 26/26) — 43/43 total, all green. Full `npm test`/`npm run
+  build` NOT run per task scope (owner will run `land.sh`'s full gate at PR time). See
+  `docs/rollouts/2026-07-06-persist-pool-v2.md`.
+  **Update 2026-07-06 (second commit, same branch/worktree) — review fixes applied, still IN
+  PROGRESS/not pushed:** fixed 4 review findings, all observability-only (no change to
+  retrieved/used chunks): (1) new `dropped_dedupe_truncate` disposition + a `dedupeSimilar` optional
+  `report` out-param so genuine near-dup drops are no longer conflated with `dedupeSimilar`'s own
+  internal top-`limit` cap truncation (was mislabeling almost every flagship-config run, `limit=3`/
+  `dedupeSimilarity=0.6`); (2) fixed an id-less match that survives rerank being mislabeled
+  `dropped_rerank_truncate` (rerank's spread-copy breaks object identity for id-less survivors too)
+  via a `__poolKey` stamp that survives the copy; (3) wrapped both the v1 and v2 observability-
+  capture blocks in their own try/catch so a capture throw can never empty out a successful
+  retrieval; (4) added a defensive 500-candidate hard cap on `recordCandidatePoolFull`'s persisted
+  payload. `tsc --noEmit` clean; `test/persist-candidate-pool.test.ts` (9/9),
+  `test/persist-candidate-pool-v2.test.ts` (14/14), `test/rag-retrieval-regression.test.ts` (28/28)
+  — 51/51 total; `test/rag-dedupe-similar.test.ts` 15/15; `eslint` 0 errors on all touched files.
+  See the "Review fixes" section of `docs/rollouts/2026-07-06-persist-pool-v2.md`.
 - **Persistent candlestick header logo (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
   IN PROGRESS 2026-07-06, PR open.** Follow-up to the merged console intro splash (#876). Replaced the
   typed "Socratic.Trade" top-bar brand with a live candlestick "SOCRATIC TRADE" `<HeaderLogo>` that
