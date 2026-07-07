@@ -768,6 +768,16 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
+- **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
+  2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
+  `docs/slack-coordination.md` documented `bash scripts/cloud-setup.sh` as the Claude Code Cloud
+  "Setup script" value, but the sandbox's cwd for that field is the *parent* of the cloned repo, not
+  the repo root — causing a reproducible `exit 127 / No such file or directory` on every fresh
+  environment. Corrected value: `cd Socratic.Trade && bash scripts/cloud-setup.sh`. **Action needed
+  from MONET**: per the PR #798 record below, Monet's own cloud environment was set up with the same
+  bare (broken) value — flagged in #agent-sync, Monet should update its environment's Setup script
+  field the same way. No app code touched. PR #967 open, auto-merge armed. See
+  `docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
 - **Bump shared dependency in agentic-trading and Congress.Trade to ^1.3.0 and fix HTTPS lockfile (AG) — IN PROGRESS 2026-07-06.** Fixing CI/CD `check-pin` failures by syncing both repositories' `package.json` specifications to the exact same version, and normalizing `package-lock.json` to use `git+https` instead of `git+ssh` to prevent tokenless environment crashes.
 - **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — COMPLETED,
   5 PRs merged 2026-07-06.** Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod

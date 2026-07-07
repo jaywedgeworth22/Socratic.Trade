@@ -8,6 +8,38 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
+Owner repeatedly hit `Setup script failed with exit code 127. bash:
+scripts/cloud-setup.sh: No such file or directory` when creating brand-new
+Claude Code Cloud environments for this repo — reproduced across multiple
+fresh environments with the exact documented Setup script value
+(`bash scripts/cloud-setup.sh`), correct env vars, and `main` as the base
+branch. Root cause found via a diagnostic `pwd && ls -la && ls -la scripts`
+Setup-script probe: the container's working directory when the Setup script
+runs is `/home/user` — the **parent** of the cloned repo — not the repo root.
+`git clone` creates a `Socratic.Trade/` subdirectory one level below that, so
+the documented bare command never resolved. (A red herring along the way: the
+`ls -la` output showed the clone directory masked as `***SLACK_TOPIC***` —
+that's the environment's own secret-redaction filter, because the
+`SLACK_TOPIC` env var's value is literally the string `Socratic.Trade`, which
+coincidentally matches the repo/clone directory name. The clone itself was
+fine the whole time.)
+
+Fix: the Setup script field must be `cd Socratic.Trade && bash
+scripts/cloud-setup.sh`, not the bare form. Updated the header comment in
+`scripts/cloud-setup.sh` and the instructions in `docs/slack-coordination.md`
+to say so explicitly. `.devcontainer/devcontainer.json`'s `postCreateCommand`
+was already correct as-is (devcontainers set `workspaceFolder` to the repo
+root automatically) — only the plain Claude Code Cloud "Setup script" text
+field needs the `cd` prefix.
+
+**Action needed from Monet specifically:** per `docs/EFFORT-LOG.md`'s PR #798
+record, Monet's cloud environment was previously configured with the same
+bare `bash scripts/cloud-setup.sh` value — very likely hitting this same
+failure. Posted to #agent-sync flagging the corrected value; Monet (or the
+owner on Monet's behalf) should update that environment's Setup script field
+to `cd Socratic.Trade && bash scripts/cloud-setup.sh`. See
+`docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
 ## 2026-07-06 — Persistent candlestick header logo (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
 Follow-up to the merged console intro splash (#876). Replaced the typed "Socratic.Trade" brand text
 in the console top bar with a live candlestick "SOCRATIC TRADE" logo that ticks forever, and made
