@@ -8,6 +8,30 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Coolify preview lanes deployed (4/6 live) + 4GB box-wedge incident (Claude cloud)
+Deployed the six Socratic Trade preview-lane apps on the Coolify box (Hetzner CX23, 4GB) via a
+**GitHub App connection** (the earlier-generated SSH deploy key is unused — skip it). **4 lanes
+built and running, verified `✓ Ready` on :3000:** `main`→`trading.jays.services` (integration),
+`agent/claude`→`claude.`, `agent/cursor`→`cursor.`, `agent/antigravity`→`antigravity.`. **2 parked
+(owner decision — leave for their owners to merge-forward, do NOT reset):** `agent/codex` (ancient
+snapshot) and `agent/monet` (npm 401 on private GitHub-Packages `congress-trading-shared@^1.2.0`,
+predates the #444 public-git-tag switch).
+
+**Hostname scheme (owner):** `trading.jays.services` = integration (retire `trading-beta.jays.services`);
+`socratictrade.com` = production only (untouched); `*.jays.services` agent subdomains = Coolify previews.
+Apps serve over `http://` (Cloudflare Tunnel = edge TLS → box Traefik :80).
+
+**Incident:** triggering all 5 remaining builds at once ran 2 concurrent `next build`s that OOM/swap-wedged
+the 4GB box — Coolify API/SSH unresponsive (`jays.services`→HTTP 000 ~20min; tunnel/Mac side stayed up).
+Owner rebooted from the Hetzner console; containers came back clean. Fix: **`concurrent_builds` pinned to 1**
+(persists); deploy lanes one at a time. This is concrete evidence for the noisy-neighbor risk of colocating
+production here — reassess box sizing before the `socratictrade.com` migration.
+
+**Blockers / next action:** owner must repoint the Cloudflare Tunnel routes to `http://91.98.44.8:80`
+(`trading.` off prod, delete `trading-beta.`, `claude|cursor|antigravity.` off Mac; leave codex/monet/
+socratictrade.com) — cloudflared runs on the Mac, not editable from a cloud session. Then final external URL
+verification. See `docs/rollouts/2026-07-07-coolify-lane-deploys.md`.
+
 ## 2026-07-06 — Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane (Claude cloud, branch `claude/llm-apps-m5-resource-optimization-n9w5ax`)
 Owner asked for help offloading local agent/dev-server resource usage (16GB M5 MacBook Air
 crashing under 5+ concurrent AI coding tools). Landed on a self-hosted Coolify instance
