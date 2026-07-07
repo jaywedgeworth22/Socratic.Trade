@@ -181,6 +181,21 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Per-account/broker LLM usage attribution (MONET, worktree `~/apps/trading-monet-llmusage`, branch
+  `monet/llm-usage-per-account`) — IN PROGRESS 2026-07-07, PR pending via land.sh.** Owner-requested:
+  make LLM usage/cost filterable + trackable per connected account/broker. Migration 14
+  (`llm_usage_connected_account`) adds nullable `connected_account_id` via a versioned ALTER (never the
+  baseline CREATE TABLE — respects the 2026-07-02 boot-crash scar); `recordLlmUsage` takes an optional
+  `connectedAccountId`; `getLlmUsageSummary` LEFT-JOINs `connected_accounts` for broker/environment/label
+  + adds `connectedAccountId`/`broker` filters; threaded into the 4 account-context call sites
+  (post-mortem, outcome-postmortem, proposal-revalidation, strategy-tuning) via `policy.connectedAccountId`;
+  `/api/llm-usage` + `/api/admin/llm-usage` accept `accountId`/`broker`; shared usage UI splits per account
+  + adds a filter + account badge ("Unattributed" for account-less rows). LOCAL only (external
+  usage-monitor push untouched); budget enforcement UNCHANGED (global-vs-per-account cap deferred as an
+  owner cost-policy decision). DEFERRED: `strategy`/`strategy-bear`/`red-team` attribution (CLAUDE-Cowork
+  keepout) — one-liner each once its single-adversary consolidation lands; flagged on #agent-sync. Gate
+  green (tsc 0 / 2875 tests + 4 new / build ok / lint 0-err). See
+  `docs/rollouts/2026-07-07-llm-usage-per-account.md`.
 - **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
   `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
   intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)
