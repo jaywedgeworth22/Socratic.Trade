@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — deferred RAG items landed (#1019 server-side as-of filter, #1021 persist-pool v2)
+Both items owner-approved same day as deferred follow-ups from the CLAUDE next-wave RAG cluster
+(`docs/rollouts/2026-07-06-claude-nextwave-rag.md`), built, independently reviewed, fixed pre-merge,
+and landed on `main`: **PR #1019** (`claude/server-asof-filter`) pushes the backtest `asOf` constraint
+into the Pinecone query itself (fail-open default via `VECTOR_ASOF_SERVER_FILTER`, escalate to
+fail-closed via `VECTOR_ASOF_STRICT`, backfill script `scripts/backfill-asof-epoch.ts`), fixing the
+empty/small-pool-in-backtests bug where eligible older filings exist in the corpus but rank below the
+no-date-filtered fetch window. **PR #1021** (`claude/persist-pool-v2`) persists the PRE-`rankPool`
+candidate pool with a per-stage drop disposition (`RAG_PERSIST_CANDIDATE_POOL_FULL`, default OFF),
+closing v1/#979's honest gap where nearly all persisted rows were `used:true` in the flagship
+production config. Both flags remain default OFF pending the epoch backfill (server-asof) and
+eval/operator decision (persist-pool). Board (`docs/EFFORT-LOG.md`) updated: both PRs' "In Progress"
+rows rewritten as Completed, original DEFERRED bullet annotated DONE. See
+`docs/rollouts/2026-07-06-deferred-rag-items-closeout.md` (session note) plus the two per-lane notes
+(`docs/rollouts/2026-07-06-server-asof-filter.md`, `docs/rollouts/2026-07-06-persist-pool-v2.md`).
+
 ## 2026-07-06 — persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE, worktree `trading-wt-pool-v2`, branch `claude/persist-pool-v2`)
 Follow-up to #979 (`RAG_PERSIST_CANDIDATE_POOL`, "persist-candidate-pool"), which honestly
 captures only `rankPool`'s OUTPUT pool (`ordered` — post minScore/asOf/hybrid/rerank/dedupe), so
