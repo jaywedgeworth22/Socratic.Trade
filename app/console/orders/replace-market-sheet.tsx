@@ -52,6 +52,9 @@ export function ReplaceMarketSheet({
 
   const order = row.order;
   const live = reality.tone === "live";
+  // Owner preference: with typed confirmation off, a live replace is one-click (the server honors the
+  // same flag via assertMarketReplaceConfirmation).
+  const needsTyped = live && snapshot?.policy.requireTypedConfirmation !== false;
   const sideWord = SIDE_LABEL[order.side] ?? String(order.side).toUpperCase();
   const kind = orderTypeLabel(order.type);
   const remaining = fmtQty(row.remaining);
@@ -184,26 +187,28 @@ export function ReplaceMarketSheet({
             </div>
           )}
 
-          <div className="mt-3">
-            <label className="con-label" htmlFor={`replace-typed-${order.id}`}>
-              Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{expectedText}</span>
-            </label>
-            <TextInput
-              id={`replace-typed-${order.id}`}
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="characters"
-              spellCheck={false}
-              onPaste={(e) => e.preventDefault()}
-              placeholder={expectedText}
-              className="con-mono"
-            />
-            <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              Paste is disabled on purpose — the words are the consent.
-            </p>
-          </div>
+          {needsTyped && (
+            <div className="mt-3">
+              <label className="con-label" htmlFor={`replace-typed-${order.id}`}>
+                Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{expectedText}</span>
+              </label>
+              <TextInput
+                id={`replace-typed-${order.id}`}
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                onPaste={(e) => e.preventDefault()}
+                placeholder={expectedText}
+                className="con-mono"
+              />
+              <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                Paste is disabled on purpose — the words are the consent.
+              </p>
+            </div>
+          )}
         </>
       ) : (
         <p className="mt-3 rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
@@ -218,10 +223,10 @@ export function ReplaceMarketSheet({
         </Btn>
         <Btn
           variant="primary"
-          disabled={busy || (live && !matches)}
+          disabled={busy || (needsTyped && !matches)}
           onClick={() => void submit()}
           title={
-            live && !matches
+            needsTyped && !matches
               ? "Type the confirmation phrase first."
               : "Cancel the limit order and submit the remainder as a market order."
           }

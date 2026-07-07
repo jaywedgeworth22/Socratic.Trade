@@ -8,6 +8,165 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — deferred RAG items landed (#1019 server-side as-of filter, #1021 persist-pool v2)
+Both items owner-approved same day as deferred follow-ups from the CLAUDE next-wave RAG cluster
+(`docs/rollouts/2026-07-06-claude-nextwave-rag.md`), built, independently reviewed, fixed pre-merge,
+and landed on `main`: **PR #1019** (`claude/server-asof-filter`) pushes the backtest `asOf` constraint
+into the Pinecone query itself (fail-open default via `VECTOR_ASOF_SERVER_FILTER`, escalate to
+fail-closed via `VECTOR_ASOF_STRICT`, backfill script `scripts/backfill-asof-epoch.ts`), fixing the
+empty/small-pool-in-backtests bug where eligible older filings exist in the corpus but rank below the
+no-date-filtered fetch window. **PR #1021** (`claude/persist-pool-v2`) persists the PRE-`rankPool`
+candidate pool with a per-stage drop disposition (`RAG_PERSIST_CANDIDATE_POOL_FULL`, default OFF),
+closing v1/#979's honest gap where nearly all persisted rows were `used:true` in the flagship
+production config. Both flags remain default OFF pending the epoch backfill (server-asof) and
+eval/operator decision (persist-pool). Board (`docs/EFFORT-LOG.md`) updated: both PRs' "In Progress"
+rows rewritten as Completed, original DEFERRED bullet annotated DONE. See
+`docs/rollouts/2026-07-06-deferred-rag-items-closeout.md` (session note) plus the two per-lane notes
+(`docs/rollouts/2026-07-06-server-asof-filter.md`, `docs/rollouts/2026-07-06-persist-pool-v2.md`).
+
+## 2026-07-06 — persist-pool-v2: pre-rankPool candidate pool + per-stage drop dispositions (CLAUDE, worktree `trading-wt-pool-v2`, branch `claude/persist-pool-v2`)
+Follow-up to #979 (`RAG_PERSIST_CANDIDATE_POOL`, "persist-candidate-pool"), which honestly
+captures only `rankPool`'s OUTPUT pool (`ordered` — post minScore/asOf/hybrid/rerank/dedupe), so
+candidates dropped UPSTREAM of that were invisible: "why did we drop this candidate" could not be
+answered. v2 closes that gap.
+
+`rankPool` (`src/lib/vector-db.ts`) gained an OPTIONAL `onDispositions?: (dispositions: Map<string,
+CandidateDisposition>) => void` param. When supplied, `rankPool` tracks every input candidate
+through each stage (minScore floor → as-of guard → rerank-truncate (Voyage's own `topK` cut) →
+post-rerank relevance floor → dedupe → `kept_not_used`/caller-upgraded `used`) and invokes the hook
+once with the full map. Every EXISTING call site passes no hook, so `rankPool` remains byte-
+identical/zero-extra-cost for them — no Map allocation, no key computation, same return value.
+`retrieveContextDetailed` wires a NEW, independent flag `RAG_PERSIST_CANDIDATE_POOL_FULL` (default
+OFF, `envFlagOn`, checked BEFORE `rankPool` even runs) that captures the PRE-`rankPool` `matches`
+pool (raw Pinecone recall, or the #822 fused multi-query pool — still exactly ONE record per call)
+together with the disposition map, persisted via a new `recordCandidatePoolFull` in
+`src/lib/rag/candidate-pool.ts` (`audit("rag_candidate_pool_full", ...)`, distinct from v1's
+`rag_candidate_pool` kind — the two flags/records toggle independently). Same "never persist raw
+text" posture as v1: candidates carry id/score/relevanceScore/docType/asOf/disposition only.
+
+Dispositions: `dropped_minscore`, `dropped_asof`, `dropped_rerank_truncate`,
+`dropped_rerank_floor`, `dropped_dedupe`, `dropped_dedupe_truncate`, `kept_not_used`, `used`.
+Id-less-collision hardening mirrors v1/the #822 fan-out code (synthetic `__cand_<index>__` keys
+plus a `__poolKey` own-enumerable stamp that survives rerank's object-copying step — see review
+fixes below).
+
+Coordinates with sibling lane `claude/server-asof-filter` (also edits `rankPool`'s as-of stage,
+lands first) — this lane's `dropped_asof` disposition wraps whatever `isWithinAsOf`/asOf-guard
+logic exists rather than re-deriving it, so the merge-forward should be mechanical. Touched
+regions in `vector-db.ts`: (1) `RankPoolOptions` + the `rankPool` function body (disposition
+tracking threaded through the existing minScore/asOf/hybrid/rerank/floor/dedupe stages — the as-of
+block specifically wraps the existing `isWithinAsOf` call, doesn't replace it); (2) the
+`retrieveContextDetailed` capture block, placed immediately AFTER v1's existing capture block
+(distinct region from the query-filter-building code earlier in the function).
+
+**Review fixes (second commit, same day):** (1) `dedupeSimilar` drops candidates for two different
+reasons — genuine near-dup vs its own internal top-`limit` cap — that were conflated into one
+`dropped_dedupe` label; `dedupeSimilar` gained an optional `report` out-param and a new
+`dropped_dedupe_truncate` disposition now separates cap-truncated distinct candidates from real
+near-dups (fires on almost every flagship-config run: `strategy.ts`'s `limit=3`,
+`dedupeSimilarity=0.6`). (2) An id-less match that SURVIVES rerank was mislabeled
+`dropped_rerank_truncate` (losing its relevanceScore) because rerank's spread-copy breaks object
+identity for id-less survivors too, not just real-id ones — fixed via a `__poolKey` stamp that
+survives the copy, used consistently in both `rankPool`'s internal key resolution and the v2
+capture block. (3) Both the v1 and v2 observability-capture blocks are now wrapped in their own
+try/catch so a throw inside capture can never turn a successful retrieval into an empty one
+(previously relied only on the function's outer catch, which returns `[]`). (4)
+`recordCandidatePoolFull` now hard-caps persisted candidates at 500 (defensive backstop against an
+operator raising `VECTOR_RERANK_OVERFETCH_K` very high), while still honestly reporting the true
+pre-cap `candidateCount`. See `docs/rollouts/2026-07-06-persist-pool-v2.md`'s "Review fixes" section
+for full detail.
+
+Local verify: `npx tsc --noEmit` clean. `npx vitest run test/persist-candidate-pool.test.ts` (v1,
+9/9) `test/persist-candidate-pool-v2.test.ts` (14/14) `test/rag-retrieval-regression.test.ts`
+(28/28) — **51/51** across the three files, all green (up from the original landing's 43/43 by the
+review-fix tests). `test/rag-dedupe-similar.test.ts` — 15/15 (10 original + 5 new). `npx eslint` on
+every touched file — 0 errors (pre-existing-pattern `no-explicit-any` warnings only). Also
+spot-checked (beyond the task's required set, still scoped — not full `npm test`):
+`rag-retrieval-eval`, `rag-retrieval-status`, `vector-db-rerank-floor`, `vector-db-rerank-overfetch`,
+`vector-db-hybrid`, `vector-db-asof-strict`, `rag-multi-query-retrieval`, `rag-multi-query`,
+`vector-db`, `vector-db-retrieval`, `vector-db-provenance` — 128/128 additional tests green, no
+regressions. Full `npm test`/`npm run build` intentionally NOT run per task scope. Committed
+locally on `claude/persist-pool-v2` (two commits: the original landing + this review-fix commit);
+NOT pushed, no PR opened (per task instructions — owner/another session will land). See
+`docs/rollouts/2026-07-06-persist-pool-v2.md`.
+
+## 2026-07-06 — Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, server-asof-filter)
+Branch `claude/server-asof-filter` (worktree `trading-wt-asof-server`). Fixed the empty/small
+backtest-pool problem: `retrieveContextDetailed` over-fetches candidates from Pinecone by pure
+vector similarity with NO date filter, then `rankPool` applies the post-fetch `isWithinAsOf` guard.
+In a backtest (`asOf` in the past) the nearest-neighbor topK is dominated by too-recent filings
+that then get dropped, leaving a tiny pool even though the correct older filings exist in the corpus
+(ranked below the fetch window). Now the date constraint can be pushed INTO the Pinecone query so
+topK is filled with ELIGIBLE (pre-asOf) candidates.
+
+- **Ingest write:** `cleanMetadata` now additively stamps a NUMERIC `as_of_epoch_ms` on every new
+  vector, derived from the same acceptance_datetime -> published_at -> as_of -> timestamp precedence
+  the post-fetch guard uses (NaN-safe; ABSENT when undated — absence is the fail-open signal).
+- **Query filter:** when `options.asOf` is set AND `VECTOR_ASOF_SERVER_FILTER=on`, a server-side
+  epoch clause is AND-combined (`$and`) with the existing scope/symbol/docType filter.
+  FAIL-OPEN default: `$or:[{as_of_epoch_ms:{$lte:X}},{as_of_epoch_ms:{$exists:false}}]` (keeps
+  un-epoch'd vectors so an un-backfilled corpus isn't dropped). FAIL-CLOSED under
+  `VECTOR_ASOF_STRICT=on`: plain `{$lte:X}` (drops un-epoch'd server-side).
+- **Invariant:** the post-fetch `isWithinAsOf` guard in `rankPool` STAYS regardless — defense in
+  depth. `asOf` unset -> no epoch clause -> byte-identical to today.
+- **Backfill:** `scripts/backfill-asof-epoch.ts` (thin entrypoint) over `backfillAsOfEpoch()` in
+  vector-db.ts — idempotent (skips vectors that already have the field), iterates via Pinecone
+  listPaginated+fetch, partial-updates by id. `BACKFILL_DRY_RUN=1` for a no-write dry run.
+- **`$exists` finding:** the installed `@pinecone-database/pinecone@8.0.0` types `filter` as an
+  opaque `object` and forwards it verbatim; `$exists` is a documented Pinecone metadata operator, so
+  the fail-open `$or`/`$exists` path typechecks and works — no design compromise needed.
+
+Flags (both default OFF): `VECTOR_ASOF_SERVER_FILTER` (new), `VECTOR_ASOF_STRICT` (existing, now
+also governs the server-side fail-closed escalation). Verify: tsc clean; new test file
+`test/vector-db-asof-server-filter.test.ts` (10 tests) + `vector-db-asof-strict` +
+`rag-retrieval-regression` green (34 total), plus 114 across the core vector-db/RAG suites.
+Committed locally, NOT pushed/landed. Next: land via `scripts/land.sh`, then run the backfill in
+prod before turning `VECTOR_ASOF_SERVER_FILTER=on`. See
+`docs/rollouts/2026-07-06-server-asof-filter.md`.
+
+## 2026-07-06 - Console de-alarm + optional confirmation + legacy removal + Cmd-K + admin hub (CLAUDE)
+Branch `claude/vigorous-lederberg-5b6d55`, landing as one PR. Real-money banner + "START LIVE" typed
+ritual removed (real money is the normal case, no ceremony). New owner preference
+`policy.requireTypedConfirmation` (Settings -> Advanced action confirmation, default ON): when OFF,
+approving a broker order / replacing a live order / loosening a live guardrail are one-click, enforced
+on server + console + mobile. Legacy `/old` dashboard deleted (redirects to /console; ~14 exclusive
+files + 2 dead tests removed); Strategy Flow visualizer dropped, legacy command palette replaced by a
+new console-native Cmd-K palette. Operator admin hub at /admin + env-gated admin.socratictrade.com
+scaffold (ADMIN_HOST + AUTH_COOKIE_DOMAIN, inert until set). Also fixed a pre-existing flaky
+socratic-db ordering test (added rowid tiebreakers). Verified: tsc clean, npm test 2642/2642, build
+green. Detail: docs/rollouts/2026-07-06-console-de-alarm-confirmation-toggle-legacy-removal-cmdk-admin.md
+## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
+Owner repeatedly hit `Setup script failed with exit code 127. bash:
+scripts/cloud-setup.sh: No such file or directory` when creating brand-new
+Claude Code Cloud environments for this repo — reproduced across multiple
+fresh environments with the exact documented Setup script value
+(`bash scripts/cloud-setup.sh`), correct env vars, and `main` as the base
+branch. Root cause found via a diagnostic `pwd && ls -la && ls -la scripts`
+Setup-script probe: the container's working directory when the Setup script
+runs is `/home/user` — the **parent** of the cloned repo — not the repo root.
+`git clone` creates a `Socratic.Trade/` subdirectory one level below that, so
+the documented bare command never resolved. (A red herring along the way: the
+`ls -la` output showed the clone directory masked as `***SLACK_TOPIC***` —
+that's the environment's own secret-redaction filter, because the
+`SLACK_TOPIC` env var's value is literally the string `Socratic.Trade`, which
+coincidentally matches the repo/clone directory name. The clone itself was
+fine the whole time.)
+
+Fix: the Setup script field must be `cd Socratic.Trade && bash
+scripts/cloud-setup.sh`, not the bare form. Updated the header comment in
+`scripts/cloud-setup.sh` and the instructions in `docs/slack-coordination.md`
+to say so explicitly. `.devcontainer/devcontainer.json`'s `postCreateCommand`
+was already correct as-is (devcontainers set `workspaceFolder` to the repo
+root automatically) — only the plain Claude Code Cloud "Setup script" text
+field needs the `cd` prefix.
+
+**Action needed from Monet specifically:** per `docs/EFFORT-LOG.md`'s PR #798
+record, Monet's cloud environment was previously configured with the same
+bare `bash scripts/cloud-setup.sh` value — very likely hitting this same
+failure. Posted to #agent-sync flagging the corrected value; Monet (or the
+owner on Monet's behalf) should update that environment's Setup script field
+to `cd Socratic.Trade && bash scripts/cloud-setup.sh`. See
+`docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
 ## 2026-07-06 — Persistent candlestick header logo (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
 Follow-up to the merged console intro splash (#876). Replaced the typed "Socratic.Trade" brand text
 in the console top bar with a live candlestick "SOCRATIC TRADE" logo that ticks forever, and made
