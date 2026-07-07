@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — as-of epoch Pinecone backfill EXECUTED (ops, MONET)
+The deferred operational gate from #1019 is cleared: `scripts/backfill-asof-epoch.ts` was run against
+the shared (default-name) Pinecone index for the operator ("local") key — dry-run, real run, then an
+idempotency re-run. Results: 341 vectors scanned, **309 updated** with a freshly-derived
+`as_of_epoch_ms`, 32 already had it (post-#1019 ingests), **0 undated, 0 errors**; re-run confirms
+`341/341 skippedHasEpoch, 0 updated`. The corpus is now fully epoch-stamped, so
+`VECTOR_ASOF_SERVER_FILTER=on` is safe AND effective (and `VECTOR_ASOF_STRICT=on` would currently
+drop nothing, since no undated vectors exist). Flipping the flag in prod (Infisical +
+`pm2 restart trading`) remains the owner-run step — both flags still default OFF. No code changed;
+docs-only PR. See `docs/rollouts/2026-07-07-asof-epoch-backfill-run.md`.
+
 ## 2026-07-07 — Coolify preview lanes deployed (4/6 live) + 4GB box-wedge incident (Claude cloud)
 Deployed the six Socratic Trade preview-lane apps on the Coolify box (Hetzner CX23, 4GB) via a
 **GitHub App connection** (the earlier-generated SSH deploy key is unused — skip it). **4 lanes

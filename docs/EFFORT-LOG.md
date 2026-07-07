@@ -181,6 +181,18 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
+  `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
+  `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row
+  moves to Completed on merge).** Executed the deferred operational follow-up from CLAUDE's #1019:
+  `scripts/backfill-asof-epoch.ts` vs the shared default Pinecone index, operator ("local") key —
+  dry-run → real run → idempotency re-run. Counts: 341 scanned / **309 updated** / 32 already
+  epoch'd (post-#1019 ingests) / **0 undated / 0 errors**; re-run = 341/341 skippedHasEpoch,
+  0 updated. Corpus fully epoch-stamped: `VECTOR_ASOF_SERVER_FILTER=on` is now safe AND effective;
+  `VECTOR_ASOF_STRICT=on` would currently drop nothing (no undated vectors). NOT done here (owner
+  prod step): flipping either flag — both remain default OFF. See
+  `docs/rollouts/2026-07-07-asof-epoch-backfill-run.md`.
+
 - **Per-account/broker LLM usage attribution (MONET, worktree `~/apps/trading-monet-llmusage`, branch
   `monet/llm-usage-per-account`) — IN PROGRESS 2026-07-07, PR pending via land.sh.** Owner-requested:
   make LLM usage/cost filterable + trackable per connected account/broker. Migration 14
