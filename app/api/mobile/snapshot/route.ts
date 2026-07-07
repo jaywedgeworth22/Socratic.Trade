@@ -28,7 +28,8 @@ export async function GET(request: Request) {
       maxOrderNotional: snapshot.policy.maxOrderNotional,
       maxOrderPctOfNav: snapshot.policy.maxOrderPctOfNav,
       maxDailyNotional: snapshot.policy.maxDailyNotional,
-      maxDailyOrders: snapshot.policy.maxDailyOrders
+      maxDailyOrders: snapshot.policy.maxDailyOrders,
+      requireTypedConfirmation: snapshot.policy.requireTypedConfirmation !== false
     },
     marketSession: snapshot.marketSession,
     scheduler: snapshot.scheduler,

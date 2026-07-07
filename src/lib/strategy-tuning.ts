@@ -684,7 +684,7 @@ async function requestLlmTuning(
       }
 
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
       return { text, payload: JSON.parse(text) as LlmTuningPayload };

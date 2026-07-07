@@ -337,6 +337,24 @@ const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    // Per-account/broker LLM usage attribution: tag each usage row with the connected account it
+    // was recorded for, so cost/tokens can be filtered by account (broker/environment derived via
+    // join to connected_accounts). Nullable — pre-existing rows and account-less contexts stay
+    // unattributed. Versioned ALTER (not a CREATE-only column add) per the 2026-07-02 "no such
+    // column" boot-crash scar noted on the llm_usage CREATE TABLE below.
+    version: 14,
+    name: "llm_usage_connected_account",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "connected_account_id")) {
+        database.exec("ALTER TABLE llm_usage ADD COLUMN connected_account_id TEXT");
+      }
+      database.exec(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_account ON llm_usage (connected_account_id, created_at)"
+      );
+    }
   }
 ];
 

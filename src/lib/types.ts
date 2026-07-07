@@ -740,6 +740,16 @@ export interface TradingPolicy {
   universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
   /**
+   * Typed confirmation for high-impact LIVE actions — approving a broker order, replacing a live
+   * order at market, and loosening a guardrail on a live account. true/undefined (default) = the
+   * owner types the phrase (e.g. `APPROVE LIVE <SYMBOL>`, `CONFIRM`) before the action runs; false =
+   * those become ordinary one-click actions. This is an adjustable OWNER PREFERENCE with an easy
+   * off-switch (Settings → Advanced action confirmation), NOT a hard safety gate: real money is the
+   * app's normal, in-domain case, not a gated exception. Genuinely destructive actions — wind-down
+   * (which SELLS) and account deletion — keep their own typed confirmation regardless of this flag.
+   */
+  requireTypedConfirmation?: boolean;
+  /**
    * Socratic Trade may explicitly override owner preference gates when it can state a structured
    * override thesis. "execute" lets a Decide-mode account act through those preference conflicts;
    * "propose" queues the action with the override note; "off" treats every preference gate normally.
