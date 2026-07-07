@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Plain-English Anthropic usage-limit error (CLAUDE, cloud lane)
+
+Owner-reported screenshot showed a raw Anthropic JSON error blob ("You have reached your
+specified API usage limits...") leaking verbatim into a thesis card's "RED TEAM FAILED"
+note. Root cause: `humanizeLlmError` (`src/lib/llm-errors.ts`) didn't recognize Anthropic's
+400 `invalid_request_error` usage-limit shape (only 401/403/404/429/5xx/timeout are mapped),
+so it fell through to the raw-JSON fallback. Fixed with a new `usage limit` branch that
+extracts the reset date and returns plain English; regression test pins the exact payload.
+Since this is the shared error-humanization chokepoint, the fix applies wherever LLM error
+reasons surface (Red Team notes, strategy/outcome-engine/post-mortem/revalidation reasons,
+Assistant console chat errors). tsc/lint/test all green; `npm run build` hits a pre-existing
+(confirmed on clean `main`) `/_not-found` "Invalid URL" collection error unrelated to this
+change. See `docs/rollouts/2026-07-06-plain-english-anthropic-usage-limit-error.md`.
 ## 2026-07-06 — deferred RAG items landed (#1019 server-side as-of filter, #1021 persist-pool v2)
 Both items owner-approved same day as deferred follow-ups from the CLAUDE next-wave RAG cluster
 (`docs/rollouts/2026-07-06-claude-nextwave-rag.md`), built, independently reviewed, fixed pre-merge,
