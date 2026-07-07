@@ -32,6 +32,18 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
+  `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
+  empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what
+  was silently learned" archive the design doc promised but never built — new
+  `deleteLearnedContext` (ownership-scoped, also the shared-contribution erasure path),
+  `GET /api/learned-context` + `DELETE /api/learned-context/[id]`, and a collapsed-by-default
+  `LearnedFactsArchive` component. 8-angle adversarial review found no correctness/security bugs.
+  Verify: 283 files / 2843 tests green, tsc clean, lint 0 errors, build clean (re-run post-merge —
+  branch had drifted far behind main). Prod verified: `/api/health` 200, `pm2 trading` stable (0
+  unstable restarts), new route live (401 unauthenticated, not 404/500). See
+  `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
 - 2026-07-06 - `trading-live` published at `7b5450fe` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`). Ships the full CLAUDE backlog train (#816 prompt-safety, #819
   usage-budget advisory, #820 due-jobs, #822 hyde-multiquery) plus everything merged to `main`
@@ -125,6 +137,11 @@ As of 2026-07-04.
 
 ## Completed
 
+- **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
+  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
+  2. [x] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
+  3. [x] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
+  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate. (Merged PR #882)
 - **PR #844 - `claude/pr805-remediation`: P0 checkRegimeFlip RMW fix + P1 backlog + AG connection-health
   slice, merged as one honest PR (CURSOR + AG + CLAUDE remediation) — ✅ COMPLETED, merged 2026-07-05
   (squash `ebcf6a23`).**
@@ -160,13 +177,264 @@ As of 2026-07-04.
   Rollout doc: `docs/rollouts/2026-07-05-cursor-session.md` (describes intended scope; now
   confirmed-merged via #844).
 
-- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854 (2026-07-05).** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
-  _2026-07-05 (CLAUDE audit-c3): CORRECTION — this row is mis-filed. Per protocol "Completed" = merged
-  to `main`; `gh pr view 854` shows state **OPEN**, mergeStateStatus **BLOCKED** (all CI green —
-  verify/smoke/gitleaks/autofix/classify SUCCESS — reviewDecision empty, no auto-merge armed). Blocked
-  by the main-protection ruleset requiring review/thread-resolution, not by code. Moved to In Progress
-  below pending actual merge; do not let the issues-sync mirror close its tracking issue off this
-  stale Completed text. action=land-it._
+---
+
+## 🚧 In Progress
+
+- **Persistent candlestick header logo (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
+  IN PROGRESS 2026-07-06, PR open.** Follow-up to the merged console intro splash (#876). Replaced the
+  typed "Socratic.Trade" top-bar brand with a live candlestick "SOCRATIC TRADE" `<HeaderLogo>` that
+  ticks forever (one column/sec), and made the intro shrink into and hand off to that exact element.
+  New shared `app/console/ui/candle-ticker.ts` (wordmark sampler + 12-unit ticker + `drawTicker`, so
+  intro and logo can't drift) + `app/console/ui/header-logo.tsx` (~248×18px, theme-independent candles
+  on the header surface, reduced-motion-safe). `intro-canvas.tsx`: transparent bg (owner choice), final
+  candles measured onto the real `[data-brand-logo]` box (seamless handoff), header shrunk to ~18px,
+  `END=T4+0.2` (fade at once, no double-draw). tsc/lint/build green + driven live (dark + light).
+  Owner open question: transparent splash shows the console+consent modal behind the candles — offered
+  a one-line switch to `var(--con-bg)`. See `docs/rollouts/2026-07-06-persistent-header-logo.md`.
+- **Design-sync: Socratic Trade UI Kit → claude.ai/design (Claude Code).** 30 primitives
+  (12 `ui` + 18 `console`) converted and uploaded to claude.ai/design so the design agent
+  builds with the app's real components. Render check 30/30 clean; conventions header shipped.
+  Uploaded to two owner accounts (projects `0a962679…` + `1da8546c…`). Additive only —
+  `.design-sync/` inputs + one `.gitignore` block, no app source changed. **PR open** on
+  branch `agent/design-sync-uikit`. Rollout: `docs/rollouts/2026-07-05-design-sync-uikit.md`.
+
+---
+
+## ✅ Completed (merged to `main`, on beta/integration)
+
+- **PR #979 - Persist retrieved candidate pool for RAG analyzability (CLAUDE, branch
+  `claude/persist-candidate-pool`).** Merged 2026-07-06. Captures the post-recall/post-dedupe
+  candidate pool from `retrieveContextDetailed` (`vector-db.ts`) — including chunks NOT making the
+  final top-`limit` slice — behind new flag `RAG_PERSIST_CANDIDATE_POOL` (default OFF,
+  byte-identical when off). **Known limitation:** it captures `rankPool`'s OUTPUT pool only, so
+  candidates dropped upstream by minScore/asOf/dedupe are never present, and in the flagship
+  production caller (dedupe 0.6 + limit 3, both of which already hard-cap output at `limit`)
+  `used:false` rows are rare/absent — a pre-rankPool v2 with per-stage drop reasons is the real
+  follow-up (see rollout note, and the deferred-work row below). New
+  `src/lib/rag/candidate-pool.ts` (`recordCandidatePool` → `audit("rag_candidate_pool", ...)`, no
+  new table); ids/scores/docType/asOf/`used` only, never raw chunk text. `RetrieveOptions.runId`
+  added (additive) and threaded from both `strategy.ts` retrieval call sites +
+  `experience-memory.ts`. Coordinated with sibling lane `claude/typed-retrieval-status` (same file,
+  disjoint region — this lane owns only the block right before the final slice; landed after it).
+  Local verify: `tsc --noEmit` clean, `test/persist-candidate-pool.test.ts` (new) +
+  `test/rag-retrieval-regression.test.ts` 26/26 green, plus spot-checked adjacent RAG/strategy/
+  experience-memory suites, no regressions; `land.sh` full gate (tsc/test/build) green at merge.
+  Rollout: `docs/rollouts/2026-07-06-persist-candidate-pool.md`.
+- **PR #977 - Corpus-coverage receipt for requested-but-empty filings doc types (CLAUDE, branch
+  `claude/corpus-coverage-receipt`).** Merged 2026-07-06. Advisory-only per-run receipt: when
+  strategy.ts's filings-RAG pass requests a doc type that produces zero chunks THIS run, emits one
+  `audit('rag_doc_type_coverage_empty')` + one kind-`safety` decision-case evidence item. Never
+  touches `ragContext`/sizing/policy — advisory only, no flag (mirrors the unconditional
+  `evidence_age_anomaly` receipt). Rollout: `docs/rollouts/2026-07-06-corpus-coverage-receipt.md`.
+  - **2026-07-06 BLOCKER fix (same day, pre-merge):** the original design gated the receipt on
+    "zero ever-ingested `ingested_accessions` rows corpus-wide" as the producer-existence check.
+    That signal was itself broken: the default-ON 8-K SUMMARY writer
+    (`src/lib/web-sources/sec8k.ts`'s `refreshEightK`, via `storeContexts`) writes retrievable
+    `doc_type: "8-k"` chunks but never calls `insertIngestedAccession` — only the default-OFF
+    full-body writer does. So `ingested_accessions` had ZERO "8-k" rows in the default config even
+    with real 8-K chunks in the corpus, meaning the receipt false-fired "8-k" on any day an 8-K
+    chunk didn't rank top-3 — routinely, not rarely. Investigated `document_chunks` as a
+    corpus-truth replacement (the reviewer's suggestion) and confirmed it's not viable: no
+    `doc_type` column in its schema, not populated unconditionally by every writer, and
+    `source`/prefix values aren't a reliable per-doc_type proxy (`disclosure-rag.ts` shares one
+    prefix across two different doc types). Fixed per the task's documented fallback: dropped the
+    runtime `ingested_accessions` producer-count entirely; added a static
+    `COVERAGE_CHECKED_DOC_TYPES = ["10-k", "10-q", "8-k"]` allowlist (`src/lib/strategy.ts`) of
+    doc types hand-verified to have a producer in code; `computeEmptyDocTypes`
+    (`src/lib/prompt-safety.ts`) narrowed to `(coverageCheckedDocTypes, retrievedDocTypes)` with no
+    DB dependency at all. Also fixed the companion noise finding: `earnings-transcript` (genuine
+    zero-producer, no writer anywhere) excluded from `COVERAGE_CHECKED_DOC_TYPES` (stays in the
+    harmless retrieval-request literal) so it no longer fires a receipt every single run forever.
+    `ingestedAccessionCountForDocType`/`ingestedAccessionCountsByDocType`
+    (`src/lib/db-learning.ts`) kept as general-purpose diagnostic helpers (doc comment corrected
+    to spell out the "8-k" undercount caveat), just no longer used by this receipt. Added the
+    regression test the fix requires (`test/rag-doc-type-coverage.test.ts`, "(c) REGRESSION"):
+    stores an 8-K summary chunk with NO `insertIngestedAccession` call anywhere and asserts no
+    false-positive receipt for "8-k". 11/11 passing (was 10/10); `npx tsc --noEmit` clean; 42/42 +
+    31/31 regression spot-checks unchanged. Full rationale in the rollout note's new "Correction"
+    section.
+  - **2026-07-06 THIRD fix (same day, pre-merge) — restore both-conditions guard, ledger-complete
+    subset only:** the 2nd fix above traded the 8-K false-positive for a new daily-noise bug:
+    firing on this-run-retrieval-emptiness ALONE (no producer check at all) means 8-K —
+    event-sparse, routinely won't rank top-3 — would fire the receipt on a large fraction of
+    normal runs. Redesigned: `COVERAGE_CHECKED_DOC_TYPES` narrowed to `["10-k", "10-q"]` (only the
+    types whose `ingested_accessions` producer ledger is COMPLETE — `sec-filings.ts` writes an
+    accession row for every 10-K/10-Q ingest; `8-k`'s default-ON summary writer does not, so its
+    ledger can't distinguish "no coverage" from "didn't rank today" — excluded;
+    `earnings-transcript` stays excluded, no producer anywhere). Restored the BOTH-CONDITIONS gate
+    for that subset: `computeEmptyDocTypes` (`src/lib/prompt-safety.ts`) gained a third
+    `hasProducerForDocType` predicate parameter — a type is "empty" only when NOT retrieved this
+    run AND the predicate reports zero producer rows. Kept `prompt-safety.ts` DB-free:
+    `strategy.ts` builds the predicate from ONE bulk `ingestedAccessionCountsByDocType()` call + an
+    in-memory prefix lookup (not N per-type queries). Rewrote `test/rag-doc-type-coverage.test.ts`
+    (14/14 passing) including the key low-noise case: a 10-K that didn't retrieve this run but HAS
+    a producer row must stay silent. `npx tsc --noEmit` clean; `strategy-prompt-safety`/
+    `strategy-rag-quickwins-wiring` sweep 5/5. This is the corpus-truth-then-ledger-scoped redesign
+    that shipped — full rationale in the rollout note's new "Second correction" section.
+- **PR #973 - RAG golden-eval expansion: episodic-analog cases + single-vs-multi-query (#822)
+  (CLAUDE), branch `claude/rag-golden-eval-episodic`.** Merged 2026-07-06. Test/fixture/docs only,
+  no production code changed. Added 10 new fixture cases to
+  `test/fixtures/rag-retrieval-eval-fixture.ts` covering `EPISODIC_DOC_TYPES`
+  (`socratic-decision`/`coach-note`/`lesson`) — the prior 462-line fixture had zero non-filings
+  cases, so the harness reportedly saturated at recall 1.0. Each new case has near-miss hard
+  negatives (same symbol/regime, wrong thesis or side) so it's actually discriminating. Added two
+  `describe` blocks to `test/rag-retrieval-eval.test.ts`: an episodic recall@k/MRR suite (reuses
+  the existing scorer via a minimal additive `cases` option on `runFixture`) and a
+  single-query-vs-multi-query suite exercising `RetrieveOptions.queries`/`rrfFuse` (#822) directly
+  against `retrieveContextDetailed`, asserting no-regression + that the fused pool draws from
+  multiple query lists (one `mocks.query` call per fan-out variant). No RAG env flag defaults
+  touched. tsc clean; focused `test/rag-retrieval-eval.test.ts` +
+  `test/rag-retrieval-regression.test.ts` = 36/36 passing (17 new).
+  **2026-07-06 follow-up (2nd commit, pre-merge) — baseline-population + recall-discrimination
+  fixes:** the "filings behavior byte-identical" claim above was actually FALSE — the filings
+  baseline/rerank/hybrid/as-of `it`s had no `cases` filter and were silently scoring the full
+  39-case mix (measured MRR 0.919) instead of the original 29 filings cases (MRR 1.0). Fixed by
+  adding `FILINGS_CASES` and wiring it through every filings-only `it`; filings MRR confirmed back
+  to 1.0. Also added an explicit `recall1` assertion over the episodic cases (`toBeCloseTo(0.4, 5)`,
+  the actual measured value, since recall@3 alone saturates at 1.0 and can't discriminate), and
+  replaced a brittle Set+fixed-array-slice assertion in the multi-query plumbing test with a
+  no-dupes + all-from-pool check. Still 36/36 passing, tsc clean. Rollout:
+  `docs/rollouts/2026-07-06-rag-golden-eval-episodic.md`.
+- **PR #970 - Typed retrieval-status receipt (CLAUDE, branch `claude/typed-retrieval-status`).**
+  Merged 2026-07-06. Distinguishes no-memory vs lookup-failed vs budget-skipped vs degraded
+  instead of every RAG/episodic retrieval outcome collapsing to an indistinguishable `[]`/
+  non-empty result. Additive/advisory-only: new `RetrievalStatus` union + optional
+  `RetrieveOptions.onStatus` callback wired through the four existing classification points in
+  `retrieveContextDetailed` (vector-db.ts), a new `status` field on `ExperienceRetrievalResult`
+  (experience-memory.ts), per-symbol/PORTFOLIO capture in strategy.ts persisted via a new
+  `rag_retrieval_status` audit row alongside `experience_retrieval`, and an additive optional
+  `ragRetrievalStatus` field on `SocraticDecisionCase` (types.ts) — persistence only, no rendering.
+  Never gates/alters chunk selection. Coordinated with sibling lane `claude/persist-candidate-pool`
+  (also edits `vector-db.ts` `retrieveContextDetailed`) — this diff was kept minimal/localized to
+  the early-return points and a thin status output. Tests: `test/rag-retrieval-status.test.ts`
+  (new, 11 cases, network-free). Pre-merge Copilot review caught a real bug:
+  `retrieveContextDetailedWithStatus`'s forwarding call to a caller-supplied `onStatus` would
+  propagate a throwing callback instead of swallowing it (breaking the "throwing callback never
+  affects retrieval" contract every other call site relies on) — fixed with a try/catch + a
+  regression test. Rollout: `docs/rollouts/2026-07-06-typed-retrieval-status.md`.
+- **PR #974 - Held-position retrieval scope (CLAUDE, worktree `~/apps/trading-wt-held-scope`,
+  branch `claude/held-position-retrieval-scope`).** Merged 2026-07-06. Widens the three retrieval
+  scopes in `runStrategyOnce` (filings RAG `topSymbols`, learned-context `learnedSymbols`, episodic
+  `situationCandidates`) to UNION in every held (open) position's symbol, not just the score-sorted
+  top-N scan candidates — so sell/hold/trim decisions on a held name outside the top slice get
+  retrieved memory too (previously zero). Strictly additive: the BUY-candidate scan/prompt set
+  (`marketScan.topCandidates`) and its ordering are unchanged; no risk-gate/sizing/policy touch.
+  Hoisted the pre-existing `heldSymbols` computation (was locally recomputed for take-profit
+  trim-band pruning) to a single shared value. New test:
+  `test/strategy-held-position-retrieval-scope.test.ts` (2 tests, held-symbol inclusion + no
+  duplicate retrieval + top-N regression). tsc clean, focused strategy/market/learned-context/
+  experience-memory suites green. Rollout: `docs/rollouts/2026-07-06-held-position-retrieval-scope.md`.
+  **Follow-up fix (same day, 2nd commit, pre-merge) — episodic-sketch gap:** episodic
+  `buildSituationSketch` (`src/lib/experience-memory.ts`) still did a bare `slice(0, 3)` on
+  candidates, so held symbols appended past top-3 reached the `retrieveDecisionExperiences` call
+  but were dropped before entering the actual sketch/query text — episodic parity was only
+  partial. Fixed with an additive `SituationCandidate.held` flag + a bounded (max 6) held-aware
+  selection in `buildSituationSketch`; non-held path is byte-identical to the old slice. 4
+  new/strengthened tests across `test/experience-memory.test.ts` +
+  `test/strategy-held-position-retrieval-scope.test.ts`; tsc clean; full `npm test` 2678/2678
+  passed. Same rollout note, follow-up section appended.
+  **Pre-merge Copilot review fix — cross-lane catch-block fallback bug:** with `topSymbols` now
+  widened to include `heldSymbols`, the filings-RAG pass could cover more than the original top-3,
+  but the typed-retrieval-status lane's (`#970`) fallback in the later `catch` block still only
+  added receipt rows for `marketScan.topCandidates.slice(0, 3)` — so a full-pass failure (e.g. a
+  vector-db import error) would silently omit held symbols from the `rag_retrieval_status` receipt
+  even though they were now in-scope for retrieval. Fixed (commit `23784ad`): the catch-block
+  fallback now iterates the same held-widened symbol set (`uniqueSymbols([...top-3,
+  ...heldSymbols])`) as the happy path, so a held symbol outside the top-3 still gets a
+  `lookup_failed` receipt row if the whole filings-RAG pass throws. (Same review pass also fixed an
+  O(heldSymbols × topCandidates) `.find()` loop to O(heldSymbols) via a pre-built symbol→candidate
+  map, and corrected a stale code comment on the `SITUATION_SKETCH_MAX_CANDIDATES` cap.)
+- **PR #816 - Prompt-safety CR-H: fencing + deterministic injection receipts for the money-path
+  prompts (CLAUDE).** Merged to `main` 2026-07-05 as squash `041b73b2` (verify/smoke/gitleaks
+  green). Advisory ONLY (owner philosophy: receipts, never blocks): fenced
+  `<owner_strategy_prompt>` + one data-not-command clause in the Bull system prompt covering every
+  untrusted block (headlines/smartMoney/RAG/learned/analogs/coaching/reflection) + Bear equivalent
+  (`STRATEGY_PROMPT_VERSION` 1.4.0→1.5.0); `reflection_summary` moved out of the SYSTEM prompt into
+  Bull userContent as fenced `<reflection_summary>` DATA; new leaf `src/lib/prompt-safety.ts`
+  deterministic injection scanner → `audit('prompt_injection_suspected')` + kind-`safety`
+  decision-case evidence (detection only, never blocks/alters); learned-context lines carry inline
+  provenance (`[origin= source= asserted= conf=]`); same-day high-relevance RAG chunk / same-day
+  fact → aggregated `audit('evidence_age_anomaly')` + `safety` evidence item; post-mortem
+  reflection WRITER fenced at source. Review pass added an excerpt cap on persisted findings (a
+  ~50KB base64 blob could otherwise persist unbounded text repeatedly via the decision-case
+  evidence JSON) and a fence-escape detection pattern (forged closing tags from inside untrusted
+  data). Tests: 2577 total in the full local gate, all green (`test/prompt-safety.test.ts` 31,
+  `test/strategy-prompt-safety.test.ts` 4, plus focused strategy/chat/socratic/learned-context
+  suites). See `docs/rollouts/2026-07-05-prompt-safety-fencing.md`.
+- **PR #819 - Wire `usage-budget` Phase 2 (advisory-first, owner-overridable enforcement) into
+  `runStrategyOnce` (CLAUDE).** Merged to `main` 2026-07-05 as squash `f28322fe`
+  (verify/smoke/gitleaks green). ADVISORY (always on when the monitor is configured):
+  `usage_budget_status` audit receipt every run + a `formatBudgetAdvisory` line injected into the
+  Bull userContent next to `drawdownAdvisory`. ENFORCEMENT (opt-in via `USAGE_BUDGET_ENFORCE`,
+  default off) at the per-user/day LLM budget choke point: skip ends the run before any LLM call
+  (audit + `notifyBudgetSkip`); downgrade swaps `policy.llmModel`/`redTeamLlmModel` on the
+  in-memory run policy only, never persisted. `debateProposal` gained an optional `policyOverride`
+  param so the Bear picks up the same transient downgrade. **Adversarial review caught a BLOCKER
+  pre-merge:** the enforcement block was mutating the shared `policy` object in place, so a
+  same-run cap-breach demotion's `setPolicy({ ...policy, strategyAuthority: "propose" })` would
+  have persisted the downgraded models to the DB permanently, contradicting the "never persisted"
+  contract; fixed with a separately-carried `runLlmOverride`/`runPolicy` never passed to
+  `setPolicy`/`autoRevertOnCapBreach`, plus a regression test that trips both a downgrade and a
+  cap-breach demotion in the same run. Also fixed: scoped the enforcement try/catch so a post-audit
+  throw in the skip path can't be swallowed into the full LLM path; threaded the downgrade into
+  `generateReflectionSummary` (outcome-engine lesson pass left as a documented intentional
+  exemption — fire-and-forget, outlives the run); de-duplicated the budget-status fetch; extended
+  the downgrade test to assert the Red Team request body's model too. Full local gate: 2587 tests
+  across 261 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-usage-budget-advisory-wiring.md`.
+- **PR #820 - Durable due-jobs substrate for 15m/1h intraday outcome sampling (CLAUDE).** Merged to
+  `main` 2026-07-05 as squash `e90db1a8` (verify/smoke/gitleaks green). New `due_jobs` table
+  (migration v11) + `src/lib/db-jobs.ts` (lease/reclaim claimable queue — fixes the
+  crashed-row-stuck-forever gap the existing `mobile_commands` queue has). `counterfactual-learning.ts`
+  + `outcome-engine.ts`'s `measureCase` enqueue `sample_intraday_horizon` jobs once a case's basis
+  (fill or ref price) resolves; new `drainDueIntradaySampleJobs` worker drains them through the same
+  `mergeHorizonRows`/write path the existing inline `samplableNow` path uses (belt-and-suspenders,
+  no duplicate rows); one fire-and-forget call added to `scheduler.ts`'s `tick()`. **Adversarial
+  review caught a lost-update-race BLOCKER pre-merge:** `measureCase` held an outcomes snapshot
+  across awaits, so its wholesale write could erase a 15m/1h row the due-jobs worker had already
+  persisted concurrently; fixed by re-merging against a fresh DB read immediately before every
+  terminal/partial write (`writeSocraticDecisionOutcome`, `markSkippedCounterfactualMatured`,
+  `markSkippedCounterfactualUnresolvable`). Also fixed: claimant-fenced the three terminal-transition
+  functions in `db-jobs.ts` (a stale/lease-expired worker could otherwise resurrect an
+  already-completed job); renamed the drain receipt's `failed` counter to `erroredRetried` +
+  removed the dead `'failed'` `DueJobStatus` value; replaced the worker's `caseId.split(":")`
+  counterfactual lookup with an exact `runId`/`horizonDays`-keyed lookup (the split-based lookup
+  could silently match the wrong row when a run/symbol pair had more than one horizon-day config);
+  added `due_jobs` to the account-deletion drift guard. Full local gate green (2529+/2530+ full
+  suite, build clean). See `docs/rollouts/2026-07-05-durable-due-jobs.md`.
+- **PR #822 - HyDE + evidence-derived multi-query retrieval for filings RAG, flag-gated (CLAUDE).**
+  Merged to `main` 2026-07-05 as squash `d97b7c71` (verify/smoke/gitleaks green). New
+  `src/lib/rag/multi-query.ts`: pure `deriveQueryVariants()` (2-4 facet sub-queries from
+  evidence/sector/dominant-factor) + `generateHydePassages()` (one cheap fail-open LLM call, HyDE
+  passages). Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both **default OFF** —
+  byte-identical retrieval when both are off (pinned by a dedicated regression test); not
+  independent, `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY`. `vector-db.ts`
+  `RetrieveOptions.queries?: string[]`: per-query embed+match (including the original query
+  alongside variants), RRF-fused into the existing `rankPool` pipeline unchanged. **Adversarial
+  review caught a fail-CLOSED BLOCKER pre-merge:** the multi-query fan-out had no per-item catch,
+  so one variant's rejected Voyage/Pinecone call discarded every other variant's already-successful
+  results via a bare `Promise.all`, returning empty filings context instead of falling back to the
+  single-query path; fixed so each fan-out call is caught individually and an all-fail case falls
+  back to plain single-query retrieval (flags-off behavior). Also fixed: first-occurrence-wins id
+  resolution could keep a lower cosine score (now higher-score wins); HyDE's endpoint/model could
+  disagree (could route an OpenAI model id to `api.anthropic.com` under an Anthropic policy,
+  silently returning `[]`; now resolved coherently with an audit on non-OK responses); HyDE spend
+  wasn't gated on the daily LLM budget (now gated via `isOverLlmBudget`). Full local gate: 2619
+  tests across 264 files, all green; build clean. See
+  `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`.
+- **Push account status metrics to Usage Monitor (AG)** — ✅ COMPLETED 2026-07-05. Pushed metricTypes `balance` and `limit` to API Usage Monitor via `usage-monitor-push.ts` upon portfolio fetch in Alpaca and Robinhood.
+- **Coach chat -> framework primitives (CODEX, M) — ✅ COMPLETED via PR #810.**
+  Focused slice for issue #473: decision-trace coach-note POST can optionally promote into lesson/framework primitives, framework review now carries explicit rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+
+- **Scan table column customization parity (CODEX, M) — ✅ COMPLETED via PR #806.**
+  Scope: bring `/console/scan` to legacy dashboard parity for column visibility, ordering, reset, and saved browser-local state; allow only tightly related ticker-drawer parity if the scan surface needs it.
+
+- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — ✅ COMPLETED via PR #854.** Updated `congress-webhook-auth.ts` to validate `X-Signature` header via HMAC SHA256. Created `processed_webhooks` db table and integrated persistent DB check in `markSeen` alongside in-memory cache to ensure persistent idempotency across server restarts. Lint and tests green.
+
+- **Codex autofix storm guard (CODEX/AG, workflow/fleet-infra) — ✅ COMPLETED via PR #1004 (2026-07-06).**
+  Scope: reduced `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
+  Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue comment.
 - **Push account status metrics to Usage Monitor (AG, M) — ✅ COMPLETED 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits. Telemetry wired into Alpaca and Robinhood `getPortfolio` calls. Lint, tsc, and tests green.
 - **Eliminate redundant fill-history fetch/replay (AG, M) — ✅ COMPLETED via PR #850 (merged 2026-07-05).** Fills fetched once in `runStrategyOnce` and passed down through all scorecard and sizing calls, eliminating up to 8 duplicate DB queries per run. Unified unit test added to `test/performance.test.ts` to assert that prefetched fills are used and DB query counts are bypassed. Lint 0, tsc clean, Next.js build green.
 - **PRs #816 / #819 / #820 / #822 - CLAUDE planned-backlog train: prompt-safety fencing, usage-budget
@@ -202,6 +470,171 @@ As of 2026-07-04.
   -- --quiet`, focused live-data vitest (`4`), full `npm test` (`257` files / `2510` tests),
   `npm run build`, `npx tsc --noEmit` (after build regenerated `.next/types`). Keepout: settings,
   approvals, Monet risk, Claude memory/RAG, unrelated tooltip sweeps respected.
+
+### Real-money / tax gate (2026-07-02)
+- **#323** — Wash-sale handling modes (`block`/`ask`/`auto`) + Decide-mode escalation framework. _(incl. coordinator round-2: account tax-type precedence, in-run cap demotion, `transitionProposalIfPending` CAS.)_
+- **#331** — IRA wash-sale disregard setting (`taxSettings.iraWashSaleHandling`), owner-requested. Default `block` (unchanged); `disregard` proceeds annotated ("Wash Sale (Technically, but IRA purchase unreported to IRS)") + audited. _(incl. coordinator Codex round-1: prompt threading via `isIraTaxRegime`, deferred disregard audit to execution, `decision.approved` gate.)_
+
+### Backend follow-ups (2026-07-02, landed by parallel sessions)
+- **#332** — `@sentry/nextjs` bump to ^10.63.0 + short/cover risk-path semantics clarification.
+- **#333** — Chat idempotency: `clientTurnId` retry dedupe on `POST /api/chat` (migration v10).
+- **#334** — Persist failover-aware `proposedByModel` per proposal; blank (never fabricate) no-FRED macro (`DEFAULT_MACRO`→`BLANK_MACRO`, `pruneMacro` drops `""`).
+- **#335** — `EquityOrder` limit/stop/TIF through Alpaca+Robinhood mappers + `/console/orders` columns; disclosure-ordered congress cap; `MarketQuoteSummary` factor/headlines/volume fields; Turbopack dev fix.
+- **#336** — `sources.price` provenance in `mergeQuoteData` (merged broker/Yahoo price now attributed to the merge provider, not the stale screener) + this cross-agent effort log.
+- **#337** — Owner decisions record + `docs/manager-model-options.md` (cross-provider model comparison for the strategist role).
+
+### P0 hotfix (2026-07-03)
+- **#341** (`claude/fix-baseddl-index-migration`) — boot crash on every pre-existing DB: #333's baseline-DDL
+  `idx_chat_turns_user_client` ran before the versioned ALTER (`no such column` on old DBs; fresh-DB CI
+  stayed green). Baseline reverted to frozen `SCHEMA_BASELINE`; versioned migration is the single source;
+  regression test boots `getDb()` against a simulated pre-#333 DB. Prod/preview DBs already hand-patched
+  (see Deployed section).
+
+### Rebrand (2026-07-03)
+- **#340** — Rebrand Agentic Trading → **Socratic Trade** / socratictrade.com (`claude/rebrand-socratic-trade`).
+  Owner set up prod infra as "Socratic Trade" (Sentry project, Cloudflare DNS, GitHub OAuth callbacks,
+  Google authorized domains — owner-side). Code aligned: display brand → "Socratic Trade" (no-space
+  "Socratic.Trade"); legacy production host fallback → `socratictrade.com` (env-first);
+  Sentry slug → `socratic-trade`; active telemetry/notify/MCP/FINRA/account-deletion fallback identifiers
+  now use Socratic Trade naming. Deliberately NOT touched: `mail@jays.services` login email, the Robinhood
+  "Agentic" account nickname, internal jays.services preview subdomains.
+
+### De-paternalization + CI hardening (2026-07-03)
+- **#339** — De-paternalize Step 1: deleted the paper-default / `paperMode:false` Don't-rule + the
+  "defaults to Test mode" framing from `AGENTS.md`; added the "Product philosophy — real trading,
+  owner's risk" section (an account is an account; no Test-mode/local-sim; harden CORRECTNESS +
+  multi-user safety, NOT obedience). Also fixed the July-4 CI holiday flake (`isTradingDay` VITEST-gated
+  test seam, so `verify` stops going red on market-closed days) and purged the contradicting Cursor
+  rule (`.cursor/rules/handoff.mdc`). _(incl. coordinator Codex round: VITEST gate on the seam so a
+  stray flag can't defeat the real market-closed guard; Cursor-rule rewrite; EFFORT-LOG stale-bullet
+  supersede.)_
+- **#342** — De-paternalize Step 2: removed `policy.paperMode`/`paperStartingCash` and the `test/local`
+  local-simulator execution path entirely (`usesLocalSimulation`, `getPaperPortfolioProjection`, local
+  paper-fill/portfolio branches). `deriveExecutionState` (`execution-mode.ts`) is the sole hub — mode is
+  purely `broker/paper`/`broker/live` from the active account's `environment`; no account ⇒ honest
+  "No account" state (`submitsBrokerOrders: false`), never a fake-fill fallback. `TestBrokerGateway`/
+  `broker:"test"` kept as test infrastructure only (~36 test files migrated to a connected test-broker
+  account). Fixed a real bug: broker-paper fills were mislabeled "Test" in the Activity feed. 83 files,
+  +854/−1208.
+
+### Socratic autonomy UI/runtime (2026-07-03)
+- **#344** — Socratic Trade Autonomy Desk implementation (`codex/socratic-trade-autonomy-mockup`):
+  persisted Socratic decisions/framework proposals, `/api/socratic/*`, RAG attribution, coach notes,
+  framework proposal review, strategy-loop decision recording, private institutional-memory indexing,
+  Socratic override semantics for owner-preference gates, public `/welcome` and `/how-it-works`,
+  coded `/design/socratic-trade`, and exact production-domain references changed to
+  `socratictrade.com`.
+- **#345** — Run-state UX fix (`codex/run-state-ux-fix`): Start/Resume are no longer hidden behind a
+  red STOP affordance. Paused states show Start or Resume as the primary header action; STOP/Wind down
+  remain red, and start/autonomy confirm flows use primary styling.
+- **#346** — IRA wash-sale UI correction (`codex/ira-washsale-ui-fix`): Roth/traditional IRA accounts
+  show same-account IRA wash sales as ignored/not applicable, hide the taxable Block / Ask / Auto
+  selector, and expose only the cross-account IRA taxable-loss rebuy setting.
+- **#347** — Console universe index exclusivity fix (`codex/universe-exclusive-indexes`):
+  `/console/guardrails` now uses the shared `toggleIncludedIndex` helper for Base indices, so
+  S&P 100/S&P 500 and Nasdaq 100/Nasdaq Composite replace each other immediately in the draft.
+- **#348** — Sell to Fund Buys title-case copy fix (`codex/sell-to-fund-title-case`):
+  Guardrails and legacy dashboard Sell to Fund Buys labels/options now use Title Case, and the
+  Guardrails save-review diff shows Title Case instead of raw lowercase enum values.
+- **#349** — Socratic admin/RAG/Pinecone/settings parity implementation
+  (`codex/live-thesis-portfolio-framing`): default RAG index `socratic-trade`, Pinecone/Voyage
+  health visibility, RAG ingestion brakes, provider-specific model reasoning controls, `/old`,
+  OAuth host canonicalization, ticker drawer coverage, and user/admin LLM usage visibility.
+- **#350** — AI Review inheritance, model catalog, and text-box font controls
+  (`codex/ai-review-model-inheritance`): removed the misleading account-review model fallback,
+  made blank AI Review inherit Red Team then Green Team, refreshed current curated provider model
+  options, added DeepSeek V4 thinking controls, and made console text boxes use consistent readable
+  fonts with user-selectable examples.
+- **#351** — Console actions/evidence/live-account polish + RAG quota safeguards
+  (`codex/console-actions-evidence-live`): action history/blocker copy, stopped cadence display,
+  raw-vs-benchmark return tooltips, reduced live-account warning copy, broker roadmap, RAG usage
+  labeling, Pinecone estimated Write Unit fuse, and earnings/RAG design docs.
+- **#352** — RAG Sentry visibility + Pinecone hosted-model review
+  (`codex/rag-sentry-visibility`): Sentry warning/error events for RAG provider failures and
+  budget trips, Pinecone-hosted NVIDIA/MSFT embedding options documented as benchmark candidates,
+  and Infisical project naming recorded as `Socratic.Trade` / `socratic-trade`.
+- **#353** — Test Account restore + usage cap email alerts
+  (`codex/restore-test-account-option`): explicit addable local mock Test Account that is not
+  default-selected, plus Pinecone/Voyage/provider cap trips routed through `budget_alert` with
+  email-capable fallback.
+
+### Fleet observability (2026-07-04)
+- **#371** — Additive Sentry CI failure reporter (`claude/sentry-ci-observability`), fleet-wide
+  observability half (b). New `.github/workflows/sentry-ci-report.yml` +
+  `scripts/sentry-ci-report.py`, zero edits to any pre-existing workflow: on
+  `workflow_run: types:[completed]` across all 7 workflows that existed at authoring time,
+  failure conclusion sends a raw-envelope Sentry error event to the `fleet-infra` Sentry project
+  tagged `{workflow, branch, actor}` and fingerprinted `[workflow, branch]`; schedule-triggered
+  runs additionally send a Sentry Crons check-in mirroring that workflow's own cron so a
+  nightly/weekly job that silently stops running also alerts. Repo secret `SENTRY_FLEET_DSN` set
+  via `gh secret set` (value never echoed/logged). Companion host-side monitor
+  (`fleet-sentry-monitor` under pm2, machine-side, not in this repo) covers pm2 crash-loop/down
+  detection, disk/WAL space, and `gh` rate-limit budget — see
+  `docs/rollouts/2026-07-04-fleet-sentry-observability.md` for full detail on both halves.
+- **PR #374 — GitHub Issues mirror of the effort board (`claude/effort-issues-mirror`).**
+  Additive, read-only owner-visibility layer over `docs/EFFORT-LOG.md`: boards stay the single
+  source of truth, agents never write issues — a workflow reconciles them. New
+  `scripts/sync-effort-issues.py` (python3 stdlib, no deps) parses the board (keyword-classified
+  `##` sections tolerant of heading/emoji drift, top-level bullets as items with continuation
+  lines folded in, `<!-- effort-key: sha1(first-line) -->` identity marker for idempotent
+  re-runs). Planned/In Progress -> issue open (`effort-board` + `state:planned`/`state:in-progress`,
+  assigned `jaywedgeworth22` for mobile notifications); Completed/Deployed -> issue closed
+  (`state:completed`/`state:deployed`). Never deletes issues; ignores hand-made issues without the
+  marker; creates missing labels on first run. New additive workflow
+  `.github/workflows/effort-issues-sync.yml` (push to `main` touching this file, daily off-minute
+  cron for drift, `workflow_dispatch`). Rolled out identically to `congress-trading-shared` (PR #4)
+  and `API-usage-monitor` (PR #9); canonical protocol doc
+  (`/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`) gained an "Issues mirror (standard)" subsection +
+  bootstrap-checklist update. Verified: parser tested directly against all three repos' real
+  boards before rollout (58/1/2 items respectively, correct bucketing); a genuine duplicate board
+  row surfaced by a live dry-run (this repo's own "Wave-1 quick wins..." logged twice under In
+  Progress) was caught and fixed with in-run dedup; full local quartet green (lint 0 errors, tsc
+  clean, 2436 tests, build ok); post-merge the push-triggered workflow run created all 58 issues
+  correctly bucketed (32 completed/6 deployed closed, 9 in-progress/11 planned open), confirmed via
+  the Issues API. See `docs/rollouts/2026-07-04-effort-issues-mirror.md`.
+
+---
+
+## 🔨 In Progress
+- **Full-suite test determinism: de-flake order-confirmation-status + chat-orchestrator-search-knowledge**
+  (CLAUDE, worktree `~/apps/trading-claude`, branch `agent/claude`) — **COMPLETED 2026-07-05, merged
+  PR #812.** Root causes (measured, not timeout-tuning): `executeProposal` tests ran a REAL market
+  scan (Nasdaq screener + Yahoo fetches, 6-8s abort timeouts + 429 backoff) — ~12-13s/test solo,
+  past 30s under 4-worker full-suite load; chat-orchestrator's first test paid the ~15s orchestrator
+  module-graph import inside its own 20s testTimeout. Fix: partial-mock `scanMarket` at the
+  `market.ts` module boundary in `order-confirmation-status` + `approval-lock` (same class — its
+  2026-06-21 fix only padded timeouts); hoist the orchestrator import into `beforeAll(…, 120_000)`.
+  After: full suite 256 files / 2506 tests green in 20.77s wall; the three files ~1s of test time.
+  See `docs/rollouts/2026-07-05-full-suite-test-determinism.md`. (Row to be re-filed under Completed
+  at the next board grooming; left in place to avoid colliding with concurrent lane edits.)
+
+- **Mobile console width overflow — autonomy-desk home (CLAUDE cloud, branch
+  `claude/mobile-console-width-overflow`) — PR open (#992).** Owner-reported: on mobile, every section
+  after the Live-thesis hero rendered wider than the viewport (content clipped off the right edge).
+  Root cause: the lower content grid in `app/console/page.tsx` fell back to an implicit `auto`
+  (min-content) track on mobile with `min-width:auto` column items, so the 7-column `PositionsCard`
+  table (nowrap headers, ~610px min-content) stretched the whole column and defeated its
+  `overflow-x-auto` wrapper. Fix: `grid-cols-1` on the wrapper + `min-w-0` on both column children
+  (mirrors the hero's existing shrink-safe pattern; layout `<main>` was already `min-w-0`). Verified
+  tsc/lint/build clean + empirical 390px before/after with the real `console.css` (627px overflow →
+  contained; table now scrolls inside its card). See
+  `docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
+- **Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane** (CLAUDE cloud,
+  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-06.**
+  Self-hosted Coolify (open-source PaaS) stood up on a Hetzner CX23 behind `jays.services` to
+  offload local agent/dev-server resource usage from the owner's 16GB M5 MacBook Air. API
+  token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
+  created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
+  corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
+  (port 4103 [corrected from an earlier 4104 typo in this row — owner confirmed 2026-07-06 "Monet
+  should be 4104 since cursor is 4103"; AGENTS.md's fleet table is the corrected source of truth],
+  `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
+  create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
+  agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
+  onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
+  box) — production needs real secrets transfer, DB migration/cutover plan, and Coolify
+  Backups enabled (unlike the preview apps). See
+  `docs/rollouts/2026-07-06-coolify-migration.md`.
 
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
@@ -343,34 +776,75 @@ As of 2026-07-04.
   environment. Corrected value: `cd Socratic.Trade && bash scripts/cloud-setup.sh`. **Action needed
   from MONET**: per the PR #798 record below, Monet's own cloud environment was set up with the same
   bare (broken) value — flagged in #agent-sync, Monet should update its environment's Setup script
-  field the same way. No app code touched. See
+  field the same way. No app code touched. PR #967 open, auto-merge armed. See
   `docs/rollouts/2026-07-06-cloud-setup-script-cwd-fix.md`.
-- **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — IN PROGRESS 2026-07-06.**
-  Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod `7b5450fe`). Throwaway worktree
-  session (seat CLAUDE per AGENT_SEAT pin), `claude/*` lanes off `main@fc4b179e`, triage-first then
-  parallel build/review/land. Scope (triage in flight): as-of-strict undated-chunk drop; per-run
-  corpus-coverage receipt; persist full retrieved candidate set (incl. unused); train/serve
-  embed-text skew; server-side numeric as-of Pinecone filter; typed retrieval-status receipt; RAG
-  golden-eval episodic expansion (validates #822 single-vs-multi-query); held-position symbols in
-  retrieval scope; verify decision-memory re-index covers outcome/lesson writes. KEEPOUT: MONET risk
-  gates, CODEX console/UI, AG data-provider lanes. Own PRs, sequential land.
-- **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
-  Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
-  Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
-  comment. Touch workflow callers only in clean Codex worktrees; preserve manual dispatch and
-  round-cap behavior.
+- **Bump shared dependency in agentic-trading and Congress.Trade to ^1.3.0 and fix HTTPS lockfile (AG) — IN PROGRESS 2026-07-06.** Fixing CI/CD `check-pin` failures by syncing both repositories' `package.json` specifications to the exact same version, and normalizing `package-lock.json` to use `git+https` instead of `git+ssh` to prevent tokenless environment crashes.
+- **CLAUDE next-wave: RAG retrieval-quality + corpus-integrity cluster (CLAUDE) — COMPLETED,
+  5 PRs merged 2026-07-06.** Follows the merged+deployed CLAUDE train (#816/#819/#820/#822 → prod
+  `7b5450fe`). Throwaway worktree session (seat CLAUDE per AGENT_SEAT pin), `claude/*` lanes off
+  `main@fc4b179e`, triage-first then parallel build/review/land. Of the 9-row triage scope, 5 lanes
+  were built/reviewed/fixed/landed same day (see their own Completed rows below for detail):
+  typed retrieval-status receipt (**PR #970**, merged 2026-07-06), RAG golden-eval episodic
+  expansion (**PR #973**, merged 2026-07-06), held-position retrieval scope (**PR #974**, merged
+  2026-07-06), per-run corpus-coverage receipt (**PR #977**, merged 2026-07-06), and persist
+  full retrieved candidate pool (**PR #979**, merged 2026-07-06). The remaining 4 triage rows
+  resolved without new PRs — no code changed for these, so they were never split into their own
+  board rows; disposition of each, triaged 2026-07-06:
+  - "Fail-closed as-of strict mode for undated chunks" (triage 2026-07-06: already done —
+    `VECTOR_ASOF_STRICT` + rankPool drop-count audit + `test/vector-db-asof-strict.test.ts`).
+  - "Fix train/serve embedding text skew" (triage 2026-07-06: already done — see `VECTOR_EMBED_CLEAN_TEXT`,
+    shipped 2026-07-01 per `PLAN.md`'s R17/RAG-backlog entry and `docs/rollouts/2026-07-01-rag-backlog.md`).
+  - "Verify decision-memory re-index covers outcome/lesson writes" (triage 2026-07-06: already done
+    — outcome + lesson writers both call `indexSocraticDecisionMemory` (`src/lib/db-socratic.ts`,
+    `src/lib/strategy.ts`)).
+  - "Server-side numeric as-of epoch filter in Pinecone" (2026-07-06: DEFERRED — needs an
+    ingest-time numeric-epoch backfill on existing vectors + a fail-open-vs-fail-closed owner
+    decision before the server-side filter can replace post-fetch as-of).
+  KEEPOUT held throughout: MONET risk gates, CODEX console/UI, AG data-provider lanes untouched.
+  Session rollout: `docs/rollouts/2026-07-06-claude-nextwave-rag.md`.
 
-- **Harden HMAC Security & Persistent Idempotency for webhooks (AG, M) — moved back from Completed
-  2026-07-05 (CLAUDE audit-c3).** PR #854 (`antigravity/socratic-webhooks`) is OPEN,
-  mergeStateStatus BLOCKED, all CI green, reviewDecision empty, no auto-merge armed. Blocked by the
-  main-protection ruleset needing review/thread-resolution — not a code issue. action=land-it; see
-  the new "Resolve main-protection ruleset review gate" Planned row below for the structural fix.
 
-- **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
-  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
-  2. [ ] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
-  3. [ ] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
-  4. [ ] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
+
+## 🔨 In Progress
+
+- **Console intro animation (candlestick page-load splash)** (CLAUDE cloud session, branch
+  `claude/socratic-trade-logos-p0hxk7`) — **pushed; PR open**. New
+  `app/console/components/intro-canvas.tsx` (pure Canvas, responsive, any-bg, once/session,
+  click-skip, reduced-motion-safe) wired into `shell.tsx` as the console first-load splash:
+  waving chart -> candles fly -> big SOCRATIC/TRADE (formed candles + colours, ripple only — no
+  reshape/"flip") -> shrink to top-left header. Header is a varied candlestick ticker (12-unit
+  green-biased walk marching one column/sec; every candle its own red/green, no colour blocks; no
+  wave); speckle fixed by overlapping flying candles onto natural strokes + body width tied to
+  column count. Letter-stem evenness fixed. tsc/lint/build green + center & header driven live.
+  Reference `docs/branding/intro-live.html`. Next (opt): persistent ticking header brand. See
+  `docs/rollouts/2026-07-06-console-intro-animation.md`.
+- **HyDE + evidence-derived multi-query retrieval for filings RAG** (CLAUDE, worktree
+  `~/apps/trading-wt-hyde`, branch `claude/hyde-multiquery`) — **IN PROGRESS 2026-07-05, review
+  fixes applied same day (second commit).** New `src/lib/rag/multi-query.ts`: pure
+  `deriveQueryVariants()` (2-4 facet sub-queries from evidence/sector/dominant-factor) +
+  `generateHydePassages()` (one cheap fail-open LLM call, HyDE passages, salience-llm.ts pattern).
+  Two flags `RAG_MULTIQUERY`/`RAG_HYDE` (+`RAG_HYDE_MODEL`), both default OFF — **not
+  independent**: `RAG_HYDE` alone is a no-op without `RAG_MULTIQUERY` (docstring fixed in review
+  pass). `vector-db.ts` `RetrieveOptions.queries?: string[]`: per-query embed+match (now including
+  the original `query` alongside variants), RRF-fused (`rag/hybrid.ts` `rrfFuse`) into the existing
+  `rankPool` pipeline unchanged. `strategy.ts` filings-RAG block wired behind both flags +
+  budget-degrade check; flags-off is byte-identical (pinned by a dedicated regression test).
+  **Review-fix pass (same day):** fixed a BLOCKER — the multi-query fan-out was fail-CLOSED (one
+  variant's rejected Voyage/Pinecone call discarded every other variant's results via a bare
+  `Promise.all`, returning `[]` instead of falling back to the single-query path) — now each
+  fan-out call is caught individually and an all-fail case falls back to plain single-query
+  retrieval. Also fixed: first-occurrence-wins id resolution could keep a lower cosine score (now
+  higher-score wins); HyDE's endpoint/model could disagree (endpoint resolved from
+  `policy.llmModel`, model sent was the separate `hydeModel()` — could route an OpenAI model to
+  `api.anthropic.com` under an Anthropic policy; now resolved coherently, and non-OK responses now
+  audit `rag_hyde_failed`); HyDE spend wasn't gated on the daily LLM budget (now gated via
+  `isOverLlmBudget`, read-only import from `llm-budget.ts`). Tests: 34 total across the 3 new files
+  (`test/rag-multi-query.test.ts` 14, `test/rag-hyde.test.ts` 12,
+  `test/rag-multi-query-retrieval.test.ts` 8). Verification: tsc clean, focused RAG/strategy suite
+  green (33 files / 384 tests). See `docs/rollouts/2026-07-05-hyde-multiquery-retrieval.md`
+  (incl. its "Review fixes" section). Local-worktree HARD RULE: commit only, no push/PR — central
+  landing operator handles integration with `origin/main` (7 commits ahead incl. sibling lanes
+  `claude/due-jobs-substrate`, `claude/prompt-safety-fencing`).
 - **MONET 5 risk lanes — reclaimed from the handback (MONET) — IN PROGRESS 2026-07-05.** The five risk rows handed back to MONET (board "MONET risk-row handback"): `monet/multi-signal-regime-scorer` (credit spreads + VIX term structure + breadth → severity), `monet/vol-targeting-portfolio-heat` (continuous vol-target exposure taper + portfolio-heat budget), `monet/correlation-event-stress-gates` (EWMA/downside correlation gate + earnings/macro blackouts + pre-trade stress), `monet/fractional-kelly-sizing` (downside-dispersion fractional Kelly), `monet/redteam-policy-aware-routing` (Red-Team unavailable → policy-aware routing timeout/429/malformed; builds on merged #814). All advisory/owner-overridable (never a cage), new-module-first (minimal policy.ts/strategy.ts diffs), built off current `main` on `monet/*` branches (the old empty `.claude/worktrees/monet-*` `claude/*` branches are NOT reused). Running a 5-lane design team, then implementing lane-by-lane with builder + adversarial verify, one PR per lane via `land.sh`. The old CLAUDE-pickup "Risk-lane implementation train" row below is superseded by this handback reclaim.
 
 - **Codex Cloud Slack + effort-log readiness across all four apps (CODEX, shared fleet-infra) —
@@ -525,31 +999,7 @@ As of 2026-07-04.
   (action=reclaim-and-finish from the new owner). AG: the implementation intent (issue #474) is
   fully specified above — recreate/finish on a fresh `agent/antigravity`-lane branch since the
   original Codex worktree content isn't recoverable from origin._
-- **Coach chat -> framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
-  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
-  can optionally promote into lesson/framework primitives, framework review now carries explicit
-  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
-  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
-  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
-  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
-  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
-  squash auto-merge is armed pending `verify`.
-- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
-  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
-  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
-  ticker-drawer parity if the scan surface needs it. Keepout: no broad settings/approvals/live-data/
-  coach/tooltip conversions in this lane. PR #806 open with auto-merge enabled; merge-forward
-  through PR #807 pushed 2026-07-05 as `63c69d05`; later blocker identified as unresolved Codex
-  review thread and addressed locally by pinning `symbol` as the first/sticky column during
-  saved-state sanitization and reordering; second review follow-up defers saved `localStorage`
-  column state until after mount to avoid hydration mismatch.
-  Verification green: focused scan-column test (4), lint 0 errors / 308 existing warnings,
-  land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up verification:
-  focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration follow-up
-  verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check`
-  clean.
+
 
 - **CODEX assigned backlog implementation train (Codex, 2026-07-05) — IN PROGRESS.**
   Scope: owner-directed CODEX rows from the backlog exhaustiveness pass: scan column customization,
@@ -560,7 +1010,7 @@ As of 2026-07-04.
   with subagent exploration/verification; do not touch AG backend-health lane, Monet risk lanes,
   Claude memory/RAG lanes, or Cursor security/perf rows.
 
-- **PR #853 - sync effort-log mirror with live board (AG, S) — new row, IN PROGRESS 2026-07-05
+- **PR #853 - sync effort-log mirror with live board (AG, S) — ✅ COMPLETED via PR #853 2026-07-05
   (CLAUDE audit-c3).** Branch `ag/effort-log-sync`. `gh pr view 853`: OPEN, mergeStateStatus
   BLOCKED, all CI green, no auto-merge armed, reviewDecision empty. Docs-only board sync; blocked
   only by the ruleset review gate. Open since 07-05 20:38. action=land-it.
@@ -659,6 +1109,36 @@ As of 2026-07-04.
   - `claude/w1-learning-loops` — Bear-veto counterfactuals + red-team efficacy scorecard; re-index decision memory on lifecycle changes; trading-day horizon arithmetic; + Codex second-pass review fixes (market-day horizon anchoring via new `market-calendar.marketDateOf`, kind-scoped veto audit queries + keyed efficacy joins, NULL-evidence backfill on `insertSkippedCounterfactualCandidate`). STATUS: **MERGED (PR #365)**. `getRedTeamEfficacy()` remains API/db-level only (console lane owns UI wiring). Deferred: `skipped_candidate_counterfactuals` has no `side` column, so vetoed SHORTs still read as long moves in the GENERIC missed-opportunity path (efficacy path side-adjusts) — candidate for the w2-outcome-engine lane's schema pass.
   - `claude/w1-rag-quickwins` — relevance floor + near-dup dedupe wired; provenance headers + stable chunk ids; content-hash dedup on + 128-bit; embedding-model version tag; rerank pool cap. STATUS: **MERGED (PR #366)**.
   - `claude/w1-regime-data` — typed regime enum + numeric severity (new dependency-free `src/lib/market-regime.ts`); live ^VIX off the 24h macro cache; per-data-class TTLs + asOf on Alpaca snapshot. STATUS: **MERGED (PR #368)**. NOTE (correction to the earlier row text): the crisis cap (policy.ts) and bear filter (strategy.ts) deliberately KEPT their substring checks per the Fable/Monet swimlane keepout — enum adoption inside risk gates is Monet's (#360 landed with them intact); only the console regime card adopted the enum.
+
+- **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray `.codex/`
+  (FLEET, XS) — MOSTLY RESOLVED 2026-07-06.** Owner confirmed 2026-07-05: MONET preview = 4104,
+  CURSOR = 4103. The Monet-port line (4103→4104) landed on `agent/claude` (31d8da7). **CURSOR has
+  since documented its own 4103 row** (`~/apps/trading-cursor`, `agent/cursor`, pm2
+  `trading-cursor`, `cursor.jays.services`) — folded in as part of resolving a same-file merge
+  overlap on 2026-07-06 (also corrected a 4104 typo in the Coolify-migration effort row's prose to
+  4103 to match). Still open: MONET confirming its lane/tooling expects 4104; CODEX
+  claiming/relocating or approving deletion of untracked `.codex/{setup.sh,maintenance.sh}` still
+  sitting in `~/apps/trading-claude`.
+
+- **Hybrid resource-aware runner routing for `verify` (Claude, own PR after #370 lands) —
+  RESERVED 2026-07-04, owner re-confirmed with design.** Route the required `verify` check to the
+  self-hosted Mac runner ONLY when the Mac has spare capacity, hosted otherwise. Design (per
+  owner, answering the objections raised when this was first proposed): (1) Mac-side
+  `scripts/runner-availability.sh` under pm2 (owner-started; pm2 one-liner + idempotent setup
+  note in the PR) — every 60s: available = 1-min loadavg/hw.ncpu < 0.6 AND free+inactive RAM
+  > 6 GB AND runner process alive AND pm2 `trading` online; hysteresis 2 consecutive available
+  checks before flipping to self, immediate flip to hosted on busy; publishes repo variable
+  `VERIFY_RUNNER_STATE` as JSON {"mode","ts"}; self-path gate commands run under `nice -n 19`.
+  (2) Router reads `vars.VERIFY_RUNNER_STATE` natively; mode!=self OR ts stale >5 min OR var
+  absent -> hosted instantly (self-hosted concurrency-1 stays as a load-shed detail). (3)
+  verify-self FAILURE triggers exactly one automatic hosted re-run and the gate takes the hosted
+  result on disagreement (Linux arbiter — a Mac flake can never block or fake-fail a merge); a
+  self PASS stands; nightly scheduled hosted full-gate canary on main; gate summary annotates
+  which environment produced each result. macOS-ARM64 cache namespace; node presence fail-fast;
+  smoke/gitleaks/check-pin stay hosted. Rollout doc must include the 2026-07-01 history, the
+  objections, the owner's re-confirmation + resource-aware answer, and a failure-mode table.
+  `workflow_call`/reusable (cross-repo) remains deferred until this lands and proves itself —
+  hosted-only default stands; resource-aware routing stays opt-in per repo.
 
 - 2026-07-04 landing train (Fable operator) — also landed: `claude/console-small-fixes` (**PR #361**), `claude/washsale-advisory-defaults` (**PR #362**), `claude/socratic-expert-review-doc` (**PR #363**), `claude/agent-sync-protocol-docs` (**PR #369**). Wave-2 lanes landed sequentially: `w2-episodic-retrieval` (**PR #437, merged 2026-07-04T21:05:02Z**), `w2-outcome-engine` (merged, see the corrected sub-lane rows above), `w2-coaching-durable`, `w2-reflection-decompose`. _(2026-07-05 CLAUDE next-wave correction: this line said "PR #437 in flight"; #437 has since merged. `w2-coaching-durable`/`w2-reflection-decompose` remain the two genuinely unlanded sub-lanes — no PR opened for either since 07-04.)_
 

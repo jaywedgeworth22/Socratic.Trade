@@ -99,7 +99,7 @@ export interface StateInfo {
   tone: "pos" | "warn" | "neg" | "muted";
 }
 
-export function deriveStateInfo(policy: TradingPolicy): StateInfo {
+export function deriveStateInfo(policy: Pick<TradingPolicy, "systemState" | "strategyAuthority">): StateInfo {
   const authority = policy.strategyAuthority === "decide" ? "Autopilot" : "Ask-first";
   switch (policy.systemState) {
     case "active":
