@@ -1,7 +1,39 @@
 # Single-Adversary Consolidation — Design Spec
 
-> **Status:** Design, not yet implemented. Consolidates a multi-turn design
-> discussion into an implementable plan.
+> **Status: DESIGNED, NOT IMPLEMENTED as of 2026-07-07** — verified by code check:
+> `grep -rn "approve-at-half\|adversaryUnavailable\|extractJsonPayload\|fetchLlmWithRetry" src`
+> returns nothing, and both adversarial passes (in-flow Bear + escalated
+> `debateProposal`) are still present on `origin/main`. All §9 decisions were
+> RESOLVED 2026-07-01 and never coded. Implementation began 2026-07-07 — update
+> this banner to IMPLEMENTED only when the code lands. Consolidates a multi-turn
+> design discussion into an implementable plan.
+
+> **⚠️ OWNER REVISION 2026-07-07 — supersedes the independence design below.**
+> The owner reversed the "hard independence" model. These decisions now govern and
+> **override** §3.8, §8, O4, R12–R14 wherever they conflict:
+> - **No model default for ANYTHING, ever.** Delete every default/fallback:
+>   `resolveOpenAiModel`'s hardcoded Green default, `resolveRoleModel`'s
+>   fall-back-to-Green, `CROSS_FAMILY_RED_TEAM_DEFAULT` / provider→default-model
+>   maps (R13), and the `RED_TEAM_LLM_PROVIDER` env default. A model is used only
+>   if the user explicitly chose it.
+> - **Both Green and Red models are mandatory and explicitly chosen.** It must be
+>   *impossible* to run without both set: enforce at settings-save (`app/api/policy`
+>   validation) and in the Settings UI, and fail-closed at runtime if somehow unset
+>   (belt-and-suspenders, but the UI makes unset unreachable).
+> - **Only models the user holds a key for are selectable in Settings.** Gate the
+>   Green/Red model dropdowns to providers with a configured key (per
+>   `resolveLlmCredential` / `getUserApiKey`).
+> - **Same model for both is ALLOWED** if the user picks it. Drop the hard
+>   same-model prohibition (§3.8a) and the write-time exact-model-independence
+>   enforcement (R14). No auto-different-provider defaulting (§3.8b). Independence
+>   is the user's choice, optionally *nudged* by a non-blocking Settings hint — never
+>   enforced. (Matches the repo philosophy: guardrails are adjustable preferences,
+>   not a cage.)
+> - **Still true from the original spec:** one adversarial LLM call doing everything
+>   both calls did (delete in-flow Bear, build on the post-sizing `debateProposal`
+>   site), kill the `RED_TEAM_LLM_PROVIDER` env override, exits never reviewed
+>   (§3.5), all-openings coverage (§3.6), never-silent failure (§3.7), and the §4
+>   reliability fixes + §5–§7 visibility/persistence (R1–R20).
 >
 > **Scope:** This app is a **paper-trading research / education tool**. A
 > "Green Team" / Bull model proposes trades; one or more adversarial models
