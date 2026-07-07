@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 - Console de-alarm + optional confirmation + legacy removal + Cmd-K + admin hub (CLAUDE)
+Branch `claude/vigorous-lederberg-5b6d55`, landing as one PR. Real-money banner + "START LIVE" typed
+ritual removed (real money is the normal case, no ceremony). New owner preference
+`policy.requireTypedConfirmation` (Settings -> Advanced action confirmation, default ON): when OFF,
+approving a broker order / replacing a live order / loosening a live guardrail are one-click, enforced
+on server + console + mobile. Legacy `/old` dashboard deleted (redirects to /console; ~14 exclusive
+files + 2 dead tests removed); Strategy Flow visualizer dropped, legacy command palette replaced by a
+new console-native Cmd-K palette. Operator admin hub at /admin + env-gated admin.socratictrade.com
+scaffold (ADMIN_HOST + AUTH_COOKIE_DOMAIN, inert until set). Also fixed a pre-existing flaky
+socratic-db ordering test (added rowid tiebreakers). Verified: tsc clean, npm test 2642/2642, build
+green. Detail: docs/rollouts/2026-07-06-console-de-alarm-confirmation-toggle-legacy-removal-cmdk-admin.md
 ## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
 Owner repeatedly hit `Setup script failed with exit code 127. bash:
 scripts/cloud-setup.sh: No such file or directory` when creating brand-new
