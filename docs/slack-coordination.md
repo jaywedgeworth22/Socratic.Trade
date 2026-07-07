@@ -76,14 +76,23 @@ Code session in **any** repo on that machine reads the channel at startup - when
 a token is present.
 
 On **cloud**, point the environment's "setup script" field at
-`cd Socratic.Trade && bash scripts/cloud-setup.sh` (it runs the installer for
-you), or add `bash scripts/setup-slack-sync.sh` to whatever setup script you
-already use. The `cd Socratic.Trade &&` prefix is required for Claude Code
-Cloud environments specifically: the sandbox's working directory for the
-"Setup script" field is the *parent* of the cloned repo, not the repo root, so
-a bare `bash scripts/cloud-setup.sh` fails with exit 127 ("No such file or
-directory") before the installer ever runs. See the header comment in
-`scripts/cloud-setup.sh` for the full explanation.
+`bash scripts/cloud-setup.sh` (it runs the installer for you), or add
+`bash scripts/setup-slack-sync.sh` to whatever setup script you already use -
+but the exact command depends on the platform's working directory for that
+field:
+
+- **Claude Code Cloud**: use `cd Socratic.Trade && bash scripts/cloud-setup.sh`.
+  That platform's sandbox starts the "Setup script" field in the *parent* of
+  the cloned repo, not the repo root, so a bare `bash scripts/cloud-setup.sh`
+  fails with exit 127 ("No such file or directory") before the installer ever
+  runs. See the header comment in `scripts/cloud-setup.sh` for the full
+  explanation.
+- **Codespaces / devcontainer** (and any other platform whose "setup script"
+  already runs from the repo root): use the bare `bash scripts/cloud-setup.sh`
+  - there is no `Socratic.Trade/` subdirectory to `cd` into, so the Claude Code
+  Cloud prefix above would itself fail there with "No such file or directory".
+  This matches `.devcontainer/devcontainer.json`'s `postCreateCommand`, which
+  already uses the bare form.
 
 ### Other repos that do not carry these scripts (self-contained bootstrap)
 
