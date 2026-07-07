@@ -2,10 +2,12 @@
 
 /** Console UI primitives. Own design system — no imports from app/ui/*. */
 
-import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { useState, useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { cx, fmtExact, timeAgo, EM_DASH } from "../lib/format";
+import { AnimatePresence, motion } from "motion/react";
 
 // ── Card ─────────────────────────────────────────────────────────────────────
+
 
 export function Card({
   title,
@@ -51,15 +53,20 @@ export function Btn({
   size,
   className,
   type = "button",
+  title,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: "sm" }) {
-  return (
+  const button = (
     <button
       type={type}
       className={cx("con-btn", BTN_CLASS[variant], size === "sm" && "con-btn-sm", className)}
       {...rest}
     />
   );
+  if (title) {
+    return <Tooltip content={title}>{button}</Tooltip>;
+  }
+  return button;
 }
 
 // ── Chip ─────────────────────────────────────────────────────────────────────
@@ -79,9 +86,11 @@ const CHIP_CLASS: Record<ChipTone, string | undefined> = {
 
 export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
   return (
-    <span className={cx("con-chip", CHIP_CLASS[tone], className)} title={title}>
-      {children}
-    </span>
+    <Tooltip content={title}>
+      <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
+        {children}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -137,13 +146,15 @@ export function Stat({
 }) {
   const color = tone === "pos" ? "var(--con-pos)" : tone === "neg" ? "var(--con-neg)" : undefined;
   return (
-    <div title={title}>
-      <div className="con-card-title">{label}</div>
-      <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight" style={color ? { color } : undefined}>
-        {value}
+    <Tooltip content={title} className="block">
+      <div>
+        <div className="con-card-title">{label}</div>
+        <div className="con-num mt-1 text-[length:var(--con-fs-xl)] font-semibold leading-tight" style={color ? { color } : undefined}>
+          {value}
+        </div>
+        {sub !== undefined && <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{sub}</div>}
       </div>
-      {sub !== undefined && <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{sub}</div>}
-    </div>
+    </Tooltip>
   );
 }
 
@@ -263,9 +274,11 @@ export function Dash() {
 export function Ago({ iso }: { iso: string | null | undefined }) {
   if (!iso) return <Dash />;
   return (
-    <time dateTime={iso} title={fmtExact(iso)} className="cursor-default whitespace-nowrap">
-      {timeAgo(iso)}
-    </time>
+    <Tooltip content={fmtExact(iso)}>
+      <time dateTime={iso} className="cursor-default whitespace-nowrap">
+        {timeAgo(iso)}
+      </time>
+    </Tooltip>
   );
 }
 
@@ -284,3 +297,59 @@ export function SignedText({ value, children }: { value: number | null | undefin
     </span>
   );
 }
+
+// ── Tooltip ──────────────────────────────────────────────────────────────────
+
+export function Tooltip({
+  children,
+  content,
+  className
+}: {
+  children: ReactNode;
+  content: ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
+  if (!content) return <>{children}</>;
+
+  return (
+    <span
+      ref={ref}
+      className={cx("group relative inline-flex", className)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      {children}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 2, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 2, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            role="tooltip"
+            className="pointer-events-none absolute bottom-full left-1/2 z-[100] mb-2 w-max max-w-xs -translate-x-1/2 rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] px-2.5 py-1.5 text-center text-[length:var(--con-fs-xs)] font-medium leading-snug text-[color:var(--con-fg)] shadow-[var(--con-shadow-lg)]"
+          >
+            {content}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </span>
+  );
+}
+

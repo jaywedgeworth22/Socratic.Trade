@@ -148,6 +148,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                       </Chip>
                     )}
                     {account.isActive && <Chip tone="accent">active</Chip>}
+                    {(() => {
+                      const policy = snapshot.connectedAccountPolicies?.[account.id];
+                      if (!policy) return null;
+                      const st = deriveStateInfo(policy);
+                      if (st.state === "halted") return null;
+                      return <Chip tone={st.tone}>{st.label}</Chip>;
+                    })()}
                   </div>
                   {!account.isActive && (
                     <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>

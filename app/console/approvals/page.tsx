@@ -9,7 +9,7 @@ import { fmtMoney } from "../lib/format";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
-import { LearnedContextInbox } from "./learned-context";
+import { LearnedContextInbox, LearnedFactsArchive } from "./learned-context";
 import {
   approvalIsLive,
   summarizeBulkSelection,
@@ -305,6 +305,7 @@ export default function ApprovalsPage() {
         )}
 
         <LearnedContextInbox />
+        <LearnedFactsArchive />
 
         <p className="text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Rejections are data, not failures — every idea you pass on keeps being scored, and Results shows how your
