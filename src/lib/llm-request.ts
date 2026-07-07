@@ -26,8 +26,9 @@ export interface LlmReasoningCapability {
  */
 export type LlmTransport = OpenAiTransport | "anthropic-messages";
 
-/** Default model when neither the per-user policy nor OPENAI_MODEL is set. */
-export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
+// DEFAULT_OPENAI_MODEL removed 2026-07-07 (owner directive: no model is a default for anything,
+// ever). Strategy Green/Red resolve to explicit per-user choices ("" when unset → fail closed);
+// the chat assistant requires an explicit per-request model or CHAT_LLM_MODEL (no hardcoded model).
 
 /**
  * OpenAI "reasoning" models (gpt-5 family, o-series). They REJECT the `temperature` param
@@ -38,11 +39,17 @@ export function isReasoningModel(model: string | undefined): boolean {
   return /^(gpt-5|o\d)/i.test((model ?? "").trim());
 }
 
-/** Resolve the per-user model: explicit policy choice → OPENAI_MODEL env → default. */
+/**
+ * Resolve the per-user Green (strategist/proposer) model. NO DEFAULT — owner directive
+ * (2026-07-07): no model is a default for anything, ever. Both the Green (`llmModel`) and Red
+ * (`redTeamLlmModel`) team models must be explicitly chosen in Settings, and it is enforced
+ * impossible to save a policy without them (app/api/policy/route.ts). Returns "" when unchosen;
+ * callers MUST treat "" as unconfigured and fail closed (route to human / skip the run), never
+ * send an empty-model request. The former `OPENAI_MODEL`-env and `DEFAULT_OPENAI_MODEL` strategy
+ * fallbacks are deliberately removed.
+ */
 export function resolveOpenAiModel(policy?: { llmModel?: string | null } | null): string {
-  const fromPolicy = policy?.llmModel?.trim();
-  if (fromPolicy) return fromPolicy;
-  return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+  return policy?.llmModel?.trim() || "";
 }
 
 export const ALL_LLM_REASONING_EFFORTS: readonly LlmReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];

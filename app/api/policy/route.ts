@@ -1,5 +1,6 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
-import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
+import { getPolicy, setPolicy, setStrategyPrompt, resolveLlmCredential } from "@/lib/db";
+import { llmModelFamily } from "@/lib/llm-provider";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
 import { stripNullsDeep } from "@/lib/policy-null-stripping";
@@ -88,9 +89,9 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
-  if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
-    delete policy.redTeamLlmModel;
-  }
+  // Owner directive 2026-07-07: an empty/cleared Red model is NOT silently deleted (that used to mean
+  // "fall back to the Green model" — a fallback that no longer exists). A blank model is rejected by
+  // validatePolicy so the user must pick one; there is no default for anything.
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
@@ -127,6 +128,19 @@ async function validatePolicy(
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
+  // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
+  // (no defaults; only keyed providers are usable). Same-model-for-both is allowed — independence is
+  // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
+  // server-side backstop. (Mandatory "both models set" is enforced in the Settings UI and at strategy
+  // runtime via fail-closed on an unconfigured model.)
+  if (typeof policy.llmModel === "string" && policy.llmModel.trim()) {
+    const provider = llmModelFamily(policy.llmModel);
+    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
+  }
+  if (typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim()) {
+    const provider = llmModelFamily(policy.redTeamLlmModel);
+    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
+  }
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
   }
