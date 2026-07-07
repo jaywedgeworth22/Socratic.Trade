@@ -297,6 +297,75 @@ export function asOfStrictEnabled(): boolean {
 }
 
 /**
+ * server-asof-filter (2026-07-06): push the point-in-time (`asOf`) constraint INTO the Pinecone
+ * query so `topK` is filled with ELIGIBLE (pre-asOf) candidates, instead of the current behavior
+ * where the pure-vector top-K is dominated by too-recent filings that the POST-fetch `isWithinAsOf`
+ * guard then decimates — leaving a tiny/empty pool in a backtest even though the correct older
+ * filings exist in the corpus (ranked below the fetch window).
+ *
+ * OFF by default — set VECTOR_ASOF_SERVER_FILTER=on to enable. It is safe to turn on at any time on
+ * the DEFAULT (fail-open) semantics because the server clause keeps un-epoch'd vectors (see
+ * `buildAsOfEpochFilter`), so an un-backfilled corpus is NOT dropped; running the backfill first
+ * just makes the topK-fill improvement effective for older vectors too. When OFF, the retrieval
+ * path is byte-for-byte the current post-fetch-only behavior.
+ *
+ * DEFENSE IN DEPTH: this NEVER removes the post-fetch `isWithinAsOf` guard in `rankPool` — that
+ * stays the authoritative leakage gate regardless of this flag. Server filtering only pre-fills a
+ * better candidate pool; the post-fetch guard is what actually enforces no-lookahead.
+ */
+export function asOfServerFilterEnabled(): boolean {
+  return envFlagOn("VECTOR_ASOF_SERVER_FILTER", false);
+}
+
+/**
+ * server-asof-filter (2026-07-06): build the Pinecone metadata-filter clause that pushes the `asOf`
+ * epoch constraint server-side. Returns `undefined` when it should add NO clause (asOf unset/
+ * unparseable, or the server-filter flag off) so the caller's existing filter is byte-identical to
+ * today. Otherwise returns a single clause to AND-combine with the existing docType/symbol/scope
+ * filter.
+ *
+ * Semantics (owner-approved):
+ *  - FAIL-OPEN (default, `strict=false`): keep epoch'd-AND-eligible vectors OR vectors LACKING the
+ *    epoch field, via `$or: [{as_of_epoch_ms: {$lte: X}}, {as_of_epoch_ms: {$exists: false}}]`, so
+ *    an un-backfilled/undated corpus is NOT dropped server-side. The post-fetch `isWithinAsOf` guard
+ *    remains the real leakage gate. `$exists` is a documented Pinecone metadata operator; the JS
+ *    client (v8) types `filter` as an opaque `object` and forwards it verbatim, so this composes
+ *    cleanly (verified in node_modules — see the server-asof-filter rollout note).
+ *  - FAIL-CLOSED (`strict=true`, VECTOR_ASOF_STRICT on): drop un-epoch'd vectors server-side with a
+ *    plain `{as_of_epoch_ms: {$lte: X}}` (no `$exists` branch) — only epoch'd-and-eligible return.
+ *    Composes with the existing post-fetch strict undated-drop for leakage-certified backtests.
+ */
+export function buildAsOfEpochFilter(asOf: string | undefined, strict: boolean): Record<string, unknown> | undefined {
+  if (!asOf || !asOfServerFilterEnabled()) return undefined;
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs)) return undefined; // unparseable asOf -> no server constraint (matches isWithinAsOf's lenient short-circuit)
+  const eligible = { [AS_OF_EPOCH_FIELD]: { $lte: asOfMs } };
+  if (strict) return eligible; // fail-closed: epoch'd-and-eligible only
+  // fail-open: epoch'd-and-eligible OR un-epoch'd (absent field)
+  return { $or: [eligible, { [AS_OF_EPOCH_FIELD]: { $exists: false } }] };
+}
+
+/**
+ * server-asof-filter (2026-07-06): AND-combine a base Pinecone metadata filter with the optional
+ * server-side `asOf` epoch clause. Returns the base UNCHANGED (same object) when there is no epoch
+ * clause, so a call with `epoch === undefined` is byte-identical to not calling this at all.
+ *
+ * When an epoch clause IS present it merges via `$and: [base, epoch]` rather than spreading epoch's
+ * keys onto the base. This is REQUIRED for correctness, not stylistic: the fail-open epoch clause is
+ * itself `{$or: [...]}`, and the shared-tier base filter ALSO carries a top-level `$or` (scope/userId
+ * coexistence) — a spread would silently drop one `$or` (a JS object can't hold two identical keys),
+ * changing which vectors match. `$and` keeps both intact and is the documented Pinecone way to
+ * combine independent constraints. The base is not mutated (a fresh object is returned).
+ */
+export function mergeAsOfEpoch(
+  base: Record<string, unknown>,
+  epoch: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!epoch) return base;
+  return { $and: [base, epoch] };
+}
+
+/**
  * R17 (2026-07-01 RAG backlog): fix train/serve text skew. `storeContexts` embeds a literal
  * `[Published: ...]` prefix (and `storeDocument` bakes a `context_header` into stored text), but
  * the QUERY embedding is the raw query with none of that boilerplate — a systematic query/document
@@ -644,6 +713,37 @@ async function indexExists(pc: Pinecone, source: ApiKeySource, userId: string): 
   return Boolean(indexes.indexes?.some((i) => i.name === indexName()));
 }
 
+/**
+ * server-asof-filter (2026-07-06): the numeric point-in-time metadata field written on every
+ * newly-upserted vector so a backtest's `asOf` constraint can be pushed INTO the Pinecone query
+ * (server-side) instead of only being applied POST-fetch. Integer epoch milliseconds. Deliberately
+ * numeric (not the ISO string in `acceptance_datetime`) because Pinecone's `$lte`/`$gte` range
+ * operators only work against numbers — an ISO-string range filter isn't expressible server-side.
+ *
+ * ABSENCE is meaningful: a vector that lacks this field is UNDATED-for-server-purposes and is the
+ * fail-open signal (see `retrieveContextDetailed`'s epoch clause). It is ONLY written when a date
+ * actually resolves, so an un-backfilled/undated vector stays absent and is not falsely dated to 0.
+ */
+export const AS_OF_EPOCH_FIELD = "as_of_epoch_ms" as const;
+
+/**
+ * Derive the numeric point-in-time epoch (ms) for a vector's metadata using the SAME precedence
+ * `resolveAsOfStamp`/`isWithinAsOf` use: acceptance_datetime -> published_at -> as_of -> timestamp.
+ * Returns `undefined` when none of those keys is present/parseable (NaN-safe) — callers MUST treat
+ * `undefined` as "leave the field absent" so absence stays the fail-open signal. Pure/dependency-free
+ * so both the ingest write path (`cleanMetadata`) and the backfill path can share one source of truth.
+ *
+ * NOTE: this intentionally mirrors `resolveAsOfStamp` exactly. It is a separate function only so it
+ * can be co-located with the write path (`cleanMetadata` is defined above `resolveAsOfStamp`) and so
+ * its "absent means fail-open" contract is documented at the point the field is written.
+ */
+export function resolveAsOfEpochMs(metadata: Record<string, unknown> | undefined): number | undefined {
+  const stamp = metadata?.acceptance_datetime ?? metadata?.published_at ?? metadata?.as_of ?? metadata?.timestamp;
+  if (stamp == null) return undefined;
+  const t = typeof stamp === "number" ? stamp : Date.parse(String(stamp));
+  return Number.isFinite(t) ? t : undefined;
+}
+
 function cleanMetadata(metadata: ContextDocument["metadata"], text: string, userId: string): RecordMetadata {
   // Derive scope from the userId sentinel used to signal the shared/public tier.
   // New vectors carry an explicit `scope` field; legacy vectors written before this change
@@ -663,6 +763,10 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
   };
   for (const [key, value] of Object.entries(metadata)) {
     if (key === "text" || key === "userId" || key === "scope" || key === "embed_model" || key === "embed_rev") continue;
+    // as_of_epoch_ms is DERIVED below from the date precedence, never copied from a caller-supplied
+    // value — skip any inbound one so a stray/incorrect field can't override the authoritative
+    // derivation (and so the "absent when undated" invariant can't be violated by a caller passing 0).
+    if (key === AS_OF_EPOCH_FIELD) continue;
     if (key === "doc_type" && typeof value === "string") {
       // Normalize doc_type to lowercase AT WRITE TIME so every new vector is consistent, regardless
       // of what casing the caller passed in (some ingesters historically passed "10-K"/"10-Q").
@@ -674,6 +778,14 @@ function cleanMetadata(metadata: ContextDocument["metadata"], text: string, user
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out[key] = value;
     else if (Array.isArray(value)) out[key] = value.map(String).filter(Boolean);
   }
+  // server-asof-filter (2026-07-06): additively stamp a NUMERIC point-in-time epoch (ms) derived
+  // from the SAME acceptance_datetime -> published_at -> as_of -> timestamp precedence the post-fetch
+  // guard uses, so a backtest's asOf can be pushed into the Pinecone query. Written ONLY when a date
+  // actually resolves — an undated document leaves the field ABSENT, which is the fail-open signal
+  // the query path relies on (absent vectors are not dropped server-side under the default). NaN-safe
+  // via resolveAsOfEpochMs. Changes only NEW upserts; existing vectors are handled by the backfill.
+  const asOfEpochMs = resolveAsOfEpochMs(metadata);
+  if (asOfEpochMs != null) out[AS_OF_EPOCH_FIELD] = asOfEpochMs;
   return out as RecordMetadata;
 }
 
@@ -1478,6 +1590,152 @@ export async function getAllVectorStoreStats(userId: string = "local"): Promise<
   }
 }
 
+/**
+ * server-asof-filter backfill (2026-07-06): pure per-vector decision for the idempotent backfill of
+ * `as_of_epoch_ms` onto EXISTING vectors. Given one vector's current metadata, decide what to do:
+ *
+ *  - `"skip-has-epoch"`: the vector already carries a (finite numeric) `as_of_epoch_ms` — idempotent
+ *    no-op, so re-running the backfill never re-writes it or costs a Pinecone update.
+ *  - `"skip-undated"`: no `as_of_epoch_ms` AND no resolvable date in the acceptance_datetime ->
+ *    published_at -> as_of -> timestamp chain — leave the field ABSENT (absence is the fail-open
+ *    signal; we must NOT stamp 0/NaN onto a genuinely-undated vector).
+ *  - `{ action: "update", epochMs }`: no epoch yet but a date resolves — set it via partial update.
+ *
+ * NaN-safe (reuses `resolveAsOfEpochMs`). No I/O — the orchestrator does the actual Pinecone update.
+ */
+export type BackfillEpochDecision =
+  | { action: "skip-has-epoch" }
+  | { action: "skip-undated" }
+  | { action: "update"; epochMs: number };
+
+export function computeBackfillEpochUpdate(metadata: Record<string, unknown> | undefined): BackfillEpochDecision {
+  const existing = metadata?.[AS_OF_EPOCH_FIELD];
+  // Idempotency: a vector already carrying a finite numeric epoch is left untouched. A non-numeric
+  // or non-finite stray value is treated as "not set" so a corrupt write can be corrected by a re-run.
+  if (typeof existing === "number" && Number.isFinite(existing)) return { action: "skip-has-epoch" };
+  const epochMs = resolveAsOfEpochMs(metadata);
+  if (epochMs == null) return { action: "skip-undated" };
+  return { action: "update", epochMs };
+}
+
+export interface BackfillAsOfEpochResult {
+  /** Total vectors scanned across all pages. */
+  scanned: number;
+  /** Vectors that already had a finite epoch (idempotent skips). */
+  skippedHasEpoch: number;
+  /** Vectors with no resolvable date — field intentionally left absent. */
+  skippedUndated: number;
+  /** Vectors updated with a freshly-derived epoch. */
+  updated: number;
+  /** Per-id update failures (non-fatal; the scan continues). */
+  errors: number;
+  /** True when `dryRun` was set — no `update` calls were issued, `updated` counts would-be updates. */
+  dryRun: boolean;
+}
+
+export interface BackfillAsOfEpochOptions {
+  /** userId whose resolved Pinecone key is used (default "local" = operator/env key). */
+  userId?: string;
+  /** When true, compute decisions and counts but issue NO Pinecone `update` calls. Default false. */
+  dryRun?: boolean;
+  /** Restrict the scan to ids under this prefix (Pinecone `listPaginated` prefix). Default: all ids. */
+  prefix?: string;
+  /** Vectors fetched per page (Pinecone fetch batch). Default 100. */
+  batchSize?: number;
+  /** Optional progress callback fired once per page with the running totals. */
+  onProgress?: (progress: BackfillAsOfEpochResult) => void;
+}
+
+/**
+ * server-asof-filter backfill orchestrator (2026-07-06): idempotently add `as_of_epoch_ms` to
+ * EXISTING Pinecone vectors by recomputing the epoch from each vector's OWN date metadata
+ * (acceptance_datetime/published_at/as_of/timestamp) and issuing a partial metadata update
+ * (`index.update({ id, metadata: { as_of_epoch_ms } })`) for those lacking it. Vectors that already
+ * have it are skipped (idempotent — safe to re-run), and genuinely-undated vectors are left absent.
+ *
+ * Iterates the whole index via Pinecone `listPaginated` (ids) + `fetch` (metadata) — no local chunk
+ * ledger drives this because `document_chunks` stores content_hashes, not Pinecone vector ids, and
+ * private-tier ids aren't enumerated there at all; listing the index is the authoritative source of
+ * "every vector that exists". Per-id update failures are counted, not thrown, so one bad record
+ * doesn't abort a long backfill. Returns aggregate counts for the operator/rollout note.
+ */
+export async function backfillAsOfEpoch(options: BackfillAsOfEpochOptions = {}): Promise<BackfillAsOfEpochResult> {
+  const userId = options.userId ?? "local";
+  const dryRun = Boolean(options.dryRun);
+  const batchSize = Math.max(1, Math.min(1000, Math.floor(options.batchSize ?? 100)));
+  const result: BackfillAsOfEpochResult = {
+    scanned: 0,
+    skippedHasEpoch: 0,
+    skippedUndated: 0,
+    updated: 0,
+    errors: 0,
+    dryRun
+  };
+
+  const { pc, pineconeSource } = getClients(userId);
+  if (!pc) throw new Error("backfillAsOfEpoch: Pinecone key not configured");
+  if (!(await indexExists(pc, pineconeSource, userId))) {
+    throw new Error(`backfillAsOfEpoch: index "${indexName()}" does not exist`);
+  }
+  const index = pc.Index(indexName());
+
+  let paginationToken: string | undefined;
+  do {
+    const listResp = await withRagApiHealth("pinecone", pineconeSource, userId, "list", () =>
+      index.listPaginated({
+        ...(options.prefix ? { prefix: options.prefix } : {}),
+        ...(paginationToken ? { paginationToken } : {})
+      })
+    );
+    const ids = (listResp.vectors ?? []).map((v) => v.id).filter((id): id is string => Boolean(id));
+    paginationToken = listResp.pagination?.next;
+    if (ids.length === 0) continue;
+
+    // Fetch metadata in batches so a large page doesn't build one oversized fetch request.
+    for (const idBatch of chunks(ids, batchSize)) {
+      const fetchResp = await withRagApiHealth("pinecone", pineconeSource, userId, "fetch", () =>
+        index.fetch({ ids: idBatch })
+      );
+      const records = fetchResp.records ?? {};
+      for (const id of idBatch) {
+        const record = records[id];
+        if (!record) continue;
+        result.scanned++;
+        const decision = computeBackfillEpochUpdate(record.metadata as Record<string, unknown> | undefined);
+        if (decision.action === "skip-has-epoch") {
+          result.skippedHasEpoch++;
+          continue;
+        }
+        if (decision.action === "skip-undated") {
+          result.skippedUndated++;
+          continue;
+        }
+        if (dryRun) {
+          result.updated++;
+          continue;
+        }
+        try {
+          await withRagApiHealth("pinecone", pineconeSource, userId, "update", () =>
+            index.update({ id, metadata: { [AS_OF_EPOCH_FIELD]: decision.epochMs } })
+          );
+          result.updated++;
+        } catch (err) {
+          result.errors++;
+          console.warn(`[vector-db] backfillAsOfEpoch: update failed for id="${id}":`, err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+    options.onProgress?.({ ...result });
+  } while (paginationToken);
+
+  try {
+    audit("vector_asof_epoch_backfill", { ...result }, userId);
+  } catch {
+    // best-effort telemetry only
+  }
+  return result;
+}
+
 export interface RetrievedChunk {
   /** Real Pinecone vector id (NOT a fabricated `<SYMBOL>#i`). */
   id: string;
@@ -1751,6 +2009,13 @@ export async function retrieveContextDetailed(
   const fetchK = wantRerank ? rerankOverFetchK(limit) : options?.asOf || wantHybrid ? overFetchK(limit) : limit;
   const extraFilter = buildExtraFilters(options);
 
+  // server-asof-filter (2026-07-06): the optional server-side point-in-time clause. `undefined`
+  // (asOf unset/unparseable, or VECTOR_ASOF_SERVER_FILTER off) means NO clause is added — the
+  // filters below are then byte-identical to today. `mergeAsOfEpoch` AND-combines it with the
+  // existing scope/symbol/docType filter (via `$and` when the base already carries a top-level `$or`,
+  // so the fail-open epoch `$or` cannot collide with the scope-coexistence `$or`).
+  const asOfEpochFilter = buildAsOfEpochFilter(options?.asOf, asOfStrictEnabled());
+
   try {
     if (!(await indexExists(pc, pineconeSource, userId))) {
       reportRetrievalStatus(options, "lookup_failed");
@@ -1766,14 +2031,14 @@ export async function retrieveContextDetailed(
     // The shared-tier filter uses $or to match BOTH new vectors (scope=='shared') and legacy
     // pre-scope vectors (userId=='local'). This is the backward-compat coexistence strategy:
     // scope is authoritative for new vectors; userId is the fallback for old ones.
-    const sharedTierFilter = {
+    const sharedTierFilter = mergeAsOfEpoch({
       ...symbolFilter,
       ...extraFilter,
       $or: [
         { scope: { $eq: SHARED_SCOPE } },
         { userId: { $eq: "local" } }
       ]
-    };
+    }, asOfEpochFilter);
 
     // Embed ONE query string (via the shared query-embed cache) and run its Pinecone match(es),
     // returning `null` on a malformed embedding (already audited/logged by the caller of `null`).
@@ -1830,16 +2095,22 @@ export async function retrieveContextDetailed(
         return m;
       }
 
+      // server-asof-filter: the user-tier filter gets the SAME epoch clause as the shared tier.
+      // The fail-open epoch clause itself carries an `$or`, so it must go through `mergeAsOfEpoch`
+      // (which promotes to `$and`) rather than a spread — a bare spread would be fine here (no
+      // pre-existing top-level `$or`), but routing both tiers through one helper keeps them identical.
+      const userTierFilter = mergeAsOfEpoch({
+        ...symbolFilter,
+        userId: { $eq: vectorUserId },
+        ...extraFilter
+      }, asOfEpochFilter);
+
       const [userResults, localResults] = await Promise.all([
         withRagApiHealth("pinecone", pineconeSource, userId, "query user tier", () =>
           index.query({
             vector: embedding,
             topK: fetchK,
-            filter: {
-              ...symbolFilter,
-              userId: { $eq: vectorUserId },
-              ...extraFilter
-            },
+            filter: userTierFilter,
             includeMetadata: true,
           })
         ),

@@ -87,7 +87,8 @@ export async function replaceStaleLimitOrderWithMarket(input: {
     confirmation: input.liveConfirmation,
     order: original,
     accountNumber: input.policy.accountNumber,
-    remainingQuantity: stale.remainingQuantity
+    remainingQuantity: stale.remainingQuantity,
+    requireTypedConfirmation: input.policy.requireTypedConfirmation !== false
   });
 
   // Live pre-flight BEFORE the cancel phase: this is a cancel-then-place workflow, so if the market
@@ -215,8 +216,11 @@ function assertMarketReplaceConfirmation(input: {
   order: EquityOrder;
   accountNumber: string;
   remainingQuantity: number;
+  requireTypedConfirmation: boolean;
 }): void {
   if (input.executionMode !== "broker/live") return;
+  // Owner-adjustable (policy.requireTypedConfirmation): off = one-click replace, no phrase required.
+  if (!input.requireTypedConfirmation) return;
   const expectedText = marketReplaceText(input.order.symbol);
   const confirmation = input.confirmation;
   const reasons: string[] = [];

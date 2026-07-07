@@ -74,6 +74,51 @@ locally on `claude/persist-pool-v2` (two commits: the original landing + this re
 NOT pushed, no PR opened (per task instructions — owner/another session will land). See
 `docs/rollouts/2026-07-06-persist-pool-v2.md`.
 
+## 2026-07-06 — Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, server-asof-filter)
+Branch `claude/server-asof-filter` (worktree `trading-wt-asof-server`). Fixed the empty/small
+backtest-pool problem: `retrieveContextDetailed` over-fetches candidates from Pinecone by pure
+vector similarity with NO date filter, then `rankPool` applies the post-fetch `isWithinAsOf` guard.
+In a backtest (`asOf` in the past) the nearest-neighbor topK is dominated by too-recent filings
+that then get dropped, leaving a tiny pool even though the correct older filings exist in the corpus
+(ranked below the fetch window). Now the date constraint can be pushed INTO the Pinecone query so
+topK is filled with ELIGIBLE (pre-asOf) candidates.
+
+- **Ingest write:** `cleanMetadata` now additively stamps a NUMERIC `as_of_epoch_ms` on every new
+  vector, derived from the same acceptance_datetime -> published_at -> as_of -> timestamp precedence
+  the post-fetch guard uses (NaN-safe; ABSENT when undated — absence is the fail-open signal).
+- **Query filter:** when `options.asOf` is set AND `VECTOR_ASOF_SERVER_FILTER=on`, a server-side
+  epoch clause is AND-combined (`$and`) with the existing scope/symbol/docType filter.
+  FAIL-OPEN default: `$or:[{as_of_epoch_ms:{$lte:X}},{as_of_epoch_ms:{$exists:false}}]` (keeps
+  un-epoch'd vectors so an un-backfilled corpus isn't dropped). FAIL-CLOSED under
+  `VECTOR_ASOF_STRICT=on`: plain `{$lte:X}` (drops un-epoch'd server-side).
+- **Invariant:** the post-fetch `isWithinAsOf` guard in `rankPool` STAYS regardless — defense in
+  depth. `asOf` unset -> no epoch clause -> byte-identical to today.
+- **Backfill:** `scripts/backfill-asof-epoch.ts` (thin entrypoint) over `backfillAsOfEpoch()` in
+  vector-db.ts — idempotent (skips vectors that already have the field), iterates via Pinecone
+  listPaginated+fetch, partial-updates by id. `BACKFILL_DRY_RUN=1` for a no-write dry run.
+- **`$exists` finding:** the installed `@pinecone-database/pinecone@8.0.0` types `filter` as an
+  opaque `object` and forwards it verbatim; `$exists` is a documented Pinecone metadata operator, so
+  the fail-open `$or`/`$exists` path typechecks and works — no design compromise needed.
+
+Flags (both default OFF): `VECTOR_ASOF_SERVER_FILTER` (new), `VECTOR_ASOF_STRICT` (existing, now
+also governs the server-side fail-closed escalation). Verify: tsc clean; new test file
+`test/vector-db-asof-server-filter.test.ts` (10 tests) + `vector-db-asof-strict` +
+`rag-retrieval-regression` green (34 total), plus 114 across the core vector-db/RAG suites.
+Committed locally, NOT pushed/landed. Next: land via `scripts/land.sh`, then run the backfill in
+prod before turning `VECTOR_ASOF_SERVER_FILTER=on`. See
+`docs/rollouts/2026-07-06-server-asof-filter.md`.
+
+## 2026-07-06 - Console de-alarm + optional confirmation + legacy removal + Cmd-K + admin hub (CLAUDE)
+Branch `claude/vigorous-lederberg-5b6d55`, landing as one PR. Real-money banner + "START LIVE" typed
+ritual removed (real money is the normal case, no ceremony). New owner preference
+`policy.requireTypedConfirmation` (Settings -> Advanced action confirmation, default ON): when OFF,
+approving a broker order / replacing a live order / loosening a live guardrail are one-click, enforced
+on server + console + mobile. Legacy `/old` dashboard deleted (redirects to /console; ~14 exclusive
+files + 2 dead tests removed); Strategy Flow visualizer dropped, legacy command palette replaced by a
+new console-native Cmd-K palette. Operator admin hub at /admin + env-gated admin.socratictrade.com
+scaffold (ADMIN_HOST + AUTH_COOKIE_DOMAIN, inert until set). Also fixed a pre-existing flaky
+socratic-db ordering test (added rowid tiebreakers). Verified: tsc clean, npm test 2642/2642, build
+green. Detail: docs/rollouts/2026-07-06-console-de-alarm-confirmation-toggle-legacy-removal-cmdk-admin.md
 ## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
 Owner repeatedly hit `Setup script failed with exit code 127. bash:
 scripts/cloud-setup.sh: No such file or directory` when creating brand-new

@@ -803,6 +803,20 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
+- **Server-side point-in-time (as-of) filtering in Pinecone (CLAUDE, server-asof-filter) — IN
+  PROGRESS 2026-07-06.** Worktree `trading-wt-asof-server`, branch `claude/server-asof-filter` off
+  `origin/main@b76b11ae`. Pushes the backtest `asOf` constraint INTO the Pinecone query so topK is
+  filled with eligible (pre-asOf) candidates instead of being decimated by the post-fetch as-of drop
+  (the empty/small-pool bug). Ingest: `cleanMetadata` additively stamps a numeric `as_of_epoch_ms`
+  (absent when undated). Query: new flag `VECTOR_ASOF_SERVER_FILTER` (default OFF) AND-combines a
+  server epoch clause — FAIL-OPEN `$or:[{$lte},{$exists:false}]` by default (keeps un-epoch'd so an
+  un-backfilled corpus isn't dropped), FAIL-CLOSED plain `{$lte}` under existing `VECTOR_ASOF_STRICT`.
+  Post-fetch `isWithinAsOf` guard stays as the leakage backstop (defense in depth). Idempotent
+  backfill `scripts/backfill-asof-epoch.ts` + `backfillAsOfEpoch()`. Pinecone `$exists` verified
+  supported (client v8 forwards the opaque filter object). tsc clean; new
+  `test/vector-db-asof-server-filter.test.ts` (10) + strict + regression green (34), 114 across core
+  vector-db/RAG suites. Committed locally, NOT landed. Next: `scripts/land.sh` + PR; run backfill in
+  prod before enabling the flag. See `docs/rollouts/2026-07-06-server-asof-filter.md`.
 - **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
   2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
   `docs/slack-coordination.md` documented `bash scripts/cloud-setup.sh` as the Claude Code Cloud
@@ -1513,3 +1527,5 @@ Jul 8 18:10 CT)._
   ruleset bottleneck (OWNER), rebasing PR #372, and pruning ~40 stale June 21-29 branches (OWNER).
 
 - 2026-07-05 — **UI audit + design-system unification review (CLAUDE, docs/design only; no code landed).** 7-lens expert panel (adversarially verified) over the live UI + decode of the claude.ai/design "Socratic Trade UI Kit". Key facts: app runs TWO disjoint design systems (ui glass-token `app/ui` vs console `con-*` `app/console`); the UI Kit is a faithful hash-tied EXPORT of both (30 leaf primitives, no composites), NOT a redesign. 55 verified findings (1 P0: money-reality LIVE/PAPER banner hardcoded dark-only Tailwind → wrong in default light theme, `app/dashboard-client.tsx:443`). Direction: "two renderers, one brand core" — unify token values + tone vocab (`pos/neg`), keep both render methodologies, defer the L-effort primitive merge; grow the Kit with `con-table` + modal/sheet family first. Deliverables: `docs/reviews/2026-07-05-ui-audit-and-design-system-unification.md` + interactive artifact `https://claude.ai/code/artifact/792a356c-79df-4bb1-b413-5979dd67a909`. State: **Completed (analysis/plan deliverable)**; implementation **Planned** — owner to sequence (Phase 0 P0 first). Not deployed (no code).
+
+- 2026-07-06 - **Console de-alarm + optional confirmation + legacy /old removal + Cmd-K + admin hub (CLAUDE).** One PR on `claude/vigorous-lederberg-5b6d55`: removed the real-money banner + "START LIVE" typed ritual; added `policy.requireTypedConfirmation` (Settings -> Advanced action confirmation, default ON; OFF = one-click approve/replace/loosen, enforced server+console+mobile); deleted the legacy `/old` dashboard (~14 exclusive files + 2 dead tests; Strategy Flow dropped, legacy palette replaced by a native Cmd-K palette); added an operator admin hub (/admin) + env-gated admin.socratictrade.com scaffold (ADMIN_HOST + AUTH_COOKIE_DOMAIN); fixed a pre-existing flaky socratic-db ordering test (rowid tiebreakers). Verified: tsc clean, npm test 2642/2642, build green. Rollout: docs/rollouts/2026-07-06-console-de-alarm-confirmation-toggle-legacy-removal-cmdk-admin.md. State: Completed (in PR).
