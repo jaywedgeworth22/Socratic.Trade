@@ -29,9 +29,10 @@ together with the disposition map, persisted via a new `recordCandidatePoolFull`
 text" posture as v1: candidates carry id/score/relevanceScore/docType/asOf/disposition only.
 
 Dispositions: `dropped_minscore`, `dropped_asof`, `dropped_rerank_truncate`,
-`dropped_rerank_floor`, `dropped_dedupe`, `kept_not_used`, `used`. Id-less-collision hardening
-mirrors v1/the #822 fan-out code (synthetic `__cand_<index>__` keys); a separate identity/real-id
-lookup recovers `_rerankScore`/final-slice membership across rerank's object-copying step.
+`dropped_rerank_floor`, `dropped_dedupe`, `dropped_dedupe_truncate`, `kept_not_used`, `used`.
+Id-less-collision hardening mirrors v1/the #822 fan-out code (synthetic `__cand_<index>__` keys
+plus a `__poolKey` own-enumerable stamp that survives rerank's object-copying step — see review
+fixes below).
 
 Coordinates with sibling lane `claude/server-asof-filter` (also edits `rankPool`'s as-of stage,
 lands first) — this lane's `dropped_asof` disposition wraps whatever `isWithinAsOf`/asOf-guard
@@ -42,17 +43,36 @@ block specifically wraps the existing `isWithinAsOf` call, doesn't replace it); 
 `retrieveContextDetailed` capture block, placed immediately AFTER v1's existing capture block
 (distinct region from the query-filter-building code earlier in the function).
 
+**Review fixes (second commit, same day):** (1) `dedupeSimilar` drops candidates for two different
+reasons — genuine near-dup vs its own internal top-`limit` cap — that were conflated into one
+`dropped_dedupe` label; `dedupeSimilar` gained an optional `report` out-param and a new
+`dropped_dedupe_truncate` disposition now separates cap-truncated distinct candidates from real
+near-dups (fires on almost every flagship-config run: `strategy.ts`'s `limit=3`,
+`dedupeSimilarity=0.6`). (2) An id-less match that SURVIVES rerank was mislabeled
+`dropped_rerank_truncate` (losing its relevanceScore) because rerank's spread-copy breaks object
+identity for id-less survivors too, not just real-id ones — fixed via a `__poolKey` stamp that
+survives the copy, used consistently in both `rankPool`'s internal key resolution and the v2
+capture block. (3) Both the v1 and v2 observability-capture blocks are now wrapped in their own
+try/catch so a throw inside capture can never turn a successful retrieval into an empty one
+(previously relied only on the function's outer catch, which returns `[]`). (4)
+`recordCandidatePoolFull` now hard-caps persisted candidates at 500 (defensive backstop against an
+operator raising `VECTOR_RERANK_OVERFETCH_K` very high), while still honestly reporting the true
+pre-cap `candidateCount`. See `docs/rollouts/2026-07-06-persist-pool-v2.md`'s "Review fixes" section
+for full detail.
+
 Local verify: `npx tsc --noEmit` clean. `npx vitest run test/persist-candidate-pool.test.ts` (v1,
-still green, 8/8) `test/persist-candidate-pool-v2.test.ts` (new, 9/9)
-`test/rag-retrieval-regression.test.ts` (extended with a `persist-pool-v2` describe block, +7
-tests, 26/26 total) — 43/43 across the three files, all green. Also spot-checked (beyond the task's
-required set, still scoped — not full `npm test`): `rag-retrieval-eval`, `rag-retrieval-status`,
-`vector-db-rerank-floor`, `vector-db-rerank-overfetch`, `vector-db-hybrid`, `vector-db-asof-strict`,
-`rag-multi-query-retrieval`, `rag-multi-query`, `rag-dedupe-similar`, `vector-db`,
-`vector-db-retrieval`, `vector-db-provenance` — 138/138 additional tests green, no regressions.
-Full `npm test`/`npm run build` intentionally NOT run per task scope. Committed locally on
-`claude/persist-pool-v2`; NOT pushed, no PR opened (per task instructions — owner/another session
-will land). See `docs/rollouts/2026-07-06-persist-pool-v2.md`.
+9/9) `test/persist-candidate-pool-v2.test.ts` (14/14) `test/rag-retrieval-regression.test.ts`
+(28/28) — **51/51** across the three files, all green (up from the original landing's 43/43 by the
+review-fix tests). `test/rag-dedupe-similar.test.ts` — 15/15 (10 original + 5 new). `npx eslint` on
+every touched file — 0 errors (pre-existing-pattern `no-explicit-any` warnings only). Also
+spot-checked (beyond the task's required set, still scoped — not full `npm test`):
+`rag-retrieval-eval`, `rag-retrieval-status`, `vector-db-rerank-floor`, `vector-db-rerank-overfetch`,
+`vector-db-hybrid`, `vector-db-asof-strict`, `rag-multi-query-retrieval`, `rag-multi-query`,
+`vector-db`, `vector-db-retrieval`, `vector-db-provenance` — 128/128 additional tests green, no
+regressions. Full `npm test`/`npm run build` intentionally NOT run per task scope. Committed
+locally on `claude/persist-pool-v2` (two commits: the original landing + this review-fix commit);
+NOT pushed, no PR opened (per task instructions — owner/another session will land). See
+`docs/rollouts/2026-07-06-persist-pool-v2.md`.
 
 ## 2026-07-06 — Fixed misleading Claude Code Cloud "Setup script" instructions (CLAUDE)
 Owner repeatedly hit `Setup script failed with exit code 127. bash:

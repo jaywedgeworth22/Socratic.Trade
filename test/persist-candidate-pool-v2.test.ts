@@ -217,6 +217,36 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL_FULL wiring", () =
     expect(byId.get("near-dup")).toMatchObject({ disposition: "dropped_dedupe" });
   });
 
+  it("review fix: flagship config (limit=3, dedupeSimilarity=0.6) — 5 distinct candidates yield dropped_dedupe_truncate for the 2 cut ones, NOT dropped_dedupe", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        { id: "a", score: 0.95, metadata: { text: "the first entirely distinct passage about quarterly revenue growth trends", userId: "local", scope: "shared" } },
+        { id: "b", score: 0.9, metadata: { text: "a second entirely distinct passage about supply chain logistics risk factors", userId: "local", scope: "shared" } },
+        { id: "c", score: 0.85, metadata: { text: "a third entirely distinct passage about executive compensation governance policy", userId: "local", scope: "shared" } },
+        { id: "d", score: 0.8, metadata: { text: "a fourth entirely distinct passage about international regulatory compliance matters", userId: "local", scope: "shared" } },
+        { id: "e", score: 0.75, metadata: { text: "a fifth entirely distinct passage about capital expenditure and infrastructure investment", userId: "local", scope: "shared" } }
+      ]
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("AAPL earnings", "AAPL", 3, "local", { dedupeSimilarity: 0.6 });
+
+    expect(result.map((c) => c.id)).toEqual(["a", "b", "c"]);
+
+    const candidates = (fullPoolCalls()[0]![1] as any).candidates as Array<Record<string, unknown>>;
+    const byId = new Map(candidates.map((c) => [c.id, c]));
+    expect(byId.get("a")).toMatchObject({ disposition: "used" });
+    expect(byId.get("b")).toMatchObject({ disposition: "used" });
+    expect(byId.get("c")).toMatchObject({ disposition: "used" });
+    // "d" and "e" are distinct, non-duplicate candidates cut purely by dedupeSimilar's OWN
+    // internal top-limit cap — this is the exact bug this fix addresses: they must NOT be
+    // mislabeled dropped_dedupe (near-duplicate removal).
+    expect(byId.get("d")).toMatchObject({ disposition: "dropped_dedupe_truncate" });
+    expect(byId.get("e")).toMatchObject({ disposition: "dropped_dedupe_truncate" });
+  });
+
   it("flag ON: a rerank-truncated candidate is disposed as dropped_rerank_truncate", async () => {
     process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
     process.env.VECTOR_ENABLE_RERANK = "on";
@@ -344,6 +374,90 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL_FULL wiring", () =
     expect(v2ById.get("low")).toMatchObject({ disposition: "dropped_minscore" });
   });
 
+  it("review fix: an id-less match that SURVIVES rerank is `used` with its relevanceScore (not mislabeled dropped_rerank_truncate)", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
+    process.env.VECTOR_ENABLE_RERANK = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        // Index 0: id-less, SURVIVES rerank (Voyage assigns it the top relevanceScore below) —
+        // this is the exact case the bug mislabeled, because rerankMatches returns a NEW spread
+        // object `{ ...match, _rerankScore }` for it, losing its original object identity.
+        { score: 0.7, metadata: { text: "id-less survivor with strong rerank relevance", userId: "local", scope: "shared" } },
+        // Index 1: id-less, TRUNCATED by rerank's own topK=2 cut (never scored at all).
+        { score: 0.65, metadata: { text: "id-less truncated by rerank topK cut", userId: "local", scope: "shared" } },
+        // Index 2: real id, also survives.
+        { id: "real-id", score: 0.6, metadata: { text: "real-id survivor", userId: "local", scope: "shared" } }
+      ]
+    });
+    // Voyage's rerank is invoked with topK=Math.min(limit, matches.length)=2, so only indices 0
+    // and 2 come back (reordered so the id-less survivor ranks first); index 1 is truncated.
+    mocks.rerank.mockResolvedValue({
+      data: [
+        { index: 0, relevanceScore: 0.92 },
+        { index: 2, relevanceScore: 0.55 }
+      ]
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("q", "AAPL", 2, "local");
+
+    // The id-less survivor and the real-id survivor are both `used`, in Voyage's rerank order.
+    expect(result.length).toBe(2);
+    expect(result[0]!.text).toContain("id-less survivor");
+    expect(result[0]!.relevanceScore).toBe(0.92);
+    expect(result[1]!.id).toBe("real-id");
+    expect(result[1]!.relevanceScore).toBe(0.55);
+
+    const candidates = (fullPoolCalls()[0]![1] as any).candidates as Array<Record<string, unknown>>;
+    // Two id-less rows (both carry the literal empty-string persisted `id` — `__poolKey` must
+    // never leak into the payload) plus the real-id row.
+    expect(candidates.length).toBe(3);
+    const idLessRows = candidates.filter((c) => c.id === "");
+    expect(idLessRows.length).toBe(2);
+    const survivorRow = idLessRows.find((c) => c.disposition === "used");
+    const truncatedRow = idLessRows.find((c) => c.disposition !== "used");
+    expect(survivorRow).toBeDefined();
+    expect(survivorRow).toMatchObject({ disposition: "used", relevanceScore: 0.92 });
+    expect(truncatedRow).toMatchObject({ disposition: "dropped_rerank_truncate" });
+    expect(truncatedRow!.relevanceScore).toBeUndefined();
+
+    const realIdRow = candidates.find((c) => c.id === "real-id");
+    expect(realIdRow).toMatchObject({ disposition: "used", relevanceScore: 0.55 });
+
+    // No `__poolKey` (the internal disambiguation key) ever leaks into the persisted payload.
+    for (const c of candidates) {
+      expect(Object.keys(c)).not.toContain("__poolKey");
+    }
+  });
+
+  it("review fix: an observability-capture throw never breaks retrieval — chunks are returned unchanged", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        { id: "a", score: 0.9, metadata: { text: "AAPL earnings report", userId: "local", scope: "shared" } },
+        { id: "b", score: 0.8, metadata: { text: "AAPL revenue update", userId: "local", scope: "shared" } }
+      ]
+    });
+    // Force the capture block to throw: recordCandidatePoolFull is the last call the v2 capture
+    // block makes, so making IT throw exercises the try/catch around the whole block without
+    // needing to reach into rankPool's internals.
+    mocks.audit.mockImplementation((kind: string) => {
+      if (kind === "rag_candidate_pool_full") throw new Error("simulated capture failure");
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("AAPL earnings", "AAPL", 2, "local");
+
+    // Retrieval succeeded and returned the full, correct chunk set despite the capture throwing —
+    // the throw must be swallowed by the capture block's own try/catch, not propagate to the
+    // function's outer catch (which would have returned []).
+    expect(result.map((c) => c.id)).toEqual(["a", "b"]);
+    expect(result[0]!.text).toBe("AAPL earnings report");
+    expect(result[1]!.text).toBe("AAPL revenue update");
+  });
+
   it("flag ON: queryHash is derived from the primary query (hashQuery), never the raw text", async () => {
     process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
     mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
@@ -358,5 +472,53 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL_FULL wiring", () =
     const calls = fullPoolCalls();
     expect(calls.length).toBe(1);
     expect((calls[0]![1] as any).queryHash).toBe(hashQuery("a stable query string"));
+  });
+});
+
+describe("recordCandidatePoolFull: defensive hard cap on persisted candidate count (review fix)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    delete process.env.RAG_PERSIST_CANDIDATE_POOL_FULL;
+  });
+
+  afterEach(() => {
+    delete process.env.RAG_PERSIST_CANDIDATE_POOL_FULL;
+  });
+
+  it("truncates an oversized candidates array to the hard cap while honestly reporting the true candidateCount", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
+    const { recordCandidatePoolFull } = await import("../src/lib/rag/candidate-pool");
+    const oversized = Array.from({ length: 600 }, (_, i) => ({
+      id: `cand-${i}`,
+      disposition: "kept_not_used" as const
+    }));
+
+    recordCandidatePoolFull({ symbol: "AAPL", queryHash: "hash", candidates: oversized }, "local");
+
+    const calls = mocks.audit.mock.calls.filter((call) => call[0] === "rag_candidate_pool_full");
+    expect(calls.length).toBe(1);
+    const payload = calls[0]![1] as any;
+    // Persisted array is capped well below the 600-candidate input.
+    expect(payload.candidates.length).toBeLessThan(600);
+    expect(payload.candidates.length).toBeLessThanOrEqual(500);
+    // The TRUE count is still honestly reported, even though the array itself was truncated.
+    expect(payload.candidateCount).toBe(600);
+  });
+
+  it("does not truncate a normal-sized candidates array (well under the cap)", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL_FULL = "on";
+    const { recordCandidatePoolFull } = await import("../src/lib/rag/candidate-pool");
+    const normal = Array.from({ length: 5 }, (_, i) => ({
+      id: `cand-${i}`,
+      disposition: "kept_not_used" as const
+    }));
+
+    recordCandidatePoolFull({ symbol: "AAPL", queryHash: "hash", candidates: normal }, "local");
+
+    const calls = mocks.audit.mock.calls.filter((call) => call[0] === "rag_candidate_pool_full");
+    const payload = calls[0]![1] as any;
+    expect(payload.candidates.length).toBe(5);
+    expect(payload.candidateCount).toBe(5);
   });
 });

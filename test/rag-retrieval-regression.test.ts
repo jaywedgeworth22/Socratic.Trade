@@ -275,6 +275,53 @@ describe("persist-pool-v2 — rankPool's optional onDispositions hook", () => {
     expect(captured!.get("near-dup")).toBe("dropped_dedupe");
   });
 
+  it("review fix: 5 fully-distinct candidates with limit=3 — the 2 cut candidates are dropped_dedupe_truncate, NOT dropped_dedupe (flagship strategy.ts config: limit=3, dedupeSimilarity=0.6)", async () => {
+    const pool = [
+      mk("a", 0.95, "the first entirely distinct passage about quarterly revenue growth trends"),
+      mk("b", 0.9, "a second entirely distinct passage about supply chain logistics risk factors"),
+      mk("c", 0.85, "a third entirely distinct passage about executive compensation governance policy"),
+      mk("d", 0.8, "a fourth entirely distinct passage about international regulatory compliance matters"),
+      mk("e", 0.75, "a fifth entirely distinct passage about capital expenditure and infrastructure investment")
+    ];
+    let captured: Map<string, string> | undefined;
+    const out = await rankPool(pool, "q", 3, {
+      dedupeSimilarity: 0.6,
+      onDispositions: (d) => { captured = d as unknown as Map<string, string>; }
+    });
+    expect(out.map((m) => m.id)).toEqual(["a", "b", "c"]);
+    expect(captured!.get("a")).toBe("kept_not_used");
+    expect(captured!.get("b")).toBe("kept_not_used");
+    expect(captured!.get("c")).toBe("kept_not_used");
+    // "d" and "e" are distinct, non-duplicate candidates cut purely by dedupeSimilar's OWN
+    // internal top-limit cap — must NOT be mislabeled as near-duplicate removal.
+    expect(captured!.get("d")).toBe("dropped_dedupe_truncate");
+    expect(captured!.get("e")).toBe("dropped_dedupe_truncate");
+  });
+
+  it("review fix: a genuine near-duplicate is still dropped_dedupe (distinct from dropped_dedupe_truncate) even alongside cap-truncated candidates", async () => {
+    const text = "the exact same repeated phrase over and over about revenue growth this quarter";
+    const pool = [
+      mk("original", 0.95, text),
+      mk("near-dup", 0.9, text + " precisely"),
+      mk("b", 0.85, "a completely different discussion about supply chain risk factors and logistics"),
+      mk("c", 0.8, "yet another unrelated passage about executive compensation and governance policy"),
+      mk("d", 0.75, "a fourth unrelated passage about capital markets and treasury operations")
+    ];
+    let captured: Map<string, string> | undefined;
+    // limit=2: "original" kept, "near-dup" genuinely judged a duplicate of "original", "b" kept
+    // (fills the cap) — "c" and "d" never even compared, cut purely by the cap.
+    const out = await rankPool(pool, "q", 2, {
+      dedupeSimilarity: 0.5,
+      onDispositions: (d) => { captured = d as unknown as Map<string, string>; }
+    });
+    expect(out.map((m) => m.id)).toEqual(["original", "b"]);
+    expect(captured!.get("original")).toBe("kept_not_used");
+    expect(captured!.get("b")).toBe("kept_not_used");
+    expect(captured!.get("near-dup")).toBe("dropped_dedupe");
+    expect(captured!.get("c")).toBe("dropped_dedupe_truncate");
+    expect(captured!.get("d")).toBe("dropped_dedupe_truncate");
+  });
+
   it("rerank truncation (Voyage topK cut) is disposed as dropped_rerank_truncate, distinct from the relevance floor", async () => {
     const pool = [mk("a", 0.9, "alpha"), mk("b", 0.8, "beta"), mk("c", 0.7, "gamma")];
     // topK=2 (limit) means rerankMatches asks Voyage for only the top 2 — "c" never comes back.

@@ -111,6 +111,18 @@ export function candidatePoolFullPersistEnabled(): boolean {
  * minScore floor -> as-of guard -> hybrid fuse (reorder only, never drops) -> cross-encoder
  * rerank (may truncate to `limit` via Voyage's `topK`) -> post-rerank relevance floor -> dedupe ->
  * final top-`limit` slice (applied by the caller, not `rankPool` itself).
+ *
+ * `dropped_dedupe` vs `dropped_dedupe_truncate` (review fix, 2026-07-06): `dedupeSimilar` itself
+ * drops candidates for two DIFFERENT reasons that both look like "absent from its output" if you
+ * only diff the before/after pool — a genuine near-duplicate judgment (Jaccard similarity >=
+ * threshold against an already-kept chunk), and its OWN internal `kept.length >= limit` cap, which
+ * truncates the pool exactly like the final top-`limit` slice does, just one stage earlier. On the
+ * flagship production config (strategy.ts: `limit=3`, `dedupeSimilarity=0.6`) the cap fires on
+ * almost every run, so lumping both into `dropped_dedupe` mislabeled ordinary truncation as
+ * "removed as a near-duplicate" for the common case. `dropped_dedupe` is now reserved for
+ * candidates `dedupeSimilar` actually judged too similar to a kept chunk; `dropped_dedupe_truncate`
+ * is for distinct candidates it never even got to compare, because its internal cap was already
+ * full — see `dedupeSimilar`'s optional `report` out-param in `rag/dedupe-similar.ts`.
  */
 export type CandidateDisposition =
   | "dropped_minscore"
@@ -118,6 +130,7 @@ export type CandidateDisposition =
   | "dropped_rerank_truncate"
   | "dropped_rerank_floor"
   | "dropped_dedupe"
+  | "dropped_dedupe_truncate"
   | "kept_not_used"
   | "used";
 
@@ -147,12 +160,26 @@ export interface CandidatePoolRecordV2 {
 }
 
 /**
+ * Defensive hard cap (review fix, 2026-07-06) on how many candidates this v2 record ever persists,
+ * independent of `matches.length`. `matches` here is bounded by `fetchK`, which for the rerank path
+ * is `rerankOverFetchK(limit)` — env-tunable ABOVE its 150 default via VECTOR_RERANK_OVERFETCH_K
+ * with no upper clamp in vector-db.ts. An operator setting that env var to a very large value would
+ * otherwise let this audit payload balloon 1:1 with it. This cap is intentionally generous (well
+ * above any expected `fetchK`) — it exists purely as a backstop against a misconfigured env var,
+ * not as a normal operating limit.
+ */
+const MAX_PERSISTED_CANDIDATES_V2 = 500;
+
+/**
  * Persist one FULL (pre-rankPool + dispositions) candidate-pool record. Fire-and-forget, never
  * throws. No-ops entirely when RAG_PERSIST_CANDIDATE_POOL_FULL is unset/off.
  */
 export function recordCandidatePoolFull(record: CandidatePoolRecordV2, userId: string = "local"): void {
   if (!candidatePoolFullPersistEnabled()) return;
   try {
+    const candidates = record.candidates.length > MAX_PERSISTED_CANDIDATES_V2
+      ? record.candidates.slice(0, MAX_PERSISTED_CANDIDATES_V2)
+      : record.candidates;
     audit(
       "rag_candidate_pool_full",
       {
@@ -160,8 +187,11 @@ export function recordCandidatePoolFull(record: CandidatePoolRecordV2, userId: s
         symbol: record.symbol,
         queryHash: record.queryHash,
         asOf: record.asOf,
+        // `candidateCount` intentionally reflects the TRUE (pre-cap) candidate count, not the
+        // possibly-truncated `candidates` array length below — so a capped payload is still
+        // honestly labeled as having come from a larger pool, not silently presented as complete.
         candidateCount: record.candidates.length,
-        candidates: record.candidates
+        candidates
       },
       userId
     );
