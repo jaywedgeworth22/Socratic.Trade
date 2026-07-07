@@ -18,44 +18,29 @@
 //
 // CONTRACT: the event shape mirrors `@jaywedgeworth22/congress-trading-shared`'s
 // `UsageTelemetryEventSchema` and the monitor's server-side parser
-// (`API-usage-monitor/src/lib/usage-telemetry.ts`). It is hand-rolled here rather than importing
-// `createUsageTelemetryClient` because the usageTelemetry export was added after this code
-// was written. MIGRATION: the shared package is now at ^1.2.0 which includes `createUsageTelemetryClient`;
-// swap `postBatch()` below for `createUsageTelemetryClient({ baseUrl, token }).send(events)`
-// — the event shape is already the shared contract, so only the transport changes.
+// (`API-usage-monitor/src/lib/usage-telemetry.ts`).
+// MIGRATION COMPLETE (2026-07-06): types and client are now imported from the shared package.
 
 import { logApiHealth } from "./db-health";
+import {
+  createUsageTelemetryClient,
+  type UsageTelemetryEvent,
+  type UsageTelemetryMetricType,
+  type UsageTelemetryUnit,
+  type UsageTelemetryBillingMode,
+  type UsageTelemetryConfidence,
+} from "@jaywedgeworth22/congress-trading-shared";
 
-// ── Contract (mirrors the shared UsageTelemetryEvent) ──────────────────────────
-
-export type UsageMetricType = "usage" | "cost" | "quota" | "tier" | "health" | "balance" | "limit";
-export type UsageUnit =
-  | "request" | "call" | "token" | "credit" | "usd" | "page" | "job" | "document" | "row" | "byte";
-export type UsageBillingMode = "actual" | "estimated" | "manual";
-export type UsageConfidence = "actual" | "estimated" | "manual";
-
-export interface UsageMonitorEvent {
-  sourceApp: string;
-  environment?: string;
-  provider: string;
-  service?: string;
-  label?: string;
-  keyRef?: string;
-  billingMode?: UsageBillingMode;
-  metricType?: UsageMetricType;
-  quantity?: number;
-  unit?: UsageUnit;
-  costUsd?: number;
-  requests?: number;
-  confidence?: UsageConfidence;
-  occurredAt?: string;
-  metadata?: Record<string, string | number | boolean | null>;
-}
+// Re-export shared types under the names consumers already use.
+export type UsageMetricType = UsageTelemetryMetricType;
+export type UsageUnit = UsageTelemetryUnit;
+export type UsageBillingMode = UsageTelemetryBillingMode;
+export type UsageConfidence = UsageTelemetryConfidence;
+export type UsageMonitorEvent = UsageTelemetryEvent;
 
 // ── Config (env-gated, server-only) ────────────────────────────────────────────
 
 const SOURCE_APP = "socratic-trade";
-const INGEST_PATH = "/api/ingest/usage";
 const HEALTH_SERVICE = "usage-monitor";
 const MAX_BATCH = 100; // monitor ingest caps each POST at 100 events
 
@@ -91,9 +76,6 @@ function flushDelayMs(): number {
   return numEnv("USAGE_MONITOR_FLUSH_MS", 2000);
 }
 
-function timeoutMs(): number {
-  return numEnv("USAGE_MONITOR_TIMEOUT_MS", 8000);
-}
 
 // ── State (globalThis-pinned so Next.js HMR module duplication can't split it) ──
 
@@ -221,6 +203,12 @@ export function pushRagUsage(entry: {
   }
 }
 
+function maskAccountNumber(acc: string): string {
+  const clean = acc.trim();
+  if (clean.length <= 4) return clean;
+  return `...${clean.slice(-4)}`;
+}
+
 /**
  * Record broker account balances and limits.
  */
@@ -235,12 +223,14 @@ export function pushBrokerBalance(entry: {
   if (!usageMonitorEnabled()) return;
   try {
     const occurredAt = new Date().toISOString();
+    const maskedAcc = maskAccountNumber(entry.accountNumber);
     if (typeof entry.cash === "number") {
       enqueue({
         sourceApp: SOURCE_APP,
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:cash`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.cash,
@@ -249,7 +239,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "cash"
         }),
       });
@@ -260,6 +250,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:buyingPower`,
         billingMode: "actual",
         metricType: "limit",
         quantity: entry.buyingPower,
@@ -268,7 +259,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "buyingPower"
         }),
       });
@@ -279,6 +270,7 @@ export function pushBrokerBalance(entry: {
         environment: usageMonitorEnv(),
         provider: entry.provider,
         service: "broker",
+        keyRef: `${maskedAcc}:equity`,
         billingMode: "actual",
         metricType: "balance",
         quantity: entry.equity,
@@ -287,7 +279,7 @@ export function pushBrokerBalance(entry: {
         occurredAt,
         metadata: cleanMetadata({
           userId: entry.userId,
-          accountNumber: entry.accountNumber,
+          accountNumber: maskedAcc,
           metric: "equity"
         }),
       });
@@ -405,23 +397,14 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
   if (!baseUrl || !token || events.length === 0) return;
 
   const fetchImpl = state.fetchImpl ?? fetch;
-  const url = `${baseUrl}${INGEST_PATH}`;
   const start = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs());
   try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ events }),
-      signal: controller.signal,
-      cache: "no-store",
-    });
+    const client = createUsageTelemetryClient({ baseUrl, token, fetchImpl });
+    await client.send(events);
     logApiHealth({
       service: HEALTH_SERVICE,
-      ok: res.ok,
+      ok: true,
       latencyMs: Date.now() - start,
-      errorText: res.ok ? undefined : `HTTP ${res.status}`,
     });
   } catch (err) {
     logApiHealth({
@@ -430,8 +413,6 @@ async function postBatch(events: UsageMonitorEvent[]): Promise<void> {
       latencyMs: Date.now() - start,
       errorText: err instanceof Error ? err.message : String(err),
     });
-  } finally {
-    clearTimeout(timer);
   }
 }
 
