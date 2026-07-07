@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Console intro: solid backdrop that dissolves on liftoff (Claude cloud, branch `claude/socratic-trade-logos-p0hxk7`)
+Refinement to the merged intro splash (#876/#996). The intro now opens with a solid, theme-matched
+backdrop (`var(--con-bg)`) covering the page during the waving-chart phase, then dissolves (0.9s) to
+reveal the console/page skeleton the moment the candles start moving up — resolving the
+transparent-vs-theme-bg question as a hybrid. `intro-canvas.tsx`: model exposes `LIFT = min(BL)`
+(first breakaway); a solid backdrop `<div>` behind the (now `position:relative`) candle canvas fades
+its opacity to 0 at `t>=LIFT`; the wrapper keeps its separate final hand-off fade. Gate green
+(tsc/lint/build) after `npm ci` (local node_modules was stale vs main's
+`congress-trading-shared#v1.4.1` — unrelated pre-existing tsc errors, not this change). Driven live
+(solid → dissolve → revealed). PR open. See `docs/rollouts/2026-07-06-intro-backdrop-dissolve.md`.
+
 ## 2026-07-06 — Plain-English Anthropic usage-limit error (CLAUDE, cloud lane)
 
 Owner-reported screenshot showed a raw Anthropic JSON error blob ("You have reached your

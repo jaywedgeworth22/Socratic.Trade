@@ -181,6 +181,15 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Console intro: solid backdrop that dissolves on liftoff (CLAUDE cloud, branch
+  `claude/socratic-trade-logos-p0hxk7`) — IN PROGRESS 2026-07-06, PR open.** Refinement to the merged
+  intro splash (#876/#996): the intro opens with a solid theme-matched backdrop (`var(--con-bg)`)
+  covering the page during the waving-chart phase, then dissolves (0.9s) to reveal the console/page
+  skeleton once the candles start moving up (resolves the transparent-vs-theme-bg question as a
+  hybrid). `intro-canvas.tsx`: model exposes `LIFT=min(BL)`; a solid backdrop `<div>` behind the
+  `position:relative` candle canvas fades opacity→0 at `t>=LIFT`. Gate green after `npm ci` (stale
+  local deps vs `congress-trading-shared#v1.4.1`). Driven live. See
+  `docs/rollouts/2026-07-06-intro-backdrop-dissolve.md`.
 - **Persistent candlestick header logo (CLAUDE cloud, branch `claude/socratic-trade-logos-p0hxk7`) —
   IN PROGRESS 2026-07-06, PR open.** Follow-up to the merged console intro splash (#876). Replaced the
   typed "Socratic.Trade" top-bar brand with a live candlestick "SOCRATIC TRADE" `<HeaderLogo>` that
