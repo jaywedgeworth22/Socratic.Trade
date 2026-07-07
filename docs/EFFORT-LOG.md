@@ -724,21 +724,22 @@ As of 2026-07-04.
   contained; table now scrolls inside its card). See
   `docs/rollouts/2026-07-06-mobile-console-width-overflow.md`.
 - **Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane** (CLAUDE cloud,
-  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-06.**
-  Self-hosted Coolify (open-source PaaS) stood up on a Hetzner CX23 behind `jays.services` to
-  offload local agent/dev-server resource usage from the owner's 16GB M5 MacBook Air. API
-  token verified working (Coolify 4.1.2). `agent/antigravity` and `agent/cursor` branches
-  created (didn't exist before). `AGENTS.md`'s outdated "Cursor: not a 4th agent lane" section
-  corrected — Cursor now runs background/agent-mode work on DeepSeek as a full peer lane
-  (port 4103 [corrected from an earlier 4104 typo in this row — owner confirmed 2026-07-06 "Monet
-  should be 4104 since cursor is 4103"; AGENTS.md's fleet table is the corrected source of truth],
-  `cursor.jays.services`) while keeping its human-review-seat role too. **Next:**
-  create the Coolify project + connect the repo, deploy 6 preview-lane apps (main +
-  agent/claude/codex/antigravity/monet/cursor), then migrate `socratictrade.com` production
-  onto the same box (owner-confirmed decision, accepting the noisy-neighbor risk on a 4GB
-  box) — production needs real secrets transfer, DB migration/cutover plan, and Coolify
-  Backups enabled (unlike the preview apps). See
-  `docs/rollouts/2026-07-06-coolify-migration.md`.
+  branch `claude/llm-apps-m5-resource-optimization-n9w5ax`) — **IN PROGRESS 2026-07-07 (4/6
+  lanes live).** Self-hosted Coolify (open-source PaaS) on a Hetzner CX23 (4 GB) behind
+  `jays.services`, offloading local agent/dev-server load from the owner's 16 GB M5 MBA. Doc
+  correction landed via PR #878 (Cursor = full peer lane; `agent/antigravity`/`agent/cursor`
+  created; ports cursor=4103/monet=4104). Six preview apps created (GitHub-App source, nixpacks,
+  :3000, `http://<host>`). **Deployed + running (4):** `main`→`trading.jays.services`
+  (integration), `agent/claude`→`claude.`, `agent/cursor`→`cursor.`, `agent/antigravity`→
+  `antigravity.` — all `✓ Ready` on :3000. **Parked (2):** `agent/codex` (ancient snapshot) +
+  `agent/monet` (401 on private GitHub-Packages `congress-trading-shared@^1.2.0`, predates the
+  #444 public-git-tag switch) — owner decision: leave for Codex/Monet to merge-forward, do NOT
+  reset. **Incident:** 2 concurrent `next build`s OOM-wedged the 4 GB box (console reboot
+  needed); fixed by pinning `concurrent_builds=1`. New scheme: `trading.jays.services`=
+  integration (retire `trading-beta`), `socratictrade.com`=prod-only. **Next (owner):** repoint
+  Cloudflare Tunnel routes to `http://91.98.44.8:80`; then final URL verification. Production
+  colocation reassessment pending (the wedge is evidence for the noisy-neighbor risk). See
+  `docs/rollouts/2026-07-07-coolify-lane-deploys.md` (+ `2026-07-06-coolify-migration.md`).
 
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it

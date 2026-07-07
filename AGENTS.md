@@ -114,10 +114,19 @@ one worktree's process at another's files.
 | `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
 | `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
 
-A parallel Coolify-based hosting migration (Hetzner box behind `jays.services`) is
-in progress for the preview lanes above — see the latest `docs/rollouts/` note for
-current status before treating it as authoritative. This table remains the source
-of truth for the local PM2/worktree setup until that migration is verified complete.
+A Coolify-based hosting migration (self-hosted PaaS on a Hetzner CX23, 4 GB, behind
+`jays.services`) is underway for the preview lanes above. As of 2026-07-07 four lanes are
+built and running on it (integration=`main`→`trading.jays.services`, plus
+`agent/claude|cursor|antigravity`→`claude|cursor|antigravity.jays.services`); `agent/codex`
+and `agent/monet` are parked until their owners merge-forward to `main` (stale deps). New
+hostname scheme: `trading.jays.services` = integration (replaces the retired
+`trading-beta.jays.services`), `socratictrade.com` = production only, `*.jays.services`
+agent subdomains = Coolify GitHub-App previews. Apps are served over `http://` (Cloudflare
+Tunnel does edge TLS → box Traefik :80). **Build caveat:** the box's `concurrent_builds` is
+pinned to **1** — two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07 (needed a
+console reboot). This table remains the source of truth for the local PM2/worktree setup
+until the tunnel cutover is verified complete; see the latest `docs/rollouts/` note for live
+status.
 
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
