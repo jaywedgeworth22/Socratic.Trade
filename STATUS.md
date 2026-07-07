@@ -8,6 +8,30 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`)
+Owner-directed after prod forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes; all gates
+green (tsc 0 / lint 0 / **2888 tests** / build) and an independent **adversarial review** done (1 HIGH
+finding — cross-tick double-sell in the stale-exit remediation — fixed + tested; 1 LOW = false
+positive). (1) **DeepSeek Green/Bear 60s timeout** — stop the silent `medium→high` reasoning upgrade
+(DeepSeek thinking is now opt-in/fast by default and the settings UI shows the true effort sent), a
+reasoning-class-aware env-tunable timeout (150s when thinking is on), and **latency capture**:
+`llmFetchCapturing` soft timeout never severs a paid reply — every Green/Bear call audits
+`llm_call_latency` and a late reply is drained into `llm_late_response` (snippet + usage + duration)
+for debug instead of discarded; no fallback model (owner refinement). (2) **MU exit deadlock** —
+protective Risk-Exits route as MARKET orders (`coerceProtectiveExitToMarket`) so they can't rest
+unfilled; `autoRemediateStaleExitOrders` cancel-replaces a stale EXIT limit at the 15m tick (exits
+only; defers to human on live typed-confirm; `policy.autoRemediateStaleExits` default on; in-flight
+guard + 5-min per-order cooldown against double-sells). (3) **Per-trade stops** —
+`atrStops`/`betaScaledStops` default ON; Bull/Bear schemas now expose
+`bracketStopLoss`/`bracketTakeProfit` + prompt guidance; `enrichOpeningProposal` validates the LLM
+stop and makes the fallback per-symbol (ATR>beta>flat). (4) **Removed the historic
+`ALLOW_LIVE_TRADING` opt-in gate** (now an opt-out escape hatch — a live account trades on its
+environment; **owner: confirm the Robinhood live acct should start trading on deploy, else set
+`ALLOW_LIVE_TRADING=false`**) + **notification retry** on transient delivery failures (owner had been
+silently missing block/timeout alerts). Trailing-stop-per-symbol deferred (needs beta/ATR in the
+scheduler tick). Landing via `land.sh` → PR. See
+`docs/rollouts/2026-07-07-strategy-exec-stops-llm-fixes.md`.
+
 ## 2026-07-07 — as-of epoch Pinecone backfill EXECUTED (ops, MONET)
 The deferred operational gate from #1019 is cleared: `scripts/backfill-asof-epoch.ts` was run against
 the shared (default-name) Pinecone index for the operator ("local") key — dry-run, real run, then an
