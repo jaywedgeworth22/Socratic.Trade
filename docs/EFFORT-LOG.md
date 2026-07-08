@@ -184,6 +184,13 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`) — IN
+  PROGRESS 2026-07-08, landing.** Owner-reviewed copy fix: role-neutral grammatically-parallel model
+  descriptors in both catalog copies; Gemini Red rec moved off the preview build to stable
+  `gemini-3.5-flash`; per-provider rec principle documented ($$ workhorse for Green, strongest STABLE
+  reasoner for Red, never a preview for the adversary seat). Display-only. Rollout note
+  `docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
 - **Model attribution on every decision surface (MONET, session worktree
   `~/.claude/projects/Socratic.Trade/model-attribution-ui-labels-99138a`, branch
   `monet/model-attribution-ui-labels-99138a`) — IN PROGRESS 2026-07-08, implementation done +

@@ -3,6 +3,11 @@ import type { ModelGroup } from "./model-picker";
 export const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
 export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 
+// Label + recommendation conventions (owner review 2026-07-08; keep in sync with
+// app/console/settings/models.tsx): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
+// both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label); per
+// provider, recommendedGreen = the stable fast/balanced $$ workhorse, recommendedRed = the strongest
+// STABLE reasoner at sustainable per-proposal cost — never a *-preview build for the Red seat.
 export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
@@ -18,9 +23,9 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     provider: "anthropic",
     label: "Anthropic (Claude)",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast Claude review", tier: "$" },
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast low-cost Claude", tier: "$" },
       { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 - premium Claude critique", tier: "$$$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 - premium Claude reasoning", tier: "$$$" },
       { value: "claude-fable-5", label: "claude-fable-5 - most capable Claude", tier: "$$$" }
     ]
   },
@@ -37,8 +42,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - preview Pro reasoning", tier: "$$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - preview Pro reasoning", tier: "$$$" }
     ]
   },
   {
