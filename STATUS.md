@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — PRODUCTION migration to Coolify IN PROGRESS (MONET, owner-directed, branch `monet/migrate-production-coolify-3676f7`)
+Owner asked in-session to migrate `socratictrade.com` off the Mac onto the Coolify box
+(`91.98.44.8` / `jays.services`). This PR adds the boot machinery
+(`scripts/coolify-prod-start.sh` + `litestream.coolify.yml`): Infisical secrets via pinned
+in-container CLI, DB restore from the existing litestream R2 replica + continued
+in-container replication, and a `DB_BOOTSTRAP=fresh|live` gate so the box app runs on an
+empty DB (cannot trade) until the Mac prod processes are stopped at cutover. Coolify app
+`socratic-trade-prod` (main, nixpacks, auto-deploy OFF — prod release stays a deliberate
+step). Cutover = stop Mac pm2 `trading`+`litestream` -> flip `DB_BOOTSTRAP=live` ->
+repoint `socratictrade.com` CNAME(tunnel)->proxied A `91.98.44.8`. Rollback = restore
+CNAME + `pm2 start trading litestream` (Mac worktree left intact). **Until
+`docs/rollouts/2026-07-07-prod-coolify-migration.md` records a verified cutover, the Mac
+pm2 lane is still production.**
+
 ## 2026-07-07 — Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`)
 Owner-directed after prod forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes; all gates
 green (tsc 0 / lint 0 / **2888 tests** / build) and an independent **adversarial review** done (1 HIGH

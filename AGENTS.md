@@ -128,6 +128,16 @@ console reboot). This table remains the source of truth for the local PM2/worktr
 until the tunnel cutover is verified complete; see the latest `docs/rollouts/` note for live
 status.
 
+**Production migration (2026-07-07, owner-directed, MONET):** production
+`socratictrade.com` is moving to the same Coolify box as app `socratic-trade-prod`
+(branch `main`, auto-deploy OFF — a prod release is still a deliberate step: trigger the
+Coolify deploy, not `~/apps/trading-publish.sh`, once cutover completes). Boot path:
+`scripts/coolify-prod-start.sh` (Infisical secrets via pinned in-container CLI, litestream
+0.5.14 restore-from-R2 + continued replication, `DB_BOOTSTRAP=fresh|live` gate against
+double-scheduler trading). See `docs/rollouts/2026-07-07-prod-coolify-migration.md` for
+state; until that note records a verified cutover, the Mac pm2 `trading` lane above is
+still production.
+
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
 
