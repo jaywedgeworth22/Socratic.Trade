@@ -113,6 +113,53 @@ copy but survive in the R2 replica (the box replicates to the same path).
   production data, not a fresh DB), `pineconeConfigured: true` (real secrets), container
   status stable (no restart loop). **PRODUCTION IS NOW SERVED FROM THE COOLIFY BOX.**
 
+## Incident: post-cutover double-run (2026-07-08 05:13-05:19Z, resolved)
+
+A parallel MONET session, unaware of the completed cutover, ran the (now-deprecated)
+`~/apps/trading-publish.sh` ~1h after cutover — restarting Mac pm2 `trading` and creating
+a ~5-minute **double-scheduler** window (Mac + box, same broker accounts, same DB state).
+Detected via its #agent-sync post; Mac `trading` re-stopped + `pm2 save` at 05:19Z.
+Damage scan of the Mac DB for the window: **0 proposals, 0 fills**; the only trace is 9
+`synthetic_stop_error` audit events — the Mac's attempts to (re)place the MU synthetic
+stop were rejected by Alpaca with `422 client_order_id must be unique`, i.e. the
+**deterministic client-order-id dedupe held** and the box's orders won. Litestream was
+NOT restarted (no replica interference). Markets were closed throughout.
+
+Hardening applied: `~/apps/trading-publish.sh` now **refuses to run** unless
+`FORCE_MAC_PROD_ROLLBACK=1` is set, with a pointer to this note (host-side file, not in
+repo). Lesson: a deprecated-in-docs deploy path is not deprecated enough while it remains
+executable — parallel sessions may act on pre-migration context.
+
+## Incident: box disk-full (2026-07-08 ~05:20Z-05:35Z, RESOLVED)
+
+Resolution: Coolify API returned 200 (v4.1.2) at ~05:35Z after the owner got a shell on
+the box (disk freed); prod app stayed healthy throughout — the app container and Traefik
+never stopped serving. Fleet merge/deploy freeze lifted. Original report follows.
+
+
+Reported by the parallel session and confirmed: Coolify API/dashboard 500s while the
+prod app keeps serving (health ok, scheduler ticking). Likely cause: tonight's repeated
+nixpacks builds (integration-preview rebuilds on each merge to `main` + the prod build)
+filled the box disk with images/build cache. **Until resolved: avoid merging to `main`**
+(each merge triggers an integration-preview build on the box) and do not trigger
+deploys. Remediation needs box shell (owner: Hetzner console / SSH):
+`docker builder prune -af && docker image prune -af` (keeps running containers), then
+consider enabling Coolify's scheduled Docker cleanup with a tighter threshold.
+If the box degrades before that: rollback path = stop Coolify app + restore apex CNAME
+to the tunnel + `FORCE_MAC_PROD_ROLLBACK=1 bash ~/apps/trading-publish.sh` (or just
+`pm2 start trading litestream` — worktree is current at `2d113054`).
+
+## Addendum: Coolify control plane off the Mac (2026-07-08, owner-directed)
+
+`jays.services` (Coolify dashboard/API) was still a tunnel CNAME — i.e. reaching the
+Coolify control plane required the Mac's cloudflared to be up, even though production
+itself no longer needs the Mac. Owner said to remove that hop: apex flipped to a proxied
+A `91.98.44.8` (record `2ba989947869f0aae5cf1eb7401a2910`; old tunnel target in the
+record comment). Verified pre/post parity direct-vs-edge (401 unauth / 500 authed — the
+500s are the open disk-full incident, identical on both paths, so routing is proven).
+MX/TXT records untouched (iCloud mail unaffected). The Mac tunnel's
+`jays.services -> 91.98.44.8:8000` ingress rule is now unused (kept as rollback).
+
 ## Follow-ups
 
 - Consider `limits_memory` on the prod app container (box is 4 GB; builds already

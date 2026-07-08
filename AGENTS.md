@@ -99,34 +99,34 @@ that file directly.
 ## Hosting & dev servers (multi-agent coordination)
 
 This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini, Cursor).
-**Each agent works in its OWN git worktree, on its OWN branch, with its OWN PM2-hosted
-live `next dev` preview on its OWN port.** Every worktree has its own `node_modules`,
-`.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
-one worktree's process at another's files.
+**Each agent works in its OWN git worktree, on its OWN branch** (Claude →
+`~/apps/trading-claude`, Codex → `~/apps/trading-codex`, Antigravity →
+`~/apps/trading-antigravity`, Cursor → `~/apps/trading-cursor`, Monet →
+`~/apps/trading-monet`; `~/Code/Agentic Trading` is the human/integration tree). Every
+worktree has its own `node_modules`, `.next`, `data/app.db`, and `.env.local` — never
+assume any are shared, and never point one worktree's process at another's files.
 
-| Worktree | Branch | Port | Process | Public route | Owner |
-|----------|--------|------|---------|--------------|-------|
-| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
-| `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
-| `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
-| `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-cursor` | `agent/cursor` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
-| `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` — **STOPPED (rollback standby)** | — | **former production (until 2026-07-07)** |
+**PREVIEW SERVERS ARE RETIRED — ALL OF THEM (owner decision, 2026-07-08, definitive).**
+Owner: previews were never looked at, and several sat behind Cloudflare Access that
+agents cannot pass — work spent keeping them fresh was pure waste. The end state is
+**production only**: no `*.jays.services` preview hostnames (`trading-beta`, `claude`,
+`codex`, `antigravity`, `cursor`, `monet`, `trading` — DNS deleted, incl. the
+`*.jays.services` wildcard), no per-agent PM2 `next dev` servers (ports 4001/4100-4104 —
+stopped), no Coolify preview app (`socratic-trade-preview` — deleted). **Do not start,
+recreate, or route to any of these.** Coolify's PR-preview feature was considered and
+deliberately NOT enabled (it auto-builds every PR; build bursts OOM-wedged and
+disk-filled the 4 GB box on 2026-07-07/08) — revisit only on owner instruction. To check
+your work: `npm run dev` locally in your own worktree + the verify CI gate.
+`scripts/setup-agent-previews.sh` and the "Preview freshness policy" below are
+historical.
 
-A Coolify-based hosting migration (self-hosted PaaS on a Hetzner CX23, 4 GB, behind
-`jays.services`) is underway for the preview lanes above. As of 2026-07-07 four lanes are
-built and running on it (integration=`main`→`trading.jays.services`, plus
-`agent/claude|cursor|antigravity`→`claude|cursor|antigravity.jays.services`); `agent/codex`
-and `agent/monet` are parked until their owners merge-forward to `main` (stale deps). New
-hostname scheme: `trading.jays.services` = integration (replaces the retired
-`trading-beta.jays.services`), `socratictrade.com` = production only, `*.jays.services`
-agent subdomains = Coolify GitHub-App previews. Apps are served over `http://` (Cloudflare
-Tunnel does edge TLS → box Traefik :80). **Build caveat:** the box's `concurrent_builds` is
-pinned to **1** — two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07 (needed a
-console reboot). This table remains the source of truth for the local PM2/worktree setup
-until the tunnel cutover is verified complete; see the latest `docs/rollouts/` note for live
-status.
+Hosting is now Coolify on the Hetzner box (`91.98.44.8`, dashboard `https://jays.services`
+— direct DNS, no Mac dependency). Exactly ONE application exists there:
+`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
+**Build caveats:** the box's `concurrent_builds` is
+pinned to **1** (two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07, console
+reboot required), and Docker cleanup thresholds matter — a build burst filled the disk on
+2026-07-08 and 500'd the Coolify control plane (see the prod-migration rollout note).
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
@@ -148,13 +148,7 @@ integration preview until 2026-07-07. The earlier "apps are served over http://"
 described the abandoned tunnel transport. Details:
 `docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 
-Bootstrap / repair the integration preview and agent previews idempotently with
-`scripts/setup-agent-previews.sh`.
-
-`trading-beta.jays.services` is the only public beta/integration hostname for
-the 4001 main preview. Do not add or document duplicate beta hostnames.
-
-### Preview freshness policy
+### Preview freshness policy (RETIRED 2026-07-08 — historical; previews no longer exist)
 
 `trading-beta.jays.services` is the integration source of truth. Agent preview
 sites (`codex.jays.services`, `claude.jays.services`, and
@@ -179,8 +173,8 @@ must not silently drift behind beta after work lands.
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
   `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`, Monet →
   `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`). Edit
-  only there, on your `agent/<name>` branch. Your **live in-progress edits** appear at your
-  port via HMR — open it in a browser; no refresh/rebuild needed.
+  only there, on your `agent/<name>` branch. To see your edits live, run `npm run dev` in
+  your own worktree (localhost; the old always-on PM2/HMR previews are retired).
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
 - **Land work via the landing script — never push directly to main:**
   ```bash

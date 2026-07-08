@@ -12,4 +12,5 @@
 - **Verification**: 
   - `npm run lint` && `npx tsc --noEmit` && `npm test`
   - Restarted `pm2 restart trading-main` and queried `api_health_log` to observe `latency_ms` dropping from >8000ms (timeout) to ~100ms.
+  - NOTE: `npx tsc --noEmit` is currently failing on `main` due to unrelated type breakages in `ApiKeySource`/`LlmKeySource` introduced in a parallel session.
 - **Follow-ups**: None.
