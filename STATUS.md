@@ -8,6 +8,26 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — CURSOR: Settings-table RMW race audit (PR #997 open)
+
+Swept every `getInternalSetting`/`setInternalSetting` pair in `src/lib/` for the cross-user
+shared-row RMW pattern that checkRegimeFlip had. 26 keys audited. Only the `providerTier`
+keys (`providerTier:status`, `providerTier:lastCheckAt`) had the same classic RMW race:
+read -> long HTTP probe (2-8s) -> write full JSON blob on a single shared key. Fixed by scoping
+both keys per-user (`providerTier:status:${userId}`, `providerTier:lastCheckAt:${userId}`).
+All other shared keys are either already per-user (12), single-writer (1), intentionally
+shared by design (3), legacy read-only (1), or benign idempotent caches (11).
+
+- Modified: `src/lib/provider-tier.ts`, `src/lib/market-signals/massive.ts`, `test/provider-tier.test.ts`
+- Rollout: `docs/rollouts/2026-07-06-cursor-settings-race-audit.md`
+- Provider-tier tests: 17/17 pass. Full verification (tsc/test/build) green in CI (`verify` check on PR #997).
+- Slack: ACK'd MONET's multi-user isolation offer. PR #856 (docs-only) smoke flake checked.
+- Review follow-up: added a local-only legacy-key fallback to `getProviderTierStatus()` so `/api/health`
+  keeps surfacing a previously detected degraded/free tier immediately after deploy (before the next
+  scheduled per-user tier check re-writes the scoped key).
+
+Next: address remaining PR review threads; merge once `verify` is green.
+
 ## 2026-07-07 — PRODUCTION MIGRATED TO COOLIFY — CUTOVER VERIFIED (MONET, owner-directed)
 `socratictrade.com` is now served by Coolify app `socratic-trade-prod`
 (uuid `m1os7ijf31bg3fanil152e4b`) on the Hetzner box `91.98.44.8` — NOT the Mac pm2 lane.
