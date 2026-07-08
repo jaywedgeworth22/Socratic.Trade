@@ -177,6 +177,39 @@ describe("debateProposal — shape-violation fail-closed (Deliverable A + B)", (
     expect(result.rejected).toBe(true);
     expect(result.failureKind).toBeUndefined();
   });
+
+  // DeepSeek v4 Flash and other json_object-mode providers can return a bare array
+  // ([{rejected, reason}]) instead of the bare object {rejected, reason}. The
+  // parser recovers the first element so a structurally-valid verdict inside an
+  // array wrapper is not lost to a malformed_response fail-closed.
+  it("recovers a valid verdict wrapped in a bare array (json_object-mode recovery)", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY");
+    stubOpenAiJsonBody([{ rejected: true, reason: "Array-wrapped verdict." }]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(true);
+    expect(result.rejected).toBe(true);
+    expect(result.reason).toBe("Array-wrapped verdict.");
+  });
+
+  it("fails closed when the bare array element is not a valid verdict object", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY_BAD");
+    stubOpenAiJsonBody([123, "not an object"]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.failureKind).toBe("malformed_response");
+  });
+
+  it("recovers a verdict from a bare array even when the array has extra elements", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY_MANY");
+    stubOpenAiJsonBody([{ rejected: false, reason: "Approved." }, { extra: "ignored" }]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(true);
+    expect(result.rejected).toBe(false);
+    expect(result.reason).toBe("Approved.");
+  });
 });
 
 describe("debateProposal LLM request bounds", () => {
