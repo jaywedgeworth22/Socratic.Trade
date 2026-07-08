@@ -88,6 +88,10 @@ export interface DashboardSnapshot {
   smartMoney?: {
     congress: Array<{ symbol: string; member: string; chamber: string; side: "buy" | "sell"; amountLow?: number; amountHigh?: number; tradedAt: string; disclosedAt?: string }>;
     insider: Array<{ symbol: string; owner: string; buyTx: number; sellTx: number; filedAt: string }>;
+    /** Cached congress-score go/no-go verdict (pass/fail + stats); null when never evaluated.
+     *  Nested here alongside the other smart-money congress data to match the server payload
+     *  (src/lib/dashboard.ts). */
+    congressScoreVerdict?: import("@/lib/congress-score-gate").CongressScoreVerdictRead | null;
   };
   marketSession?: string;
   /** Backend macro/market-regime board (FRED macro + derived metrics + free market-wide signals). */
