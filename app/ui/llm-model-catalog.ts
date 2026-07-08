@@ -6,8 +6,12 @@ export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 // Label + recommendation conventions (owner review 2026-07-08; keep in sync with
 // app/console/settings/models.tsx): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
 // both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label); per
-// provider, recommendedGreen = the stable fast/balanced $$ workhorse, recommendedRed = the strongest
-// STABLE reasoner at sustainable per-proposal cost — never a *-preview build for the Red seat.
+// provider, recommendedGreen = the stable fast/balanced $$ workhorse, recommendedRed = the
+// provider's strongest reasoner at sustainable per-proposal cost. A "-preview" suffix is no
+// disqualifier for the Red seat (owner ruling 2026-07-08): the adversary fails SAFE (unavailable /
+// unparseable review routes to human / fail-closed, never a wrong order) and Gemini previews are
+// long-lived and production-used; the residual risk is endpoint churn — re-check the pinned model
+// ID when the provider promotes or renames it.
 export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
@@ -42,8 +46,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true, recommendedRed: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - preview Pro reasoning", tier: "$$$" }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
     ]
   },
   {

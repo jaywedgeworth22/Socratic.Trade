@@ -37,9 +37,12 @@ interface ModelGroup {
 // - Descriptors are ROLE-NEUTRAL noun phrases — this one catalog feeds BOTH the Green (proposer)
 //   and Red (reviewer) pickers, so no label may bake in a role (no "critique"/"review").
 // - Per provider: recommendedGreen = the stable fast/balanced $$ workhorse (the proposer runs every
-//   tick); recommendedRed = the strongest STABLE reasoner at sustainable per-proposal cost. Never
-//   recommend a *-preview build for the Red seat — an adversary on the money path needs a
-//   production-stable model (deliberately picking a preview stays possible, just unrecommended).
+//   tick); recommendedRed = the provider's strongest reasoner at sustainable per-proposal cost —
+//   reasoning depth is the adversary's top criterion, and the Red seat FAILS SAFE (an unavailable or
+//   unparseable review routes to human / fail-closed; it can never place a wrong order), so a
+//   "-preview" suffix is no disqualifier (owner ruling 2026-07-08: Gemini previews are long-lived and
+//   production-used — the label mostly reflects pricing/SLA finality). The residual preview risk is
+//   endpoint churn: re-check the pinned model ID when the provider promotes or renames it.
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
@@ -74,8 +77,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true, recommendedRed: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$" }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$", recommendedRed: true }
     ]
   },
   {

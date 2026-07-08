@@ -1,5 +1,16 @@
 # 2026-07-08 — Model-picker labels + Red-team recommendation fix (MONET)
 
+> **CORRECTION (same day, owner ruling — follow-up PR after #1078):** the "never recommend a
+> *-preview build for the Red seat" rule introduced in #1078 was over-read and is REVERTED.
+> Owner: the Gemini "-preview" suffix mostly reflects pricing/SLA finality — those endpoints are
+> long-lived and production-used — and the Red seat FAILS SAFE (an unavailable/unparseable review
+> routes to human / fail-closed; it can never place a wrong order), so reasoning depth is the top
+> criterion for the adversary. `gemini-3.1-pro-preview` gets its `recommendedRed` back (label now
+> "deepest Gemini reasoning", parallel with "deepest OpenAI reasoning"); `gemini-3.5-flash` keeps
+> only `recommendedGreen`. The convention comments in both catalogs now state the fail-safe
+> rationale and the one residual preview risk (endpoint churn — re-check the pinned ID on
+> promote/rename). The role-neutral label fixes from #1078 stand unchanged.
+
 ## Summary
 Owner review of the Green/Red model pickers found (1) role-flavored, grammatically
 inconsistent descriptors and (2) an incoherent Red-team recommendation. Fixed in both
