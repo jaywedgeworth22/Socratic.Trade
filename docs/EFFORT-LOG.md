@@ -32,6 +32,24 @@ As of 2026-07-04.
 
 ## Deployed
 
+- **PROD RELEASE 2026-07-08 (owner-directed in-session, MONET): Coolify deploy `rjskkyzx`
+  of `socratic-trade-prod` FINISHED + verified — production = `main@4af98aaa` EXACTLY.**
+  Ships #1095 + #1097 (prev deploy n1v296 = ea779bbf earlier the same day). Verified:
+  deployment-record commit 4af98aaa, app running:healthy, edge 307->/login 200. As of this
+  release every effort merged to `main` is in production. Rollout:
+  `docs/rollouts/2026-07-08-prod-release-4af98aaa.md`.
+- **PR #1095 inline-Bear bare-array recovery + #1097 docs close-out (MONET) — DEPLOYED
+  2026-07-08 via deploy `rjskkyzx`.** New exported `parseBearSurvivors` (strategy.ts):
+  proposal-shaped bare arrays recovered; explicit `{proposals:[]}` stays a real veto; all
+  malformed -> fallbackToBull, never a silent full veto. 7 tests. _(Row added at release
+  close-out by the intro-anim session; the fixing session announced on #agent-sync only.)_
+- **Intro animation: skip centered-wordmark middle act (MONET) — DEPLOYED 2026-07-08.**
+  Merged as PR #1089 (merge commit `ea779bbf`); shipped in prod deploy n1v296 (deployed
+  commit = ea779bbf exactly). Candles fly chart -> top-left header logo directly (~6.1s,
+  was ~9.3s); centered SOCRATIC / TRADE act preserved behind
+  `CENTER_WORDMARK_STEP: boolean = false` in `app/console/components/intro-canvas.tsx`
+  (flip to true to restore). Rollout note
+  `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
 - **ALL preview servers retired (OWNER decision via MONET) - DONE 2026-07-08 ~00:50 CDT.** Owner: never used them, some behind CF Access agents cannot pass. End state = production only. Coolify preview app DELETED, preview DNS incl. *.jays.services wildcard DELETED, Mac PM2 previews (trading-main/claude/codex) STOPPED, Mac trading+litestream pm2 apps DELETED (accidental double-starts x2 tonight; rollback = pm2 start ~/apps/trading.config.cjs). Coolify PR-previews considered + NOT enabled (4GB box). AGENTS.md carries the definitive do-not-recreate stanza. Rollout: docs/rollouts/2026-07-08-previews-retired.md. NOTE: CLAUDE PR #1038 (integration-only teardown docs) is superseded - needs update/close.
 - 2026-07-07 ~23:15 CDT - **PRODUCTION socratictrade.com MIGRATED to the Coolify box (MONET, owner-directed) — DEPLOYED + VERIFIED.** `socratictrade.com` now = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`, main @ `e73c66a4`+#1039, nixpacks, auto-deploy OFF) on `91.98.44.8`; Mac pm2 `trading`+`litestream` STOPPED (saved stopped = rollback standby; do NOT restart while box runs `DB_BOOTSTRAP=live` — double-scheduler). DB moved via litestream 0.5.14 restore from the R2 replica; litestream now replicates in-container to the same path (PITR continuity). Secrets stay in Infisical (in-container CLI, `REQUIRE_SECRETS_MANAGER` enforced). Verified: edge 200/307, `/api/health` ok + scheduler ticking, restored-DB markers, container stable. **Release process changed: prod deploy = trigger Coolify deploy of `socratic-trade-prod`; `~/apps/trading-publish.sh` DEPRECATED.** Also fixed pre-existing `trading.jays.services` edge 503 (http:// FQDN vs CF SSL=full; https:// FQDN is the required scheme). Rollout: `docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 - 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
@@ -256,8 +274,12 @@ As of 2026-07-04.
   driven live (console + mobile, seeded dev DB). Rollout:
   `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
-- **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
-  PROGRESS 2026-07-07, gates green + adversarial review done, landing.** Owner-directed after prod
+- **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — DEPLOYED
+  2026-07-08 (in-place correction at the `rjskkyzx` release close-out: merged as PR #1036 @ `e73c66a4`
+  on 2026-07-07; in production via deploys n1v296/rjskkyzx; row previously still said IN PROGRESS). Its
+  OWNER NOTE is now LIVE: `ALLOW_LIVE_TRADING` is opt-OUT — the Robinhood live account trades on its
+  environment unless the flag is set to `false` in Infisical; re-surfaced to the owner at this release.**
+  Owner-directed after prod
   forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout
   — no silent `medium→high` reasoning upgrade (fast/opt-in thinking + UI shows true effort), a
   reasoning-class-aware env-tunable timeout (150s) on the Green/Bear calls (no fallback model), PLUS
@@ -978,13 +1000,6 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
-- **Intro animation: skip centered-wordmark middle act (MONET, branch
-  `monet/candlesticks-intro-animation-360f5f`) — IN PROGRESS 2026-07-08, landing via PR.**
-  Owner: intro too long. Candles now fly chart -> top-left header logo directly (~6.1s,
-  was ~9.3s); the centered SOCRATIC / TRADE act is preserved behind
-  `CENTER_WORDMARK_STEP: boolean = false` in `app/console/components/intro-canvas.tsx`
-  (flip to true to restore). Verify gate green (lint 0 err / tsc / 2901 tests / build).
-  Rollout note `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
 - **Migrate PRODUCTION socratictrade.com to the Coolify box (MONET, owner-directed 2026-07-07) - IN PROGRESS 2026-07-07 ~22:45 CDT.** Owner asked directly in-session. New Coolify app `socratic-trade-prod` (main branch, nixpacks, GitHub App source, auto-deploy OFF so prod releases stay owner-run), Infisical secrets via `scripts/coolify-prod-start.sh` self-wrapping `infisical-run.mjs` (pinned infisical CLI 0.43.98 + litestream 0.5.14 fetched to the persistent /app/data volume), DB migrated via litestream restore from the existing R2 replica with in-container `litestream replicate -exec` afterwards (PITR continuity preserved). Double-scheduler safety: `DB_BOOTSTRAP=fresh` (empty DB, no broker accounts, cannot trade) until Mac pm2 `trading`+`litestream` are stopped, then flip to `live` + repoint `socratictrade.com` CNAME(tunnel)->A 91.98.44.8 proxied. Rollback = restore CNAME + `pm2 start trading litestream`. Rollout note `docs/rollouts/2026-07-07-prod-coolify-migration.md`. (Preview-lane Coolify migration was CLAUDE-owned; this production leg is a new owner-directed effort, announced on #agent-sync.)
 - **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
   2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
