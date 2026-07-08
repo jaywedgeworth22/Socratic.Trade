@@ -8,13 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-08 — Gemini Red-team rec restored (MONET, follow-up to #1078, owner ruling)
-Owner overruled #1078's "never a preview for the Red seat" rule as over-read: Gemini previews are
-long-lived/production-used and the Red seat fails safe (unavailable review routes to human /
-fail-closed — never a wrong order), so reasoning depth wins for the adversary.
-`gemini-3.1-pro-preview` regains `recommendedRed` (label now "deepest Gemini reasoning");
-`gemini-3.5-flash` keeps only `recommendedGreen`. Convention comments rewritten in both catalogs;
-#1078's role-neutral label fixes stand. See the correction banner in
+## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
+Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
+empirical (llm_step outcomes + llm_usage, excluding the fixed Gemini bear format incident and the
+fixed pre-#1036 60s-timeout class): gemini-3.5-flash = Green+Red (bear 46/46 post-fix, bull 27/0);
+gpt-5.4-mini = Green+Red (22/2, 18/1); deepseek-v4-pro = Red only (bear 17/3 w/ fixed cause; no
+successful Green history); claude-sonnet-5 + gemini-3.1-pro-preview = NO recs (zero calls ever;
+Anthropic key also capped until 2026-08-01). Convention comments in both catalogs now state the
+empirical derivation + snapshot. #1078's role-neutral labels stand. See the FINAL banner in
 `docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
 
 ## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)

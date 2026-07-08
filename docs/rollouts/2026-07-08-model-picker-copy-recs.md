@@ -1,15 +1,23 @@
 # 2026-07-08 — Model-picker labels + Red-team recommendation fix (MONET)
 
-> **CORRECTION (same day, owner ruling — follow-up PR after #1078):** the "never recommend a
-> *-preview build for the Red seat" rule introduced in #1078 was over-read and is REVERTED.
-> Owner: the Gemini "-preview" suffix mostly reflects pricing/SLA finality — those endpoints are
-> long-lived and production-used — and the Red seat FAILS SAFE (an unavailable/unparseable review
-> routes to human / fail-closed; it can never place a wrong order), so reasoning depth is the top
-> criterion for the adversary. `gemini-3.1-pro-preview` gets its `recommendedRed` back (label now
-> "deepest Gemini reasoning", parallel with "deepest OpenAI reasoning"); `gemini-3.5-flash` keeps
-> only `recommendedGreen`. The convention comments in both catalogs now state the fail-safe
-> rationale and the one residual preview risk (endpoint churn — re-check the pinned ID on
-> promote/rename). The role-neutral label fixes from #1078 stand unchanged.
+> **FINAL (same day, owner directive: "check the history of calls and base it on that, not on the
+> wording of the model").** Two earlier rationales — #1078's "never a preview for the Red seat" and
+> the first draft of this PR's "reasoning depth wins, preview is fine" — were BOTH armchair theories.
+> The recommendations are now derived from this account's actual call history (`llm_step` outcomes in
+> the audit trail + `llm_usage`), excluding two fixed incident classes (the Gemini bear
+> unparseable-format incident, fixed 2026-07-02, and the pre-#1036 60s reasoning-timeout aborts):
+>
+> | model | Red (bear) record | Green (bull) record | flags |
+> |---|---|---|---|
+> | gemini-3.5-flash | **46/46 clean post-fix** (59/93 lifetime incl. incident) | 27/0 | Green + Red |
+> | gpt-5.4-mini | 18/1 | 22/2 | Green + Red |
+> | deepseek-v4-pro | 17/3 (all 3 = fixed timeout class) | 0 successes / 3 timeouts | Red only |
+> | claude-sonnet-5 | zero calls ever (+ Anthropic key capped until 2026-08-01) | zero | none |
+> | gemini-3.1-pro-preview | zero calls ever | zero | none |
+>
+> Zero-history models carry no recommendation regardless of pedigree — the flags are re-derived from
+> history as it accrues. The role-neutral label fixes from #1078 stand; `gemini-3.1-pro-preview`'s
+> label is "deepest Gemini reasoning" (parallel form; the model ID already says preview).
 
 ## Summary
 Owner review of the Green/Red model pickers found (1) role-flavored, grammatically
