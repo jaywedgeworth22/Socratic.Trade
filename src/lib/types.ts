@@ -210,17 +210,10 @@ export interface TuningSettings {
   sizingFloorPct?: number;
   /** Maximum % of max order notional the deterministic sizer will ever allocate. Default 100. */
   sizingCeilingPct?: number;
-  /** Minimum proposal confidenceScore that triggers Red Team review. Default 80. */
-  redTeamConvictionThreshold?: number;
-  /**
-   * Stakes-scaled dissent (composite review E/high/S): notional-as-%-of-NAV threshold that also
-   * triggers the approval-time Red Team debate for an OPENING (buy/short) proposal, independent of
-   * confidenceScore. Without this, `shouldRunRedTeamDebate` gated on confidence ONLY, so a
-   * low-confidence but large-notional LIVE trade got no adversarial review while a high-confidence
-   * $50 paper trade did. Default 15 (%). Advisory routing only — widens which trades get a second
-   * look; never blocks anything.
-   */
-  redTeamNotionalPctOfNavThreshold?: number;
+  // `redTeamConvictionThreshold` and `redTeamNotionalPctOfNavThreshold` were REMOVED 2026-07-07
+  // (single-adversary consolidation, decision O2): the Red Team review now runs on EVERY risk-adding
+  // opening — coverage is structural, not conviction/stakes-gated — so both trigger thresholds (and
+  // `shouldRunRedTeamDebate`) are gone. Stale values in persisted tuning JSON are simply ignored.
   /** Optional max opening order notional as % of portfolio in crisis/inverted regimes. Undefined or <=0 disables. */
   crisisMaxOpeningExposurePct?: number;
   /**
@@ -448,13 +441,12 @@ export interface TuningSettings {
    */
   minOosTestDates?: number;
   /**
-   * OPT-IN (DEFAULT false): when true, a debate-unavailable EXIT (sell/cover) is routed by
-   * `routeOnAdversaryUnavailable`'s de-risk-only rule — NOT held for human review, just annotated
-   * with a loud "RED TEAM FAILED" rationale note and the parity audit event. Default false: default
-   * behavior is byte-identical — every proposal (buy/short/sell/cover) is still added to
-   * `requiresHumanReview` when the Red Team debate could not run, exactly like today's unconditional
-   * hold in strategy.ts's debate-unavailable branch. Flip this on to let risk-reducing exits proceed
-   * autonomously through an adversary outage instead of freezing behind an approval queue.
+   * VESTIGIAL since the 2026-07-07 single-adversary consolidation (§3.5): exits (sell/cover) and
+   * net-risk-reducing trades are now STRUCTURALLY exempt from the Red Team review — they can never
+   * be debate-unavailable because they are never debated — so this opt-in no longer has a
+   * production call site (`routeOnAdversaryUnavailable` still honors it as a pure function). Kept
+   * (rather than deleted) so persisted tuning JSON round-trips unchanged; it may be removed once
+   * the consolidation has soaked.
    */
   deRiskExitsOnAdversaryUnavailable?: boolean;
   /**
@@ -760,10 +752,19 @@ export interface TradingPolicy {
   socraticOverrideMaxPctOfNav?: number;
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
-  /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
-   *  fallback. This is the Green Team / Bull proposer model. */
+  /**
+   * The Green Team / Bull proposer model — REQUIRED to run (owner directive 2026-07-07: no model
+   * defaults, ever; the former OPENAI_MODEL/DEFAULT_OPENAI_MODEL fallbacks are gone). Unset
+   * resolves to "" and the strategy run fails closed with an actionable Settings message.
+   */
   llmModel?: string;
-  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  /**
+   * The Red Team reviewer model — REQUIRED to run (owner directive 2026-07-07: no model defaults,
+   * ever). It NEVER falls back to `llmModel` or any cross-family default: unset resolves to "" and
+   * every risk-adding opening fails closed to human review (`not_configured`). The SAME model as
+   * `llmModel` is ALLOWED when explicitly chosen — independence is a non-blocking Settings hint,
+   * never a gate.
+   */
   redTeamLlmModel?: string;
   /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
@@ -1009,31 +1010,36 @@ export interface TradeProposal {
   takeProfitBand?: number;
   takeProfitBasis?: number;
   /**
-   * Red Team (Bear) debate verdict for this proposal, mirroring `RedTeamDebateResult`
-   * (src/lib/red-team.ts). Set by the strategy loop when the Red Team debate runs on a
-   * high-conviction proposal; surfaced as its own "Bear Review" block in the dashboard so the
-   * critique isn't buried inside the truncated rationale. Optional so existing/persisted proposals
-   * and test fixtures that predate the field render unchanged.
-   *   - `rejected`: the Bear found a critical flaw (the proposal is dropped upstream, so a persisted
-   *     proposal will normally have `rejected: false`; the field records the surviving verdict).
-   *   - `available`: the debate actually ran and returned a verdict (vs skipped / failed-open).
-   *   - `reason`: the Bear's counter-argument or approval reasoning.
-   *   - `model`: the model that actually served the debate (per-proposal Red Team resolution,
-   *     including the cross-provider Anthropic path). Optional: legacy persisted verdicts predate
-   *     it — readers fall back to the snapshot policy's configured red-team model.
-   *   - `trigger`: WHICH stakes-scaled-dissent condition demanded this debate (composite review
-   *     E/high/S) — "confidence" (the original threshold), "notional" (large %-of-NAV order),
-   *     "live_opening" (a live, non-paper opening), "override_requested" (the proposal itself asks to
-   *     override an owner preference), or "escalation_regime" (entered during a Risk-Off/Crisis/
-   *     Inverted regime). Optional: legacy persisted verdicts predate stakes-scaled dissent and
+   * The single Red Team review verdict for this proposal, mirroring `RedTeamDebateResult`
+   * (src/lib/red-team.ts). Set by the strategy loop for EVERY risk-adding opening (buy/short that
+   * increases |net exposure|) — coverage is structural since the 2026-07-07 single-adversary
+   * consolidation, no longer conviction-gated. Surfaced as its own "Red Team Review" block on the
+   * approval card. Optional so existing/persisted proposals and test fixtures that predate the
+   * field render unchanged.
+   *   - `verdict`: the three-way, down-only verdict — "approve" (full finalized size),
+   *     "approve-at-half" (one discrete 0.5× haircut; if half isn't placeable the proposal is HELD
+   *     for human review rather than proceeding at full size), or "reject". Absent on legacy
+   *     persisted verdicts (which carried only `rejected`) and when `available` is false.
+   *   - `rejected`: `verdict === "reject"` (kept for legacy persisted verdicts/readers; a persisted
+   *     surviving proposal normally has `rejected: false`).
+   *   - `available`: the review actually ran and returned a valid verdict (vs skipped / failed).
+   *   - `reason`: the reviewer's counter-argument, haircut justification, or approval reasoning.
+   *   - `model`: the model that actually served the review (per-account Red Team resolution).
+   *     Optional: legacy persisted verdicts predate it — readers fall back to the snapshot
+   *     policy's configured red-team model.
+   *   - `trigger`: why the review ran. "all_openings" for every verdict written since the
+   *     consolidation (universal coverage); the legacy stakes-scaled-dissent values ("confidence",
+   *     "notional", "live_opening", "override_requested", "escalation_regime") remain readable on
+   *     older persisted verdicts. Optional: the oldest persisted verdicts predate the field and
    *     always meant "confidence".
    */
   redTeamVerdict?: {
+    verdict?: "approve" | "approve-at-half" | "reject";
     rejected: boolean;
     available: boolean;
     reason: string;
     model?: string;
-    trigger?: "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
+    trigger?: "all_openings" | "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime";
     /**
      * True when the Bear REJECTED this opening but an agent-authored `autonomyOverride` thesis made
      * the veto advisory (folded into the sized PolicyDecision as an overridable reason and then
@@ -1603,6 +1609,15 @@ export interface PolicyDecision {
   escalations?: GateEscalation[];
   /** Wash-sale gate audit trail — present whenever a BUY hit a wash-sale lock (never silent). */
   washSale?: WashSaleGateAudit;
+  /**
+   * Machine-readable "the Red Team review could not run for this proposal" flag (single-adversary
+   * consolidation R18/R19), persisted with the stored decision on BOTH the propose-mode and the
+   * requiresHumanReview inserts so the pending-approval badge reads a stable stored field — the
+   * notification payload flag covers only the feed/title path. The human-readable reason is also
+   * appended to `reasons`. Absent (not false) when the review ran normally.
+   */
+  adversaryUnavailable?: boolean;
+  adversaryUnavailableReason?: string;
   projectedSymbolExposurePct?: number;
   dailyNotionalUsed?: number;
 }

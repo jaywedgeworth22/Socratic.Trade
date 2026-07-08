@@ -46,6 +46,8 @@ type RedTeamTrigger = NonNullable<NonNullable<TradeProposal["redTeamVerdict"]>["
 
 function redTeamTriggerMeta(trigger?: RedTeamTrigger) {
   switch (trigger) {
+    case "all_openings":
+      return { label: "risk-adding opening", title: "Every risk-adding opening gets the single Red Team review at its finalized size — coverage is structural, not conviction-gated." };
     case "confidence":
       return { label: "confidence", title: "The proposer confidence cleared the configured Red Team conviction threshold." };
     case "notional":
@@ -141,7 +143,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const greenModelPersisted = p.proposedByModel?.trim() || null;
   const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
   const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
-  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
+  // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
+  // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
+  // predate per-proposal model stamping on a policy whose Red model was since cleared.
+  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || "unknown";
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -267,13 +272,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
         </div>
 
-        {/* Red team: the adversarial (bear) model + its verdict, when the debate ran. */}
+        {/* Red team: the single adversarial reviewer + its verdict, when the review ran. */}
         {p.redTeamVerdict?.available && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
                 className="con-card-title flex items-center gap-1.5"
-                title="Red team = the adversarial reviewer (bear): a model tasked with attacking the proposal before you see it."
+                title="Red team = the single adversarial reviewer: a model tasked with fact-checking and attacking the finalized trade before you see it."
               >
                 <Swords size={12} /> Devil&apos;s advocate (red team)
               </div>
@@ -282,12 +287,35 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
+                {p.redTeamVerdict.verdict === "approve-at-half"
+                  ? "Verdict: approved at HALF size"
+                  : p.redTeamVerdict.rejected
+                    ? "Verdict: rejected"
+                    : "Verdict: survived review"}
               </span>
               <Chip tone="warn" title={redTrigger.title}>
                 trigger: {redTrigger.label}
               </Chip>
             </div>
+          </div>
+        )}
+
+        {/* §5.1 / R19 — the review could NOT run: a pending card that exists BECAUSE the Red Team was
+            unavailable must be distinguishable from a routine manual approval. Reads the persisted
+            per-proposal verdict first, with the stored decision flag as the legacy/defensive fallback. */}
+        {((p.redTeamVerdict && !p.redTeamVerdict.available) || pending.decision.adversaryUnavailable === true) && (
+          <div
+            className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
+            title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
+          >
+            <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
+              <Swords size={12} /> Red Team review unavailable
+              {p.redTeamVerdict?.failureKind ? ` (${p.redTeamVerdict.failureKind.replace(/_/g, " ")})` : ""}
+            </div>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {p.redTeamVerdict?.reason ?? pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
+              {" "}No model critiqued this trade — review it as the sole adversary.
+            </p>
           </div>
         )}
 

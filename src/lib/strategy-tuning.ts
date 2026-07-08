@@ -14,7 +14,7 @@ import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
@@ -687,7 +687,8 @@ async function requestLlmTuning(
       recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
-      return { text, payload: JSON.parse(text) as LlmTuningPayload };
+      // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+      return { text, payload: JSON.parse(extractJsonPayload(text)) as LlmTuningPayload };
     }
   );
 

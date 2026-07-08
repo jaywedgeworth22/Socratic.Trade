@@ -232,12 +232,11 @@ export const LLM_REQUEST_DEFAULTS = {
   deterministicTemperature: 0,
   maxOutputTokens: 1500,
   /**
-   * Sampling temperature for the adversary/reviewer roles (inline Bear + the separate high-conviction
-   * `debateProposal` debate). Composite review B/medium/S: "everything runs at temperature 0
-   * including red-teaming, so one greedy same-family Bear surfaces one failure mode." A non-zero
-   * adversary temperature widens the set of objections a re-run could surface instead of always
-   * finding the exact same (or no) flaw. Per-role sampling: the proposer (Bull/Green) keeps
-   * temperature 0 (deterministic, unaffected) — only the critique roles use this.
+   * Sampling temperature for the single Red Team reviewer (`debateProposal`). Composite review
+   * B/medium/S: "everything runs at temperature 0 including red-teaming, so one greedy same-family
+   * reviewer surfaces one failure mode." A non-zero adversary temperature widens the set of
+   * objections a re-run could surface instead of always finding the exact same (or no) flaw.
+   * Per-role sampling: the proposer (Bull/Green) keeps temperature 0 (deterministic, unaffected).
    */
   adversaryTemperature: 0.7
 } as const;
@@ -269,11 +268,76 @@ export function isRetryableLlmError(error: unknown): boolean {
   return /abort|timed? ?out|timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network|fetch failed/i.test(msg);
 }
 
+export interface LlmRetryOptions {
+  /** Total attempts INCLUDING the first (default 2, clamped 1–3). Keep small: the adversary runs
+   *  inside the per-user scheduler lock — aggressive retries starve the scheduler and defeat the
+   *  reason the hard per-call timeout exists (design doc §4.3). */
+  attempts?: number;
+  /** Base backoff before attempt N+1: `baseDelayMs * 2^N` (default 500ms — total added wall-clock
+   *  stays trivially small relative to the per-attempt timeout). */
+  baseDelayMs?: number;
+  /** Per-attempt timeout; each attempt gets its OWN AbortSignal so a retry never inherits an
+   *  already-expiring signal. Defaults to LLM_TIMEOUT_MS via llmFetch. */
+  timeoutMs?: number;
+  /** Observability hook — called before each retry with what triggered it. */
+  onRetry?: (info: { attempt: number; status?: number; error?: unknown }) => void;
+}
+
+/**
+ * `llmFetch` with a small bounded retry on TRANSIENT failures only (HTTP 429/5xx per
+ * `isRetryableLlmStatus`, and timeouts/socket errors per `isRetryableLlmError`) — design doc §4.3
+ * for the single Red Team reviewer (the Green/Bull path keeps its own explicit
+ * `policy.llmFallbackModels` failover chain instead). Non-transient failures (4xx, schema errors)
+ * return/throw immediately. There is deliberately NO hidden model/provider failover here (R11):
+ * a failed reviewer declares itself unavailable and the caller fails closed to human review.
+ */
+export async function fetchLlmWithRetry(
+  url: string,
+  init: RequestInit = {},
+  options: LlmRetryOptions = {}
+): Promise<Response> {
+  const attempts = Math.max(1, Math.min(3, options.attempts ?? 2));
+  const baseDelayMs = Math.max(0, options.baseDelayMs ?? 500);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Fresh per-attempt signal: reusing one AbortSignal.timeout across attempts would hand the
+    // retry a clock that already ran during attempt 1. A caller-supplied `init.signal` is
+    // respected as-is (caller-managed lifetime).
+    const attemptInit: RequestInit = {
+      ...init,
+      signal: init.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined)
+    };
+    try {
+      const response = await llmFetch(url, attemptInit);
+      if (attempt < attempts && isRetryableLlmStatus(response.status)) {
+        options.onRetry?.({ attempt, status: response.status });
+        await response.text().catch(() => ""); // drain so the socket can be reused
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** (attempt - 1)));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (attempt < attempts && isRetryableLlmError(error)) {
+        lastError = error;
+        options.onRetry?.({ attempt, error });
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** (attempt - 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError ?? new Error("LLM request failed after retries.");
+}
+
 export const LLM_OUTPUT_TOKEN_CAPS = {
   strategyProposal: LLM_REQUEST_DEFAULTS.maxOutputTokens,
-  strategyCritique: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   strategyTuning: LLM_REQUEST_DEFAULTS.maxOutputTokens,
-  redTeamDebate: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  /**
+   * The single Red Team reviewer (docs/single-adversary-consolidation.md §7). Replaces the former
+   * duplicate `strategyCritique` (in-flow Bear, deleted) and `redTeamDebate` caps — one adversary,
+   * one cap.
+   */
+  adversaryReview: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   postMortemReflection: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   proposalRevalidation: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   // Small — a structured-output extraction of a handful of {kind,subject,value,symbol} candidates
