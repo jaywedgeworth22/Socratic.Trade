@@ -8,6 +8,16 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — PROD RELEASE rjskkyzx: production = main@4af98aaa exactly (MONET, owner-directed)
+Owner asked to get all completed work to production. Coolify deploy `rjskkyzx` of
+`socratic-trade-prod` finished + verified (deployment commit 4af98aaa = main HEAD, app
+running:healthy, edge 307→/login 200). Ships #1095 (inline-Bear bare-array recovery — no more
+silent full veto on malformed Bear replies) + #1097 (sweep docs close-out) on top of n1v296.
+Every merged effort is now live. **OWNER ACTION: confirm `ALLOW_LIVE_TRADING` in Infisical —
+it's opt-OUT since #1036, so the Robinhood live account trades on its environment unless set
+to `false`.** Boards trued up (intro #1089 + #1036 rows → Deployed; #1095 row added). See
+`docs/rollouts/2026-07-08-prod-release-4af98aaa.md`.
+
 ## 2026-07-08 — Troubleshoot sweep MERGED (#1087) + PRODUCTION DEPLOYED + Deploy-workflow hazard closed (MONET)
 PR #1087 (10-issue sweep) merged 10:35Z; Coolify deployment n1v296 (commit ea779bbf, includes
 the day's sibling PRs) health-verified: ok/db/scheduler ticking, finnhub dependency back to
