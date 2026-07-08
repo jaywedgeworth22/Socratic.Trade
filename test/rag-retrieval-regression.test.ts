@@ -21,9 +21,24 @@
  * dependency (`rerankMatches`) is exercised in-process against fake `{ rerank }` stand-ins that
  * throw/return synchronously, never touching a real client.
  */
-import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { rankPool, isWithinAsOf, resolveAsOfStamp, matchToChunk, rerankMatches } from "../src/lib/vector-db";
 import { fuseHybrid } from "../src/lib/rag/hybrid";
+
+vi.mock("../src/lib/db-health", () => ({
+  logApiHealth: vi.fn(),
+}));
+
+// Isolate the DB: even though logApiHealth is mocked, rankPool's strict-asOf `audit()` and
+// rerankMatches' `alertRagConnectionFailure()` (getInternalSetting/setInternalSetting) still touch
+// getDb(). Point DATABASE_URL at a per-run temp file so incidental writes never mutate the repo's
+// real data/app.db (repo convention — see AGENTS.md "Tests use a temp SQLite file per run").
+beforeAll(() => {
+  process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-rag-retrieval-regression-${randomUUID()}.db`)}`;
+});
 
 // ── Fixture builders (matchToChunk-shaped: id/score/metadata, exactly what Pinecone returns) ────
 

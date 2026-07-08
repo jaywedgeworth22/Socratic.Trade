@@ -10,6 +10,42 @@ steps materially change.
 
 ## 2026-07-06 — Congress Score Eval UI Wiring (AG)
 Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
+## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `cursor/full-itemization-pass`)
+Materialized the previously-claimed ~45 CURSOR rows from the "full itemization" pass as 27
+individual discrete rows in `docs/EFFORT-LOG.md` (P0 Security 5, P1 Mechanical 9, P2 Ops 9,
+P3 Observability 4). Verified 9 already-done items; implemented 2 new fixes today (crashed-run
+stale-row sweep in `db-execution.ts`/`scheduler.ts`, `socratic_case_write_failed` audit receipt
+in `strategy.ts`). 16 items remain unstarted — see the "CURSOR individual rows" subsection in
+the effort log. Verification: lint/tsc/test/build all green. See
+`docs/rollouts/2026-07-06-cursor-full-itemization.md`.
+## 2026-07-08 — ALL previews retired (owner decision); hosting = production only
+No more `*.jays.services` preview servers of any kind (owner never used them; some sat
+behind CF Access agents can't pass). Coolify runs exactly ONE app: `socratic-trade-prod`
+(= socratictrade.com). Preview app deleted, preview DNS (incl. wildcard) deleted, Mac PM2
+previews stopped, Mac `trading`/`litestream` pm2 apps DELETED (re-started accidentally
+twice on 2026-07-08 — see rollout note; rollback = `pm2 start ~/apps/trading.config.cjs`).
+Coolify PR-previews deliberately not enabled (4 GB box build limits). Check work via
+local `npm run dev` + verify CI. See `docs/rollouts/2026-07-08-previews-retired.md`.
+## 2026-07-06 — CURSOR: Settings-table RMW race audit (PR #997 open)
+
+Swept every `getInternalSetting`/`setInternalSetting` pair in `src/lib/` for the cross-user
+shared-row RMW pattern that checkRegimeFlip had. 26 keys audited. Only the `providerTier`
+keys (`providerTier:status`, `providerTier:lastCheckAt`) had the same classic RMW race:
+read -> long HTTP probe (2-8s) -> write full JSON blob on a single shared key. Fixed by scoping
+both keys per-user (`providerTier:status:${userId}`, `providerTier:lastCheckAt:${userId}`).
+All other shared keys are either already per-user (12), single-writer (1), intentionally
+shared by design (3), legacy read-only (1), or benign idempotent caches (11).
+
+- Modified: `src/lib/provider-tier.ts`, `src/lib/market-signals/massive.ts`, `test/provider-tier.test.ts`
+- Rollout: `docs/rollouts/2026-07-06-cursor-settings-race-audit.md`
+- Provider-tier tests: 17/17 pass. Full verification (tsc/test/build) green in CI (`verify` check on PR #997).
+- Slack: ACK'd MONET's multi-user isolation offer. PR #856 (docs-only) smoke flake checked.
+- Review follow-up: added a local-only legacy-key fallback to `getProviderTierStatus()` so `/api/health`
+  keeps surfacing a previously detected degraded/free tier immediately after deploy (before the next
+  scheduled per-user tier check re-writes the scoped key).
+
+Next: address remaining PR review threads; merge once `verify` is green.
+
 ## 2026-07-07 — PRODUCTION MIGRATED TO COOLIFY — CUTOVER VERIFIED (MONET, owner-directed)
 `socratictrade.com` is now served by Coolify app `socratic-trade-prod`
 (uuid `m1os7ijf31bg3fanil152e4b`) on the Hetzner box `91.98.44.8` — NOT the Mac pm2 lane.
