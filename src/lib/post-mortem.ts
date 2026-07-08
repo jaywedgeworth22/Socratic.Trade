@@ -150,7 +150,7 @@ Return a single concise paragraph (<= 130 words) that is specific and directive.
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "post-mortem", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
 
         return { text: typeof text === "string" ? text : undefined };

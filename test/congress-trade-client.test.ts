@@ -77,14 +77,18 @@ describe("congress-trade-client reads (enabled)", () => {
     expect(await getAppARef("AAPL")).toBeNull();
   });
 
-  it("caps the refs request to 500 tickers", async () => {
+  it("batches refs requests in chunks of 500", async () => {
     const fetchSpy = vi.fn(async (_url: string) => new Response(JSON.stringify({ refs: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchSpy);
     const many = Array.from({ length: 600 }, (_, i) => `T${i}`);
     await getAppARefs(many);
-    const url = fetchSpy.mock.calls[0][0] as string;
-    const tickers = decodeURIComponent(url.split("tickers=")[1]).split(",");
-    expect(tickers).toHaveLength(500);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const url1 = fetchSpy.mock.calls[0][0] as string;
+    const tickers1 = decodeURIComponent(url1.split("tickers=")[1]).split(",");
+    expect(tickers1).toHaveLength(500);
+    const url2 = fetchSpy.mock.calls[1][0] as string;
+    const tickers2 = decodeURIComponent(url2.split("tickers=")[1]).split(",");
+    expect(tickers2).toHaveLength(100);
   });
 
   it("pulls the public transactions feed without leaking the push/ingest token", async () => {
