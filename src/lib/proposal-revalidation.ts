@@ -275,7 +275,7 @@ export async function revalidatePendingProposals(input: {
           return { text: undefined, assessments: [] as RevalidationAssessment[] };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
         const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };

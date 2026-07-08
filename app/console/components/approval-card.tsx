@@ -123,6 +123,9 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const rewardRisk = rewardRiskFor(pending);
   const redTrigger = redTeamTriggerMeta(p.redTeamVerdict?.trigger);
   const policy = snapshot?.policy;
+  // Owner preference: when typed confirmation is off, approving a broker order is one-click like any
+  // other — no "APPROVE LIVE <SYMBOL>" phrase. The server honors the same flag (assertLiveApprovalConfirmation).
+  const willPromptTyped = live && policy?.requireTypedConfirmation !== false;
   const dailyUsed = finite(pending.decision.dailyNotionalUsed) ? pending.decision.dailyNotionalUsed : snapshot?.dailyStats.notional;
   const dailyRemaining = finite(policy?.maxDailyNotional) && finite(dailyUsed) ? Math.max(0, policy.maxDailyNotional - dailyUsed) : undefined;
   const referencePrice = p.referencePrice ?? pending.proposalReferencePrice;
@@ -159,7 +162,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   };
 
   const approve = async () => {
-    if (live) {
+    if (willPromptTyped) {
       setLiveOpen(true);
       return;
     }
@@ -462,7 +465,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {typeof p.bracketTakeProfit === "number" ? `take-profit ${fmtMoney(p.bracketTakeProfit)}` : ""}.
               </>
             ) : null}
-            {live ? " This uses the broker-account approval phrase before anything is placed." : ""}
+            {willPromptTyped ? " This uses the broker-account approval phrase before anything is placed." : ""}
           </p>
           <p className="mt-1">
             <strong>If you reject:</strong> nothing is traded. The idea stays on the record and its counterfactual return
@@ -489,7 +492,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
         {/* Approving a broker-connected order stays visually primary; the typed
             ritual in the sheet is the real friction. */}
         <Btn variant={live ? "primary" : "pos"} disabled={busy !== null} onClick={() => void approve()}>
-          {busy === "approve" ? "Approving…" : live ? (
+          {busy === "approve" ? "Approving…" : willPromptTyped ? (
             <>
               Approve broker order… <LiveTag />
             </>
