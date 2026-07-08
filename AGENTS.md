@@ -106,7 +106,7 @@ one worktree's process at another's files.
 
 | Worktree | Branch | Port | Process | Public route | Owner |
 |----------|--------|------|---------|--------------|-------|
-| `~/Code/Agentic Trading` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
+| `~/Code/Socratic.Trade` | `main` | **4001** | pm2 `trading-main` → `next dev` | `trading-beta.jays.services` | **integration / review / merges / hand-edits** (human via **Cursor**) |
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
@@ -167,7 +167,7 @@ must not silently drift behind beta after work lands.
   by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
   - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
     and `git push origin agent/foo:main`).
-  - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
+  - Refuses any push originating from `~/Code/Socratic.Trade` (integration worktree).
   - Emergency human override (use sparingly): `HOOKS_ALLOW_MAIN_PUSH=1 git push origin ...`
 - **`npm run build` only affects YOUR worktree.** If a build wipes your `.next` and your live
   preview starts erroring (`ENOENT .next/...`), restart it: `pm2 restart trading-<you>`.
