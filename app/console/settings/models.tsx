@@ -43,9 +43,11 @@ interface ModelGroup {
 //   2026-07-02, and the pre-#1036 60s reasoning-timeout aborts): gemini-3.5-flash bear 46/46 clean
 //   post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1; deepseek-v4-pro bear 17/3 (all 3 were
 //   the fixed timeout class) but NO successful Green history. Models with ZERO calls in a role carry
-//   no rec for it regardless of pedigree (claude-sonnet-5, gemini-3.1-pro-preview — and the Anthropic
-//   key is usage-capped until 2026-08-01, so recommending Claude now points at a provider that
-//   cannot be called). Re-derive these flags from the history as it accrues.
+//   no rec for it regardless of pedigree (claude-sonnet-5, gemini-3.1-pro-preview) — until they earn
+//   one. Key-level quota/rate limits (e.g. the 2026-07 Anthropic usage cap, the OpenAI rate-limit
+//   failures in gpt-5.5's bull record) are OWNER-ADJUSTABLE account settings, NOT model qualities —
+//   never hold them against a model here; they only mean the history is thin/noisy until the owner
+//   raises the limit and real calls accrue. Re-derive these flags from the history as it accrues.
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
