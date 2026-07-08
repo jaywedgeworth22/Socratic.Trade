@@ -3,22 +3,23 @@ import type { ModelGroup } from "./model-picker";
 export const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
 export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 
-// Label + recommendation conventions (owner review 2026-07-08; keep in sync with
+// Label + recommendation conventions (owner rulings 2026-07-08; keep in sync with
 // app/console/settings/models.tsx): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
-// both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label); per
-// provider, recommendedGreen = the stable fast/balanced $$ workhorse, recommendedRed = the
-// provider's strongest reasoner at sustainable per-proposal cost. A "-preview" suffix is no
-// disqualifier for the Red seat (owner ruling 2026-07-08): the adversary fails SAFE (unavailable /
-// unparseable review routes to human / fail-closed, never a wrong order) and Gemini previews are
-// long-lived and production-used; the residual risk is endpoint churn — re-check the pinned model
-// ID when the provider promotes or renames it.
+// both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label).
+// Recommendations are EMPIRICAL — derived from THIS ACCOUNT's call history (llm_step outcomes +
+// llm_usage), never from model naming/marketing or per-provider quotas. Snapshot 2026-07-08
+// (excluding the fixed Gemini bear format incident and the fixed pre-#1036 60s-timeout class):
+// gemini-3.5-flash bear 46/46 post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1;
+// deepseek-v4-pro bear 17/3 (fixed timeout class) but no successful Green history. Zero-history
+// models carry no rec (claude-sonnet-5, gemini-3.1-pro-preview; the Anthropic key is also
+// usage-capped until 2026-08-01). Re-derive from history as it accrues.
 export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano - lowest cost OpenAI", tier: "$" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - balanced default", tier: "$$", recommendedGreen: true },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini - balanced default", tier: "$$", recommendedGreen: true, recommendedRed: true },
       { value: "gpt-5.4", label: "gpt-5.4 - stronger analysis", tier: "$$$" },
       { value: "gpt-5.5", label: "gpt-5.5 - deepest OpenAI reasoning", tier: "$$$" }
     ]
@@ -28,7 +29,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Anthropic (Claude)",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 - fast low-cost Claude", tier: "$" },
-      { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$", recommendedRed: true },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 - balanced Claude analysis", tier: "$$" },
       { value: "claude-opus-4-8", label: "claude-opus-4-8 - premium Claude reasoning", tier: "$$$" },
       { value: "claude-fable-5", label: "claude-fable-5 - most capable Claude", tier: "$$$" }
     ]
@@ -46,8 +47,8 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite - low-cost Gemini", tier: "$" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash - stable flagship Flash", tier: "$$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview - deepest Gemini reasoning", tier: "$$$" }
     ]
   },
   {
@@ -63,7 +64,7 @@ export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash - fast DeepSeek V4", tier: "$" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$", recommendedGreen: true, recommendedRed: true }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro - stronger DeepSeek V4", tier: "$$", recommendedRed: true }
     ]
   }
 ];

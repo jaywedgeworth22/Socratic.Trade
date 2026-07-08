@@ -33,23 +33,26 @@ interface ModelGroup {
   options: ModelOption[];
 }
 
-// Label + recommendation conventions (owner review 2026-07-08):
+// Label + recommendation conventions (owner rulings 2026-07-08):
 // - Descriptors are ROLE-NEUTRAL noun phrases — this one catalog feeds BOTH the Green (proposer)
 //   and Red (reviewer) pickers, so no label may bake in a role (no "critique"/"review").
-// - Per provider: recommendedGreen = the stable fast/balanced $$ workhorse (the proposer runs every
-//   tick); recommendedRed = the provider's strongest reasoner at sustainable per-proposal cost —
-//   reasoning depth is the adversary's top criterion, and the Red seat FAILS SAFE (an unavailable or
-//   unparseable review routes to human / fail-closed; it can never place a wrong order), so a
-//   "-preview" suffix is no disqualifier (owner ruling 2026-07-08: Gemini previews are long-lived and
-//   production-used — the label mostly reflects pricing/SLA finality). The residual preview risk is
-//   endpoint churn: re-check the pinned model ID when the provider promotes or renames it.
+// - Recommendations are EMPIRICAL, not per-provider quotas and not read off model naming/marketing:
+//   a model carries recommendedGreen/recommendedRed only when THIS ACCOUNT's call history (llm_step
+//   outcomes in the audit trail + llm_usage) shows a solid record in that role. Snapshot as of
+//   2026-07-08 (excluding two fixed incident classes — the Gemini bear format incident, fixed
+//   2026-07-02, and the pre-#1036 60s reasoning-timeout aborts): gemini-3.5-flash bear 46/46 clean
+//   post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1; deepseek-v4-pro bear 17/3 (all 3 were
+//   the fixed timeout class) but NO successful Green history. Models with ZERO calls in a role carry
+//   no rec for it regardless of pedigree (claude-sonnet-5, gemini-3.1-pro-preview — and the Anthropic
+//   key is usage-capped until 2026-08-01, so recommending Claude now points at a provider that
+//   cannot be called). Re-derive these flags from the history as it accrues.
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost OpenAI · $" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true, recommendedRed: true },
       { value: "gpt-5.4", label: "gpt-5.4 — stronger analysis · $$$" },
       { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" }
     ]
@@ -59,7 +62,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Anthropic (Claude)",
     options: [
       { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast low-cost Claude · $" },
-      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$" },
       { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
@@ -77,8 +80,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
     ]
   },
   {
@@ -94,7 +97,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash — fast DeepSeek V4 · $" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedGreen: true, recommendedRed: true }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedRed: true }
     ]
   }
 ];
