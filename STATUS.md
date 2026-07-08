@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — PRODUCTION MIGRATED TO COOLIFY — CUTOVER VERIFIED (MONET, owner-directed)
+`socratictrade.com` is now served by Coolify app `socratic-trade-prod`
+(uuid `m1os7ijf31bg3fanil152e4b`) on the Hetzner box `91.98.44.8` — NOT the Mac pm2 lane.
+Cut over 2026-07-07 ~23:15 CDT and verified (edge 200/307, `/api/health` ok, scheduler
+ticking, restored production DB confirmed, litestream replicating in-container to the
+same R2 path). Mac pm2 `trading` + `litestream` are STOPPED and saved that way —
+they are the rollback standby (restore tunnel CNAME + `pm2 start trading litestream`).
+**Production release process changed:** trigger a Coolify deploy of `socratic-trade-prod`
+(auto-deploy from `main` is OFF; `~/apps/trading-publish.sh` is deprecated). Boot path:
+`scripts/coolify-prod-start.sh` with `DB_BOOTSTRAP=live`. Full detail + follow-ups:
+`docs/rollouts/2026-07-07-prod-coolify-migration.md`. Also fixed in passing: the
+integration preview `trading.jays.services` had been 503 at the edge (http:// FQDN vs
+Cloudflare SSL=full) — now https:// FQDN and healthy.
 ## 2026-07-07 — PRODUCTION migration to Coolify IN PROGRESS (MONET, owner-directed, branch `monet/migrate-production-coolify-3676f7`)
 Owner asked in-session to migrate `socratictrade.com` off the Mac onto the Coolify box
 (`91.98.44.8` / `jays.services`). This PR adds the boot machinery

@@ -32,6 +32,7 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-07 ~23:15 CDT - **PRODUCTION socratictrade.com MIGRATED to the Coolify box (MONET, owner-directed) — DEPLOYED + VERIFIED.** `socratictrade.com` now = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`, main @ `e73c66a4`+#1039, nixpacks, auto-deploy OFF) on `91.98.44.8`; Mac pm2 `trading`+`litestream` STOPPED (saved stopped = rollback standby; do NOT restart while box runs `DB_BOOTSTRAP=live` — double-scheduler). DB moved via litestream 0.5.14 restore from the R2 replica; litestream now replicates in-container to the same path (PITR continuity). Secrets stay in Infisical (in-container CLI, `REQUIRE_SECRETS_MANAGER` enforced). Verified: edge 200/307, `/api/health` ok + scheduler ticking, restored-DB markers, container stable. **Release process changed: prod deploy = trigger Coolify deploy of `socratic-trade-prod`; `~/apps/trading-publish.sh` DEPRECATED.** Also fixed pre-existing `trading.jays.services` edge 503 (http:// FQDN vs CF SSL=full; https:// FQDN is the required scheme). Rollout: `docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 - 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
   empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what

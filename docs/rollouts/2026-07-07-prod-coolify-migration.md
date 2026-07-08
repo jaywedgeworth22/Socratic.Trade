@@ -81,13 +81,54 @@ copy but survive in the R2 replica (the box replicates to the same path).
 
 ## Status / cutover log
 
-- 2026-07-07 ~23:00 CDT — plan + repo additions written; Coolify app creation next.
-  (This section is updated as the migration proceeds.)
+- 2026-07-07 ~23:00 CDT — plan + repo additions written; PR #1039 merged (verify green).
+- Coolify app `socratic-trade-prod` created: uuid `m1os7ijf31bg3fanil152e4b`, persistent
+  volume `prod-app-data` -> `/app/data` (storage API type=`persistent`), 13 envs via
+  `PATCH /envs/bulk` (Infisical identity runtime-only `is_buildtime:false`; NIXPACKS_*
+  buildtime), `is_auto_deploy_enabled:false`.
+- **Found + fixed a pre-existing outage:** `trading.jays.services` (integration preview)
+  had been 503 at the edge since the tunnel->direct-A DNS switch. Cause: app FQDN was
+  `http://...` so Coolify/Traefik only created an :80 router, while both Cloudflare zones
+  run SSL mode **full** (edge connects origin :443). Fix (and the scheme production now
+  uses): set the app domain to `https://...` — Traefik then serves :443 (self-signed
+  default cert, acceptable to "full") — plus restart. The AGENTS.md "apps served over
+  http://" note described the abandoned tunnel transport and is superseded.
+- 2026-07-07 23:12 CDT — first deploy (fresh mode) built + booted clean: binaries
+  installed (litestream 0.5.14, infisical CLI 0.43.98), 51 shared + 94 app secrets
+  injected, migrations applied to the empty volume DB, scheduler started,
+  `prod.jays.services` 307 at edge, `/api/health` ok.
+- 2026-07-07 23:13:21 CDT — `pm2 stop trading`; WAL quiesced 20s; `pm2 stop litestream`;
+  `pm2 save` (both stay STOPPED in the saved state — rollback standby).
+- 23:14 CDT — `DB_BOOTSTRAP=live` + container restart: fresh DB moved aside
+  (`*.pre-restore-*` on the volume), litestream restore from R2 completed, replicate
+  resumed to the same bucket/path (`txid.replica == txid.db` within 2s), app Ready,
+  `[scheduler] user local has autoResumeOnBoot enabled` — the restored DB is the real
+  production DB and autonomy resumed exactly as it would on a Mac reboot.
+- 23:15 CDT — DNS: `socratictrade.com` CNAME(tunnel `6b807051-...`) -> **A `91.98.44.8`
+  proxied** (record id `f43f1023f8a63d04aedafd39616aab9d`; old value in the record
+  comment for rollback).
+- 23:16-23:18 CDT — verification: edge 307, `/login` 200, `/api/health` ok with
+  db ok + scheduler ticking (age cycled 14s->55s->16s over four 20s polls, matching the
+  60s tick), dataProvider tier cache timestamps from 2026-07-07 08:49 (i.e. restored
+  production data, not a fresh DB), `pineconeConfigured: true` (real secrets), container
+  status stable (no restart loop). **PRODUCTION IS NOW SERVED FROM THE COOLIFY BOX.**
 
 ## Follow-ups
 
 - Consider `limits_memory` on the prod app container (box is 4 GB; builds already
   serialize via `concurrent_builds=1`, runtime caps not yet set).
 - Decommission plan for the Mac lane (pm2 delete + tunnel route removal) only after a
-  soak period — keep as rollback target for now.
+  soak period — keep as rollback target for now. `~/apps/trading-publish.sh` is now a
+  DEPRECATED deploy path (it would build+restart the stopped pm2 lane, not production);
+  production release = trigger a Coolify deploy of `socratic-trade-prod`.
+- Empirically confirm `is_auto_deploy_enabled:false` held (next merge to `main` must NOT
+  queue a `socratic-trade-prod` deployment; the integration preview rebuilding is fine).
+- `[congress-stream] no subscription configured` warnings appeared on the fresh-DB boot;
+  confirm they cleared (or match Mac behavior) on the restored DB.
+- `admin.socratictrade.com` still CNAMEs the tunnel and 404s (no ingress rule) — same
+  behavior as before; decide whether to delete or repoint later.
 - Rotate/trim the old `app.db.backup-*` files on the Mac (not migrated).
+- Preview lanes other than `trading.jays.services` (claude/cursor/antigravity DNS names)
+  may still have the same http://-FQDN-vs-SSL-full 503 — their Coolify apps were
+  consolidated/removed, so their DNS records now point at a box with no matching router.
+  Owners should recheck when re-standing them up (use https:// FQDNs).
