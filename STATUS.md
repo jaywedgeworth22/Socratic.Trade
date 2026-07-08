@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — ALL previews retired (owner decision); hosting = production only
+No more `*.jays.services` preview servers of any kind (owner never used them; some sat
+behind CF Access agents can't pass). Coolify runs exactly ONE app: `socratic-trade-prod`
+(= socratictrade.com). Preview app deleted, preview DNS (incl. wildcard) deleted, Mac PM2
+previews stopped, Mac `trading`/`litestream` pm2 apps DELETED (re-started accidentally
+twice on 2026-07-08 — see rollout note; rollback = `pm2 start ~/apps/trading.config.cjs`).
+Coolify PR-previews deliberately not enabled (4 GB box build limits). Check work via
+local `npm run dev` + verify CI. See `docs/rollouts/2026-07-08-previews-retired.md`.
 ## 2026-07-06 — CURSOR: Settings-table RMW race audit (PR #997 open)
 
 Swept every `getInternalSetting`/`setInternalSetting` pair in `src/lib/` for the cross-user
