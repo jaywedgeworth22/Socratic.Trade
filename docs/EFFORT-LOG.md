@@ -156,6 +156,7 @@ As of 2026-07-04.
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Consolidate usage telemetry clients in consumer apps (AG) — ✅ COMPLETED 2026-07-06 (PR #1005).** Replaced `postBatch` telemetry sending logic with `@jaywedgeworth22/congress-trading-shared` in Socratic.Trade.
 
 - **Congress Score Eval UI Wiring (AG) — ✅ COMPLETED 2026-07-06 (PR #971).** Wired `congressScoreVerdict` into the `MarketScanTab` on the console dashboard. The signal verdict, stats, and gating status are now explicitly surfaced in the UI. Review follow-up (2026-07-08): fixed the runtime read path (verdict is nested under `smartMoney`), typed the prop as `CongressScoreVerdictRead`, rendered `INSUFFICIENT` as neutral, and made the gating label reflect the effective (fresh-`FAIL_SIGNIFICANCE`-only) zeroing state. Lint, tsc, and Next.js build all pass.
 - **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
