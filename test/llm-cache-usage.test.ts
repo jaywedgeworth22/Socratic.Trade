@@ -44,6 +44,28 @@ describe("extractLlmUsage — prompt-cache fields per provider", () => {
     expect(usage.cacheCreationTokens).toBe(1200);
   });
 
+  it("xAI (Grok, OpenAI-compatible): prompt_tokens_details.cached_tokens", () => {
+    // xAI's automatic prompt caching reports through the OpenAI-compatible details object.
+    const usage = extractLlmUsage({
+      usage: {
+        prompt_tokens: 4200,
+        completion_tokens: 180,
+        prompt_tokens_details: { cached_tokens: 3600 }
+      }
+    });
+    expect(usage.promptTokens).toBe(4200);
+    expect(usage.cachedPromptTokens).toBe(3600);
+  });
+
+  it("Mistral (no prompt-cache fields): legacy shape, no cache tokens, cost at full input rate", () => {
+    const usage = extractLlmUsage({ usage: { prompt_tokens: 3000, completion_tokens: 250, total_tokens: 3250 } });
+    expect(usage).toEqual({ promptTokens: 3000, completionTokens: 250, totalTokens: 3250 });
+    // Cost path: absent cache fields must be identical to the pre-change full-rate billing.
+    expect(estimateLlmCostUsd("mistral-medium-3-5", usage.promptTokens, usage.completionTokens, usage.cachedPromptTokens, usage.cacheCreationTokens)).toBe(
+      estimateLlmCostUsd("mistral-medium-3-5", 3000, 250)
+    );
+  });
+
   it("no cache fields → unchanged legacy shape", () => {
     const usage = extractLlmUsage({ usage: { prompt_tokens: 100, completion_tokens: 50 } });
     expect(usage).toEqual({ promptTokens: 100, completionTokens: 50, totalTokens: 150 });
