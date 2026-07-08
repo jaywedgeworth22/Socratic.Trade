@@ -16,7 +16,11 @@
 > | gemini-3.1-pro-preview | zero calls ever | zero | none |
 >
 > Zero-history models carry no recommendation regardless of pedigree — the flags are re-derived from
-> history as it accrues. The role-neutral label fixes from #1078 stand; `gemini-3.1-pro-preview`'s
+> history as it accrues. **Owner clarification (same day):** key-level quota/rate limits — the 2026-07
+> Anthropic usage cap and the OpenAI rate-limit failures dominating gpt-5.5's bull record — are
+> owner-adjustable account settings, not model qualities or provider outages; they are never held
+> against a model, and once the owner raises a limit the affected model simply starts accruing the
+> real history these flags are derived from. The role-neutral label fixes from #1078 stand; `gemini-3.1-pro-preview`'s
 > label is "deepest Gemini reasoning" (parallel form; the model ID already says preview).
 
 ## Summary

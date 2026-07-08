@@ -11,8 +11,11 @@ export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 // (excluding the fixed Gemini bear format incident and the fixed pre-#1036 60s-timeout class):
 // gemini-3.5-flash bear 46/46 post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1;
 // deepseek-v4-pro bear 17/3 (fixed timeout class) but no successful Green history. Zero-history
-// models carry no rec (claude-sonnet-5, gemini-3.1-pro-preview; the Anthropic key is also
-// usage-capped until 2026-08-01). Re-derive from history as it accrues.
+// models carry no rec until they earn one (claude-sonnet-5, gemini-3.1-pro-preview). Key-level
+// quota/rate limits (e.g. the 2026-07 Anthropic usage cap, the OpenAI rate-limit failures in
+// gpt-5.5's bull record) are OWNER-ADJUSTABLE account settings, NOT model qualities — never hold
+// them against a model here; they only mean the history is thin/noisy until the owner raises the
+// limit and real calls accrue. Re-derive the flags from history as it accrues.
 export const CURATED_LLM_MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
