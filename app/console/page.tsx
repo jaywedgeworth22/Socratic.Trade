@@ -102,8 +102,8 @@ export default function ConsoleHomePage() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <div className="flex min-w-0 flex-col gap-4">
           <Card
             title={
               <span className="flex items-center gap-1.5">
@@ -205,7 +205,7 @@ export default function ConsoleHomePage() {
           <PositionsCard snapshot={snapshot} />
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4">
           <RiskUtilizationCard risk={risk} />
 
           <Card

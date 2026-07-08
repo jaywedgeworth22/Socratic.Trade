@@ -98,7 +98,7 @@ that file directly.
 
 ## Hosting & dev servers (multi-agent coordination)
 
-This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini).
+This repo is touched by several AI tools (Claude Code, Codex, Antigravity/Gemini, Cursor).
 **Each agent works in its OWN git worktree, on its OWN branch, with its OWN PM2-hosted
 live `next dev` preview on its OWN port.** Every worktree has its own `node_modules`,
 `.next`, `data/app.db`, and `.env.local` — never assume any are shared, and never point
@@ -110,8 +110,43 @@ one worktree's process at another's files.
 | `~/apps/trading-claude` | `agent/claude` | **4100** | pm2 `trading-claude` → `next dev` | `claude.jays.services` | Claude Code |
 | `~/apps/trading-codex` | `agent/codex` | **4101** | pm2 `trading-codex` → `next dev` | `codex.jays.services` | Codex |
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
-| `~/apps/trading-monet` | `agent/monet` | **4103** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
+| `~/apps/trading-cursor` | `agent/cursor` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
+| `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` — **STOPPED (rollback standby)** | — | **former production (until 2026-07-07)** |
+
+A Coolify-based hosting migration (self-hosted PaaS on a Hetzner CX23, 4 GB, behind
+`jays.services`) is underway for the preview lanes above. As of 2026-07-07 four lanes are
+built and running on it (integration=`main`→`trading.jays.services`, plus
+`agent/claude|cursor|antigravity`→`claude|cursor|antigravity.jays.services`); `agent/codex`
+and `agent/monet` are parked until their owners merge-forward to `main` (stale deps). New
+hostname scheme: `trading.jays.services` = integration (replaces the retired
+`trading-beta.jays.services`), `socratictrade.com` = production only, `*.jays.services`
+agent subdomains = Coolify GitHub-App previews. Apps are served over `http://` (Cloudflare
+Tunnel does edge TLS → box Traefik :80). **Build caveat:** the box's `concurrent_builds` is
+pinned to **1** — two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07 (needed a
+console reboot). This table remains the source of truth for the local PM2/worktree setup
+until the tunnel cutover is verified complete; see the latest `docs/rollouts/` note for live
+status.
+
+**PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
+`socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
+branch `main`, nixpacks, auto-deploy OFF). **A production release is a deliberate step:
+trigger a Coolify deploy of `socratic-trade-prod` — `~/apps/trading-publish.sh` is
+DEPRECATED** (it targets the stopped Mac pm2 lane). Boot path:
+`scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
+in-container CLI, one-time litestream 0.5.14 restore from the R2 replica
+(marker-guarded), then `litestream replicate -exec` (backup continuity lives in the
+container now; the Mac `litestream` pm2 app is stopped). SQLite lives on the persistent
+volume at `/app/data`. Rollback: restore the `socratictrade.com` CNAME to the tunnel
+(`6b807051-...cfargotunnel.com`, saved in the DNS record comment) + `pm2 start trading
+litestream` on the Mac. **Never start Mac pm2 `trading` while the Coolify app runs
+`DB_BOOTSTRAP=live`** — two schedulers would trade the same broker accounts.
+**Domain scheme correction:** app FQDNs in Coolify must be `https://<host>` — both
+Cloudflare zones run SSL mode "full" (edge connects origin :443; Traefik serves its
+default cert). An `http://` FQDN yields edge 503 ("no available server") — this bit the
+integration preview until 2026-07-07. The earlier "apps are served over http://" note
+described the abandoned tunnel transport. Details:
+`docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
@@ -143,9 +178,9 @@ must not silently drift behind beta after work lands.
 ### How each agent works
 - **Launch yourself in your own worktree dir** (Claude → `~/apps/trading-claude`, Codex →
   `~/apps/trading-codex`, Antigravity → `~/apps/trading-antigravity`, Monet →
-  `~/apps/trading-monet`). Edit only there, on your `agent/<name>` branch. Your **live
-  in-progress edits** appear at your port via HMR — open it in a browser; no refresh/rebuild
-  needed.
+  `~/apps/trading-monet`, Cursor (background/agent mode) → `~/apps/trading-cursor`). Edit
+  only there, on your `agent/<name>` branch. Your **live in-progress edits** appear at your
+  port via HMR — open it in a browser; no refresh/rebuild needed.
 - **Do not edit in another agent's worktree, nor in the `main` integration worktree.**
 - **Land work via the landing script — never push directly to main:**
   ```bash
@@ -175,35 +210,41 @@ must not silently drift behind beta after work lands.
   build/`next dev` *inside* `~/apps/trading-live` (production) to preview edits — deploy there
   via its release steps only.
 
-### Cursor: the human review cockpit (not a 4th agent lane)
-Cursor fills the **human-in-the-loop** seat, not a fourth autonomous agent. The three
-CLI/agentic tools (Claude Code, Codex, Antigravity) *produce* work in parallel `agent/*`
-worktrees; Cursor is where a human *reviews, steers, hand-edits, and integrates* it. Its home
-is the existing **`main` integration worktree** (`~/Code/Agentic Trading`) — no new port, no
-PM2 preview.
+### Cursor: peer agent lane (DeepSeek) *and* human review seat
 
-- **Best uses:** reviewing/merging the `agent/*` branches (inline-AI diff reading + merge-
-  conflict resolution), fast surgical hand-edits where firing a whole agent is overkill,
-  in-editor debugging, and codebase Q&A while you steer.
-- **Don't** make `main` an autonomous lane or stand up an `agent/cursor` dev-server worktree to
-  run a 4th parallel agent — it adds a branch to merge and a preview to babysit for little gain
-  over the three you already have.
-- **If you do use Cursor's agent/background mode** for a feature, keep it on its own branch like
-  the others. It already does this: background runs land on `cursor/*` branches (e.g.
-  `origin/cursor/setup-dev-environment-*`) — merge them like any `agent/*` branch.
+Cursor fills **two** roles now, neither subordinate to the other. (Previously this section
+called Cursor "not a 4th agent lane" — that's outdated; corrected 2026-07-06, see
+`docs/rollouts/2026-07-06-coolify-migration.md`.)
+
+1. **A full peer autonomous lane**, on par with Claude Code, Codex, and Antigravity/Gemini.
+   The owner runs Cursor's background/agent mode on **DeepSeek**, producing work in its own
+   worktree (`~/apps/trading-cursor`), on its own branch (`agent/cursor`), with its own
+   PM2-hosted preview (`cursor.jays.services`, port **4103**) — see the hosting table above.
+   Treat it exactly like the Claude/Codex/Antigravity/Monet rows: don't edit in it from
+   another agent, land via `scripts/land.sh`, keep the Pre-Commit/Handoff Protocol current
+   from it like any other lane.
+2. **The human-in-the-loop review seat.** The owner still also uses Cursor interactively —
+   reviewing/merging `agent/*` branches, fast surgical hand-edits, in-editor debugging,
+   codebase Q&A — from the existing `main` integration worktree (`~/Code/Agentic Trading`).
+   This role is unchanged; it no longer implies Cursor *can't also* run its own autonomous
+   lane.
+
+- **One-off background tasks** (distinct from the persistent `agent/cursor` lane) still land
+  on their own `cursor/*` branches (e.g. `origin/cursor/setup-dev-environment-*`) — merge
+  those like any other feature branch.
 - **Handoff still applies.** Cursor auto-loads `AGENTS.md` (and `.cursor/rules/`); `AGENTS.md`
   is the real file and `CLAUDE.md` is a symlink to it, so both carry the same content (incl. the
   Pre-Commit / Handoff Protocol above) — edit `AGENTS.md` to change either. Before
-  any commit from Cursor, update `STATUS.md` + a `docs/rollouts/` note + `PLAN.md` like every
-  other tool.
+  any commit from Cursor (either role), update `STATUS.md` + a `docs/rollouts/` note +
+  `PLAN.md` like every other tool.
 
 ### A running port is NOT a work lock
 A dev/preview server listening on a port does **not** mean another agent is mid-task. Do not
-infer "someone is working" from an open 4001/4100/4101/4102/4000 (or a stray 3000/3001/3002).
-Coordinate ONLY via `git status` / `git log` / the branch list and `STATUS.md` — never by
-inspecting ports. The legacy per-agent ephemeral dev lanes (Claude 3000 / Codex 3001 via
-`npm run dev:codex` / Antigravity 3002) are superseded by the PM2 worktree previews above;
-use them only as a one-off and treat them as disposable.
+infer "someone is working" from an open 4000/4001/4100/4101/4102/4103/4104 (or a stray
+3000/3001/3002). Coordinate ONLY via `git status` / `git log` / the branch list and
+`STATUS.md` — never by inspecting ports. The legacy per-agent ephemeral dev lanes (Claude
+3000 / Codex 3001 via `npm run dev:codex` / Antigravity 3002) are superseded by the PM2
+worktree previews above; use them only as a one-off and treat them as disposable.
 
 Host-local deployment details (tunnel, pm2 ecosystem) live in `~/apps/README.md` on the
 deployment machine.

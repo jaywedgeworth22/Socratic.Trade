@@ -148,6 +148,13 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
                       </Chip>
                     )}
                     {account.isActive && <Chip tone="accent">active</Chip>}
+                    {(() => {
+                      const policy = snapshot.connectedAccountPolicies?.[account.id];
+                      if (!policy) return null;
+                      const st = deriveStateInfo(policy);
+                      if (st.state === "halted") return null;
+                      return <Chip tone={st.tone}>{st.label}</Chip>;
+                    })()}
                   </div>
                   {!account.isActive && (
                     <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
@@ -227,9 +234,10 @@ export function RunStateButton({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
-/** One control surface for run-state changes. Asymmetric friction:
- *  stopping = one tap + one confirm, no typing; starting a broker-connected account =
- *  typed ritual; winding down (the one stop verb that SELLS) = typed ritual. */
+/** One control surface for run-state changes. Friction is reserved for what SELLS or halts
+ *  the world: stopping = one tap + one confirm; winding down (the one stop verb that SELLS) =
+ *  typed ritual. Starting scheduled runs is ONE TAP for every account — a live broker account
+ *  is the app's normal, in-domain case, not a scary exception that needs a typed ritual. */
 function ControlSheet({
   snapshot,
   open,
@@ -253,7 +261,6 @@ function ControlSheet({
   const startLabel = state === "close_only" ? "Resume" : "Start";
   const startGerund = state === "close_only" ? "Resuming" : "Starting";
   const startProgressLabel = `${startGerund}…`;
-  const startPhrase = reality.tone === "live" ? (state === "close_only" ? "RESUME LIVE" : "START LIVE") : null;
   const liquidatePhrase = "WIND DOWN";
   const sheetTitle = emergency
     ? "Stop the strategy"
@@ -367,16 +374,11 @@ function ControlSheet({
                     Wind down…
                   </Btn>
                 )}
-                {o.id === "start" &&
-                  (startPhrase ? (
-                    <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => setConfirmVerb(confirmVerb === "start" ? null : "start")}>
-                      {startLabel}…
-                    </Btn>
-                  ) : (
-                    <Btn variant="pos" size="sm" disabled={busy !== null} onClick={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}>
-                      {busy === "start" ? startProgressLabel : startLabel}
-                    </Btn>
-                  ))}
+                {o.id === "start" && (
+                  <Btn variant="pos" size="sm" disabled={busy !== null} onClick={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}>
+                    {busy === "start" ? startProgressLabel : startLabel}
+                  </Btn>
+                )}
               </div>
               <p className="mt-1.5 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">{o.body}</p>
 
@@ -391,22 +393,6 @@ function ControlSheet({
                   onConfirm={() =>
                     void act("liquidating", () => setSystemState("liquidating"), "Winding down", "Only sell orders until the account is in cash.")
                   }
-                />
-              )}
-              {o.id === "start" && confirmVerb === "start" && startPhrase && (
-                <TypedConfirm
-                  phrase={startPhrase}
-                  value={armText}
-                  onChange={setArmText}
-                  busy={busy === "start"}
-                  confirmLabel={
-                    <>
-                      {startLabel} scheduled runs
-                    </>
-                  }
-                  variant="primary"
-                  note={`${startGerund} a broker-connected account changes automation state, so it costs the typed confirmation phrase — stopping never does.`}
-                  onConfirm={() => void act("start", startStrategy, "Running", "Scheduled runs are on.")}
                 />
               )}
             </div>
@@ -690,14 +676,6 @@ export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
             Signing out only ends this browser session. The strategy keeps its current run state on the server — it
             does not stop, start, or sell anything.
           </p>
-          <Link
-            href="/old"
-            className="con-btn con-btn-outline self-start"
-            title="Open the legacy dashboard at /old. The new Socratic console is the primary app."
-            onClick={() => setOpen(false)}
-          >
-            Old dashboard
-          </Link>
           {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
           <a
             href="/logout"
