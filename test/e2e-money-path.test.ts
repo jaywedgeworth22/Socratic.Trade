@@ -45,7 +45,7 @@ const BULL_PROPOSAL = {
   timeInForce: "gfd",
   marketHours: "regular_hours",
   rationale: "Bull thesis for AAPL E2E",
-  tradeThesisTag: "Momentum",
+  tradeThesisTag: "Momentum-Breakout",
   confidenceScore: 85
 };
 
@@ -121,7 +121,9 @@ function stubFetchE2E(): void {
 }
 
 async function setupBrokerLiveAutonomous(label: string): Promise<void> {
-  process.env.ALLOW_LIVE_TRADING = "true";
+  // vi.stubEnv (not a raw process.env assignment) so afterEach's vi.unstubAllEnvs() restores it and
+  // the live-trading opt-in can't leak into subsequent tests/files.
+  vi.stubEnv("ALLOW_LIVE_TRADING", "true");
   const { setPolicy, upsertConnectedAccount, setActiveConnectedAccount, upsertUserApiKey } = await import("../src/lib/db");
   upsertUserApiKey("local", "openai", "test-openai-key", "test fixture");
   const accountId = randomUUID();
@@ -159,7 +161,12 @@ async function setupBrokerLiveAutonomous(label: string): Promise<void> {
 describe("E2E money-path integration test", () => {
   it("runs strategy through to execution", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
-    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key"); // Need gemini key so red team doesn't skip
+    // Keys for both LLM families present so Red Team credential resolution never fails-closed; the
+    // fetch stub actually serves the Red Team through the OpenAI-family endpoint.
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    // Deterministic trading day: runStrategyOnce() skips non-manual runs when isTradingDay() is
+    // false, so force the VITEST-only seam on to keep this test off the calendar (weekends/holidays).
+    vi.stubEnv("AGENTIC_TEST_FORCE_TRADING_DAY", "1");
     stubFetchE2E();
     await setupBrokerLiveAutonomous("E2E Live");
     const { runStrategyOnce } = await import("../src/lib/strategy");
@@ -170,14 +177,12 @@ describe("E2E money-path integration test", () => {
     expect(result.status).toBe("completed");
 
     const aaplProposal = result.proposals.find((p) => p.proposal.symbol === "AAPL");
-    const debugLogs = listAudit(500)
-      .filter((e) => (e.payload as { runId?: string })?.runId === result.runId);
-    console.dir(debugLogs, { depth: null });
     expect(aaplProposal).toBeDefined();
 
-    console.log("AAPL proposal status:", aaplProposal!.status, "Reasons:", aaplProposal!.reasons);
-    // The order should be placed and filled
-    expect(["placing", "filled", "paper", "placed"]).toContain(aaplProposal?.status);
+    // On the broker/live decide path a successfully submitted order is surfaced in result.proposals
+    // with the terminal status "placed" (the DB-only "placing"/"filled" states are never pushed here),
+    // so assert that exact status to actually validate the money-path execution.
+    expect(aaplProposal?.status).toBe("placed");
     
     // Check audit logs for the money path success
     const runKinds = listAudit(500)
