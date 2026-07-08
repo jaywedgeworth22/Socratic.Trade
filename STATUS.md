@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Gemini Red-team rec restored (MONET, follow-up to #1078, owner ruling)
+Owner overruled #1078's "never a preview for the Red seat" rule as over-read: Gemini previews are
+long-lived/production-used and the Red seat fails safe (unavailable review routes to human /
+fail-closed — never a wrong order), so reasoning depth wins for the adversary.
+`gemini-3.1-pro-preview` regains `recommendedRed` (label now "deepest Gemini reasoning");
+`gemini-3.5-flash` keeps only `recommendedGreen`. Convention comments rewritten in both catalogs;
+#1078's role-neutral label fixes stand. See the correction banner in
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
 ## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)
 Owner review: role-flavored descriptors ("premium Claude critique", "fast Claude review") made
 role-neutral + grammatically parallel (opus = "premium Claude reasoning", haiku = "fast low-cost
