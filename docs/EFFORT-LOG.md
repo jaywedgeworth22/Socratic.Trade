@@ -1855,7 +1855,7 @@ brackets; effort S/M/L.
 - [P1][UX][S] Decision-trace back always returns to /console -> router.back() guarded, fallback to Journal.
 - [P1][UX][S] Scan has no add-to-watchlist -> per-row Watch button -> POST /api/watchlist (or ?add=SYMBOL prefill).
 - [P1][Visual][S] Capability badges 9-hue rainbow -> collapse to --info chips (+icons), --warn only for OAuth-needed.
-- [P2][DS][S] pos/neg vs up/down tone vocab -> standardize on pos/neg across both systems (keystone unification).
+- [P2][DS][S] pos/neg vs up/down tone vocab -> standardize on pos/neg across both systems (keystone unification). _→ DONE 2026-07-08 (MONET, owner-endorsed rename): ui system renamed to pos/neg (tokens, Tone union, all call sites); console already conformed; colors byte-identical both themes; see `docs/rollouts/2026-07-08-tone-rename-pos-neg.md`._
 - [P2][DS][S] Console lacks Segmented primitive -> port a console Segmented; refactor policy-form to use it.
 - [P2][DS][S] Radius scales unmapped -> agree one card-corner + one control-corner value both systems reference.
 - [P2][DS][M] Primitive parity gaps -> build a parity matrix; port IconButton + RawNumInput both ways.

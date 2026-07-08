@@ -36,13 +36,15 @@ markup themes automatically.
 | `--muted` | `text-muted` | Secondary text (labels, subtitles). |
 | `--faint` | `text-faint` | Tertiary text (hints, meta). |
 | `--accent` / `--accent-fg` | `text-accent` / `bg-accent` / `text-accent-fg` | Brand/CTA green + its on-color. |
-| `--up` / `--down` / `--down-fg` | `text-up` / `text-down` / `text-down-fg` | Gains / losses (and the loss on-color for danger buttons). |
+| `--pos` / `--neg` / `--neg-fg` | `text-pos` / `text-neg` / `text-neg-fg` | Gains / losses (and the loss on-color for danger buttons). |
 | `--warn` / `--info` | `text-warn` / `text-info` | Warning / informational status. |
 | `--ring` | `focus-visible:ring-[var(--ring)]` | Focus ring. |
 
 Status tones are also wrapped by the `Chip`/`Dot`/`StatTile` primitives
-(`neutral | up | down | warn | info | accent`) — use those instead of hand-rolling
-tinted badges.
+(`neutral | pos | neg | warn | info | accent`) — use those instead of hand-rolling
+tinted badges. (Tone vocabulary standardized on `pos/neg` per the 2026-07-05 UI audit,
+finding 1.2 — `up/down` collided with price-direction language, and the console system
+already used `pos/neg`.)
 
 ### WCAG-AA contrast — source of truth
 
@@ -53,8 +55,8 @@ defined:
   `--faint` are chosen to meet **4.5:1 (normal text)** on every surface tier.
   Recorded worst cases: **≥7.3:1** on `surface-3` in light mode, **≥5.5:1** on
   `surface-3` in dark mode.
-- `--down-fg` exists specifically so danger buttons pass AA in dark mode
-  (`text-white` on `--down` measured ≈4.07:1, below 4.5:1). History:
+- `--neg-fg` exists specifically so danger buttons pass AA in dark mode
+  (`text-white` on `--neg` measured ≈4.07:1, below 4.5:1). History:
   `docs/reviews/2026-06-21-ui-ux-issue-register.md:89` (issue A11Y-7) and
   `docs/reviews/2026-06-20-ui-ux-and-mobile-audit.md:245`.
 
