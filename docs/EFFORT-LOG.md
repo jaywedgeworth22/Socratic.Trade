@@ -184,6 +184,16 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`) — IN PROGRESS
+  2026-07-08, committed, PR pending.** New operator script `scripts/benchmark-llm-models.ts`:
+  every curated-catalog model benchmarked in BOTH strategy roles (Green/Bull + Red/Bear) through
+  the app's REAL request paths (resolveLlmEndpoint/buildLlmRequestBody/llmFetchCapturing, real
+  strategy schemas + prompts, real signal_snapshot-derived input pack), app DB strictly read-only,
+  no broker interaction. Metrics: latency (p50/p95, cold vs cache-warm), reliability, est. cost
+  (cache-aware, #1086-guarded), schema-valid rate, bracketStopLoss coverage. Verified with real
+  DeepSeek calls against trading-live standby data. Rollout note
+  `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
+
 - **Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`) — IN
   PROGRESS 2026-07-08, landing.** Owner-reviewed copy fix: role-neutral grammatically-parallel model
   descriptors in both catalog copies; Gemini Red rec moved off the preview build to stable
