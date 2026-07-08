@@ -191,10 +191,20 @@ As of 2026-07-04.
   reasoner for Red, never a preview for the adversary seat). Display-only. Rollout note
   `docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
 
+- **Alert Center filter redesign — clipped tile headings → wrapping pills (MONET, same session
+  worktree as the model-attribution lane, branch `monet/alert-center-pills-99138a`) — IN PROGRESS
+  2026-07-08, PR pending via land.sh.** Owner-reported (screenshot): "ATTENTION/DELIVERIES/
+  APPROVALS/ALL" tile headings clipped in the Alert Center. Root cause: fixed `sm:grid-cols-4`
+  tiles + uppercase 0.09em-tracked `con-card-title` headings can't fit a quarter-column. Redesigned
+  to a wrapping sentence-case pill row (chip idiom, counts inline, hover hints); closes the
+  55-findings "[P1][A11y] AlertCenter color-only" row in passing (aria-pressed + weight cue) + adds
+  a coarse-pointer 44px floor on these pills. Driven live at 641px and 309px container widths —
+  zero clipping, clean wrap. Rollout: `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
+
 - **Model attribution on every decision surface (MONET, session worktree
   `~/.claude/projects/Socratic.Trade/model-attribution-ui-labels-99138a`, branch
-  `monet/model-attribution-ui-labels-99138a`) — IN PROGRESS 2026-07-08, implementation done +
-  driven live, PR pending via land.sh.** Owner-directed: every decision shows WHICH LLM model made
+  `monet/model-attribution-ui-labels-99138a`) — ✅ COMPLETED 2026-07-08: PR #1076 squash-merged to
+  `main` (verify green, auto-merge).** Owner-directed: every decision shows WHICH LLM model made
   it (or failed to make it) — small type + vendor logo (existing `ModelBadge`). Gaps closed:
   failed-review states (`redTeamVerdict.failureKind`) were persisted but never rendered anywhere
   (approval card + decision trace gated on `available`); decision-trace model was raw text;
@@ -1793,7 +1803,7 @@ brackets; effort S/M/L.
 - [P2][Visual] dashboard-client backdrop-blur vs elev-* -> MOOT: dashboard-client.tsx deleted (apply elev-* discipline to remaining app/ui data surfaces if any).
 
 ### Action - clear recommendation (Planned)
-- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons.
+- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons. _→ DONE 2026-07-08 (MONET): folded into the owner-requested Alert Center pill redesign (clipped tile headings) — aria-pressed + bold-weight non-color cue + hover hints; see `docs/rollouts/2026-07-08-alert-center-filter-pills.md`._
 - [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers.
 - [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header.
 - [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons.
