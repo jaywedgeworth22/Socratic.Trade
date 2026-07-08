@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Troubleshoot sweep MERGED (#1087) + PRODUCTION DEPLOYED + Deploy-workflow hazard closed (MONET)
+PR #1087 (10-issue sweep) merged 10:35Z; Coolify deployment n1v296 (commit ea779bbf, includes
+the day's sibling PRs) health-verified: ok/db/scheduler ticking, finnhub dependency back to
+ok:true with the new rate limiter live. Post-merge actions: (1) the PR's gitleaks red was a
+FALSE POSITIVE on the fake scrubber-test fixture (defused in follow-up PR);
+(2) **`.github/workflows/deploy.yml` DISABLED via `gh workflow disable`** — it auto-ran on
+every main push on the Mac self-hosted runner ending in `pm2 restart trading` (the
+"accidentally re-started twice" source from the previews-retired note); if the rollback pm2
+lane were ever started it would resurrect the double-scheduler scenario on the next merge.
+Re-enable only for a deliberate Mac rollback. Owner still owed: congress SSE env decision,
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000, Alpha Vantage key rotation + tier decision, MU order
+4EED5BE7 fill confirmation. Addendum: `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`.
+
 ## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
 Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
 chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act is preserved

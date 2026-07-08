@@ -1,5 +1,22 @@
 # 2026-07-08 — Multi-issue troubleshoot sweep (MONET)
 
+> **Addendum (post-merge, same day):** PR #1087 merged 10:35Z via auto-merge.
+> Production deployed via Coolify (deployment `n1v296af3quh3ri4mo56nxv5`,
+> commit `ea779bbf` = main incl. this sweep + the day's sibling PRs) — health
+> verified after: ok/db ok/scheduler ticking; finnhub dependency back to
+> ok:true with the rate limiter live; alpha-vantage still red (daily quota
+> already burned — expected), congress SSE still red (owner env decision
+> pending). Two follow-ups handled: (1) the PR's `gitleaks` red was a FALSE
+> POSITIVE on the deliberately-fake `sk_live_abc123` scrubber-test fixture —
+> fixture changed to a non-key-shaped string in the follow-up PR;
+> (2) **`.github/workflows/deploy.yml` DISABLED via `gh workflow disable`**
+> (file kept for deliberate rollback use): it auto-ran on every main push on
+> the Mac self-hosted runner ending in `pm2 restart trading` — it was the
+> source of the "accidentally re-started twice" incidents in the 2026-07-08
+> previews-retired note, and if the rollback pm2 lane were ever started it
+> would put the Mac scheduler back into production against the same broker
+> accounts Coolify trades on the very next merge.
+
 Owner reported 10 issues in one batch; a 22-agent investigation workflow (one
 investigator per issue + adversarial verifier per finding + prod-diagnostics
 scout + completeness critic) diagnosed all of them, then 6 implementation lanes

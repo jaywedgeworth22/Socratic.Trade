@@ -194,7 +194,13 @@ As of 2026-07-04.
   DeepSeek calls against trading-live standby data. Rollout note
   `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
 - **Multi-issue troubleshooting sweep, 10 owner-reported items (MONET, branch
-  `monet/multi-issue-troubleshooting-5b55ad`) — IN PROGRESS 2026-07-08.** Owner batch:
+  `monet/multi-issue-troubleshooting-5b55ad`) — ✅ COMPLETED + DEPLOYED TO PRODUCTION
+  2026-07-08: PR #1087 squash-merged 10:35Z (verify green, auto-merge); Coolify deployment
+  n1v296 (commit ea779bbf) health-verified same day. Post-merge: gitleaks red was a false
+  positive (fake scrubber-test fixture — defused in follow-up PR); hazardous
+  `.github/workflows/deploy.yml` (Mac self-hosted `pm2 restart trading` on every main push,
+  the "accidentally re-started twice" source) DISABLED via `gh workflow disable`. Addendum in
+  docs/rollouts/2026-07-08-multi-issue-troubleshoot.md.** Owner batch:
   market-scan mostly blank; framework-improvements card click loses context on strategy page;
   outcomes "compare to paper/broker" -> connected-account picker; LLM usage all alpaca-paper or
   unattributed; site-wide font-selection feature archaeology; Finnhub call-volume control;
