@@ -66,6 +66,15 @@ export function humanizeLlmError(raw: string | undefined | null, opts: { provide
   if (status === 429 || has("rate limit", "rate_limit", "too many requests", "quota", "insufficient_quota", "billing", "credit balance", "out of credit", "payment required"))
     return `Your ${provider} account hit a rate limit or is out of quota/credits. Wait and retry, or check ${provider} billing.`;
 
+  // Anthropic's org/workspace-level "specified API usage limit" (distinct from a 429 rate limit —
+  // this is an admin-configured spend cap) comes back as a 400 invalid_request_error, so it doesn't
+  // match the 429/quota branch above and previously fell through to a raw-JSON dump.
+  if (has("usage limit", "usage limits")) {
+    const regainMatch = text.match(/regain access ((?:on )?[^."]+)/i);
+    const when = regainMatch ? ` You'll regain access ${regainMatch[1].trim()}.` : "";
+    return `${provider} has hit its configured API usage limit for this account.${when} Raise the limit with your ${provider} plan/console, or wait for it to reset.`;
+  }
+
   if ((status !== undefined && status >= 500) || has("overloaded", "service unavailable", "internal server error", "bad gateway", "gateway timeout"))
     return `${provider} is temporarily unavailable (server error). Try again in a moment.`;
 

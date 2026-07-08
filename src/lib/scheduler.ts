@@ -18,7 +18,9 @@ import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { checkMonthlyLlmSpendCeiling } from "./llm-budget";
 import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
+import type { TradingPolicy } from "./types";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
@@ -133,6 +135,13 @@ function scheduleKey(userId: string, connectedAccountId: string): string {
 const stopGuardHost = globalThis as unknown as { __stopMonitorInFlight?: Set<string> };
 const stopMonitorInFlight: Set<string> =
   stopGuardHost.__stopMonitorInFlight ?? (stopGuardHost.__stopMonitorInFlight = new Set<string>());
+
+// Per-account in-flight guard for the stale-limit / auto-remediation pass. Without it, a slow broker
+// (the ≥4 sequential round-trips in a cancel-replace can outlast the 60s tick) would let the next tick
+// re-process the SAME stale exit and place a SECOND market sell — a double-sell / accidental short.
+const staleExitGuardHost = globalThis as unknown as { __staleExitInFlight?: Set<string> };
+const staleExitInFlight: Set<string> =
+  staleExitGuardHost.__staleExitInFlight ?? (staleExitGuardHost.__staleExitInFlight = new Set<string>());
 
 /**
  * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
@@ -387,10 +396,21 @@ async function tick(): Promise<void> {
         const executionState = deriveExecutionState(policy, account);
         const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
 
-        if (brokerGateway) {
-          void brokerGateway.getEquityOrders(policy.accountNumber)
-            .then((orders) => notifyStaleLimitOrders({ userId, policy, orders }))
-            .catch((err) => console.error("[scheduler] stale-limit-order alert error:", err));
+        if (brokerGateway && !staleExitInFlight.has(key)) {
+          staleExitInFlight.add(key);
+          const gw = brokerGateway;
+          const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
+          void gw.getEquityOrders(policy.accountNumber)
+            .then(async (orders) => {
+              await notifyStaleLimitOrders({ userId, policy, orders });
+              // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
+              // when disabled; defers to the human on a live account with typed confirmation on. The
+              // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
+              // a slow broker cancel from triggering a second market sell on the next tick.
+              await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
+            })
+            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
+            .finally(() => staleExitInFlight.delete(key));
         }
 
         const protectiveState =

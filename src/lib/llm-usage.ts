@@ -23,6 +23,10 @@ export interface LlmUsageEntry {
   /** Non-secret stable fingerprint of the API key that served this call (see keyFingerprint), so
    *  usage/cost can be measured PER ATTACHED KEY — user-provided or operator. */
   keyRef?: string;
+  /** The connected account this call was recorded for, so cost/tokens can be attributed and
+   *  filtered per account (broker/environment derived by joining connected_accounts at read
+   *  time). Undefined for account-less contexts (e.g. chat) — those stay "unattributed". */
+  connectedAccountId?: string;
   promptTokens?: number;
   completionTokens?: number;
 }
@@ -124,8 +128,8 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
     const cost = estimateLlmCostUsd(entry.model, entry.promptTokens, entry.completionTokens);
     getDb()
       .prepare(
-        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO llm_usage (id, user_id, provider, model, context, key_source, key_ref, connected_account_id, prompt_tokens, completion_tokens, total_tokens, cost_usd, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         crypto.randomUUID(),
@@ -135,6 +139,7 @@ export function recordLlmUsage(entry: LlmUsageEntry): void {
         entry.context ?? "unknown",
         entry.keySource,
         entry.keyRef ?? null,
+        entry.connectedAccountId ?? null,
         entry.promptTokens ?? null,
         entry.completionTokens ?? null,
         total ?? null,
@@ -169,6 +174,15 @@ export interface LlmUsageRow {
   keySource: LlmKeySource;
   /** Per-attached-key fingerprint (see keyFingerprint); null for legacy rows without one. */
   keyRef: string | null;
+  /** Connected account this usage is attributed to; null for unattributed / account-less rows. */
+  connectedAccountId: string | null;
+  /** Broker of the attributed account (via join to connected_accounts); null when unattributed
+   *  or the account has since been deleted. */
+  broker: string | null;
+  /** 'paper' | 'live' of the attributed account; null when unattributed. */
+  environment: string | null;
+  /** Human label of the attributed account; null when unattributed. */
+  accountLabel: string | null;
   calls: number;
   promptTokens: number;
   completionTokens: number;
@@ -182,32 +196,55 @@ export interface LlmUsageRow {
  * rows where a NON-`local` tenant spent on the operator key — the figure the operator most cares
  * about while the failover is enabled.
  */
-export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly?: boolean; userId?: string } = {}): LlmUsageRow[] {
+export function getLlmUsageSummary(opts: {
+  sinceIso?: string;
+  operatorFundedOnly?: boolean;
+  userId?: string;
+  /** Filter to a single connected account. */
+  connectedAccountId?: string;
+  /** Filter to a broker (e.g. "alpaca", "robinhood") — matched via join to connected_accounts. */
+  broker?: string;
+} = {}): LlmUsageRow[] {
   const where: string[] = [];
   const params: unknown[] = [];
   if (opts.sinceIso) {
-    where.push("created_at >= ?");
+    where.push("lu.created_at >= ?");
     params.push(opts.sinceIso);
   }
   if (opts.userId) {
-    where.push("user_id = ?");
+    where.push("lu.user_id = ?");
     params.push(opts.userId);
   }
+  if (opts.connectedAccountId) {
+    where.push("lu.connected_account_id = ?");
+    params.push(opts.connectedAccountId);
+  }
+  if (opts.broker) {
+    where.push("ca.broker = ?");
+    params.push(opts.broker);
+  }
   if (opts.operatorFundedOnly) {
-    where.push("key_source = 'operator'");
-    where.push("user_id != 'local'");
+    where.push("lu.key_source = 'operator'");
+    where.push("lu.user_id != 'local'");
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  // LEFT JOIN so unattributed rows (null connected_account_id) and rows whose account was since
+  // deleted still appear (broker/environment/label come back null → "unattributed" in the UI).
   const rows = getDb()
     .prepare(
-      `SELECT user_id, provider, model, context, key_source, key_ref,
+      `SELECT lu.user_id, lu.provider, lu.model, lu.context, lu.key_source, lu.key_ref,
+              lu.connected_account_id,
+              ca.broker AS broker, ca.environment AS environment, ca.label AS account_label,
               COUNT(*) AS calls,
-              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-              COALESCE(SUM(total_tokens),0) AS total_tokens,
-              COALESCE(SUM(cost_usd),0) AS cost_usd
-       FROM llm_usage ${clause}
-       GROUP BY user_id, provider, model, context, key_source, key_ref
+              COALESCE(SUM(lu.prompt_tokens),0) AS prompt_tokens,
+              COALESCE(SUM(lu.completion_tokens),0) AS completion_tokens,
+              COALESCE(SUM(lu.total_tokens),0) AS total_tokens,
+              COALESCE(SUM(lu.cost_usd),0) AS cost_usd
+       FROM llm_usage lu
+       LEFT JOIN connected_accounts ca ON ca.id = lu.connected_account_id
+       ${clause}
+       GROUP BY lu.user_id, lu.provider, lu.model, lu.context, lu.key_source, lu.key_ref,
+                lu.connected_account_id, ca.broker, ca.environment, ca.label
        ORDER BY cost_usd DESC, calls DESC`
     )
     .all(...params) as Array<Record<string, unknown>>;
@@ -218,6 +255,10 @@ export function getLlmUsageSummary(opts: { sinceIso?: string; operatorFundedOnly
     context: r.context == null ? null : String(r.context),
     keySource: r.key_source as LlmKeySource,
     keyRef: r.key_ref == null ? null : String(r.key_ref),
+    connectedAccountId: r.connected_account_id == null ? null : String(r.connected_account_id),
+    broker: r.broker == null ? null : String(r.broker),
+    environment: r.environment == null ? null : String(r.environment),
+    accountLabel: r.account_label == null ? null : String(r.account_label),
     calls: Number(r.calls),
     promptTokens: Number(r.prompt_tokens),
     completionTokens: Number(r.completion_tokens),

@@ -595,7 +595,7 @@ function AiReviewPanel({
   const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);
   const hasAnyChange = changes.length > 0 || promptChanged;
   const hasLooser = changes.some((c) => c.direction === "looser");
-  const needsTyped = reality.tone === "live" && hasLooser;
+  const needsTyped = reality.tone === "live" && hasLooser && policy.requireTypedConfirmation !== false;
 
   const generate = async () => {
     setBusy("review");

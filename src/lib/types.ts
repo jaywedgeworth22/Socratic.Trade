@@ -740,6 +740,16 @@ export interface TradingPolicy {
   universeFloor?: UniverseFloor;
   strategyAuthority: StrategyAuthority;
   /**
+   * Typed confirmation for high-impact LIVE actions — approving a broker order, replacing a live
+   * order at market, and loosening a guardrail on a live account. true/undefined (default) = the
+   * owner types the phrase (e.g. `APPROVE LIVE <SYMBOL>`, `CONFIRM`) before the action runs; false =
+   * those become ordinary one-click actions. This is an adjustable OWNER PREFERENCE with an easy
+   * off-switch (Settings → Advanced action confirmation), NOT a hard safety gate: real money is the
+   * app's normal, in-domain case, not a gated exception. Genuinely destructive actions — wind-down
+   * (which SELLS) and account deletion — keep their own typed confirmation regardless of this flag.
+   */
+  requireTypedConfirmation?: boolean;
+  /**
    * Socratic Trade may explicitly override owner preference gates when it can state a structured
    * override thesis. "execute" lets a Decide-mode account act through those preference conflicts;
    * "propose" queues the action with the override note; "off" treats every preference gate normally.
@@ -811,6 +821,13 @@ export interface TradingPolicy {
    * 0 or undefined disables the stale-limit alert. Default 15.
    */
   staleLimitOrderMinutes?: number;
+  /**
+   * Auto-cancel-and-replace a STALE EXIT limit order (sell/cover) with a market order once it passes
+   * staleLimitOrderMinutes, so a protective exit a resting limit failed to fill cannot strand the
+   * position (the MU deadlock). Default ON. On a live account it defers to human typed confirmation
+   * when requireTypedConfirmation is on; entries are never auto-forced to market. Owner-tunable.
+   */
+  autoRemediateStaleExits?: boolean;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;

@@ -34,7 +34,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
@@ -1233,7 +1233,7 @@ export async function runStrategyOnce(
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
-        return enrichOpeningProposal(overrideSized, policy, marketScan);
+        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -1883,10 +1883,11 @@ export async function runStrategyOnce(
         continue;
       }
 
-      // Pre-flight live-order guard: a last, default-SAFE assertion just before a real-capital order
-      // is placed. No-op on the broker/paper path (submitsBrokerOrders, real-capital-free); on the
-      // broker/live path it throws unless live trading is explicitly enabled (ALLOW_LIVE_TRADING). It
-      // NEVER places or enables a trade.
+      // Pre-flight live-order guard: a last assertion just before a real-capital order is placed.
+      // No-op on the broker/paper path (submitsBrokerOrders, real-capital-free). On the broker/live
+      // path it now ALLOWS by default (a live account trades on its environment alone) and throws
+      // ONLY when live trading has been explicitly disabled via the ALLOW_LIVE_TRADING=false escape
+      // hatch. It NEVER places or enables a trade.
       try {
         assertLivePreflight({
           mode: executionMode,
@@ -3171,8 +3172,13 @@ function assertLiveApprovalConfirmation(input: {
   accountNumber: string;
   proposal: TradeProposal;
   estimatedNotional?: number;
+  requireTypedConfirmation: boolean;
 }): void {
   if (input.executionMode !== "broker/live") return;
+  // Owner-adjustable preference (policy.requireTypedConfirmation): when the owner has turned typed
+  // confirmation off, a live approval is a one-click action like any other — no phrase required.
+  // Real money is the app's normal, in-domain case, not a gated exception.
+  if (!input.requireTypedConfirmation) return;
   const expectedText = liveApprovalText(input.proposal.symbol);
   const confirmation = input.confirmation;
   const reasons: string[] = [];
@@ -3251,7 +3257,8 @@ export async function executeProposal(
     proposalId,
     accountNumber: row.accountNumber,
     proposal,
-    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional
+    estimatedNotional: row.estimatedNotional ?? row.review?.estimatedNotional,
+    requireTypedConfirmation: policy.requireTypedConfirmation !== false
   });
 
   // TOCTOU guard on notional/order caps: the daily/hourly cap check reads the
@@ -3495,9 +3502,9 @@ export async function executeProposal(
     }
 
     // Pre-flight live-order guard on the human-approval path too (parity with the autonomous run
-    // loop). No-op on broker/paper; on broker/live it refuses unless live trading is explicitly
-    // enabled (ALLOW_LIVE_TRADING). It NEVER places or enables a trade — a human-approved pending
-    // proposal must clear the same live invariant as an autonomous one before reaching the broker.
+    // loop). No-op on broker/paper; on broker/live it ALLOWS by default and refuses ONLY when live
+    // trading has been explicitly disabled via the ALLOW_LIVE_TRADING=false escape hatch. It NEVER
+    // places or enables a trade — a human-approved pending proposal clears the same live invariant.
     try {
       assertLivePreflight({
         mode: executionMode,
@@ -4072,7 +4079,9 @@ async function proposeTrades(input: {
             "rationale",
             "tradeThesisTag",
             "confidenceScore",
-            "autonomyOverride"
+            "autonomyOverride",
+            "bracketStopLoss",
+            "bracketTakeProfit"
           ],
           properties: {
             symbol: { type: "string" },
@@ -4089,7 +4098,9 @@ async function proposeTrades(input: {
             rationale: { type: "string" },
             tradeThesisTag: { enum: THESIS_PLAYBOOK },
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
-            autonomyOverride: autonomyOverrideSchema
+            autonomyOverride: autonomyOverrideSchema,
+            bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
+            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." }
           }
         }
       }
@@ -4188,11 +4199,22 @@ async function proposeTrades(input: {
           const isLast = i === bullAttempts.length - 1;
           const next = bullAttempts[i + 1];
           try {
-            const response = await llmFetch(attempt.url, {
-              method: "POST",
-              headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
-              body: JSON.stringify(attempt.body)
-            });
+            const bullSoftTimeoutMs = strategyLlmTimeoutMs(attempt.model, input.policy.llmReasoningEffort);
+            // Reasoning-class-aware SOFT wall-clock: a thinking-enabled model gets the widened bound.
+            // The request is NOT severed at the wall — if it's slow the tick moves on, but the eventual
+            // reply + its true latency are captured for debug (recordLlmOutcome), instead of discarded.
+            const response = await llmFetchCapturing(
+              attempt.url,
+              {
+                method: "POST",
+                headers: llmAuthHeaders({ provider: attempt.provider, key: attempt.key }),
+                body: JSON.stringify(attempt.body)
+              },
+              {
+                softTimeoutMs: bullSoftTimeoutMs,
+                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs })
+              }
+            );
 
             if (!response.ok) {
               const detail = await response.text();
@@ -4245,7 +4267,7 @@ async function proposeTrades(input: {
       }
     );
   } catch (error) {
-    const reason = humanizeLlmTransportError(error, { provider, model, stepLabel: "Green Team proposal", timeoutMs: LLM_TIMEOUT_MS });
+    const reason = humanizeLlmTransportError(error, { provider, model, stepLabel: "Green Team proposal", timeoutMs: strategyLlmTimeoutMs(model, input.policy.llmReasoningEffort) });
     const failedStep: StrategyLlmStep = { ...bullStepBase, status: "failed", reason };
     recordStep(failedStep);
     throw new StrategyLlmStepFailure(reason, llmSteps, error);
@@ -4345,7 +4367,9 @@ async function proposeTrades(input: {
             "rationale",
             "tradeThesisTag",
             "confidenceScore",
-            "autonomyOverride"
+            "autonomyOverride",
+            "bracketStopLoss",
+            "bracketTakeProfit"
           ],
           properties: {
             symbol: { type: "string" },
@@ -4369,7 +4393,9 @@ async function proposeTrades(input: {
             // Bear system prompt (buildBearSystem) now instructs it to preserve the Bull's score unless it
             // is REVISING conviction, so this is restored as a required, re-emitted field.
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100 — preserve the Bull's score unless you are deliberately revising conviction; state why in the rationale if you change it." },
-            autonomyOverride: autonomyOverrideSchema
+            autonomyOverride: autonomyOverrideSchema,
+            bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
+            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." }
           }
         }
       }
@@ -4548,11 +4574,21 @@ async function proposeTrades(input: {
         }
       },
       async () => {
-        const bearResponse = await llmFetch(bearUrl, {
-          method: "POST",
-          headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
-          body: JSON.stringify(bearBody)
-        });
+        const bearSoftTimeoutMs = strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort);
+        // Reasoning-class-aware SOFT wall-clock (see Green Team above); the request is not severed at
+        // the wall — a late reply + its latency are captured for debug rather than discarded.
+        const bearResponse = await llmFetchCapturing(
+          bearUrl,
+          {
+            method: "POST",
+            headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
+            body: JSON.stringify(bearBody)
+          },
+          {
+            softTimeoutMs: bearSoftTimeoutMs,
+            onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bear", provider: bearProvider, model: bearModel, softTimeoutMs: bearSoftTimeoutMs })
+          }
+        );
 
         if (!bearResponse.ok) {
           console.warn("Bear Agent API failed, falling back to Bull proposals");
@@ -4579,7 +4615,7 @@ async function proposeTrades(input: {
       }
     );
   } catch (error) {
-    const reason = humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: LLM_TIMEOUT_MS });
+    const reason = humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort) });
     return bearUnavailable(reason, "fallback");
   }
 
@@ -4739,6 +4775,69 @@ function clampConfidence(score: number | undefined): number | undefined {
   return Math.min(100, Math.max(1, score));
 }
 
+/**
+ * A protective / stop-loss exit (a Risk-Exit sell or cover) must actually GET OUT, so it executes as a
+ * MARKET order rather than a resting limit. A non-marketable limit can miss the fill entirely in
+ * exactly the falling tape a stop is meant for — the MU incident: a Risk-Exit limit @ $991 never
+ * filled as MU slid to -8%, and the stale unfilled order then blocked every re-exit for a day. Other
+ * exits (profit-taking trims, rebalances) keep whatever order type the model chose.
+ */
+export function coerceProtectiveExitToMarket(proposal: TradeProposal): TradeProposal {
+  const isProtectiveExit = (proposal.side === "sell" || proposal.side === "cover") && proposal.tradeThesisTag === "Risk-Exit";
+  if (!isProtectiveExit) return proposal;
+  if (proposal.type !== "limit" && proposal.type !== "stop_limit") return proposal;
+  return {
+    ...proposal,
+    type: "market",
+    limitPrice: undefined,
+    stopPrice: undefined,
+    rationale: (proposal.rationale ?? "") + "\n\n[Risk] Protective Risk-Exit routed as a MARKET order so it actually fills — a resting limit can miss the exit in a fast/falling tape, and a stale unfilled exit then blocks every retry."
+  };
+}
+
+/**
+ * Record the outcome of a strategy Green/Bear LLM call for observability. Fires for EVERY call (fast
+ * or late): an `llm_call_latency` audit captures the real duration so the timeout can be tuned from
+ * data instead of a guess. When the call was slow (the tick already moved on) or errored, it ALSO
+ * captures the eventual reply we paid for — text snippet + token usage — in an `llm_late_response`
+ * audit, rather than discarding it.
+ */
+function recordLlmOutcome(
+  outcome: LlmCallOutcome,
+  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number }
+): void {
+  audit(
+    "llm_call_latency",
+    { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, softTimeoutMs: ctx.softTimeoutMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error },
+    ctx.userId
+  );
+  // Only the LATE path reads the body: there the tick bailed at the soft timeout and never touched the
+  // response, so we alone can drain it. A FAST response (success, or a non-ok like a 429 that fails
+  // over) is read by the normal flow — recording must NOT also read it or the two race on the body.
+  if (!outcome.late) return;
+  void (async () => {
+    try {
+      let textSnippet: string | undefined;
+      let usage: unknown;
+      if (outcome.response) {
+        const payload = await outcome.response.json().catch(() => undefined);
+        if (payload) {
+          const text = extractLlmText(payload);
+          textSnippet = typeof text === "string" && text ? text.slice(0, 4000) : undefined;
+          usage = extractLlmUsage(payload);
+        }
+      }
+      audit(
+        "llm_late_response",
+        { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error, textSnippet, usage },
+        ctx.userId
+      );
+    } catch (err) {
+      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
+    }
+  })();
+}
+
 function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
@@ -4751,6 +4850,11 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
       dollarAmount: proposal.dollarAmount ?? undefined,
       limitPrice: proposal.limitPrice ?? undefined,
       stopPrice: proposal.stopPrice ?? undefined,
+      // Per-trade protective bracket the LLM may now propose (schema-exposed). Carry a finite, positive
+      // price through; enrichOpeningProposal validates the SIDE (below entry for a long, above for a
+      // short) and falls back to the per-symbol default when absent or nonsensical.
+      bracketStopLoss: Number.isFinite(proposal.bracketStopLoss) && (proposal.bracketStopLoss ?? 0) > 0 ? proposal.bracketStopLoss : undefined,
+      bracketTakeProfit: Number.isFinite(proposal.bracketTakeProfit) && (proposal.bracketTakeProfit ?? 0) > 0 ? proposal.bracketTakeProfit : undefined,
       timeInForce: proposal.timeInForce ?? "gfd",
       marketHours: proposal.marketHours ?? "regular_hours",
       tradeThesisTag: proposal.tradeThesisTag ?? undefined,
@@ -4769,7 +4873,9 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
                 : {})
             }
           : undefined
-    }));
+    }))
+    // Protective Risk-Exits execute as market orders so they cannot rest unfilled (see helper above).
+    .map(coerceProtectiveExitToMarket);
 }
 
 export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
@@ -4907,7 +5013,7 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
  * and for brokers without native brackets (the synthetic scheduler-tick monitor remains the fallback
  * there). Pre-existing bracket fields on the proposal are never overwritten.
  */
-export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan): TradeProposal {
+export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan, atrStopPctBySymbol: Record<string, number> = {}): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
   const marketPrice = marketScan.quotesBySymbol[sym]?.price;
@@ -4922,10 +5028,31 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
   const dollarOrderBracketQty = next.dollarAmount != null && next.quantity == null ? Math.floor(next.dollarAmount / entryPrice) : undefined;
   const canUseWholeShareBracket = dollarOrderBracketQty == null || dollarOrderBracketQty >= 1;
   if (bracketsEnabled && brokerSupportsBrackets && canUseWholeShareBracket) {
-    const stopPct = proposal.side === "short"
+    const flatStopPct = proposal.side === "short"
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
+    // Per-symbol FALLBACK stop distance (used only when the LLM did not propose a valid per-trade
+    // stop): ATR-scaled when available, else beta-scaled, else the flat policy stop — mirroring
+    // generateProactiveRiskProposals' effectiveStopPct precedence (ATR > beta > flat) so a name gets
+    // the SAME intelligent stop on the opening bracket as on its proactive exit, never a flat 8% here
+    // and an ATR stop there.
+    const beta = marketScan.quotesBySymbol[sym]?.beta;
+    const atrPct = policy.atrStops === true ? atrStopPctBySymbol[sym] : undefined;
+    const stopPct = (typeof atrPct === "number" && atrPct > 0)
+      ? atrPct
+      : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true);
     const takePct = policy.riskRules?.takeProfitPct ?? 0;
+    // Honor a VALID LLM-proposed per-trade stop/take (must sit on the correct side of entry — below
+    // for a long, above for a short); a nonsensical one is discarded so the per-symbol fallback fills
+    // it in (a stop on the wrong side is worse than the default).
+    const llmStop = next.bracketStopLoss;
+    const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
+      (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
+    if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
+    const llmTake = next.bracketTakeProfit;
+    const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
+      (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
+    if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
