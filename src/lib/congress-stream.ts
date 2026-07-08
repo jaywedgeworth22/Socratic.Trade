@@ -18,20 +18,13 @@
 // this module is on the instrumentation import chain, which Next also bundles for the edge runtime, so
 // it must NOT statically import Node-only modules (crypto, better-sqlite3/db) — keep it fetch-only.
 
-import { CongressTradeClient, SseParser, type SseMessage } from "@jaywedgeworth22/congress-trading-shared";
-
-// Re-export for existing consumers that import SseParser from this module
-export { SseParser, type SseMessage };
 import { applyCongressEvent, type CongressEvent } from "./congress-trade-events";
 import { logApiHealth } from "./db-health";
+import { CongressTradeClient, SseParser, type SseMessage, type Subscription } from "@jaywedgeworth22/congress-trading-shared";
 
+const DEFAULT_PATH = "/api/stream";
 const MAX_BACKOFF_MS = 60_000;
 const INITIAL_BACKOFF_MS = 1_000;
-
-interface Subscription {
-  id: string;
-  token: string;
-}
 
 interface StreamState {
   started: boolean;
@@ -60,8 +53,7 @@ function baseUrl(): string {
 
 /** Build App A's stream URL with the required `?subscription=<id>` query param. */
 function streamUrl(subscriptionId: string): string {
-  const client = new CongressTradeClient({ baseUrl: baseUrl() });
-  return client.streamUrl(subscriptionId);
+  return new CongressTradeClient({ baseUrl: baseUrl() }).streamUrl(subscriptionId);
 }
 
 function envSubscriptionId(): string | undefined {
@@ -87,8 +79,7 @@ async function createSubscription(): Promise<Subscription | null> {
   const desiredSecret = (process.env.CONGRESS_STREAM_SUBSCRIPTION_TOKEN ?? "").trim();
   try {
     const client = new CongressTradeClient({ baseUrl: baseUrl() });
-    const sub = await client.createSubscription(clientId, desiredSecret.length >= 16 ? desiredSecret : undefined);
-    return { id: sub.id, token: sub.secret };
+    return await client.createSubscription(clientId, desiredSecret);
   } catch (err) {
     console.warn("[congress-stream] subscription create error:", err instanceof Error ? err.message : err);
     return null;
@@ -103,7 +94,7 @@ async function createSubscription(): Promise<Subscription | null> {
 export async function resolveSubscription(): Promise<Subscription | null> {
   const id = envSubscriptionId();
   const token = envSubscriptionToken();
-  if (id && token) return { id, token };
+  if (id && token) return { id, secret: token };
   if (state.subscription) return state.subscription;
   if (!flagOn(process.env.CONGRESS_STREAM_AUTO_SUBSCRIBE)) return null;
   const created = await createSubscription();
@@ -111,6 +102,7 @@ export async function resolveSubscription(): Promise<Subscription | null> {
   return created;
 }
 
+// ── Pure SSE frame parser (unit-tested; no network) ──────────────────────────
 /** App A's non-data control frames — recognized so they never log as "dropped unparseable". */
 const CONTROL_EVENTS = new Set(["cursor", "ping", "reconnect", "error"]);
 
@@ -176,7 +168,7 @@ export async function connectOnce(): Promise<void> {
   const res = await fetch(streamUrl(sub.id), {
     headers: {
       accept: "text/event-stream",
-      authorization: `Bearer ${sub.token}`, // App A reads the subscription secret from Bearer or ?token
+      authorization: `Bearer ${sub.secret}`, // App A reads the subscription secret from Bearer or ?token
       ...(state.lastEventId ? { "last-event-id": state.lastEventId } : {})
     },
     cache: "no-store",

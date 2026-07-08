@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "motion/react";
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 
+
 export function Card({
   title,
   action,
@@ -84,13 +85,17 @@ const CHIP_CLASS: Record<ChipTone, string | undefined> = {
 };
 
 export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
-  return (
-    <Tooltip content={title}>
-      <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
-        {children}
-      </span>
-    </Tooltip>
+  const chip = (
+    <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
+      {children}
+    </span>
   );
+  // Only pay for the Tooltip (state + effects) when there's actually a title —
+  // matches the Btn pattern above and avoids per-chip hook overhead in lists.
+  if (title) {
+    return <Tooltip content={title}>{chip}</Tooltip>;
+  }
+  return chip;
 }
 
 /** Small brokerage-confirmation tag for actions that still use the server's

@@ -322,4 +322,28 @@ describe("retrieveContextDetailed: RAG_PERSIST_CANDIDATE_POOL wiring", () => {
     expect(calls.length).toBe(1);
     expect((calls[0]![1] as any).queryHash).toBe(hashQuery("a stable query string"));
   });
+
+  it("review fix: an observability-capture throw never breaks retrieval — v1's capture block is wrapped in its own try/catch (defense in depth)", async () => {
+    process.env.RAG_PERSIST_CANDIDATE_POOL = "on";
+    mocks.embed.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    mocks.query.mockResolvedValue({
+      matches: [
+        { id: "a", score: 0.9, metadata: { text: "AAPL earnings report", userId: "local", scope: "shared" } },
+        { id: "b", score: 0.8, metadata: { text: "AAPL revenue update", userId: "local", scope: "shared" } }
+      ]
+    });
+    // Force the v1 capture block to throw: recordCandidatePool is the last call it makes, so
+    // making IT throw exercises the try/catch around the whole block.
+    mocks.audit.mockImplementation((kind: string) => {
+      if (kind === "rag_candidate_pool") throw new Error("simulated capture failure");
+    });
+
+    const { retrieveContextDetailed } = await import("../src/lib/vector-db");
+    const result = await retrieveContextDetailed("AAPL earnings", "AAPL", 2, "local");
+
+    // Retrieval succeeded and returned the full, correct chunk set despite the capture throwing.
+    expect(result.map((c) => c.id)).toEqual(["a", "b"]);
+    expect(result[0]!.text).toBe("AAPL earnings report");
+    expect(result[1]!.text).toBe("AAPL revenue update");
+  });
 });

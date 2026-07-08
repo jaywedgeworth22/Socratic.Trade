@@ -13,6 +13,7 @@ import { ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import { receivedLabel } from "@/lib/dashboard-ui";
 import { cx } from "../lib/format";
+import { Tooltip } from "../ui/primitives";
 import { DEFAULT_VISIBLE_SCAN_COLUMN_IDS, SCAN_COLUMNS } from "./columns";
 
 type SortDir = "asc" | "desc";
@@ -177,9 +178,8 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     const isVisible = visible.includes(column.id);
                     const index = visible.indexOf(column.id);
                     return (
-                      <Tooltip content={column.headerTitle}>
-                        (<div
-                          key={column.id}
+                      <div title={column.headerTitle} key={column.id}>
+                        <div
                           className={cx(
                             "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
                             !isVisible && "opacity-70"
@@ -218,8 +218,8 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                           ) : (
                             <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">hidden</span>
                           )}
-                        </div>)
-                      </Tooltip>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -241,8 +241,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                   aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
                   className={cx(c.num && "num", i === 0 && STICKY_CELL)}
                 >
-                  <Tooltip
-                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
+                  <div title={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
                     <button
                       type="button"
                       onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
@@ -255,7 +254,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                         {active && activeSort.dir === "asc" ? "▲" : "▼"}
                       </span>
                     </button>
-                  </Tooltip>
+                  </div>
                 </th>
               );
             })}
@@ -271,13 +270,12 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                 const title =
                   [own, own?.includes("Received ") ? undefined : received].filter(Boolean).join("\n") || undefined;
                 return (
-                  <Tooltip content={title}>
-                    (<td
-                      key={c.id}
-                      className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
-                      {c.render(q)}
-                    </td>)
-                  </Tooltip>
+                  <td
+                    key={c.id}
+                    title={title}
+                    className={cx("cursor-default whitespace-nowrap", c.num && "num con-num", i === 0 && cx(STICKY_CELL, STICKY_CELL_HOVER))}>
+                    {c.render(q)}
+                  </td>
                 );
               })}
             </tr>

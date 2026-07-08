@@ -76,7 +76,7 @@ interface Destination {
   desc: string;
 }
 
-const DESTINATIONS: Destination[] = [
+export const DESTINATIONS: Destination[] = [
   { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
   { href: "/console/approvals", label: "Decisions", icon: Inbox, desc: "Pending trade proposals and learned-context changes awaiting a decision." },
   { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },

@@ -310,7 +310,9 @@ export function PolicySaveBar({
   // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can
   // loosen the cage too — they must cost the typed word on brokerage accounts like any field.
   const hasLooser = diff.some((d) => d.direction === "looser") || extraEntries.some((e) => e.direction === "looser");
-  const needsTyped = reality.tone === "live" && hasLooser;
+  // Loosening a guardrail on a live account normally costs a typed word; the owner can turn that off
+  // in Settings → Advanced action confirmation (policy.requireTypedConfirmation).
+  const needsTyped = reality.tone === "live" && hasLooser && policy.requireTypedConfirmation !== false;
 
   const commit = async () => {
     setBusy(true);

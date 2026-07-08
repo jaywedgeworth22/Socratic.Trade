@@ -324,8 +324,10 @@ describe("generateProactiveRiskProposals ATR stops", () => {
     const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: true }), {}, {});
     expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
   });
-  it("ignores the ATR map entirely when atrStops is off (default)", () => {
-    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules }), {}, { TSLA: 20 });
+  it("ignores the ATR map entirely when atrStops is explicitly off", () => {
+    // atrStops now defaults ON, so exercise the OFF path explicitly: the ATR map is ignored and the
+    // flat 10% stop applies, which a -15% move breaches.
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules, atrStops: false }), {}, { TSLA: 20 });
     expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
   });
 });
