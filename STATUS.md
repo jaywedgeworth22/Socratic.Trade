@@ -15,6 +15,12 @@ Claude"), and the Gemini Red-team recommendation moved off the *preview* build
 (`gemini-3.1-pro-preview` → stable `gemini-3.5-flash`); recommendation principle documented in both
 catalog copies (console/settings/models.tsx + ui/llm-model-catalog.ts, display-only flags). See
 `docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+## 2026-07-08 — Alert Center filter pills (MONET)
+Owner-reported clipped tile headings ("DELIVERIE…") in the Alert Center. Replaced the fixed
+4-column stat-tile filter grid with a wrapping sentence-case pill row (counts inline, hover
+hints, aria-pressed + bold non-color selected cue, coarse-pointer 44px floor). Driven live at
+641px/309px container widths — no clipping, clean wrap. Closes the 55-findings AlertCenter
+aria-pressed row in passing. See `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
 
 ## 2026-07-08 — Model attribution on every decision surface (MONET)
 Every decision surface now shows which LLM model made — or FAILED to make — the decision:

@@ -131,11 +131,16 @@ export function AlertCenter({
     [rows]
   );
 
-  const filters: Array<{ id: AlertCenterFilter; label: string; count: number }> = [
-    { id: "attention", label: "Attention", count: summary.attention },
-    { id: "deliveries", label: "Deliveries", count: summary.deliveries },
-    { id: "approvals", label: "Approvals", count: summary.approvals },
-    { id: "all", label: "All", count: summary.total }
+  const filters: Array<{ id: AlertCenterFilter; label: string; count: number; hint: string }> = [
+    {
+      id: "attention",
+      label: "Attention",
+      count: summary.attention,
+      hint: "Events that likely need you: kill switch, failed runs, budget alerts, degraded providers, failed deliveries."
+    },
+    { id: "deliveries", label: "Deliveries", count: summary.deliveries, hint: "Notification deliveries that failed or were skipped." },
+    { id: "approvals", label: "Approvals", count: summary.approvals, hint: "Pending approvals, policy blocks, and withdrawn proposals." },
+    { id: "all", label: "All", count: summary.total, hint: "Every alert in the current account scope." }
   ];
 
   return (
@@ -154,23 +159,33 @@ export function AlertCenter({
           </p>
         )}
 
-        <div className="grid gap-2 sm:grid-cols-4">
-          {filters.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setFilter(item.id)}
-              className={cx(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
-                filter === item.id
-                  ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)]"
-                  : "border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] hover:border-[color:var(--con-line-strong)]"
-              )}
-            >
-              <div className="con-card-title">{item.label}</div>
-              <div className="con-num mt-1 text-[length:var(--con-fs-lg)] font-semibold">{item.count}</div>
-            </button>
-          ))}
+        {/* Wrapping pill row instead of a fixed 4-column tile grid: the uppercase tile headings
+            clipped ("DELIVERIE…") in narrow rails. Pills wrap to any width, use sentence case,
+            and signal the selected state with aria-pressed + weight, not color alone. */}
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Alert filters">
+          {filters.map((item) => {
+            const selected = filter === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setFilter(item.id)}
+                aria-pressed={selected}
+                title={item.hint}
+                className={cx(
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[length:var(--con-fs-xs)] transition-colors [@media(pointer:coarse)]:min-h-11",
+                  selected
+                    ? "border-[color:var(--con-accent)] bg-[color:var(--con-accent-soft)] font-bold text-[color:var(--con-accent)]"
+                    : "border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] font-semibold text-[color:var(--con-muted)] hover:border-[color:var(--con-line-strong)]"
+                )}
+              >
+                {item.label}
+                <span className="con-num font-semibold" aria-label={`${item.count} alerts`}>
+                  {item.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         <TextInput
