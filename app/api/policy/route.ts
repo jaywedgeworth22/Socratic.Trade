@@ -107,7 +107,16 @@ export async function PUT(request: Request) {
     policy.llmModel !== current.llmModel ||
     policy.redTeamLlmModel !== current.redTeamLlmModel ||
     policy.llmReasoningEffort !== current.llmReasoningEffort;
-  const validationError = await validatePolicy(policy, userId, { enforceInteractiveReasoningRule: reasoningConfigChanged });
+  const validationError = await validatePolicy(policy, userId, {
+    enforceInteractiveReasoningRule: reasoningConfigChanged,
+    // Keyed-provider backstop gating mirrors the reasoning rule: validatePolicy runs against the
+    // MERGED policy, so enforcing it on every save would 400 EVERY unrelated write (notification
+    // prefs, caps, ...) for a user whose STORED model's provider key was since removed. A stored
+    // unkeyed model is already safe at run time (proposeTrades throws / the Red review fails
+    // closed); only a write that actually sets/changes that model must prove its provider is keyed.
+    enforceKeyedGreenModelRule: policy.llmModel !== current.llmModel,
+    enforceKeyedRedModelRule: policy.redTeamLlmModel !== current.redTeamLlmModel
+  });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
   return NextResponse.json(policy);
@@ -116,7 +125,11 @@ export async function PUT(request: Request) {
 async function validatePolicy(
   policy: TradingPolicy,
   userId: string,
-  options: { enforceInteractiveReasoningRule?: boolean } = {}
+  options: {
+    enforceInteractiveReasoningRule?: boolean;
+    enforceKeyedGreenModelRule?: boolean;
+    enforceKeyedRedModelRule?: boolean;
+  } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
   // bad data cannot block unrelated policy updates. Newly added custom Additional Watchlist symbols are
@@ -133,11 +146,11 @@ async function validatePolicy(
   // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
   // server-side backstop. (Mandatory "both models set" is enforced in the Settings UI and at strategy
   // runtime via fail-closed on an unconfigured model.)
-  if (typeof policy.llmModel === "string" && policy.llmModel.trim()) {
+  if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim()) {
     const provider = llmModelFamily(policy.llmModel);
     if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
   }
-  if (typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim()) {
+  if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim()) {
     const provider = llmModelFamily(policy.redTeamLlmModel);
     if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
   }
