@@ -193,6 +193,24 @@ As of 2026-07-04.
   (cache-aware, #1086-guarded), schema-valid rate, bracketStopLoss coverage. Verified with real
   DeepSeek calls against trading-live standby data. Rollout note
   `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
+- **Multi-issue troubleshooting sweep, 10 owner-reported items (MONET, branch
+  `monet/multi-issue-troubleshooting-5b55ad`) — IN PROGRESS 2026-07-08.** Owner batch:
+  market-scan mostly blank; framework-improvements card click loses context on strategy page;
+  outcomes "compare to paper/broker" -> connected-account picker; LLM usage all alpaca-paper or
+  unattributed; site-wide font-selection feature archaeology; Finnhub call-volume control;
+  Congress.Trade "no subscription configured"; Alpha Vantage 1/s spacing + general API-connection
+  errors; MU stuck exit (policy block vs open order 88f6af66... — verify PR #1036 deployed to
+  Coolify prod); shorter order number/label. STATUS 2026-07-08: all 10 diagnosed (22-agent
+  sweep, adversarially verified), 7 fixed in code + 3 review defects fixed; full gate green
+  (lint 0 err / tsc / 2946 tests / build); PR opening via land.sh. Prod actions (deploy,
+  congress env, MU fill check, VECTOR_EMBED_BATCH_DELAY_MS, AV key rotation) in
+  docs/rollouts/2026-07-08-multi-issue-troubleshoot.md.
+
+- **LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`) —
+  IN PROGRESS 2026-07-08, landing.** cache_control already present on the Anthropic transport; added
+  the missing half: cached-token extraction across provider usage shapes, discounted cost accounting
+  (0.1x reads / 1.25x Anthropic writes), and an `llm_cache_usage` audit for visibility. No migration
+  (v15 left for the single-adversary branch). llm-usage.ts + new test only.
 
 - **Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`) — IN
   PROGRESS 2026-07-08, landing.** Owner-reviewed copy fix: role-neutral grammatically-parallel model
