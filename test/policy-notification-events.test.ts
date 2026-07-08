@@ -114,6 +114,10 @@ describe("policy notification event settings", () => {
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).llmReasoningEffort).toBe("high");
 
     // But a write that CHANGES the model/effort combo to the disallowed one is still rejected.
+    // (Seed a key so the model-changing write passes the keyed-provider backstop and reaches the
+    // reasoning rule.)
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
     const stillRejected = await PUT(
       new Request("http://localhost/api/policy", {
         method: "PUT",
