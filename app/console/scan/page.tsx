@@ -15,12 +15,13 @@
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
+import type { CongressScoreVerdictRead } from "@/lib/congress-score-gate";
 import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Ago, Btn, Card, Chip, Empty } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, type ChipTone } from "../ui/primitives";
 import { useToast } from "../ui/toast";
 import { ScanTable } from "./scan-table";
 import { SmartMoneySection } from "./smart-money";
@@ -146,7 +147,7 @@ export default function ScanPage() {
           error={live.error}
           onRefresh={() => void onRefresh()}
           policyLimit={snapshot.policy.marketScanCandidateLimit}
-          congressScoreVerdict={snapshot.congressScoreVerdict}
+          congressScoreVerdict={snapshot.smartMoney?.congressScoreVerdict}
           gatingEnabled={snapshot.policy.tuning?.congressGoNoGoGating ?? false}
         />
       ) : (
@@ -170,7 +171,7 @@ function MarketScanTab({
   error: string | null;
   onRefresh: () => void;
   policyLimit?: number;
-  congressScoreVerdict?: any;
+  congressScoreVerdict?: CongressScoreVerdictRead | null;
   gatingEnabled?: boolean;
 }) {
   // No scan at all: friendly empty state that explains how to get one.
@@ -207,6 +208,49 @@ function MarketScanTab({
   const warningText =
     scan.warnings.length > 1 ? `${scan.warnings[0]} (+${scan.warnings.length - 1} more — hover for all)` : scan.warnings[0];
 
+  // Effective gating state for the label/tooltip. The policy flag alone does NOT mean the
+  // congress signal is being zeroed: only a FRESH FAIL_SIGNIFICANCE verdict actually zeroes
+  // the congress term (see congressGateMultiplier in src/lib/congress-score-gate.ts). PASS,
+  // INSUFFICIENT, and any stale verdict fail open (multiplier 1 — no change).
+  const activelyGating =
+    !!gatingEnabled &&
+    !!congressScoreVerdict &&
+    !congressScoreVerdict.stale &&
+    congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE";
+  // PASS is a clean signal (pos); FAIL_SIGNIFICANCE is a real, data-backed failure that gates
+  // (warn); INSUFFICIENT is neutral — too little data to judge — and must not read as a failure
+  // (muted). See classifyCongressVerdict in src/lib/congress-score-gate.ts.
+  const verdictTone: ChipTone = !congressScoreVerdict
+    ? "muted"
+    : congressScoreVerdict.verdict === "PASS"
+      ? "pos"
+      : congressScoreVerdict.verdict === "FAIL_SIGNIFICANCE"
+        ? "warn"
+        : "muted";
+  const gatingLabel = !gatingEnabled
+    ? {
+        text: "Off",
+        className: "text-[color:var(--con-faint)]",
+        title: "Go/no-go gating is disabled in policy — the congress signal is applied unconditionally."
+      }
+    : activelyGating
+      ? {
+          text: "Zeroing",
+          className: "font-medium text-[color:var(--con-warn)]",
+          title: "Gating is enabled and this fresh FAIL_SIGNIFICANCE verdict is currently zeroing the congress signal in this scan."
+        }
+      : congressScoreVerdict?.stale
+        ? {
+            text: "Enabled",
+            className: "font-medium text-[color:var(--con-fg)]",
+            title: "Gating is enabled, but the cached verdict is stale — the congress signal is applied (fail-open, no zeroing)."
+          }
+        : {
+            text: "Enabled",
+            className: "font-medium text-[color:var(--con-fg)]",
+            title: "Gating is enabled, but the current verdict does not zero the congress signal (only a fresh FAIL_SIGNIFICANCE gates)."
+          };
+
   return (
     <div className="flex flex-col gap-3">
       {congressScoreVerdict && (
@@ -215,7 +259,7 @@ function MarketScanTab({
             Congress Signal Validation:
           </span>
           <Chip
-            tone={congressScoreVerdict.verdict === "PASS" ? "pos" : "warn"}
+            tone={verdictTone}
             title={congressScoreVerdict.reasons.length > 0 ? congressScoreVerdict.reasons.join("\n") : "Signal passed statistical significance validation."}
           >
             {congressScoreVerdict.verdict}
@@ -225,8 +269,8 @@ function MarketScanTab({
             {congressScoreVerdict.stats.marginalICMeanIC !== undefined ? ` · marginal IC: ${(congressScoreVerdict.stats.marginalICMeanIC * 100).toFixed(2)}%` : ""}
           </span>
           <div className="flex-1" />
-          <span className="text-[color:var(--con-faint)]" title="Whether a failing verdict is currently zeroing the congress signal in this scan.">
-            Gating: {gatingEnabled ? <span className="font-medium text-[color:var(--con-fg)]">Active</span> : "Off"}
+          <span className="text-[color:var(--con-faint)]" title={gatingLabel.title}>
+            Gating: <span className={gatingLabel.className}>{gatingLabel.text}</span>
           </span>
         </div>
       )}
