@@ -37,6 +37,11 @@ describe("policy notification event settings", () => {
 
   it("rejects gpt-5.5 high reasoning for interactive strategy runs", async () => {
     const { PUT } = await import("../app/api/policy/route");
+    // Keyed-provider backstop (owner directive 2026-07-07): a chosen model's provider must have a
+    // resolvable key or the PUT 400s on THAT first — seed one so this test reaches the reasoning rule.
+    const { upsertUserApiKey } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    upsertUserApiKey(DEFAULT_REQUEST_USER_ID, "openai", "sk-test", "test fixture");
 
     const response = await PUT(
       new Request("http://localhost/api/policy", {
