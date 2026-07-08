@@ -184,6 +184,10 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`) — IN PROGRESS
+  2026-07-08, landing.** #1091's recovery applied to the uncovered inline Bear parse (silent-full-veto
+  fix); helper + 7 tests; superseded cleanly by the single-adversary inline-Bear deletion when it lands.
+
 - **LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`) — IN PROGRESS
   2026-07-08, committed, PR pending.** New operator script `scripts/benchmark-llm-models.ts`:
   every curated-catalog model benchmarked in BOTH strategy roles (Green/Bull + Red/Bear) through

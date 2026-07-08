@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`)
+PR #1091's DeepSeek bare-array fix applied to the parser it didn't cover: the inline Bear in
+strategy.ts, where a bare array (or any object missing `proposals`) silently read as a deliberate
+FULL VETO. New `parseBearSurvivors` helper: bare proposal-arrays recovered, `{proposals: []}` stays a
+real veto, everything malformed → fallbackToBull. Latent exposure (live Bear = gemini) closed until
+the single-adversary consolidation deletes the path (their deletion supersedes). See
+`docs/rollouts/2026-07-08-inline-bear-array-recovery.md`.
+
 ## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
 Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
 chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act is preserved
