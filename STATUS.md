@@ -8,7 +8,7 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `main`)
+## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `cursor/full-itemization-pass`)
 Materialized the previously-claimed ~45 CURSOR rows from the "full itemization" pass as 27
 individual discrete rows in `docs/EFFORT-LOG.md` (P0 Security 5, P1 Mechanical 9, P2 Ops 9,
 P3 Observability 4). Verified 9 already-done items; implemented 2 new fixes today (crashed-run

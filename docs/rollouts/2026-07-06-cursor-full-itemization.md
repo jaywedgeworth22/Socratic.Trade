@@ -58,6 +58,18 @@ npm test         # 283 files, 2843 tests all pass
 npm run build    # clean
 ```
 
+## 2026-07-08 review follow-up (PR #1003)
+Addressed the three Copilot review threads so the PR can merge:
+- `db-execution.ts` `markStaleRunningRuns`: the sweep now only receipts/counts rows the guarded
+  UPDATE actually transitioned (`res.changes > 0`) — a concurrent scheduler instance repairing the
+  row first no longer produces a duplicate `strategy_run_crashed` audit or inflates `count`. The
+  receipt is also account-scoped now (passes the run's `connected_account_id` to `audit`).
+- Added `test/stale-running-runs.test.ts`: focused coverage that a stale run is marked failed with
+  exactly one account-scoped receipt, a fresh run is untouched, and re-running the sweep is
+  idempotent (no double-receipt).
+- `STATUS.md`: corrected the entry's branch label from `main` to `cursor/full-itemization-pass`.
+- Touched files: `src/lib/db-execution.ts`, `test/stale-running-runs.test.ts`, `STATUS.md`, this note.
+
 ## Follow-ups (16 unstarted remaining items)
 - P0-4: Tamper-evident audit chain (M)
 - P0-5: Key-handling residuals — flip decryptValue to reject plaintext (S)
