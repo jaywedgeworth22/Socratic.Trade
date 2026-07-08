@@ -50,6 +50,22 @@ opened PR, and this fleet's PR volume already OOM-wedged (2026-07-07) and disk-f
   trading/litestream absent.
 - Production untouched throughout: `/api/health` ok, scheduler ticking.
 
+## Addendum (same night, owner-directed): preview DNS re-armed + admin host wired
+
+- **`*.jays.services` wildcard A -> box RESTORED** (contradicting the deletion above —
+  owner wants the ability to spin up temporary previews via Coolify later). Constraint
+  recorded: preview hostnames must be ONE level under `jays.services`
+  (e.g. `pr{{pr_id}}.jays.services`) — CF free Universal SSL does not cover two-level
+  names. The Preview URL Template field is **UI-only** (API PATCH rejects
+  `preview_url_template`); set it in the Coolify app UI when enabling previews.
+  Previews remain NOT enabled; a preview-scoped `DB_BOOTSTRAP=fresh` env is pre-set on
+  `socratic-trade-prod` so a future PR preview can never restore the prod DB and trade.
+- **`admin.socratictrade.com` connected to production**: `ADMIN_HOST` +
+  `AUTH_COOKIE_DOMAIN=.socratictrade.com` envs set (one-time re-login caused by cookie
+  re-scope), domain added to the app FQDNs, DNS flipped tunnel-CNAME -> proxied A.
+  Verified: `https://admin.socratictrade.com/` 307s into the /admin auth flow; apex
+  unaffected; DB restore marker intact across the applying restart (no re-restore).
+
 ## Follow-ups
 
 - CLAUDE's PR #1038 (docs: Coolify integration-only) is now doubly outdated (prod

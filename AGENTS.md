@@ -110,12 +110,17 @@ assume any are shared, and never point one worktree's process at another's files
 Owner: previews were never looked at, and several sat behind Cloudflare Access that
 agents cannot pass — work spent keeping them fresh was pure waste. The end state is
 **production only**: no `*.jays.services` preview hostnames (`trading-beta`, `claude`,
-`codex`, `antigravity`, `cursor`, `monet`, `trading` — DNS deleted, incl. the
-`*.jays.services` wildcard), no per-agent PM2 `next dev` servers (ports 4001/4100-4104 —
-stopped), no Coolify preview app (`socratic-trade-preview` — deleted). **Do not start,
-recreate, or route to any of these.** Coolify's PR-preview feature was considered and
-deliberately NOT enabled (it auto-builds every PR; build bursts OOM-wedged and
-disk-filled the 4 GB box on 2026-07-07/08) — revisit only on owner instruction. To check
+`codex`, `antigravity`, `cursor`, `monet`, `trading` — DNS records deleted), no per-agent
+PM2 `next dev` servers (ports 4001/4100-4104 — stopped and deleted from pm2), no Coolify
+preview app (`socratic-trade-preview` — deleted). **Do not start, recreate, or route to
+any of these.** Coolify's PR-preview feature was considered and deliberately NOT enabled
+(it auto-builds every PR; build bursts OOM-wedged and disk-filled the 4 GB box on
+2026-07-07/08) — revisit only on owner instruction. For that future option the plumbing
+is pre-armed (owner-directed 2026-07-08): a `*.jays.services` wildcard A record points at
+the box, preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
+names fail CF Universal SSL), the Preview URL Template is a UI-only Coolify field, and
+`socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
+never restore the production DB and trade. To check
 your work: `npm run dev` locally in your own worktree + the verify CI gate.
 `scripts/setup-agent-previews.sh` and the "Preview freshness policy" below are
 historical.
