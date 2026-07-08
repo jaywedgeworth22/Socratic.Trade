@@ -1543,11 +1543,7 @@ discrepancies that motivated these rows._
   preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
   bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
   confirms are the exact ceremony the product philosophy says to minimize.)_
-- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — Audit every
-  hardcoded settings key (scheduler leader, system state, caches) for the same shared-row RMW
-  pattern checkRegimeFlip had; per-user-scope or single-writer-guard each hit. _(why now: The P0
-  regime race was found by inspection, not by a systematic pass; multi-user correctness is a stated
-  priority and the same pattern likely exists on other keys.)_
+- **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches). PR pending.
 - **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
   2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,
   vol-targeting) return to MONET; the five empty .claude/worktrees/monet-* worktrees are
