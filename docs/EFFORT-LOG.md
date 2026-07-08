@@ -32,6 +32,7 @@ As of 2026-07-04.
 
 ## Deployed
 
+- 2026-07-07 ~23:15 CDT - **PRODUCTION socratictrade.com MIGRATED to the Coolify box (MONET, owner-directed) — DEPLOYED + VERIFIED.** `socratictrade.com` now = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`, main @ `e73c66a4`+#1039, nixpacks, auto-deploy OFF) on `91.98.44.8`; Mac pm2 `trading`+`litestream` STOPPED (saved stopped = rollback standby; do NOT restart while box runs `DB_BOOTSTRAP=live` — double-scheduler). DB moved via litestream 0.5.14 restore from the R2 replica; litestream now replicates in-container to the same path (PITR continuity). Secrets stay in Infisical (in-container CLI, `REQUIRE_SECRETS_MANAGER` enforced). Verified: edge 200/307, `/api/health` ok + scheduler ticking, restored-DB markers, container stable. **Release process changed: prod deploy = trigger Coolify deploy of `socratic-trade-prod`; `~/apps/trading-publish.sh` DEPRECATED.** Also fixed pre-existing `trading.jays.services` edge 503 (http:// FQDN vs CF SSL=full; https:// FQDN is the required scheme). Rollout: `docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 - 2026-07-06 - `trading-live` published at `1c0c20d3` on `socratictrade.com` (CLAUDE, owner-run
   `~/apps/trading-publish.sh`, PR #998). Learned-context UX: reworded the awkward/over-scoped
   empty-state copy on the Learned Context approval queue, and shipped the "browse + delete what
@@ -903,7 +904,6 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
-- **Migrate PRODUCTION socratictrade.com to the Coolify box (MONET, owner-directed 2026-07-07) - IN PROGRESS 2026-07-07 ~22:45 CDT.** Owner asked directly in-session. New Coolify app `socratic-trade-prod` (main branch, nixpacks, GitHub App source, auto-deploy OFF so prod releases stay owner-run), Infisical secrets via `scripts/coolify-prod-start.sh` self-wrapping `infisical-run.mjs` (pinned infisical CLI 0.43.98 + litestream 0.5.14 fetched to the persistent /app/data volume), DB migrated via litestream restore from the existing R2 replica with in-container `litestream replicate -exec` afterwards (PITR continuity preserved). Double-scheduler safety: `DB_BOOTSTRAP=fresh` (empty DB, no broker accounts, cannot trade) until Mac pm2 `trading`+`litestream` are stopped, then flip to `live` + repoint `socratictrade.com` CNAME(tunnel)->A 91.98.44.8 proxied. Rollback = restore CNAME + `pm2 start trading litestream`. Rollout note `docs/rollouts/2026-07-07-prod-coolify-migration.md`. (Preview-lane Coolify migration was CLAUDE-owned; this production leg is a new owner-directed effort, announced on #agent-sync.)
 - **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
   2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and
   `docs/slack-coordination.md` documented `bash scripts/cloud-setup.sh` as the Claude Code Cloud

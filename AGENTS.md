@@ -112,7 +112,7 @@ one worktree's process at another's files.
 | `~/apps/trading-antigravity` | `agent/antigravity` | **4102** | pm2 `trading-antigravity` → `next dev` | `antigravity.jays.services` | Antigravity/Gemini |
 | `~/apps/trading-cursor` | `agent/cursor` | **4103** | pm2 `trading-cursor` → `next dev` | `cursor.jays.services` | Cursor (background/agent mode, DeepSeek) |
 | `~/apps/trading-monet` | `agent/monet` | **4104** | pm2 `trading-monet` → `next dev` | `monet.jays.services` | Claude Code (Monet, cloud lane) |
-| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` | `socratictrade.com` | **production** |
+| `~/apps/trading-live` | release | **4000** | pm2 `trading` → `next start` — **STOPPED (rollback standby)** | — | **former production (until 2026-07-07)** |
 
 A Coolify-based hosting migration (self-hosted PaaS on a Hetzner CX23, 4 GB, behind
 `jays.services`) is underway for the preview lanes above. As of 2026-07-07 four lanes are
@@ -128,15 +128,25 @@ console reboot). This table remains the source of truth for the local PM2/worktr
 until the tunnel cutover is verified complete; see the latest `docs/rollouts/` note for live
 status.
 
-**Production migration (2026-07-07, owner-directed, MONET):** production
-`socratictrade.com` is moving to the same Coolify box as app `socratic-trade-prod`
-(branch `main`, auto-deploy OFF — a prod release is still a deliberate step: trigger the
-Coolify deploy, not `~/apps/trading-publish.sh`, once cutover completes). Boot path:
-`scripts/coolify-prod-start.sh` (Infisical secrets via pinned in-container CLI, litestream
-0.5.14 restore-from-R2 + continued replication, `DB_BOOTSTRAP=fresh|live` gate against
-double-scheduler trading). See `docs/rollouts/2026-07-07-prod-coolify-migration.md` for
-state; until that note records a verified cutover, the Mac pm2 `trading` lane above is
-still production.
+**PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
+`socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
+branch `main`, nixpacks, auto-deploy OFF). **A production release is a deliberate step:
+trigger a Coolify deploy of `socratic-trade-prod` — `~/apps/trading-publish.sh` is
+DEPRECATED** (it targets the stopped Mac pm2 lane). Boot path:
+`scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
+in-container CLI, one-time litestream 0.5.14 restore from the R2 replica
+(marker-guarded), then `litestream replicate -exec` (backup continuity lives in the
+container now; the Mac `litestream` pm2 app is stopped). SQLite lives on the persistent
+volume at `/app/data`. Rollback: restore the `socratictrade.com` CNAME to the tunnel
+(`6b807051-...cfargotunnel.com`, saved in the DNS record comment) + `pm2 start trading
+litestream` on the Mac. **Never start Mac pm2 `trading` while the Coolify app runs
+`DB_BOOTSTRAP=live`** — two schedulers would trade the same broker accounts.
+**Domain scheme correction:** app FQDNs in Coolify must be `https://<host>` — both
+Cloudflare zones run SSL mode "full" (edge connects origin :443; Traefik serves its
+default cert). An `http://` FQDN yields edge 503 ("no available server") — this bit the
+integration preview until 2026-07-07. The earlier "apps are served over http://" note
+described the abandoned tunnel transport. Details:
+`docs/rollouts/2026-07-07-prod-coolify-migration.md`.
 
 Bootstrap / repair the integration preview and agent previews idempotently with
 `scripts/setup-agent-previews.sh`.
