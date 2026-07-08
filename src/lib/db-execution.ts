@@ -1,6 +1,6 @@
 // db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
-import { getDb } from "./db";
+import { audit, getDb } from "./db";
 import type { StrategyRunRow } from "./types";
 
 /**
@@ -235,6 +235,54 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
     .run(new Date().toISOString(), status, summary, id, userId);
+}
+
+/**
+ * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
+ * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
+ * within STALE_THRESHOLD_MS (default 10 min) is marked failed with a receipted reason.
+ *
+ * Returns the number of repaired rows for logging/auditing.
+ */
+const STALE_RUN_THRESHOLD_MS = 10 * 60_000; // 10 min — a tick-cadence run takes ~1-2 min at most
+export function markStaleRunningRuns(now: number = Date.now()): number {
+  const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
+  const db = getDb();
+  const stale = db
+    .prepare(
+      `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
+       WHERE status = 'running' AND started_at < ?`
+    )
+    .all(cutoff) as Array<{
+      id: string;
+      user_id: string;
+      connected_account_id: string | null;
+      started_at: string;
+    }>;
+  let count = 0;
+  for (const row of stale) {
+    const res = db
+      .prepare(
+        `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
+         WHERE id = ? AND status = 'running'`
+      )
+      .run(new Date().toISOString(), row.started_at, row.id);
+    // Only receipt+count rows this sweep actually transitioned. If a concurrent scheduler
+    // instance already repaired the row between our SELECT and UPDATE, `changes === 0` — skip
+    // it so we don't emit a duplicate `strategy_run_crashed` audit or over-report `count`.
+    if (res.changes === 0) continue;
+    // `audit` is imported statically from ./db (top of file). The db → db-execution cycle is safe
+    // under ESM live bindings because audit is only called here at runtime, never at module init.
+    audit(
+      "strategy_run_crashed",
+      { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
+      row.user_id,
+      // Scope the receipt to the run's account so per-account ops queries can filter it.
+      row.connected_account_id ?? undefined
+    );
+    count++;
+  }
+  return count;
 }
 
 /**

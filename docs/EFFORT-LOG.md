@@ -1465,9 +1465,141 @@ statistics incl. the auto-apply safety prerequisites, testing), MONET ~40 (risk/
 security-hardening receipts), CODEX ~40 (console/UI), CURSOR ~45 (mechanical fixes, ops
 verifications, observability), unassigned ~15 (owner decisions incl. tuning cadence, multi-symbol
 fact schema, /old maintenance policy, doctrine store). Includes two live bugs: partial-day ADV in
-the impact model (AG) and checkRegimeFlip's non-atomic 'local'-hardcoded RMW (CURSOR)._
+the impact model (AG) and checkRegimeFlip's non-atomic 'local'-hardcoded RMW (CURSOR — FIXED via
+PR #844, per-user regime:current:${userId} keys)._
 
-### 2026-07-05 next-wave (cycle 2)
+#### CURSOR individual rows (mechanical fixes, ops verifications, observability — 27 items)
+_2026-07-06 (CURSOR). Written during the individual-item materialization pass. Previously only
+existed as a ~45-row lane-count claim in the summary above, not as discrete rows. Each row is
+tagged with priority (P0–P3), size (S/M/L), and source doc reference. Keepouts: no RAG/memory
+(CLAUDE), no risk gates (MONET), no console/UI (CODEX), no data providers (AG)._
+
+**P0 — Security hardening (5 items)**
+
+- **P0-1 — Rate-limit /api/chat and /api/scan** (M). Add new RATE_LIMITS entries for chat+scan,
+  call enforceRateLimit at the top of POST `/api/chat` and GET `/api/scan`. Limiter already
+  exists (`src/lib/rate-limit.ts`). Sources: audit-work-split G1, improvement-audit S-1.
+
+- **P0-2 — Encrypt Robinhood OAuth tokens at rest** (M). Route `setMcpOAuthTokens` persistence
+  through `encryptValue`/`decryptValue` (already module-private in `db-api-keys.ts`). Add
+  `encryptJson`/`decryptJson` helper. Preserve legacy-plaintext fallback. Sources:
+  audit-work-split G2, improvement-audit S-2.
+
+- **P0-3 — Constant-time admin-token compare + reconsider allowNonProd** (S). Replace `===` with
+  `crypto.timingSafeEqual` in `auth/admin.ts:63` + `admin/reindex-*/route.ts`. Consider
+  defaulting `allowNonProd=false` for write/admin routes. Sources: audit-work-split G3,
+  improvement-audit S-3, §11.
+
+- **P0-4 — Tamper-evident audit chain** (M). Per-row `prev_hash` chain computed inside `audit()`;
+  periodic anchor of chain head to external sink (Sentry/R2/usage-monitor); verify-chain admin
+  endpoint; GDPR deletion leaves signed tombstone. Source: composite-review H ("Receipts are the
+  control plane but the audit log is not tamper-evident").
+
+- **P0-5 — Key-handling residuals: flip decryptValue to reject plaintext** (S). `decryptValue`
+  returns any non-envelope value unchanged — plaintext keys "work" silently; one-time re-encrypt
+  migration then flip to reject non-envelope values with per-row receipt. Include resolved
+  endpoint host + keySource in `llm_step` audit events. Source: composite-review H.
+
+**P1 — Mechanical correctness fixes (9 items)**
+
+- **P1-1 — Collapse redundant listFillEvents fetch/replay in getDashboardSnapshot** (M). 9+
+  `listFillEvents` calls per dashboard request, each a 500-row SELECT + JSON.parse + FIFO
+  replay. Fetch live+paper fills once, thread parsed `FillEvent[]` arrays through all consumers
+  (getPaperPortfolioProjection, getPerformanceSummary, getThesisScorecard, etc.), backward-
+  compatible optional params. Sources: audit-work-split E1, improvement-audit §6.1.
+
+- **P1-2 — Batch proposal point-queries in dashboard feed builders** (M). buildAuditFeed +
+  buildUnifiedFeed do per-row `getProposalById` (1 SQL round-trip each). Add
+  `getProposalsByIds(ids[], userId)` with `WHERE id IN (...)`, collect distinct proposalIds
+  up front, pass Map-backed closure. Sources: audit-work-split E2, improvement-audit §6.1.
+
+- **P1-3 — Cap buildUnifiedFeed output at the source** (S). Client slices to 50 groups but
+  server returns uncapped. Sort newest-first, cap at ~60 groups in buildUnifiedFeed or
+  immediately after in dashboard.ts. Sources: audit-work-split E3, improvement-audit §6.1.
+
+- **P1-4 — Add better-sqlite3 cache_size/mmap_size pragmas** (S). Add
+  `cache_size = -20000` (20MB page cache) and `mmap_size = 268435456` (256MB) alongside
+  existing WAL/busy_timeout/synchronous pragmas in `getDb()`. Source: audit-work-split E7.
+
+- **P1-5 — Socratic case-write failure → durable retry receipt** (S). `recordSocraticDecision`
+  try/catches to `console.warn` only; on SQLITE_BUSY/disk pressure a live order exists with no
+  case. Catch→audit+sentry+durable retry row keyed by proposalId, swept at run start.
+  Sources: composite-review H, socratic-review.
+
+- **P1-6 — Crashed-run status sweep** (S). `finishStrategyRun` called only from normal/early-exit/
+  catch; a process kill leaves `status='running'` permanently. At boot + each tick, mark stale
+  running rows failed with audit receipt. Source: composite-review H.
+
+- **P1-7 — Durable due-jobs substrate for sub-day outcome capture** (M). Sub-day horizons
+  ride the in-memory 60s tick; a sleep/restart misses the window. Add `outcome_jobs` table
+  (decision/fill id, horizon, due_at, status), idempotent capture, honest 'missed' receipts.
+  Source: composite-review H.
+
+- **P1-8 — Agent-not-running receipts** (M). No in-app signal when the agent is dead across
+  ticks. Boot-time downtime receipt (lastTick→now gap), cadence-aware missed-run check,
+  notification on `autonomy_halted_on_boot`. Source: composite-review H.
+
+- **P1-9 — Money-path concurrency/property/fault-injection tests** (M). Add concurrency harness
+  racing runStrategyOnce for two accounts (assert caps/reservation), fast-check property tests
+  on sizing/policy math, fault-injecting TestBrokerGateway asserting no orphaned orders.
+  Sources: expert-design-review G, composite-review G.
+
+**P2 — Ops verifications (9 items)**
+
+- **P2-1 — Verify drawdown kill-switch wiring + restart durability** (S). Confirm HWM/start-of-day
+  equity survive restart (`risk-breaker.ts:65-93`), HWM tracks on non-active runs, add
+  regression test for breach→close_only. Source: audit-work-split G5.
+
+- **P2-2 — Verify correlation cluster gate enable path** (S). Confirm `applyCorrelationClusterGate`
+  runs pre-execution, maxAvgCorrelation drops over-correlated openings, add test. Source:
+  audit-work-split G6.
+
+- **P2-3 — Litestream restore verification** (S). Confirm restore has been exercised (not just
+  replicate); if untested, add documented restore-verification runbook note. Source:
+  audit-work-split G9a, improvement-audit §F.
+
+- **P2-4 — Account-deletion table list sync test** (S). Cross-check every user-scoped table from
+  `db-*.ts` + `db.ts migrate()` against `DELETE_TABLES_BY_USER_ID` in account-deletion.ts.
+  Source: audit-work-split G9b.
+
+- **P2-5 — Disk headroom + WAL growth monitoring** (S). Add free bytes, DB + WAL sizes,
+  Litestream last-sync age to `/api/health` and ops snapshot; threshold → degraded flag +
+  needs-attention notification. Source: composite-review H.
+
+- **P2-6 — Automated self-reporting restore drill** (M). Periodic job on production box:
+  restore to scratch, PRAGMA integrity_check, RPO measurement, one decrypt attempt of stored
+  credential, audit receipt + notification. Source: composite-review H.
+
+- **P2-7 — Mac sleep keep-awake posture + protection-gap receipts** (S). pmset/caffeinate
+  guidance in `docs/deployment.md`, tick-gap detection >~3min during market hours →
+  `audit('protection_gap', …)` + notify. Source: composite-review H.
+
+- **P2-8 — Account deletion Pinecone propagation** (S). Vector purge step in
+  confirmAndDeleteAccount (metadata filter or namespace), durable fallback row swept by
+  scheduler, extend table-list test. Source: composite-review H, socratic-review.
+
+- **P2-9 — Add .next/cache restore to Playwright CI workflow** (S). actions/cache@v4 keyed on
+  runner.os + lockfile hash + source hash, restore-keys fallback. Source: audit-work-split E8.
+
+**P3 — Observability enhancements (4 items)**
+
+- **P3-1 — Stamp prompt version + Bear-veto/diversity-collapse in Langfuse** (M). Add
+  promptVersion to generation metadata, emit Bear-veto and diversity-collapse decision points
+  as observations/tags. No-op when langfuse unconfigured. Source: audit-work-split G10,
+  improvement-audit §E.
+
+- **P3-2 — Audit trail queryable by decision fields** (M). SQLite generated columns
+  (`json_extract`) + indexes on hot fields (user/account/symbol/model); additive migration
+  with backfill. Source: composite-review G.
+
+- **P3-3 — Run-level trace tree + online eval-in-prod** (L). Run-root span in runStrategyOnce
+  nesting generations/decision events with token cost + outcome; online-eval sampler running
+  fraction of live proposals through deterministic scorers; gated behind langfuseConfigured().
+  Sources: expert-design-review G, composite-review G.
+
+- **P3-4 — Periodic broker-truth reconciliation receipt** (M). Daily market-close reconciliation
+  per account (positions/cash/lots diff), out-of-tolerance deltas → needs-attention notification;
+  wire the built-but-unwired `crossCheckRealizedPnl`. Source: composite-review H.
 _Added 2026-07-05 (CLAUDE next-wave). Sourced from a fresh cross-agent audit of the board against
 live PR/git state; see the stale-row corrections applied above in this same pass for the
 discrepancies that motivated these rows._
