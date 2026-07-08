@@ -197,6 +197,12 @@ As of 2026-07-04.
   congress env, MU fill check, VECTOR_EMBED_BATCH_DELAY_MS, AV key rotation) in
   docs/rollouts/2026-07-08-multi-issue-troubleshoot.md.
 
+- **LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`) —
+  IN PROGRESS 2026-07-08, landing.** cache_control already present on the Anthropic transport; added
+  the missing half: cached-token extraction across provider usage shapes, discounted cost accounting
+  (0.1x reads / 1.25x Anthropic writes), and an `llm_cache_usage` audit for visibility. No migration
+  (v15 left for the single-adversary branch). llm-usage.ts + new test only.
+
 - **Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`) — IN
   PROGRESS 2026-07-08, landing.** Owner-reviewed copy fix: role-neutral grammatically-parallel model
   descriptors in both catalog copies; Gemini Red rec moved off the preview build to stable

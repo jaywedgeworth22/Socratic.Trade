@@ -24,6 +24,14 @@ VECTOR_EMBED_BATCH_DELAY_MS ≤5000 in Infisical — Voyage is paid); litestream
 in-container (health "unknown" is a reporting gap); Roth IRA runs failing on Gemini 400 (separate).
 Prod actions listed in `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`. NOTE: several fixes
 in this saga were merged-but-never-deployed (auto-deploy OFF) — deploy after merge.
+## 2026-07-08 — LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`)
+Owner cache tip audited: Anthropic transport already sends `cache_control` (llm-call.ts); other
+providers auto-cache server-side. Fixed the real gap: `extractLlmUsage` now surfaces cache-read/
+creation tokens (all 4 provider shapes), `estimateLlmCostUsd` prices them at 0.1x/1.25x input
+(cost was overstated on cached calls), and `recordLlmUsage` writes an `llm_cache_usage` audit on
+cache activity — hit rates + savings queryable, zero schema migration. See
+`docs/rollouts/2026-07-08-llm-cache-observability.md`.
+
 ## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
 Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
 empirical (llm_step outcomes + llm_usage, excluding the fixed Gemini bear format incident and the
