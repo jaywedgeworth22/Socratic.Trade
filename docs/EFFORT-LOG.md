@@ -181,6 +181,25 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Single-adversary consolidation — FULL implementation (MONET, Cowork desktop; owner-directed
+  handoff from the Cowork Claude session) — CODE COMPLETE 2026-07-07, awaiting Mac-side land.**
+  Branch `monet/single-adversary-consolidation` (worktree `.claude/worktrees/monet-single-adversary`
+  in the owner's repo), built ON draft PR #1035's Stage 1a (cherry-picked cleanly onto current
+  `origin/main` — the #1014 overlap warning was a false alarm; #1035 is SUPERSEDED, close it when
+  this lands). Scope delivered: `docs/single-adversary-consolidation.md` as amended by the owner's
+  2026-07-07 revision — in-flow Bear LLM deleted (deterministicBearFilter kept), `debateProposal`
+  rewritten as the ONE post-sizing reviewer (both jobs, three-way down-only verdict incl.
+  approve-at-half with placeability hold, R7 evidence context, per-account usage attribution),
+  universal coverage of risk-adding openings w/ net-direction exit exemption + 3-wide concurrency,
+  `RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 one-time
+  seed), NO model defaults anywhere (incl. `DEFAULT_POLICY.llmModel` removed; both models mandatory
+  Settings picks, keyed-providers-only, same-model allowed w/ non-blocking hint), R1–R20
+  reliability/visibility (extractJsonPayload everywhere, fetchLlmWithRetry, strict verdict shape,
+  `decision.adversaryUnavailable` + notification flag + amber card badge, `rejected_by_red_team`
+  rows). Verified on Linux x64: tsc 0 / eslint 0 errors / 2,888 tests pass; `npm run build` runs at
+  land (Cowork sandbox cannot exceed 45s/process). NEXT: Mac-side Claude helper runs
+  `scripts/land.sh` (PR ready, `--squash --auto`). See
+  `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
 - **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
   `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
   `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row

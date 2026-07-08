@@ -8,6 +8,26 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-07 — single-adversary consolidation IMPLEMENTED, awaiting land (MONET, Cowork desktop)
+The 2026-07-01-decided, never-implemented `docs/single-adversary-consolidation.md` is now CODE, as
+amended by the owner's 2026-07-07 revision, on branch `monet/single-adversary-consolidation`
+(supersedes preservation draft **PR #1035** — its Stage 1a was cherry-picked cleanly onto current
+`origin/main`; the feared #1014 conflict was a false alarm). One adversary: the in-flow Bear LLM is
+deleted; `debateProposal` reviews EVERY risk-adding opening post-sizing (net-direction-aware exit
+exemption, 3-wide concurrency) with a down-only `approve`/`approve-at-half`/`reject` verdict and
+fail-closed-everywhere semantics (persisted `decision.adversaryUnavailable`, notification flag,
+amber approval-card badge, `rejected_by_red_team` rows). NO MODEL DEFAULTS anywhere — both models
+are mandatory explicit Settings picks (`DEFAULT_POLICY.llmModel` removed too);
+`RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 seeds from a
+live override once). Reliability: `extractJsonPayload` everywhere, strict verdict-shape validation,
+bounded `fetchLlmWithRetry` (no hidden failover). Verified on Linux x64 (CI platform):
+tsc 0 / eslint 0 errors / **2,888 tests pass**; `npm run build` is delegated to the Mac landing
+lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
+**Next action:** Mac-side Claude helper lands via `scripts/land.sh` (branch exists locally in the
+owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
+deploy, any account without explicit models fails closed with an actionable Settings message —
+owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+
 ## 2026-07-07 — as-of epoch Pinecone backfill EXECUTED (ops, MONET)
 The deferred operational gate from #1019 is cleared: `scripts/backfill-asof-epoch.ts` was run against
 the shared (default-name) Pinecone index for the operator ("local") key — dry-run, real run, then an

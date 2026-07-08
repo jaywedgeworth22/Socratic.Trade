@@ -1,12 +1,19 @@
 # Single-Adversary Consolidation — Design Spec
 
-> **Status: DESIGNED, NOT IMPLEMENTED as of 2026-07-07** — verified by code check:
-> `grep -rn "approve-at-half\|adversaryUnavailable\|extractJsonPayload\|fetchLlmWithRetry" src`
-> returns nothing, and both adversarial passes (in-flow Bear + escalated
-> `debateProposal`) are still present on `origin/main`. All §9 decisions were
-> RESOLVED 2026-07-01 and never coded. Implementation began 2026-07-07 — update
-> this banner to IMPLEMENTED only when the code lands. Consolidates a multi-turn
-> design discussion into an implementable plan.
+> **Status: IMPLEMENTED 2026-07-07** (branch `monet/single-adversary-consolidation`, MONET —
+> Stage 1a authored by the Cowork Claude session and reconciled onto current `origin/main`;
+> supersedes preservation draft PR #1035). Verified: the in-flow Bear LLM pass is deleted,
+> `debateProposal` is the single post-sizing reviewer with the three-way
+> `approve`/`approve-at-half`/`reject` verdict, `extractJsonPayload`/`fetchLlmWithRetry`/
+> `adversaryUnavailable` all exist in `src`, and the full R1–R20 reconciliation below is coded as
+> amended by the owner revision. Implementation deltas from this spec (all owner-revision-driven or
+> option-(b) choices the spec allowed): no backup-reviewer failover (R11 option b — bounded
+> same-model retry only, no hidden fallback); verdict `trigger` records `"all_openings"` (universal
+> coverage made the stakes-scaled dissent triggers moot; legacy values remain readable);
+> `tuning.deRiskExitsOnAdversaryUnavailable` is vestigial (exits are structurally exempt — §3.5 made
+> the opt-in unreachable); Red-Team rejections persist as `trade_proposals` status
+> `"rejected_by_red_team"` (R8). See
+> `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md` for the full record.
 
 > **⚠️ OWNER REVISION 2026-07-07 — supersedes the independence design below.**
 > The owner reversed the "hard independence" model. These decisions now govern and
