@@ -3,6 +3,7 @@ import {
   getActiveStrategyProfile,
   getAutoResumeOnBoot,
   getPolicy,
+  peekPolicy,
   getProposalsByIds,
   getStrategyPrompt,
   latestAuditByKind,
@@ -204,9 +205,13 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const connectedAccounts = listConnectedAccounts(userId);
+  // Read-only projection: generating a dashboard snapshot must not seed
+  // account_strategy_state. peekPolicy returns the same effective
+  // systemState/strategyAuthority getPolicy would compute on first touch,
+  // without persisting a row (getPolicy writes one for un-seeded accounts).
   const connectedAccountPolicies = Object.fromEntries(
     connectedAccounts.map((account) => {
-      const pol = getPolicy(userId, account.id);
+      const pol = peekPolicy(userId, account.id);
       return [account.id, { systemState: pol.systemState, strategyAuthority: pol.strategyAuthority }];
     })
   );

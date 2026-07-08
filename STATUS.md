@@ -8,6 +8,16 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-06 — Congress Score Eval UI Wiring (AG)
+Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
+## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `cursor/full-itemization-pass`)
+Materialized the previously-claimed ~45 CURSOR rows from the "full itemization" pass as 27
+individual discrete rows in `docs/EFFORT-LOG.md` (P0 Security 5, P1 Mechanical 9, P2 Ops 9,
+P3 Observability 4). Verified 9 already-done items; implemented 2 new fixes today (crashed-run
+stale-row sweep in `db-execution.ts`/`scheduler.ts`, `socratic_case_write_failed` audit receipt
+in `strategy.ts`). 16 items remain unstarted — see the "CURSOR individual rows" subsection in
+the effort log. Verification: lint/tsc/test/build all green. See
+`docs/rollouts/2026-07-06-cursor-full-itemization.md`.
 ## 2026-07-08 — ALL previews retired (owner decision); hosting = production only
 No more `*.jays.services` preview servers of any kind (owner never used them; some sat
 behind CF Access agents can't pass). Coolify runs exactly ONE app: `socratic-trade-prod`
