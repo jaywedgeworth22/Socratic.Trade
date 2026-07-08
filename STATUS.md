@@ -14,6 +14,13 @@ chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act
 verbatim behind `CENTER_WORDMARK_STEP: boolean = false` in
 `app/console/components/intro-canvas.tsx` — flip to `true` to restore. Full verify gate green.
 See `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
+## 2026-07-08 — LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`)
+Owner cache tip audited: Anthropic transport already sends `cache_control` (llm-call.ts); other
+providers auto-cache server-side. Fixed the real gap: `extractLlmUsage` now surfaces cache-read/
+creation tokens (all 4 provider shapes), `estimateLlmCostUsd` prices them at 0.1x/1.25x input
+(cost was overstated on cached calls), and `recordLlmUsage` writes an `llm_cache_usage` audit on
+cache activity — hit rates + savings queryable, zero schema migration. See
+`docs/rollouts/2026-07-08-llm-cache-observability.md`.
 
 ## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
 Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
