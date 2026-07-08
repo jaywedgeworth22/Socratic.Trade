@@ -24,6 +24,7 @@ import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import { redTeamFailureMeta } from "./lib/red-team";
 import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
@@ -565,13 +566,25 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
       tone: "pos"
     });
   }
-  if (proposal?.redTeamVerdict?.available) {
-    rows.push({
-      title: "Adversarial review",
-      meta: proposal.redTeamVerdict.model ?? "red team",
-      body: proposal.redTeamVerdict.reason,
-      tone: proposal.redTeamVerdict.rejected ? "neg" : "warn"
-    });
+  if (proposal?.redTeamVerdict) {
+    const verdict = proposal.redTeamVerdict;
+    if (verdict.available) {
+      rows.push({
+        title: "Adversarial review",
+        meta: verdict.model ?? "red team",
+        body: verdict.reason,
+        tone: verdict.rejected ? "neg" : "warn"
+      });
+    } else {
+      const failure = redTeamFailureMeta(verdict.failureKind);
+      rows.push({
+        title: "Adversarial review FAILED",
+        meta: [verdict.model, failure.label].filter(Boolean).join(" · ") || failure.label,
+        metaTitle: failure.title,
+        body: verdict.reason,
+        tone: "warn"
+      });
+    }
   }
   return rows.slice(0, 6);
 }

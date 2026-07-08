@@ -20,6 +20,7 @@ import {
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
 import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
+import { redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -142,6 +143,10 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
   const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
   const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
+  // FAILED review: attribute honestly — never blame a fallback model that provably never ran.
+  const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
+  const redFailureModel =
+    p.redTeamVerdict && !p.redTeamVerdict.available ? redTeamFailureModel(p.redTeamVerdict, snapshot?.policy.redTeamLlmModel) : null;
   const sizeText =
     typeof p.dollarAmount === "number"
       ? `~${fmtMoney(p.dollarAmount)}`
@@ -267,8 +272,9 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
         </div>
 
-        {/* Red team: the adversarial (bear) model + its verdict, when the debate ran. */}
-        {p.redTeamVerdict?.available && (
+        {/* Red team: the adversarial (bear) model + its verdict — including the FAILURE state,
+            so a review that could not run is never visually identical to one that never triggered. */}
+        {p.redTeamVerdict && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
@@ -277,18 +283,42 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
               >
                 <Swords size={12} /> Devil&apos;s advocate (red team)
               </div>
-              <ModelBadge modelId={redModel} title="The adversarial reviewer model that critiqued this proposal" />
+              {p.redTeamVerdict.available ? (
+                <ModelBadge modelId={redModel} title="The adversarial reviewer model that critiqued this proposal" />
+              ) : redFailureModel ? (
+                <ModelBadge modelId={redFailureModel} title="The adversarial reviewer model that failed to produce a verdict" />
+              ) : (
+                <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={redFailure.title}>
+                  no reviewer model configured
+                </span>
+              )}
             </div>
             <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">{p.redTeamVerdict.reason}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
-              <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
-              </span>
-              <Chip tone="warn" title={redTrigger.title}>
-                trigger: {redTrigger.label}
-              </Chip>
+              {p.redTeamVerdict.available ? (
+                <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
+                  {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
+                </span>
+              ) : (
+                <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>
+                  No verdict: review failed ({redFailure.label})
+                </span>
+              )}
+              {(p.redTeamVerdict.available || p.redTeamVerdict.trigger) && (
+                <Chip tone="warn" title={redTrigger.title}>
+                  trigger: {redTrigger.label}
+                </Chip>
+              )}
             </div>
           </div>
+        )}
+        {!p.redTeamVerdict && (
+          <p
+            className="cursor-default text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+            title="None of the dissent triggers (confidence, notional, live opening, override request, risk regime) applied, so no adversarial reviewer was asked. The empty state is information, not an omission."
+          >
+            No adversarial review ran for this proposal — below every dissent trigger.
+          </p>
         )}
 
         {/* Provenance + sizing receipt */}

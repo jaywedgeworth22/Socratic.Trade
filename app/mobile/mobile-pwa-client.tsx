@@ -15,6 +15,8 @@ import {
   Wifi,
   X
 } from "lucide-react";
+import { modelDisplayName } from "../console/lib/models";
+import { redTeamFailureMeta } from "../console/lib/red-team";
 
 type CommandStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 type MobileCommand = {
@@ -38,6 +40,13 @@ type PendingProposal = {
     dollarAmount?: number;
     quantity?: number;
     rationale?: string;
+    proposedByModel?: string;
+    redTeamVerdict?: {
+      rejected: boolean;
+      available: boolean;
+      model?: string;
+      failureKind?: "not_configured" | "timeout" | "provider_error" | "rate_limited" | "malformed_response";
+    };
   };
 };
 type MobileSnapshot = {
@@ -102,6 +111,22 @@ function statusTone(status: CommandStatus): string {
 
 function commandLabel(value: string): string {
   return value.replaceAll(".", " / ").replaceAll("_", " ");
+}
+
+/** Compact one-line model attribution for a proposal card: which model proposed it, and which
+ *  model reviewed it — or failed to (text-only on mobile; the console gets the logo badges). */
+function modelAttributionLine(proposal: PendingProposal["proposal"]): string | null {
+  const parts: string[] = [];
+  if (proposal.proposedByModel) parts.push(`Proposed by ${modelDisplayName(proposal.proposedByModel)}`);
+  const verdict = proposal.redTeamVerdict;
+  if (verdict?.available) {
+    const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
+    parts.push(`Red team: ${verdict.rejected ? "rejected" : "survived"}${reviewer}`);
+  } else if (verdict) {
+    const reviewer = verdict.model ? ` — ${modelDisplayName(verdict.model)}` : "";
+    parts.push(`Red team FAILED (${redTeamFailureMeta(verdict.failureKind).label})${reviewer}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 function liveApprovalText(symbol: string): string {
@@ -352,6 +377,9 @@ export function MobilePwaClient() {
                     </div>
                     <p className="text-sm font-medium">{money(proposal.estimatedNotional)}</p>
                   </div>
+                  {modelAttributionLine(proposal.proposal) && (
+                    <p className="mt-1 text-xs text-faint">{modelAttributionLine(proposal.proposal)}</p>
+                  )}
                   {proposal.proposal.rationale && (
                     <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{proposal.proposal.rationale}</p>
                   )}

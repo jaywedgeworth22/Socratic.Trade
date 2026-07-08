@@ -24,6 +24,41 @@ VECTOR_EMBED_BATCH_DELAY_MS ≤5000 in Infisical — Voyage is paid); litestream
 in-container (health "unknown" is a reporting gap); Roth IRA runs failing on Gemini 400 (separate).
 Prod actions listed in `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`. NOTE: several fixes
 in this saga were merged-but-never-deployed (auto-deploy OFF) — deploy after merge.
+## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
+Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
+empirical (llm_step outcomes + llm_usage, excluding the fixed Gemini bear format incident and the
+fixed pre-#1036 60s-timeout class): gemini-3.5-flash = Green+Red (bear 46/46 post-fix, bull 27/0);
+gpt-5.4-mini = Green+Red (22/2, 18/1); deepseek-v4-pro = Red only (bear 17/3 w/ fixed cause; no
+successful Green history); claude-sonnet-5 + gemini-3.1-pro-preview = NO recs (zero calls ever;
+Anthropic key also capped until 2026-08-01). Convention comments in both catalogs now state the
+empirical derivation + snapshot. #1078's role-neutral labels stand. See the FINAL banner in
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
+## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)
+Owner review: role-flavored descriptors ("premium Claude critique", "fast Claude review") made
+role-neutral + grammatically parallel (opus = "premium Claude reasoning", haiku = "fast low-cost
+Claude"), and the Gemini Red-team recommendation moved off the *preview* build
+(`gemini-3.1-pro-preview` → stable `gemini-3.5-flash`); recommendation principle documented in both
+catalog copies (console/settings/models.tsx + ui/llm-model-catalog.ts, display-only flags). See
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+## 2026-07-08 — Alert Center filter pills (MONET)
+Owner-reported clipped tile headings ("DELIVERIE…") in the Alert Center. Replaced the fixed
+4-column stat-tile filter grid with a wrapping sentence-case pill row (counts inline, hover
+hints, aria-pressed + bold non-color selected cue, coarse-pointer 44px floor). Driven live at
+641px/309px container widths — no clipping, clean wrap. Closes the 55-findings AlertCenter
+aria-pressed row in passing. See `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
+
+## 2026-07-08 — Model attribution on every decision surface (MONET)
+Every decision surface now shows which LLM model made — or FAILED to make — the decision:
+approval cards render the previously-invisible failed-review state (failureKind + the failed
+reviewer's ModelBadge, honest "no reviewer model configured" for not_configured) plus an
+explicit "no adversarial review ran" empty state; the decision trace badges the deciding +
+reviewer models (was raw text) incl. a failed-review card; console-home evidence rows surface
+failed reviews; mobile proposal cards get a compact text attribution line (payload already
+carried the fields). New pure helper `app/console/lib/red-team.ts` + 6 unit tests. Verified:
+tsc clean, lint 0 errors, 2895 tests + 6 new green, build clean, all three states driven live
+on a seeded dev DB (console + mobile). See
+`docs/rollouts/2026-07-08-model-attribution-ui-labels.md`. PR pending via land.sh.
 
 ## 2026-07-06 — Congress Score Eval UI Wiring (AG)
 Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.

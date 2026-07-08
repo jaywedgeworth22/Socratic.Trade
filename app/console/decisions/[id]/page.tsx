@@ -6,7 +6,9 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, BookOpen, Brain, Database, GitBranch, MessageSquare, Swords, TrendingUp } from "lucide-react";
 import type { SocraticDecisionCase, SocraticDecisionTrace, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution, StrategyRunRow } from "@/lib/types";
 import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
+import { redTeamFailureMeta } from "../../lib/red-team";
 import { Btn, Card, Chip, SignedText, TextArea } from "../../ui/primitives";
+import { ModelBadge } from "../../ui/provider-logo";
 import { SymbolButton } from "../../ui/symbol-drilldown";
 
 type LoadState =
@@ -173,10 +175,14 @@ export default function DecisionTracePage() {
         <div className="con-autonomy-card">
           <div className="con-card-title">Action</div>
           <div className="mt-1 text-[length:var(--con-fs-xl)] font-semibold">{decision.action || EM_DASH}</div>
-          <p>
-            {fmtMoney(decision.notional)}
-            {decision.model ? ` · ${decision.model}` : ""}
-          </p>
+          <p>{fmtMoney(decision.notional)}</p>
+          {decision.model ? (
+            <ModelBadge modelId={decision.model} className="mt-1 text-[length:var(--con-fs-xs)]" title="The model that made this decision" />
+          ) : (
+            <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title="Older cases predate served-model persistence; the deciding model was not recorded.">
+              deciding model not recorded
+            </p>
+          )}
         </div>
       </section>
 
@@ -203,14 +209,39 @@ export default function DecisionTracePage() {
           <TraceSection icon={<Swords size={13} />} title="Dissent">
             {decision.redTeamVerdict?.available && (
               <article className="con-evidence-card con-evidence-warn">
-                <div className="flex items-start justify-between gap-3">
-                  <strong>Red Team</strong>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <strong className="flex items-center gap-2">
+                    Red Team
+                    <ModelBadge
+                      modelId={decision.redTeamVerdict.model}
+                      className="text-[length:var(--con-fs-xs)]"
+                      title="The adversarial reviewer model that produced this verdict"
+                    />
+                  </strong>
                   <span>{redTeamTriggerLabel(decision.redTeamVerdict.trigger)}</span>
                 </div>
                 <p>{decision.redTeamVerdict.reason}</p>
               </article>
             )}
-            <EvidenceList items={decision.dissent} empty={decision.redTeamVerdict?.available ? "" : "No dissent items are attached to this case yet."} />
+            {decision.redTeamVerdict && !decision.redTeamVerdict.available && (
+              <article className="con-evidence-card con-evidence-warn">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <strong className="flex items-center gap-2">
+                    Red Team
+                    <ModelBadge
+                      modelId={decision.redTeamVerdict.model}
+                      className="text-[length:var(--con-fs-xs)]"
+                      title="The adversarial reviewer model that failed to produce a verdict"
+                    />
+                  </strong>
+                  <span title={redTeamFailureMeta(decision.redTeamVerdict.failureKind).title}>
+                    review failed ({redTeamFailureMeta(decision.redTeamVerdict.failureKind).label})
+                  </span>
+                </div>
+                <p>{decision.redTeamVerdict.reason}</p>
+              </article>
+            )}
+            <EvidenceList items={decision.dissent} empty={decision.redTeamVerdict ? "" : "No dissent items are attached to this case yet — no adversarial review was triggered."} />
           </TraceSection>
         </div>
 

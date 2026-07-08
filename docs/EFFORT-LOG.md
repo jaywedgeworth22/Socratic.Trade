@@ -197,6 +197,40 @@ As of 2026-07-04.
   congress env, MU fill check, VECTOR_EMBED_BATCH_DELAY_MS, AV key rotation) in
   docs/rollouts/2026-07-08-multi-issue-troubleshoot.md.
 
+- **Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`) — IN
+  PROGRESS 2026-07-08, landing.** Owner-reviewed copy fix: role-neutral grammatically-parallel model
+  descriptors in both catalog copies; Gemini Red rec moved off the preview build to stable
+  `gemini-3.5-flash`; per-provider rec principle documented ($$ workhorse for Green, strongest STABLE
+  reasoner for Red, never a preview for the adversary seat). Display-only. Rollout note
+  `docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
+- **Alert Center filter redesign — clipped tile headings → wrapping pills (MONET, same session
+  worktree as the model-attribution lane, branch `monet/alert-center-pills-99138a`) — IN PROGRESS
+  2026-07-08, PR pending via land.sh.** Owner-reported (screenshot): "ATTENTION/DELIVERIES/
+  APPROVALS/ALL" tile headings clipped in the Alert Center. Root cause: fixed `sm:grid-cols-4`
+  tiles + uppercase 0.09em-tracked `con-card-title` headings can't fit a quarter-column. Redesigned
+  to a wrapping sentence-case pill row (chip idiom, counts inline, hover hints); closes the
+  55-findings "[P1][A11y] AlertCenter color-only" row in passing (aria-pressed + weight cue) + adds
+  a coarse-pointer 44px floor on these pills. Driven live at 641px and 309px container widths —
+  zero clipping, clean wrap. Rollout: `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
+
+- **Model attribution on every decision surface (MONET, session worktree
+  `~/.claude/projects/Socratic.Trade/model-attribution-ui-labels-99138a`, branch
+  `monet/model-attribution-ui-labels-99138a`) — ✅ COMPLETED 2026-07-08: PR #1076 squash-merged to
+  `main` (verify green, auto-merge).** Owner-directed: every decision shows WHICH LLM model made
+  it (or failed to make it) — small type + vendor logo (existing `ModelBadge`). Gaps closed:
+  failed-review states (`redTeamVerdict.failureKind`) were persisted but never rendered anywhere
+  (approval card + decision trace gated on `available`); decision-trace model was raw text;
+  console-home evidence dropped failed reviews; mobile had zero attribution. New pure
+  `app/console/lib/red-team.ts` (labels reuse server `describeRedTeamFailureKind`; honesty rule —
+  never blame a model that provably never ran: `not_configured` → no badge) + explicit "no
+  adversarial review ran" empty state (composite-review "render dissent honestly"). NOT badged
+  (honest): `congressScoreVerdict` (statistical, no model); Bull failures (already model-attributed
+  in the activity feed); tuning/post-mortem/outcome/revalidation artifacts (ledger-only today —
+  follow-up). Verify: tsc clean / lint 0 err / 2895 + 6 new tests / build clean / all 3 states
+  driven live (console + mobile, seeded dev DB). Rollout:
+  `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
+
 - **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
   PROGRESS 2026-07-07, gates green + adversarial review done, landing.** Owner-directed after prod
   forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout
@@ -1782,7 +1816,7 @@ brackets; effort S/M/L.
 - [P2][Visual] dashboard-client backdrop-blur vs elev-* -> MOOT: dashboard-client.tsx deleted (apply elev-* discipline to remaining app/ui data surfaces if any).
 
 ### Action - clear recommendation (Planned)
-- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons.
+- [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons. _→ DONE 2026-07-08 (MONET): folded into the owner-requested Alert Center pill redesign (clipped tile headings) — aria-pressed + bold-weight non-color cue + hover hints; see `docs/rollouts/2026-07-08-alert-center-filter-pills.md`._
 - [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers.
 - [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header.
 - [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons.
