@@ -20,6 +20,13 @@ lane were ever started it would resurrect the double-scheduler scenario on the n
 Re-enable only for a deliberate Mac rollback. Owner still owed: congress SSE env decision,
 VECTOR_EMBED_BATCH_DELAY_MS ≤5000, Alpha Vantage key rotation + tier decision, MU order
 4EED5BE7 fill confirmation. Addendum: `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`.
+## 2026-07-08 — Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`)
+PR #1091's DeepSeek bare-array fix applied to the parser it didn't cover: the inline Bear in
+strategy.ts, where a bare array (or any object missing `proposals`) silently read as a deliberate
+FULL VETO. New `parseBearSurvivors` helper: bare proposal-arrays recovered, `{proposals: []}` stays a
+real veto, everything malformed → fallbackToBull. Latent exposure (live Bear = gemini) closed until
+the single-adversary consolidation deletes the path (their deletion supersedes). See
+`docs/rollouts/2026-07-08-inline-bear-array-recovery.md`.
 
 ## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
 Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
