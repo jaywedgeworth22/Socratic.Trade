@@ -78,6 +78,7 @@ export default function SettingsPage() {
         {/* llmModel / redTeamLlmModel live on the account's policy — same
             save path (PUT /api/policy) as everything else account-scoped. */}
         <ModelsCard />
+        <AdvancedActionConfirmationCard />
       </section>
 
       {/* ── ALL ACCOUNTS ── */}
@@ -162,6 +163,55 @@ export default function SettingsPage() {
         <AccountDeletionCard />
       </section>
     </div>
+  );
+}
+
+// ── This account: typed confirmation for high-impact live actions ────────────
+
+function AdvancedActionConfirmationCard() {
+  const { snapshot, refresh } = useConsoleData();
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
+  // Default ON (undefined => required). Real money is normal, but the phrase stays available as an
+  // owner preference — this switch turns it off so approvals / replacements / loosening are one click.
+  const required = snapshot?.policy.requireTypedConfirmation !== false;
+  const setRequired = async (next: boolean) => {
+    setSaving(true);
+    try {
+      await savePolicy({ requireTypedConfirmation: next });
+      await refresh();
+      toast.push(
+        "pos",
+        next ? "Typed confirmation on" : "Typed confirmation off",
+        next
+          ? "Approving a broker order, replacing a live order, and loosening a guardrail ask you to type the phrase first."
+          : "Those are now ordinary one-click actions. Winding down (which sells) and account deletion still confirm."
+      );
+    } catch (error) {
+      toast.push("neg", "Couldn't save", error instanceof ConsoleApiError ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card title="Advanced action confirmation">
+      <Field
+        label="Type a phrase to confirm high-impact live actions"
+        hint="On: approving a broker order, replacing a live order at market, and loosening a guardrail on a live account each ask you to type a short phrase (e.g. APPROVE LIVE NVDA) first. Off: they are one click. Winding down (which SELLS) and deleting an account always keep their own typed confirmation regardless."
+      >
+        <div className="flex items-center gap-3">
+          <Toggle
+            checked={required}
+            onChange={(next) => void setRequired(next)}
+            disabled={saving}
+            label="Require typed confirmation for high-impact live actions"
+          />
+          <span className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+            {required ? "On — type to confirm" : "Off — one click"}
+          </span>
+        </div>
+      </Field>
+    </Card>
   );
 }
 

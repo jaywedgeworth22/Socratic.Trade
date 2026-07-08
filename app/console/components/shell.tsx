@@ -17,7 +17,10 @@ import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { SymbolDrawerProvider } from "../ui/symbol-drawer";
 import { ToastProvider } from "../ui/toast";
 import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
+import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
+import { ConsoleIntro } from "./intro-canvas";
+import { HeaderLogo } from "../ui/header-logo";
 import { DesktopRail, MobileTabBar } from "./nav";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
@@ -66,6 +69,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
         data-textbox-font={dataTextBoxFont}
         suppressHydrationWarning
       >
+        <ConsoleIntro />
         <div className="text-center">
           <div className="con-card-title">Socratic Trade</div>
           <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
@@ -100,6 +104,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
       data-textbox-font={dataTextBoxFont}
       suppressHydrationWarning
     >
+      <ConsoleIntro />
       {/* ToastProvider must live INSIDE .console-root: it renders the .con-toasts
           viewport as its last child, and the --con-* design tokens (colors, radii,
           shadows) are scoped to .console-root — a toast mounted outside it would
@@ -121,6 +126,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
           {/* Blocking shared-data-pool consent gate — same semantics as the
               legacy dashboard gate; renders nothing once answered. */}
           <ConsentGate />
+          {/* ⌘K / Ctrl+K command palette — from-anywhere jump to any console screen. */}
+          <CommandPalette />
         </ToastProvider>
       </SymbolDrawerProvider>
     </div>
@@ -139,10 +146,13 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
-        <span className="hidden pr-2 text-[length:var(--con-fs-md)] font-bold tracking-tight lg:block">Socratic.Trade</span>
+        <div className="hidden shrink-0 pr-2 lg:block"><HeaderLogo /></div>
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />
+        <div className="hidden md:block">
+          <CommandPaletteTrigger />
+        </div>
         <ThemeToggle theme={theme} cycle={cycleTheme} />
         <UserMenu snapshot={snapshot} />
         <div className="hidden sm:block">
