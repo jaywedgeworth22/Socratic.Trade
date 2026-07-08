@@ -250,6 +250,13 @@ Respond with a JSON object containing:
               }
             };
           }
+          // DeepSeek v4 Flash and other small/fast json_object-mode providers sometimes wrap a
+          // correct verdict object in an array (e.g. [{rejected:true,reason:"..."}] instead of
+          // {rejected:true,reason:"..."}). Extract the first element when the top-level value
+          // is a non-empty array rather than failing the whole debate as malformed.
+          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null) {
+            parsed = parsed[0];
+          }
           const verdict = validateRedTeamVerdictShape(parsed);
           if (!verdict) {
             return {
@@ -359,8 +366,21 @@ async function debateViaAnthropic(args: {
         let parsed: unknown = null;
         if (text) {
           try {
+            // First try to extract the JSON object from within any surrounding prose or markdown.
             const match = text.match(/\{[\s\S]*\}/);
-            if (match) parsed = JSON.parse(match[0]);
+            if (match) {
+              parsed = JSON.parse(match[0]);
+            } else {
+              // No {…} block found — the model may have returned a bare JSON value (array or
+              // other). Try parsing the whole text; extract the first element when it is a
+              // non-empty array (same recovery as the OpenAI path above).
+              const whole = JSON.parse(text.trim());
+              if (Array.isArray(whole) && whole.length > 0 && typeof whole[0] === "object" && whole[0] !== null) {
+                parsed = whole[0];
+              } else if (whole !== null && typeof whole === "object" && !Array.isArray(whole)) {
+                parsed = whole;
+              }
+            }
           } catch {
             parsed = null;
           }
