@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Model attribution on every decision surface (MONET)
+Every decision surface now shows which LLM model made — or FAILED to make — the decision:
+approval cards render the previously-invisible failed-review state (failureKind + the failed
+reviewer's ModelBadge, honest "no reviewer model configured" for not_configured) plus an
+explicit "no adversarial review ran" empty state; the decision trace badges the deciding +
+reviewer models (was raw text) incl. a failed-review card; console-home evidence rows surface
+failed reviews; mobile proposal cards get a compact text attribution line (payload already
+carried the fields). New pure helper `app/console/lib/red-team.ts` + 6 unit tests. Verified:
+tsc clean, lint 0 errors, 2895 tests + 6 new green, build clean, all three states driven live
+on a seeded dev DB (console + mobile). See
+`docs/rollouts/2026-07-08-model-attribution-ui-labels.md`. PR pending via land.sh.
+
 ## 2026-07-06 — Congress Score Eval UI Wiring (AG)
 Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
 ## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `cursor/full-itemization-pass`)

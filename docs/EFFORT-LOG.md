@@ -184,6 +184,23 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Model attribution on every decision surface (MONET, session worktree
+  `~/.claude/projects/Socratic.Trade/model-attribution-ui-labels-99138a`, branch
+  `monet/model-attribution-ui-labels-99138a`) — IN PROGRESS 2026-07-08, implementation done +
+  driven live, PR pending via land.sh.** Owner-directed: every decision shows WHICH LLM model made
+  it (or failed to make it) — small type + vendor logo (existing `ModelBadge`). Gaps closed:
+  failed-review states (`redTeamVerdict.failureKind`) were persisted but never rendered anywhere
+  (approval card + decision trace gated on `available`); decision-trace model was raw text;
+  console-home evidence dropped failed reviews; mobile had zero attribution. New pure
+  `app/console/lib/red-team.ts` (labels reuse server `describeRedTeamFailureKind`; honesty rule —
+  never blame a model that provably never ran: `not_configured` → no badge) + explicit "no
+  adversarial review ran" empty state (composite-review "render dissent honestly"). NOT badged
+  (honest): `congressScoreVerdict` (statistical, no model); Bull failures (already model-attributed
+  in the activity feed); tuning/post-mortem/outcome/revalidation artifacts (ledger-only today —
+  follow-up). Verify: tsc clean / lint 0 err / 2895 + 6 new tests / build clean / all 3 states
+  driven live (console + mobile, seeded dev DB). Rollout:
+  `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
+
 - **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
   PROGRESS 2026-07-07, gates green + adversarial review done, landing.** Owner-directed after prod
   forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout
