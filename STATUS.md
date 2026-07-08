@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)
+Owner review: role-flavored descriptors ("premium Claude critique", "fast Claude review") made
+role-neutral + grammatically parallel (opus = "premium Claude reasoning", haiku = "fast low-cost
+Claude"), and the Gemini Red-team recommendation moved off the *preview* build
+(`gemini-3.1-pro-preview` → stable `gemini-3.5-flash`); recommendation principle documented in both
+catalog copies (console/settings/models.tsx + ui/llm-model-catalog.ts, display-only flags). See
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
 ## 2026-07-08 — Model attribution on every decision surface (MONET)
 Every decision surface now shows which LLM model made — or FAILED to make — the decision:
 approval cards render the previously-invisible failed-review state (failureKind + the failed

@@ -33,6 +33,13 @@ interface ModelGroup {
   options: ModelOption[];
 }
 
+// Label + recommendation conventions (owner review 2026-07-08):
+// - Descriptors are ROLE-NEUTRAL noun phrases — this one catalog feeds BOTH the Green (proposer)
+//   and Red (reviewer) pickers, so no label may bake in a role (no "critique"/"review").
+// - Per provider: recommendedGreen = the stable fast/balanced $$ workhorse (the proposer runs every
+//   tick); recommendedRed = the strongest STABLE reasoner at sustainable per-proposal cost. Never
+//   recommend a *-preview build for the Red seat — an adversary on the money path needs a
+//   production-stable model (deliberately picking a preview stays possible, just unrecommended).
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
@@ -48,9 +55,9 @@ const MODEL_GROUPS: ModelGroup[] = [
     provider: "anthropic",
     label: "Anthropic (Claude)",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast Claude review · $" },
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast low-cost Claude · $" },
       { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude critique · $$$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
   },
@@ -67,8 +74,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$" }
     ]
   },
   {
