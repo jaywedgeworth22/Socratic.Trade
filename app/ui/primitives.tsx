@@ -23,7 +23,7 @@ const buttonBase =
 
 const buttonVariants: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-fg hover:brightness-110 shadow-sm",
-  danger: "bg-down text-down-fg hover:brightness-110 shadow-sm",
+  danger: "bg-neg text-neg-fg hover:brightness-110 shadow-sm",
   ghost: "border border-line bg-surface text-fg hover:bg-surface-2",
   subtle: "bg-surface-2 text-fg hover:bg-surface-3",
   accentSoft: "bg-accent/12 text-accent hover:bg-accent/20 border border-accent/20"
@@ -106,11 +106,13 @@ export function PanelHeader({
 }
 
 /* ── Chip / Badge ────────────────────────────────────────────────────────── */
-type Tone = "neutral" | "up" | "down" | "warn" | "info" | "accent";
+/* Tone vocabulary standardized on pos/neg (UI-audit finding 1.2): "up/down" collided with
+ * price-direction language, and the console system already used pos/neg. */
+type Tone = "neutral" | "pos" | "neg" | "warn" | "info" | "accent";
 const toneClasses: Record<Tone, string> = {
   neutral: "bg-surface-3 text-muted",
-  up: "bg-up/15 text-up",
-  down: "bg-down/15 text-down",
+  pos: "bg-pos/15 text-pos",
+  neg: "bg-neg/15 text-neg",
   warn: "bg-warn/15 text-warn",
   info: "bg-info/15 text-info",
   accent: "bg-accent/15 text-accent"
@@ -138,8 +140,8 @@ export function Chip({
   );
 }
 
-export function Dot({ tone = "up", pulse }: { tone?: Tone; pulse?: boolean }) {
-  const color = { up: "bg-up", down: "bg-down", warn: "bg-warn", info: "bg-info", accent: "bg-accent", neutral: "bg-faint" }[tone];
+export function Dot({ tone = "pos", pulse }: { tone?: Tone; pulse?: boolean }) {
+  const color = { pos: "bg-pos", neg: "bg-neg", warn: "bg-warn", info: "bg-info", accent: "bg-accent", neutral: "bg-faint" }[tone];
   return (
     <span className="relative flex h-2 w-2">
       {pulse && <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-70", color)} />}
@@ -198,7 +200,7 @@ export function Segmented<T extends string>({
       {options.map((opt) => {
         const active = value === opt.value;
         const activeTone =
-          opt.tone === "down" ? "bg-down/20 text-down" : opt.tone === "warn" ? "bg-warn/20 text-warn" : "bg-surface-3 text-fg";
+          opt.tone === "neg" ? "bg-neg/20 text-neg" : opt.tone === "warn" ? "bg-warn/20 text-warn" : "bg-surface-3 text-fg";
         return (
           <button
             key={opt.value}
@@ -381,7 +383,7 @@ export function StatTile({
    */
   title?: string;
 }) {
-  const valueTone = tone === "up" ? "text-up" : tone === "down" ? "text-down" : tone === "warn" ? "text-warn" : "text-fg";
+  const valueTone = tone === "pos" ? "text-pos" : tone === "neg" ? "text-neg" : tone === "warn" ? "text-warn" : "text-fg";
   return (
     <Card className="px-4 py-3" title={title}>
       <div className="flex items-center justify-between text-muted">

@@ -8,6 +8,13 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
+UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
+Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/
+--neg-fg + @theme), Tone union + maps in app/ui/primitives.tsx, price-chart cssVar reads,
+all call sites (error page + 4 admin clients + model-picker), visual-system.md. Pure
+rename: computed colors verified byte-identical in light AND dark. tsc/lint/2972 tests
+green; PR via land.sh. See `docs/rollouts/2026-07-08-tone-rename-pos-neg.md`.
 ## 2026-07-08 — PROD RELEASE rjskkyzx: production = main@4af98aaa exactly (MONET, owner-directed)
 Owner asked to get all completed work to production. Coolify deploy `rjskkyzx` of
 `socratic-trade-prod` finished + verified (deployment commit 4af98aaa = main HEAD, app
