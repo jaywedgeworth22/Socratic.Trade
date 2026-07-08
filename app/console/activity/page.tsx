@@ -13,7 +13,7 @@ import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
-import { Ago, Card, Chip, Empty, SignedText, type ChipTone } from "../ui/primitives";
+import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
 
 type Tab = "all" | "runs" | "fills" | "alerts";
@@ -353,11 +353,13 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                           <Chip tone={statusTone(p.status)}>{p.status}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
-                            <span title="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
-                              <SignedText value={p.performanceSinceProposalPct}>
-                                since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
-                              </SignedText>
-                            </span>
+                            <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
+                              <span>
+                                <SignedText value={p.performanceSinceProposalPct}>
+                                  since: {fmtPct(p.performanceSinceProposalPct, 2, true)}
+                                </SignedText>
+                              </span>
+                            </Tooltip>
                           )}
                         </div>
                         <p className="mt-1 leading-relaxed text-[color:var(--con-muted)]">{p.proposal.rationale}</p>

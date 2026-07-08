@@ -6,6 +6,7 @@
  *  per tab session; skipped for prefers-reduced-motion. Click to dismiss. */
 
 import { useEffect, useRef, useState } from "react";
+import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS } from "../ui/candle-ticker";
 
 type Cell = { nx: number; ntop: number; nh: number };
 type Geo = { x: number; bt: number; bb: number; wt: number; wb: number; bw: number; col?: string; up?: boolean };
@@ -13,6 +14,7 @@ type Model = {
   M: number;
   candleAt: (j: number, t: number, L: Layout) => Geo;
   layout: (vw: number, vh: number) => Layout;
+  LIFT: number; // when the first candle breaks off the chart and starts moving up
   END: number;
 };
 type Layout = {
@@ -41,34 +43,8 @@ function buildModel(): Model {
     return m + s * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   };
 
-  const off = document.createElement("canvas");
-  const octx = off.getContext("2d", { willReadFrequently: true })!;
-  function sampleCells(text: string, fontPx: number, tracking: number, pitch: number) {
-    const font = `700 ${fontPx}px Arial, "Helvetica Neue", sans-serif`;
-    octx.font = font;
-    const widths = [...text].map((ch) => (ch === " " ? fontPx * 0.45 : octx.measureText(ch).width));
-    const total = widths.reduce((a, b) => a + b, 0) + tracking * (text.length - 1);
-    const padX = Math.ceil(fontPx * 0.35), H = Math.ceil(fontPx * 1.5);
-    off.width = Math.ceil(total) + padX * 2; off.height = H;
-    octx.clearRect(0, 0, off.width, off.height);
-    octx.fillStyle = "#fff"; octx.textBaseline = "alphabetic"; octx.font = font;
-    let x = padX; const topY = Math.round(fontPx * 1.1);
-    for (let i = 0; i < text.length; i++) { if (text[i] !== " ") octx.fillText(text[i], x, topY); x += widths[i] + tracking; }
-    const img = octx.getImageData(0, 0, off.width, off.height).data, W = off.width;
-    let x0 = W, x1 = 0, y0 = H, y1 = 0;
-    for (let yy = 0; yy < H; yy++) for (let xx = 0; xx < W; xx++) {
-      if (img[(yy * W + xx) * 4 + 3] > 128) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; }
-    }
-    const cells: { cx: number; top: number; h: number }[] = [];
-    const half = Math.floor((pitch - 4) / 2);
-    for (let cx = x0 + 2; cx < x1; cx += pitch) {
-      const colv: number[] = [];
-      for (let yy = 0; yy < H; yy++) { let s = 0, n = 0; for (let xx = cx; xx < cx + pitch - 4 && xx < W; xx++) { s += img[(yy * W + xx) * 4 + 3]; n++; } colv.push(n ? s / n / 255 : 0); }
-      let yy = 0;
-      while (yy < H) { if (colv[yy] > 0.42) { const s = yy; while (yy < H && colv[yy] > 0.42) yy++; if (yy - s >= Math.round(fontPx * 0.03)) cells.push({ cx: cx - x0 + half, top: s - y0, h: yy - s }); } else yy++; }
-    }
-    return { cells, w: x1 - x0, h: y1 - y0 };
-  }
+  // sampleCells is the shared letter sampler from candle-ticker.ts — the single
+  // source used by both this splash and the persistent HeaderLogo.
 
   const SOC = sampleCells("SOCRATIC", 200, 10, 15), TRD = sampleCells("TRADE", 200, 10, 15);
   const gap = 200 * 0.34, blockW = Math.max(SOC.w, TRD.w), blockH = SOC.h + gap + TRD.h;
@@ -102,7 +78,7 @@ function buildModel(): Model {
     const wv = WAMP * (0.6 * Math.sin(2 * Math.PI * 1.5 * u - t * 1.6) + 0.4 * Math.sin(2 * Math.PI * 2.6 * u - t * 1.05 + 0.7));
     return Math.max(0.02, Math.min(0.98, trend + wob + wv));
   };
-  const G = ["#0e9358", "#12a565", "#18b271"], RDc = ["#c22648", "#d3365a", "#dd4076"];
+  const G = TICKER_GREENS, RDc = TICKER_REDS;
   const BL: number[] = [], FD: number[] = [], AR: number[] = [], WX2: number[] = [], WY2: number[] = [], P4s: number[] = [], P4e: number[] = [], WX4: number[] = [], WY4: number[] = [], INFRAC: number[] = [], INCOL: string[] = [];
   for (let j = 0; j < M; j++) {
     BL.push(rnd(1.2, 2.6)); FD.push(rnd(2.6, 3.3)); AR.push(BL[j] + FD[j]);
@@ -112,17 +88,20 @@ function buildModel(): Model {
     const o = chartPrice(j, BL[j]), c = chartPrice(Math.min(j + 1, M), BL[j]), mag = Math.min(1, Math.abs(c - o) / 0.12);
     INFRAC.push(0.34 + 0.6 * mag); INCOL.push((c < o ? G : RDc)[Math.min(2, Math.floor(mag * 3))]);
   }
-  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 1.6;
+  // END: fade begins right after the candles land on the header logo (T4) — the
+  // persistent HeaderLogo owns the forever-tick, so the overlay hands off at once
+  // instead of holding and double-drawing the wordmark.
+  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 0.2;
+  // LIFT: the earliest candle breakaway — the moment candles start moving up. The
+  // solid backdrop holds until here, then dissolves so the console reveals behind
+  // the rising candles.
+  const LIFT = Math.min(...BL);
 
-  // Header ticker: a small green-biased price walk of P candle "units" (color + body
-  // fraction + vertical offset), matching the approved candle-tick reference. Each header
-  // column shows one unit; the pattern marches one column left per second, so neighbouring
-  // columns differ — a lively, varied red/green ticker, never one big block of each color.
-  const P = 12, hr = mulberry32(9);
-  const hgauss = (m: number, sd: number) => { let u = 0, v = 0; while (!u) u = hr(); while (!v) v = hr(); return m + sd * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-  const hprice: number[] = [0]; for (let i = 0; i < P; i++) hprice.push(hprice[hprice.length - 1] + hgauss(0.16, 0.9));
-  const hrets = hprice.slice(1).map((v, i) => v - hprice[i]), hmx = Math.max(...hrets.map(Math.abs)) || 1;
-  const UNITS = hrets.map((r) => { const up = r >= 0, mag = Math.abs(r) / hmx; return { col: (up ? G : RDc)[Math.min(2, Math.floor(mag * 3))], frac: 0.4 + 0.45 * mag, off: up ? 0.3 : 0.62 }; });
+  // Header ticker units — the shared green-biased walk from candle-ticker.ts, so the
+  // splash's final ticker and the persistent HeaderLogo march through the identical
+  // colours. Each header column shows one unit; the pattern marches one column left
+  // per second (see headerTick), so neighbouring columns differ — never a solid block.
+  const UNITS = buildTickerUnits(), P = UNITS.length;
   const hxKey = (nx: number) => Math.round(nx * 1000);
   const uniqHx = [...new Set(HEADER.map((c) => hxKey(c.nx)))].sort((a, b) => a - b);
   const hColMap = new Map(uniqHx.map((v, i) => [v, i]));
@@ -132,7 +111,9 @@ function buildModel(): Model {
     const portrait = vh > vw;
     const stackW = Math.min(portrait ? vw * 0.9 : vw * 0.8, vh * STACK_AR * 0.62), stackH = stackW / STACK_AR;
     const cm = Math.max(18, vw * 0.03);
-    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.05, 24), 42, (vw - 2 * pad) / HEADER_AR);
+    // Fallback header box (used only until the real top-bar logo can be measured):
+    // small, top-left, matching the persistent HeaderLogo's ~18px height.
+    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.024, 16), 22, (vw - 2 * pad) / HEADER_AR);
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
       chart: { x0: cm, x1: vw - cm, midY: vh * (portrait ? 0.42 : 0.5), amp: vh * (portrait ? 0.34 : 0.4) },
@@ -186,7 +167,7 @@ function buildModel(): Model {
     if (t < T4) waveRipple(s, t, L); else headerTick(s, j, t);
     return s;
   };
-  return { M, candleAt, layout, END };
+  return { M, candleAt, layout, LIFT, END };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -199,6 +180,7 @@ export function ConsoleIntro() {
   const [hidden, setHidden] = useState(introDone);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const bgRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (introDone) return;
@@ -209,7 +191,7 @@ export function ConsoleIntro() {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (sessionShown || reduce) { hide(); return; }
 
-    const canvas = canvasRef.current, wrap = wrapRef.current;
+    const canvas = canvasRef.current, wrap = wrapRef.current, bg = bgRef.current;
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) { hide(); return; }
@@ -218,7 +200,18 @@ export function ConsoleIntro() {
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let VW = 0, VH = 0, L = model.layout(1, 1), raf = 0, fading = false, done = false, fadeTimer = 0;
-    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); };
+    // The intro's final candles land on the REAL top-bar brand logo so the splash
+    // hands off seamlessly into it. We measure [data-brand-logo] (in the DOM behind
+    // this overlay) and use its viewport rect as the header box; until it exists
+    // (e.g. still loading) we fall back to the small computed top-left box.
+    let headerBox: { x: number; y: number; w: number; h: number } | null = null;
+    const measureHeader = () => {
+      const el = document.querySelector<HTMLElement>("[data-brand-logo]");
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 2 && r.height > 2) headerBox = { x: r.left, y: r.top, w: r.width, h: r.height };
+    };
+    const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); measureHeader(); };
     resize();
     window.addEventListener("resize", resize);
 
@@ -233,9 +226,15 @@ export function ConsoleIntro() {
     wrap.addEventListener("click", skip);
     window.addEventListener("keydown", onKey);
 
+    let dissolved = false;
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
       const t = (now - introStart) / 1000;
+      // Solid backdrop holds until the first candle lifts off, then dissolves so the
+      // console/page reveals behind the rising candles (the canvas stays opaque).
+      if (!dissolved && t >= model.LIFT) { dissolved = true; if (bg) bg.style.opacity = "0"; }
+      if (!headerBox) measureHeader();      // the top bar may mount after the intro starts
+      if (headerBox) L.header = headerBox;  // land the shrinking candles on the real logo box
       ctx.clearRect(0, 0, VW, VH);
       for (let j = 0; j < model.M; j++) {
         const c = model.candleAt(j, t, L); const col = c.col || "#18b271";
@@ -256,9 +255,12 @@ export function ConsoleIntro() {
     <div
       ref={wrapRef}
       aria-hidden
-      style={{ position: "fixed", inset: 0, zIndex: 200, background: "#0b1018", transition: "opacity .7s ease", cursor: "pointer" }}
+      style={{ position: "fixed", inset: 0, zIndex: 200, background: "transparent", transition: "opacity .7s ease", cursor: "pointer" }}
     >
-      <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
+      {/* Solid theme backdrop that covers the page until the candles lift off, then
+          dissolves (opacity → 0) to reveal the console behind the rising candles. */}
+      <div ref={bgRef} style={{ position: "absolute", inset: 0, background: "var(--con-bg)", transition: "opacity .9s ease" }} />
+      <canvas ref={canvasRef} style={{ position: "relative", display: "block", width: "100%", height: "100%" }} />
     </div>
   );
 }

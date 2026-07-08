@@ -16,6 +16,12 @@ import type {
 
 export interface NotifyConfig {
   timeoutMs: number;
+  /** Total delivery attempts per channel (>=1). A transient failure ("fetch failed"/timeout/5xx/429)
+   *  is retried up to this many times so a single network blip never silently drops a critical alert
+   *  (block / run_failed / LLM-timeout). Non-transient failures (4xx, bad URL) are NOT retried. */
+  retryAttempts: number;
+  /** Base backoff between retries in ms (multiplied by the attempt number). 0 disables the wait. */
+  retryDelayMs: number;
   push: { provider: "ntfy" | "pushover"; ntfyServer: string; pushoverToken: string };
   email: { provider: "resend"; resendKey: string; from: string };
   sms: { twilioSid: string; twilioToken: string; twilioFrom: string };
@@ -25,8 +31,12 @@ export interface NotifyConfig {
 export function loadNotifyConfig(): NotifyConfig {
   const provider = process.env.NOTIFY_PUSH_PROVIDER === "pushover" ? "pushover" : "ntfy";
   const timeoutMs = Number(process.env.NOTIFY_TIMEOUT_MS ?? 5000);
+  const retryAttempts = Number(process.env.NOTIFY_RETRY_ATTEMPTS ?? 3);
+  const retryDelayMs = Number(process.env.NOTIFY_RETRY_DELAY_MS ?? 400);
   return {
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000,
+    retryAttempts: Number.isFinite(retryAttempts) && retryAttempts >= 1 ? Math.floor(retryAttempts) : 3,
+    retryDelayMs: Number.isFinite(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 400,
     push: {
       provider,
       ntfyServer: process.env.NOTIFY_NTFY_SERVER ?? "https://ntfy.sh",
@@ -54,6 +64,16 @@ interface ChannelDef {
 
 function abortSignal(ms: number): AbortSignal | undefined {
   return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(ms) : undefined;
+}
+
+/** Delivery failures worth retrying: transient network/timeout errors and 5xx/429 upstreams. A 4xx
+ *  (bad target, auth) or a malformed-URL throw is permanent — retrying it just wastes attempts. */
+function isTransientDeliveryError(message: string): boolean {
+  return /fetch failed|timed? ?out|timeout|abort|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network|socket|HTTP 429|HTTP 5\d\d/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
 async function postOrThrow(fetchImpl: typeof fetch, url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -223,14 +243,33 @@ export async function notify(
       results.push({ channel: id, ok: false, skipped: "no_target" });
       continue;
     }
-    try {
-      await channel.send(target, msg, { cfg, fetchImpl, timeoutMs: cfg.timeoutMs });
+    // Deliver with bounded retry: a transient blip (the ~7% "fetch failed"/timeout to ntfy/resend seen
+    // in prod) must not silently drop a critical alert. Permanent failures (4xx/bad target) fail fast.
+    const attempts = Math.max(1, cfg.retryAttempts);
+    let lastError = "";
+    let delivered = false;
+    let usedAttempts = 0;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      usedAttempts = attempt;
+      try {
+        await channel.send(target, msg, { cfg, fetchImpl, timeoutMs: cfg.timeoutMs });
+        delivered = true;
+        break;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        if (attempt < attempts && isTransientDeliveryError(lastError)) {
+          await sleep(cfg.retryDelayMs * attempt);
+          continue;
+        }
+        break;
+      }
+    }
+    if (delivered) {
       results.push({ channel: id, ok: true });
-      audit("notify.sent", { userId, channel: id, kind: msg.kind ?? "alert" }, userId);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      results.push({ channel: id, ok: false, error });
-      audit("notify.error", { userId, channel: id, error }, userId);
+      audit("notify.sent", { userId, channel: id, kind: msg.kind ?? "alert", ...(usedAttempts > 1 ? { attempts: usedAttempts } : {}) }, userId);
+    } else {
+      results.push({ channel: id, ok: false, error: lastError });
+      audit("notify.error", { userId, channel: id, error: lastError, attempts: usedAttempts }, userId);
     }
   }
   return results;

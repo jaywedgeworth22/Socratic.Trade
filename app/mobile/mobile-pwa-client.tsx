@@ -58,6 +58,7 @@ type MobileSnapshot = {
     maxOrderNotional?: number;
     maxDailyNotional?: number;
     maxDailyOrders?: number;
+    requireTypedConfirmation?: boolean;
   };
   marketSession?: { label?: string; isOpen?: boolean };
   scheduler?: { lastRunAt: string | null; nextRunAt: string | null };
@@ -334,9 +335,12 @@ export function MobilePwaClient() {
           ) : (
             pendingProposals.map((proposal) => {
               const live = proposal.executionMode === "broker/live";
+              // Owner preference: with typed confirmation off, a live approval is one-click (the server
+              // honors the same flag via executeProposal). Mirrors console approval-card.tsx.
+              const willPromptTyped = live && snapshot?.policy.requireTypedConfirmation !== false;
               const typedText = liveTextByProposal[proposal.id] ?? "";
               const expectedLiveText = liveApprovalText(proposal.proposal.symbol);
-              const livePhraseMatches = !live || typedText.trim().toUpperCase() === expectedLiveText;
+              const livePhraseMatches = !willPromptTyped || typedText.trim().toUpperCase() === expectedLiveText;
               return (
                 <div key={proposal.id} className="rounded-md border border-line bg-surface p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -351,7 +355,7 @@ export function MobilePwaClient() {
                   {proposal.proposal.rationale && (
                     <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{proposal.proposal.rationale}</p>
                   )}
-                  {live && (
+                  {willPromptTyped && (
                     <div className="mt-3">
                       <label className="text-xs font-semibold uppercase tracking-wide text-faint" htmlFor={`mobile-live-${proposal.id}`}>
                         Type exactly: <span className="font-mono text-fg">{expectedLiveText}</span>
@@ -380,7 +384,7 @@ export function MobilePwaClient() {
                       onClick={() =>
                         void submitCommand("proposal.approve", {
                           proposalId: proposal.id,
-                          ...(live
+                          ...(willPromptTyped
                             ? {
                                 liveConfirmation: {
                                   proposalId: proposal.id,
