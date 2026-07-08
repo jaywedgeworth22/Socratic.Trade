@@ -1,0 +1,82 @@
+import { describe, expect, it } from "vitest";
+import { estimateLlmCostUsd, extractLlmUsage } from "../src/lib/llm-usage";
+
+// Prompt-cache accounting: extractLlmUsage must surface cache-read/creation tokens from every
+// provider's usage shape, and estimateLlmCostUsd must price cached tokens at the discounted rate
+// instead of billing the whole prompt at the full input price (which overstated cost on cached
+// calls — e.g. gpt-5.5 cached input is $0.50/M vs $5.00/M).
+
+describe("extractLlmUsage — prompt-cache fields per provider", () => {
+  it("OpenAI / Gemini-compat: prompt_tokens_details.cached_tokens", () => {
+    const usage = extractLlmUsage({
+      usage: {
+        prompt_tokens: 6000,
+        completion_tokens: 1500,
+        total_tokens: 7500,
+        prompt_tokens_details: { cached_tokens: 5000 }
+      }
+    });
+    expect(usage.promptTokens).toBe(6000);
+    expect(usage.cachedPromptTokens).toBe(5000);
+    expect(usage.cacheCreationTokens).toBeUndefined();
+  });
+
+  it("DeepSeek: prompt_cache_hit_tokens", () => {
+    const usage = extractLlmUsage({
+      usage: { prompt_tokens: 5200, completion_tokens: 300, prompt_cache_hit_tokens: 4800 }
+    });
+    expect(usage.promptTokens).toBe(5200);
+    expect(usage.cachedPromptTokens).toBe(4800);
+  });
+
+  it("Anthropic: input_tokens EXCLUDES cache tokens — promptTokens is normalized to the full prompt", () => {
+    const usage = extractLlmUsage({
+      usage: {
+        input_tokens: 800,
+        output_tokens: 400,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 1200
+      }
+    });
+    // full prompt = 800 uncached + 4000 read + 1200 written
+    expect(usage.promptTokens).toBe(6000);
+    expect(usage.cachedPromptTokens).toBe(4000);
+    expect(usage.cacheCreationTokens).toBe(1200);
+  });
+
+  it("no cache fields → unchanged legacy shape", () => {
+    const usage = extractLlmUsage({ usage: { prompt_tokens: 100, completion_tokens: 50 } });
+    expect(usage).toEqual({ promptTokens: 100, completionTokens: 50, totalTokens: 150 });
+  });
+});
+
+describe("estimateLlmCostUsd — cache-aware pricing", () => {
+  it("prices cache reads at 0.1x input instead of full rate (gpt-5.5)", () => {
+    // 6000 prompt (5000 cached) + 1500 out on gpt-5.5 ($5/$30):
+    // uncached: 6000*5/1M = $0.03 ... full-price version:
+    const fullPrice = estimateLlmCostUsd("gpt-5.5", 6000, 1500);
+    // cache-aware: (1000*5 + 5000*0.5)*1e-6 + 1500*30*1e-6
+    const cached = estimateLlmCostUsd("gpt-5.5", 6000, 1500, 5000);
+    expect(fullPrice).toBeCloseTo((6000 * 5 + 1500 * 30) / 1_000_000, 10);
+    expect(cached).toBeCloseTo((1000 * 5 + 5000 * 0.5 + 1500 * 30) / 1_000_000, 10);
+    expect(cached!).toBeLessThan(fullPrice!);
+  });
+
+  it("prices Anthropic cache creation at 1.25x input", () => {
+    // opus-4-8 ($5/$25): 6000 prompt = 800 full + 4000 read(0.1x) + 1200 creation(1.25x)
+    const cost = estimateLlmCostUsd("claude-opus-4-8", 6000, 400, 4000, 1200);
+    const expected = ((800 + 4000 * 0.1 + 1200 * 1.25) * 5 + 400 * 25) / 1_000_000;
+    expect(cost).toBeCloseTo(expected, 10);
+  });
+
+  it("clamps malformed usage (cached > prompt) — never a negative cost", () => {
+    const cost = estimateLlmCostUsd("gpt-5.5", 1000, 0, 999999);
+    // all 1000 treated as cached at 0.1x
+    expect(cost).toBeCloseTo((1000 * 0.5) / 1_000_000, 10);
+    expect(cost!).toBeGreaterThan(0);
+  });
+
+  it("back-compat: two-arg call unchanged", () => {
+    expect(estimateLlmCostUsd("gpt-5.5", 1000, 100)).toBeCloseTo((1000 * 5 + 100 * 30) / 1_000_000, 10);
+  });
+});
