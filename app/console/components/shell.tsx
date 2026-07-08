@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
+import { useConsoleFont } from "../lib/useConsoleFont";
 import { useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
 import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
@@ -60,6 +61,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const { snapshot, fetchedAt, loading, error, stream } = useConsoleData();
   const { theme, dataTheme, cycle } = useConsoleTheme();
   const { dataTextBoxFont } = useConsoleTextBoxFont();
+  const { dataConsoleFont } = useConsoleFont();
 
   if (loading) {
     return (
@@ -67,6 +69,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
         className="console-root flex min-h-dvh items-center justify-center"
         data-theme={dataTheme}
         data-textbox-font={dataTextBoxFont}
+        data-console-font={dataConsoleFont}
         suppressHydrationWarning
       >
         <ConsoleIntro />
@@ -84,6 +87,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
         className="console-root flex min-h-dvh items-center justify-center px-6"
         data-theme={dataTheme}
         data-textbox-font={dataTextBoxFont}
+        data-console-font={dataConsoleFont}
         suppressHydrationWarning
       >
         <div className="con-card max-w-md p-6 text-center">
@@ -102,6 +106,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
       className="console-root flex min-h-dvh flex-col"
       data-theme={dataTheme}
       data-textbox-font={dataTextBoxFont}
+      data-console-font={dataConsoleFont}
       suppressHydrationWarning
     >
       <ConsoleIntro />

@@ -86,12 +86,13 @@
   --con-font-serif: Georgia, "Times New Roman", serif;
   --con-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --con-control-font: var(--con-font-ui);
+  --con-body-font: var(--con-font-ui);
 
   background: var(--con-bg);
   color: var(--con-fg);
   font-size: var(--con-fs-base);
   line-height: 1.5;
-  font-family: var(--con-font-ui);
+  font-family: var(--con-body-font);
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
@@ -104,6 +105,19 @@
 }
 .console-root[data-textbox-font="mono"] {
   --con-control-font: var(--con-font-mono);
+}
+
+/* Console font: the whole console UI's font (nav, chrome, cards, copy) — kept
+   independent from --con-control-font/[data-textbox-font] above, which only
+   governs editable inputs/textareas. */
+.console-root[data-console-font="system"] {
+  --con-body-font: var(--con-font-system);
+}
+.console-root[data-console-font="serif"] {
+  --con-body-font: var(--con-font-serif);
+}
+.console-root[data-console-font="mono"] {
+  --con-body-font: var(--con-font-mono);
 }
 
 /* ── DARK (explicit choice) — keep IDENTICAL to the media-query block below ── */

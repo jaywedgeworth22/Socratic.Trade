@@ -2,6 +2,7 @@ import { audit, getInternalSetting, setInternalSetting } from "./db";
 import { DEFAULT_POLICY } from "./defaults";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
 import { normalizeSymbol } from "./money";
+import { shortOrderLabel } from "./order-labels";
 import { sendNotification } from "./notifications";
 import type { EquityOrder, TradingPolicy } from "./types";
 
@@ -66,7 +67,7 @@ export async function notifyStaleLimitOrders(input: {
     const side = String(item.order.side ?? "order").toUpperCase();
     const title = `${symbol} ${side} limit order still working`;
     const summary =
-      `${symbol} ${side} ${item.order.type} order ${item.order.id} is still open after ` +
+      `${symbol} ${side} ${item.order.type} order ${shortOrderLabel(item.order.id)} is still open after ` +
       `${item.ageMinutes} minutes (${formatQuantity(item.remainingQuantity)} remaining). ` +
       "Review the order; cancel/reprice it before replacing it with a market order.";
 

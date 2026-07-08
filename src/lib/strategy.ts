@@ -4227,7 +4227,7 @@ async function proposeTrades(input: {
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
             const payload = await response.json();
-            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, ...extractLlmUsage(payload) });
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
             if (i > 0) {
               bullServedProvider = attempt.provider;
               bullServedModel = attempt.model;
@@ -4596,7 +4596,7 @@ async function proposeTrades(input: {
         }
 
         const bearPayload = await bearResponse.json();
-        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
+        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(bearPayload) });
         const bearText = extractLlmText(bearPayload);
 
         if (!bearText) {

@@ -14,6 +14,30 @@ chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act
 verbatim behind `CENTER_WORDMARK_STEP: boolean = false` in
 `app/console/components/intro-canvas.tsx` — flip to `true` to restore. Full verify gate green.
 See `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
+## 2026-07-08 — LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`)
+New operator script `scripts/benchmark-llm-models.ts`: benchmarks every curated-catalog model in
+BOTH strategy roles (Green proposer + Red reviewer) through the app's REAL request paths
+(resolveLlmEndpoint -> buildLlmRequestBody w/ the strategy schemas+prompts -> llmFetchCapturing),
+input pack reconstructed from the real signal_snapshot/macro/portfolio data, app DB strictly
+read-only (scratch-DB isolation for credential resolution). Cache-aware (#1086-guarded) cost +
+cold/warm round split. Verified end-to-end with real DeepSeek calls against the trading-live
+standby data. See `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
+## 2026-07-08 — Multi-issue troubleshoot sweep: 10 owner-reported issues diagnosed, 7 fixed in code (MONET, `monet/multi-issue-troubleshooting-5b55ad`)
+22-agent investigation (per-issue investigator + adversarial verifier + prod scout + critic)
+then 6 implementation lanes + 2-lens diff review + fix round. Diagnosed: scan blanks (provider
+quota pile-up + Yahoo rate-limiting the new Hetzner egress IP — container-verified, IPv6 fine),
+framework-card link to wrong page, fake outcomes compare toggle, LLM usage attribution gap
+(the deferred half of #1030), font selector merged-but-unwired (#1007 dead hook), Finnhub 25-wide
+bursts, congress SSE missing env (CONGRESS_STREAM_* absent in Infisical prod), Alpha Vantage
+burst+daily-cap (+ its error text LEAKED the raw API key into health logs — scrubbed now, rotate
+the key), MU exit saga (blocking $991 limit EXPIRED 07-07; flat-5% trailingStopPct remnant fired
+market sell 4eed5be7 after hours — check it filled at the 07-08 open; 3 synthetic-stops bugs found
++ fixed: filled-at-quote misbooking, all-night re-arm/422 loop, resting-order blindness), short
+order labels. Bonus: 10-K RAG ingestion effectively stalled by free-tier throttle (lower
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000 in Infisical — Voyage is paid); litestream confirmed RUNNING
+in-container (health "unknown" is a reporting gap); Roth IRA runs failing on Gemini 400 (separate).
+Prod actions listed in `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`. NOTE: several fixes
+in this saga were merged-but-never-deployed (auto-deploy OFF) — deploy after merge.
 ## 2026-07-08 — LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`)
 Owner cache tip audited: Anthropic transport already sends `cache_control` (llm-call.ts); other
 providers auto-cache server-side. Fixed the real gap: `extractLlmUsage` now surfaces cache-read/
