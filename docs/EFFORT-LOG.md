@@ -770,6 +770,18 @@ As of 2026-07-04.
   Cloudflare Tunnel routes to `http://91.98.44.8:80`; then final URL verification. Production
   colocation reassessment pending (the wedge is evidence for the noisy-neighbor risk). See
   `docs/rollouts/2026-07-07-coolify-lane-deploys.md` (+ `2026-07-06-coolify-migration.md`).
+  **UPDATE 2026-07-08 (SIMPLIFIED):** owner reviewed and concluded the per-agent preview lanes
+  were dead weight (nobody used them; mostly-backend app = little to preview; they caused the
+  OOM wedge). **Torn down all 5 per-agent Coolify apps** (claude/codex/antigravity/cursor/monet)
+  + deleted the unused SSH deploy key; only the **integration app** (`main`) remains on the box
+  (serving at `main.jays.services`; the `trading.jays.services` rename is stuck on a
+  post-reboot Coolify build-queue hang — optional to chase). Dangling `*.jays.services` DNS for
+  the 5 lanes + a `*.coolify` wildcard are cosmetic (404 via wildcard), pending deletion.
+  **Production migration → handed to MONET** (needs Mac DB + Infisical + `pm2 stop trading`
+  access this cloud session lacks): runbook in
+  `docs/rollouts/2026-07-08-production-coolify-migration-handoff.md` — key risks: double-trading
+  (one scheduler only), irreplaceable DB (persistent volume + Litestream), and box sizing
+  (resize to ≥8 GB first; the 4 GB box wedges under build load).
 
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
