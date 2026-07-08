@@ -130,7 +130,12 @@ Hardening applied: `~/apps/trading-publish.sh` now **refuses to run** unless
 repo). Lesson: a deprecated-in-docs deploy path is not deprecated enough while it remains
 executable — parallel sessions may act on pre-migration context.
 
-## Incident: box disk-full (2026-07-08 ~05:20Z, OPEN at time of writing)
+## Incident: box disk-full (2026-07-08 ~05:20Z-05:35Z, RESOLVED)
+
+Resolution: Coolify API returned 200 (v4.1.2) at ~05:35Z after the owner got a shell on
+the box (disk freed); prod app stayed healthy throughout — the app container and Traefik
+never stopped serving. Fleet merge/deploy freeze lifted. Original report follows.
+
 
 Reported by the parallel session and confirmed: Coolify API/dashboard 500s while the
 prod app keeps serving (health ok, scheduler ticking). Likely cause: tonight's repeated
