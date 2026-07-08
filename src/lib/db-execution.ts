@@ -1,6 +1,6 @@
 // db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
-import { getDb } from "./db";
+import { audit, getDb } from "./db";
 import type { StrategyRunRow } from "./types";
 
 /**
@@ -271,9 +271,8 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     // instance already repaired the row between our SELECT and UPDATE, `changes === 0` — skip
     // it so we don't emit a duplicate `strategy_run_crashed` audit or over-report `count`.
     if (res.changes === 0) continue;
-    // Import audit only when needed (circular dependency: db-execution → db → db-execution)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { audit } = require("./db") as { audit: typeof import("./db").audit };
+    // `audit` is imported statically from ./db (top of file). The db → db-execution cycle is safe
+    // under ESM live bindings because audit is only called here at runtime, never at module init.
     audit(
       "strategy_run_crashed",
       { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
