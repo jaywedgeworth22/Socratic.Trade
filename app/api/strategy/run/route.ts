@@ -2,7 +2,7 @@ import { runStrategyOnce } from "@/lib/strategy";
 import { resolveRequestUserId } from "@/lib/request-user";
 import { getPolicy } from "@/lib/db";
 import { resolveLlmEndpoint } from "@/lib/llm-provider";
-import { LLM_REQUIRED_STRATEGY_MESSAGE } from "@/lib/llm-required";
+import { LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "@/lib/llm-required";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -14,8 +14,17 @@ export async function POST(request: Request) {
   // proposeTrades uses — not "any provider". This makes the early 412 match the deep fail-loud throw,
   // so a user whose selected strategy model's provider has no key is blocked here instead of running a
   // loop that only errors deep inside proposeTrades. `summary` keeps the client's existing error rendering.
-  if (!resolveLlmEndpoint(getPolicy(userId), userId).key) {
+  const greenEndpoint = resolveLlmEndpoint(getPolicy(userId), userId);
+  if (!greenEndpoint.key) {
     return NextResponse.json({ status: "failed", summary: LLM_REQUIRED_STRATEGY_MESSAGE, proposals: [] }, { status: 412 });
+  }
+  // NO MODEL DEFAULTS (owner directive 2026-07-07): a blank Green model resolves to "" and the deep
+  // proposeTrades backstop fails closed with the same message — pre-check here so the user gets the
+  // actionable 412 instead of a failed run. (A blank RED model does not 412: the run still produces
+  // proposals, and debateProposal fails closed per-opening → routed to human approval, which is the
+  // legible consequence the owner accepted for un-migrated policies.)
+  if (!greenEndpoint.model) {
+    return NextResponse.json({ status: "failed", summary: LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, proposals: [] }, { status: 412 });
   }
   const body = await request.json().catch(() => ({})) as { manual?: boolean } | null;
   const result = await runStrategyOnce(userId, { manual: body?.manual === true });

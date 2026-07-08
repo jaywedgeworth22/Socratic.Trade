@@ -39,7 +39,7 @@ import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYB
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
-import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
+import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -3690,6 +3690,12 @@ async function proposeTrades(input: {
   // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
   // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
   if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
+  // NO MODEL DEFAULTS (owner directive 2026-07-07): a blank Green model resolves to "" and MUST fail
+  // closed here — never send an empty-model request. Same legible-failure path as the missing key:
+  // the run summary carries the actionable message and the route pre-checks and 412s early. The Red
+  // (reviewer) model has its own fail-closed backstop inside debateProposal (not_configured), which
+  // routes every un-reviewed opening to human approval rather than aborting the whole run.
+  if (!resolvedModel) throw new LlmCredentialRequiredError(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
