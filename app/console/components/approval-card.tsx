@@ -19,7 +19,6 @@ import {
 } from "../lib/api";
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
-import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Chip, Dash, LiveTag, SignedText, TextInput } from "../ui/primitives";
@@ -142,7 +141,8 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // (the policy-derived value can be stale if the owner swapped models since proposing).
   const greenModelPersisted = p.proposedByModel?.trim() || null;
   const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
-  const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
+  // No-defaults directive: never display a made-up default model as if it served this proposal.
+  const greenModel = greenModelPersisted ?? greenModelConfigured ?? "unknown";
   // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
   // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
   // predate per-proposal model stamping on a policy whose Red model was since cleared.
