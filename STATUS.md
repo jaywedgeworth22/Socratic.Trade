@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`)
+New operator script `scripts/benchmark-llm-models.ts`: benchmarks every curated-catalog model in
+BOTH strategy roles (Green proposer + Red reviewer) through the app's REAL request paths
+(resolveLlmEndpoint -> buildLlmRequestBody w/ the strategy schemas+prompts -> llmFetchCapturing),
+input pack reconstructed from the real signal_snapshot/macro/portfolio data, app DB strictly
+read-only (scratch-DB isolation for credential resolution). Cache-aware (#1086-guarded) cost +
+cold/warm round split. Verified end-to-end with real DeepSeek calls against the trading-live
+standby data. See `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
 ## 2026-07-08 — Multi-issue troubleshoot sweep: 10 owner-reported issues diagnosed, 7 fixed in code (MONET, `monet/multi-issue-troubleshooting-5b55ad`)
 22-agent investigation (per-issue investigator + adversarial verifier + prod scout + critic)
 then 6 implementation lanes + 2-lens diff review + fix round. Diagnosed: scan blanks (provider

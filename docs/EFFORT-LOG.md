@@ -184,6 +184,15 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`) — IN PROGRESS
+  2026-07-08, committed, PR pending.** New operator script `scripts/benchmark-llm-models.ts`:
+  every curated-catalog model benchmarked in BOTH strategy roles (Green/Bull + Red/Bear) through
+  the app's REAL request paths (resolveLlmEndpoint/buildLlmRequestBody/llmFetchCapturing, real
+  strategy schemas + prompts, real signal_snapshot-derived input pack), app DB strictly read-only,
+  no broker interaction. Metrics: latency (p50/p95, cold vs cache-warm), reliability, est. cost
+  (cache-aware, #1086-guarded), schema-valid rate, bracketStopLoss coverage. Verified with real
+  DeepSeek calls against trading-live standby data. Rollout note
+  `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
 - **Multi-issue troubleshooting sweep, 10 owner-reported items (MONET, branch
   `monet/multi-issue-troubleshooting-5b55ad`) — IN PROGRESS 2026-07-08.** Owner batch:
   market-scan mostly blank; framework-improvements card click loses context on strategy page;
