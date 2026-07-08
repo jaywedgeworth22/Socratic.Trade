@@ -371,7 +371,10 @@ describe("secret scrubbing", () => {
   });
 
   it("redacts every literal occurrence of a known secret value", () => {
-    const secret = "sk_live_abc123";
+    // Deliberately NOT key-shaped: redactSecretValue matches the literal value, so any
+    // string exercises it, and a realistic-looking fixture trips gitleaks' generic-api-key
+    // rule (it flagged the previous "sk_live_"-prefixed value on PR #1087).
+    const secret = "fixture-secret-value-123";
     const text = `Thank you for using our API! Your key ${secret} has exceeded the daily limit. Key: ${secret}`;
     const scrubbed = redactSecretValue(text, secret);
     expect(scrubbed).not.toContain(secret);
