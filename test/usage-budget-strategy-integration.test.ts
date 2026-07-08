@@ -164,6 +164,9 @@ async function seedTestAccountAndPolicy(overrides: Record<string, unknown> = {})
     ...DEFAULT_POLICY,
     systemState: "active",
     llmModel: "gpt-4o",
+    // Explicit Red model (no-defaults world: it never falls back to Green, and every risk-adding
+    // opening is reviewed — the stubs answer it with an approve verdict).
+    redTeamLlmModel: "gpt-4o",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",
