@@ -184,6 +184,19 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Multi-issue troubleshooting sweep, 10 owner-reported items (MONET, branch
+  `monet/multi-issue-troubleshooting-5b55ad`) — IN PROGRESS 2026-07-08.** Owner batch:
+  market-scan mostly blank; framework-improvements card click loses context on strategy page;
+  outcomes "compare to paper/broker" -> connected-account picker; LLM usage all alpaca-paper or
+  unattributed; site-wide font-selection feature archaeology; Finnhub call-volume control;
+  Congress.Trade "no subscription configured"; Alpha Vantage 1/s spacing + general API-connection
+  errors; MU stuck exit (policy block vs open order 88f6af66... — verify PR #1036 deployed to
+  Coolify prod); shorter order number/label. STATUS 2026-07-08: all 10 diagnosed (22-agent
+  sweep, adversarially verified), 7 fixed in code + 3 review defects fixed; full gate green
+  (lint 0 err / tsc / 2946 tests / build); PR opening via land.sh. Prod actions (deploy,
+  congress env, MU fill check, VECTOR_EMBED_BATCH_DELAY_MS, AV key rotation) in
+  docs/rollouts/2026-07-08-multi-issue-troubleshoot.md.
+
 - **Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`) — IN
   PROGRESS 2026-07-07, gates green + adversarial review done, landing.** Owner-directed after prod
   forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes: (1) DeepSeek Green/Bear 60s timeout

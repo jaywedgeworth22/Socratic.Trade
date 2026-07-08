@@ -22,6 +22,7 @@ import {
   type EnrichmentContext,
   type SymbolEnrichment
 } from "../src/lib/data-providers";
+import { getServiceHealthLog } from "../src/lib/db-health";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
@@ -31,6 +32,10 @@ beforeAll(() => {
   // circuit breaker (default ON) would otherwise trip a lane mid-file (the temp health log accumulates
   // failures across tests) and skip those follow-up calls. The breaker has its own dedicated test.
   process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
+  // These tests don't exercise real provider pacing (that lives in provider-rate-limit.test.ts) —
+  // without this, Finnhub/Alpha Vantage/Yahoo calls here would inherit real-world spacing (real
+  // 400ms-1.2s waits per request) since the pacer is unaware it's under test.
+  process.env.PROVIDER_RATE_LIMIT_DISABLED = "1";
 });
 
 describe("market enrichment provider", () => {
@@ -590,6 +595,35 @@ describe("Alpha Vantage Warning Detection", () => {
     expect(fetchCount).toBe(1);
   });
 
+  // Composite review (e): Alpha Vantage's quota/error text has been observed echoing the
+  // caller's own API key (e.g. referencing the request URL). That text is stored verbatim in
+  // api_health_log and surfaced through connections-health/the ops snapshot — a real secret
+  // leak if not scrubbed before logging.
+  it("scrubs the caller's own API key out of the warning/error text before it reaches api_health_log", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    const secretKey = "SUPER_SECRET_AV_KEY_123";
+    vi.stubGlobal("fetch", async () => {
+      return new Response(JSON.stringify({
+        Note: `Thank you for using Alpha Vantage! Please visit https://www.alphavantage.co/premium/?apikey=${secretKey} for a higher rate limit.`
+      }));
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider(secretKey);
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL).toEqual({});
+
+    const rows = getServiceHealthLog("alpha-vantage", 5);
+    expect(rows.length).toBeGreaterThan(0);
+    const errorTexts = rows.map((r) => r.error_text).filter((t): t is string => typeof t === "string");
+    expect(errorTexts.length).toBeGreaterThan(0);
+    for (const text of errorTexts) {
+      expect(text).not.toContain(secretKey);
+    }
+    expect(errorTexts.some((t) => t.includes("apikey=***"))).toBe(true);
+  });
+
   describe("Fintech Studios / PowerIntell", () => {
     it("adds FintechStudiosEnrichmentProvider to cascade when key is set", async () => {
       process.env.FINTECH_STUDIOS_API_KEY = "test-key-fts";
@@ -657,6 +691,99 @@ describe("Alpha Vantage Warning Detection", () => {
       expect(res2.AAPL).toEqual({});
       expect(fetchCount).toBe(2);
     });
+  });
+});
+
+describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalFmpKey = process.env.FMP_API_KEY;
+  const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
+
+  beforeEach(() => {
+    delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+  });
+
+  afterEach(() => {
+    if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    else delete process.env.FINNHUB_API_KEY;
+    if (originalFmpKey) process.env.FMP_API_KEY = originalFmpKey;
+    else delete process.env.FMP_API_KEY;
+    if (originalAlphaVantageKey) process.env.ALPHAVANTAGE_API_KEY = originalAlphaVantageKey;
+    else delete process.env.ALPHAVANTAGE_API_KEY;
+  });
+
+  // Composite review (d): getCreds() used to be all-or-nothing — one failed handshake blanked
+  // Yahoo enrichment for EVERY symbol this run. It now retries once with a short backoff.
+  it("retries the cookie/crumb handshake once after a transient failure, instead of blanking the whole batch", async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let cookieAttempts = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "https://fc.yahoo.com") {
+        cookieAttempts++;
+        if (cookieAttempts === 1) throw new Error("network blip");
+        return new Response(null, { status: 200, headers: { "set-cookie": "A=1; Path=/" } });
+      }
+      if (url.startsWith("https://query1.finance.yahoo.com/v1/test/getcrumb")) {
+        return new Response("test-crumb", { status: 200 });
+      }
+      if (url.startsWith("https://query1.finance.yahoo.com/v10/finance/quoteSummary/")) {
+        return new Response(
+          JSON.stringify({
+            quoteSummary: {
+              result: [{ summaryDetail: { trailingPE: { raw: 31.4 } }, assetProfile: { sector: "Technology" } }]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    // Not an exact-match: unrelated describe blocks in this file may leave a provider key set
+    // (e.g. FINTECH_STUDIOS_API_KEY) depending on run order — irrelevant to what's under test
+    // here (Yahoo's own handshake retry), and any such extra provider's fetch calls are caught
+    // by CascadingEnrichmentProvider without affecting Yahoo's result.
+    expect(provider.name).toContain("yahoo-finance");
+
+    vi.useFakeTimers();
+    try {
+      const resultPromise = provider.enrich(["AAPL"]);
+      // Let the failed first attempt run, then cross the retry backoff.
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await resultPromise;
+      expect(result.AAPL?.peRatio).toBe(31.4);
+      expect(result.AAPL?.sector).toBe("Technology");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(cookieAttempts).toBe(2); // failed once, retried once, succeeded
+  });
+
+  it("still degrades to empty (never throws) when the retry also fails", async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "https://fc.yahoo.com") throw new Error("network down");
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    vi.useFakeTimers();
+    try {
+      const resultPromise = provider.enrich(["AAPL"]);
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await resultPromise;
+      expect(result.AAPL?.peRatio).toBeUndefined();
+      expect(result.AAPL?.sector).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

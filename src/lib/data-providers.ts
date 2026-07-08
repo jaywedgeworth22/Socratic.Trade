@@ -28,6 +28,7 @@ import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
+import { withProviderLimit, scrubProviderErrorText, appendErrorCause } from "./provider-rate-limit";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -367,6 +368,9 @@ async function fetchWithRetry(
     userId?: string;
     deferSuccessLog?: boolean;
     suppressHealthStatuses?: number[];
+    // This provider's own API key (if any) — scrubbed out of any errorText logged below so
+    // a leaked query-param or echoed-back value never reaches api_health_log verbatim.
+    apiKey?: string;
   } = {}
 ): Promise<Response> {
   const retries = options.retries ?? 1;
@@ -406,7 +410,7 @@ async function fetchWithRetry(
           service: options.service,
           ok: response.ok,
           latencyMs: Date.now() - start,
-          errorText: response.ok ? undefined : `HTTP ${response.status}`,
+          errorText: response.ok ? undefined : scrubProviderErrorText(`HTTP ${response.status}`, options.apiKey),
           keySource: options.keySource,
           userId: options.userId,
         });
@@ -418,11 +422,16 @@ async function fetchWithRetry(
     }
   } catch (err) {
     if (options.service) {
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      // err.cause carries the actual network-layer failure (ECONNREFUSED, DNS, etc.) that
+      // "fetch failed" alone omits — append it (truncated) before scrubbing so the health
+      // row is diagnosable without also leaking a URL-embedded API key.
+      const errorText = scrubProviderErrorText(appendErrorCause(rawMessage, err), options.apiKey);
       logApiHealth({
         service: options.service,
         ok: false,
         latencyMs: Date.now() - start,
-        errorText: err instanceof Error ? err.message : String(err),
+        errorText,
         keySource: options.keySource,
         userId: options.userId,
       });
@@ -1662,6 +1671,9 @@ interface YfCreds { cookie: string; crumb: string; expiresAt: number; }
 let yfCreds: YfCreds | null = null;
 const YF_CRUMB_TTL_MS = 55 * 60_000; // 55 min (crumbs expire ~1 hr)
 const YF_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+// A single failed cookie/crumb handshake otherwise blanks the ENTIRE Yahoo enrichment batch
+// for every symbol this run — retry once after this short backoff before giving up.
+const YF_CREDS_RETRY_BACKOFF_MS = 500;
 
 class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
   readonly name = "yahoo-finance";
@@ -1684,7 +1696,8 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
 
     let creds: YfCreds;
     try { creds = await this.getCreds(); } catch (err) {
-      logApiHealth({ service: this.name, ok: false, errorText: err instanceof Error ? err.message : String(err) });
+      const rawMessage = err instanceof Error ? err.message : String(err);
+      logApiHealth({ service: this.name, ok: false, errorText: scrubProviderErrorText(appendErrorCause(rawMessage, err)) });
       return result;
     }
 
@@ -1709,6 +1722,17 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const now = Date.now();
     if (yfCreds && yfCreds.expiresAt > now) return yfCreds;
 
+    try {
+      return await this.fetchCreds(now);
+    } catch {
+      // One retry with a short backoff — a transient network blip or momentary 429 on the
+      // handshake shouldn't blank Yahoo enrichment for every symbol this run.
+      await new Promise((resolve) => setTimeout(resolve, YF_CREDS_RETRY_BACKOFF_MS));
+      return await this.fetchCreds(Date.now());
+    }
+  }
+
+  private async fetchCreds(now: number): Promise<YfCreds> {
     const cookieRes = await fetch("https://fc.yahoo.com", {
       headers: { "user-agent": YF_UA },
       redirect: "follow"
@@ -1737,98 +1761,105 @@ class YahooFinanceEnrichmentProvider implements MarketEnrichmentProvider {
     const modules =
       "summaryDetail,defaultKeyStatistics,financialData,assetProfile,calendarEvents,institutionOwnership,majorHoldersBreakdown";
     const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=${modules}&crumb=${encodeURIComponent(creds.crumb)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const res = await fetchWithRetry(url, {
-        headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
-        cache: "no-store",
-        signal: controller.signal
-      }, { service: this.name });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
-      const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
-      if (!r) return {};
-
-      const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
-      const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
-      const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
-      const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
-      const ce = (r.calendarEvents ?? {}) as Record<string, unknown>;
-      const io = (r.institutionOwnership ?? {}) as Record<string, unknown>;
-      const mh = (r.majorHoldersBreakdown ?? {}) as Record<string, { raw?: number }>;
-
-      const rawPe = (sd.trailingPE as { raw?: number })?.raw;
-      const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
-      const rawEps = (ks.trailingEps as { raw?: number })?.raw;
-      const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
-      const rawPb = (ks.priceToBook as { raw?: number })?.raw;
-      const rawShortFloat = (ks.shortPercentOfFloat as { raw?: number })?.raw;
-      const rawBeta = (ks.beta as { raw?: number })?.raw;
-      const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
-      const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
-      const rawDebtToEquity = (fd.debtToEquity as { raw?: number })?.raw;
-      const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
-      const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
-      const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
-
-      const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
-      // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
-      const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
-      const eps = typeof rawEps === "number" ? rawEps : undefined;
-      const pbRatio = typeof rawPb === "number" && rawPb > 0 ? rawPb : undefined;
-      const shortPercentOfFloat = typeof rawShortFloat === "number" && rawShortFloat >= 0 ? Math.round(rawShortFloat * 10000) / 100 : undefined;
-      const beta = typeof rawBeta === "number" ? rawBeta : undefined;
-      const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
-      const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
-      const debtToEquity = typeof rawDebtToEquity === "number" ? rawDebtToEquity : undefined;
-      const epsGrowth = typeof rawEarningsGrowth === "number" ? rawEarningsGrowth : undefined;
-      let fcfYield: number | undefined;
-      if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
-        fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
+    // The new prod egress IP gets HTTP 429 from Yahoo on a cold/parallel burst; gate through
+    // the shared per-provider pacer (provider-rate-limit.ts) so requests stay gently paced
+    // instead of firing CONCURRENCY-wide. The AbortController/timeout is armed INSIDE the
+    // pacer callback so the 8s HTTP timeout starts counting at actual dispatch time, not
+    // when this call joins the queue — otherwise queue wait eats into the timeout.
+    const res = await withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        return await fetchWithRetry(url, {
+          headers: { "user-agent": YF_UA, "Cookie": creds.cookie, "accept": "application/json" },
+          cache: "no-store",
+          signal: controller.signal
+        }, { service: this.name });
+      } finally {
+        clearTimeout(timeout);
       }
-      const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
-      const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json() as { quoteSummary?: { result?: Array<Record<string, unknown>> } };
+    const r = json?.quoteSummary?.result?.[0] as Record<string, unknown> | undefined;
+    if (!r) return {};
 
-      // Next-earnings signal: calendarEvents.earnings.earningsDate is an array of {raw:<unix seconds>}
-      // ranges (sometimes a single point, sometimes a lo/hi window). Take the EARLIEST future date
-      // and convert to whole calendar days out. Undefined when there is no future date — never 0/guess.
-      const daysToEarnings = parseDaysToEarnings(ce);
+    const sd = (r.summaryDetail ?? {}) as Record<string, { raw?: number }>;
+    const ks = (r.defaultKeyStatistics ?? {}) as Record<string, { raw?: number }>;
+    const fd = (r.financialData ?? {}) as Record<string, { raw?: number } | string>;
+    const ap = (r.assetProfile ?? {}) as Record<string, unknown>;
+    const ce = (r.calendarEvents ?? {}) as Record<string, unknown>;
+    const io = (r.institutionOwnership ?? {}) as Record<string, unknown>;
+    const mh = (r.majorHoldersBreakdown ?? {}) as Record<string, { raw?: number }>;
 
-      // Institutional ownership %: prefer majorHoldersBreakdown.institutionsPercentHeld (0–1 fraction);
-      // fall back to summing institutionOwnership.ownershipList[].pctHeld. Stored as 0–100 percentage.
-      const institutionOwnershipPct = parseInstitutionOwnershipPct(mh, io);
+    const rawPe = (sd.trailingPE as { raw?: number })?.raw;
+    const rawDiv = (sd.trailingAnnualDividendYield as { raw?: number })?.raw;
+    const rawEps = (ks.trailingEps as { raw?: number })?.raw;
+    const rawRecMean = (fd.recommendationMean as { raw?: number })?.raw;
+    const rawPb = (ks.priceToBook as { raw?: number })?.raw;
+    const rawShortFloat = (ks.shortPercentOfFloat as { raw?: number })?.raw;
+    const rawBeta = (ks.beta as { raw?: number })?.raw;
+    const raw52High = (sd.fiftyTwoWeekHigh as { raw?: number })?.raw;
+    const raw52Low = (sd.fiftyTwoWeekLow as { raw?: number })?.raw;
+    const rawDebtToEquity = (fd.debtToEquity as { raw?: number })?.raw;
+    const rawEarningsGrowth = (fd.earningsGrowth as { raw?: number })?.raw;
+    const rawFcf = (fd.freeCashflow as { raw?: number })?.raw;
+    const rawMarketCap = (sd.marketCap as { raw?: number })?.raw;
 
-      // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
-      let analystBySource: Record<string, AnalystRatingDetail> | undefined;
-      if (typeof rawRecMean === "number" && rawRecMean > 0) {
-        const score = analystScoreFromMean(rawRecMean);
-        analystBySource = {
-          [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), mean: Math.round(rawRecMean * 100) / 100 }
-        };
-      }
-
-      return {
-        ...(peRatio !== undefined && { peRatio }),
-        ...(dividendYield !== undefined && { dividendYield }),
-        ...(eps !== undefined && { eps }),
-        ...(sector !== undefined && { sector }),
-        ...(industry !== undefined && { industry }),
-        ...(pbRatio !== undefined && { pbRatio }),
-        ...(shortPercentOfFloat !== undefined && { shortPercentOfFloat }),
-        ...(beta !== undefined && { beta }),
-        ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
-        ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
-        ...(debtToEquity !== undefined && { debtToEquity }),
-        ...(epsGrowth !== undefined && { epsGrowth }),
-        ...(fcfYield !== undefined && { fcfYield }),
-        ...(daysToEarnings !== undefined && { daysToEarnings }),
-        ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
-        ...(analystBySource !== undefined && { analystBySource })
-      };
-    } finally {
-      clearTimeout(timeout);
+    const peRatio = typeof rawPe === "number" && rawPe > 0 ? rawPe : undefined;
+    // Yahoo returns yield as decimal fraction (0.0036 = 0.36%); store as percentage points.
+    const dividendYield = typeof rawDiv === "number" && rawDiv >= 0 ? Math.round(rawDiv * 10000) / 100 : undefined;
+    const eps = typeof rawEps === "number" ? rawEps : undefined;
+    const pbRatio = typeof rawPb === "number" && rawPb > 0 ? rawPb : undefined;
+    const shortPercentOfFloat = typeof rawShortFloat === "number" && rawShortFloat >= 0 ? Math.round(rawShortFloat * 10000) / 100 : undefined;
+    const beta = typeof rawBeta === "number" ? rawBeta : undefined;
+    const fiftyTwoWeekHigh = typeof raw52High === "number" ? raw52High : undefined;
+    const fiftyTwoWeekLow = typeof raw52Low === "number" ? raw52Low : undefined;
+    const debtToEquity = typeof rawDebtToEquity === "number" ? rawDebtToEquity : undefined;
+    const epsGrowth = typeof rawEarningsGrowth === "number" ? rawEarningsGrowth : undefined;
+    let fcfYield: number | undefined;
+    if (typeof rawFcf === "number" && typeof rawMarketCap === "number" && rawMarketCap > 0) {
+      fcfYield = Math.round((rawFcf / rawMarketCap) * 10000) / 100;
     }
+    const sector = typeof ap.sector === "string" && ap.sector ? ap.sector : undefined;
+    const industry = typeof ap.industry === "string" && ap.industry ? ap.industry : undefined;
+
+    // Next-earnings signal: calendarEvents.earnings.earningsDate is an array of {raw:<unix seconds>}
+    // ranges (sometimes a single point, sometimes a lo/hi window). Take the EARLIEST future date
+    // and convert to whole calendar days out. Undefined when there is no future date — never 0/guess.
+    const daysToEarnings = parseDaysToEarnings(ce);
+
+    // Institutional ownership %: prefer majorHoldersBreakdown.institutionsPercentHeld (0–1 fraction);
+    // fall back to summing institutionOwnership.ownershipList[].pctHeld. Stored as 0–100 percentage.
+    const institutionOwnershipPct = parseInstitutionOwnershipPct(mh, io);
+
+    // Analyst rating comes from the 1–5 recommendation mean → blended by the cascade.
+    let analystBySource: Record<string, AnalystRatingDetail> | undefined;
+    if (typeof rawRecMean === "number" && rawRecMean > 0) {
+      const score = analystScoreFromMean(rawRecMean);
+      analystBySource = {
+        [this.name]: { score: Math.round(score), label: labelFromAnalystScore(score), mean: Math.round(rawRecMean * 100) / 100 }
+      };
+    }
+
+    return {
+      ...(peRatio !== undefined && { peRatio }),
+      ...(dividendYield !== undefined && { dividendYield }),
+      ...(eps !== undefined && { eps }),
+      ...(sector !== undefined && { sector }),
+      ...(industry !== undefined && { industry }),
+      ...(pbRatio !== undefined && { pbRatio }),
+      ...(shortPercentOfFloat !== undefined && { shortPercentOfFloat }),
+      ...(beta !== undefined && { beta }),
+      ...(fiftyTwoWeekHigh !== undefined && { fiftyTwoWeekHigh }),
+      ...(fiftyTwoWeekLow !== undefined && { fiftyTwoWeekLow }),
+      ...(debtToEquity !== undefined && { debtToEquity }),
+      ...(epsGrowth !== undefined && { epsGrowth }),
+      ...(fcfYield !== undefined && { fcfYield }),
+      ...(daysToEarnings !== undefined && { daysToEarnings }),
+      ...(institutionOwnershipPct !== undefined && { institutionOwnershipPct }),
+      ...(analystBySource !== undefined && { analystBySource })
+    };
   }
 }
 
@@ -2061,15 +2092,24 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
   }
 
   private async getJson(url: string): Promise<unknown> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
-    }
+    // Finnhub's free tier is 60 req/min; the 5-wide symbol chunking above fires 5
+    // endpoints/symbol, so gate actual dispatch through the shared per-provider pacer
+    // (see provider-rate-limit.ts) instead of bursting 25-wide per chunk. The
+    // AbortController/timeout is armed INSIDE the pacer callback so the 6s HTTP timeout
+    // starts counting at actual dispatch time, not when this call joins the queue —
+    // otherwise queue wait eats into the timeout and every request dispatched after ~6s
+    // arrives already aborted.
+    const response = await withProviderLimit(this.name, async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      try {
+        return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, apiKey: this.apiKey });
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
   }
 }
 
@@ -2461,25 +2501,34 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
         chunk.map(async (symbol) => {
           try {
             const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${this.apiKey}`;
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 6000);
-            let payload: Record<string, unknown>;
-            try {
-              // deferSuccessLog: true — don't mark 200 healthy until body validates;
-              // Alpha Vantage embeds quota/error messages in HTTP 200 responses.
-              const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
-              if (!response.ok) throw new Error(`HTTP ${response.status}`);
-              payload = await response.json() as Record<string, unknown>;
-
-              if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
-                const msg = String(payload.Note || payload.Information || payload["Error Message"]);
-                logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
-                throw new Error(`Alpha Vantage API warning/error: ${msg}`);
+            // deferSuccessLog: true — don't mark 200 healthy until body validates;
+            // Alpha Vantage embeds quota/error messages in HTTP 200 responses. Free tier is
+            // ~1 req/sec — gate through the shared per-provider pacer (provider-rate-limit.ts)
+            // so this stays strictly serial instead of bursting CONCURRENCY-wide. The
+            // AbortController/timeout is armed INSIDE the pacer callback so the 6s HTTP
+            // timeout starts counting at actual dispatch time, not when this call joins the
+            // (strictly-serial, so potentially long) queue.
+            const response = await withProviderLimit(this.name, async () => {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 6000);
+              try {
+                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, apiKey: this.apiKey });
+              } finally {
+                clearTimeout(timeout);
               }
-              logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
-            } finally {
-              clearTimeout(timeout);
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json() as Record<string, unknown>;
+
+            if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
+              // Alpha Vantage's own quota/error text has been observed echoing the caller's
+              // API key (e.g. referencing the request URL) — scrub before it ever reaches
+              // api_health_log / the ops snapshot.
+              const msg = scrubProviderErrorText(String(payload.Note || payload.Information || payload["Error Message"]), this.apiKey);
+              logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
+              throw new Error(`Alpha Vantage API warning/error: ${msg}`);
             }
+            logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
 
             let sentiment: number | undefined;
             let headlines: string[] = [];

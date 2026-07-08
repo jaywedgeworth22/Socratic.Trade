@@ -56,6 +56,7 @@ export default function ConsoleHomePage() {
   const evidenceRows = deriveEvidenceRows(snapshot, latest, primaryDecision);
   const actionRows = deriveActionRows(snapshot, latest);
   const frameworkRows = deriveFrameworkRows(snapshot);
+  const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -256,12 +257,18 @@ export default function ConsoleHomePage() {
               </span>
             }
             action={
-              <Link href="/console/strategy" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Framework <ArrowRight size={12} />
+              // The fallback body below renders thesis/regime scorecard rows, not framework
+              // proposals — that data lives (and is fully rendered) on Results, not Strategy.
+              // Only link to Strategy when framework proposals are actually shown here.
+              <Link
+                href={hasFrameworkProposals ? "/console/strategy" : "/console/results#thesis-regime"}
+                className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+              >
+                {hasFrameworkProposals ? "Framework" : "Results"} <ArrowRight size={12} />
               </Link>
             }
           >
-            {(snapshot.socratic?.frameworkProposals?.length ?? 0) > 0 ? (
+            {hasFrameworkProposals ? (
               <FrameworkProposalList proposals={snapshot.socratic?.frameworkProposals ?? []} refresh={refresh} />
             ) : (
               <div className="flex flex-col gap-2">
