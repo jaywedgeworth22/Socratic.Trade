@@ -5,27 +5,116 @@
  *  figures render as "—" with a reason, not an estimate. Tax figures are
  *  estimates only, clearly labeled. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { ConnectedAccount, EquityCurvePoint, PerformanceSummary } from "@/lib/types";
+import { ConsoleApiError, fetchAccountPerformance } from "../lib/api";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
-import { Btn, Card, Chip, Dash, Empty, SignedText, Stat } from "../ui/primitives";
+import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
+
+type CompareAccountSummary = { id: string; label: string; environment: "paper" | "live" };
+
+/** Bucket state for the comparison account picker on Results. Mirrors the
+ *  loading/empty/error/ready idiom used by the symbol drilldown's history fetch. */
+type CompareState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; account: CompareAccountSummary; performance: PerformanceSummary | null; pricesUnavailable: boolean };
+
+function useComparePerformance(accountId: string | null): CompareState {
+  const [state, setState] = useState<CompareState>({ status: "idle" });
+
+  useEffect(() => {
+    if (!accountId) {
+      setState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: "loading" });
+    (async () => {
+      try {
+        const result = await fetchAccountPerformance(accountId);
+        if (cancelled) return;
+        setState({
+          status: "ready",
+          account: result.account,
+          performance: result.performance,
+          pricesUnavailable: result.pricesUnavailable
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: error instanceof ConsoleApiError ? error.message : "Could not load comparison performance."
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
+  return state;
+}
+
+/** Pick the bucket (realized/unrealized/winRate/avgReturn/curve) matching an account's
+ *  OWN money-reality out of a full PerformanceSummary — same paper-vs-live split the
+ *  active account already uses above.
+ *
+ *  `pricesUnavailable` forces `unrealized` to `undefined` (rendered as "-" by BucketCard)
+ *  instead of the comparison endpoint's synthetic $0 — that endpoint never fetches live
+ *  quotes, so its unrealized figures aren't real data, just an artifact of an empty
+ *  currentPrices map (see app/api/connected-accounts/[id]/performance/route.ts). Realized
+ *  P&L, win rate, and avg return don't depend on currentPrices, so they stay untouched. */
+function bucketFor(
+  performance: PerformanceSummary | null,
+  environment: "paper" | "live",
+  pricesUnavailable = false
+): { realized?: number; unrealized?: number; winRate?: number; avgReturn?: number; curve: EquityCurvePoint[] } {
+  if (!performance) {
+    return { realized: undefined, unrealized: undefined, winRate: undefined, avgReturn: undefined, curve: [] };
+  }
+  const bucket =
+    environment === "paper"
+      ? {
+          realized: performance.paperRealizedPnl,
+          unrealized: performance.paperUnrealizedPnl,
+          winRate: performance.paperWinRate,
+          avgReturn: performance.paperAverageReturnPct,
+          curve: performance.paperEquityCurve
+        }
+      : {
+          realized: performance.liveRealizedPnl,
+          unrealized: performance.liveUnrealizedPnl,
+          winRate: performance.liveWinRate,
+          avgReturn: performance.liveAverageReturnPct,
+          curve: performance.liveEquityCurve
+        };
+  return pricesUnavailable ? { ...bucket, unrealized: undefined } : bucket;
+}
 
 export default function ResultsPage() {
   const { snapshot } = useConsoleData();
-  const [compare, setCompare] = useState(false);
+  const [compareAccountId, setCompareAccountId] = useState<string | null>(null);
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  const compareState = useComparePerformance(compareAccountId);
   if (!snapshot || !reality) return null;
 
   const perf = snapshot.performance;
   const tax = snapshot.tax;
+  // Real multi-account comparison: every OTHER connected account (any environment) the
+  // user could pick, never a hardcoded paper/live pairing of the same account's own data.
+  const otherAccounts: ConnectedAccount[] = snapshot.connectedAccounts.filter((a) => a.id !== reality.account?.id);
 
   // The selected account lives in exactly ONE money-reality, so only its bucket
-  // shows by default. The other bucket is one explicit toggle away — never
-  // silently mixed onto the page as if it belonged to this account.
+  // shows by default. A comparison account's bucket is one explicit picker
+  // selection away — never silently mixed onto the page as if it belonged to
+  // this account.
   const liveSelected = reality.tone === "live";
   const practiceBucket = (
     <BucketCard
@@ -61,23 +150,50 @@ export default function ResultsPage() {
           for {reality.account?.label ?? "no connected account"}
         </span>
         <div className="flex-1" />
-        <Btn size="sm" variant="ghost" onClick={() => setCompare((v) => !v)}>
-          {compare
-            ? "Hide comparison"
-            : liveSelected
-              ? "Compare with paper account"
-              : "Compare with brokerage account"}
-        </Btn>
+        {otherAccounts.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="compare-account" className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+              Compare with
+            </label>
+            <Select
+              id="compare-account"
+              value={compareAccountId ?? ""}
+              onChange={(event) => setCompareAccountId(event.target.value || null)}
+            >
+              <option value="">None</option>
+              {otherAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label} ({account.environment})
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </div>
 
-      {/* Buckets: selected reality first; the other only on explicit compare. */}
-      <div className={compare ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
+      {/* Buckets: selected reality first; a comparison account's bucket only once picked. */}
+      <div className={compareAccountId ? "grid gap-4 lg:grid-cols-2" : "grid gap-4"}>
         {liveSelected ? liveBucket : practiceBucket}
-        {compare && (liveSelected ? practiceBucket : liveBucket)}
+        {compareAccountId &&
+          (compareState.status === "ready" ? (
+            <BucketCard
+              title={compareState.account.label}
+              tone={compareState.account.environment}
+              {...bucketFor(compareState.performance, compareState.account.environment, compareState.pricesUnavailable)}
+            />
+          ) : compareState.status === "error" ? (
+            <Card title="Comparison">
+              <Empty>{compareState.message}</Empty>
+            </Card>
+          ) : (
+            <Card title="Comparison">
+              <Empty>Loading comparison…</Empty>
+            </Card>
+          ))}
       </div>
-      {compare && (
+      {compareAccountId && (
         <p className="-mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          Comparison only — broker-paper and brokerage-account results never share an axis or a total.
+          Comparison only — these two accounts&apos; results never share an axis or a total.
         </p>
       )}
 
@@ -124,7 +240,10 @@ export default function ResultsPage() {
       </Card>
 
       {/* Scorecards */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* id="thesis-regime" is the deep-link target for the home page's Framework-improvements
+          card when it's showing this same thesis/regime data as its fallback body; scroll-mt
+          clears the app shell's sticky reality/chrome header (see shell.tsx). */}
+      <div id="thesis-regime" className="grid scroll-mt-28 gap-4 lg:grid-cols-2">
         <ScorecardCard
           title="By thesis"
           rows={(snapshot.thesisScorecard ?? []).map((t: ThesisStat) => ({

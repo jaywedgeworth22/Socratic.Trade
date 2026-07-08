@@ -756,6 +756,23 @@ export interface SyntheticTrailingStop {
   trailAmount?: number;
   status: "active" | "triggered" | "cancelled";
   lastPrice?: number;
+  /**
+   * Count of prior protective-exit attempts whose broker order was POSITIVELY confirmed dead.
+   * Monotonic — advances only via advanceSyntheticStopGeneration, is never reset backwards, and is
+   * deliberately untouched by upsertSyntheticStop. The fire path appends "-g<generation>" to the
+   * deterministic client_order_id when > 0 (generation 0 keeps the original unsuffixed format), so a
+   * legitimately re-armed stop places under a fresh id while the id stays deterministic WITHIN one
+   * arming cycle — the broker's client_order_id dedupe remains the last-resort double-sell guard.
+   */
+  fireGeneration: number;
+  /**
+   * client_order_id of the most recent exit attempt whose outcome is not yet confirmed dead.
+   * Persisted just after the claim and BEFORE the broker placement call, so a placement that throws
+   * after the broker accepted still remembers the possibly-live order's id: an ambiguous retry
+   * reuses it verbatim and fails safe toward a 422 collision instead of a duplicate sell. Cleared
+   * only by advanceSyntheticStopGeneration (i.e. only once that order is confirmed dead).
+   */
+  lastAttemptRefId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -774,17 +791,36 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     trailAmount: r.trail_amount != null ? Number(r.trail_amount) : undefined,
     status: String(r.status) as SyntheticTrailingStop["status"],
     lastPrice: r.last_price != null ? Number(r.last_price) : undefined,
+    fireGeneration: r.fire_generation != null ? Number(r.fire_generation) : 0,
+    lastAttemptRefId: r.last_attempt_ref_id != null ? String(r.last_attempt_ref_id) : undefined,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   };
 }
 
-export function upsertSyntheticStop(stop: Omit<SyntheticTrailingStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+export function upsertSyntheticStop(
+  stop: Omit<SyntheticTrailingStop, "createdAt" | "updatedAt" | "fireGeneration" | "lastAttemptRefId"> & {
+    createdAt?: string;
+    fireGeneration?: number;
+    lastAttemptRefId?: string;
+  }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      // The status CASE is a money-path guard: an upsert must NEVER resurrect a 'triggered' row back
+      // to 'active'. A triggered stop has (or may have) a protective exit order at the broker; blindly
+      // re-arming it re-fires the same stop on every monitor tick on top of that resting exit (the
+      // 2026-07-08 MU incident: ~280 duplicate market sells stopped only by client_order_id dedupe).
+      // The ONLY legitimate re-arm path is revertSyntheticStopClaim, called after the triggering exit
+      // order is confirmed dead (placement threw / broker-confirmed terminal without closing the position).
+      //
+      // fire_generation and last_attempt_ref_id are deliberately ABSENT from the DO UPDATE SET: the
+      // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
+      // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
+      // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -792,15 +828,44 @@ export function upsertSyntheticStop(stop: Omit<SyntheticTrailingStop, "createdAt
         extreme_price = excluded.extreme_price,
         trail_percent = excluded.trail_percent,
         trail_amount = excluded.trail_amount,
-        status = excluded.status,
+        status = CASE
+          WHEN synthetic_trailing_stops.status = 'triggered' AND excluded.status = 'active'
+          THEN synthetic_trailing_stops.status
+          ELSE excluded.status
+        END,
         last_price = excluded.last_price,
         updated_at = excluded.updated_at`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
-      stop.status, stop.lastPrice ?? null, stop.createdAt ?? now, now
+      stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
+      stop.createdAt ?? now, now
     );
+}
+
+/**
+ * Record the protective-exit attempt the fire path is about to place: persists the client_order_id
+ * (refId) BEFORE the broker call, so even a placement that throws after the broker accepted leaves a
+ * durable memory of the possibly-live order. Does not touch fire_generation.
+ */
+export function recordSyntheticStopAttempt(id: string, refId: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET last_attempt_ref_id = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(refId, new Date().toISOString(), id, userId);
+}
+
+/**
+ * Advance the exit generation after POSITIVE confirmation that the prior attempt's broker order is
+ * dead (order list fetched, no live exit order, the recorded client_order_id absent from live
+ * states, no fill still pending reconciliation). Increment-only — generation never moves backwards.
+ * Also clears last_attempt_ref_id: the order it remembered is confirmed dead, so there is no longer
+ * a possibly-live attempt to guard against, and the next fire records a fresh id at claim time.
+ */
+export function advanceSyntheticStopGeneration(id: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET fire_generation = fire_generation + 1, last_attempt_ref_id = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(new Date().toISOString(), id, userId);
 }
 
 export function listSyntheticStops(accountNumber: string, userId: string = "local", status: SyntheticTrailingStop["status"] = "active"): SyntheticTrailingStop[] {

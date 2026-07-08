@@ -146,7 +146,8 @@ Respond with a JSON object containing:
         proposal,
         isBullish,
         executionMode,
-        userId
+        userId,
+        connectedAccountId: policy.connectedAccountId
       });
     }
   }
@@ -227,7 +228,7 @@ Respond with a JSON object containing:
         }
 
         const payload = await response.json();
-        recordLlmUsage({ userId, provider, model, context: "red-team", keySource, keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId, provider, model, context: "red-team", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
 
         if (text) {
@@ -300,6 +301,7 @@ async function debateViaAnthropic(args: {
   isBullish: boolean;
   executionMode: string;
   userId: string;
+  connectedAccountId?: string;
 }): Promise<RedTeamDebateResult> {
   const model = process.env.RED_TEAM_LLM_MODEL || "claude-haiku-4-5-20251001";
   const body = {
@@ -352,7 +354,7 @@ async function debateViaAnthropic(args: {
           };
         }
         const payload = await response.json();
-        recordLlmUsage({ userId: args.userId, provider: "anthropic", model, context: "red-team", keySource: args.keySource, keyRef: args.keyRef, ...extractLlmUsage(payload) });
+        recordLlmUsage({ userId: args.userId, provider: "anthropic", model, context: "red-team", keySource: args.keySource, keyRef: args.keyRef, connectedAccountId: args.connectedAccountId, ...extractLlmUsage(payload) });
         const text: string | undefined = Array.isArray(payload.content)
           ? payload.content.map((c: { text?: string }) => c?.text ?? "").join("")
           : undefined;
