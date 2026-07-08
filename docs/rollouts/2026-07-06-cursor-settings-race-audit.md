@@ -82,18 +82,31 @@ Also: `vectorStore:lastIngest` — ingest is idempotent by SEC accession number.
 
 ## Files changed
 
-- `src/lib/provider-tier.ts` — per-user scoped keys, functions instead of constants
+- `src/lib/provider-tier.ts` — per-user scoped keys, functions instead of constants;
+  `getProviderTierStatus()` reads a local-only legacy fallback (see review follow-up below)
 - `src/lib/market-signals/massive.ts` — legacy fallback read in `massiveDetectedFree`
 - `test/provider-tier.test.ts` — updated test key strings
 
 ## Verification
 
+Verified green via the PR #997 `verify` CI check (runs tsc → test → build):
+
 ```bash
 npx tsc --noEmit     # clean
-npm run lint         # (pending)
-npm test             # (pending, provider-tier: 17/17 pass)
-npm run build        # (pending)
+npm run lint         # clean
+npm test             # pass (provider-tier: 17/17)
+npm run build        # clean
 ```
+
+## Review follow-up (Copilot, PR #997)
+
+`getProviderTierStatus()` originally read only the new per-user key
+(`providerTier:status:local`), which is empty right after deploy until the next scheduled tier
+check (up to 24h) re-populates it. That would make `/api/health` (and any other reader) regress
+to `{}` even when a degraded/free tier was previously detected on the legacy shared key. Fixed by
+having `getProviderTierStatus()` fall back to the legacy `providerTier:status` key **only for the
+`"local"` scope** (the scope the old shared blob mapped to), so existing persisted status keeps
+surfacing immediately after deploy. Mirrors the fallback already present in `massiveDetectedFree`.
 
 ## Follow-ups
 

@@ -49,7 +49,17 @@ function ymd(ms: number): string {
 }
 
 export function getProviderTierStatus(userId: string = "local"): ProviderTierStatus {
-  return getInternalSetting<ProviderTierStatus>(providerTierStatusKey(userId)) ?? {};
+  const scoped = getInternalSetting<ProviderTierStatus>(providerTierStatusKey(userId));
+  if (scoped) return scoped;
+  // Backward-compat: before per-user scoping (pre-2026-07-06) the status lived on the single
+  // shared key `providerTier:status`, which the "local" scheduler owned. Surface that legacy
+  // blob for the "local" scope until the next tier check re-writes the per-user key, so readers
+  // like /api/health don't regress to `{}` for up to 24h after deploy while a previously detected
+  // degraded/free tier is still persisted.
+  if (userId === "local") {
+    return getInternalSetting<ProviderTierStatus>("providerTier:status") ?? {};
+  }
+  return {};
 }
 
 // ── Massive (Polygon) probe ───────────────────────────────────────────────────

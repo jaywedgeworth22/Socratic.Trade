@@ -8,7 +8,7 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-06 — CURSOR: Settings-table RMW race audit (uncommitted)
+## 2026-07-06 — CURSOR: Settings-table RMW race audit (PR #997 open)
 
 Swept every `getInternalSetting`/`setInternalSetting` pair in `src/lib/` for the cross-user
 shared-row RMW pattern that checkRegimeFlip had. 26 keys audited. Only the `providerTier`
@@ -20,10 +20,13 @@ shared by design (3), legacy read-only (1), or benign idempotent caches (11).
 
 - Modified: `src/lib/provider-tier.ts`, `src/lib/market-signals/massive.ts`, `test/provider-tier.test.ts`
 - Rollout: `docs/rollouts/2026-07-06-cursor-settings-race-audit.md`
-- Provider-tier tests: 17/17 pass. Full verification pending.
+- Provider-tier tests: 17/17 pass. Full verification (tsc/test/build) green in CI (`verify` check on PR #997).
 - Slack: ACK'd MONET's multi-user isolation offer. PR #856 (docs-only) smoke flake checked.
+- Review follow-up: added a local-only legacy-key fallback to `getProviderTierStatus()` so `/api/health`
+  keeps surfacing a previously detected degraded/free tier immediately after deploy (before the next
+  scheduled per-user tier check re-writes the scoped key).
 
-Next: full verification gate (lint/tsc/test/build), update effort boards, commit + push.
+Next: address remaining PR review threads; merge once `verify` is green.
 
 ## 2026-07-06 — Mobile console width overflow fix (PR open)
 
