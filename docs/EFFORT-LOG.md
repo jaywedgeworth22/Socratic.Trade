@@ -968,6 +968,13 @@ As of 2026-07-04.
 - PR #340 - Socratic Trade rebrand.
 
 ## In Progress
+- **Intro animation: skip centered-wordmark middle act (MONET, branch
+  `monet/candlesticks-intro-animation-360f5f`) — IN PROGRESS 2026-07-08, landing via PR.**
+  Owner: intro too long. Candles now fly chart -> top-left header logo directly (~6.1s,
+  was ~9.3s); the centered SOCRATIC / TRADE act is preserved behind
+  `CENTER_WORDMARK_STEP: boolean = false` in `app/console/components/intro-canvas.tsx`
+  (flip to true to restore). Verify gate green (lint 0 err / tsc / 2901 tests / build).
+  Rollout note `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
 - **Migrate PRODUCTION socratictrade.com to the Coolify box (MONET, owner-directed 2026-07-07) - IN PROGRESS 2026-07-07 ~22:45 CDT.** Owner asked directly in-session. New Coolify app `socratic-trade-prod` (main branch, nixpacks, GitHub App source, auto-deploy OFF so prod releases stay owner-run), Infisical secrets via `scripts/coolify-prod-start.sh` self-wrapping `infisical-run.mjs` (pinned infisical CLI 0.43.98 + litestream 0.5.14 fetched to the persistent /app/data volume), DB migrated via litestream restore from the existing R2 replica with in-container `litestream replicate -exec` afterwards (PITR continuity preserved). Double-scheduler safety: `DB_BOOTSTRAP=fresh` (empty DB, no broker accounts, cannot trade) until Mac pm2 `trading`+`litestream` are stopped, then flip to `live` + repoint `socratictrade.com` CNAME(tunnel)->A 91.98.44.8 proxied. Rollback = restore CNAME + `pm2 start trading litestream`. Rollout note `docs/rollouts/2026-07-07-prod-coolify-migration.md`. (Preview-lane Coolify migration was CLAUDE-owned; this production leg is a new owner-directed effort, announced on #agent-sync.)
 - **Fix misleading Claude Code Cloud "Setup script" instructions (CLAUDE) — IN PROGRESS
   2026-07-06.** Docs/comment-only fix: `scripts/cloud-setup.sh` header comment and

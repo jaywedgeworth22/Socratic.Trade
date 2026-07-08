@@ -8,6 +8,12 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
+Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
+chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act is preserved
+verbatim behind `CENTER_WORDMARK_STEP: boolean = false` in
+`app/console/components/intro-canvas.tsx` — flip to `true` to restore. Full verify gate green.
+See `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
 ## 2026-07-08 — LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`)
 New operator script `scripts/benchmark-llm-models.ts`: benchmarks every curated-catalog model in
 BOTH strategy roles (Green proposer + Red reviewer) through the app's REAL request paths

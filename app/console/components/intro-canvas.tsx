@@ -1,9 +1,11 @@
 "use client";
 
-/** First-load splash: a candlestick chart that waves, breaks apart, reassembles
- *  into SOCRATIC / TRADE (ticking left + waving), then shrinks into the top-left
- *  logo which keeps ticking. Pure Canvas, responsive, any background. Plays once
- *  per tab session; skipped for prefers-reduced-motion. Click to dismiss. */
+/** First-load splash: a candlestick chart that waves, breaks apart, and the candles
+ *  fly straight up into the top-left header logo, which keeps ticking. Pure Canvas,
+ *  responsive, any background. Plays once per tab session; skipped for
+ *  prefers-reduced-motion. Click to dismiss. The original middle act — assembling a
+ *  large centered SOCRATIC / TRADE wordmark before a second flight to the header —
+ *  is preserved behind CENTER_WORDMARK_STEP below. */
 
 import { useEffect, useRef, useState } from "react";
 import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS } from "../ui/candle-ticker";
@@ -23,6 +25,15 @@ type Layout = {
   header: { x: number; y: number; w: number; h: number };
   sizeScale: number;
 };
+
+// CENTER_WORDMARK_STEP — the intro originally had a middle act: the candles first
+// assembled into a large centered SOCRATIC / TRADE wordmark (wave ripple, short
+// hold), then flew a second leg into the header logo. Owner cut it 2026-07-08
+// because it made the intro too long; candles now fly chart -> header directly.
+// All of the middle act's code is kept live below — flip this to true to restore
+// the original three-act sequence. (Typed `boolean`, not literal `false`, so
+// TypeScript/ESLint don't flag the preserved branch as unreachable.)
+const CENTER_WORDMARK_STEP: boolean = false;
 
 // shared across mounts so the loading->loaded transition doesn't restart it
 let introStart: number | null = null;
@@ -88,10 +99,13 @@ function buildModel(): Model {
     const o = chartPrice(j, BL[j]), c = chartPrice(Math.min(j + 1, M), BL[j]), mag = Math.min(1, Math.abs(c - o) / 0.12);
     INFRAC.push(0.34 + 0.6 * mag); INCOL.push((c < o ? G : RDc)[Math.min(2, Math.floor(mag * 3))]);
   }
-  // END: fade begins right after the candles land on the header logo (T4) — the
+  // END: fade begins right after the candles land on the header logo — the
   // persistent HeaderLogo owns the forever-tick, so the overlay hands off at once
-  // instead of holding and double-drawing the wordmark.
-  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25, END = T4 + 0.2;
+  // instead of holding and double-drawing the wordmark. Landing is T2B (all candles
+  // arrived) on the direct path, or T4 (end of the second flight) with the center
+  // wordmark act enabled. T3/T4 only shape the center-wordmark timeline.
+  const T2B = Math.max(...AR), T3 = T2B + 0.75, T4 = T3 + 2.25;
+  const END = (CENTER_WORDMARK_STEP ? T4 : T2B) + 0.2;
   // LIFT: the earliest candle breakaway — the moment candles start moving up. The
   // solid backdrop holds until here, then dissolves so the console reveals behind
   // the rising candles.
@@ -151,14 +165,26 @@ function buildModel(): Model {
   };
   // HEADER: discrete per-second candlestick ticker — each column shows its own varied unit
   // and the pattern marches one column left per second (never one big block of red/green).
+  // The march is anchored where landing completes (T2B direct / T4 with center wordmark);
+  // the modulo handles negative offsets, so early-landing candles tick before the anchor.
+  const TICK_T0 = CENTER_WORDMARK_STEP ? T4 : T2B;
   const headerTick = (s: Geo, j: number, t: number) => {
-    const u = UNITS[(((HCOL[j] + Math.floor(t - T4)) % P) + P) % P];
+    const u = UNITS[(((HCOL[j] + Math.floor(t - TICK_T0)) % P) + P) % P];
     const wh = s.wb - s.wt, frac = HSHORT[j] ? Math.max(u.frac, 0.82) : u.frac, bh = Math.max(1.4, wh * frac);
     s.bt = s.wt + (wh - bh) * u.off; s.bb = s.bt + bh; s.col = u.col;
   };
   const candleAt = (j: number, t: number, L: Layout): Geo => {
     if (t < BL[j]) { const g = chartGeom(j, t, L); g.col = g.up ? "#18b271" : "#d3365a"; return g; }
-    const stack = { ...stackGeom(j, L), col: INCOL[j] }, header = { ...headerGeom(j, L), col: INCOL[j] };
+    const header = { ...headerGeom(j, L), col: INCOL[j] };
+    if (!CENTER_WORDMARK_STEP) {
+      // Direct path: each candle flies chart -> header logo in one leg, then ticks.
+      if (t < AR[j]) { const g = chartGeom(j, BL[j], L); return { ...fly((t - BL[j]) / FD[j], g, header, WX2[j], WY2[j], L.stackW), col: INCOL[j] }; }
+      headerTick(header, j, t);
+      return header;
+    }
+    // Preserved center-wordmark path: chart -> big centered stack (ripple + hold) ->
+    // second flight to the header logo -> tick.
+    const stack = { ...stackGeom(j, L), col: INCOL[j] };
     if (t < AR[j]) { const g = chartGeom(j, BL[j], L); return { ...fly((t - BL[j]) / FD[j], g, stack, WX2[j], WY2[j], L.stackW), col: INCOL[j] }; }
     let s: Geo;
     if (t < T3) s = { ...stack };
