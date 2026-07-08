@@ -79,8 +79,8 @@ function Provenance({ item }: { item: PendingLearnedItem }) {
       {item.classifierReason && (
         <Tooltip
           content="Why the fail-closed classifier routed this to your confirmation queue instead of storing it automatically.">
-          (<span>Why it queued <span className="text-[color:var(--con-muted)]">{item.classifierReason}</span>
-          </span>)
+          <span>Why it queued <span className="text-[color:var(--con-muted)]">{item.classifierReason}</span>
+          </span>
         </Tooltip>
       )}
     </div>
@@ -148,10 +148,10 @@ function LearnedItemCard({
         </Tooltip>
         {item.symbol && (
           <Tooltip content="The ticker this item is about.">
-            (<span
+            <span
               className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <SymbolButton symbol={item.symbol} showLogo={false} />
-            </span>)
+            </span>
           </Tooltip>
         )}
         <div className="flex-1" />
@@ -309,8 +309,7 @@ export function LearnedContextInbox() {
             {count > 0 && (
               <Tooltip
                 content={`${count} learned item${count === 1 ? "" : "s"} awaiting your decision.`}>
-                (<span className="con-num text-[color:var(--con-accent)]">({count})
-                              </span>)
+                <span className="con-num text-[color:var(--con-accent)]">({count})</span>
               </Tooltip>
             )}
           </h2>
