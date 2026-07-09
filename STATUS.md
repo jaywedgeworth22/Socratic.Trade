@@ -8,6 +8,36 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Vitest temp-SQLite leak cleanup (MONET, branch `monet/distracted-albattani-dfc422`)
+The suite leaked every temp DB it created (`DATABASE_URL=file:<tmpdir>/agentic-*.db` beforeAll pattern
+plus older `chat-*`/`trading-test-*`/`llm-provider-test-*` names) — 178k files/~130GB on the fleet Mac
+before the 2026-07-09 manual cleanup; janitor-less machines and CI kept accumulating. Fixed with zero
+test-file edits: `vitest.config.ts` now points the test runtime's TMPDIR/TMP/TEMP at one per-run
+`agentic-vitest-*` dir (vitest spreads `config.env` into worker env at fork), and the new
+`test/global-setup.ts` creates it, `rm -rf`s it on teardown, and sweeps `agentic-*` leftovers >6h old
+from the real temp dir (janitor parity; crashed runs self-heal next run). Verified empirically: DBs
+observed landing inside the per-run dir mid-run, dir gone after teardown, zero new loose tmp entries
+across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 tests / build. See
+`docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
+`origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
+lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
+Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
+while we waited on it). Full Coolify-instance migration: pg_dump + `/data/coolify` (preserves the
+GitHub App source, envs, API token) restored onto a pinned 4.1.2 install; prod SQLite volume
+tar-copied (no R2 re-restore; old app stopped first — single scheduler/litestream-writer held
+throughout); built image `docker save/load`ed so cutover downtime was ~5 min; six Cloudflare A
+records flipped (`jays.services` apex/`*`/`prod`, `socratictrade.com` apex/`*`/`admin`). Verified:
+health 200/db ok/scheduler ticking, litestream caught up, runners re-registered, dashboard live.
+Old box: all containers stopped `--restart=no` (rollback standby until owner deletes it).
+**Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
+the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
+congress-stream SSE 403s — the one migration regression, root-caused); (2) first
+ANNOUNCE-THEN-DEPLOY release on the new box ships main HEAD (`6363e1e7`) — deliberately not
+triggered as part of the migration. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
+
 ## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
 Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature
 (still DEFAULT OFF — `src/lib/defaults.ts` verified unchanged, not an enablement). FIX 1
