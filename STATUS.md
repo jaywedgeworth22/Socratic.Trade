@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
+Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
+while we waited on it). Full Coolify-instance migration: pg_dump + `/data/coolify` (preserves the
+GitHub App source, envs, API token) restored onto a pinned 4.1.2 install; prod SQLite volume
+tar-copied (no R2 re-restore; old app stopped first — single scheduler/litestream-writer held
+throughout); built image `docker save/load`ed so cutover downtime was ~5 min; six Cloudflare A
+records flipped (`jays.services` apex/`*`/`prod`, `socratictrade.com` apex/`*`/`admin`). Verified:
+health 200/db ok/scheduler ticking, litestream caught up, runners re-registered, dashboard live.
+Old box: all containers stopped `--restart=no` (rollback standby until owner deletes it).
+**Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
+the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
+congress-stream SSE 403s — the one migration regression, root-caused); (2) first
+ANNOUNCE-THEN-DEPLOY release on the new box ships main HEAD (`6363e1e7`) — deliberately not
+triggered as part of the migration. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
+
 ## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
 Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature
 (still DEFAULT OFF — `src/lib/defaults.ts` verified unchanged, not an enablement). FIX 1
