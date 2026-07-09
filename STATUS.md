@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Settings auto-save everywhere (MONET)
+Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
+section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
+inline indicator (serialized writes, optimistic+revert, error-toast); converted Event
+notifications, Tax treatment, Market-scan shape (settings/page.tsx), Delivery channels, LLM models,
+and the Strategy page's model selects/prompt/scoring-weights. Excluded (unchanged): guardrails
+review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/account-deletion, learned-
+context queue, kill switch, typed-confirmation master switch. Toggles/selects save on change;
+text/number on blur. Verified live: every control type persists across reload. Two soft calls
+flagged to owner (strategy prompt/weights now blur-save; guardrails kept review-and-commit). See
+docs/rollouts/2026-07-09-settings-autosave.md.
+
 ## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
 Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
 assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
