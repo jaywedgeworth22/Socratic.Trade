@@ -1312,6 +1312,16 @@ As of 2026-07-08 (assignment-rule update).
   twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
   threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
   docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+- **npm `allowScripts` approval in package.json (MONET, branch `monet/allow-scripts-approval`)
+  — IN PROGRESS 2026-07-08, landing.** In-repo approval of the 7 install-script packages
+  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so install
+  approvals live in-repo (no host `~/.npmrc` tweaks) and stay valid when npm's future default flips to
+  blocking unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still runs install
+  scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash came from host `~/.npmrc`
+  skipping scripts, not npm 11's default. `package.json`-only; no dep/lockfile change.
+  Deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs in Congress.Trade)
+  and a drifted lockfile regen. Verified: `npm ci` clean + `better_sqlite3.node` builds.
+  Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
   2026-07-08, PR #1116 open, auto-merge armed (gate green: tsc/lint/2996 tests/build).** Once-per-UTC-day Fable-class review of learned_context / pending learning
   decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence
