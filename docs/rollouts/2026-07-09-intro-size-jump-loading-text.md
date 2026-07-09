@@ -59,6 +59,20 @@ Two owner-reported items on the console intro (both viewports, prod):
   `app/console/components/shell.tsx`, `app/console/components/intro-canvas.tsx`
 - `STATUS.md`, `docs/EFFORT-LOG.md` (+ live board), this note.
 
+## Review follow-up (Codex P2)
+
+The reviewer flagged that removing the text left a **blank** load screen for
+visitors whose intro is *skipped* (returning tab via `st.introShown`, or
+prefers-reduced-motion) — those never see the animation. Addressed with a new
+`LoadingBrand` component in the loading branch: it renders a small centered,
+text-free static candlestick "SOCRATIC TRADE" mark **only** when the intro is
+skipped (returns `null` on a first visit, so it never interferes with the
+animation the owner asked to keep). First visit still gets the full intro and no
+text; skipped loads get the brand mark instead of a blank flash. Verified first
+visit visually (clean animation, no stray mark) + lint/tsc/build; the
+sub-second loading window itself isn't freezable in the preview harness, so the
+skip fallback is covered by logic + the first-visit non-interference check.
+
 ## Follow-ups
 
 - If the wordmark text or font ever changes, re-measure `WORDMARK_AR` (documented

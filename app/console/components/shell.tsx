@@ -63,8 +63,11 @@ function ShellFrame({ children }: { children: ReactNode }) {
         suppressHydrationWarning
       >
         {/* The candlestick intro is the entire load screen — no text label, so
-            the animation plays on a clean backdrop (owner request). */}
+            the animation plays on a clean backdrop (owner request). LoadingBrand
+            shows a small STATIC candlestick mark only when the intro is skipped
+            (returning tab / reduced motion), so those loads aren't a blank flash. */}
         <ConsoleIntro />
+        <LoadingBrand />
       </div>
     );
   }
@@ -149,6 +152,29 @@ function BrandReveal() {
       aria-hidden={!shown}
     >
       <HeaderLogo />
+    </div>
+  );
+}
+
+/** Loading-screen fallback brand mark. Shown ONLY when the intro splash won't
+ *  animate — a returning tab (`st.introShown`) or prefers-reduced-motion — so
+ *  those loads show a small centered candlestick "SOCRATIC TRADE" instead of a
+ *  blank screen during the snapshot fetch. On a first visit it renders nothing
+ *  (the intro owns the load screen). HeaderLogo self-selects a static frame
+ *  under reduced motion. Starts hidden and only reveals after the client-side
+ *  check, so the SSR/first paint never flashes it before the intro. */
+function LoadingBrand() {
+  const [skipped, setSkipped] = useState(false);
+  useEffect(() => {
+    let shown = false;
+    try { shown = sessionStorage.getItem("st.introShown") === "1"; } catch { /* ignore */ }
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (shown || reduce) setSkipped(true);
+  }, []);
+  if (!skipped) return null;
+  return (
+    <div className="flex items-center justify-center opacity-70" aria-hidden>
+      <HeaderLogo height={26} />
     </div>
   );
 }
