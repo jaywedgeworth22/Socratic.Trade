@@ -202,6 +202,18 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
+  `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
+  tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
+  adversarial verify): Gemini Bull-schema 400 fixed (llm-call.ts dialect shaping); Robinhood
+  $1-minimum trim loop fixed (order_checks + cooldown receipt + dust-exit exemption); ACTIVE
+  naked-short remediation bug fixed (held-leg exclusion auto+manual, position guard, TOCTOU
+  re-verify, in-flight lock — owner push-notified to cancel resting d642d572 pre-open);
+  ALPHAVANTAGE_API_KEYS pool; acknowledged_at lifecycle + auto-ack sweep + repeat-dedup;
+  twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
+  threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
+  docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+
 - **Activity log grouping (MONET, branch `monet/activity-log-grouping`) — IN PROGRESS 2026-07-08,
   landing.** Generic runId-based consolidation + wider ops bucket in dashboard-feed.ts; real-hour
   replay 54 events → 9 visual entries; consolidation test added.

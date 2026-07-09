@@ -9,6 +9,7 @@ import {
   latestAuditByKind,
   listAudit,
   listNotificationEvents,
+  sweepAutoAcknowledgeNotifications,
   listPendingProposals,
   listRecentProposals,
   listStrategyProfiles,
@@ -385,6 +386,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
+  // Lazy auto-ack sweep: clears alerts whose condition is provably resolved (a pending_approval
+  // whose proposal left "proposed", or a run_failed whose account has since run successfully)
+  // before the snapshot's Attention count is computed. Cheap, bounded, idempotent — see
+  // sweepAutoAcknowledgeNotifications in db-notifications.ts.
+  sweepAutoAcknowledgeNotifications(userId);
   const notifications = listNotificationEvents(userId, 100);
   const latestRunAudit = policy.connectedAccountId
     ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)

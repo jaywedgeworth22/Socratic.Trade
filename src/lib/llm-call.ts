@@ -40,7 +40,10 @@ export interface LlmRequestSpec {
   temperature?: number;
   /**
    * Structured-output schema. When present:
-   * - OpenAI/compatible (non-DeepSeek) → strict `json_schema` (unless `openAiJsonObject`);
+   * - OpenAI/compatible (non-DeepSeek, non-Gemini) → strict `json_schema` (unless `openAiJsonObject`);
+   * - Gemini → strict `json_schema`, but with `type: [T,"null"]` / anyOf-with-null rewritten to
+   *   Gemini's single-type + `nullable:true` dialect first (see `toGeminiJsonSchema`); falls back to
+   *   `json_object` only if a construct can't be translated;
    * - DeepSeek → `json_object` (it rejects strict json_schema);
    * - Anthropic → a single forced tool whose `input_schema` is this schema (reliable JSON).
    * Omit for free-text output (e.g. the post-mortem reflection paragraph).
@@ -131,11 +134,105 @@ export function buildLlmRequestBody(
   return withLlmRequestBounds(base, transport, bounds);
 }
 
+/**
+ * Recursively rewrites a JSON Schema node so Gemini's OpenAI-compatible endpoint (an
+ * OpenAPI-3.0-derived structured-output dialect) accepts it. Gemini's schema validator rejects two
+ * JSON-Schema constructs that OpenAI/Anthropic accept fine:
+ *   1. `type: [T, "null"]` union-type arrays (the app's standard "optional numeric/string field"
+ *      encoding — see the Bull trade-proposal schema's quantity/dollarAmount/limitPrice/stopPrice/
+ *      bracketStopLoss/bracketTakeProfit in strategy.ts) — Gemini wants a single `type` plus a
+ *      separate `nullable: true` instead.
+ *   2. An `anyOf` branch that is just `{ type: "null" }` (the app's "optional whole sub-object"
+ *      encoding — see `autonomyOverrideSchema` in strategy.ts) — same fix, collapsed to the
+ *      non-null branch with `nullable: true` added.
+ * This is what makes Gemini viable as a Bull model: every Bull call previously failed 400
+ * INVALID_ARGUMENT in ~1s because the six nullable price/quantity fields (plus autonomyOverride) hit
+ * case 1/2 above, while the Bear/Red-Team verdict schema (red-team.ts) has no nullable fields at all
+ * and always succeeded — that contrast is the diagnostic signal that isolated this as a schema-shape
+ * bug rather than an account/model/quota problem.
+ *
+ * Returns `unsupported: true` when the walk hits a shape this transform can't collapse into Gemini's
+ * dialect (a `type` array or `anyOf` with more than one remaining non-null alternative — nothing in
+ * this app's schemas does that today, but a future schema addition might), so the caller can fall back
+ * to a bare `json_object` the same way the existing DeepSeek special case does, rather than forwarding
+ * a schema Gemini is still likely to reject.
+ */
+export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupported: boolean } {
+  let unsupported = false;
+
+  const isNullOnly = (candidate: unknown): boolean =>
+    !!candidate &&
+    typeof candidate === "object" &&
+    !Array.isArray(candidate) &&
+    (candidate as Record<string, unknown>).type === "null" &&
+    Object.keys(candidate as Record<string, unknown>).length === 1;
+
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (!value || typeof value !== "object") return value;
+
+    const obj = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+
+    for (const [key, val] of Object.entries(obj)) {
+      if (key === "type" && Array.isArray(val)) {
+        const nonNullTypes = val.filter((t) => t !== "null");
+        const hadNull = nonNullTypes.length !== val.length;
+        if (nonNullTypes.length === 1) {
+          result.type = nonNullTypes[0];
+          if (hadNull) result.nullable = true;
+        } else {
+          // Either no non-null type at all (malformed) or more than one — no single Gemini `type`
+          // this can collapse to.
+          unsupported = true;
+          result.type = val;
+        }
+        continue;
+      }
+      if (key === "anyOf" && Array.isArray(val)) {
+        const branches = val as unknown[];
+        const nonNullBranches = branches.filter((b) => !isNullOnly(b));
+        const hadNull = nonNullBranches.length !== branches.length;
+        if (nonNullBranches.length === 1) {
+          const collapsed = walk(nonNullBranches[0]) as Record<string, unknown>;
+          Object.assign(result, collapsed);
+          if (hadNull) result.nullable = true;
+        } else {
+          // Zero or 2+ non-null branches remain — can't collapse to a single Gemini-shaped node.
+          unsupported = true;
+          result.anyOf = nonNullBranches.map(walk);
+          if (hadNull) result.nullable = true;
+        }
+        continue;
+      }
+      result[key] = walk(val);
+    }
+    return result;
+  };
+
+  return { schema: walk(node), unsupported };
+}
+
 function openAiChatResponseFormat(
   provider: LlmEndpoint["provider"],
   schema: LlmJsonSchema | undefined,
   openAiJsonObject: boolean | undefined
 ): Record<string, unknown> | undefined {
+  if (schema && !openAiJsonObject && provider === "gemini") {
+    const { schema: geminiSchema, unsupported } = toGeminiJsonSchema(schema.schema);
+    if (unsupported) {
+      // Something in this schema (a type-union or anyOf with more than one non-null alternative) has
+      // no Gemini-dialect equivalent this transform can produce — fall back to a bare JSON object the
+      // same way the DeepSeek branch below does, rather than forwarding a schema Gemini will likely
+      // reject anyway. Logged so an unexpected new schema shape doesn't silently degrade output quality.
+      console.warn(
+        `[llm-call] Gemini schema "${schema.name}" has a construct toGeminiJsonSchema can't translate ` +
+          "(type-union or anyOf with 2+ non-null branches) — falling back to json_object."
+      );
+      return { type: "json_object" };
+    }
+    return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: geminiSchema } };
+  }
   if (schema && !openAiJsonObject && provider !== "deepseek") {
     return { type: "json_schema", json_schema: { name: schema.name, strict: true, schema: schema.schema } };
   }

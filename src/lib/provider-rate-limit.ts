@@ -39,7 +39,13 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   "alpha-vantage": { minIntervalMs: 1100, concurrency: 1 },
   // No published limit, but the prod egress IP gets HTTP 429 on a cold burst while paced,
   // low-concurrency requests succeed — gentle pacing, not parallel bursts.
-  "yahoo-finance": { minIntervalMs: 400, concurrency: 2 }
+  "yahoo-finance": { minIntervalMs: 400, concurrency: 2 },
+  // Free "Basic" tier is 8 API credits/min (see docs/data-provider-mcp-evaluation.md) — each
+  // batch call here already folds up to 120 symbols into ONE request, so strictly serial with
+  // 10s spacing (6/min) leaves headroom under the 8/min cap instead of chasing it exactly, and
+  // keeps back-to-back batch chunks (large scans) from bursting. Prod was 100% HTTP 429 on this
+  // provider even after the 2026-07-08 rate-limiter deploy because this entry didn't exist yet.
+  twelvedata: { minIntervalMs: 10_000, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {
@@ -216,6 +222,19 @@ export function redactSecretValue(text: string, secret: string | undefined | nul
  *  containing the key leaked into the message" are covered. */
 export function scrubProviderErrorText(text: string, secret?: string | null): string {
   return redactApiKeyParams(redactSecretValue(text, secret));
+}
+
+/** Pool-aware variant of scrubProviderErrorText: redacts EVERY key in a multi-key pool (not
+ *  just the currently-dispatching one), then a final `apikey=...`-shaped query-param pass.
+ *  Alpha Vantage's quota/error text has only ever been observed echoing the CALLING key, but
+ *  folding every pool member in here means a future echo of a DIFFERENT pool member's key
+ *  (e.g. if AV's message format ever changes) can't leak unredacted either. */
+export function scrubProviderErrorTextForPool(text: string, keys: readonly string[]): string {
+  let scrubbed = text;
+  for (const key of keys) {
+    scrubbed = redactSecretValue(scrubbed, key);
+  }
+  return redactApiKeyParams(scrubbed);
 }
 
 /** Append `err.cause` (when present) to an error message, truncated so one verbose

@@ -85,6 +85,13 @@ describe("resolveProviderLimiterConfig", () => {
     expect(config).toEqual({ minIntervalMs: 400, concurrency: 2 });
   });
 
+  // Regression: twelvedata had NO entry here at all, so its fetch call went completely
+  // unpaced and was 100% HTTP 429 in prod even after finnhub/yahoo/alpha-vantage were fixed.
+  it("uses twelvedata's hard default of strictly-serial 10s spacing (free Basic tier is 8 credits/min)", () => {
+    const config = resolveProviderLimiterConfig("twelvedata");
+    expect(config).toEqual({ minIntervalMs: 10_000, concurrency: 1 });
+  });
+
   it("lets an env PER_MIN override win over a provider with no hard default", () => {
     process.env.PROVIDER_RATE_LIMIT_TESTPROV_PER_MIN = "30";
     const config = resolveProviderLimiterConfig("testprov");
