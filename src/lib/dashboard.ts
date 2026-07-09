@@ -43,7 +43,7 @@ import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { PrefetchedFills } from "./performance";
-import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
@@ -413,6 +413,29 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);
 
+  const advisoryAudits = audit
+    .filter((e) =>
+      [
+        "deterministic_bear_veto",
+        "red_team_veto_overridden",
+        "prompt_injection_suspected",
+        "evidence_age_anomaly"
+      ].includes(e.kind)
+    )
+    .map((e) => ({
+      id: e.id,
+      createdAt: e.createdAt,
+      type: e.kind as NotificationEventType,
+      title: e.kind,
+      status: "sent" as const,
+      payload: e.payload,
+      connectedAccountId: e.connectedAccountId
+    } satisfies NotificationEvent));
+
+  const combinedNotifications = [...notifications, ...advisoryAudits]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 100);
+
   // Unified fills for the feed: merge the pre-fetched live + paper arrays (oldest-first, capped at
   // 500) instead of re-issuing the unfiltered listFillEvents query the feed builder used to trigger.
   const unifiedFills: FillEvent[] = accountNumber
@@ -439,7 +462,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     addProposalId(asRec(nested.fill).proposalId);
   }
   for (const fill of unifiedFills) addProposalId(fill.proposalId);
-  for (const notification of notifications) {
+  for (const notification of combinedNotifications) {
     const payload = asRec(notification.payload);
     addProposalId(payload.proposalId);
     addProposalId(asRec(payload.fill).proposalId);
@@ -521,7 +544,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   const unifiedFeed = buildUnifiedFeed({
     audit,
-    notifications,
+    notifications: combinedNotifications,
     fills: unifiedFills,
     orders,
     symbolMetaBySymbol,
@@ -532,7 +555,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     id: event.id,
     createdAt: event.createdAt,
     kind: event.kind,
-    payload: null,
+    payload: asRec(event.payload),
     connectedAccountId: event.connectedAccountId
   }));
 
@@ -574,7 +597,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     tax,
     profiles,
     activeProfile,
-    notifications,
+    notifications: combinedNotifications,
     notificationStatus: {
       configured: Boolean(policy.notificationSettings.webhookUrl?.trim()),
       enabledEvents: policy.notificationSettings.enabledEvents
