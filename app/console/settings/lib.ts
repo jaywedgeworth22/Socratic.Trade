@@ -123,6 +123,8 @@ export interface ApiKeyEntry {
   /** Set only when YOU have a stored key. */
   updatedAt?: string;
   savedLabel?: string;
+  /** UI text override (default is "key", e.g., "contact" for SEC) */
+  credentialName?: string;
 }
 
 export function listApiKeys(): Promise<{ keys: ApiKeyEntry[] }> {

@@ -30,8 +30,8 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off. ${ADVISORY_NOTE}` },
   { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: `Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt). ${ADVISORY_NOTE}` },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
-  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on" },
-  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
+  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market and after-hours)." },
+  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on", hint: "Permits the agent to place orders configured to fill outside regular market hours." }
 ];
 
 export const SOCRATIC_OVERRIDE: FieldDef[] = [

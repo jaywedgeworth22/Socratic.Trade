@@ -21,7 +21,7 @@
 // is App A's wire format; `coerceCongressTrade()` converts between them.
 
 import { audit, getInternalSetting, resolveApiKey, setInternalSetting } from "../db";
-import { congressAsCongressSourceEnabled, getAppATransactions } from "../congress-trade-client";
+import { congressAsCongressSourceEnabled, getCongressTradeClient } from "../api-clients/congress";
 import { normalizeSymbol } from "../money";
 import type { CongressSignal, CongressTrade } from "./types";
 import {
@@ -717,7 +717,8 @@ export async function fetchAppACongressTrades(now: number = Date.now()): Promise
   const from = new Date(now - (windowDays() + 7) * 24 * 60 * 60_000).toISOString().slice(0, 10);
   let since: string | undefined;
   for (let page = 0; page < APP_A_MAX_PAGES; page++) {
-    const res = await getAppATransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) });
+    const client = getCongressTradeClient();
+    const res = await client.getTransactions({ from, limit: APP_A_PAGE_SIZE, ...(since ? { since } : {}) }).catch(() => null);
     if (!res || res.transactions.length === 0) break;
     for (const raw of res.transactions) {
       const t = coerceCongressTrade(raw);
