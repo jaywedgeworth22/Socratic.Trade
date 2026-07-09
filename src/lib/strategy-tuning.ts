@@ -428,8 +428,13 @@ export async function proposeStrategyTuning(
   };
 
   const policyForResolution = policyForTuningReviewer(policy, modelOverride);
-  const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
-  if (!llmKey) {
+  const { key: llmKey, model: llmModel } = resolveLlmEndpoint(policyForResolution, userId);
+  // No-defaults contract (owner 2026-07-07; llm-request.ts `resolveOpenAiModel`): a blank model is
+  // "unconfigured" EXACTLY like a missing key — callers MUST fail closed rather than send `model:""`.
+  // Tuning has a deterministic local-rules fallback, so degrade to it in BOTH cases. Without the
+  // model guard a keyed-but-model-less (un-migrated) policy would reach requestLlmTuning and fire a
+  // provider 400 for an empty model instead of producing a usable local proposal.
+  if (!llmKey || !llmModel) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
     return applyOosGate(localProposal, userId);
   }
