@@ -46,7 +46,7 @@ re-checks and partial placed/blocked/failed outcomes stay independent. Verificat
 `./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
 `./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
 full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
-`npm run build` passed with only the existing Sentry Edge-runtime warning.
+`npm run build` passed with only the existing Sentry Edge-runtime warning. PR #1174 is open.
 Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
 
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
