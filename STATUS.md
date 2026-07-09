@@ -23,6 +23,15 @@ footnote + header comment. Data is forward-only (fills in as vetoes mature ~5 tr
 retroactive backfill). Concurrent with `monet/model-stats-drawer-wide` (different region of the same
 file). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
 `docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
+## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
+Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
+turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
+`docs/EFFORT-LOG.md merge=union` (kills the dominant conflict) + `scripts/merge-shepherd.sh` (re-syncs
+stuck auto-merge-armed PRs, re-runs flaky verify once, merges the green ones, writes a digest to a
+"Merge shepherd status" tracking issue) + a launchd driver (Mac PAT so update-branch re-triggers CI) +
+a manual-dispatch GH Action. Acts ONLY on auto-merge-armed PRs; reports the rest. Merge≠deploy, so the
+announce-then-deploy step stays the human checkpoint. Dry-run validated against the live backlog.
+
 ## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
 Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
 assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
