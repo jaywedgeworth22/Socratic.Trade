@@ -20,6 +20,20 @@ to the generic form, exec-mode clarification simplified. Kept ONE terse "exclude
 accounting" note (verified real: `tax.ts:197` filters `broker !== "test"`). Live/paper reality
 correctness for real broker accounts unchanged. Gate green: tsc 0 / lint 0-err / vitest 3168 / build.
 See `docs/rollouts/2026-07-09-account-mgmt-ui-and-test-label.md`.
+## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
+Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page
+pickers drop the word "Model" from their labels: "Proposer Model" -> "Proposer", "Reviewer Model" ->
+"Reviewer" (both the field labels and the intro-paragraph prose in `app/console/settings/models.tsx`;
+the Field labels and the Proposer/Red-Team summary line in `app/console/strategy/page.tsx`). This
+collided with the separate AI-review (strategy-tuning) panel, which also said "Reviewer model" and
+defaulted its blank option to "Same As Red Team"/"Same As Green Team" — that panel's model field is
+now "Strategist", its intro sentence says "A strategist model reads...", and the inherited-label
+ternary (`inheritedReviewerLabel`, variable name unchanged) now renders "Reviewer"/"Proposer" instead
+of "Red Team"/"Green Team", so its blank-option text reads "Same As Reviewer" / "Same As Proposer".
+All "Red Team"/"Green Team" concept names elsewhere (approval-card, results page, decisions page,
+model-stats-drawer, `red-team.ts`, hints) are untouched. Gate green: tsc clean, lint 0 errors, 3168
+tests, build clean. See `docs/rollouts/2026-07-09-picker-copy-strategist.md`.
+
 ## 2026-07-09 — Model rotation: 3 codex P2 fixes folded into PR #1117 (MONET/Opus, branch `monet/model-rotation`)
 PR #1117 had all checks green + auto-merge armed; the only blocker was three unresolved codex-bot
 review threads (repo enforces `required_conversation_resolution`). All three confirmed real and fixed

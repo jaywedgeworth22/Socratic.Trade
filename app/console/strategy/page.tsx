@@ -308,7 +308,7 @@ export default function StrategyPage() {
         }
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer Model" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
+          <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <ModelSelect
@@ -322,7 +322,7 @@ export default function StrategyPage() {
             </div>
           </Field>
           <Field
-            label="Reviewer Model"
+            label="Reviewer"
             hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
@@ -359,7 +359,7 @@ export default function StrategyPage() {
           </div>
         )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Proposer: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(effectiveRedTeamModel)}.
+          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(effectiveRedTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
@@ -621,7 +621,7 @@ function AiReviewPanel({
   const inheritedReviewerModel =
     [policy.redTeamLlmModel, policy.llmModel].find((m) => m && m !== ROTATE_ALL_MODELS_ID) || "";
   const inheritedReviewerLabel =
-    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Red Team" : "Green Team";
+    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Reviewer" : "Proposer";
   const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
   const reviewerReasoningValue = reviewerReasoningControl
@@ -685,7 +685,7 @@ function AiReviewPanel({
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        A reviewer model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
+        A strategist model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
         market backdrop, then proposes prompt/weight/guardrail changes. Nothing is applied until you review the exact
         diff and commit it — the same rules as editing by hand, including a typed word for LIVE authority expansion.
       </p>
@@ -694,7 +694,7 @@ function AiReviewPanel({
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-64">
             <Field
-              label="Reviewer model"
+              label="Strategist"
               hint={`Blank = same as ${inheritedReviewerLabel}. AI Review has no separate account-level model.`}
               htmlFor="ai-review-model"
             >

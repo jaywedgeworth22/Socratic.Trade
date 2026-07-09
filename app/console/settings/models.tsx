@@ -314,8 +314,8 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The Proposer Model (aka Green Team or Bull) writes the trade proposals;
-        the Reviewer Model (aka Red Team or Bear) fact-checks and critiques every risk-adding opening at its final size
+        Which models argue about your money. The Proposer (aka Green Team or Bull) writes the trade proposals;
+        the Reviewer (aka Red Team or Bear) fact-checks and critiques every risk-adding opening at its final size
         before it places. <strong>Both are required</strong> — there is no default model and no fallback: runs fail
         closed (route to your approval) until both are chosen. Coach is browser-local and also adjustable on the Coach
         page. Providers without a resolvable key are disabled — add one under API keys below.
@@ -328,7 +328,7 @@ export function ModelsCard() {
       )}
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Proposer Model — required"
+          label="Proposer — required"
           hint="aka Green Team or Bull — writes the trade proposals each run. Required: there is no default model."
           htmlFor="models-green"
         >
@@ -349,7 +349,7 @@ export function ModelsCard() {
           </div>
         </Field>
         <Field
-          label="Reviewer Model — required"
+          label="Reviewer — required"
           hint="aka Red Team or Bear — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
           htmlFor="models-red"
         >

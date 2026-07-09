@@ -341,7 +341,19 @@ As of 2026-07-08 (assignment-rule update).
 - **Proposer/Reviewer Model naming + accurate Red-team role description (MONET, branch
   `monet/model-picker-copy2`) — ✅ COMPLETED via PR #1109 (merged).** Copy-only on both model
   pickers; the `reviewedByModel` Red attribution gap was carried into the single-adversary lane
-  (now a filed follow-up post-#1191).
+  (now a filed follow-up post-#1191). Follow-up 2026-07-09: see "Picker copy" row below —
+  owner asked to drop "Model" from these labels and disambiguate the AI-review panel.
+- **Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch
+  `monet/picker-copy-strategist`) — ✅ COMPLETED via PR #1202 (auto-merge armed).** Owner-directed pure
+  display-copy follow-up to PR #1109 above: drops "Model" from both picker labels
+  ("Proposer Model"→"Proposer", "Reviewer Model"→"Reviewer") in
+  `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. This collided with
+  the separate AI-review (strategy-tuning) panel's own "Reviewer model" field and its "Same
+  As Red Team"/"Same As Green Team" default, so that panel's field is renamed "Strategist"
+  (intro sentence now "A strategist model reads...", inherited-label ternary now renders
+  "Reviewer"/"Proposer"). No functional/variable-name changes; all other Red Team/Green Team
+  concept names untouched. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
+  `docs/rollouts/2026-07-09-picker-copy-strategist.md`.
 - **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
   `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
   `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row
