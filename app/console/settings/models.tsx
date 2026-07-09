@@ -107,6 +107,14 @@ const MODEL_GROUPS: ModelGroup[] = [
 
 const CATALOG_IDS = new Set(MODEL_GROUPS.flatMap((g) => g.options.map((o) => o.value)));
 
+/** Sentinel meaning "rotate through all eligible curated models — a different one each run"
+ *  (testing option; the strategy run substitutes the concrete round-robin pick at run start,
+ *  skipping models with no resolvable key — see src/lib/model-rotation.ts). Offered for the
+ *  Proposer/Reviewer seats only, never the Coach. Keep the literal in sync with
+ *  LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts and app/ui/llm-model-catalog.ts. */
+const ROTATE_MODEL_ID = "__rotate__";
+const ROTATE_MODEL_LABEL = "Rotate all models (testing)";
+
 function ModelSelect({
   id,
   value,
@@ -128,12 +136,20 @@ function ModelSelect({
 }) {
   // A stored model id outside the catalog (typed on the Strategy screen or by
   // an older UI) still has to show as selected — never lie about the config.
-  const customCurrent = value && !CATALOG_IDS.has(value) ? value : null;
+  const customCurrent = value && !CATALOG_IDS.has(value) && value !== ROTATE_MODEL_ID ? value : null;
   return (
     <Select id={id} value={value} title={title} onChange={(e) => onChange(e.target.value)}>
       <option value="" title={emptyTitle}>
         {emptyLabel}
       </option>
+      {(role === "proposer" || role === "red-team") && (
+        <option
+          value={ROTATE_MODEL_ID}
+          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+        >
+          {ROTATE_MODEL_LABEL}
+        </option>
+      )}
       {customCurrent && (
         <option value={customCurrent} title="A model id outside the curated list, kept exactly as stored.">
           {customCurrent} — custom id
@@ -256,8 +272,11 @@ export function ModelsCard() {
     }
   };
 
-  const isCurated = (m: string) => !m || CATALOG_IDS.has(m);
+  // The rotation sentinel only ever serves curated models, so the custom-cost-fallback warning
+  // doesn't apply to it.
+  const isCurated = (m: string) => !m || CATALOG_IDS.has(m) || m === ROTATE_MODEL_ID;
   const showCustomWarning = (green && !isCurated(green)) || (red && !isCurated(red));
+  const rotationSelected = green === ROTATE_MODEL_ID || red === ROTATE_MODEL_ID;
 
   return (
     <Card
@@ -381,6 +400,13 @@ export function ModelsCard() {
             Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
           </div>
         </div>
+      )}
+      {rotationSelected && (
+        <p className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+          audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+          automatically. Intended for paper/test accounts.
+        </p>
       )}
       {selectedNoKey.length > 0 && (
         <p className="mt-2 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">

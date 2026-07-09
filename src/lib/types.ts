@@ -757,6 +757,8 @@ export interface TradingPolicy {
    * The Green Team / Bull proposer model — REQUIRED to run (owner directive 2026-07-07: no model
    * defaults, ever; the former OPENAI_MODEL/DEFAULT_OPENAI_MODEL fallbacks are gone). Unset
    * resolves to "" and the strategy run fails closed with an actionable Settings message.
+   * May also hold the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL) — resolved to a
+   * concrete round-robin pick at run start (src/lib/model-rotation.ts), never served literally.
    */
   llmModel?: string;
   /**
@@ -764,7 +766,7 @@ export interface TradingPolicy {
    * ever). It NEVER falls back to `llmModel` or any cross-family default: unset resolves to "" and
    * every risk-adding opening fails closed to human review (`not_configured`). The SAME model as
    * `llmModel` is ALLOWED when explicitly chosen — independence is a non-blocking Settings hint,
-   * never a gate.
+   * never a gate. May also hold the "__rotate__" rotation sentinel (see `llmModel`).
    */
   redTeamLlmModel?: string;
   /**

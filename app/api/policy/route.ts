@@ -1,6 +1,7 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
 import { getPolicy, setPolicy, setStrategyPrompt, resolveLlmCredential } from "@/lib/db";
 import { llmModelFamily } from "@/lib/llm-provider";
+import { isModelRotationSentinel } from "@/lib/llm-request";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
 import { stripNullsDeep } from "@/lib/policy-null-stripping";
@@ -144,6 +145,10 @@ async function validatePolicy(
   if (policy.socraticOverrideMode !== undefined && !["off", "propose", "execute"].includes(policy.socraticOverrideMode)) return "socraticOverrideMode must be off, propose, or execute.";
   if (policy.socraticOverrideMaxPctOfNav !== undefined && (!Number.isFinite(policy.socraticOverrideMaxPctOfNav) || policy.socraticOverrideMaxPctOfNav <= 0 || policy.socraticOverrideMaxPctOfNav > 100)) return "socraticOverrideMaxPctOfNav must be between 0 and 100.";
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
+  // NOTE: any non-empty id ≤64 chars is deliberately valid here — this includes custom provider
+  // model ids AND the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL in
+  // src/lib/llm-request.ts; resolved to a concrete model at run start by src/lib/model-rotation.ts).
+  // Do not add a catalog whitelist.
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.learningReviewEnabled !== undefined && typeof policy.learningReviewEnabled !== "boolean") return "learningReviewEnabled must be a boolean.";
@@ -154,11 +159,15 @@ async function validatePolicy(
   // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
   // server-side backstop. (Mandatory "both models set" is enforced in the Settings UI and at strategy
   // runtime via fail-closed on an unconfigured model.)
-  if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim()) {
+  // The "__rotate__" rotation sentinel is EXEMPT from the keyed-provider check: it is not a concrete
+  // model with a single provider to key-check — rotation resolves it, per run, to a pick drawn ONLY
+  // from credential-resolvable models (src/lib/model-rotation.ts), so the keyed guarantee is upheld
+  // at serve time, not save time.
+  if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim() && !isModelRotationSentinel(policy.llmModel)) {
     const provider = llmModelFamily(policy.llmModel);
     if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
   }
-  if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim()) {
+  if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim() && !isModelRotationSentinel(policy.redTeamLlmModel)) {
     const provider = llmModelFamily(policy.redTeamLlmModel);
     if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
   }

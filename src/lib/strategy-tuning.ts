@@ -13,7 +13,7 @@ import {
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, isModelRotationSentinel } from "./llm-request";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
@@ -317,9 +317,18 @@ function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", 
 }
 
 function policyForTuningReviewer(policy: TradingPolicy, modelOverride?: string): TradingPolicy {
+  // Sentinel-aware model inheritance (mirrors the UI panel's inheritedReviewerModel, which SKIPS the
+  // "__rotate__" sentinel when it promises a Green-model review). "__rotate__" is a run-scoped rotation
+  // marker resolved only inside runStrategyOnce; the tuning reviewer runs OUTSIDE a strategy run, so
+  // resolveOpenAiModel would map the raw sentinel to "" and silently degrade this LLM review to local
+  // rules. Fall through the sentinel to the first CONCRETE configured model instead. When BOTH seats are
+  // "__rotate__", no concrete model is found → the downstream `!llmModel` gate honestly falls to local
+  // rules (same no-defaults contract as elsewhere).
   const explicitModel = modelOverride?.trim();
-  if (explicitModel) return { ...policy, llmModel: explicitModel };
-  const teamModel = policy.redTeamLlmModel?.trim() || policy.llmModel?.trim();
+  if (explicitModel && !isModelRotationSentinel(explicitModel)) return { ...policy, llmModel: explicitModel };
+  const teamModel = [policy.redTeamLlmModel, policy.llmModel]
+    .map((m) => m?.trim())
+    .find((m) => m && !isModelRotationSentinel(m));
   return teamModel ? { ...policy, llmModel: teamModel } : policy;
 }
 

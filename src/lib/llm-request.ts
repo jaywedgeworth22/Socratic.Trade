@@ -31,6 +31,23 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
 // the chat assistant requires an explicit per-request model or CHAT_LLM_MODEL (no hardcoded model).
 
 /**
+ * Sentinel model id meaning "rotate through every eligible curated model, a different one each
+ * run" (owner testing option for accruing comparative live history across models). It is a valid
+ * PERSISTED value for policy.llmModel / policy.redTeamLlmModel, but it must never be SERVED:
+ * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
+ * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
+ * no imports beyond types) so both the rotation module and `resolveOpenAiModel`'s safety net below
+ * can share it without an import cycle. Keep the literal in sync with the UI copies in
+ * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID) and app/console/settings/models.tsx.
+ */
+export const LLM_MODEL_ROTATION_SENTINEL = "__rotate__";
+
+/** True when the model id is the rotation sentinel (see LLM_MODEL_ROTATION_SENTINEL). */
+export function isModelRotationSentinel(model?: string | null): boolean {
+  return (model ?? "").trim() === LLM_MODEL_ROTATION_SENTINEL;
+}
+
+/**
  * OpenAI "reasoning" models (gpt-5 family, o-series). They REJECT the `temperature` param
  * (400 "Only the default (1) value is supported") and instead take `reasoning_effort`. They also
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
@@ -47,9 +64,18 @@ export function isReasoningModel(model: string | undefined): boolean {
  * callers MUST treat "" as unconfigured and fail closed (route to human / skip the run), never
  * send an empty-model request. The former `OPENAI_MODEL`-env and `DEFAULT_OPENAI_MODEL` strategy
  * fallbacks are deliberately removed.
+ *
+ * The rotation sentinel ("__rotate__") is ALSO treated as unset here — a SAFETY NET for consumers
+ * that read the persisted policy directly OUTSIDE a strategy run (chat, the outcome-engine lesson
+ * pass, strategy tuning, the run route's key precheck): with no defaults left it resolves to ""
+ * (fail closed) instead of sending the literal "__rotate__" to a provider. The strategy run itself
+ * substitutes the concrete rotation pick before ever reaching this function
+ * (src/lib/model-rotation.ts).
  */
 export function resolveOpenAiModel(policy?: { llmModel?: string | null } | null): string {
-  return policy?.llmModel?.trim() || "";
+  const fromPolicy = policy?.llmModel?.trim();
+  if (fromPolicy && fromPolicy !== LLM_MODEL_ROTATION_SENTINEL) return fromPolicy;
+  return "";
 }
 
 export const ALL_LLM_REASONING_EFFORTS: readonly LlmReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
