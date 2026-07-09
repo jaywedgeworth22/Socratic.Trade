@@ -756,6 +756,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
+  logo (MONET, intro-anim session, branch `monet/intro-landing-fixes-3676f7`) — IN PROGRESS
+  2026-07-08.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
+  popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
+  cause: intro can finish against the loading shell and lands on a stale hard-coded fallback
+  box; reveal then has no mounted logo. Fix in `intro-canvas.tsx` only: fallback box now
+  matches the real logo geometry per viewport (<lg = MobileBrandRow formula, >=lg = bar
+  logo), landing box eases to the measured target instead of snapping, natural fade waits
+  for a settled measured target (8s timeout safety; skip stays immediate).
 - **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
   `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
   tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +

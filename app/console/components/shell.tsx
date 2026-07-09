@@ -195,6 +195,9 @@ function MobileBrandRow() {
   const [logoH, setLogoH] = useState(24);
 
   useEffect(() => {
+    // Keep this formula in sync with intro-canvas.tsx layout()'s <lg fallback
+    // header box — the splash assembles the wordmark at that size before this
+    // row can be measured, and a mismatch shows as a size pop at reveal.
     const measure = () => setLogoH(Math.max(16, Math.min(34, Math.round((window.innerWidth * 0.88) / WORDMARK_AR))));
     measure();
     window.addEventListener("resize", measure);
