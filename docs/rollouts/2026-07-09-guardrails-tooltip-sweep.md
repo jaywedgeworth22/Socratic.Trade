@@ -3,7 +3,7 @@
 ## Summary
 
 Added native `title` affordances to the remaining bare Guardrails controls in
-the Universe and Autonomy sections.
+the Universe and Autonomy sections. PR #1184 is open with auto-merge armed.
 
 ## Why
 
