@@ -202,6 +202,10 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Proposer/Reviewer Model naming + Red description fix (MONET, branch `monet/model-picker-copy2`)
+  — IN PROGRESS 2026-07-08, landing.** Copy-only on both pickers; Red attribution gap
+  (`reviewedByModel`) queued for the single-adversary lane.
+
 - **Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`) — IN PROGRESS
   2026-07-08, landing.** #1091's recovery applied to the uncovered inline Bear parse (silent-full-veto
   fix); helper + 7 tests; superseded cleanly by the single-adversary inline-Bear deletion when it lands.
