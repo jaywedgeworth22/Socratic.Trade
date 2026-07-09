@@ -125,6 +125,10 @@ async function validatePolicy(
   if (policy.socraticOverrideMode !== undefined && !["off", "propose", "execute"].includes(policy.socraticOverrideMode)) return "socraticOverrideMode must be off, propose, or execute.";
   if (policy.socraticOverrideMaxPctOfNav !== undefined && (!Number.isFinite(policy.socraticOverrideMaxPctOfNav) || policy.socraticOverrideMaxPctOfNav <= 0 || policy.socraticOverrideMaxPctOfNav > 100)) return "socraticOverrideMaxPctOfNav must be between 0 and 100.";
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
+  // NOTE: any non-empty id ≤64 chars is deliberately valid here — this includes custom provider
+  // model ids AND the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL in
+  // src/lib/llm-request.ts; resolved to a concrete model at run start by src/lib/model-rotation.ts).
+  // Do not add a catalog whitelist.
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {

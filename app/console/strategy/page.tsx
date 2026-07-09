@@ -17,7 +17,7 @@ import {
 } from "@/lib/llm-request";
 // Pure curated-model DATA (no legacy UI components) — the same catalog the rest
 // of the app offers, so the console review picker stays consistent with it.
-import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED } from "../../ui/llm-model-catalog";
+import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED, ROTATE_ALL_MODELS_ID, ROTATE_ALL_MODELS_LABEL } from "../../ui/llm-model-catalog";
 import {
   activateProfile,
   copyProfileToAccount,
@@ -62,6 +62,7 @@ function modelSelectValue(model: string | undefined): string {
 
 function modelProviderLabel(model: string | undefined): string {
   if (!model) return "Not Set";
+  if (model === ROTATE_ALL_MODELS_ID) return "Rotating (a different model each run)";
   const group = CURATED_LLM_MODEL_GROUPS.find((g) => g.options.some((option) => option.value === model));
   return group?.label ?? "Custom Provider";
 }
@@ -141,7 +142,7 @@ function ModelSelect({
 }) {
   const selectValue = modelSelectValue(value);
   const custom = selectValue === CUSTOM_MODEL_OPTION;
-  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION ? value : null;
+  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION && value !== ROTATE_ALL_MODELS_ID ? value : null;
   return (
     <div className="flex flex-col gap-2">
       <Select
@@ -153,6 +154,12 @@ function ModelSelect({
         }}
       >
         {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
+        <option
+          value={ROTATE_ALL_MODELS_ID}
+          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+        >
+          {ROTATE_ALL_MODELS_LABEL}
+        </option>
         {customCurrent && (
           <option value={customCurrent} title="A model id outside the curated list, kept exactly as stored.">
             {customCurrent} - custom id
@@ -211,8 +218,14 @@ export default function StrategyPage() {
   const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
   const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
-  const showCustomModelWarning = (proposerModel && !isCuratedModel(proposerModel)) || (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel));
-  const reasoningModels = [proposerModel, effectiveRedTeamModel];
+  // The rotation sentinel is neither a custom id (it only ever serves curated models, so the
+  // custom-cost-fallback warning doesn't apply) nor a model with its own reasoning capability.
+  const isRotate = (m: string) => m === ROTATE_ALL_MODELS_ID;
+  const showCustomModelWarning =
+    (proposerModel && !isCuratedModel(proposerModel) && !isRotate(proposerModel)) ||
+    (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel) && !isRotate(effectiveRedTeamModel));
+  const rotationSelected = isRotate(proposerModel) || isRotate(effectiveRedTeamModel);
+  const reasoningModels = [proposerModel, effectiveRedTeamModel].filter((m) => !isRotate(m));
   const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
     ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
@@ -324,6 +337,13 @@ export default function StrategyPage() {
             <div>
               Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
             </div>
+          </div>
+        )}
+        {rotationSelected && (
+          <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+            audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+            automatically. Intended for paper/test accounts.
           </div>
         )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
@@ -584,8 +604,12 @@ function AiReviewPanel({
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
 
-  const inheritedReviewerModel = policy.redTeamLlmModel || policy.llmModel || "";
-  const inheritedReviewerLabel = policy.redTeamLlmModel ? "Red Team" : "Green Team";
+  // The rotation sentinel is not a callable model — when a rotating seat would be inherited,
+  // fall through to the next concrete choice (AI review runs once, outside the per-run rotation).
+  const inheritedReviewerModel =
+    [policy.redTeamLlmModel, policy.llmModel].find((m) => m && m !== ROTATE_ALL_MODELS_ID) || "";
+  const inheritedReviewerLabel =
+    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Red Team" : "Green Team";
   const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
   const reviewerReasoningValue = reviewerReasoningControl

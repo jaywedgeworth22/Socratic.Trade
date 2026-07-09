@@ -30,6 +30,23 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
 
 /**
+ * Sentinel model id meaning "rotate through every eligible curated model, a different one each
+ * run" (owner testing option for accruing comparative live history across models). It is a valid
+ * PERSISTED value for policy.llmModel / policy.redTeamLlmModel, but it must never be SERVED:
+ * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
+ * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
+ * no imports beyond types) so both the rotation module and `resolveOpenAiModel`'s safety net below
+ * can share it without an import cycle. Keep the literal in sync with the UI copies in
+ * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID) and app/console/settings/models.tsx.
+ */
+export const LLM_MODEL_ROTATION_SENTINEL = "__rotate__";
+
+/** True when the model id is the rotation sentinel (see LLM_MODEL_ROTATION_SENTINEL). */
+export function isModelRotationSentinel(model?: string | null): boolean {
+  return (model ?? "").trim() === LLM_MODEL_ROTATION_SENTINEL;
+}
+
+/**
  * OpenAI "reasoning" models (gpt-5 family, o-series). They REJECT the `temperature` param
  * (400 "Only the default (1) value is supported") and instead take `reasoning_effort`. They also
  * spend output budget on hidden reasoning tokens, so the visible-output cap must be raised.
@@ -38,10 +55,15 @@ export function isReasoningModel(model: string | undefined): boolean {
   return /^(gpt-5|o\d)/i.test((model ?? "").trim());
 }
 
-/** Resolve the per-user model: explicit policy choice → OPENAI_MODEL env → default. */
+/** Resolve the per-user model: explicit policy choice → OPENAI_MODEL env → default.
+ *  The rotation sentinel is treated as unset here — a SAFETY NET for consumers that read the
+ *  persisted policy directly OUTSIDE a strategy run (chat, the outcome-engine lesson pass,
+ *  strategy tuning, the run route's key precheck): they fall back to the default model instead of
+ *  sending the literal "__rotate__" to a provider. The strategy run itself substitutes the
+ *  concrete rotation pick before ever reaching this function (src/lib/model-rotation.ts). */
 export function resolveOpenAiModel(policy?: { llmModel?: string | null } | null): string {
   const fromPolicy = policy?.llmModel?.trim();
-  if (fromPolicy) return fromPolicy;
+  if (fromPolicy && fromPolicy !== LLM_MODEL_ROTATION_SENTINEL) return fromPolicy;
   return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
 }
 

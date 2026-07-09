@@ -1,0 +1,202 @@
+// model-rotation.ts — the "__rotate__" testing option: rotate the Proposer (green) and/or
+// Reviewer (red) model through every eligible curated model, a different one each strategy run.
+//
+// PURPOSE (owner request 2026-07-08): accrue live comparative history across models on the paper
+// and test accounts. Proposals already persist `proposedByModel` (the CONCRETE serving model), so
+// attribution is automatic — rotation only has to vary which model serves each run.
+//
+// HOW IT RESOLVES: `runStrategyOnce` calls `resolveModelRotationForRun` at the TOP of every run,
+// BEFORE any budget preview or `resolveLlmEndpoint` call, and merges the result onto its
+// RUN-SCOPED policy clone (`runPolicy`) — the same pattern as the usage-budget downgrade. The
+// PERSISTED policy keeps the sentinel so the NEXT run rotates again; nothing downstream (endpoint
+// resolution, timeouts, `proposedByModel` stamping) ever sees "__rotate__". A safety net in
+// `resolveOpenAiModel` (llm-request.ts) covers consumers that read the persisted policy outside a
+// run (chat, lesson pass, tuning): they get the default model, never the literal sentinel.
+//
+// POINTER STATE: independent per-seat round-robin counters persisted via internal settings, keyed
+// `model_rotation:<userId>:<accountId>:<seat>`. To vary green/red COMBINATIONS rather than locking
+// phase (both counters advancing by 1 per run = a fixed pairing), the red counter advances one
+// EXTRA step whenever the green counter wraps a full cycle.
+import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
+import { llmModelFamily } from "./llm-provider";
+import { DEFAULT_OPENAI_MODEL, isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
+
+export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
+
+/**
+ * The rotation pool: the curated model catalog (keep in sync with
+ * app/ui/llm-model-catalog.ts CURATED_LLM_MODEL_GROUPS — src/lib must not import from app/)
+ * MINUS deliberate exclusions:
+ *   - mistral-small-2603 / mistral-medium-3-5 — broken capability map (benchmark 2026-07-08,
+ *     0/12 calls succeeded); re-add when the capability map is fixed.
+ *   - grok-build-0.1 — coding specialist, soft-timeouts as a Green strategist.
+ * Order interleaves providers so consecutive runs hit different providers even before the
+ * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
+ */
+export const MODEL_ROTATION_POOL: readonly string[] = [
+  "gpt-5.4-mini",
+  "claude-haiku-4-5",
+  "gemini-3.5-flash",
+  "deepseek-v4-flash",
+  "gpt-5.4-nano",
+  "claude-sonnet-5",
+  "gemini-3.1-flash-lite",
+  "grok-4.3",
+  "gpt-5.4",
+  "claude-opus-4-8",
+  "gemini-3.1-pro-preview",
+  "deepseek-v4-pro",
+  "gpt-5.5",
+  "claude-fable-5"
+];
+
+/** One seat's pick: the model served this run plus the pointer bookkeeping that produced it. */
+export interface RotationSeatPick {
+  model: string;
+  /** Counter value CONSUMED by this pick (pool index = pointer % pool length). */
+  pointer: number;
+  /** Counter value to persist for the next run. */
+  nextPointer: number;
+  /** True when this pick consumed the last slot of a full cycle through the pool. */
+  wrapped: boolean;
+}
+
+export interface RotationAdvance {
+  green?: RotationSeatPick;
+  red?: RotationSeatPick;
+}
+
+/**
+ * Pure round-robin pointer logic (unit-testable without a DB). Each rotating seat consumes
+ * `pool[counter % pool.length]` and advances its counter by 1; when the GREEN counter wraps
+ * (finishes a full cycle), the RED counter advances one extra step so the green/red pairing
+ * shifts phase instead of repeating the same combinations forever.
+ */
+export function advanceRotationPointers(input: {
+  pool: readonly string[];
+  rotateGreen: boolean;
+  rotateRed: boolean;
+  greenCounter: number;
+  redCounter: number;
+}): RotationAdvance {
+  const n = input.pool.length;
+  if (n === 0) return {};
+  const normalize = (counter: number): number => {
+    const safe = Number.isFinite(counter) ? Math.trunc(counter) : 0;
+    return ((safe % n) + n) % n;
+  };
+  const out: RotationAdvance = {};
+  let greenWrapped = false;
+  if (input.rotateGreen) {
+    const pointer = normalize(input.greenCounter);
+    greenWrapped = pointer === n - 1;
+    out.green = { model: input.pool[pointer]!, pointer, nextPointer: pointer + 1, wrapped: greenWrapped };
+  }
+  if (input.rotateRed) {
+    const pointer = normalize(input.redCounter);
+    out.red = {
+      model: input.pool[pointer]!,
+      pointer,
+      // The extra +1 on green wrap is what varies the green/red COMBINATION over cycles.
+      nextPointer: pointer + 1 + (greenWrapped ? 1 : 0),
+      wrapped: pointer === n - 1
+    };
+  }
+  return out;
+}
+
+/**
+ * The rotation pool restricted to models whose provider credential actually RESOLVES for this
+ * user (their own key or the operator failover) — rotation must never inject a guaranteed-failure
+ * run by picking a model nobody holds a key for.
+ */
+export function eligibleRotationPool(userId: string): { pool: string[]; skipped: string[] } {
+  const pool: string[] = [];
+  const skipped: string[] = [];
+  for (const model of MODEL_ROTATION_POOL) {
+    if (resolveLlmCredential(llmModelFamily(model), userId).key) pool.push(model);
+    else skipped.push(model);
+  }
+  return { pool, skipped };
+}
+
+function rotationPointerKey(userId: string, accountId: string | undefined, seat: "green" | "red"): string {
+  return `model_rotation:${userId}:${accountId ?? "none"}:${seat}`;
+}
+
+/**
+ * Resolve the rotation sentinel(s) on a policy into CONCRETE models for one strategy run.
+ * Returns `{}` when neither seat is set to rotate. Reads + advances the per-(user, account, seat)
+ * pointers and audits every pick (`model_rotation_pick`). Never throws: on any storage error the
+ * rotating seats fall back to the app default model (a normal, working run) rather than letting
+ * the raw sentinel reach a provider.
+ */
+export function resolveModelRotationForRun(input: {
+  userId: string;
+  accountId?: string;
+  runId: string;
+  policy: { llmModel?: string | null; redTeamLlmModel?: string | null };
+}): { llmModel?: string; redTeamLlmModel?: string } {
+  const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
+  const rotateRed = isModelRotationSentinel(input.policy.redTeamLlmModel);
+  if (!rotateGreen && !rotateRed) return {};
+  try {
+    const { pool, skipped } = eligibleRotationPool(input.userId);
+    if (pool.length === 0) {
+      // No provider credential resolves at all — the run will fail on the key check regardless;
+      // substitute the default model so it fails the NORMAL way instead of serving "__rotate__".
+      audit(
+        "model_rotation_pick",
+        { runId: input.runId, outcome: "empty_pool", fallback: DEFAULT_OPENAI_MODEL, skipped },
+        input.userId,
+        input.accountId
+      );
+      return {
+        ...(rotateGreen ? { llmModel: DEFAULT_OPENAI_MODEL } : {}),
+        ...(rotateRed ? { redTeamLlmModel: DEFAULT_OPENAI_MODEL } : {})
+      };
+    }
+    const greenKey = rotationPointerKey(input.userId, input.accountId, "green");
+    const redKey = rotationPointerKey(input.userId, input.accountId, "red");
+    const advance = advanceRotationPointers({
+      pool,
+      rotateGreen,
+      rotateRed,
+      greenCounter: getInternalSetting<number>(greenKey) ?? 0,
+      redCounter: getInternalSetting<number>(redKey) ?? 0
+    });
+    const out: { llmModel?: string; redTeamLlmModel?: string } = {};
+    for (const [seat, pick, key] of [
+      ["green", advance.green, greenKey],
+      ["red", advance.red, redKey]
+    ] as const) {
+      if (!pick) continue;
+      setInternalSetting(key, pick.nextPointer);
+      audit(
+        "model_rotation_pick",
+        {
+          runId: input.runId,
+          seat,
+          model: pick.model,
+          pointer: pick.pointer,
+          nextPointer: pick.nextPointer,
+          wrapped: pick.wrapped,
+          poolSize: pool.length,
+          skippedNoCredential: skipped
+        },
+        input.userId,
+        input.accountId
+      );
+      if (seat === "green") out.llmModel = pick.model;
+      else out.redTeamLlmModel = pick.model;
+    }
+    return out;
+  } catch (error) {
+    // Fail safe, not silent: a broken pointer store must not kill the run or leak the sentinel.
+    console.error("[model-rotation] pick failed; falling back to default model:", error);
+    return {
+      ...(rotateGreen ? { llmModel: DEFAULT_OPENAI_MODEL } : {}),
+      ...(rotateRed ? { redTeamLlmModel: DEFAULT_OPENAI_MODEL } : {})
+    };
+  }
+}

@@ -37,6 +37,7 @@ import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llm
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
+import { resolveModelRotationForRun } from "./model-rotation";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
 import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
@@ -345,6 +346,18 @@ export async function runStrategyOnce(
       return result;
     }
 
+    // ── Model rotation (owner testing option) ─────────────────────────────
+    // "__rotate__" as llmModel / redTeamLlmModel round-robins each run through every curated
+    // model whose provider credential resolves, so comparative live history accrues across
+    // models (`proposedByModel` already stamps the CONCRETE serving model on each proposal).
+    // Resolved HERE — after the market-closed early-return (a skipped run must not consume a
+    // rotation slot) and BEFORE any budget preview or LLM endpoint resolution — onto a
+    // RUN-SCOPED override, the same pattern as the usage-budget downgrade below: the persisted
+    // policy keeps the sentinel so the NEXT run rotates again, and the breaker `setPolicy`
+    // calls above/below (which persist `policy`) can never overwrite it with a concrete model.
+    // Every pick is audited (`model_rotation_pick`). See src/lib/model-rotation.ts.
+    const rotationOverride = resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
     void checkBudgetAndAlert(userId, policy).catch(() => {});
@@ -363,7 +376,9 @@ export async function runStrategyOnce(
       budgetStatus = await getBudgetStatusCached();
       if (budgetStatus) {
         const enforceOn = usageBudgetEnforceEnabled();
-        const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
+        // Rotation-resolved view: the preview must reason about the CONCRETE models this run
+        // will serve, not the "__rotate__" sentinel (which has no price entry).
+        const wouldDecide = await previewBudgetDecision(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
         audit(
           "usage_budget_status",
           {
@@ -546,7 +561,9 @@ export async function runStrategyOnce(
     // market-closed early-return above).
     let enforceDecision: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
     try {
-      enforceDecision = await evaluateBudgetForRun(userId, policy, { status: budgetStatus });
+      // Rotation-resolved view (same reason as the advisory preview above): enforcement must
+      // evaluate the CONCRETE models this run will serve, never the "__rotate__" sentinel.
+      enforceDecision = await evaluateBudgetForRun(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
     } catch {
       /* fail-open — never let usage-budget enforcement break a run */
     }
@@ -565,7 +582,12 @@ export async function runStrategyOnce(
     // object threaded into LLM-model-resolution call sites for this run.
     const runLlmOverride: { llmModel?: string; redTeamLlmModel?: string } = {};
     if (enforceDecision.downgraded) {
-      const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+      // "before" = what this run WOULD have served (rotation already resolved), so the
+      // downgrade audit shows a concrete-model transition, not the "__rotate__" sentinel.
+      const before = {
+        llmModel: rotationOverride.llmModel ?? policy.llmModel,
+        redTeamLlmModel: rotationOverride.redTeamLlmModel ?? policy.redTeamLlmModel
+      };
       if (enforceDecision.llmModel) runLlmOverride.llmModel = enforceDecision.llmModel;
       if (enforceDecision.redTeamLlmModel) runLlmOverride.redTeamLlmModel = enforceDecision.redTeamLlmModel;
       audit(
@@ -586,7 +608,9 @@ export async function runStrategyOnce(
     // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
     // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
     // persists ONLY `strategyAuthority`, never the in-run model downgrade.
-    const runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride };
+    // Merge order matters: the usage-budget downgrade (runLlmOverride) intentionally WINS over the
+    // rotation pick — enforcement is the owner's opt-in cost override of whatever would have run.
+    const runPolicy: RunnablePolicy = { ...policy, ...rotationOverride, ...runLlmOverride };
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility

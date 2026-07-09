@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Model rotation option "Rotate all models (testing)" (MONET, branch `monet/model-rotation`)
+Owner request: a Proposer/Reviewer picker option that rotates through all model combinations so the
+paper/test accounts accrue comparative live history (attribution is automatic via `proposedByModel`).
+New `"__rotate__"` sentinel selectable on both pickers (Settings→Models + Strategy page); resolved at
+the TOP of `runStrategyOnce` onto the RUN-SCOPED `runPolicy` (same pattern as the usage-budget
+downgrade — the persisted policy keeps the sentinel; breaker `setPolicy` calls can't overwrite it).
+Round-robin per (user, account, seat) via internal settings `model_rotation:<user>:<acct>:<seat>`;
+red pointer advances one extra step on green wrap so combinations shift phase; pool = curated catalog
+minus mistral-small-2603/mistral-medium-3-5 (broken capability map, benchmark 2026-07-08) and
+grok-build-0.1 (coding model), filtered to providers whose credential resolves; every pick audited
+(`model_rotation_pick`). Safety net: `resolveOpenAiModel` treats the sentinel as unset for consumers
+outside a run (chat/lesson pass/tuning). New `src/lib/model-rotation.ts` + 13 tests. See
+`docs/rollouts/2026-07-08-model-rotation.md`.
 ## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
 All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
 requirement, implemented by 14 file-disjoint subagents across two workflow waves and

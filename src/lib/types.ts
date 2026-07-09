@@ -761,9 +761,12 @@ export interface TradingPolicy {
   /** Sell-to-fund-buy mode (PR 3). Defaults to "off" — no funding sells unless explicitly enabled. */
   sellToFundBuy?: SellToFundBuyMode;
   /** Account strategy LLM model id for the agentic loop (e.g. "gpt-5.4-mini"). Overrides the OPENAI_MODEL env
-   *  fallback. This is the Green Team / Bull proposer model. */
+   *  fallback. This is the Green Team / Bull proposer model. May also hold the "__rotate__" rotation
+   *  sentinel (LLM_MODEL_ROTATION_SENTINEL) — resolved to a concrete round-robin pick at run start
+   *  (src/lib/model-rotation.ts), never served literally. */
   llmModel?: string;
-  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. */
+  /** Optional Red Team / Bear reviewer model. When unset, Red Team reuses `llmModel`. May also hold the
+   *  "__rotate__" rotation sentinel (see `llmModel`). */
   redTeamLlmModel?: string;
   /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).

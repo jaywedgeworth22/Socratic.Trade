@@ -202,6 +202,15 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Model rotation option "Rotate all models (testing)" (MONET, branch `monet/model-rotation`) —
+  IN PROGRESS 2026-07-08, landing.** Owner request: rotate Proposer/Reviewer through all model
+  combinations so paper/test accounts accrue comparative live history. `"__rotate__"` sentinel on
+  both pickers; run-scoped substitution at the top of `runStrategyOnce` (persisted policy keeps the
+  sentinel); per-(user,account,seat) round-robin pointers in internal settings, red advances an
+  extra step on green wrap; pool = curated catalog minus mistral x2 + grok-build-0.1, filtered to
+  resolvable credentials; every pick audited (`model_rotation_pick`). New `src/lib/model-rotation.ts`
+  + 13 tests. Rollout: `docs/rollouts/2026-07-08-model-rotation.md`.
+
 - **Proposer/Reviewer Model naming + Red description fix (MONET, branch `monet/model-picker-copy2`)
   — IN PROGRESS 2026-07-08, landing.** Copy-only on both pickers; Red attribution gap
   (`reviewedByModel`) queued for the single-adversary lane.
