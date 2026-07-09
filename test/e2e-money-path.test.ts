@@ -92,9 +92,11 @@ function bearOk(): Response {
 }
 
 function redTeamOk(): Response {
+  // Single-adversary consolidation: the reviewer returns the three-way {verdict, reason} shape.
+  // "approve" = proceed at the finalized size, so the money path completes to a placed order.
   return new Response(
     JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({ rejected: false, reason: "E2E looks good to me" }) } }]
+      choices: [{ message: { content: JSON.stringify({ verdict: "approve", reason: "E2E looks good to me" }) } }]
     }),
     { status: 200, headers: { "content-type": "application/json" } }
   );
@@ -146,6 +148,10 @@ async function setupBrokerLiveAutonomous(label: string): Promise<void> {
     activeBroker: "alpaca",
     accountNumber: "TEST",
     llmModel: "gpt-4.1-mini",
+    // No-defaults world: the single Red Team reviewer must be an explicit pick or the risk-adding
+    // opening fails closed to human review. Same OpenAI-family model as the proposer so the fetch
+    // stub serves its "Red Team Risk Agent" call through the api.openai.com endpoint.
+    redTeamLlmModel: "gpt-4.1-mini",
     includedIndices: [],
     additionalSymbols: ["AAPL"],
     strategyAuthority: "decide",

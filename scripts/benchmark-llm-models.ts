@@ -3,9 +3,10 @@
 //   resolveLlmEndpoint (provider/transport/key routing) -> buildLlmRequestBody (per-transport wire
 //   body incl. schemas + withLlmRequestBounds token caps/reasoning) -> llmAuthHeaders ->
 //   llmFetchCapturing (soft timeout = strategyLlmTimeoutMs, no severing) -> extractLlmText/-Usage.
-// System prompts come from buildBullSystem/buildBearSystem (strategy-prompts) with representative
-// params; the Bull `trade_proposals` and Bear `bear_proposals` JSON schemas mirror the literals in
-// src/lib/strategy.ts (proposeTrades) — keep them in sync if strategy.ts changes.
+// System prompts come from buildBullSystem (strategy-prompts) for the proposer and
+// buildRedTeamReviewSystem for the single Red Team reviewer; the Bull `trade_proposals` JSON schema
+// mirrors the literal in src/lib/strategy.ts (proposeTrades) and the reviewer sends the app's real
+// `red_team_verdict` three-way schema (RED_TEAM_VERDICT_SCHEMA) — keep them in sync if either changes.
 //
 // The Green user turn is reconstructed from REAL data when available: the most recent
 // `signal_snapshot` audit event (CandidateEvidence digests -> compact candidates, the same fields
@@ -94,7 +95,8 @@ const estimateCost = estimateLlmCostUsd as (
   cacheCreationTokens?: number
 ) => number | undefined;
 const { upsertUserApiKey, decryptValue, apiKeyEnvVarForService, LLM_PROVIDER_SERVICES } = await import("../src/lib/db-api-keys");
-const { buildBullSystem, buildBearSystem, THESIS_PLAYBOOK } = await import("../src/lib/strategy-prompts");
+const { buildBullSystem, buildRedTeamReviewSystem, THESIS_PLAYBOOK } = await import("../src/lib/strategy-prompts");
+const { RED_TEAM_VERDICT_SCHEMA } = await import("../src/lib/red-team");
 const { CURATED_LLM_MODEL_GROUPS } = await import("../app/ui/llm-model-catalog");
 const { DEFAULT_STRATEGY_PROMPT } = await import("../src/lib/defaults");
 
@@ -402,20 +404,6 @@ const bullSchema = {
   }
 };
 
-const bearSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["proposals"],
-  properties: {
-    proposals: {
-      type: "array",
-      items: proposalItemSchema(
-        "Conviction score from 1 to 100 — preserve the Bull's score unless you are deliberately revising conviction; state why in the rationale if you change it."
-      )
-    }
-  }
-};
-
 // ── System prompts (the app's real builders, representative params) ──────────
 const bullSystemPrompt = buildBullSystem({
   shortAllowed: false,
@@ -428,7 +416,9 @@ const bullSystemPrompt = buildBullSystem({
   stopLossPct: 8,
   takeProfitPct: 20
 });
-const bearSystemPrompt = buildBearSystem({ shortAllowed: false });
+// The single Red Team reviewer critiques ONE finalized, risk-adding opening (representative:
+// a long AAPL open). The benchmark measures the reviewer request through the real builder.
+const bearSystemPrompt = buildRedTeamReviewSystem({ side: "buy", symbol: "AAPL" });
 
 // ── Bear input: sample proposals under review ────────────────────────────────
 type LooseProposal = Record<string, unknown>;
@@ -598,8 +588,8 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
           model: endpoint.model,
           systemPrompt: bearSystemPrompt,
           userContent: JSON.stringify(bearUserContent),
-          schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
-          maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
+          schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
+          maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
           reasoningEffort,
           temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
         }

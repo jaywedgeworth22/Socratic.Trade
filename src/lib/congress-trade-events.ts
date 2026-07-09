@@ -7,6 +7,7 @@
 import {
   type CongressEvent,
   type CongressEventType,
+  CONGRESS_EVENT_TYPES,
   CongressEventSchema,
   parseSafe,
 } from "@jaywedgeworth22/congress-trading-shared";
@@ -186,10 +187,7 @@ export function applyCongressEvents(events: unknown): ApplyResult[] {
 }
 
 function isCongressEventType(value: string): boolean {
-  return value === "congress.trade" ||
-    value === "trade.new" ||
-    value === "insider.update" ||
-    value === "ref.upsert" ||
-    value === "price.eod" ||
-    value === "spx.eod";
+  // Canonical types come from the shared package; `trade.new` is App A's legacy
+  // alias and is remapped to `congress.trade` by applyCongressEvent.
+  return (CONGRESS_EVENT_TYPES as readonly string[]).includes(value) || value === "trade.new";
 }

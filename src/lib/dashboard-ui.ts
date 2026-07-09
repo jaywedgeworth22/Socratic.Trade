@@ -357,7 +357,12 @@ export function formatNotificationDisplay(
   } else if (event.type === "block") {
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} Blocked`;
   } else if (event.type === "pending_approval") {
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval`;
+    // Single-adversary visibility (§5.2): when the run flagged this pending approval as
+    // "Red Team review unavailable" (payload metadata flag, read defensively via asRecord), the
+    // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
+    // discarding it with the generic overwrite.
+    const adversaryUnavailable = payload.adversaryUnavailable === true;
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {

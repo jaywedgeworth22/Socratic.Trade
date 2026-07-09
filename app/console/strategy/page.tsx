@@ -29,10 +29,12 @@ import {
 import { activeConnectedAccount, deriveReality, type RealityInfo } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
 import { classify, getAtPath, type FieldDef } from "../lib/policy-diff";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
 
@@ -233,7 +235,7 @@ export default function StrategyPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Strategy</h1>
         <Chip tone={reality.tone}>
@@ -294,26 +296,36 @@ export default function StrategyPage() {
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Proposer Model" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
-            <ModelSelect
-              id="llm-model"
-              value={proposerModel}
-              role="proposer"
-              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
-            />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <ModelSelect
+                  id="llm-model"
+                  value={proposerModel}
+                  role="proposer"
+                  onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
+                />
+              </div>
+              <ModelStatsButton role="proposer" />
+            </div>
           </Field>
           <Field
             label="Reviewer Model"
             hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
-            <ModelSelect
-              id="rt-model"
-              value={redTeamModel}
-              allowBlank
-              blankLabel="Same As Proposer"
-              role="red-team"
-              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
-            />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <ModelSelect
+                  id="rt-model"
+                  value={redTeamModel}
+                  allowBlank
+                  blankLabel="Same As Proposer"
+                  role="red-team"
+                  onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
+                />
+              </div>
+              <ModelStatsButton role="red-team" />
+            </div>
           </Field>
         </div>
         {showCustomModelWarning && (

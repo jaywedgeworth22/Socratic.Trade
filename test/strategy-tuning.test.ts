@@ -60,6 +60,40 @@ describe("proposeStrategyTuning", () => {
     expect(getStrategyPrompt()).toBe("BASE STRATEGY");
   });
 
+  it("degrades to local rules when a provider key resolves but no model is configured (no-defaults contract)", async () => {
+    const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    // Keyed, but the (un-migrated) policy has NO Green or Red model selected. resolveLlmEndpoint
+    // returns a truthy key with model "" — the tuning path must treat that as unconfigured and use
+    // deterministic local rules, never send `model:""` and 400 the provider.
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("tuning must NOT call the provider with a blank model");
+    });
+    setStrategyPrompt("BASE STRATEGY");
+    setPolicy({
+      ...DEFAULT_POLICY,
+      accountNumber: "TUNE-BLANK-MODEL",
+      llmModel: "",
+      redTeamLlmModel: undefined,
+      scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
+    });
+    insertFillEvent({
+      accountNumber: "TUNE-BLANK-MODEL",
+      source: "paper",
+      symbol: "AAPL",
+      side: "buy",
+      quantity: 1,
+      price: 100,
+      notional: 100,
+      status: "filled"
+    });
+
+    const proposal = await proposeStrategyTuning();
+    expect(proposal.generatedBy).toBe("local_rules");
+  });
+
   it("inherits the AI review model from Red Team, then Green Team, when no override is chosen", async () => {
     const userWithRedTeam = `tune-review-red-${randomUUID()}`;
     const userWithGreenOnly = `tune-review-green-${randomUUID()}`;
@@ -300,6 +334,7 @@ describe("proposeStrategyTuning", () => {
       ...DEFAULT_POLICY,
       accountNumber,
       activeBroker: "alpaca",
+      llmModel: "gpt-4.1-mini",
       scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
     }, userId);
     insertFillEvent({
@@ -380,7 +415,7 @@ describe("proposeStrategyTuning", () => {
     process.env.OPENAI_API_KEY = "test-key";
     process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
     setStrategyPrompt("CURRENT PROMPT");
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-LLM-GATE", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-LLM-GATE", llmModel: "gpt-4.1-mini", scoringWeights: { ...DEFAULT_POLICY.scoringWeights } });
     // No fills => 0 closed lots; even if the model ignores the prompt and returns weights, they must be stripped.
     vi.stubGlobal("fetch", async () => new Response(
       JSON.stringify({
@@ -411,7 +446,7 @@ describe("proposeStrategyTuning", () => {
     // Use custom weights so we can assert the clamp precisely.
     const customWeights = { liquidity: 1.0, momentum: 1.0, value: 1.0, quality: 1.0, volatility: 1.0, sentiment: 1.0, positioning: 1.0, diversification: 1.0 };
     // oosWithholdUnvalidated: false → legacy keep-behavior so this test can assert clamped weights
-    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
+    setPolicy({ ...DEFAULT_POLICY, accountNumber: "TUNE-CLAMP", llmModel: "gpt-4.1-mini", scoringWeights: customWeights, tuning: { oosWithholdUnvalidated: false } });
     // Seed 20 closed lots so the §3.E gate passes.
     let n = 0;
     for (let i = 0; i < 20; i++) {
