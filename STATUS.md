@@ -16,6 +16,17 @@ the Journal's faint/xs treatment. Verified live with an injected 15-min-old row 
 rendered, correct dateTime). Gate green (lint 0/tsc/3168 tests/build). See
 `docs/rollouts/2026-07-09-autonomous-actions-timing.md`.
 
+## 2026-07-09 — Settings auto-save everywhere (MONET)
+Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
+section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
+inline indicator (serialized writes, optimistic+revert, error-toast); converted Event
+notifications, Tax treatment, Market-scan shape (settings/page.tsx), Delivery channels, LLM models,
+and the Strategy page's model selects/prompt/scoring-weights. Excluded (unchanged): guardrails
+review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/account-deletion, learned-
+context queue, kill switch, typed-confirmation master switch. Toggles/selects save on change;
+text/number on blur. Verified live: every control type persists across reload. Two soft calls
+flagged to owner (strategy prompt/weights now blur-save; guardrails kept review-and-commit). See
+docs/rollouts/2026-07-09-settings-autosave.md.
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
 (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
@@ -6990,6 +7001,8 @@ None. Phase 2 backend optimization is complete.
   explicit clean-start script). Added direct vector/SEC/strategy prompt tests. Full
   combined worktree verification passed: `npx tsc --noEmit`, `npm test` (195 tests,
   27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
+- 2026-07-06: **Console Tooltip Primitive** — replaced disparate, buggy tooltip logic in the console with a unified, accessible, polymorphic Tooltip primitive built on motion/react. See docs/rollouts/2026-07-06-console-tooltip-primitive.md.
+- 2026-07-06: **Advisory Audit Rollout** — rendered the new advisory audit kinds (`deterministic_bear_veto`, `red_team_veto_overridden`, `prompt_injection_suspected`, `evidence_age_anomaly`) in the console Alert Center and activity feed. See docs/rollouts/2026-07-06-advisory-audit-rollout.md.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.

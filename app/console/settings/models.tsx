@@ -10,12 +10,13 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models";
-import { savePolicy, ConsoleApiError } from "../lib/api";
+import { savePolicy } from "../lib/api";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
-import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Field, Select } from "../ui/primitives";
+import { Card, Field, Select } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
 import { fetchChatProviders } from "./lib";
 
 /** Curated model catalog — a console-local copy of the data in
@@ -123,6 +124,7 @@ function ModelSelect({
   providers,
   title,
   role,
+  disabled,
   onChange
 }: {
   id: string;
@@ -132,13 +134,14 @@ function ModelSelect({
   providers: Record<string, boolean> | null;
   title: string;
   role?: "proposer" | "red-team" | "coach";
+  disabled?: boolean;
   onChange: (next: string) => void;
 }) {
   // A stored model id outside the catalog (typed on the Strategy screen or by
   // an older UI) still has to show as selected — never lie about the config.
   const customCurrent = value && !CATALOG_IDS.has(value) && value !== ROTATE_MODEL_ID ? value : null;
   return (
-    <Select id={id} value={value} title={title} onChange={(e) => onChange(e.target.value)}>
+    <Select id={id} value={value} title={title} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
       <option value="" title={emptyTitle}>
         {emptyLabel}
       </option>
@@ -183,11 +186,12 @@ function ModelSelect({
 export function ModelsCard() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
-  const [draft, setDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string } | null>(null);
+  const autoSave = useAutoSave();
+  // Sticky optimistic overlay: each select's own edits persist immediately; on a
+  // write failure useAutoSave's onError restores just that field.
+  const [draft, setDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string }>({});
   const [coachModel, setCoachModel] = useState("");
   const [providers, setProviders] = useState<Record<string, boolean> | null>(null);
-  const [busy, setBusy] = useState(false);
-  useUnsavedChanges(draft !== null);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,12 +222,13 @@ export function ModelsCard() {
   };
 
   const policy = snapshot?.policy;
-  const green = draft?.llmModel !== undefined ? draft.llmModel : (policy?.llmModel ?? "");
-  const red = draft?.redTeamLlmModel !== undefined ? draft.redTeamLlmModel : (policy?.redTeamLlmModel ?? "");
+  const green = draft.llmModel !== undefined ? draft.llmModel : (policy?.llmModel ?? "");
+  const red = draft.redTeamLlmModel !== undefined ? draft.redTeamLlmModel : (policy?.redTeamLlmModel ?? "");
 
-  // BOTH team models are REQUIRED (owner directive 2026-07-07: no model defaults, ever). Saving with
-  // either blank is blocked here, and the runtime independently fails closed if a policy somehow has
-  // one unset (pre-existing accounts from before this rule) — the banner below makes that legible.
+  // BOTH team models are REQUIRED (owner directive 2026-07-07: no model defaults, ever). Each select
+  // auto-saves independently on change — including back to blank/unset, which sends null — so nothing
+  // here blocks that write; the runtime fails closed on its own whenever either is unset (including
+  // pre-existing accounts from before this rule) — the banner below makes that legible.
   const missingModels = [!green ? "Strategist (green team)" : null, !red ? "Reviewer (red team)" : null].filter(
     (m): m is string => m !== null
   );
@@ -252,24 +257,18 @@ export function ModelsCard() {
 
   if (!snapshot || !policy) return null;
 
-  const save = async () => {
-    if (!draft) return;
-    setBusy(true);
-    try {
-      // "" → null: the policy route strips nulls back to absent, which is how
-      // an optional model field is actually cleared (empty string is rejected).
-      await savePolicy({
-        ...(draft.llmModel !== undefined ? { llmModel: draft.llmModel || null } : {}),
-        ...(draft.redTeamLlmModel !== undefined ? { redTeamLlmModel: draft.redTeamLlmModel || null } : {})
-      });
-      await refresh();
-      setDraft(null);
-      toast.push("pos", "Models saved", "Takes effect on the next run.");
-    } catch (error) {
-      toast.push("neg", "Models not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  // Persist one team's model choice. Selects fire on change (native <select> onChange
+  // only ever fires on an actual selection change, so there's no unchanged-value spam
+  // to guard against, unlike blur-committed text/number fields elsewhere). "" → null:
+  // the policy route strips nulls back to absent, which is how an optional model field
+  // is actually cleared (empty string is rejected) — selecting the blank/"unset" option
+  // still sends null, same as the explicit-Save version did.
+  const commit = (key: "llmModel" | "redTeamLlmModel", next: string, prev: string | undefined, errorTitle: string) => {
+    setDraft((d) => ({ ...d, [key]: next }));
+    autoSave.save(() => savePolicy({ [key]: next || null }).then(() => refresh()), {
+      onError: () => setDraft((d) => ({ ...d, [key]: prev })),
+      errorTitle
+    });
   };
 
   // The rotation sentinel only ever serves curated models, so the custom-cost-fallback warning
@@ -290,26 +289,7 @@ export function ModelsCard() {
           >
             Usage &amp; Cost
           </Link>
-          {draft && (
-            <>
-              <Btn variant="ghost" size="sm" onClick={() => setDraft(null)} title="Throw away the unsaved model choices.">
-                Discard
-              </Btn>
-              <Btn
-                variant="primary"
-                size="sm"
-                disabled={busy || missingModels.length > 0}
-                onClick={() => void save()}
-                title={
-                  missingModels.length > 0
-                    ? `Both team models are required — choose the ${missingModels.join(" and ")} first.`
-                    : "Write both model choices to this account's policy."
-                }
-              >
-                {busy ? "Saving…" : "Save"}
-              </Btn>
-            </>
-          )}
+          <SaveStatus status={autoSave.status} />
         </div>
       }
     >
@@ -342,7 +322,8 @@ export function ModelsCard() {
                 providers={providers}
                 title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
                 role="proposer"
-                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
+                disabled={autoSave.saving}
+                onChange={(next) => commit("llmModel", next, draft.llmModel, "Strategist not saved")}
               />
             </div>
             <ModelStatsButton role="proposer" />
@@ -363,7 +344,8 @@ export function ModelsCard() {
                 providers={providers}
                 title="The adversarial reviewer model. Same model as the strategist is allowed; a different provider gives a genuinely independent second opinion."
                 role="red-team"
-                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+                disabled={autoSave.saving}
+                onChange={(next) => commit("redTeamLlmModel", next, draft.redTeamLlmModel, "Reviewer not saved")}
               />
             </div>
             <ModelStatsButton role="red-team" />

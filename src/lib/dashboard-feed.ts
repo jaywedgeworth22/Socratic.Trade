@@ -133,6 +133,34 @@ function formatAuditEvent(
     };
   }
 
+  if (kind === "deterministic_bear_veto") {
+    return {
+      title: `Vetoed by Bear Risk: ${context.symbol ?? "Trade"}`,
+      detail: stringValue(payload.reason) ?? "Market regime blocked proposal"
+    };
+  }
+
+  if (kind === "red_team_veto_overridden") {
+    return {
+      title: `Red Team Veto Overridden: ${context.symbol ?? "Trade"}`,
+      detail: stringValue(payload.reason) ?? "Human override recorded"
+    };
+  }
+
+  if (kind === "prompt_injection_suspected") {
+    return {
+      title: `Prompt Injection Suspected: ${context.symbol ?? "Trade"}`,
+      detail: stringValue(payload.detail) ?? "Security anomaly logged"
+    };
+  }
+
+  if (kind === "evidence_age_anomaly") {
+    return {
+      title: `Evidence Age Anomaly: ${context.symbol ?? "Trade"}`,
+      detail: stringValue(payload.detail) ?? "Stale context recorded"
+    };
+  }
+
   if (kind === "policy_change") {
     return {
       title: "Policy updated",

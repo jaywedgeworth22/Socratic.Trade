@@ -30,6 +30,7 @@ import { activeConnectedAccount, deriveReality, type RealityInfo } from "../lib/
 import { EM_DASH } from "../lib/format";
 import { classify, getAtPath, type FieldDef } from "../lib/policy-diff";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
@@ -37,6 +38,7 @@ import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -151,6 +153,19 @@ function reasoningSummary(control: ReturnType<typeof reasoningControlForModels>)
   return `${control.capabilities.map((capability) => capability.label).join(" + ")} active.`;
 }
 
+/** Whenever a model selection changes, the previously-saved reasoning effort may no longer be a
+ *  valid/offered value for the new model pairing (e.g. a provider-specific "xhigh" that the newly
+ *  chosen model doesn't expose). Recompute + include a renormalized value in the SAME save so a
+ *  model-only write can never leave the stored (model, effort) combo in an invalid state — mirrors
+ *  what the old single "Save models" button did by bundling the recomputed effort into one PUT. */
+function reasoningPatchFor(models: string[], effort: LlmReasoningEffort | undefined): { llmReasoningEffort?: LlmReasoningEffort } {
+  const candidates = models.filter((m) => m && m !== ROTATE_ALL_MODELS_ID);
+  const control = reasoningControlForModels(candidates);
+  if (!control) return {};
+  const value = normalizeReasoningValueForControl(candidates, control, effort);
+  return value ? { llmReasoningEffort: value } : {};
+}
+
 function normalizeReasoningValueForControl(
   models: string[],
   control: ReturnType<typeof reasoningControlForModels>,
@@ -168,14 +183,23 @@ function normalizeReasoningValueForControl(
 function ModelSelect({
   id,
   value,
-  onChange,
+  onPick,
+  onCustomTextChange,
+  onCustomTextBlur,
+  disabled,
   allowBlank,
   blankLabel,
   role
 }: {
   id: string;
   value: string | undefined;
-  onChange: (model: string) => void;
+  /** A concrete model choice from the dropdown (curated id, blank, or rotate) — persist immediately. */
+  onPick: (model: string) => void;
+  /** Local-only update per keystroke while typing a custom id — never persists. */
+  onCustomTextChange: (text: string) => void;
+  /** Persist the typed custom id (if any) on blur. */
+  onCustomTextBlur: () => void;
+  disabled?: boolean;
   allowBlank?: boolean;
   blankLabel?: string;
   role: "proposer" | "red-team";
@@ -188,9 +212,16 @@ function ModelSelect({
       <Select
         id={id}
         value={selectValue}
+        disabled={disabled}
         onChange={(event) => {
           const next = event.target.value;
-          onChange(next === CUSTOM_MODEL_OPTION ? (custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION) : next);
+          if (next === CUSTOM_MODEL_OPTION) {
+            // Entering (or re-entering) custom-id entry mode is a UI-mode switch, not a concrete
+            // model choice — don't persist until a real id is typed and blurred.
+            onCustomTextChange(custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION);
+            return;
+          }
+          onPick(next);
         }}
       >
         {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
@@ -227,8 +258,9 @@ function ModelSelect({
         <TextInput
           value={value && value !== CUSTOM_MODEL_OPTION ? value : ""}
           placeholder="provider-model-id"
-          onChange={(event) => onChange(event.target.value)}
-          title="Type an exact provider model ID if it is not in the curated list."
+          onChange={(event) => onCustomTextChange(event.target.value)}
+          onBlur={onCustomTextBlur}
+          title="Type an exact provider model ID if it is not in the curated list. Saves when you click away."
         />
       )}
     </div>
@@ -239,24 +271,30 @@ export default function StrategyPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
 
+  // Prompt: local text while typing, persist on blur (see commitPrompt below).
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
-  const [modelDraft, setModelDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string; llmReasoningEffort?: LlmReasoningEffort } | null>(null);
-  const [weightsDraft, setWeightsDraft] = useState<Partial<Record<keyof ScoringWeights, number>> | null>(null);
+  const autoSavePrompt = useAutoSave();
+  // Models: sticky optimistic overlay per field — each select persists immediately on
+  // change; the custom-id text fields persist on blur. Reverted by useAutoSave's onError.
+  const [localProposerModel, setLocalProposerModel] = useState<string | null>(null);
+  const [localRedTeamModel, setLocalRedTeamModel] = useState<string | null>(null);
+  const [localReasoningEffort, setLocalReasoningEffort] = useState<LlmReasoningEffort | null>(null);
+  const autoSaveModels = useAutoSave();
+  // Scoring weights: local text while typing each factor, persist on blur (per-field patch —
+  // the server deep-merges scoringWeights, see commitWeight below).
+  const [weightsOverlay, setWeightsOverlay] = useState<Partial<Record<keyof ScoringWeights, number>>>({});
+  const autoSaveWeights = useAutoSave();
+  // Presets ("Apply to this account") is a discrete action button, not auto-saved.
   const [busy, setBusy] = useState<string | null>(null);
 
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
-  // Unsaved-draft registration must run unconditionally (before the null return).
-  useUnsavedChanges(
-    (promptDraft !== null && promptDraft !== snapshot?.strategyPrompt) || modelDraft !== null || weightsDraft !== null
-  );
   if (!snapshot || !reality) return null;
 
   const policy = snapshot.policy;
   const activeAccount = activeConnectedAccount(snapshot);
   const prompt = promptDraft ?? snapshot.strategyPrompt;
-  const promptDirty = promptDraft !== null && promptDraft !== snapshot.strategyPrompt;
-  const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
-  const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
+  const proposerModel = localProposerModel ?? policy.llmModel ?? "";
+  const redTeamModel = localRedTeamModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
   // The rotation sentinel is neither a custom id (it only ever serves curated models, so the
   // custom-cost-fallback warning doesn't apply) nor a model with its own reasoning capability.
@@ -268,21 +306,64 @@ export default function StrategyPage() {
   const reasoningModels = [proposerModel, effectiveRedTeamModel].filter((m) => !isRotate(m));
   const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
-    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
+    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, localReasoningEffort ?? policy.llmReasoningEffort)
     : undefined;
 
-  const save = async (label: string, body: Record<string, unknown>, after?: () => void) => {
-    setBusy(label);
-    try {
-      await savePolicy(body);
-      await refresh();
-      after?.();
-      toast.push("pos", `${label} saved`, "Takes effect on the next run.");
-    } catch (error) {
-      toast.push("neg", `${label} not saved`, error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(null);
-    }
+  // Prompt: skip the write if blur leaves it unchanged from the saved copy.
+  const commitPrompt = () => {
+    if (promptDraft === null || promptDraft === snapshot.strategyPrompt) return;
+    const next = promptDraft;
+    const prev = snapshot.strategyPrompt;
+    autoSavePrompt.save(() => savePolicy({ strategyPrompt: next }).then(() => refresh()), {
+      onError: () => setPromptDraft(prev),
+      errorTitle: "Prompt not saved"
+    });
+  };
+
+  // Persist one team's model choice (from either the select or a blurred custom-id text field).
+  // Bundles a renormalized reasoning effort into the SAME write whenever the model set changes —
+  // see reasoningPatchFor — so a model-only save can never leave (model, effort) invalid.
+  const commitProposerModel = (model: string, prev: string) => {
+    if (model === (policy.llmModel ?? "")) return; // unchanged from the saved value -> no write
+    const patch = {
+      llmModel: model,
+      ...reasoningPatchFor([model, redTeamModel || model], localReasoningEffort ?? policy.llmReasoningEffort)
+    };
+    setLocalProposerModel(model);
+    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+      onError: () => setLocalProposerModel(prev),
+      errorTitle: "Proposer not saved"
+    });
+  };
+  const commitRedTeamModel = (model: string, prev: string) => {
+    if (model === (policy.redTeamLlmModel ?? "")) return; // unchanged from the saved value -> no write
+    const patch = {
+      // "" (blank = same as proposer) -> null: the policy route strips nulls back to absent,
+      // which is how this optional field is actually cleared (an empty string is rejected).
+      redTeamLlmModel: model || null,
+      ...reasoningPatchFor([proposerModel, model || proposerModel], localReasoningEffort ?? policy.llmReasoningEffort)
+    };
+    setLocalRedTeamModel(model);
+    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+      onError: () => setLocalRedTeamModel(prev),
+      errorTitle: "Reviewer not saved"
+    });
+  };
+  const commitReasoningEffort = (effort: LlmReasoningEffort) => {
+    const prev = localReasoningEffort ?? policy.llmReasoningEffort;
+    setLocalReasoningEffort(effort);
+    autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }).then(() => refresh()), {
+      onError: () => setLocalReasoningEffort(prev ?? null),
+      errorTitle: "Reasoning effort not saved"
+    });
+  };
+
+  // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
+  const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
+    if (next === saved) return;
+    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }).then(() => refresh()), {
+      onError: () => setWeightsOverlay((d) => ({ ...d, [key]: saved }))
+    });
   };
 
   return (
@@ -298,53 +379,23 @@ export default function StrategyPage() {
       </div>
 
       {/* Prompt */}
-      <Card
-        title="The strategist's written instructions"
-        action={
-          promptDirty ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setPromptDraft(null)}>
-                Discard
-              </Btn>
-              <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => void save("Prompt", { strategyPrompt: promptDraft }, () => setPromptDraft(null))}>
-                {busy === "Prompt" ? "Saving…" : "Save prompt"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="The strategist's written instructions" action={<SaveStatus status={autoSavePrompt.status} />}>
         <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
           contract. The deterministic policy gate still constrains everything it proposes.
         </p>
-        <TextArea rows={16} value={prompt} onChange={(e) => setPromptDraft(e.target.value)} spellCheck={false} />
+        <TextArea
+          rows={16}
+          value={prompt}
+          onChange={(e) => setPromptDraft(e.target.value)}
+          onBlur={commitPrompt}
+          spellCheck={false}
+          title="Saves when you click away."
+        />
       </Card>
 
       {/* Models */}
-      <Card
-        title="Models"
-        action={
-          modelDraft ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setModelDraft(null)}>
-                Discard
-              </Btn>
-              <Btn
-                variant="primary"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => {
-                  if (!modelDraft) return;
-                  const body = reasoningControl && reasoningValue ? { ...modelDraft, llmReasoningEffort: reasoningValue } : modelDraft;
-                  void save("Models", body, () => setModelDraft(null));
-                }}
-              >
-                {busy === "Models" ? "Saving…" : "Save models"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="Models" action={<SaveStatus status={autoSaveModels.status} />}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
             <div className="flex items-start gap-2">
@@ -353,7 +404,14 @@ export default function StrategyPage() {
                   id="llm-model"
                   value={proposerModel}
                   role="proposer"
-                  onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
+                  disabled={autoSaveModels.saving}
+                  onPick={(model) => commitProposerModel(model, proposerModel)}
+                  onCustomTextChange={(text) => setLocalProposerModel(text)}
+                  onCustomTextBlur={() => {
+                    const typed = (localProposerModel ?? "").trim();
+                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                    commitProposerModel(typed, policy.llmModel ?? "");
+                  }}
                 />
               </div>
               <ModelStatsButton role="proposer" />
@@ -372,7 +430,14 @@ export default function StrategyPage() {
                   allowBlank
                   blankLabel="Same As Proposer"
                   role="red-team"
-                  onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
+                  disabled={autoSaveModels.saving}
+                  onPick={(model) => commitRedTeamModel(model, redTeamModel)}
+                  onCustomTextChange={(text) => setLocalRedTeamModel(text)}
+                  onCustomTextBlur={() => {
+                    const typed = (localRedTeamModel ?? "").trim();
+                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                    commitRedTeamModel(typed, policy.redTeamLlmModel ?? "");
+                  }}
                 />
               </div>
               <ModelStatsButton role="red-team" />
@@ -411,7 +476,8 @@ export default function StrategyPage() {
               <Select
                 id="effort"
                 value={reasoningValue}
-                onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), llmReasoningEffort: e.target.value as LlmReasoningEffort }))}
+                disabled={autoSaveModels.saving}
+                onChange={(e) => commitReasoningEffort(e.target.value as LlmReasoningEffort)}
               >
                 {reasoningControl.options.map((option) => (
                   <option key={option.value} value={option.value} title={option.hint}>
@@ -425,26 +491,7 @@ export default function StrategyPage() {
       </Card>
 
       {/* Scoring weights */}
-      <Card
-        title="Scoring-factor weights"
-        action={
-          weightsDraft ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setWeightsDraft(null)}>
-                Discard
-              </Btn>
-              <Btn
-                variant="primary"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => void save("Weights", { scoringWeights: weightsDraft }, () => setWeightsDraft(null))}
-              >
-                {busy === "Weights" ? "Saving…" : "Save weights"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="Scoring-factor weights" action={<SaveStatus status={autoSaveWeights.status} />}>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           The market scan ranks candidates by these eight factors before the strategist ever sees them. Defaults shown
           under each field. Weights are relative — raising one factor increases its share of the score and lowers the
@@ -452,7 +499,8 @@ export default function StrategyPage() {
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {WEIGHT_KEYS.map((key) => {
-            const current = weightsDraft?.[key] ?? policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const saved = policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const current = weightsOverlay[key] ?? saved;
             const meta = FACTOR_META[key] ?? { name: key, tip: "A scoring factor used to rank market-scan candidates." };
             return (
               <Field
@@ -477,7 +525,9 @@ export default function StrategyPage() {
                   min="0"
                   value={String(current)}
                   emptyValue={DEFAULT_WEIGHTS[key]}
-                  onValueChange={(parsed) => setWeightsDraft((d) => ({ ...(d ?? {}), [key]: parsed }))}
+                  title="Saves when you click away."
+                  onValueChange={(parsed) => setWeightsOverlay((d) => ({ ...d, [key]: parsed }))}
+                  onBlur={() => commitWeight(key, current, saved)}
                 />
               </Field>
             );
