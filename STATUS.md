@@ -255,6 +255,26 @@ lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
 owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
 deploy, any account without explicit models fails closed with an actionable Settings message —
 owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+## 2026-07-09 — Effort log assignment rules + ops snapshot fix deployed + branch cleanup (MONET, `copilot-effort-log-assignment-rules`)
+Completed this session:
+- **Effort log assignment rules ratified**: agents must only be assigned to efforts they are actively working on — no pre-assigning the backlog. Rule 4 (fundamentals-veto) ratified by owner as "keep current risk approach where most things are just suggestions."
+- **Ops snapshot truncation fix** (PR #1119): `auditEntrySummary()` now checks `error`/`note` keys (used by `order_placement_uncertain` payloads), identifier composition, JSON fallback 240→500 chars. Deployed to production via Coolify (commit `15f78b21`).
+- **Branch cleanup**: 77 stale branches pruned from origin. PR #873 (dependabot motion) merged.
+- **PR #1169** (Codex autofix: broker-minimum sizing floor): Codex autofix threads resolved, CI passed, auto-merge scheduled — branch needs `update-branch` before merge.
+- **New Planned effort**: Pre-proposal broker health/availability gate — before LLM proposal generation, check broker connectivity, error rate, minimum notional, account status. See effort log.
+- **Remaining owner questions**: Q4 (main-protection ruleset), Q5 (Alert Center filter pills), Q6 (strip stale agent tags).
+
+## 2026-07-09 — Codex autofix PR #1169: broker-min floor skipped zero-rounded sizes (Claude, `copilot-effort-log-assignment-rules`)
+Codex P2 on the broker minimum dollar-notional floor (`src/lib/strategy.ts`): the raise guarded on
+the POST-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (e.g. an
+LLM-advised `$0.22`, or any positive fallback under `$1`) skipped the floor and returned
+`dollarAmount: 0` — the exact guaranteed-reject path the floor exists to eliminate. Fix guards on the
+PRE-rounding source (`advisedNotional`, or `fallbackBase * finalMultiplier`) and raises to the floor
+when capacity covers the minimum. New regression suite `test/broker-minimum-sizing.test.ts` (4 tests:
+$0.22→$1, $0.9→$1, Alpaca no-floor no-op, capacity-below-floor left small). Gates: tsc clean, sizing
+suites green (43), build green; full `npm test` has pre-existing LLM-credential failures in this VM
+(keys present) unrelated to this change — verified identical on the base tree.
+Rollout: docs/rollouts/2026-07-09-codex-autofix-pr1169-broker-min-floor.md.
 ## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
 The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
 failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real
