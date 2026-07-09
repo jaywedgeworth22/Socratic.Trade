@@ -204,6 +204,27 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Robinhood broker-held resting-stop hardening (MONET, worktree `trading-monet-rh-harden`, branch
+  `monet/rh-broker-stop-hardening`) — Completed (merged to `main`) 2026-07-09, landed via
+  `scripts/land.sh`.** Two safety bugs in the opt-in `policy.robinhoodBrokerStops` feature (still
+  DEFAULT OFF — not enablement). FIX 1 (double-exit prevention): RH resting-order states
+  `queued/confirmed/unconfirmed` were unrecognized by the synthetic-stop monitor, so a resting RH
+  broker stop was invisible and a synthetic market-sell could fire on top of it. Added
+  broker-agnostic `isLiveOrderState()` to `src/lib/broker-side.ts` (Alpaca + RH vocabularies are
+  disjoint, so RH recognition can't misclassify Alpaca); `src/lib/synthetic-stops.ts` now uses it in
+  all three liveness sites (`isLiveBrokerStop`, `isLiveExitOrder`, `isLiveState`), replacing the old
+  local Alpaca-only `LIVE_ORDER_STATES` set. FIX 2 (no orphaned stops on disable):
+  `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) used to early-return when
+  the flag was off, stranding any already-resting GTC stop; the flag now gates PLACEMENT only, and a
+  disabled reconcile runs a teardown loop that cancels every resting stop the feature placed
+  (`pending_cancel` retry on cancel failure). `listBrokerProtectiveStops`
+  (`src/lib/db-api-keys.ts`) now returns both `resting` and `pending_cancel` rows so failed cancels
+  get retried instead of orphaning. `src/lib/defaults.ts` verified unchanged before commit —
+  `robinhoodBrokerStops: false` stays default off. Landing-session gate (fresh `npm ci` in a
+  dedicated worktree): `tsc --noEmit` clean, lint 0 errors (only grandfathered warnings), 306 test
+  files / 3181 tests passed, `npm run build` succeeded. No mechanical fixes or test-expectation
+  changes were needed — the assembled diff matched the intended fix exactly on inspection.
+  `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
 - **Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`) —
   COMPLETED 2026-07-09, merged to `main` via PR #1213 (auto-merge armed).** Owner-directed console-UI fix: the Model Stats drawer's
   4-column table (Model / Cost / Latency / Realized performance) was cramped inside the shared

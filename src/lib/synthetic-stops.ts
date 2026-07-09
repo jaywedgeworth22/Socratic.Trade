@@ -15,7 +15,7 @@ import {
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
-import { isRejectedOrCanceledState } from "./broker-side";
+import { isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
 import { deriveExecutionState } from "./execution-mode";
@@ -25,16 +25,17 @@ import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradePropo
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
-// Order states that mean a broker order is still RESTING (not filled/canceled/expired/rejected).
-// We list only clearly-live states so a terminal or unknown-status order never makes us skip
-// synthetic protection (bias: when unsure, protect).
-const LIVE_ORDER_STATES = new Set([
-  "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open"
-]);
-
-/** A resting broker-held stop leg (e.g. an Alpaca OCO bracket stop) — a live order whose type is a stop. */
+/**
+ * A resting broker-held stop leg (an Alpaca OCO bracket stop, or a Robinhood broker-held protective
+ * stop) — a live order whose type is a stop. Liveness is the broker-agnostic `isLiveOrderState`
+ * (broker-side.ts), so a Robinhood stop RESTING in queued/confirmed/unconfirmed counts here just
+ * like an Alpaca stop in new/accepted/held. This is what lets the monitor see that a symbol is
+ * ALREADY protected by a broker stop and skip auto-registering a synthetic trailing stop on top of
+ * it — without that, the synthetic could market-sell shares the resting broker stop is also covering
+ * (a double exit).
+ */
 function isLiveBrokerStop(order: EquityOrder): boolean {
-  return /stop/i.test(order.type) && LIVE_ORDER_STATES.has(String(order.state).trim().toLowerCase());
+  return /stop/i.test(order.type) && isLiveOrderState(order.state);
 }
 
 /**
@@ -45,7 +46,7 @@ function isLiveBrokerStop(order: EquityOrder): boolean {
  * the position (Alpaca) report as a raw "buy".
  */
 function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "short"): boolean {
-  if (!LIVE_ORDER_STATES.has(String(order.state).trim().toLowerCase())) return false;
+  if (!isLiveOrderState(order.state)) return false;
   const side = String(order.side).trim().toLowerCase();
   return positionSide === "long" ? side === "sell" : side === "cover" || side === "buy";
 }
@@ -180,7 +181,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // 90 shares unprotected forever.
   const hasAnyLiveExitOrder = (symbol: string, positionSide: "long" | "short"): boolean =>
     brokerOrders.some((o) => normalizeSymbol(o.symbol) === symbol && isLiveExitOrder(o, positionSide));
-  const isLiveState = (state: string): boolean => LIVE_ORDER_STATES.has(String(state).trim().toLowerCase());
+  const isLiveState = (state: string): boolean => isLiveOrderState(state);
 
   // Synthetic protective exits whose outcome hasn't been reconciled yet (booked pending at
   // placement, finalized by reconcilePendingFills from broker truth). While one is pending for a

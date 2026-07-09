@@ -8,6 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
+Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature
+(still DEFAULT OFF — `src/lib/defaults.ts` verified unchanged, not an enablement). FIX 1
+(double-exit prevention): added broker-agnostic `isLiveOrderState()` to `src/lib/broker-side.ts`
+recognizing both Alpaca resting states and Robinhood's `queued/confirmed/unconfirmed` (disjoint
+vocabularies, so Alpaca can't be misclassified); `src/lib/synthetic-stops.ts` now uses it in all
+three liveness checks (`isLiveBrokerStop`, `isLiveExitOrder`, `isLiveState`), so a resting RH broker
+stop is visible to the synthetic monitor and won't get a duplicate synthetic market-sell fired on
+top of it. FIX 2 (no orphaned stops on disable): `reconcileBrokerProtectiveStops`
+(`src/lib/broker-protective-stops.ts`) now gates only PLACEMENT on the flag; when disabled it runs a
+teardown loop that cancels every resting stop the feature placed (`pending_cancel` retry on cancel
+failure); `listBrokerProtectiveStops` (`src/lib/db-api-keys.ts`) now returns both `resting` and
+`pending_cancel` rows so failed cancels get retried instead of orphaning. Landing-session gate
+(fresh `npm ci` in the dedicated worktree): `tsc --noEmit` clean, lint 0 errors, 306 test files /
+3181 tests passed, `npm run build` succeeded — no mechanical fixes or test-expectation updates were
+needed; the assembled diff was inspected and matches the intended fix exactly. See
+`docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
+
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
 (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
