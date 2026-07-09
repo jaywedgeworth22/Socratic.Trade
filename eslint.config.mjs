@@ -50,6 +50,7 @@ export default [
     // the warnings over time.
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
+      "react-hooks/set-state-in-effect": "warn",
       "react/no-unescaped-entities": "warn",
       "react/display-name": "warn",
       "@next/next/no-html-link-for-pages": "warn",

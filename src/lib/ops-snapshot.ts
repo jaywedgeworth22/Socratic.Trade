@@ -128,7 +128,9 @@ function sanitizeAuditDetail(kind: string, payload: unknown): string {
   const reason = typeof p.reason === "string" ? p.reason : "";
   const summary = typeof p.summary === "string" ? p.summary : "";
   const message = typeof p.message === "string" ? p.message : "";
-  return reason || summary || message || JSON.stringify(p).slice(0, 240);
+  const error = typeof p.error === "string" ? p.error : "";
+  const note = typeof p.note === "string" ? p.note : "";
+  return reason || summary || message || error || note || JSON.stringify(p).slice(0, 500);
 }
 
 function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, string>): OpsStrategyRunRow[] {
@@ -230,7 +232,11 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
       try {
         const policy = peekPolicy(userId, account.id);
         const greenEndpoint = resolveLlmEndpoint(policy, userId);
-        const redEndpoint = resolveLlmEndpoint({ llmModel: policy.redTeamLlmModel }, userId);
+        // R16 (single-adversary consolidation): resolve Red with role:"red" — the SAME resolution the
+        // strategy path uses — so these diagnostics can never report Red as "configured" (via the old
+        // treat-Red-as-Green trick + its former default fallback) while the run path fails closed on a
+        // blank/unkeyed Red model. An unset Red now resolves to model "" with no key.
+        const redEndpoint = resolveLlmEndpoint(policy, userId, "https://api.openai.com/v1/chat/completions", "red");
         return {
           connectedAccountId: account.id,
           label: account.label || account.broker,
@@ -243,8 +249,12 @@ export function buildOpsSnapshot(input: { runsPerUser?: number; auditPerUser?: n
           redTeamLlmModel: policy.redTeamLlmModel ?? null,
           llmProvider: greenEndpoint.provider,
           llmKeyConfigured: Boolean(greenEndpoint.key),
-          redTeamLlmProvider: redEndpoint.provider,
-          redTeamLlmKeyConfigured: Boolean(redEndpoint.key),
+          // With NO model chosen the endpoint's provider/key are meaningless (resolution falls
+          // through to the OpenAI branch on model "") — report them null/false so the snapshot says
+          // "unconfigured", matching the strategy path's fail-closed treatment, instead of leaking
+          // the fall-through provider's key state as if a Red reviewer were configured.
+          redTeamLlmProvider: redEndpoint.model ? redEndpoint.provider : null,
+          redTeamLlmKeyConfigured: Boolean(redEndpoint.model && redEndpoint.key),
           policyReadError: null,
           lastRunStartedAt: getLastStrategyRunStartedAt(userId, account.id)
         };

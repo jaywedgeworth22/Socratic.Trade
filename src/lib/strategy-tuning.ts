@@ -13,8 +13,8 @@ import {
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
-import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { LLM_OUTPUT_TOKEN_CAPS, llmFetch, isModelRotationSentinel } from "./llm-request";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
@@ -317,9 +317,18 @@ function currentRegimeFromLots(accountNumber: string, source: "paper" | "live", 
 }
 
 function policyForTuningReviewer(policy: TradingPolicy, modelOverride?: string): TradingPolicy {
+  // Sentinel-aware model inheritance (mirrors the UI panel's inheritedReviewerModel, which SKIPS the
+  // "__rotate__" sentinel when it promises a Green-model review). "__rotate__" is a run-scoped rotation
+  // marker resolved only inside runStrategyOnce; the tuning reviewer runs OUTSIDE a strategy run, so
+  // resolveOpenAiModel would map the raw sentinel to "" and silently degrade this LLM review to local
+  // rules. Fall through the sentinel to the first CONCRETE configured model instead. When BOTH seats are
+  // "__rotate__", no concrete model is found → the downstream `!llmModel` gate honestly falls to local
+  // rules (same no-defaults contract as elsewhere).
   const explicitModel = modelOverride?.trim();
-  if (explicitModel) return { ...policy, llmModel: explicitModel };
-  const teamModel = policy.redTeamLlmModel?.trim() || policy.llmModel?.trim();
+  if (explicitModel && !isModelRotationSentinel(explicitModel)) return { ...policy, llmModel: explicitModel };
+  const teamModel = [policy.redTeamLlmModel, policy.llmModel]
+    .map((m) => m?.trim())
+    .find((m) => m && !isModelRotationSentinel(m));
   return teamModel ? { ...policy, llmModel: teamModel } : policy;
 }
 
@@ -428,8 +437,13 @@ export async function proposeStrategyTuning(
   };
 
   const policyForResolution = policyForTuningReviewer(policy, modelOverride);
-  const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
-  if (!llmKey) {
+  const { key: llmKey, model: llmModel } = resolveLlmEndpoint(policyForResolution, userId);
+  // No-defaults contract (owner 2026-07-07; llm-request.ts `resolveOpenAiModel`): a blank model is
+  // "unconfigured" EXACTLY like a missing key — callers MUST fail closed rather than send `model:""`.
+  // Tuning has a deterministic local-rules fallback, so degrade to it in BOTH cases. Without the
+  // model guard a keyed-but-model-less (un-migrated) policy would reach requestLlmTuning and fire a
+  // provider 400 for an empty model instead of producing a usable local proposal.
+  if (!llmKey || !llmModel) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
     return applyOosGate(localProposal, userId);
   }
@@ -684,10 +698,11 @@ async function requestLlmTuning(
       }
 
       const payload = await response.json();
-      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, ...extractLlmUsage(payload) });
+      recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
-      return { text, payload: JSON.parse(text) as LlmTuningPayload };
+      // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+      return { text, payload: JSON.parse(extractJsonPayload(text)) as LlmTuningPayload };
     }
   );
 

@@ -7,9 +7,11 @@
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
+import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { expireStalePendingProposals } from "./proposal-revalidation";
+import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
@@ -17,7 +19,9 @@ import { reconcilePendingFills, runStrategyOnce } from "./strategy";
 import { checkMonthlyLlmSpendCeiling } from "./llm-budget";
 import { maybeAutoTuneWeights } from "./auto-tune-scheduler";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
+import { autoRemediateStaleExitOrders } from "./order-replacement";
 import { runSyntheticStopMonitor } from "./synthetic-stops";
+import type { TradingPolicy } from "./types";
 import { triggerEngineEnabled, triggerMode } from "./triggers";
 import { isFilingIngestDue, refreshDueWebSources, refreshFilingBodies } from "./web-sources";
 import { symbolsForPolicyUniverse } from "./index-universes";
@@ -133,6 +137,13 @@ const stopGuardHost = globalThis as unknown as { __stopMonitorInFlight?: Set<str
 const stopMonitorInFlight: Set<string> =
   stopGuardHost.__stopMonitorInFlight ?? (stopGuardHost.__stopMonitorInFlight = new Set<string>());
 
+// Per-account in-flight guard for the stale-limit / auto-remediation pass. Without it, a slow broker
+// (the ≥4 sequential round-trips in a cancel-replace can outlast the 60s tick) would let the next tick
+// re-process the SAME stale exit and place a SECOND market sell — a double-sell / accidental short.
+const staleExitGuardHost = globalThis as unknown as { __staleExitInFlight?: Set<string> };
+const staleExitInFlight: Set<string> =
+  staleExitGuardHost.__staleExitInFlight ?? (staleExitGuardHost.__staleExitInFlight = new Set<string>());
+
 /**
  * Boot-time autonomy interlock. A persisted `systemState === "active"` must NOT silently resume
  * live/paper order placement after an unattended restart, crash-loop, or DB restore. Unless an
@@ -240,6 +251,16 @@ async function tick(): Promise<void> {
     }
   }
 
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+  // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
+  // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
+  try {
+    const repaired = markStaleRunningRuns(Date.now());
+    if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
+  } catch (err) {
+    console.error("[scheduler] stale-run sweep error:", err);
+  }
+
   // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
   // true/on/yes), only the lease holder runs the background updates and per-account tick body
   // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
@@ -298,6 +319,16 @@ async function tick(): Promise<void> {
   for (const userId of listUsers()) {
     void checkRegimeFlip(userId).catch((err) =>
       console.error(`[scheduler] regime check error for ${userId}:`, err)
+    );
+  }
+
+  // Once-per-day LLM learning review (default OFF; policy.learningReviewEnabled): a frontier-class
+  // model audits recent learned-context rows + the pending learning queue against a system-history
+  // digest, so lessons built on corrupted evidence (execution defects blamed on theses) get caught.
+  // Annotate-only unless the owner opted into "decide". No-op unless enabled + due; self-guarded.
+  for (const userId of listUsers()) {
+    void runDailyLearningReviewIfDue(userId).catch((err) =>
+      console.error(`[scheduler] learning-review error for ${userId}:`, err)
     );
   }
 
@@ -376,10 +407,21 @@ async function tick(): Promise<void> {
         const executionState = deriveExecutionState(policy, account);
         const brokerGateway = executionState.submitsBrokerOrders ? getBrokerGateway(policy, userId) : undefined;
 
-        if (brokerGateway) {
-          void brokerGateway.getEquityOrders(policy.accountNumber)
-            .then((orders) => notifyStaleLimitOrders({ userId, policy, orders }))
-            .catch((err) => console.error("[scheduler] stale-limit-order alert error:", err));
+        if (brokerGateway && !staleExitInFlight.has(key)) {
+          staleExitInFlight.add(key);
+          const gw = brokerGateway;
+          const stalePolicy = policy as TradingPolicy & { accountNumber: string }; // accountNumber checked non-null above
+          void gw.getEquityOrders(policy.accountNumber)
+            .then(async (orders) => {
+              await notifyStaleLimitOrders({ userId, policy, orders });
+              // Auto-cancel-replace stale EXIT limits with market orders (MU deadlock backstop). No-op
+              // when disabled; defers to the human on a live account with typed confirmation on. The
+              // in-flight guard above + the per-order cooldown inside autoRemediateStaleExitOrders keep
+              // a slow broker cancel from triggering a second market sell on the next tick.
+              await autoRemediateStaleExitOrders({ userId, policy: stalePolicy, activeAccount: account, gateway: gw, orders });
+            })
+            .catch((err) => console.error("[scheduler] stale-limit-order handling error:", err))
+            .finally(() => staleExitInFlight.delete(key));
         }
 
         const protectiveState =

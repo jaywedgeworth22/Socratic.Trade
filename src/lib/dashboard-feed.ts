@@ -1,6 +1,7 @@
 import type { EquityOrder, EquityPosition, FillEvent, NotificationEvent, PendingProposal, TradeProposal } from "./types";
 import { formatQuantity } from "./money";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
+import { shortOrderLabel } from "./order-labels";
 
 export interface SymbolMeta {
   companyName?: string;
@@ -184,7 +185,8 @@ function formatAuditEvent(
         : result === "placed" || result === "paper"
           ? `${titlePrefix} Approved`
           : `${titlePrefix} ${capitalize(result)}`;
-    const detail =
+    const orderId = stringValue(payload.orderId);
+    const buildProposalApprovedDetail = (orderIdFragment: string | undefined) =>
       joinDetail([
         // "paper" here is a legacy result value from before the local-simulation execution path was
         // removed — no code path writes it anymore, but old audit rows can still carry it.
@@ -192,10 +194,14 @@ function formatAuditEvent(
         result === "placed" && stringValue(payload.fillStatus) === "pending_reconciliation" ? "Broker accepted order; pending execution" : undefined,
         result === "placed" && stringValue(payload.fillStatus) !== "pending_reconciliation" ? "Order placed" : undefined,
         result === "placed" && stringValue(payload.brokerState) ? `Broker state ${readableBrokerState(stringValue(payload.brokerState))}` : undefined,
-        stringValue(payload.orderId) ? `Order ${stringValue(payload.orderId)}` : undefined,
+        orderIdFragment,
         firstReason(payload)
-      ]) ?? "Awaiting next update";
-    return { title, detail };
+      ]);
+    // Detail shows the short order tag ("Order 6F8A1C2E"); the full broker order id is never
+    // lost — it stays available via fullText (the raw-toggle affordance) when it differs.
+    const detail = buildProposalApprovedDetail(orderId ? `Order ${shortOrderLabel(orderId)}` : undefined) ?? "Awaiting next update";
+    const fullDetail = orderId ? buildProposalApprovedDetail(`Order ${orderId}`) : undefined;
+    return { title, detail, fullText: fullDetail && fullDetail !== detail ? fullDetail : undefined };
   }
 
   if (kind === "proposal_rejected") {
@@ -209,13 +215,18 @@ function formatAuditEvent(
     const brokerState = stringValue(payload.brokerState);
     const orderId = stringValue(payload.orderId);
     const reason = stringValue(payload.reason) ?? stringValue(payload.error);
+    const buildBrokerDeclineDetail = (orderIdFragment: string | undefined) =>
+      joinDetail([
+        brokerState ? `Broker state ${readableBrokerState(brokerState)}` : "Broker declined the order",
+        orderIdFragment,
+        reason
+      ]);
+    const detail = buildBrokerDeclineDetail(orderId ? `Order ${shortOrderLabel(orderId)}` : undefined) ?? "Broker declined the order";
+    const fullDetail = orderId ? buildBrokerDeclineDetail(`Order ${orderId}`) : undefined;
     return {
       title: `${sideLabel(context.side, context.symbol) ?? context.symbol ?? "Order"} Broker Declined`,
-      detail: joinDetail([
-        brokerState ? `Broker state ${readableBrokerState(brokerState)}` : "Broker declined the order",
-        orderId ? `Order ${orderId}` : undefined,
-        reason
-      ]) ?? "Broker declined the order"
+      detail,
+      fullText: fullDetail && fullDetail !== detail ? fullDetail : undefined
     };
   }
 
@@ -223,10 +234,9 @@ function formatAuditEvent(
     const notification = payload as unknown as NotificationEvent;
     const symbol = normalizeSymbol(notificationSymbol(payload)) ?? context.symbol;
     const side = normalizeSide(notificationSide(payload)) ?? context.side;
-    const statusVerb = notification.status === "sent" ? "sent" : notification.status === "failed" ? "failed" : "skipped";
     if (notification.type === "fill") {
       return {
-        title: `${sideLabel(side, symbol) ?? symbol ?? "Trade"} ${capitalize(statusVerb)}`,
+        title: `${sideLabel(side, symbol) ?? symbol ?? "Trade"} ${notificationStatusLabel(notification.status)}`,
         detail: notification.error ? shortText(notification.error) : shortText(notification.title)
       };
     }
@@ -243,16 +253,17 @@ function formatAuditEvent(
       };
     }
     return {
-      title: `${humanizeNotificationType(notification.type)} ${capitalize(statusVerb)}`,
+      title: `${notificationTypeLabel(notification.type)} ${notificationStatusLabel(notification.status)}`,
       detail: notification.error ? shortText(notification.error) : shortText(notification.title)
     };
   }
 
   if (kind === "fill_reconciled") {
+    const status = stringValue(payload.status);
     return {
       title: `${context.symbol ?? "Fill"} reconciled`,
       detail: joinDetail([
-        stringValue(payload.status),
+        status ? feedStatusLabel(status) : undefined,
         numberValue(payload.quantity) ? `Qty ${trimNumber(numberValue(payload.quantity) ?? 0)}` : undefined,
         numberValue(payload.price) ? `@ ${trimCurrency(numberValue(payload.price) ?? 0)}` : undefined
       ]) ?? "Broker state synced"
@@ -260,9 +271,13 @@ function formatAuditEvent(
   }
 
   if (kind === "order_cancel") {
+    const orderId = stringValue(payload.orderId);
+    const detail = shortText(orderId ? `Order ${shortOrderLabel(orderId)}` : "Broker request submitted");
+    const fullDetail = orderId ? shortText(`Order ${orderId}`) : undefined;
     return {
       title: "Order cancel requested",
-      detail: shortText(stringValue(payload.orderId) ? `Order ${stringValue(payload.orderId)}` : "Broker request submitted")
+      detail,
+      fullText: fullDetail && fullDetail !== detail ? fullDetail : undefined
     };
   }
 
@@ -339,9 +354,12 @@ function formatAuditEvent(
   }
 
   if (kind.startsWith("run_skipped_")) {
+    const detail = genericAuditDetail(payload) ?? humanizeKind(kind);
+    const fullDetail = genericAuditDetail(payload, { shortIds: false });
     return {
       title: "Strategy run skipped",
-      detail: genericAuditDetail(payload) ?? humanizeKind(kind)
+      detail,
+      fullText: fullDetail && fullDetail !== detail ? fullDetail : undefined
     };
   }
 
@@ -419,8 +437,12 @@ function formatAuditEvent(
     };
   }
 
+  // Unknown/unhandled audit kinds NEVER render raw JSON inline — the detail is either a
+  // recognized generic field, up to 3 scalar payload fields as "Key: value" fragments, or a
+  // plain "Event recorded". The full JSON payload stays available via the existing
+  // RawToggle/fullText affordance.
   const serializedPayload = serializeAuditPayload(payload);
-  const detail = genericAuditDetail(payload) ?? serializedPayload ?? "Event recorded";
+  const detail = genericAuditDetail(payload) ?? scalarFieldsDetail(payload) ?? "Event recorded";
   return {
     title: humanizeKind(kind),
     detail,
@@ -499,13 +521,64 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function humanizeNotificationType(type?: string): string {
-  if (!type) return "Notification";
-  return type.replace(/_/g, " ");
+/** Plain-English fallback for an audit kind with no dedicated branch above (e.g.
+ *  "notify.prefs.set", "run_skipped_market_closed"). De-underscores and capitalizes just the
+ *  leading letter (sentence case), matching the decided-vocabulary style used elsewhere in this
+ *  file ("Web source refresh", "Trade blocked", ...) rather than every-word Title Case. */
+function humanizeKind(kind: string): string {
+  const spaced = kind.replace(/_/g, " ");
+  return spaced.length > 0 ? `${spaced[0]!.toUpperCase()}${spaced.slice(1)}` : spaced;
 }
 
-function humanizeKind(kind: string): string {
-  return kind.replace(/_/g, " ");
+/** Title-Case de-underscore/de-camelCase for a payload field NAME used in a "Key: value"
+ *  fragment (see `scalarFieldsDetail`) — e.g. "recordCount" -> "Record Count". Distinct from
+ *  `humanizeKind`'s sentence-case treatment: field-name labels read as short header words. */
+function titleCaseFieldKey(key: string): string {
+  const spaced = key
+    .replace(/_/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+  return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/** Last-resort detail for an unrecognized audit kind: up to 3 scalar (string/number/boolean)
+ *  payload fields rendered as plain "Key: value" fragments — never the raw JSON blob. The raw
+ *  payload stays available via `fullText` (see the catch-all return below). */
+function scalarFieldsDetail(payload: Record<string, unknown>, limit = 3): string | undefined {
+  const entries = Object.entries(payload).filter(
+    ([, value]) => typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+  );
+  if (entries.length === 0) return undefined;
+  const fragments = entries.slice(0, limit).map(([key, value]) => `${titleCaseFieldKey(key)}: ${String(value)}`);
+  return fragments.length > 0 ? fragments.join(" · ") : undefined;
+}
+
+/** Broker order ids get shortOrderLabel (src/lib/order-labels.ts); strategy run ids get the
+ *  same short-tag treatment via this local mirror — order-labels.ts is scoped to broker order
+ *  ids, and run ids are a different id space, so this stays a tiny local helper rather than a
+ *  cross-import. Same deterministic, stateless first-8-chars-uppercase projection. */
+function shortRunLabel(id: string): string {
+  const cleaned = String(id ?? "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase();
+  if (cleaned.length === 0) return "?";
+  if (cleaned.length < 8) return cleaned;
+  return cleaned.slice(0, 8);
+}
+
+/** OrderType labels (decided vocabulary) for order/fill detail strings. A tiny local map rather
+ *  than importing app/console/orders/lib.ts's orderTypeLabel — this is a server-shared lib and
+ *  must not import from app/. */
+const ORDER_TYPE_LABELS: Record<string, string> = {
+  market: "Market",
+  limit: "Limit",
+  stop_market: "Stop-market",
+  stop_limit: "Stop-limit"
+};
+
+function feedOrderTypeLabel(type?: string): string {
+  if (!type) return "-";
+  return ORDER_TYPE_LABELS[type] ?? humanizeKind(type);
 }
 
 /** Human names for the web-source connector ids used in `web_source_refresh` audits. */
@@ -520,20 +593,32 @@ const WEB_SOURCE_LABELS: Record<string, string> = {
 
 /** Pure-ops audit kinds: background data refreshes and housekeeping that are not
  *  account decisions. The console collapses these into a "System" group. */
-export const OPS_AUDIT_KINDS = new Set(["web_source_refresh", "congress_share_daily", "notify.bridge.error"]);
-
-/** Audit kinds that belong to one strategy run and are consolidated into a single
- *  `run-<runId>` group in the unified feed (plus any `run_skipped_*` kind). */
-const RUN_SCOPED_AUDIT_KINDS = new Set([
-  "strategy_run",
-  "rationale_diversity",
-  "candidates_considered",
-  "signal_snapshot",
-  "llm_step"
+// Housekeeping/background kinds: bundled into the collapsed System bucket instead of one card
+// each. notify.sent / notify.error are channel-DELIVERY mechanics — the `notification` panel row
+// (which carries the alert's content + status) still renders in the main feed; these are the
+// per-channel webhook/email/push plumbing that used to add 2-4 rows per alert.
+export const OPS_AUDIT_KINDS = new Set([
+  "web_source_refresh",
+  "congress_share_daily",
+  "notify.bridge.error",
+  "notify.sent",
+  "notify.error",
+  "due_jobs_intraday_sample_drain",
+  "vector_store",
+  "recoverable_issue",
+  "llm_cache_usage"
 ]);
 
-function runGroupIdForAudit(kind: string, payload: Record<string, unknown>): string | undefined {
-  if (!RUN_SCOPED_AUDIT_KINDS.has(kind) && !kind.startsWith("run_skipped_")) return undefined;
+/**
+ * Consolidate ANY audit event that carries a `runId` into its `run-<runId>` group (owner request
+ * 2026-07-08: an hour of activity showed 30-40 separate cards because only 5 allowlisted kinds
+ * joined the run group while a real run emits 15+ runId-tagged kinds — rag_retrieval_status,
+ * experience_retrieval, llm_call_latency, evidence_age_anomaly, socratic_outcome_job, …).
+ * Grouping is generic-by-runId, so new run-scoped audit kinds bundle automatically instead of
+ * needing an allowlist entry. Proposal-linked events still take `prop-<id>` precedence at the
+ * call site, and the run card's title stays anchored on the `strategy_run` summary event.
+ */
+function runGroupIdForAudit(_kind: string, payload: Record<string, unknown>): string | undefined {
   const runId = stringValue(payload.runId);
   return runId ? `run-${runId}` : undefined;
 }
@@ -552,7 +637,10 @@ function joinDetail(parts: Array<string | undefined>): string | undefined {
   return filtered.length > 0 ? filtered.join(" · ") : undefined;
 }
 
-function genericAuditDetail(payload: Record<string, unknown>): string | undefined {
+/** `shortIds: false` (default true) spells out the full raw order/run id instead of the short
+ *  tag — callers use that variant to build a distinct `fullText` so the complete id is never
+ *  lost when the short-tag `detail` is shown. */
+function genericAuditDetail(payload: Record<string, unknown>, options?: { shortIds?: boolean }): string | undefined {
   const details = asRecord(payload.details);
   const symbol = stringValue(payload.symbol) ?? stringValue(details.symbol);
   const side = stringValue(payload.side);
@@ -565,6 +653,7 @@ function genericAuditDetail(payload: Record<string, unknown>): string | undefine
   const orderId = stringValue(payload.orderId);
   const runId = stringValue(payload.runId);
   const count = numberValue(payload.count) ?? numberValue(payload.recordCount) ?? numberValue(payload.candidateCount);
+  const shortIds = options?.shortIds !== false;
   return joinDetail([
     reason,
     summary,
@@ -572,10 +661,10 @@ function genericAuditDetail(payload: Record<string, unknown>): string | undefine
     error,
     operation,
     symbol ? [side, symbol].filter(Boolean).join(" ") : side,
-    status ? `Status: ${status}` : undefined,
-    orderId ? `Order ${orderId}` : undefined,
+    status ? `Status: ${feedStatusLabel(status)}` : undefined,
+    orderId ? `Order ${shortIds ? shortOrderLabel(orderId) : orderId}` : undefined,
     count !== undefined ? `Count ${count}` : undefined,
-    runId ? `Run ${runId}` : undefined
+    runId ? `Run ${shortIds ? shortRunLabel(runId) : runId}` : undefined
   ]);
 }
 
@@ -605,7 +694,7 @@ function formatLlmSteps(value: unknown): string | undefined {
       const provider = stringValue(step.provider);
       const status = stringValue(step.status);
       if (!model && !provider) return undefined;
-      const modelPart = model && provider ? `${model}/${provider}` : model ?? provider;
+      const modelPart = model && provider ? `${model} via ${capitalize(provider)}` : model ?? provider;
       return `${label}: ${modelPart}${status && status !== "completed" ? ` (${status})` : ""}`;
     })
     .filter(Boolean);
@@ -646,7 +735,7 @@ function brokerOrderDetail(order: EquityOrder | undefined, fillStatus?: string):
         : isTerminalBrokerState(order.state)
           ? `Broker reported ${readableBrokerState(order.state)}`
           : "Accepted by broker; awaiting fill";
-  return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`;
+  return `${prefix}: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${feedOrderTypeLabel(order.type)}`;
 }
 
 function brokerOrderTitle(order: EquityOrder): string {
@@ -658,7 +747,7 @@ function brokerOrderTitle(order: EquityOrder): string {
   return `Order Submitted: ${side} ${symbol}`;
 }
 
-import { formatNotificationDisplay } from "./dashboard-ui";
+import { feedStatusLabel, formatNotificationDisplay, notificationStatusLabel, notificationTypeLabel } from "./dashboard-ui";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -829,7 +918,11 @@ export function buildUnifiedFeed(input: {
       raw: event.payload
     };
 
-    const groupId = proposalId ? `prop-${proposalId}` : `notif-${event.id}`;
+    // Precedence: proposal group > run group > standalone. Run-scoped alerts ("Sell MU blocked",
+    // "run failed", "Red Team routed to human") carry a runId in their payload — folding them into
+    // the run card removes the 2-3 sibling rows that always appeared next to every run entry.
+    const notifRunId = stringValue(payload.runId);
+    const groupId = proposalId ? `prop-${proposalId}` : notifRunId ? `run-${notifRunId}` : `notif-${event.id}`;
     if (proposalId) {
       proposalIdByGroupId.set(groupId, proposalId);
     }
@@ -856,7 +949,7 @@ export function buildUnifiedFeed(input: {
       title: `${fill.source === "paper" ? "Paper " : ""}${fill.side.toUpperCase()} ${fill.symbol}`,
       detail: fill.status === "pending_reconciliation"
         ? `${formattedQty} shares reviewed @ ${trimCurrency(fill.price)} · broker order pending execution`
-        : `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${fill.status}`,
+        : `${formattedQty} shares @ ${trimCurrency(fill.price)} · ${feedStatusLabel(fill.status)}`,
       status: fill.status,
       raw: fill.raw
     };
@@ -884,7 +977,7 @@ export function buildUnifiedFeed(input: {
       createdAt: order.createdAt,
       type: "order",
       title: brokerOrderTitle(order),
-      detail: `Broker state: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${order.type}`,
+      detail: `Broker state: ${readableBrokerState(order.state)} · Qty ${formattedFilled} / ${formattedTotal} · ${feedOrderTypeLabel(order.type)}`,
       status: order.state,
       raw: order
     };

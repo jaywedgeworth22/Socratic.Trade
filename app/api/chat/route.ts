@@ -14,7 +14,6 @@ import { resolveLlmCredential } from "@/lib/db";
 import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { isOverLlmBudget } from "@/lib/llm-budget";
 import { LLM_REQUIRED_CHAT_MESSAGE } from "@/lib/llm-required";
-import { DEFAULT_OPENAI_MODEL } from "@/lib/llm-request";
 import { NextResponse } from "next/server";
 
 /** The explicit offline path: the deterministic MockLLM, intentionally keyless. Anything else is a real
@@ -39,9 +38,8 @@ function resolveChatProvider(modelHint: string | undefined, providerHint: string
 
 export const dynamic = "force-dynamic";
 
-import type { LlmKeySource } from "@/lib/db-api-keys";
-function usageOpts(userId: string, source: LlmKeySource, keyRef?: string): LlmUsageOpts {
-  return { userId, keySource: source, keyRef, context: "chat" };
+function usageOpts(userId: string, source: "user" | "operator" | "none", keyRef?: string): LlmUsageOpts {
+  return { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
 }
 
 /**
@@ -51,13 +49,20 @@ function usageOpts(userId: string, source: LlmKeySource, keyRef?: string): LlmUs
  * caller falls through to the env default (also per-user via getLLM(userId)).
  */
 function llmFromProvider(hint: string | undefined, userId: string) {
+  // No hardcoded chat model default (owner 2026-07-07: no model is a default for anything). The chat
+  // model must be explicit — the client's per-request model (routed by llmForModel above) or the
+  // operator's CHAT_LLM_MODEL. Without one, return null so the caller falls through (ultimately to
+  // MockLLM), never a silently-picked model.
+  const chatModel = process.env.CHAT_LLM_MODEL?.trim();
   if (hint === "openai") {
+    if (!chatModel) return null;
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
-    if (key) return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? DEFAULT_OPENAI_MODEL, undefined, usageOpts(userId, source, keyRef));
+    if (key) return new OpenAILLM(key, chatModel, undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "anthropic") {
+    if (!chatModel) return null;
     const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
-    if (key) return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", undefined, usageOpts(userId, source, keyRef));
+    if (key) return new AnthropicLLM(key, chatModel, undefined, usageOpts(userId, source, keyRef));
   }
   if (hint === "mock") return new MockLLM();
   return null;

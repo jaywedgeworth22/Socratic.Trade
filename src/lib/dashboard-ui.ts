@@ -1,4 +1,4 @@
-import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, OrderSide } from "./types";
+import type { EnrichmentSources, EquityPosition, MarketQuote, NotificationEvent, NotificationEventType, NotificationStatus, OrderSide } from "./types";
 import type { SymbolMeta } from "./dashboard-feed";
 import { formatQuantity } from "./money";
 
@@ -258,6 +258,84 @@ export function formatShareQuantity(value?: number, symbol?: string): string {
   return formatQuantity(value, symbol);
 }
 
+/** Defensive Title-Case de-underscore/de-hyphenate fallback so a raw snake_case or kebab-case
+ *  enum value never reaches the user, even for a value not covered by an explicit label map
+ *  below. Mirrors `plainLabel` in app/console/lib/labels.ts — that file is a separate package
+ *  boundary (this is a server-shared lib and must not import from app/), so this is a small
+ *  local mirror, not a cross-import. */
+function plainEnumLabel(raw: string): string {
+  return raw
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+// ── Feed / proposal / fill statuses (decided vocabulary) ───────────────────────────────────
+
+const FEED_STATUS_LABELS: Record<string, string> = {
+  filled: "Filled",
+  partially_filled: "Partially filled",
+  pending_order: "Order pending",
+  pending_reconciliation: "Awaiting reconciliation",
+  pending_approval: "Awaiting approval",
+  approved: "Approved",
+  blocked: "Blocked",
+  rejected: "Rejected",
+  rejected_by_broker: "Rejected by broker",
+  pending: "Pending",
+  unknown: "Status unknown",
+  proposed: "Proposed",
+  executed: "Executed",
+  expired: "Expired",
+  failed: "Failed",
+  withdrawn: "Withdrawn",
+  placed: "Placed",
+  paper: "Paper trade",
+  completed: "Completed",
+  placing_failed: "Placement failed",
+  running: "Running"
+};
+
+/** Plain-English label for a feed/proposal/fill status string. Unknown values fall back to a
+ *  defensive Title-Case de-underscore rather than ever showing the raw enum. */
+export function feedStatusLabel(raw?: string | null): string {
+  if (!raw) return "";
+  return FEED_STATUS_LABELS[raw.toLowerCase()] ?? plainEnumLabel(raw);
+}
+
+// ── Notifications (decided vocabulary) ──────────────────────────────────────────────────────
+
+const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
+  fill: "Order filled",
+  block: "Trade blocked",
+  run_failed: "Run failed",
+  pending_approval: "Awaiting your approval",
+  kill_switch: "Kill switch",
+  price_alert: "Price alert",
+  proposal_withdrawn: "Proposal withdrawn",
+  limit_order_stale: "Stale limit order",
+  provider_degraded: "Data provider degraded",
+  budget_alert: "Budget alert",
+  learning_review: "Learning review"
+};
+
+export function notificationTypeLabel(type?: string | null): string {
+  if (!type) return "";
+  return NOTIFICATION_EVENT_TYPE_LABELS[type as NotificationEventType] ?? plainEnumLabel(type);
+}
+
+const NOTIFICATION_STATUS_LABELS: Record<NotificationStatus, string> = {
+  sent: "Sent",
+  failed: "Delivery failed",
+  skipped: "Not sent"
+};
+
+export function notificationStatusLabel(status?: string | null): string {
+  if (!status) return "";
+  return NOTIFICATION_STATUS_LABELS[status as NotificationStatus] ?? plainEnumLabel(status);
+}
+
 export function formatNotificationDisplay(
   event: NotificationEvent,
   symbolMetaBySymbol: Record<string, SymbolMeta>
@@ -279,7 +357,12 @@ export function formatNotificationDisplay(
   } else if (event.type === "block") {
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} Blocked`;
   } else if (event.type === "pending_approval") {
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval`;
+    // Single-adversary visibility (§5.2): when the run flagged this pending approval as
+    // "Red Team review unavailable" (payload metadata flag, read defensively via asRecord), the
+    // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
+    // discarding it with the generic overwrite.
+    const adversaryUnavailable = payload.adversaryUnavailable === true;
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
@@ -317,7 +400,7 @@ function notificationDetail(event: NotificationEvent): string {
     const reason = stringValue(payload.reason) || stringValue(payload.detail);
     return reason ? `Audit logged: ${reason}` : "Advisory audit logged";
   }
-  const prefix = event.status === "sent" ? "Notification Sent" : event.status === "failed" ? "Notification Failed" : "Notification Skipped";
+  const prefix = notificationStatusLabel(event.status);
   const reason = notificationReason(event.error);
   return reason ? `${prefix} - ${reason}` : prefix;
 }

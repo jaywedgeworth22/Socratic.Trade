@@ -9,14 +9,14 @@
 import { canonicalTicker } from "../rag/chunk";
 import { resolveLlmCredential } from "../db";
 import { recordLlmUsage, extractLlmUsage } from "../llm-usage";
-import { DEFAULT_OPENAI_MODEL, llmFetch, isReasoningModel } from "../llm-request";
+import { llmFetch, isReasoningModel } from "../llm-request";
 import { DISCLAIMER, SYSTEM_PROMPT } from "./prompt";
 import type { ChatLLM, Citation, LlmResult, LlmRunArgs, ToolCall } from "./types";
 
 /** Per-user attribution for the LLM usage ledger. When `userId` is set, run() records a usage row. */
 export interface LlmUsageOpts {
   userId?: string;
-  keySource?: "user" | "none";
+  keySource?: "user" | "operator";
   /** Non-secret fingerprint of the key serving this call (per-attached-key attribution). */
   keyRef?: string;
   context?: string;
@@ -619,7 +619,7 @@ export function llmForModel(
   const provider = chatProviderForModel(trimmed);
   const { key, source, keyRef } = resolveLlmCredential(provider, userId);
   if (!key) return new MockLLM();
-  const usage: LlmUsageOpts = { userId, keySource: source, keyRef, context: "chat" };
+  const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
   if (provider === "anthropic") {
     return new AnthropicLLM(key, trimmed, opts.transport ?? defaultTransport, usage);
   }
@@ -634,18 +634,21 @@ export function llmForModel(
  */
 export function getLLM(userId?: string, opts: { transport?: Transport; openAITransport?: OpenAITransport } = {}): ChatLLM {
   const chatLlm = process.env.CHAT_LLM;
-  if (chatLlm === "anthropic") {
+  // No hardcoded chat model default (owner 2026-07-07): the env-default chat path requires an
+  // explicit CHAT_LLM_MODEL. Without it, fall through to MockLLM rather than silently pick a model.
+  const chatModel = process.env.CHAT_LLM_MODEL?.trim();
+  if (chatLlm === "anthropic" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("anthropic", userId);
     if (key) {
-      const usage: LlmUsageOpts = { userId, keySource: source, keyRef, context: "chat" };
-      return new AnthropicLLM(key, process.env.CHAT_LLM_MODEL ?? "claude-opus-4-8", opts.transport ?? defaultTransport, usage);
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      return new AnthropicLLM(key, chatModel, opts.transport ?? defaultTransport, usage);
     }
   }
-  if (chatLlm === "openai") {
+  if (chatLlm === "openai" && chatModel) {
     const { key, source, keyRef } = resolveLlmCredential("openai", userId);
     if (key) {
-      const usage: LlmUsageOpts = { userId, keySource: source, keyRef, context: "chat" };
-      return new OpenAILLM(key, process.env.CHAT_LLM_MODEL ?? DEFAULT_OPENAI_MODEL, opts.openAITransport ?? defaultOpenAITransport, usage);
+      const usage: LlmUsageOpts = { userId, keySource: source === "operator" ? "operator" : "user", keyRef, context: "chat" };
+      return new OpenAILLM(key, chatModel, opts.openAITransport ?? defaultOpenAITransport, usage);
     }
   }
   return new MockLLM();

@@ -10,6 +10,8 @@ import { type ReactNode } from "react";
 import type { EquityOrder, EquityPosition, PendingProposal } from "@/lib/types";
 import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
 import { cx, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { plainLabel, thesisTagLabel } from "../lib/labels";
+import { readableState } from "../orders/lib";
 import { Ago, Chip, Dash, SignedText, Tooltip, type ChipTone } from "./primitives";
 import {
   buildDerivedTiles,
@@ -91,17 +93,17 @@ export function ExposureSection({
 
       {position && econ && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Tooltip as="div" className="cursor-default flex flex-col" content={`Shares currently held${econ.isShort ? " (negative = short position)" : ""}.`}>
+          <Tooltip className="cursor-default flex flex-col" content={`Shares currently held${econ.isShort ? " (negative = short position)" : ""}.`}>
             <div className="con-card-title mb-0.5">Quantity</div>
             <div className="con-num text-[length:var(--con-fs-sm)]">
               {fmtQty(position.quantity)} sh{econ.isShort ? " · short" : ""}
             </div>
           </Tooltip>
-          <Tooltip as="div" className="cursor-default flex flex-col" content="What the position is worth at the latest known price.">
+          <Tooltip className="cursor-default flex flex-col" content="What the position is worth at the latest known price.">
             <div className="con-card-title mb-0.5">Market value</div>
             <div className="con-num text-[length:var(--con-fs-sm)]">{fmtMoney(position.marketValue)}</div>
           </Tooltip>
-          <Tooltip as="div" className="cursor-default flex flex-col" content={`Average cost per share (${fmtMoney(position.averageCost)}) × quantity — what was paid to build the position.`}>
+          <Tooltip className="cursor-default flex flex-col" content={`Average cost per share (${fmtMoney(position.averageCost)}) × quantity — what was paid to build the position.`}>
             <div className="con-card-title mb-0.5">Entry basis</div>
             <div className="con-num text-[length:var(--con-fs-sm)]">
               {fmtMoney(econ.costBasis)}
@@ -109,7 +111,6 @@ export function ExposureSection({
             </div>
           </Tooltip>
           <Tooltip
-            as="div"
             className="cursor-default flex flex-col"
             content="Market value minus entry basis — the open gain or loss if closed at the latest known price. Not realized until sold."
           >
@@ -131,9 +132,8 @@ export function ExposureSection({
           </div>
           <ul className="flex flex-col">
             {pending.map((p) => (
+              <li key={p.id}>
               <Tooltip
-                as="li"
-                key={p.id}
                 className="con-row -mx-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-1 py-1.5 text-[length:var(--con-fs-sm)] w-full"
                 content={p.proposal.rationale || "No rationale recorded."}
               >
@@ -147,11 +147,11 @@ export function ExposureSection({
                 </span>
                 {p.proposal.tradeThesisTag && (
                   <Chip tone="muted" title="The thesis tag the strategy filed this idea under.">
-                    {p.proposal.tradeThesisTag}
+                    {thesisTagLabel(p.proposal.tradeThesisTag)}
                   </Chip>
                 )}
                 {typeof p.proposal.confidenceScore === "number" && (
-                  <Tooltip as="span" className="con-num text-[color:var(--con-faint)]" content="The strategy's stated conviction in this idea (0–100).">
+                  <Tooltip className="con-num text-[color:var(--con-faint)]" content="The strategy's stated conviction in this idea (0–100).">
                     conf {Math.round(p.proposal.confidenceScore)}
                   </Tooltip>
                 )}
@@ -165,6 +165,7 @@ export function ExposureSection({
                   <Tooltip content="Open the Approvals screen to approve or reject this idea.">Review →</Tooltip>
                 </Link>
               </Tooltip>
+              </li>
             ))}
           </ul>
         </div>
@@ -177,11 +178,10 @@ export function ExposureSection({
           </div>
           <ul className="flex flex-col">
             {orders.map((o) => (
+              <li key={o.id}>
               <Tooltip
-                as="li"
-                key={o.id}
                 className="con-row -mx-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-1 py-1.5 text-[length:var(--con-fs-sm)] w-full"
-                content={`${o.side} ${o.type.replace(/_/g, " ")} order · state: ${o.state}${o.placedAgent ? ` · placed by ${o.placedAgent}` : ""}`}
+                content={`${o.side} ${o.type.replace(/_/g, " ")} order · state: ${readableState(o.state)}${o.placedAgent ? ` · placed by ${plainLabel(o.placedAgent)}` : ""}`}
               >
                 {sideChip(o.side)}
                 <span className="con-num">
@@ -194,13 +194,14 @@ export function ExposureSection({
                         : EM_DASH}
                   {typeof o.averagePrice === "number" && o.averagePrice > 0 ? ` @ ${fmtMoney(o.averagePrice)}` : ""}
                 </span>
-                <Chip tone={o.state === "filled" ? "pos" : ["cancelled", "canceled", "rejected", "failed", "expired"].includes(o.state) ? "neg" : "muted"} title={`Order state reported by the broker: ${o.state}.`}>
-                  {o.state}
+                <Chip tone={o.state === "filled" ? "pos" : ["cancelled", "canceled", "rejected", "failed", "expired"].includes(o.state) ? "neg" : "muted"} title={`Order state reported by the broker: ${readableState(o.state)}.`}>
+                  {readableState(o.state)}
                 </Chip>
                 <span className="ml-auto text-[color:var(--con-faint)]">
                   <Ago iso={o.createdAt} />
                 </span>
               </Tooltip>
+              </li>
             ))}
           </ul>
         </div>
@@ -272,7 +273,7 @@ export function DerivedTilesSection({ view, derived }: { view: QuoteView; derive
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {tiles.map((t) => (
-          <Tooltip as="div" key={t.key} className="con-tile cursor-default flex flex-col" content={t.title}>
+          <Tooltip key={t.key} className="con-tile cursor-default flex flex-col" content={t.title}>
             <div className="con-card-title">{t.label}</div>
             <div
               className="con-num mt-0.5 text-[length:var(--con-fs-md)] font-semibold"
@@ -301,7 +302,7 @@ export function FactorSection({ view }: { view: QuoteView }) {
     >
       <div className="space-y-2">
         {rows.map((f) => (
-          <Tooltip as="div" key={f.key} className="con-row -mx-1 cursor-default rounded px-1 py-0.5 flex flex-col w-full" content={f.title}>
+          <Tooltip key={f.key} className="con-row -mx-1 cursor-default rounded px-1 py-0.5 flex flex-col w-full" content={f.title}>
             <div className="mb-0.5 flex items-baseline justify-between text-[length:var(--con-fs-xs)]">
               <span className="text-[color:var(--con-faint)]">{f.label}</span>
               <span className="con-num font-semibold">{f.value.toFixed(1)}</span>
@@ -312,7 +313,6 @@ export function FactorSection({ view }: { view: QuoteView }) {
           </Tooltip>
         ))}
         <Tooltip
-          as="div"
           className="flex items-baseline justify-between border-t border-[color:var(--con-line)] pt-2 text-[length:var(--con-fs-sm)] font-semibold w-full"
           content="The weighted total of all factor sub-scores using the active policy's scoring weights — the number the screener ranked this symbol by."
         >

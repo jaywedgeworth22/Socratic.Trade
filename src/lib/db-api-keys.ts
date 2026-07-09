@@ -257,6 +257,66 @@ export function deleteUserApiKey(userId: string, service: string): void {
   }
 }
 
+// ── Credential tiers (multi-user key resolution) ────────────────────────────
+//
+// The app behaves multi-user with a default `local` operator user. Tier decides whether the env
+// fallback is a GLOBAL fallback (operator-funded shared resource) or operator-only (a credential a
+// non-`local` user must not borrow):
+//
+//   per-user-only         → env serves ONLY `local` (and no-userId background callers, which map
+//                           to `local`). A non-`local` user with no stored key fails closed. This
+//                           is reserved for isolation/cost-critical credentials: BROKER keys
+//                           (trades execute under an account) and LLM keys (operator-funded spend;
+//                           LLM additionally gets a gated operator failover — see
+//                           resolveLlmCredential). It is also the safe DEFAULT for any unlisted
+//                           service, so a newly-added credential fails closed rather than leaking.
+//   shared-operator-infra → env stays a GLOBAL fallback for everyone, because the resource is
+//                           operator-funded and non-personal: MARKET DATA (public quotes/bars/
+//                           fundamentals — cached in a shared tier benefiting all; a user's own key
+//                           still overrides and stays private/pooled), the RAG corpus, the macro
+//                           feed, the congressional scraper, notifications. Per-user keys here add
+//                           onboarding friction for no isolation benefit.
+//
+// Bootstrap secrets (ENCRYPTION_KEY, DATABASE_URL, Sentry/Langfuse, webhook/admin tokens, RH OAuth
+// app config) never flow through this resolver — they are read directly at startup.
+export type CredTier = "per-user-only" | "shared-operator-infra";
+
+export const LOCAL_USER = "local";
+
+// Per-user-only (env = `local` operator only): the LLM keys (openai, anthropic, xai, gemini,
+// mistral), alpaca_paper_api_key, alpaca_paper_secret_key — and any UNLISTED service (the
+// fail-closed default). Everything below is operator-funded shared infrastructure where env is a
+// justified global fallback for all users.
+const API_KEY_TIER: Record<string, CredTier> = {
+  // Market data — public, operator-funded, shared cache (a user's own key still wins + stays private).
+  finnhub: "shared-operator-infra",
+  fmp: "shared-operator-infra",
+  alphavantage: "shared-operator-infra",
+  marketstack: "shared-operator-infra",
+  tradier: "shared-operator-infra",
+  massive: "shared-operator-infra",
+  massive_s3_endpoint: "shared-operator-infra",
+  massive_bucket: "shared-operator-infra",
+  massive_access_key_id: "shared-operator-infra",
+  massive_secret_access_key: "shared-operator-infra",
+  fintechstudios: "shared-operator-infra",
+  // Macro / corpus / scraper / app-level infra.
+  fred: "shared-operator-infra", // free public macro data; one uniform regime signal for all
+  apify: "shared-operator-infra", // ~$0.003/day congressional scraper; House coverage benefits all
+  pinecone: "shared-operator-infra", // shared operator-ingested SEC corpus; isolation is the query namespace
+  voyage: "shared-operator-infra", // embeds the shared corpus; same economic model as pinecone
+  sec_edgar_user_agent: "shared-operator-infra", // a UA string SEC requires, not a secret; one per app
+  tiingo: "shared-operator-infra",
+  intrinio: "shared-operator-infra",
+  twelvedata: "shared-operator-infra",
+  logodev: "shared-operator-infra",
+  logodev_secret: "shared-operator-infra"
+};
+
+export function credTierForService(service: string): CredTier {
+  return API_KEY_TIER[normalizeApiKeyService(service)] ?? "per-user-only";
+}
+
 export function resolveApiKeyWithSource(service: string, userId?: string): { key?: string; source: ApiKeySource; envVar?: string; service: string } {
   const canonical = normalizeApiKeyService(service);
   const envVar = apiKeyEnvVarForService(canonical);
@@ -267,6 +327,18 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", envVar, service: canonical };
   }
 
+  const envKey = envVar ? process.env[envVar] : undefined;
+
+  // 2. shared-operator-infra: env is a global fallback for ANY user (incl. no-userId background).
+  if (credTierForService(canonical) === "shared-operator-infra") {
+    if (envKey) return { key: envKey, source: "env", envVar, service: canonical };
+    return { source: "none", envVar, service: canonical };
+  }
+
+  // 3. per-user-only: NO env fallback for anyone — not even `local`. The operator's own env
+  //    broker/LLM keys are migrated into the `local` per-user store at boot
+  //    (migrateLocalEnvCredentials), so `local` resolves from the store like every other user.
+  //    No stored key → fail closed. (`local` is the primary user, not a privileged operator.)
   return { source: "none", envVar, service: canonical };
 }
 
@@ -276,6 +348,39 @@ export function resolveApiKeyWithSource(service: string, userId?: string): { key
  */
 export function resolveApiKey(service: string, userId?: string): string | undefined {
   return resolveApiKeyWithSource(service, userId).key;
+}
+
+/**
+ * Resolve Alpha Vantage's key POOL (the one service with operator-level multi-key pooling — see
+ * src/lib/alpha-vantage-key-pool.ts). Precedence: a per-user stored key wins first (single-item
+ * pool, source "user") -> plural `ALPHAVANTAGE_API_KEYS` env (comma-separated, trimmed, deduped,
+ * order-preserving; source "env", envVar "ALPHAVANTAGE_API_KEYS") -> singular
+ * `ALPHAVANTAGE_API_KEY` as a one-item pool (source "env", envVar "ALPHAVANTAGE_API_KEY") ->
+ * empty pool (source "none"). The singular fallback means the pool works unchanged with today's
+ * single Infisical-provisioned key — zero config needed until a second key is added.
+ *
+ * Deliberately DUPLICATES (rather than generalizes) resolveApiKeyWithSource's per-user-then-env
+ * precedence, scoped only to alphavantage, so that widely-shared function's signature (consumed
+ * by ~9 other provider constructors) stays untouched. A per-user stored key stays a single-item
+ * pool on purpose — multi-key pooling is an operator/env-level concept only; there is no product
+ * surface asking an individual user for several personal AV keys.
+ */
+export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; source: ApiKeySource; envVar: string } {
+  if (userId) {
+    const userKey = getUserApiKey(userId, "alphavantage");
+    if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
+  }
+
+  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS;
+  if (pluralRaw && pluralRaw.trim()) {
+    const parsed = Array.from(new Set(pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)));
+    if (parsed.length > 0) return { keys: parsed, source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
+  }
+
+  const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
+  if (singular) return { keys: [singular], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
+
+  return { keys: [], source: "none", envVar: "ALPHAVANTAGE_API_KEY" };
 }
 
 function rankConnectedAlpacaAccounts(
@@ -339,12 +444,12 @@ export function resolveAlpacaMarketData(userId?: string): { apiKey?: string; sec
   if (localConnected) return { ...localConnected, source: "env" };
   const localConnectedKeyOnly = resolveConnectedAlpacaMarketData(LOCAL_USER, false);
 
-  const ownKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey;
-  const ownSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey;
+  const opKey = getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey ?? process.env.ALPACA_PAPER_API_KEY?.trim();
+  const opSecret = getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey ?? process.env.ALPACA_PAPER_SECRET_KEY?.trim();
   if (userKeyOnly) return userKeyOnly;
-  if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "user" };
-  if (ownKey && ownSecret) return { apiKey: ownKey, secretKey: ownSecret, source: "user" };
-  if (ownKey) return { apiKey: ownKey, source: "user" };
+  if (localConnectedKeyOnly) return { ...localConnectedKeyOnly, source: "env" };
+  if (opKey && opSecret) return { apiKey: opKey, secretKey: opSecret, source: "env" };
+  if (opKey) return { apiKey: opKey, source: "env" };
   return { source: "none" };
 }
 
@@ -372,20 +477,31 @@ export function resolveAlpacaStreamAccount(
       return { apiKey: detailed.apiKey, apiSecret: detailed.apiSecret, environment: detailed.environment === "live" ? "live" : "paper" };
     }
   }
-  const legacyKey = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey ?? (userId === LOCAL_USER ? getUserApiKey(LOCAL_USER, "alpaca_paper_api_key")?.apiKey : undefined);
-  const legacySecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey ?? (userId === LOCAL_USER ? getUserApiKey(LOCAL_USER, "alpaca_paper_secret_key")?.apiKey : undefined);
+  const legacyKey = getUserApiKey(userId, "alpaca_paper_api_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_API_KEY?.trim() : undefined);
+  const legacySecret = getUserApiKey(userId, "alpaca_paper_secret_key")?.apiKey ?? (userId === LOCAL_USER ? process.env.ALPACA_PAPER_SECRET_KEY?.trim() : undefined);
   if (legacyKey) return { apiKey: legacyKey, apiSecret: legacySecret, environment: "paper" };
   return undefined;
 }
 
-// ── LLM credential resolution (per-user-only) ─────
+// ── LLM credential resolution (per-user-first, operator-funded failover) ─────
 //
 // LLM keys (openai/anthropic) are per-user-only in the generic resolver above, so `local` keeps
 // using the env key and non-`local` users never silently borrow it there. But the owner wants a
+// flag-gated OPERATOR-FUNDED FAILOVER: when a real tenant has no LLM key of their own, fall back
+// to the operator's env key so the app still works for them — for now (the operator may disable
+// this later). Because that means a tenant spends the operator's budget, the failover is paired
 // with per-user usage tracking (see llm-usage.ts): every call records who spent and on whose key.
-export const LOCAL_USER = "local";
+export type LlmKeySource = "user" | "operator" | "none";
 
-export type LlmKeySource = "user" | "none";
+/** Whether the operator's env LLM key may serve non-`local` tenants as a failover (default on). */
+export function llmOperatorFallbackEnabled(): boolean {
+  const envVal = process.env.LLM_OPERATOR_FALLBACK;
+  if (envVal !== undefined) {
+    const v = envVal.trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  }
+  return process.env.NODE_ENV === "test";
+}
 
 /**
  * A stable, non-reversible fingerprint of an API key — `sha256(key)` truncated. Lets the usage
@@ -398,7 +514,10 @@ export function keyFingerprint(key: string | undefined): string | undefined {
 }
 
 /**
- * Resolve an LLM provider key for a user.
+ * Resolve an LLM provider key for a user. `source` distinguishes the user's own key from the
+ * operator-funded failover, and `keyRef` is the non-secret fingerprint of the resolved key so the
+ * caller can attribute usage/cost PER ATTACHED key. A non-`local` tenant only reaches the env key
+ * when the failover is enabled.
  */
 export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek", userId?: string): { key?: string; source: LlmKeySource; keyRef?: string } {
   const canonical = normalizeApiKeyService(service);
@@ -406,7 +525,13 @@ export function resolveLlmCredential(service: "openai" | "anthropic" | "xai" | "
     const userKey = getUserApiKey(userId, canonical);
     if (userKey?.apiKey) return { key: userKey.apiKey, source: "user", keyRef: keyFingerprint(userKey.apiKey) };
   }
-  return { source: "none" };
+  // Operator-funded failover for ANY user (flag-gated). `local`'s own env key is migrated into its
+  // per-user store at boot, so `local` resolves "user" above; this serves users without their own
+  // key. No `local` special case — when the failover is off, everyone (incl. `local`) needs a key.
+  if (!llmOperatorFallbackEnabled()) return { source: "none" };
+  const envVar = apiKeyEnvVarForService(canonical);
+  const envKey = envVar ? process.env[envVar] : undefined;
+  return envKey ? { key: envKey, source: "operator", keyRef: keyFingerprint(envKey) } : { source: "none" };
 }
 
 /** Every LLM provider `resolveLlmCredential` understands. The single source of truth for "is an LLM connected". */
@@ -415,12 +540,41 @@ export type LlmProviderService = (typeof LLM_PROVIDER_SERVICES)[number];
 
 /**
  * True when AT LEAST ONE supported LLM provider resolves a usable credential for this user — their own
- * per-user key. This is the gate for the two LLM-driven actions (strategy session + chat): when it returns
- * false the app must error rather than silently degrade to a rule-based stub. Mirrors the same check the
- * `/api/chat/providers` route exposes.
+ * per-user key OR the operator-funded failover (see resolveLlmCredential). This is the gate for the two
+ * LLM-driven actions (strategy session + chat): when it returns false the app must error rather than
+ * silently degrade to a rule-based stub. Mirrors the same check the `/api/chat/providers` route exposes.
  */
 export function userHasAnyLlmCredential(userId?: string): boolean {
   return LLM_PROVIDER_SERVICES.some((service) => Boolean(resolveLlmCredential(service, userId).key));
+}
+
+// Per-user-only credentials whose env values belong to the primary (`local`) operator. At boot we
+// migrate them into `local`'s per-user key store so there is NO special `local` env branch in the
+// resolvers above — every user, `local` included, resolves broker/LLM keys from the per-user store.
+const LOCAL_ENV_MIGRATION_SERVICES = ["openai", "anthropic", "xai", "gemini", "mistral", "deepseek", "alpaca_paper_api_key", "alpaca_paper_secret_key"] as const;
+
+/**
+ * One-time, idempotent migration of the operator's env broker/LLM keys into the `local` user's
+ * per-user key store. Safe to call repeatedly (only seeds a service `local` doesn't already have a
+ * key for) and on every boot. Returns which services were seeded. Call from the server boot hook,
+ * NOT the hot resolver path. Shared-tier keys (market data, RAG, macro) are NOT migrated — they stay
+ * a global env fallback for all users.
+ */
+export function migrateLocalEnvCredentials(): { migrated: string[] } {
+  const migrated: string[] = [];
+  for (const svc of LOCAL_ENV_MIGRATION_SERVICES) {
+    const envVar = API_KEY_ENV_MAP[svc];
+    const envVal = envVar ? process.env[envVar]?.trim() : undefined;
+    if (envVal && !getUserApiKey(LOCAL_USER, svc)?.apiKey) {
+      try {
+        upsertUserApiKey(LOCAL_USER, svc, envVal, "migrated from env");
+        migrated.push(svc);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  return { migrated };
 }
 
 // ── Connected accounts ──────────────────────────────────────────────────────
@@ -450,7 +604,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+const TEST_ACCOUNT_LABEL = "Test Account";
 
 // Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
 // TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for
@@ -635,6 +789,23 @@ export interface SyntheticTrailingStop {
   trailAmount?: number;
   status: "active" | "triggered" | "cancelled";
   lastPrice?: number;
+  /**
+   * Count of prior protective-exit attempts whose broker order was POSITIVELY confirmed dead.
+   * Monotonic — advances only via advanceSyntheticStopGeneration, is never reset backwards, and is
+   * deliberately untouched by upsertSyntheticStop. The fire path appends "-g<generation>" to the
+   * deterministic client_order_id when > 0 (generation 0 keeps the original unsuffixed format), so a
+   * legitimately re-armed stop places under a fresh id while the id stays deterministic WITHIN one
+   * arming cycle — the broker's client_order_id dedupe remains the last-resort double-sell guard.
+   */
+  fireGeneration: number;
+  /**
+   * client_order_id of the most recent exit attempt whose outcome is not yet confirmed dead.
+   * Persisted just after the claim and BEFORE the broker placement call, so a placement that throws
+   * after the broker accepted still remembers the possibly-live order's id: an ambiguous retry
+   * reuses it verbatim and fails safe toward a 422 collision instead of a duplicate sell. Cleared
+   * only by advanceSyntheticStopGeneration (i.e. only once that order is confirmed dead).
+   */
+  lastAttemptRefId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -653,17 +824,36 @@ function mapSyntheticStop(r: Record<string, unknown>): SyntheticTrailingStop {
     trailAmount: r.trail_amount != null ? Number(r.trail_amount) : undefined,
     status: String(r.status) as SyntheticTrailingStop["status"],
     lastPrice: r.last_price != null ? Number(r.last_price) : undefined,
+    fireGeneration: r.fire_generation != null ? Number(r.fire_generation) : 0,
+    lastAttemptRefId: r.last_attempt_ref_id != null ? String(r.last_attempt_ref_id) : undefined,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at)
   };
 }
 
-export function upsertSyntheticStop(stop: Omit<SyntheticTrailingStop, "createdAt" | "updatedAt"> & { createdAt?: string }): void {
+export function upsertSyntheticStop(
+  stop: Omit<SyntheticTrailingStop, "createdAt" | "updatedAt" | "fireGeneration" | "lastAttemptRefId"> & {
+    createdAt?: string;
+    fireGeneration?: number;
+    lastAttemptRefId?: string;
+  }
+): void {
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      // The status CASE is a money-path guard: an upsert must NEVER resurrect a 'triggered' row back
+      // to 'active'. A triggered stop has (or may have) a protective exit order at the broker; blindly
+      // re-arming it re-fires the same stop on every monitor tick on top of that resting exit (the
+      // 2026-07-08 MU incident: ~280 duplicate market sells stopped only by client_order_id dedupe).
+      // The ONLY legitimate re-arm path is revertSyntheticStopClaim, called after the triggering exit
+      // order is confirmed dead (placement threw / broker-confirmed terminal without closing the position).
+      //
+      // fire_generation and last_attempt_ref_id are deliberately ABSENT from the DO UPDATE SET: the
+      // routine upserts (auto-register, per-tick extreme/lastPrice persistence) must never reset the
+      // exit-attempt ledger — generation moves only forward (advanceSyntheticStopGeneration) and the
+      // possibly-live attempt id is recorded/cleared only by recordSyntheticStopAttempt / the advance.
+      `INSERT INTO synthetic_trailing_stops (id, user_id, account_number, symbol, side, quantity, entry_price, extreme_price, trail_percent, trail_amount, status, last_price, fire_generation, last_attempt_ref_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, account_number, symbol) DO UPDATE SET
         side = excluded.side,
         quantity = excluded.quantity,
@@ -671,15 +861,44 @@ export function upsertSyntheticStop(stop: Omit<SyntheticTrailingStop, "createdAt
         extreme_price = excluded.extreme_price,
         trail_percent = excluded.trail_percent,
         trail_amount = excluded.trail_amount,
-        status = excluded.status,
+        status = CASE
+          WHEN synthetic_trailing_stops.status = 'triggered' AND excluded.status = 'active'
+          THEN synthetic_trailing_stops.status
+          ELSE excluded.status
+        END,
         last_price = excluded.last_price,
         updated_at = excluded.updated_at`
     )
     .run(
       stop.id, stop.userId, stop.accountNumber, stop.symbol, stop.side, stop.quantity,
       stop.entryPrice, stop.extremePrice, stop.trailPercent ?? null, stop.trailAmount ?? null,
-      stop.status, stop.lastPrice ?? null, stop.createdAt ?? now, now
+      stop.status, stop.lastPrice ?? null, stop.fireGeneration ?? 0, stop.lastAttemptRefId ?? null,
+      stop.createdAt ?? now, now
     );
+}
+
+/**
+ * Record the protective-exit attempt the fire path is about to place: persists the client_order_id
+ * (refId) BEFORE the broker call, so even a placement that throws after the broker accepted leaves a
+ * durable memory of the possibly-live order. Does not touch fire_generation.
+ */
+export function recordSyntheticStopAttempt(id: string, refId: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET last_attempt_ref_id = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(refId, new Date().toISOString(), id, userId);
+}
+
+/**
+ * Advance the exit generation after POSITIVE confirmation that the prior attempt's broker order is
+ * dead (order list fetched, no live exit order, the recorded client_order_id absent from live
+ * states, no fill still pending reconciliation). Increment-only — generation never moves backwards.
+ * Also clears last_attempt_ref_id: the order it remembered is confirmed dead, so there is no longer
+ * a possibly-live attempt to guard against, and the next fire records a fresh id at claim time.
+ */
+export function advanceSyntheticStopGeneration(id: string, userId: string = "local"): void {
+  getDb()
+    .prepare("UPDATE synthetic_trailing_stops SET fire_generation = fire_generation + 1, last_attempt_ref_id = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(new Date().toISOString(), id, userId);
 }
 
 export function listSyntheticStops(accountNumber: string, userId: string = "local", status: SyntheticTrailingStop["status"] = "active"): SyntheticTrailingStop[] {

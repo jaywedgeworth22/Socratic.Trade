@@ -200,7 +200,7 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
   return (
     <div className="mt-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Tooltip as="span" className="con-mono text-[length:var(--con-fs-sm)] font-semibold" content="The order the assistant drafted. It is only a draft until you stage and then approve it.">
+        <Tooltip className="con-mono text-[length:var(--con-fs-sm)] font-semibold" content="The order the assistant drafted. It is only a draft until you stage and then approve it.">
           {sideUp} {draft.qty} <SymbolButton symbol={draft.symbol} showLogo={false} className="font-mono text-inherit" /> · {draft.order_type}
           {limitText}
         </Tooltip>
@@ -218,13 +218,14 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
       {draft.rationale && <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">{draft.rationale}</p>}
       {draft.warnings.length > 0 && (
         <Tooltip
-          as="ul"
-          className="mt-1.5 space-y-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)] w-fit"
+          className="mt-1.5"
           content="Cautions the assistant itself attached to this draft."
         >
-          {draft.warnings.map((w, i) => (
-            <li key={i}>⚠ {w}</li>
-          ))}
+          <ul className="space-y-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+            {draft.warnings.map((w, i) => (
+              <li key={i}>⚠ {w}</li>
+            ))}
+          </ul>
         </Tooltip>
       )}
 
@@ -236,43 +237,44 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
       )}
       {phase !== "checking" && decision && (
         <Tooltip
-          as="div"
-          className="mt-2 rounded-md px-2.5 py-1.5 text-[length:var(--con-fs-xs)]"
-          style={{
-            background: blocked ? "var(--con-neg-soft)" : "var(--con-pos-soft)",
-            color: blocked ? "var(--con-neg)" : "var(--con-pos)"
-          }}
+          className="mt-2"
           content={
             blocked
               ? "Your policy guardrails would refuse this order as things stand now."
               : "A preview check against your policy guardrails. The authoritative check re-runs when you approve."
           }
         >
-          <div className="flex flex-wrap items-center gap-1.5 font-semibold">
-            {blocked ? <AlertTriangle size={13} /> : <ShieldCheck size={13} />}
-            {blocked ? "Blocked by policy" : "Passes policy preview"}
-            {estimatedNotional !== undefined && (
-              <Tooltip
-                as="span"
-                className="con-num font-normal text-[color:var(--con-muted)]"
-                content="Estimated order value from the broker's pre-trade review. Final numbers are re-checked at approval time."
-              >
-                · est. {fmtMoney(estimatedNotional)}
-              </Tooltip>
+          <div
+            className="rounded-md px-2.5 py-1.5 text-[length:var(--con-fs-xs)]"
+            style={{
+              background: blocked ? "var(--con-neg-soft)" : "var(--con-pos-soft)",
+              color: blocked ? "var(--con-neg)" : "var(--con-pos)"
+            }}
+          >
+            <div className="flex flex-wrap items-center gap-1.5 font-semibold">
+              {blocked ? <AlertTriangle size={13} /> : <ShieldCheck size={13} />}
+              {blocked ? "Blocked by policy" : "Passes policy preview"}
+              {estimatedNotional !== undefined && (
+                <Tooltip
+                  className="con-num font-normal text-[color:var(--con-muted)]"
+                  content="Estimated order value from the broker's pre-trade review. Final numbers are re-checked at approval time."
+                >
+                  · est. {fmtMoney(estimatedNotional)}
+                </Tooltip>
+              )}
+            </div>
+            {blocked && decision.reasons.length > 0 && (
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {decision.reasons.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
             )}
           </div>
-          {blocked && decision.reasons.length > 0 && (
-            <ul className="mt-1 list-disc space-y-0.5 pl-4">
-              {decision.reasons.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-          )}
         </Tooltip>
       )}
       {phase !== "checking" && previewError && (
         <Tooltip
-          as="div"
           className="mt-2 rounded-md bg-[color:var(--con-warn-soft)] px-2.5 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]"
           content="Only the preview failed. Staging still runs the real policy check on the server."
         >
@@ -343,7 +345,6 @@ export function DraftTicket({ draft, reality }: { draft: ChatDraft; reality: Rea
             </Tooltip>
             {stagedElsewhere ? (
               <Tooltip
-                as="span"
                 className="text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-warn)]"
                 content="Approvals shows the ACTIVE account's proposals, so this one is not visible under the account the console is currently scoped to."
               >

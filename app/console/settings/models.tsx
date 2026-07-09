@@ -13,6 +13,7 @@ import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models"
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Field, Select } from "../ui/primitives";
 import { fetchChatProviders } from "./lib";
@@ -33,13 +34,28 @@ interface ModelGroup {
   options: ModelOption[];
 }
 
+// Label + recommendation conventions (owner rulings 2026-07-08):
+// - Descriptors are ROLE-NEUTRAL noun phrases — this one catalog feeds BOTH the Green (proposer)
+//   and Red (reviewer) pickers, so no label may bake in a role (no "critique"/"review").
+// - Recommendations are EMPIRICAL, not per-provider quotas and not read off model naming/marketing:
+//   a model carries recommendedGreen/recommendedRed only when THIS ACCOUNT's call history (llm_step
+//   outcomes in the audit trail + llm_usage) shows a solid record in that role. Snapshot as of
+//   2026-07-08 (excluding two fixed incident classes — the Gemini bear format incident, fixed
+//   2026-07-02, and the pre-#1036 60s reasoning-timeout aborts): gemini-3.5-flash bear 46/46 clean
+//   post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1; deepseek-v4-pro bear 17/3 (all 3 were
+//   the fixed timeout class) but NO successful Green history. Models with ZERO calls in a role carry
+//   no rec for it regardless of pedigree (claude-sonnet-5, gemini-3.1-pro-preview) — until they earn
+//   one. Key-level quota/rate limits (e.g. the 2026-07 Anthropic usage cap, the OpenAI rate-limit
+//   failures in gpt-5.5's bull record) are OWNER-ADJUSTABLE account settings, NOT model qualities —
+//   never hold them against a model here; they only mean the history is thin/noisy until the owner
+//   raises the limit and real calls accrue. Re-derive these flags from the history as it accrues.
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost OpenAI · $" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true, recommendedRed: true },
       { value: "gpt-5.4", label: "gpt-5.4 — stronger analysis · $$$" },
       { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" }
     ]
@@ -48,9 +64,9 @@ const MODEL_GROUPS: ModelGroup[] = [
     provider: "anthropic",
     label: "Anthropic (Claude)",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast Claude review · $" },
-      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude critique · $$$" },
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast low-cost Claude · $" },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
   },
@@ -67,8 +83,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
     ]
   },
   {
@@ -84,12 +100,20 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash — fast DeepSeek V4 · $" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedGreen: true, recommendedRed: true }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedRed: true }
     ]
   }
 ];
 
 const CATALOG_IDS = new Set(MODEL_GROUPS.flatMap((g) => g.options.map((o) => o.value)));
+
+/** Sentinel meaning "rotate through all eligible curated models — a different one each run"
+ *  (testing option; the strategy run substitutes the concrete round-robin pick at run start,
+ *  skipping models with no resolvable key — see src/lib/model-rotation.ts). Offered for the
+ *  Proposer/Reviewer seats only, never the Coach. Keep the literal in sync with
+ *  LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts and app/ui/llm-model-catalog.ts. */
+const ROTATE_MODEL_ID = "__rotate__";
+const ROTATE_MODEL_LABEL = "Rotate all models (testing)";
 
 function ModelSelect({
   id,
@@ -112,12 +136,20 @@ function ModelSelect({
 }) {
   // A stored model id outside the catalog (typed on the Strategy screen or by
   // an older UI) still has to show as selected — never lie about the config.
-  const customCurrent = value && !CATALOG_IDS.has(value) ? value : null;
+  const customCurrent = value && !CATALOG_IDS.has(value) && value !== ROTATE_MODEL_ID ? value : null;
   return (
     <Select id={id} value={value} title={title} onChange={(e) => onChange(e.target.value)}>
       <option value="" title={emptyTitle}>
         {emptyLabel}
       </option>
+      {(role === "proposer" || role === "red-team") && (
+        <option
+          value={ROTATE_MODEL_ID}
+          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+        >
+          {ROTATE_MODEL_LABEL}
+        </option>
+      )}
       {customCurrent && (
         <option value={customCurrent} title="A model id outside the curated list, kept exactly as stored.">
           {customCurrent} — custom id
@@ -189,6 +221,24 @@ export function ModelsCard() {
   const green = draft?.llmModel !== undefined ? draft.llmModel : (policy?.llmModel ?? "");
   const red = draft?.redTeamLlmModel !== undefined ? draft.redTeamLlmModel : (policy?.redTeamLlmModel ?? "");
 
+  // BOTH team models are REQUIRED (owner directive 2026-07-07: no model defaults, ever). Saving with
+  // either blank is blocked here, and the runtime independently fails closed if a policy somehow has
+  // one unset (pre-existing accounts from before this rule) — the banner below makes that legible.
+  const missingModels = [!green ? "Strategist (green team)" : null, !red ? "Reviewer (red team)" : null].filter(
+    (m): m is string => m !== null
+  );
+  // Independence HINT (never a gate): same model — or same provider — for both teams is ALLOWED,
+  // but a same-family reviewer shares the proposer's blind spots, so nudge without blocking.
+  const providerOf = (m: string) => MODEL_GROUPS.find((g) => g.options.some((o) => o.value === m))?.provider;
+  const independenceHint =
+    green && red
+      ? green === red
+        ? "Strategist and Reviewer are the SAME model — it will be critiquing its own proposals. Allowed, but a different model (ideally a different provider) gives a genuinely independent second opinion."
+        : providerOf(green) && providerOf(green) === providerOf(red)
+        ? "Strategist and Reviewer are different models from the SAME provider — partial independence. Allowed; a different provider avoids shared family blind spots."
+        : null
+      : null;
+
   const selectedNoKey = useMemo(() => {
     if (!providers) return [];
     const out: string[] = [];
@@ -222,8 +272,11 @@ export function ModelsCard() {
     }
   };
 
-  const isCurated = (m: string) => !m || CATALOG_IDS.has(m);
+  // The rotation sentinel only ever serves curated models, so the custom-cost-fallback warning
+  // doesn't apply to it.
+  const isCurated = (m: string) => !m || CATALOG_IDS.has(m) || m === ROTATE_MODEL_ID;
   const showCustomWarning = (green && !isCurated(green)) || (red && !isCurated(red));
+  const rotationSelected = green === ROTATE_MODEL_ID || red === ROTATE_MODEL_ID;
 
   return (
     <Card
@@ -242,7 +295,17 @@ export function ModelsCard() {
               <Btn variant="ghost" size="sm" onClick={() => setDraft(null)} title="Throw away the unsaved model choices.">
                 Discard
               </Btn>
-              <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()} title="Write both model choices to this account's policy.">
+              <Btn
+                variant="primary"
+                size="sm"
+                disabled={busy || missingModels.length > 0}
+                onClick={() => void save()}
+                title={
+                  missingModels.length > 0
+                    ? `Both team models are required — choose the ${missingModels.join(" and ")} first.`
+                    : "Write both model choices to this account's policy."
+                }
+              >
                 {busy ? "Saving…" : "Save"}
               </Btn>
             </>
@@ -251,42 +314,60 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The strategist (green team) proposes trades; the reviewer / strategy-review
-        model (red team) tries to kill high-conviction ideas before they reach you. Coach is browser-local and also
-        adjustable on the Coach page. Providers without a resolvable key are marked — add one under API keys below.
+        Which models argue about your money. The Proposer (aka Green Team or Bull) writes the trade proposals;
+        the Reviewer (aka Red Team or Bear) fact-checks and critiques every risk-adding opening at its final size
+        before it places. <strong>Both are required</strong> — there is no default model and no fallback: runs fail
+        closed (route to your approval) until both are chosen. Coach is browser-local and also adjustable on the Coach
+        page. Providers without a resolvable key are disabled — add one under API keys below.
       </p>
+      {missingModels.length > 0 && (
+        <p className="mb-3 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">
+          {missingModels.join(" and ")} not chosen. Strategy runs fail closed until both team models are explicitly
+          selected — nothing runs on a default.
+        </p>
+      )}
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Strategist (green team)"
-          hint="Writes the trade proposals each run."
+          label="Proposer — required"
+          hint="aka Green Team or Bull — writes the trade proposals each run. Required: there is no default model."
           htmlFor="models-green"
         >
-          <ModelSelect
-            id="models-green"
-            value={green}
-            emptyLabel="app default (gpt-5.4-mini)"
-            emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
-            providers={providers}
-            title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
-            role="proposer"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-green"
+                value={green}
+                emptyLabel="— choose a model (required)"
+                emptyTitle="No model chosen — strategy runs fail closed until one is explicitly selected. There is no default."
+                providers={providers}
+                title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
+                role="proposer"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="proposer" />
+          </div>
         </Field>
         <Field
-          label="Reviewer / Strategy Review (red team)"
-          hint="Argues against high-conviction ideas. Blank = same model as the strategist."
+          label="Reviewer — required"
+          hint="aka Red Team or Bear — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
           htmlFor="models-red"
         >
-          <ModelSelect
-            id="models-red"
-            value={red}
-            emptyLabel="same as strategist"
-            emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
-            providers={providers}
-            title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
-            role="red-team"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-red"
+                value={red}
+                emptyLabel="— choose a model (required)"
+                emptyTitle="No reviewer chosen — every risk-adding opening fails closed to your approval until one is explicitly selected. There is no fallback to the strategist."
+                providers={providers}
+                title="The adversarial reviewer model. Same model as the strategist is allowed; a different provider gives a genuinely independent second opinion."
+                role="red-team"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="red-team" />
+          </div>
         </Field>
         <Field
           label="Coach"
@@ -305,6 +386,11 @@ export function ModelsCard() {
           />
         </Field>
       </div>
+      {independenceHint && (
+        <p className="mt-3 rounded-lg border border-[color:var(--con-none-border)] bg-[color:var(--con-none-soft)] p-2.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          {independenceHint}
+        </p>
+      )}
       {showCustomWarning && (
         <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">
           <svg className="h-4 w-4 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -314,6 +400,13 @@ export function ModelsCard() {
             Custom model selected. Cost tracking will use a conservative fallback rate to prevent budget bypass.
           </div>
         </div>
+      )}
+      {rotationSelected && (
+        <p className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+          audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+          automatically. Intended for paper/test accounts.
+        </p>
       )}
       {selectedNoKey.length > 0 && (
         <p className="mt-2 rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-2.5 text-[length:var(--con-fs-xs)]">

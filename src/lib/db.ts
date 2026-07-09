@@ -337,6 +337,67 @@ const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    // Per-account/broker LLM usage attribution: tag each usage row with the connected account it
+    // was recorded for, so cost/tokens can be filtered by account (broker/environment derived via
+    // join to connected_accounts). Nullable — pre-existing rows and account-less contexts stay
+    // unattributed. Versioned ALTER (not a CREATE-only column add) per the 2026-07-02 "no such
+    // column" boot-crash scar noted on the llm_usage CREATE TABLE below.
+    version: 14,
+    name: "llm_usage_connected_account",
+    up: (database) => {
+      const cols = database.prepare("PRAGMA table_info(llm_usage)").all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === "connected_account_id")) {
+        database.exec("ALTER TABLE llm_usage ADD COLUMN connected_account_id TEXT");
+      }
+      database.exec(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_account ON llm_usage (connected_account_id, created_at)"
+      );
+    }
+  },
+  {
+    // Single-adversary consolidation R15: the hidden RED_TEAM_LLM_PROVIDER/RED_TEAM_LLM_MODEL env
+    // override is being DELETED (owner directive 2026-07-07: Settings must tell the truth; no hidden
+    // routing). A deployment that was actually serving its Red Team via that override — with a blank
+    // per-account `redTeamLlmModel` — would silently flip to fail-closed (every opening routed to
+    // human review) the moment the env reads disappear. Seed the first-class setting ONCE from the
+    // env override that was serving, so a working safety setup keeps working and the owner can see —
+    // and change — the real model in Settings. Only rows with a BLANK redTeamLlmModel are touched
+    // (an explicit choice always wins), and nothing is seeded when the override was never active.
+    // This is a migration of an operator's own explicit env configuration, NOT a new default: with
+    // no env override set, blank stays blank and fails closed legibly.
+    version: 15,
+    name: "seed_red_team_model_from_env_override",
+    up: (database) => {
+      const envProvider = (process.env.RED_TEAM_LLM_PROVIDER ?? "").trim().toLowerCase();
+      if (envProvider !== "anthropic") return;
+      // The exact model the deleted override path was running (red-team.ts's debateViaAnthropic):
+      // RED_TEAM_LLM_MODEL when set, else its hardcoded claude-haiku default.
+      const servedModel = (process.env.RED_TEAM_LLM_MODEL ?? "").trim() || "claude-haiku-4-5-20251001";
+      const rows = database
+        .prepare("SELECT user_id, connected_account_id, policy FROM account_strategy_state")
+        .all() as Array<{ user_id: string; connected_account_id: string; policy: string }>;
+      const update = database.prepare(
+        "UPDATE account_strategy_state SET policy = ? WHERE user_id = ? AND connected_account_id = ?"
+      );
+      for (const row of rows) {
+        let policy: Record<string, unknown>;
+        try {
+          policy = JSON.parse(row.policy) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (!policy || typeof policy !== "object") continue;
+        const existing = typeof policy.redTeamLlmModel === "string" ? policy.redTeamLlmModel.trim() : "";
+        if (existing) continue; // explicit choice wins — never overwrite
+        policy.redTeamLlmModel = servedModel;
+        update.run(JSON.stringify(policy), row.user_id, row.connected_account_id);
+        console.log(
+          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Settings → LLM models.`
+        );
+      }
+    }
   }
 ];
 
@@ -1141,6 +1202,23 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE fill_events ADD COLUMN mfe REAL");
   }
 
+  // Synthetic-stop refire hardening (2026-07-08 MU incident, round 2): per-row exit-attempt state
+  // (additive, guarded). fire_generation counts prior protective-exit attempts whose broker order
+  // was POSITIVELY confirmed dead — it is monotonic (advance-only; nothing ever resets it back), and
+  // the fire path appends "-g<generation>" to the deterministic client_order_id when it is > 0, so a
+  // legitimately re-armed stop places under a fresh id instead of 422-colliding forever with a dead
+  // order's id. last_attempt_ref_id remembers the client_order_id of the most recent attempt whose
+  // outcome is NOT yet confirmed dead (e.g. placement threw after the broker accepted), so an
+  // ambiguous retry reuses it verbatim and the broker's own dedupe fails safe toward a 422 instead
+  // of a duplicate protective sell.
+  const syntheticStopColumns = database.prepare("PRAGMA table_info(synthetic_trailing_stops)").all() as Array<{ name: string }>;
+  if (!syntheticStopColumns.some((c) => c.name === "fire_generation")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN fire_generation INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!syntheticStopColumns.some((c) => c.name === "last_attempt_ref_id")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN last_attempt_ref_id TEXT");
+  }
+
   // Outcome engine (Wave 2): multi-horizon outcome rows + terminal-unresolvable reason on
   // skipped-candidate counterfactuals (additive, guarded). See docs/rollouts/2026-07-04-w2-outcome-engine.md.
   const skippedCfColumns = database.prepare("PRAGMA table_info(skipped_candidate_counterfactuals)").all() as Array<{ name: string }>;
@@ -1182,6 +1260,16 @@ function migrate(database: Database.Database): void {
     "notification_events"
   ]) {
     addAccountColumn(table);
+  }
+
+  // Alert lifecycle (2026-07-09): acknowledge state on notification_events, so the Alert Center's
+  // "Attention" pill can be cleared instead of growing forever (see docs/rollouts for the
+  // triage that motivated this). Additive, guarded — existing rows keep acknowledged_at NULL
+  // (unacknowledged) until acted on or resolved by the auto-ack sweep in db-notifications.ts.
+  const notificationEventColumns = database.prepare("PRAGMA table_info(notification_events)").all() as Array<{ name: string }>;
+  if (!notificationEventColumns.some((c) => c.name === "acknowledged_at")) {
+    database.exec("ALTER TABLE notification_events ADD COLUMN acknowledged_at TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_notification_events_unacked ON notification_events (user_id, acknowledged_at)");
   }
 
   // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table

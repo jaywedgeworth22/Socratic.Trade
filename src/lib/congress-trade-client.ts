@@ -1,3 +1,4 @@
+import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
 // Read client for congress.trade (App A) — server-only, cache-aside + congress source.
 //
 // App A also pulls FMP (its own key + cron + backfill) and exposes public, read-only endpoints
@@ -35,12 +36,7 @@ import type {
   PriceClose,
   PriceSeries,
 } from "@jaywedgeworth22/congress-trading-shared";
-import type { SecurityRef } from "@jaywedgeworth22/congress-trading-shared";
-import {
-  API_PATHS,
-  MAX_REFS_BATCH,
-  TransactionsPageSchema,
-} from "@jaywedgeworth22/congress-trading-shared";
+import { TransactionsPageSchema } from "@jaywedgeworth22/congress-trading-shared";
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";
@@ -137,7 +133,7 @@ export async function getAppABundle(ticker: string, opts?: { from?: string; to?:
   const sym = normalizeSymbol(ticker);
   if (!sym) return null;
   try {
-    const res = (await getSharedClient().getBundle(sym, opts)) as unknown as AppABundle;
+    const res = await getSharedClient().getBundle(sym, opts);
     return {
       ref: res.ref,
       prices: res.prices,

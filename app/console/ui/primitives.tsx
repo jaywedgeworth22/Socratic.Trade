@@ -9,7 +9,6 @@ import { AnimatePresence, motion } from "motion/react";
 // ── Card ─────────────────────────────────────────────────────────────────────
 
 
-
 export function Card({
   title,
   action,
@@ -70,29 +69,61 @@ export function Btn({
   return button;
 }
 
+export function IconButton({
+  label,
+  className,
+  type = "button",
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  const button = (
+    <button
+      type={type}
+      aria-label={label}
+      className={cx(
+        "inline-flex h-8 w-8 items-center justify-center rounded-[var(--con-radius-sm)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] text-[color:var(--con-muted)] transition-colors hover:text-[color:var(--con-fg)] hover:bg-[color:var(--con-surface-2)] disabled:opacity-45 disabled:cursor-not-allowed",
+        className
+      )}
+      {...rest}
+    />
+  );
+  return <Tooltip content={label}>{button}</Tooltip>;
+}
+
 // ── Chip ─────────────────────────────────────────────────────────────────────
 
-export type ChipTone = "muted" | "accent" | "pos" | "neg" | "warn" | "none" | "paper" | "live";
+export type ChipTone = "muted" | "accent" | "pos" | "neg" | "warn" | "info" | "none" | "paper" | "live";
 
-const CHIP_CLASS: Record<ChipTone, string | undefined> = {
-  muted: undefined,
-  accent: "con-chip-accent",
-  pos: "con-chip-pos",
-  neg: "con-chip-neg",
-  warn: "con-chip-warn",
-  none: "con-chip-none",
-  paper: "con-chip-paper",
-  live: "con-chip-live"
+/** Single source of truth for tone -> CSS custom-property color. CHIP_CLASS, the status
+ *  Dot, and the inline Stat/SignedText color ternaries all derive their tone set from this
+ *  one map, so adding a new tone is one edit here instead of three. */
+export const TONE_VAR: Record<ChipTone, string> = {
+  muted: "var(--con-faint)",
+  accent: "var(--con-accent)",
+  pos: "var(--con-pos)",
+  neg: "var(--con-neg)",
+  warn: "var(--con-warn)",
+  info: "var(--con-info)",
+  none: "var(--con-none)",
+  paper: "var(--con-paper)",
+  live: "var(--con-live)"
 };
 
+const CHIP_CLASS: Record<ChipTone, string | undefined> = Object.fromEntries(
+  (Object.keys(TONE_VAR) as ChipTone[]).map((tone) => [tone, tone === "muted" ? undefined : `con-chip-${tone}`])
+) as Record<ChipTone, string | undefined>;
+
 export function Chip({ tone = "muted", className, title, children }: { tone?: ChipTone; className?: string; title?: string; children: ReactNode }) {
-  return (
-    <Tooltip content={title}>
-      <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
-        {children}
-      </span>
-    </Tooltip>
+  const chip = (
+    <span className={cx("con-chip", CHIP_CLASS[tone], className)}>
+      {children}
+    </span>
   );
+  // Only pay for the Tooltip (state + effects) when there's actually a title —
+  // matches the Btn pattern above and avoids per-chip hook overhead in lists.
+  if (title) {
+    return <Tooltip content={title}>{chip}</Tooltip>;
+  }
+  return chip;
 }
 
 /** Small brokerage-confirmation tag for actions that still use the server's
@@ -105,27 +136,42 @@ export function LiveTag() {
 
 // ── Status dot ───────────────────────────────────────────────────────────────
 
-const DOT_COLOR: Record<string, string> = {
-  pos: "var(--con-pos)",
-  neg: "var(--con-neg)",
-  warn: "var(--con-warn)",
-  accent: "var(--con-accent)",
-  muted: "var(--con-faint)"
-};
-
-export function Dot({ tone = "muted", pulse }: { tone?: keyof typeof DOT_COLOR; pulse?: boolean }) {
-  return <span className={cx("con-dot", pulse && "con-dot-pulse")} style={{ background: DOT_COLOR[tone] ?? DOT_COLOR.muted }} aria-hidden />;
+export function Dot({ tone = "muted", pulse }: { tone?: keyof typeof TONE_VAR; pulse?: boolean }) {
+  return <span className={cx("con-dot", pulse && "con-dot-pulse")} style={{ background: TONE_VAR[tone] ?? TONE_VAR.muted }} aria-hidden />;
 }
 
 // ── Meter ────────────────────────────────────────────────────────────────────
 
 export function Meter({ value, max, className }: { value: number; max?: number; className?: string }) {
   const hasMax = typeof max === "number" && Number.isFinite(max) && max > 0;
-  const ratio = hasMax ? Math.min(1, Math.max(0, value / max!)) : 0;
+  const rawRatio = hasMax ? Math.max(0, value / max!) : 0;
+  const ratio = Math.min(1, rawRatio);
+  // At-cap and over-cap used to render identically (both clamp to a solid 100% fill) —
+  // a breach gets a hatched pattern + the overage surfaced in a title tooltip / aria-valuetext
+  // so it doesn't rely on the red tint alone to signal "this is over the limit, not just full".
+  const breached = hasMax && rawRatio > 1;
+  const overagePct = breached ? Math.round((rawRatio - 1) * 100) : undefined;
   const tone = ratio >= 0.95 ? "con-meter-neg" : ratio >= 0.75 ? "con-meter-warn" : undefined;
   return (
-    <div className={cx("con-meter", tone, className)} role="progressbar" aria-valuenow={value} aria-valuemax={hasMax ? max : undefined}>
-      <div style={{ width: `${hasMax ? ratio * 100 : 0}%` }} />
+    <div
+      className={cx("con-meter", tone, className)}
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemax={hasMax ? max : undefined}
+      aria-valuetext={breached ? `${overagePct}% over` : undefined}
+      title={breached ? `+${overagePct}% over` : undefined}
+    >
+      <div
+        style={
+          breached
+            ? {
+                width: "100%",
+                backgroundImage:
+                  "repeating-linear-gradient(135deg, var(--con-neg) 0px, var(--con-neg) 4px, var(--con-warn) 4px, var(--con-warn) 8px)"
+              }
+            : { width: `${hasMax ? ratio * 100 : 0}%` }
+        }
+      />
     </div>
   );
 }
@@ -145,7 +191,7 @@ export function Stat({
   tone?: "pos" | "neg" | "muted";
   title?: string;
 }) {
-  const color = tone === "pos" ? "var(--con-pos)" : tone === "neg" ? "var(--con-neg)" : undefined;
+  const color = tone && tone !== "muted" ? TONE_VAR[tone] : undefined;
   return (
     <Tooltip content={title} className="block">
       <div>
@@ -260,6 +306,48 @@ export function Toggle({
   );
 }
 
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  className
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: Array<{ value: T; label: ReactNode; title?: string }>;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className={cx("inline-flex rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-0.5", className)}
+    >
+      {options.map((opt) => {
+        const active = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            aria-pressed={active}
+            title={opt.title}
+            onClick={() => onChange(opt.value)}
+            className={
+              active
+                ? "rounded px-2 py-1 text-[length:var(--con-fs-xs)] font-bold text-[color:var(--con-fg)] bg-[color:var(--con-surface)]"
+                : "rounded px-2 py-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]"
+            }
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Empty state / dash ───────────────────────────────────────────────────────
 
 export function Empty({ children }: { children: ReactNode }) {
@@ -291,7 +379,7 @@ export function signTone(v: number | null | undefined): "pos" | "neg" | undefine
 
 export function SignedText({ value, children }: { value: number | null | undefined; children: ReactNode }) {
   const tone = signTone(value);
-  const color = tone === "pos" ? "var(--con-pos)" : tone === "neg" ? "var(--con-neg)" : undefined;
+  const color = tone ? TONE_VAR[tone] : undefined;
   return (
     <span className="con-num" style={color ? { color } : undefined}>
       {children}
@@ -301,23 +389,17 @@ export function SignedText({ value, children }: { value: number | null | undefin
 
 // ── Tooltip ──────────────────────────────────────────────────────────────────
 
-export function Tooltip<T extends React.ElementType = "span">({
+export function Tooltip({
   children,
   content,
-  className,
-  as,
-  style,
-  ...rest
+  className
 }: {
   children: ReactNode;
   content: ReactNode;
   className?: string;
-  as?: T;
-  style?: React.CSSProperties;
-} & React.ComponentPropsWithoutRef<T>) {
-  const Component = as || "span";
+}) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -331,17 +413,15 @@ export function Tooltip<T extends React.ElementType = "span">({
   if (!content) return <>{children}</>;
 
   return (
-    <Component
+    <span
       ref={ref}
       className={cx("group relative inline-flex", className)}
-      style={style}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
-      onBlur={(event: React.FocusEvent) => {
+      onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}
-      {...rest}
     >
       {children}
       <AnimatePresence>
@@ -358,7 +438,7 @@ export function Tooltip<T extends React.ElementType = "span">({
           </motion.div>
         )}
       </AnimatePresence>
-    </Component>
+    </span>
   );
 }
 

@@ -62,8 +62,16 @@ export const DEFAULT_POLICY: TradingPolicy = {
   socraticOverrideMode: "execute",
   socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
-  llmModel: "gpt-5.4-mini",
+  // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
+  // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
+  // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
+  // are REQUIRED explicit picks in Settings → LLM models; unset fails closed with an actionable
+  // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   llmReasoningEffort: "medium",
+  // Daily LLM learning review — default OFF; "annotate" never mutates anything (audits + a
+  // notification only). "decide" (apply verdicts) is a separate owner opt-in in Settings.
+  learningReviewEnabled: false,
+  learningReviewMode: "annotate",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,
@@ -78,6 +86,14 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
+  // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
+  // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
+  // tightens it for low-beta. ATR takes precedence over beta for the stop distance when both apply;
+  // each falls back to the flat riskRules.stopLossPct when its per-symbol input is unavailable. Both
+  // are owner-tunable off-switches in Settings — preferences, not cages.
+  atrStops: true,
+  betaScaledStops: true,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
@@ -85,6 +101,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   proposalExpiryMinutes: 2880,
   proposalRevalidateCadenceHours: 0,
   staleLimitOrderMinutes: 15,
+  autoRemediateStaleExits: true, // cancel-replace a stale EXIT limit with a market order so a stop can't strand the position (MU deadlock); owner-tunable, defers to human typed-confirm on live
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,
