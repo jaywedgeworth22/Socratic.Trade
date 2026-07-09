@@ -38,7 +38,10 @@ export const DEFAULT_RISK_RULES: RiskRules = {
   takeProfitPct: 20,
   // Take partial profit at the target and let the rest ride (laddered per take-profit band).
   takeProfitTrimPct: 50,
-  trailingStopPct: 0
+  trailingStopPct: 0,
+  // Mandatory for any short (see policy.ts's short-selling gate) — mirrors the long stopLossPct
+  // default so a short-enabled policy isn't rejected out of the box for lacking a stop.
+  shortStopLossPct: 8
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {

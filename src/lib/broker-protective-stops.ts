@@ -8,9 +8,12 @@
 //
 // Reconciliation runs from the synthetic-stop monitor each tick: it CANCELS stops for closed
 // positions every time (risk-reducing, always safe) and PLACES missing stops only when the system is
-// running. This self-heals — a restart re-places any missing stops for still-open positions. Gated
-// to live Robinhood with the opt-in policy.robinhoodBrokerStops flag (default off): the synthetic
-// monitor remains the always-on fallback, so this is purely additive protection.
+// running. This self-heals — a restart re-places any missing stops for still-open positions. The
+// opt-in policy.robinhoodBrokerStops flag (default off) gates only PLACEMENT: when the flag is
+// turned off (or the run is no longer live Robinhood), reconcile still CANCELS every stop the
+// feature previously placed for the account, so disabling the feature tears its resting stops down
+// instead of orphaning them. The always-on synthetic monitor remains the fallback, so this is purely
+// additive protection.
 
 import {
   audit,
@@ -67,6 +70,13 @@ export async function cancelBrokerProtectiveStop(
 export interface ReconcileResult {
   placed: number;
   cancelled: number;
+  /**
+   * Broker order ids this reconcile successfully cancelled (one per `cancelled` count). The caller
+   * fetched its order list BEFORE reconcile ran, so these orders still look live in that list —
+   * it must drop them before deciding whether a symbol is already protected, or a just-torn-down
+   * stop suppresses synthetic registration and leaves the position with neither protection.
+   */
+  cancelledOrderIds: string[];
 }
 
 /**
@@ -84,8 +94,34 @@ export async function reconcileBrokerProtectiveStops(args: {
   running: boolean;
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0 };
-  if (!brokerProtectiveStopsEnabled(policy, executionMode)) return out;
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [] };
+
+  // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
+  // (flag off) or no longer applicable (not live Robinhood, no stop-loss %), any stop it previously
+  // placed is still resting live at the broker. Turning the feature off must TEAR THOSE DOWN, not
+  // strand them: an orphaned GTC stop-market SELL would rest forever with no app-side cleanup and
+  // could later sell shares the user no longer intends to protect this way. This teardown is pure
+  // risk reduction (it never places a replacement), so the `liveReplaceBlocked` "never leave a
+  // position unprotected" guard — which only matters when we cancel WITH intent to re-place — does
+  // not apply here. If no rows exist, this is a true no-op (the common disabled/default case).
+  if (!brokerProtectiveStopsEnabled(policy, executionMode)) {
+    for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+      try {
+        await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+        deleteBrokerProtectiveStop(row.id, userId);
+        out.cancelled++;
+        out.cancelledOrderIds.push(row.brokerOrderId);
+      } catch (err) {
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId);
+        // Keep it as pending_cancel so a later tick retries the cancel rather than orphaning the
+        // resting broker stop (listBrokerProtectiveStops returns pending_cancel rows, so the next
+        // disabled reconcile re-attempts it).
+        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+      }
+    }
+    return out;
+  }
+
   const stopPct = policy.riskRules!.stopLossPct!;
 
   // Robinhood is long-only, so protective stops only apply to long positions. Computed UP FRONT
@@ -108,6 +144,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
         out.cancelled++;
+        out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
         // Keep it in DB as pending_cancel to retry on the next tick
         console.error(`[protective-stops] retry cancel failed for ${row.symbol} order ${row.brokerOrderId}:`, err);
@@ -123,6 +160,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
         deleteBrokerProtectiveStop(row.id, userId);
         out.cancelled++;
+        out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
         audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err) }, userId);
         // Mark as pending_cancel to retry later
@@ -160,6 +198,7 @@ export async function reconcileBrokerProtectiveStops(args: {
           await gateway.cancelEquityOrder(accountNumber, existingStop.brokerOrderId);
           deleteBrokerProtectiveStop(existingStop.id, userId);
           out.cancelled++;
+          out.cancelledOrderIds.push(existingStop.brokerOrderId);
         } catch (err) {
           audit("broker_protective_stop_cancel_error", { symbol: sym, brokerOrderId: existingStop.brokerOrderId, error: errMsg(err) }, userId);
           upsertBrokerProtectiveStop({ ...existingStop, status: "pending_cancel" });
@@ -168,13 +207,15 @@ export async function reconcileBrokerProtectiveStops(args: {
     }
   }
 
-  // 4. Place-if-missing for each open long without a resting stop (excluding pending_cancel ones).
+  // 4. Place-if-missing for each open long without a stop row. A pending_cancel row BLOCKS
+  // placement for its symbol: its broker order may still be live (the cancel keeps failing), and
+  // placing a replacement would upsert a new broker_order_id over the row (UNIQUE
+  // user/account/symbol), orphaning the old still-live full-size GTC stop with no tracking and no
+  // retry — two resting sell stops, one invisible. The section-1 retry keeps re-attempting the
+  // cancel; placement resumes on the tick after it succeeds (and until then the old stop itself is
+  // still protecting the position).
   const currentStops = listBrokerProtectiveStops(accountNumber, userId);
-  const existing = new Set(
-    currentStops
-      .filter((r) => r.status !== "pending_cancel")
-      .map((r) => normalizeSymbol(r.symbol))
-  );
+  const existing = new Set(currentStops.map((r) => normalizeSymbol(r.symbol)));
 
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;

@@ -254,11 +254,11 @@ E4 (Autonomy) and any tightening/loosening of E1/E2/E3 that affects Live trigger
 | Rk11 | Broker-held brackets | toggle | `brokerBracketsEnabled` | `true` |
 | Rk12 | Robinhood broker stops | toggle | `robinhoodBrokerStops` | `false` |
 | Rk13 | **Enable short selling** | toggle (capability-gated) | `shortSellingEnabled` | `undefined` | 
-| Rk14 | **Short stop-loss %** | number (%) — **mandatory when Rk13 on** | `riskRules.shortStopLossPct` | `undefined` |
+| Rk14 | **Short stop-loss %** | number (%) — **mandatory when Rk13 on** | `riskRules.shortStopLossPct` | `8` |
 | Rk15 | Max short order $ | number ($) | `maxShortOrderNotional` | `undefined` |
 | Rk16 | Max short exposure % | number (%) | `maxShortExposurePct` | `undefined` |
 
-**Coupling rule:** enabling Rk13 hard-requires Rk14 (block save if short-selling on and `shortStopLossPct` empty). Rk13 is **greyed with an inline explainer when `ConnectedAccount.capabilities.shortSelling === false`** or the account is an IRA (capability-aware disabling, companion §"Woven through every control"). Enabling short selling is a §0.2 confirm.
+**Coupling rule:** Rk14 is pre-filled at its 8% default, so enabling Rk13 is not blocked out of the box; block save only if the user explicitly clears `shortStopLossPct` while Rk13 is on. Rk13 is **greyed with an inline explainer when `ConnectedAccount.capabilities.shortSelling === false`** or the account is an IRA (capability-aware disabling, companion §"Woven through every control"). Enabling short selling is a §0.2 confirm.
 
 ## 2.6 ADVANCED — Circuit breakers (cards double as armed/tripped status)
 
