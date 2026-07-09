@@ -1190,13 +1190,14 @@ discrepancies that motivated these rows._
   MONET guidance received and implemented in-progress: bulk reject remains the existing one-click
   inline confirm; LIVE bulk approve opens one aggregate typed-confirm sheet only when
   `policy.requireTypedConfirmation` is on; when it is off, live bulk approve is one-click. Each
-  selected proposal still runs through the existing per-item approval endpoint, preserving
-  independent placed/blocked/failed results. Focused test, lint (0 errors), typecheck, full
+  selected batch now posts to a server-side bulk approval route that validates the aggregate
+  live phrase against server-derived batch membership, then runs each row through the normal
+  `executeProposal` path, preserving independent placed/blocked/failed results. Focused test, lint (0 errors), typecheck, full
   Vitest (301 files / 3101 tests via low workers), and `npm run build` are green; build emitted
   only the existing Sentry Edge-runtime warning. PR #1174 is open. 2026-07-09 review fix:
-  capped approval batches at 20 requests, counted non-placed/non-blocked approve results as
-  failed rows with reasons, and moved bulk typed-confirm validation into the existing server
-  confirmation contract using the actual typed batch phrase. Focused review verification:
+  capped approval batches at 20 approvals, counted non-placed/non-blocked approve results as
+  failed rows with reasons, kept the per-proposal live-confirm contract symbol-specific, and
+  stabilized the bulk sheet close handler so typing does not reset focus. Focused review verification:
   `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
   `npx tsc --noEmit`, and `npm run lint -- --quiet`.
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).

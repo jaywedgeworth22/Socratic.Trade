@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, ShieldAlert } from "lucide-react";
 import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
-import { approveProposal, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
+import { bulkApproveProposals, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
 import { ApprovalCard } from "../components/approval-card";
@@ -177,7 +177,7 @@ export default function ApprovalsPage() {
     return "other";
   };
 
-  const runBulkApproveBatch = async (selected: PendingProposal[], liveTypedText?: string, liveBatchCount?: number) => {
+  const runBulkApproveBatch = async (selected: PendingProposal[], liveTypedText?: string) => {
     if (selected.length === 0) return;
     setBulkBusy("approve");
     let placed = 0;
@@ -185,37 +185,20 @@ export default function ApprovalsPage() {
     let failed = 0;
     const failureDetails: string[] = [];
     try {
-      for (const proposal of selected) {
-        try {
-          const liveConfirmation =
-            liveTypedText && approvalIsLive(proposal)
-              ? {
-                  proposalId: proposal.id,
-                  accountNumber: proposal.accountNumber ?? null,
-                  executionMode: "broker/live" as const,
-                  estimatedNotional: approvalEstimatedNotional(proposal),
-                  typedText: liveTypedText,
-                  batchLiveCount: liveBatchCount && liveBatchCount > 1 ? liveBatchCount : null
-                }
-              : undefined;
-          const result = await approveProposal(proposal.id, liveConfirmation);
-          const status = finishApproval(result);
-          if (status === "placed") placed += 1;
-          else if (status === "blocked") blocked += 1;
-          else {
-            failed += 1;
-            const reasons = result.reasons?.filter(Boolean).join("; ");
-            failureDetails.push(`${proposal.proposal.symbol}: ${reasons || result.status || "approval did not place"}`);
-          }
-        } catch (error) {
+      const symbolById = new Map(selected.map((proposal) => [proposal.id, proposal.proposal.symbol]));
+      const response = await bulkApproveProposals(
+        selected.map((proposal) => proposal.id),
+        liveTypedText ? { typedText: liveTypedText } : undefined
+      );
+      for (const result of response.results) {
+        const status = finishApproval(result);
+        if (status === "placed") placed += 1;
+        else if (status === "blocked") blocked += 1;
+        else {
           failed += 1;
-          const reasons =
-            error instanceof LiveConfirmationRequiredError
-              ? error.reasons.join("; ")
-              : error instanceof Error
-                ? error.message
-                : "request failed";
-          failureDetails.push(`${proposal.proposal.symbol}: ${reasons || "request failed"}`);
+          const reasons = result.reasons?.filter(Boolean).join("; ");
+          const symbol = result.symbol ?? symbolById.get(result.proposalId) ?? "proposal";
+          failureDetails.push(`${symbol}: ${reasons || result.status || "approval did not place"}`);
         }
       }
       await refresh();
@@ -227,6 +210,15 @@ export default function ApprovalsPage() {
         `Approved ${placed} proposal${placed === 1 ? "" : "s"}`,
         detail || undefined
       );
+    } catch (error) {
+      failed += selected.length;
+      const reasons =
+        error instanceof LiveConfirmationRequiredError
+          ? error.reasons.join("; ")
+          : error instanceof Error
+            ? error.message
+            : "request failed";
+      toast.push("warn", "Approval batch failed", reasons || "No approvals were submitted.");
     } finally {
       setBulkBusy(null);
     }
@@ -248,10 +240,13 @@ export default function ApprovalsPage() {
 
   const submitLiveApproveBatch = async (typedText: string) => {
     const selected = liveApproveBatch ?? [];
-    const liveCount = selected.filter(approvalIsLive).length;
     setLiveApproveBatch(null);
-    await runBulkApproveBatch(selected, typedText.trim().toUpperCase(), liveCount);
+    await runBulkApproveBatch(selected, typedText.trim().toUpperCase());
   };
+
+  const closeLiveApproveBatch = useCallback(() => {
+    setLiveApproveBatch(null);
+  }, []);
 
   const runBulkReject = async () => {
     const selected = filtered.filter((proposal) => effectiveSelectedIds.has(proposal.id));
@@ -510,7 +505,7 @@ export default function ApprovalsPage() {
         open={liveApproveBatch !== null}
         proposals={liveApproveBatch ?? []}
         busy={bulkBusy === "approve"}
-        onClose={() => setLiveApproveBatch(null)}
+        onClose={closeLiveApproveBatch}
         onSubmit={(typedText) => void submitLiveApproveBatch(typedText)}
       />
     </div>
@@ -546,10 +541,10 @@ function BulkLiveApproveSheet({
   const matches = typed.trim().toUpperCase() === expectedText;
   const liveNotional = live.reduce((sum, proposal) => sum + approvalEstimatedNotional(proposal), 0);
 
-  const close = () => {
+  const close = useCallback(() => {
     setTyped("");
     onClose();
-  };
+  }, [onClose]);
 
   const submit = () => {
     const typedText = typed.trim().toUpperCase();

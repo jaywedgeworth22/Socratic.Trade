@@ -50,11 +50,13 @@ Resumed the Codex approvals lane after MONET confirmed the owner/product constra
 remains the existing one-click inline confirm. Bulk approve now includes selected LIVE proposals:
 if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
 before approval; if the owner has turned that setting off, live bulk approval is one-click. Each
-selected row still calls the existing per-proposal approval endpoint, so broker/account/notional
-re-checks and partial placed/blocked/failed outcomes stay independent. PR review follow-up capped
-bulk approve to 20 requests, reports non-placed/non-blocked approval results as failed rows, and
-has the server validate the actual typed batch phrase (`APPROVE N LIVE ORDERS`) instead of a
-client-synthesized per-symbol phrase. Verification:
+selected batch now posts to a server-side bulk approval route, which computes the live batch
+membership server-side, validates the aggregate phrase, then runs each row through the normal
+`executeProposal` path so broker/account/notional re-checks and partial placed/blocked/failed
+outcomes stay independent. PR review follow-up capped bulk approve to 20 approvals, reports
+non-placed/non-blocked approval results as failed rows, keeps the per-proposal live-confirm
+contract symbol-specific, and stabilizes the sheet close handler so typing does not reset focus.
+Verification:
 `./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
 `./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
 full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).

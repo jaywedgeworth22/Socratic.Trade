@@ -8,20 +8,22 @@ Branch: `codex/live-bulk-typed-confirm` (worktree `/Users/jay/.codex/worktrees/s
 - LIVE bulk approval opens one aggregate typed-confirm sheet only when `policy.requireTypedConfirmation` is enabled.
 - When typed confirmation is disabled, selected LIVE proposals approve with the same one-click bulk action as paper proposals.
 - Bulk reject remains the existing inline one-click confirm path; no typed phrase was added there.
-- Each selected proposal still submits through the existing per-item approve endpoint, so placed, blocked, and failed results stay row-honest.
-- PR review follow-up capped bulk approvals at 20 requests, reports non-placed/non-blocked approve results as failed rows with reasons, and validates the actual typed batch phrase server-side.
+- Bulk approve now submits to `/api/proposals/bulk-approve`; the route computes selected live membership server-side, validates the one aggregate phrase, then executes each row through the normal `executeProposal` path so placed, blocked, and failed results stay row-honest.
+- PR review follow-up capped bulk approvals at 20 approvals, reports non-placed/non-blocked approve results as failed rows with reasons, keeps the per-proposal live-confirm contract symbol-specific, and stabilizes the sheet close handler so typing does not reset focus.
 
 ## Why
 
 #807 intentionally left LIVE proposals out of bulk approve. MONET confirmed the owner constraints before implementation:
 bulk reject must stay one-click, LIVE bulk approve may ask for one aggregate typed phrase only when the owner-adjustable
-`policy.requireTypedConfirmation` setting is on, and the implementation must keep using the current per-item approval
-endpoint instead of inventing a new broker path.
+`policy.requireTypedConfirmation` setting is on, and the implementation must not invent a new broker execution path.
+The PR review correctly required server-authoritative batch membership for the aggregate phrase, so the final shape is a
+thin batch route over the existing `executeProposal` path.
 
 ## Files
 
 - `app/console/approvals/page.tsx`
 - `app/console/approvals/triage.ts`
+- `app/api/proposals/bulk-approve/route.ts`
 - `app/console/lib/api.ts`
 - `src/lib/strategy.ts`
 - `test/approvals-triage-model.test.ts`
@@ -55,10 +57,10 @@ Passed:
 - `npx tsc --noEmit`: clean
 - Full Vitest: 301 files / 3101 tests (low workers to avoid local resource SIGTERM)
 - `npm run build`: passed with only the existing Sentry Edge-runtime warning
-- Review-fix focused tests: 2 files / 6 tests
+- Review-fix focused tests: 2 files / 8 tests
 - Review-fix `npx tsc --noEmit`: clean
 - Review-fix `npm run lint -- --quiet`: clean
 
 ## Follow-ups
 
-- If the product later wants a dedicated server batch endpoint, add it as a separate contract; this branch intentionally keeps the existing per-item endpoint while validating the typed batch phrase through the existing live-confirm payload.
+- Resolve PR #1174 review threads after this review-fix push lands and CI re-runs; all current findings have code/tests in this note.

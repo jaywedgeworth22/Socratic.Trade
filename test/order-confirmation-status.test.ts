@@ -46,14 +46,15 @@ vi.mock("../src/lib/market", async (importOriginal) => {
         provider: "test-scan",
         asOf
       };
+      const msft: MarketQuote = { ...aapl, symbol: "MSFT", price: 300, bid: 299, ask: 300 };
       return {
         source: "test-scan",
         generatedAt: asOf,
-        scannedSymbols: 1,
-        returnedQuotes: 1,
-        topCandidates: [aapl],
+        scannedSymbols: 2,
+        returnedQuotes: 2,
+        topCandidates: [aapl, msft],
         sectorBySymbol: {},
-        quotesBySymbol: { AAPL: aapl },
+        quotesBySymbol: { AAPL: aapl, MSFT: msft },
         warnings: []
       };
     }
@@ -62,6 +63,7 @@ vi.mock("../src/lib/market", async (importOriginal) => {
 
 let mockOrderStatus = "accepted";
 let lastCreateOrderOpts: Record<string, unknown> | null = null;
+let mockOrderSeq = 0;
 
 vi.mock("@alpacahq/alpaca-trade-api", () => {
   return {
@@ -77,11 +79,19 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
       }
       async getLatestQuotes(symbols: string[]) {
         if (symbols.includes("BRK.B")) return { "BRK.B": { bp: 409, ap: 410, t: new Date().toISOString() } };
-        return { AAPL: { bp: 199, ap: 200, t: new Date().toISOString() } };
+        return Object.fromEntries(
+          symbols.map((symbol) => [
+            symbol,
+            symbol === "MSFT"
+              ? { bp: 299, ap: 300, t: new Date().toISOString() }
+              : { bp: 199, ap: 200, t: new Date().toISOString() }
+          ])
+        );
       }
       async createOrder(opts: Record<string, unknown>) {
         lastCreateOrderOpts = opts;
-        return { id: "order-confirm-1", status: mockOrderStatus, qty: opts.qty, filled_qty: "0", filled_avg_price: null };
+        mockOrderSeq += 1;
+        return { id: `order-confirm-${mockOrderSeq}`, status: mockOrderStatus, qty: opts.qty, filled_qty: "0", filled_avg_price: null };
       }
       async cancelOrder() {}
     }
@@ -90,7 +100,11 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
 
 const ACCOUNT = "ACC-CONFIRM";
 
-async function seedLiveProposal(userId: string, environment: "paper" | "live" = "paper"): Promise<string> {
+async function seedLiveProposal(
+  userId: string,
+  environment: "paper" | "live" = "paper",
+  symbol: string = "AAPL"
+): Promise<string> {
   const { upsertConnectedAccount, setPolicy, insertProposal } = await import("../src/lib/db");
 
   // "paper" (not "live") by default — this exercises the identical broker/placeEquityOrder
@@ -117,7 +131,8 @@ async function seedLiveProposal(userId: string, environment: "paper" | "live" = 
       connectedAccountId: "acc-confirm-test",
       activeBroker: "alpaca",
       systemState: "active",
-      requireTypedConfirmation: true
+      requireTypedConfirmation: true,
+      maxDailyNotional: 5_000
     },
     userId
   );
@@ -129,7 +144,7 @@ async function seedLiveProposal(userId: string, environment: "paper" | "live" = 
     accountNumber: ACCOUNT,
     userId,
     proposal: {
-      symbol: "AAPL",
+      symbol,
       side: "buy",
       type: "market",
       dollarAmount: 500,
@@ -149,6 +164,7 @@ beforeEach(async () => {
   vi.resetModules();
   vi.unstubAllEnvs();
   mockOrderStatus = "accepted";
+  mockOrderSeq = 0;
   lastCreateOrderOpts = null;
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-order-confirm-${randomUUID()}.db`)}`;
 });
@@ -191,26 +207,68 @@ describe("executeProposal — broker-agnostic order-placement confirmation", () 
     expect(row?.status).toBe("placed");
   }, 30000);
 
-  it("accepts the actual typed batch phrase for a live bulk approval", async () => {
+  it("rejects a generic batch phrase on the per-proposal live approval contract", async () => {
     mockOrderStatus = "accepted";
-    const userId = `confirm-live-batch-${randomUUID()}`;
+    const userId = `confirm-live-per-item-${randomUUID()}`;
     const proposalId = await seedLiveProposal(userId, "live");
 
     const { executeProposal } = await import("../src/lib/strategy");
 
-    const result = await executeProposal(proposalId, userId, {
+    await expect(executeProposal(proposalId, userId, {
       liveConfirmation: {
         proposalId,
         accountNumber: ACCOUNT,
         executionMode: "broker/live",
         estimatedNotional: 500,
-        typedText: "APPROVE 2 LIVE ORDERS",
-        batchLiveCount: 2
+        typedText: "APPROVE 2 LIVE ORDERS"
       }
-    });
+    })).rejects.toThrow("Type APPROVE LIVE AAPL to approve this live order.");
+    expect(lastCreateOrderOpts).toBeNull();
+  }, 30000);
 
-    expect(result.status).toBe("placed");
-    expect(result.orderId).toBe("order-confirm-1");
+  it("accepts a server-verified typed batch phrase through the bulk approval route", async () => {
+    mockOrderStatus = "accepted";
+    const userId = "local";
+    const firstId = await seedLiveProposal(userId, "live", "AAPL");
+    const secondId = await seedLiveProposal(userId, "live", "MSFT");
+
+    const { POST } = await import("../app/api/proposals/bulk-approve/route");
+    const response = await POST(
+      new Request("http://localhost/api/proposals/bulk-approve", {
+        method: "POST",
+        body: JSON.stringify({
+          proposalIds: [firstId, secondId],
+          liveConfirmation: { typedText: "APPROVE 2 LIVE ORDERS" }
+        })
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { results: Array<{ status: string; orderId?: string }> };
+    expect(body.results.map((result) => result.status)).toEqual(["placed", "placed"]);
+    expect(body.results.map((result) => result.orderId)).toEqual(["order-confirm-1", "order-confirm-2"]);
+  }, 30000);
+
+  it("server-verifies the typed bulk count from selected proposal rows", async () => {
+    mockOrderStatus = "accepted";
+    const userId = "local";
+    const proposalId = await seedLiveProposal(userId, "live", "AAPL");
+
+    const { POST } = await import("../app/api/proposals/bulk-approve/route");
+    const response = await POST(
+      new Request("http://localhost/api/proposals/bulk-approve", {
+        method: "POST",
+        body: JSON.stringify({
+          proposalIds: [proposalId],
+          liveConfirmation: { typedText: "APPROVE 2 LIVE ORDERS" }
+        })
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json() as { expectedText?: string };
+    expect(body.expectedText).toBe("APPROVE LIVE AAPL");
+    expect(lastCreateOrderOpts).toBeNull();
   }, 30000);
 
   it("returns quotes under both canonical and requested share-class symbols", async () => {

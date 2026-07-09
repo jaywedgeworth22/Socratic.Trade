@@ -208,7 +208,6 @@ export interface LiveApprovalConfirmation {
   executionMode?: ExecutionMode | string;
   estimatedNotional?: number | null;
   typedText?: string | null;
-  batchLiveCount?: number | null;
 }
 
 export class LiveApprovalConfirmationError extends Error {
@@ -3230,11 +3229,7 @@ function assertLiveApprovalConfirmation(input: {
   // Real money is the app's normal, in-domain case, not a gated exception.
   if (!input.requireTypedConfirmation) return;
   const confirmation = input.confirmation;
-  const batchLiveCount = Number(confirmation?.batchLiveCount);
-  const expectedText =
-    Number.isInteger(batchLiveCount) && batchLiveCount > 1
-      ? liveBatchApprovalText(batchLiveCount)
-      : liveApprovalText(input.proposal.symbol);
+  const expectedText = liveApprovalText(input.proposal.symbol);
   const reasons: string[] = [];
   const typedText = String(confirmation?.typedText ?? "").trim().toUpperCase();
   const expectedNotional = input.estimatedNotional;

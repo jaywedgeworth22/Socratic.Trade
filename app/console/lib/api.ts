@@ -147,7 +147,6 @@ export interface LiveApprovalConfirmationBody {
   executionMode: "broker/live";
   estimatedNotional?: number | null;
   typedText: string;
-  batchLiveCount?: number | null;
 }
 
 export interface ApproveResult {
@@ -166,6 +165,31 @@ export async function approveProposal(
     return await request<ApproveResult>(`/api/proposals/${encodeURIComponent(id)}/approve`, {
       method: "POST",
       body: JSON.stringify(liveConfirmation ? { liveConfirmation } : {})
+    });
+  } catch (error) {
+    if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
+      const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
+      if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
+        throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface BulkApproveResult extends ApproveResult {
+  proposalId: string;
+  symbol?: string;
+}
+
+export async function bulkApproveProposals(
+  proposalIds: string[],
+  liveConfirmation?: { typedText: string }
+): Promise<{ results: BulkApproveResult[] }> {
+  try {
+    return await request<{ results: BulkApproveResult[] }>("/api/proposals/bulk-approve", {
+      method: "POST",
+      body: JSON.stringify({ proposalIds, ...(liveConfirmation ? { liveConfirmation } : {}) })
     });
   } catch (error) {
     if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
