@@ -85,11 +85,13 @@ describe("resolveProviderLimiterConfig", () => {
     expect(config).toEqual({ minIntervalMs: 400, concurrency: 2 });
   });
 
-  // Regression: twelvedata had NO entry here at all, so its fetch call went completely
-  // unpaced and was 100% HTTP 429 in prod even after finnhub/yahoo/alpha-vantage were fixed.
-  it("uses twelvedata's hard default of strictly-serial 10s spacing (free Basic tier is 8 credits/min)", () => {
+  // twelvedata: a batch call costs 1 credit PER SYMBOL and the free tier is 8 credits/min. The real
+  // budget control is in the provider (symbol cap + one-call-per-minute window gate that SKIPS
+  // rather than queues); this pacer entry is only a light serialization backstop (concurrency 1,
+  // short 2s spacing — NOT 60s, which would re-introduce the scan stall the gate avoids).
+  it("uses twelvedata's hard default of a light serial backstop (concurrency 1, short spacing)", () => {
     const config = resolveProviderLimiterConfig("twelvedata");
-    expect(config).toEqual({ minIntervalMs: 10_000, concurrency: 1 });
+    expect(config).toEqual({ minIntervalMs: 2_000, concurrency: 1 });
   });
 
   it("lets an env PER_MIN override win over a provider with no hard default", () => {
@@ -365,11 +367,11 @@ describe("queue wait must not consume the caller's request timeout", () => {
 
 describe("secret scrubbing", () => {
   it("redacts apikey=<value> query params regardless of casing", () => {
-    const text = "GET https://example.com/query?function=X&apikey=SUPERSECRET123 failed";
+    const text = "GET https://example.com/query?function=X&apikey=SUPERSECRET123 failed"; // gitleaks:allow
     expect(redactApiKeyParams(text)).toBe("GET https://example.com/query?function=X&apikey=*** failed");
-    expect(redactApiKeyParams("...&ApiKey=abc123&other=1")).toContain("ApiKey=***");
-    expect(redactApiKeyParams("...&token=xyz")).toContain("token=***");
-    expect(redactApiKeyParams("...&access_key=xyz")).toContain("access_key=***");
+    expect(redactApiKeyParams("...&ApiKey=abc123&other=1")).toContain("ApiKey=***"); // gitleaks:allow
+    expect(redactApiKeyParams("...&token=xyz")).toContain("token=***"); // gitleaks:allow
+    expect(redactApiKeyParams("...&access_key=xyz")).toContain("access_key=***"); // gitleaks:allow
   });
 
   it("leaves text with no key-shaped query param untouched", () => {
