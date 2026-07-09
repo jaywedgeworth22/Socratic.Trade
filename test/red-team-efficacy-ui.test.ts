@@ -12,7 +12,7 @@ import {
 import type { RedTeamEfficacy } from "../src/lib/performance";
 
 describe("buildRedTeamModelRows", () => {
-  it("adds an unattributed bucket from matured records with no model, never fabricating empty rows", () => {
+  it("uses the full-history byModel rows, including persisted unattributed buckets", () => {
     const efficacy: RedTeamEfficacy = {
       totalVetoes: 4,
       maturedVetoes: 4,
@@ -23,7 +23,8 @@ describe("buildRedTeamModelRows", () => {
       survivorRiskHitRate: 50,
       avgReturnPct: -1.25,
       byModel: [
-        { model: "gpt-5.4-mini", maturedVetoes: 2, vetoValueAddRate: 50, survivorRiskHitRate: 50, avgReturnPct: -2.5 }
+        { model: "gpt-5.4-mini", maturedVetoes: 2, vetoValueAddRate: 50, survivorRiskHitRate: 50, avgReturnPct: -2.5 },
+        { model: RED_TEAM_UNATTRIBUTED_MODEL, maturedVetoes: 2, vetoValueAddRate: 50, survivorRiskHitRate: 50, avgReturnPct: 0 }
       ],
       records: [
         { runId: "1", symbol: "AAPL", returnPct: -10, model: "gpt-5.4-mini" },

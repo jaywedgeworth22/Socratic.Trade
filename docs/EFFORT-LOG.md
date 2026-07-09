@@ -1158,8 +1158,12 @@ discrepancies that motivated these rows._
   FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_ 2026-07-09 CODEX:
   scope corrected per MONET to the narrow Results/snapshot/test/docs fileset only. Local slice now
   built in this worktree (`redTeamEfficacy` snapshot payload + Results card + focused regression +
-  rollout note); PR #1175 is open. Verified here with `npx vitest run test/red-team-efficacy-ui.test.ts
-  test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet`.
+  rollout note); PR #1175 is open. 2026-07-09 review fix: reviewer `unattributed` rows now come
+  from full-history `getRedTeamEfficacy()` `byModel`, the card labels persisted counts as veto
+  decisions rather than all reviewed openings, and override share counts only actually applied
+  Socratic overrides while still disclosing override-path vetoes. Verified here with
+  `npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
+  test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet`.
   Keepout remains approval bulk-confirm, Monet model/alert lanes, AG tooltip/sheet PRs, and Claude memory/RAG.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
   first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them

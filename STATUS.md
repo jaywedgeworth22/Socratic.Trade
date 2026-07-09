@@ -12,13 +12,16 @@ steps materially change.
 MONET narrowed this lane to read-side Results/snapshot/test/docs only: no `approvals/**`,
 no `approval-card.tsx`, no `src/lib/red-team.ts`, no `src/lib/strategy.ts`. The active
 account dashboard snapshot now carries `redTeamEfficacy` plus the override split
-(`overriddenVetoes`, `reviewedOpenings`, `overrideRatePct`) derived from existing
-`proposal_rejected_by_red_team` / `red_team_veto_overridden` audits. Results renders a new
+(`overrideVetoes`, `appliedOverrideVetoes`, `vetoDecisions`, `overrideSharePct`) derived from
+existing `proposal_rejected_by_red_team`, `red_team_veto_overridden`, and
+`socratic_override_applied` audits. Results renders a new
 Red Team veto efficacy card with overall stats, honest 20/50 sample gating on reviewer rows,
 and a recent resolved-veto table that labels missing `redTeamVerdict.model` history as
-`unattributed` instead of fabricating attribution. Focused verification here: `npx vitest run
-test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`,
-and `npm run lint -- --quiet` — all green. PR #1175 is open.
+`unattributed` instead of fabricating attribution; the unattributed rollup now comes from the
+full `getRedTeamEfficacy()` history, not the recent records slice. Focused verification here:
+`npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
+test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet` — all green.
+PR #1175 is open.
 Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
 ## 2026-07-08 — Mobile chrome bar fixes: scope width, run-state chip, profile menu, avatar, STOP (MONET, branch `monet/mobile-chrome-fixes-3676f7`)
 Six owner phone-screenshot items: account scope flex-1 on phones; run-state chip unboxed +

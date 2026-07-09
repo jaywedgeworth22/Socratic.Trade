@@ -304,10 +304,10 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
     );
   }
 
-  if (efficacy.reviewedOpenings === 0) {
+  if (efficacy.vetoDecisions === 0) {
     return (
       <Card title="Red Team veto efficacy">
-        <Empty>No Red Team opening debates recorded yet.</Empty>
+        <Empty>No Red Team veto decisions recorded yet.</Empty>
       </Card>
     );
   }
@@ -330,10 +330,10 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Stat
-          label="Reviewed openings"
-          value={efficacy.reviewedOpenings}
-          sub={`${efficacy.totalVetoes} blocking · ${efficacy.overriddenVetoes} overridden`}
-          title="Opening-side Red Team decisions only. Blocking vetoes keep the trade out; overridden vetoes proceed on a logged autonomy thesis and are not counted as missed opportunities."
+          label="Veto decisions"
+          value={efficacy.vetoDecisions}
+          sub={`${efficacy.totalVetoes} blocking · ${efficacy.appliedOverrideVetoes}/${efficacy.overrideVetoes} overrides applied`}
+          title="Opening-side Red Team veto decisions only. Blocking vetoes keep the trade out; applied overrides proceed on a logged autonomy thesis and are not counted as missed opportunities. Survived Red Team reviews are not persisted in this metric."
         />
         <Stat
           label="Resolved blocking vetoes"
@@ -342,10 +342,10 @@ function RedTeamEfficacyCard({ efficacy }: { efficacy: RedTeamEfficacySnapshot |
           title="Blocking vetoes whose forward return actually resolved. Unresolvable names stay disclosed instead of disappearing from the denominator."
         />
         <Stat
-          label="Override rate"
-          value={fmtPct(efficacy.overrideRatePct, 1)}
-          sub={efficacy.overriddenVetoes > 0 ? `${efficacy.overriddenVetoes} overridden` : "none overridden"}
-          title="Share of opening-side Red Team veto decisions that the autonomy override path let proceed."
+          label="Applied override share"
+          value={fmtPct(efficacy.overrideSharePct, 1)}
+          sub={efficacy.appliedOverrideVetoes > 0 ? `${efficacy.appliedOverrideVetoes} applied` : "none applied"}
+          title="Share of opening-side Red Team veto decisions where the Socratic override path actually applied. Refused overrides and later blocks are not counted as applied."
         />
         <Stat
           label="Avoided losers"

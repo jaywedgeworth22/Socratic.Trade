@@ -107,12 +107,14 @@ export interface DashboardSnapshot {
   };
   performance?: PerformanceSummary;
   redTeamEfficacy?: RedTeamEfficacy & {
-    /** Openings whose Bear veto was later explicitly overridden at approval time. */
-    overriddenVetoes: number;
-    /** Total opening veto decisions observed = non-overridden vetoes + overridden vetoes. */
-    reviewedOpenings: number;
-    /** overriddenVetoes / reviewedOpenings (%), 0 when no veto decisions exist. */
-    overrideRatePct: number;
+    /** Opening Bear vetoes routed to the Socratic override path. */
+    overrideVetoes: number;
+    /** Opening Bear vetoes whose Socratic override actually applied. */
+    appliedOverrideVetoes: number;
+    /** Blocking vetoes + override-path vetoes; survived Red Team reviews are not persisted here. */
+    vetoDecisions: number;
+    /** appliedOverrideVetoes / vetoDecisions (%), 0 when no veto decisions exist. */
+    overrideSharePct: number;
   };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];

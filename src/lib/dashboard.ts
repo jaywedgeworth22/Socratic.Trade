@@ -608,20 +608,34 @@ function getDashboardRedTeamEfficacy(userId: string, connectedAccountId?: string
     connectedAccountId,
     limit: 12
   });
-  const overriddenKeys = new Set<string>();
+  const redTeamOverrideKeys = new Set<string>();
   for (const event of listAuditByKind("red_team_veto_overridden", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
     const payload = event.payload as { runId?: string; symbol?: string; side?: string } | undefined;
     if (!payload?.runId || !payload.symbol) continue;
     if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
-    overriddenKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}`);
+    redTeamOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
   }
-  const overriddenVetoes = overriddenKeys.size;
-  const reviewedOpenings = efficacy.totalVetoes + overriddenVetoes;
+  const appliedOverrideKeys = new Set<string>();
+  for (const event of listAuditByKind("socratic_override_applied", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; conflicts?: unknown } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+    if (!conflicts.some((conflict) => String(conflict).startsWith("red_team_veto:"))) continue;
+    appliedOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  }
+  let appliedOverrideVetoes = 0;
+  for (const key of redTeamOverrideKeys) {
+    if (appliedOverrideKeys.has(key)) appliedOverrideVetoes += 1;
+  }
+  const overrideVetoes = redTeamOverrideKeys.size;
+  const vetoDecisions = efficacy.totalVetoes + overrideVetoes;
   return {
     ...efficacy,
-    overriddenVetoes,
-    reviewedOpenings,
-    overrideRatePct: reviewedOpenings > 0 ? Number(((overriddenVetoes / reviewedOpenings) * 100).toFixed(1)) : 0
+    overrideVetoes,
+    appliedOverrideVetoes,
+    vetoDecisions,
+    overrideSharePct: vetoDecisions > 0 ? Number(((appliedOverrideVetoes / vetoDecisions) * 100).toFixed(1)) : 0
   };
 }
 

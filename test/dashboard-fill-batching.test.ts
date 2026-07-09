@@ -194,6 +194,24 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
       userId,
       connectedAccountId
     );
+    db.audit(
+      "socratic_override_applied",
+      { runId: "run-rt-2", symbol: "MSFT", side: "buy", conflicts: ["red_team_veto: Too early."], thesis: "Override with logged evidence.", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+    db.audit(
+      "red_team_veto_overridden",
+      { runId: "run-rt-3", symbol: "TSLA", side: "buy", thesisTag: "Momentum", reason: "Crowded.", model: "claude-opus", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+    db.audit(
+      "socratic_override_refused",
+      { runId: "run-rt-3", symbol: "TSLA", side: "buy", conflicts: ["red_team_veto: Crowded."], hardReasons: [], thesis: "Override was refused." },
+      userId,
+      connectedAccountId
+    );
 
     const snapshot = await getDashboardSnapshot(userId);
 
@@ -201,9 +219,10 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
     expect(snapshot.redTeamEfficacy).toMatchObject({
       totalVetoes: 1,
       maturedVetoes: 1,
-      overriddenVetoes: 1,
-      reviewedOpenings: 2,
-      overrideRatePct: 50,
+      overrideVetoes: 2,
+      appliedOverrideVetoes: 1,
+      vetoDecisions: 3,
+      overrideSharePct: 33.3,
       vetoValueAddRate: 100
     });
     expect(snapshot.redTeamEfficacy?.records[0]?.symbol).toBe("AAPL");
