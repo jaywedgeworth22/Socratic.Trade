@@ -169,7 +169,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
       <IconButton label={`Model stats — cost, latency and realized performance for every ${roleLabel} option.`} onClick={openDrawer}>
         <BarChart2 size={15} />
       </IconButton>
-      <Sheet open={open} onClose={() => setOpen(false)} title={`Model stats — ${roleLabel}`}>
+      <Sheet open={open} onClose={() => setOpen(false)} title={`Model stats — ${roleLabel}`} wide>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Cost and latency per call for every model in this picker. Figures marked <strong>live</strong> come from your own
           recent calls in this role{data ? ` (last ${data.sinceDays} days)` : ""}; models without enough live traffic fall
