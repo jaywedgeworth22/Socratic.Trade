@@ -71,6 +71,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { extendedHoursExitBufferBps, marketableLimitExitPrice } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
@@ -722,7 +723,9 @@ export async function runStrategyOnce(
           })
       );
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
+    // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
+    // session); the pure generator just receives the buffer (undefined ⇒ default market/queue-to-open).
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy));
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -5115,7 +5118,11 @@ export function generateProactiveRiskProposals(
   // Precomputed ATR-based stop DISTANCE (% of entry) per symbol — supplied by the caller (which has
   // bars) when policy.atrStops is on. Mirrors the betaBySymbol precompute pattern so this stays a pure
   // sync function. Empty/absent → fall back to the fixed/beta stop (a name is never left unprotected).
-  atrStopPctBySymbol: Record<string, number> = {}
+  atrStopPctBySymbol: Record<string, number> = {},
+  // Marketable-limit buffer (bps) for an extended-hours protective exit, or undefined for the default
+  // market/queue-to-open routing. Resolved by the async caller (it knows the session) so this stays
+  // pure; see extendedHoursExitBufferBps. When set, the stop exit becomes a limit tagged extended_hours.
+  extHoursBufferBps?: number
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -5173,13 +5180,21 @@ export function generateProactiveRiskProposals(
     }
 
     if (reason) {
+      // Extended-hours routing (only when the caller resolved a live pre/post session with the toggle
+      // on): a marketable-limit off the current price that can actually fill after hours, else the
+      // default market order that queues to the regular open.
+      const exitLimitPrice = extHoursBufferBps != null
+        ? marketableLimitExitPrice(currentPrice, exitSide, extHoursBufferBps)
+        : undefined;
+      const useExtLimit = exitLimitPrice != null;
       proactiveProposals.push({
         symbol: normalizeSymbol(pos.symbol),
         side: exitSide,
-        type: "market",
+        type: useExtLimit ? "limit" : "market",
         quantity: Math.abs(pos.quantity),
+        limitPrice: useExtLimit ? exitLimitPrice : undefined,
         timeInForce: "gfd",
-        marketHours: "regular_hours",
+        marketHours: useExtLimit ? "extended_hours" : "regular_hours",
         rationale: reason,
         tradeThesisTag: "Risk-Exit",
         entryMarketRegime: "Active Risk Check"

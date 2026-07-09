@@ -18,6 +18,7 @@ import { getBrokerGateway } from "./broker";
 import { isRejectedOrCanceledState } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
+import { resolveProtectiveExitRouting } from "./protective-exit-routing";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
@@ -317,8 +318,6 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];
     return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
   };
-  const marketHours = policy.allowExtendedHoursSyntheticStops ? "extended_hours" : "regular_hours";
-
   for (const stop of stops) {
     const price = priceFor(stop.symbol);
     result.evaluated++;
@@ -363,13 +362,19 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
     const qty = Math.min(positionQty, Math.max(positionQty - coverage.coveredQty, 0));
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    // Route the protective exit: a plain market order that queues to the regular open by default, or a
+    // marketable-limit tagged extended_hours when "App stops in extended hours" is on AND we are in the
+    // pre/post session (a market order with extended_hours=true is broker-rejected). `price` is the
+    // triggering quote, used as the limit basis (a sell crosses down, a cover crosses up).
+    const routing = resolveProtectiveExitRouting(policy, exitSide, price);
     const exitProposal: TradeProposal = {
       symbol: normalizeSymbol(stop.symbol),
       side: exitSide,
-      type: "market",
+      type: routing.type,
       quantity: qty,
+      limitPrice: routing.limitPrice,
       timeInForce: "gfd",
-      marketHours,
+      marketHours: routing.marketHours,
       rationale: "Synthetic trailing stop fired from the protective scheduler.",
       tradeThesisTag: "Synthetic Stop",
       entryMarketRegime: "Risk Exit"
@@ -445,10 +450,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         accountNumber,
         symbol: stop.symbol,
         side: exitSide,
-        type: "market",
+        type: routing.type,
         quantity: qty,
+        limitPrice: routing.limitPrice,
         timeInForce: "gfd",
-        marketHours,
+        marketHours: routing.marketHours,
         refId
       });
       // A non-throwing broker response can still be a synchronous rejection/cancellation (same

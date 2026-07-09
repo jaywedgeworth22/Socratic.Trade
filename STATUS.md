@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Stop-loss settings accuracy: extended-hours exit routing + coexistence label (MONET, branch `monet/stop-loss-settings-defaults-759d07`)
+Owner audited the stop toggles for labels that don't match behavior. Slice 1 (PR pending) fixes the
+worst: "App stops in extended hours" (`allowExtendedHoursSyntheticStops`) was **broken** — Alpaca 422s
+a `market` order tagged `extended_hours` (must be a DAY limit) and the MCP path dropped the flag, so
+enabling it made the protective exit fail/no-op. New `src/lib/protective-exit-routing.ts` routes a
+**marketable-limit** `extended_hours` exit when the toggle is on in a pre/post session (crosses the
+last quote by `marketableLimitBufferBps`, default 15), else the prior **market/queue-to-open** (owner
+ruling "limit ON / queue OFF", default stays OFF). Wired into both protective paths (synthetic monitor
++ proactive generator). Also fixed the per-position protection label (`derive.ts`) to show a fixed and
+a trailing stop **coexisting** instead of trailing-replaces-fixed. Gate green (tsc, lint 0-err, 3183
+tests, build). Coordinated with peer PR #1221 (`shortStopLossPct=8` default + shorts-surface) and AG
+#1211 (ext-hours tooltips) — this lane owns the gate + label honesty + behavior-match; `field-defs.ts`,
+`page.tsx` short-selling gate, and the RH-stop ATR/beta distance are follow-ups deferred until those
+PRs land. See `docs/rollouts/2026-07-09-stop-loss-extended-hours-exit-routing.md`.
 ## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
 Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
 assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
