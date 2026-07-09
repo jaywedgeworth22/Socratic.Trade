@@ -95,6 +95,13 @@ runId-tagged audit event + run-scoped notifications into one run card (was a 5-k
 widens the housekeeping bucket (notify.sent/error delivery mechanics, due-jobs drain, vector_store,
 recoverable_issue, llm_cache_usage). Real-hour replay: 54 raw events → 8 main cards + 1 collapsed
 system row. All data preserved/expandable. See `docs/rollouts/2026-07-08-activity-log-grouping.md`.
+## 2026-07-09 — Shared-dep proper-usage cleanup refresh (CODEX replacing dirty Cursor PR #1105)
+Cross-app audit: Socratic.Trade already used shared client/SSE/share/telemetry well.
+This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event checks,
+`SharePayload`-based outbound type, dead imports. Refreshed on branch
+`codex/refresh-shared-dep-usage` from dirty Cursor PR #1105 without editing the Cursor branch.
+Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
+See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
 
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.

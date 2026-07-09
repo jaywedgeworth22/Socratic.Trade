@@ -25,6 +25,7 @@ import {
   type ShortVolumeRow,
   type FundamentalRow,
   type AnalystRow,
+  type SharePayload,
   resolveTickerAlias,
   SecurityRefInputSchema,
   PriceSeriesSchema,
@@ -159,17 +160,14 @@ export type CongressShortVol = ShortVolumeRow;
 export type CongressFundamental = FundamentalRow;
 export type CongressAnalyst = AnalystRow;
 
-export interface CongressSharePayload {
+/**
+ * Outbound share payload. Same wire shape as shared `SharePayload`; `refs` may
+ * use the local optional-field builder (`CongressRef`) before schema validation
+ * coerces them to `SecurityRefInput`.
+ */
+export type CongressSharePayload = Omit<SharePayload, "refs"> & {
   refs?: CongressRef[];
-  spx?: PriceClose[];
-  prices?: PriceSeries[];
-  insider?: InsiderRow[];
-  shortVolume?: ShortVolumeRow[];
-  fundamentals?: FundamentalRow[];
-  analyst?: AnalystRow[];
-  /** Provenance tag (defaults to APP_B_ORIGIN on send). Lets a receiver skip rows it originated. */
-  origin?: string;
-}
+};
 
 export interface CongressShareResult {
   ok: boolean;

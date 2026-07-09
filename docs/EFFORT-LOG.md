@@ -767,6 +767,11 @@ As of 2026-07-08 (assignment-rule update).
   STOP button squeeze fix (shrink-0 + centered content). Fileset:
   app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
   app/console/console.css.
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
+  Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
+  Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
+  shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
+  `congress-trade-client.ts`.
 - **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
   logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
   popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
