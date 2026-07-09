@@ -8,6 +8,85 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
+Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature
+(still DEFAULT OFF — `src/lib/defaults.ts` verified unchanged, not an enablement). FIX 1
+(double-exit prevention): added broker-agnostic `isLiveOrderState()` to `src/lib/broker-side.ts`
+recognizing both Alpaca resting states and Robinhood's `queued/confirmed/unconfirmed` (disjoint
+vocabularies, so Alpaca can't be misclassified); `src/lib/synthetic-stops.ts` now uses it in all
+three liveness checks (`isLiveBrokerStop`, `isLiveExitOrder`, `isLiveState`), so a resting RH broker
+stop is visible to the synthetic monitor and won't get a duplicate synthetic market-sell fired on
+top of it. FIX 2 (no orphaned stops on disable): `reconcileBrokerProtectiveStops`
+(`src/lib/broker-protective-stops.ts`) now gates only PLACEMENT on the flag; when disabled it runs a
+teardown loop that cancels every resting stop the feature placed (`pending_cancel` retry on cancel
+failure); `listBrokerProtectiveStops` (`src/lib/db-api-keys.ts`) now returns both `resting` and
+`pending_cancel` rows so failed cancels get retried instead of orphaning. Landing-session gate
+(fresh `npm ci` in the dedicated worktree): `tsc --noEmit` clean, lint 0 errors, 306 test files /
+3181 tests passed, `npm run build` succeeded — no mechanical fixes or test-expectation updates were
+needed; the assembled diff was inspected and matches the intended fix exactly. See
+`docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
+## 2026-07-09 — Autonomous actions: relative timestamps top-right (MONET, branch `monet/autonomous-actions-timing-3676f7`)
+Owner ask: the Home "Autonomous actions" rows show relative timing top-right ("15m ago") like
+Journal entries. `DecisionRowData.at` wired from all three row sources (Socratic decision / run /
+pending proposal `createdAt`), rendered with the shared `Ago` primitive (hover = exact time) in
+the Journal's faint/xs treatment. Verified live with an injected 15-min-old row ("15m ago"
+rendered, correct dateTime). Gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-autonomous-actions-timing.md`.
+
+## 2026-07-09 — Stop-loss settings accuracy: extended-hours exit routing + coexistence label (MONET, branch `monet/stop-loss-settings-defaults-759d07`)
+Owner audited the stop toggles for labels that don't match behavior. Slice 1 (PR pending) fixes the
+worst: "App stops in extended hours" (`allowExtendedHoursSyntheticStops`) was **broken** — Alpaca 422s
+a `market` order tagged `extended_hours` (must be a DAY limit) and the MCP path dropped the flag, so
+enabling it made the protective exit fail/no-op. New `src/lib/protective-exit-routing.ts` routes a
+**marketable-limit** `extended_hours` exit when the toggle is on in a pre/post session (crosses the
+last quote by `marketableLimitBufferBps`, default 15), else the prior **market/queue-to-open** (owner
+ruling "limit ON / queue OFF", default stays OFF). Wired into both protective paths (synthetic monitor
++ proactive generator). Also fixed the per-position protection label (`derive.ts`) to show a fixed and
+a trailing stop **coexisting** instead of trailing-replaces-fixed. Gate green (tsc, lint 0-err, 3183
+tests, build). Coordinated with peer PR #1221 (`shortStopLossPct=8` default + shorts-surface) and AG
+#1211 (ext-hours tooltips) — this lane owns the gate + label honesty + behavior-match; `field-defs.ts`,
+`page.tsx` short-selling gate, and the RH-stop ATR/beta distance are follow-ups deferred until those
+PRs land. See `docs/rollouts/2026-07-09-stop-loss-extended-hours-exit-routing.md`.
+## 2026-07-09 — Settings auto-save everywhere (MONET)
+Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
+section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
+inline indicator (serialized writes, optimistic+revert, error-toast); converted Event
+notifications, Tax treatment, Market-scan shape (settings/page.tsx), Delivery channels, LLM models,
+and the Strategy page's model selects/prompt/scoring-weights. Excluded (unchanged): guardrails
+review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/account-deletion, learned-
+context queue, kill switch, typed-confirmation master switch. Toggles/selects save on change;
+text/number on blur. Verified live: every control type persists across reload. Two soft calls
+flagged to owner (strategy prompt/weights now blur-save; guardrails kept review-and-commit). See
+docs/rollouts/2026-07-09-settings-autosave.md.
+## 2026-07-09 — Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch `monet/short-stop-default-and-surface`)
+Owner-directed fix for "enabling short selling rejects every short out of the box": the mandatory
+short-stop gate (`policy.ts:433`) had nothing to pass by default since `riskRules.shortStopLossPct`
+was `undefined` unless a user set it. `DEFAULT_RISK_RULES` (`src/lib/defaults.ts`) now sets
+`shortStopLossPct: 8` (mirrors the long `stopLossPct: 8`) — a real default, not a `?? stopLossPct`
+gate fallback, per owner's explicit instruction. Because `mergePolicy` deep-merges `riskRules`
+against `DEFAULT_POLICY.riskRules`, every policy without an override now carries the 8% stop and
+passes the gate; the gate itself is unchanged (still rejects `shortStopLossPct <= 0`). Also moved
+the four `SHORTS` fields (`app/console/guardrails/page.tsx`) from a collapsed
+`<AdvancedGroup title="Short selling">` in the Advanced rulebook card to the bottom of the main
+Essentials card (same `PolicyFieldRow` + `maxShortExposurePct` utilization-meter shape used
+elsewhere), and updated the `shortStopLossPct` field hint (`field-defs.ts`) to say "Defaults to
+8%." instead of reading like an unmet requirement. Sanity-checked with a throwaway script:
+`evaluateTradeProposal` against `{ ...DEFAULT_POLICY, shortSellingEnabled: true }` (no explicit
+`shortStopLossPct`) now approves a well-sized short — no naked-short invariant broken (the gate
+logic is untouched). Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
+
+## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
+Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
+(`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
+install approvals live in-repo (no fragile host `~/.npmrc` tweak) and stay valid when npm's future
+default flips to *blocking* unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still
+runs install scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash was caused by
+host `~/.npmrc` skipping scripts, not npm 11's default gating; this block removes that host dependency
+rather than re-enabling npm-11 default behavior. Extracted from a larger uncommitted change in
+the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
+in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
+`better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
 ## 2026-07-09 — Retire dead preview-server infra files (MONET, `monet/retire-preview-files`)
 Deleted the 4 dead preview files (`.github/workflows/sync-previews.yml`, `scripts/sync-preview-lanes.sh`,
 `scripts/sync-watchdog.sh`, `scripts/setup-agent-previews.sh`) — all dead since the 2026-07-08 preview
@@ -16,6 +95,11 @@ retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push ho
 README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
 intact as the paper trail. Doc/infra-only, no runtime surface.
 
+## 2026-07-08 — Centralized Congress API client factory (AG)
+Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_ANALYTICS_ENABLED` gating flags to avoid unnecessary API calls. Fixed type issues across `congress-analytics.ts` and `history.ts`. Verified: tests pass 2970/2970, `npm run build` completed successfully, and tsc is clean. PR via `land.sh`. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
+
+### 2026-07-09 — Codex autofix on PR #1104
+Addressed two Codex review findings: (1) corrected the analytics flag name in docs from the non-existent `CONGRESS_TRADE_ANALYTICS_ENABLED` to the implemented `CONGRESS_ANALYTICS_ENABLED` (STATUS.md, EFFORT-LOG, rollout note); (2) removed a synthetic per-symbol `logApiHealth({ ok: false })` in `data-providers.ts` `CongressTradeEnrichmentProvider.enrich` that double-counted `congress.trade` failures the shared client's fetch wrapper already logs — prevented the enrichment circuit breaker tripping early. `transportError` retained for negative-cache gating only. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
 ## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
 Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
 opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized
@@ -176,6 +260,26 @@ lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
 owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
 deploy, any account without explicit models fails closed with an actionable Settings message —
 owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+## 2026-07-09 — Effort log assignment rules + ops snapshot fix deployed + branch cleanup (MONET, `copilot-effort-log-assignment-rules`)
+Completed this session:
+- **Effort log assignment rules ratified**: agents must only be assigned to efforts they are actively working on — no pre-assigning the backlog. Rule 4 (fundamentals-veto) ratified by owner as "keep current risk approach where most things are just suggestions."
+- **Ops snapshot truncation fix** (PR #1119): `auditEntrySummary()` now checks `error`/`note` keys (used by `order_placement_uncertain` payloads), identifier composition, JSON fallback 240→500 chars. Deployed to production via Coolify (commit `15f78b21`).
+- **Branch cleanup**: 77 stale branches pruned from origin. PR #873 (dependabot motion) merged.
+- **PR #1169** (Codex autofix: broker-minimum sizing floor): Codex autofix threads resolved, CI passed, auto-merge scheduled — branch needs `update-branch` before merge.
+- **New Planned effort**: Pre-proposal broker health/availability gate — before LLM proposal generation, check broker connectivity, error rate, minimum notional, account status. See effort log.
+- **Remaining owner questions**: Q4 (main-protection ruleset), Q5 (Alert Center filter pills), Q6 (strip stale agent tags).
+
+## 2026-07-09 — Codex autofix PR #1169: broker-min floor skipped zero-rounded sizes (Claude, `copilot-effort-log-assignment-rules`)
+Codex P2 on the broker minimum dollar-notional floor (`src/lib/strategy.ts`): the raise guarded on
+the POST-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (e.g. an
+LLM-advised `$0.22`, or any positive fallback under `$1`) skipped the floor and returned
+`dollarAmount: 0` — the exact guaranteed-reject path the floor exists to eliminate. Fix guards on the
+PRE-rounding source (`advisedNotional`, or `fallbackBase * finalMultiplier`) and raises to the floor
+when capacity covers the minimum. New regression suite `test/broker-minimum-sizing.test.ts` (4 tests:
+$0.22→$1, $0.9→$1, Alpaca no-floor no-op, capacity-below-floor left small). Gates: tsc clean, sizing
+suites green (43), build green; full `npm test` has pre-existing LLM-credential failures in this VM
+(keys present) unrelated to this change — verified identical on the base tree.
+Rollout: docs/rollouts/2026-07-09-codex-autofix-pr1169-broker-min-floor.md.
 ## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
 The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
 failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real
@@ -378,6 +482,11 @@ This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event 
 Merged via PR #1171 as `54b6d722`; repo effort mirror closeout follows on `codex/shared-dep-closeout`.
 Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
 See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+## 2026-07-09 — Drizzle ORM Migration (AG)
+Refactored the application's database layer to use Drizzle ORM, migrating away from raw custom SQLite implementation. Configured schema definition in `src/lib/db/schema.ts` (tables: `settings`, `user_settings`, `market_data_demands` with constraints). Updated `src/lib/db-settings.ts` to fully use Drizzle queries for read/write operations and upserts utilizing `onConflictDoUpdate`. Verified: linting clean, types pass (`tsc --noEmit`), tests pass (`2970/2970`), and build succeeds. Ready for landing. See `docs/rollouts/2026-07-09-drizzle-orm-migration.md`.
+
+## 2026-07-08 — Centralized Congress API client factory (AG)
+Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags to avoid unnecessary API calls. Fixed type issues across `congress-analytics.ts` and `history.ts`. Verified: tests pass 2970/2970, `npm run build` completed successfully, and tsc is clean. PR via `land.sh`. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
 
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
@@ -554,6 +663,22 @@ repoint `socratictrade.com` CNAME(tunnel)->proxied A `91.98.44.8`. Rollback = re
 CNAME + `pm2 start trading litestream` (Mac worktree left intact). **Until
 `docs/rollouts/2026-07-07-prod-coolify-migration.md` records a verified cutover, the Mac
 pm2 lane is still production.**
+## 2026-07-08 — Coolify simplified to integration-only; production migration handed to Monet (Claude cloud)
+Owner reviewed the Coolify preview lanes and concluded the five per-agent lanes were dead weight
+(never used; mostly-backend app has little to preview; they caused the 4GB box OOM-wedge). **Torn
+down all 5 per-agent Coolify apps** (claude/codex/antigravity/cursor/monet) + deleted the unused SSH
+deploy key. Only the **integration app** (`main`) remains, serving on the box at `main.jays.services`
+(the `trading.jays.services` rename is stuck on a post-reboot Coolify build-queue hang — optional).
+Dangling `*.jays.services` DNS for the 5 lanes + a `*.coolify` wildcard are cosmetic (404 via the
+`*.jays.services` wildcard), pending deletion (blocked in auto-mode; needs explicit per-record OK).
+
+**Production → Coolify: handed to MONET.** It's viable (integration proves the app runs on the box)
+but genuinely involved and needs Mac access this cloud session lacks (live prod `data/app.db`,
+Infisical secrets, `pm2 stop trading`). Runbook: `docs/rollouts/2026-07-08-production-coolify-migration-handoff.md`.
+Top risks called out there: **double-trading** (exactly one scheduler live, Mac OR box), the
+**irreplaceable DB** (persistent volume + Litestream + backup-before-migrate), and **box sizing**
+(resize to ≥8GB first — the 4GB box wedges under build load, which for live trading = stalled
+scheduler/missed orders).
 
 ## 2026-07-07 — Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`)
 Owner-directed after prod forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes; all gates
@@ -896,6 +1021,11 @@ still needs: secrets transfer (broker/LLM API keys), safe DB migration/cutover p
 Backups enabled in Coolify for that app specifically (the preview lanes deliberately skip
 Coolify Backups as not worth the 20% cost for fully-reproducible state; production is not
 reproducible and must not skip this). See `docs/rollouts/2026-07-06-coolify-migration.md`.
+## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override (SUPERSEDED by #1191)
+
+Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected. _(Merge-forward note 2026-07-09: superseded by PR #1191's single-adversary consolidation, which deleted the Anthropic special-case entirely — the explicit `redTeamLlmModel` is now the sole source via `resolveLlmEndpoint(role: "red")`. PR #989 no longer carries a `red-team.ts` diff.)_
+
+
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
 
 Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that
@@ -1151,6 +1281,11 @@ suite at land time: `npx tsc --noEmit` clean, `npm test` 2711/2711 passed across
 `npm run build` clean (confirmed via the PR's `verify`/`verify-hosted` CI logs).
 
 See `docs/rollouts/2026-07-06-typed-retrieval-status.md` for the full note.
+## 2026-07-06 — Mobile Settings Crash Fix (AG)
+Fixed "Maximum call stack size exceeded" bug caused by a focus trap race condition when navigating to settings from the More sheet menu on mobile. Added a re-entrancy guard and `isConnected` check to `app/console/ui/sheet.tsx`. All tests and Next.js build passed locally. See `docs/rollouts/2026-07-06-mobile-settings-sheet-focus-loop.md`.
+
+## 2026-07-06 — Congress Score Eval UI Wiring (AG)
+Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
 
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
@@ -6979,6 +7114,19 @@ None. Phase 2 backend optimization is complete.
   explicit clean-start script). Added direct vector/SEC/strategy prompt tests. Full
   combined worktree verification passed: `npx tsc --noEmit`, `npm test` (195 tests,
   27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
+- 2026-07-06: **Console Tooltip Primitive** — replaced disparate, buggy tooltip logic in the console with a unified, accessible, polymorphic Tooltip primitive built on motion/react. See docs/rollouts/2026-07-06-console-tooltip-primitive.md.
+- 2026-07-06: **Advisory Audit Rollout** — rendered the new advisory audit kinds (`deterministic_bear_veto`, `red_team_veto_overridden`, `prompt_injection_suspected`, `evidence_age_anomaly`) in the console Alert Center and activity feed. See docs/rollouts/2026-07-06-advisory-audit-rollout.md.
+- 2026-07-06: **Global Application Font Settings** — updated the settings page to allow the user
+  to select a global application-wide font in addition to a specific text box font. Separated
+  the app font configuration into its own `appFont` property in `localStorage` and injected
+  it via a new CSS variable `--con-app-font` that targets the `.console-root` class.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-global-app-font.md`.
+- 2026-07-06: **Credential Naming UI Fix** — updated the API keys settings page to dynamically
+  use appropriate credential terminology ("key" vs "contact") based on the catalog entry.
+  This ensures accurate text for the SEC EDGAR User-Agent which expects a contact string.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-credential-naming.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
@@ -7032,3 +7180,5 @@ Update this file when any of the following change:
 - expected verification workflow
 - handoff reading order
 - roadmap meaningfully changes
+
+- 2026-07-09: Added explanatory tooltips to the 'Run during extended hours' and 'Allow extended-hours orders' fields in the Guardrails UI. See docs/rollouts/2026-07-09-extended-hours-tooltips.md.

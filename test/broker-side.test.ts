@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { toBrokerSide, isShortIntent, isRejectedOrCanceledState } from "../src/lib/broker-side";
+import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState } from "../src/lib/broker-side";
 import { toMcpOrder } from "../src/lib/robinhood";
 import type { EquityOrderInput, OrderSide } from "../src/lib/types";
 
@@ -58,6 +58,49 @@ describe("isRejectedOrCanceledState — broker-agnostic terminal-decline check",
     expect(isRejectedOrCanceledState("submitted")).toBe(false);
     expect(isRejectedOrCanceledState(undefined)).toBe(false);
     expect(isRejectedOrCanceledState(null)).toBe(false);
+  });
+});
+
+describe("isLiveOrderState — broker-agnostic resting/live check", () => {
+  it("recognizes Alpaca-flavored resting/working states", () => {
+    expect(isLiveOrderState("new")).toBe(true);
+    expect(isLiveOrderState("accepted")).toBe(true);
+    expect(isLiveOrderState("pending_new")).toBe(true);
+    expect(isLiveOrderState("held")).toBe(true);
+    expect(isLiveOrderState("partially_filled")).toBe(true);
+    expect(isLiveOrderState("open")).toBe(true);
+  });
+
+  it("recognizes Robinhood resting states (queued/confirmed/unconfirmed) — the double-exit fix", () => {
+    // A resting RH broker stop reports one of these; before the fix they were unrecognized, so the
+    // synthetic monitor couldn't see the broker stop and could fire its own market sell on top of it.
+    expect(isLiveOrderState("queued")).toBe(true);
+    expect(isLiveOrderState("confirmed")).toBe(true);
+    expect(isLiveOrderState("unconfirmed")).toBe(true);
+  });
+
+  it("is case-insensitive and trims", () => {
+    expect(isLiveOrderState("CONFIRMED")).toBe(true);
+    expect(isLiveOrderState("  Queued  ")).toBe(true);
+  });
+
+  it("does not flag terminal or unknown states (bias: when unsure, treat as NOT live)", () => {
+    expect(isLiveOrderState("filled")).toBe(false);
+    expect(isLiveOrderState("canceled")).toBe(false);
+    expect(isLiveOrderState("cancelled")).toBe(false);
+    expect(isLiveOrderState("rejected")).toBe(false);
+    expect(isLiveOrderState("expired")).toBe(false);
+    expect(isLiveOrderState("failed")).toBe(false);
+    expect(isLiveOrderState("something_else")).toBe(false);
+    expect(isLiveOrderState(undefined)).toBe(false);
+    expect(isLiveOrderState(null)).toBe(false);
+  });
+
+  it("is complementary to isRejectedOrCanceledState — no state is both live and terminal-decline", () => {
+    for (const s of ["new", "accepted", "queued", "confirmed", "unconfirmed", "held", "open", "partially_filled"]) {
+      expect(isLiveOrderState(s)).toBe(true);
+      expect(isRejectedOrCanceledState(s)).toBe(false);
+    }
   });
 });
 
