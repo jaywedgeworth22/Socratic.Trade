@@ -395,6 +395,16 @@ As of 2026-07-08 (assignment-rule update).
   reload. Flagged to owner: strategy prompt/weights auto-save (soft call), guardrails kept review.
   Rollout: `docs/rollouts/2026-07-09-settings-autosave.md`.
 
+- **Fix mobile "Settings" crash inside Sheet (AG, S)** — PR #989 open (`ag/mobile-settings-sheet-focus-loop`).
+  Fixed "Maximum call stack size exceeded" caused by a focus-trap reentrancy loop when opening Settings
+  from the mobile More sheet: `app/console/ui/sheet.tsx` now guards `onFocusIn` with an `isFocusing`
+  reentrancy flag and an `isConnected` check. Bundles a small follow-on: dynamic credential-name UI
+  copy in the API-keys settings (SEC EDGAR shows "contact" instead of "key"). _(Merge-forward note
+  2026-07-09: the branch's third piece — `src/lib/red-team.ts` respecting an explicitly chosen
+  `redTeamLlmModel` — was superseded by the single-adversary consolidation (PR #1191), which removed
+  the Anthropic special-case entirely; the merge takes main's red-team.ts wholesale.)_ See
+  `docs/rollouts/2026-07-06-mobile-settings-sheet-focus-loop.md`,
+  `2026-07-06-red-team-model-override-fix.md` (superseded by #1191), `2026-07-06-credential-naming.md`.
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
   2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the

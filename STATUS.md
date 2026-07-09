@@ -1021,6 +1021,11 @@ still needs: secrets transfer (broker/LLM API keys), safe DB migration/cutover p
 Backups enabled in Coolify for that app specifically (the preview lanes deliberately skip
 Coolify Backups as not worth the 20% cost for fully-reproducible state; production is not
 reproducible and must not skip this). See `docs/rollouts/2026-07-06-coolify-migration.md`.
+## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override (SUPERSEDED by #1191)
+
+Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected. _(Merge-forward note 2026-07-09: superseded by PR #1191's single-adversary consolidation, which deleted the Anthropic special-case entirely — the explicit `redTeamLlmModel` is now the sole source via `resolveLlmEndpoint(role: "red")`. PR #989 no longer carries a `red-team.ts` diff.)_
+
+
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)
 
 Closeout of the same-day CLAUDE next-wave RAG retrieval-quality + corpus-integrity cluster that
@@ -1276,6 +1281,11 @@ suite at land time: `npx tsc --noEmit` clean, `npm test` 2711/2711 passed across
 `npm run build` clean (confirmed via the PR's `verify`/`verify-hosted` CI logs).
 
 See `docs/rollouts/2026-07-06-typed-retrieval-status.md` for the full note.
+## 2026-07-06 — Mobile Settings Crash Fix (AG)
+Fixed "Maximum call stack size exceeded" bug caused by a focus trap race condition when navigating to settings from the More sheet menu on mobile. Added a re-entrancy guard and `isConnected` check to `app/console/ui/sheet.tsx`. All tests and Next.js build passed locally. See `docs/rollouts/2026-07-06-mobile-settings-sheet-focus-loop.md`.
+
+## 2026-07-06 — Congress Score Eval UI Wiring (AG)
+Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
 
 ## 2026-07-05 — CLAUDE backlog train: 4 PRs merged (#816/#819/#820/#822)
 
@@ -7106,6 +7116,17 @@ None. Phase 2 backend optimization is complete.
   27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
 - 2026-07-06: **Console Tooltip Primitive** — replaced disparate, buggy tooltip logic in the console with a unified, accessible, polymorphic Tooltip primitive built on motion/react. See docs/rollouts/2026-07-06-console-tooltip-primitive.md.
 - 2026-07-06: **Advisory Audit Rollout** — rendered the new advisory audit kinds (`deterministic_bear_veto`, `red_team_veto_overridden`, `prompt_injection_suspected`, `evidence_age_anomaly`) in the console Alert Center and activity feed. See docs/rollouts/2026-07-06-advisory-audit-rollout.md.
+- 2026-07-06: **Global Application Font Settings** — updated the settings page to allow the user
+  to select a global application-wide font in addition to a specific text box font. Separated
+  the app font configuration into its own `appFont` property in `localStorage` and injected
+  it via a new CSS variable `--con-app-font` that targets the `.console-root` class.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-global-app-font.md`.
+- 2026-07-06: **Credential Naming UI Fix** — updated the API keys settings page to dynamically
+  use appropriate credential terminology ("key" vs "contact") based on the catalog entry.
+  This ensures accurate text for the SEC EDGAR User-Agent which expects a contact string.
+  Verified with `npx tsc --noEmit`, `npm run lint`, and `npm run build`.
+  See `docs/rollouts/2026-07-06-credential-naming.md`.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
