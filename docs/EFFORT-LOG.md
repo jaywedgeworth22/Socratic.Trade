@@ -335,7 +335,7 @@ As of 2026-07-08 (assignment-rule update).
   (now a filed follow-up post-#1191). Follow-up 2026-07-09: see "Picker copy" row below —
   owner asked to drop "Model" from these labels and disambiguate the AI-review panel.
 - **Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch
-  `monet/picker-copy-strategist`) — COMPLETED, PR pending merge.** Owner-directed pure
+  `monet/picker-copy-strategist`) — ✅ COMPLETED via PR #1202 (auto-merge armed).** Owner-directed pure
   display-copy follow-up to PR #1109 above: drops "Model" from both picker labels
   ("Proposer Model"→"Proposer", "Reviewer Model"→"Reviewer") in
   `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. This collided with
