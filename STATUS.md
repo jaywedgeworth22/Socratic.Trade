@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Autonomous actions: relative timestamps top-right (MONET, branch `monet/autonomous-actions-timing-3676f7`)
+Owner ask: the Home "Autonomous actions" rows show relative timing top-right ("15m ago") like
+Journal entries. `DecisionRowData.at` wired from all three row sources (Socratic decision / run /
+pending proposal `createdAt`), rendered with the shared `Ago` primitive (hover = exact time) in
+the Journal's faint/xs treatment. Verified live with an injected 15-min-old row ("15m ago"
+rendered, correct dateTime). Gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-autonomous-actions-timing.md`.
+
 ## 2026-07-09 — Settings auto-save everywhere (MONET)
 Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
 section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
