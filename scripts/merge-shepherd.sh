@@ -50,6 +50,7 @@ for num in $nums; do
   # conclusion (SUCCESS/FAILURE) for a finished check; else status (IN_PROGRESS/QUEUED)
   # for a running one; else state (PENDING) for a commit-status; else NONE = no check at all.
   verify=$(jq -r '[.statusCheckRollup[]? | select((.name // .context)=="verify")][0] | (.conclusion // .status // .state // "NONE")' <<<"$d")
+  nchecks=$(jq -r '[.statusCheckRollup[]?] | length' <<<"$d")   # any checks at all yet?
   reran=$(jq -r '([.labels[]?.name] | index("shepherd-reran")) != null' <<<"$d")
 
   if [ "$draft" = "true" ]; then row DRAFT "$num" "$title"; continue; fi
@@ -61,7 +62,8 @@ for num in $nums; do
     case "$verify" in
       SUCCESS) row WOULD-MERGE "$num" "$title" ;;
       FAILURE) row FAILING "$num" "$title  (verify failing; reran=$reran)" ;;
-      NONE)    row WOULD-SYNC "$num" "$title  (no verify check — would re-sync to re-trigger CI)" ;;
+      NONE)    if [ "$nchecks" -gt 0 ]; then row WAITING "$num" "$title  (CI running; verify not posted yet)";
+               else row WOULD-SYNC "$num" "$title  (no CI at all — would re-sync to re-trigger it)"; fi ;;
       *)       row WAITING "$num" "$title  (verify=$verify — CI running)" ;;
     esac
     continue
@@ -97,8 +99,13 @@ for num in $nums; do
   elif [ "$verify" = "FAILURE" ]; then
     row FAILING "$num" "$title  (verify failing after a re-run — needs a human)"
 
+  elif [ "$verify" = "NONE" ] && [ "$nchecks" -gt 0 ]; then
+    # Other checks exist but the "verify" status hasn't posted yet → CI is mid-run.
+    # Do NOT re-sync (that would needlessly re-trigger CI) — just wait.
+    row WAITING "$num" "$title  (CI running; verify not posted yet)"
+
   elif [ "$verify" = "NONE" ]; then
-    # No verify check ever ran for this head (conflicting-never-dispatched, or an
+    # ZERO checks for this head — CI never dispatched (conflicting-never-run, or an
     # Actions dispatch hiccup). Re-sync to force a fresh CI run. This is #1166's case.
     if out=$(gh pr update-branch "$num" -R "$REPO" 2>&1); then
       row UNSTUCK "$num" "$title  (no CI had run — re-synced to re-trigger verify)"
