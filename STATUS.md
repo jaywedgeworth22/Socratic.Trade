@@ -95,6 +95,11 @@ retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push ho
 README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
 intact as the paper trail. Doc/infra-only, no runtime surface.
 
+## 2026-07-08 — Centralized Congress API client factory (AG)
+Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_ANALYTICS_ENABLED` gating flags to avoid unnecessary API calls. Fixed type issues across `congress-analytics.ts` and `history.ts`. Verified: tests pass 2970/2970, `npm run build` completed successfully, and tsc is clean. PR via `land.sh`. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
+
+### 2026-07-09 — Codex autofix on PR #1104
+Addressed two Codex review findings: (1) corrected the analytics flag name in docs from the non-existent `CONGRESS_TRADE_ANALYTICS_ENABLED` to the implemented `CONGRESS_ANALYTICS_ENABLED` (STATUS.md, EFFORT-LOG, rollout note); (2) removed a synthetic per-symbol `logApiHealth({ ok: false })` in `data-providers.ts` `CongressTradeEnrichmentProvider.enrich` that double-counted `congress.trade` failures the shared client's fetch wrapper already logs — prevented the enrichment circuit breaker tripping early. `transportError` retained for negative-cache gating only. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
 ## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
 Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
 opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized
