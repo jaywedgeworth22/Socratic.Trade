@@ -3,6 +3,18 @@ import type { ModelGroup } from "./model-picker";
 export const DEFAULT_LLM_MODEL = "gpt-5.4-mini";
 export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
 
+/**
+ * Sentinel model id meaning "rotate through all eligible curated models — a different one each
+ * run" (testing option for accruing comparative live history across models; intended for the
+ * paper/test accounts). Persisted as-is on policy.llmModel / policy.redTeamLlmModel; the strategy
+ * run substitutes the concrete round-robin pick at run start (src/lib/model-rotation.ts — models
+ * with no resolvable provider key are skipped). Keep the literal in sync with
+ * LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts and the console-local copy in
+ * app/console/settings/models.tsx.
+ */
+export const ROTATE_ALL_MODELS_ID = "__rotate__";
+export const ROTATE_ALL_MODELS_LABEL = "Rotate all models (testing)";
+
 // Label + recommendation conventions (owner rulings 2026-07-08; keep in sync with
 // app/console/settings/models.tsx): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
 // both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label).

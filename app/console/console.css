@@ -31,7 +31,9 @@
   --con-muted: #46556b;   /* ≥7:1 on surface */
   --con-faint: #566478;   /* ≥5.5:1 on surface */
 
-  --con-accent: #12616f;
+  /* Sourced from the shared --brand-accent token (app/globals.css) — console
+     is the canonical value the whole app's brand accent derives from. */
+  --con-accent: var(--brand-accent);
   --con-accent-contrast: #ffffff;
   --con-pos: #157f4e;
   --con-pos-contrast: #ffffff;
@@ -39,6 +41,8 @@
   --con-neg-contrast: #ffffff;
   --con-warn: #9a6209;
   --con-warn-contrast: #ffffff;
+  --con-info: #0891b2;
+  --con-info-contrast: #ffffff;
 
   /* Money-reality tones (reinforcement only — the word is load-bearing) */
   --con-none: #64748b;
@@ -60,6 +64,8 @@
   --con-neg-border: color-mix(in oklab, var(--con-neg) 50%, transparent);
   --con-warn-soft: color-mix(in oklab, var(--con-warn) 12%, transparent);
   --con-warn-border: color-mix(in oklab, var(--con-warn) 45%, transparent);
+  --con-info-soft: color-mix(in oklab, var(--con-info) 12%, transparent);
+  --con-info-border: color-mix(in oklab, var(--con-info) 45%, transparent);
   --con-none-soft: color-mix(in oklab, var(--con-none) 10%, transparent);
   --con-none-border: color-mix(in oklab, var(--con-none) 45%, transparent);
   --con-paper-soft: color-mix(in oklab, var(--con-paper) 10%, transparent);
@@ -67,9 +73,11 @@
   --con-live-soft: color-mix(in oklab, var(--con-live) 11%, transparent);
   --con-live-border: color-mix(in oklab, var(--con-live) 55%, transparent);
 
-  /* Shape */
-  --con-radius: 12px;
-  --con-radius-sm: 8px;
+  /* Shape — canonical shared with ui via --radius-card/--radius-control
+     (app/globals.css). Console's own values ARE the canon; this just points
+     back at the shared vars so both systems stay in lockstep. */
+  --con-radius: var(--radius-card);
+  --con-radius-sm: var(--radius-control);
 
   /* Type scale */
   --con-fs-xs: 11px;
@@ -133,7 +141,7 @@
   --con-muted: #a5b2c4;
   --con-faint: #8492a6;
 
-  --con-accent: #58c7d3;
+  --con-accent: var(--brand-accent-dark);
   --con-accent-contrast: #071316;
   --con-pos: #37c58c;
   --con-pos-contrast: #04170e;
@@ -141,6 +149,8 @@
   --con-neg-contrast: #1c0605;
   --con-warn: #e5aa4b;
   --con-warn-contrast: #201302;
+  --con-info: #22d3ee;
+  --con-info-contrast: #061f26;
 
   --con-none: #94a3b8;
   --con-paper: #98a3ff;
@@ -168,7 +178,7 @@
     --con-muted: #a5b2c4;
     --con-faint: #8492a6;
 
-    --con-accent: #58c7d3;
+    --con-accent: var(--brand-accent-dark);
     --con-accent-contrast: #071316;
     --con-pos: #37c58c;
     --con-pos-contrast: #04170e;
@@ -176,6 +186,8 @@
     --con-neg-contrast: #1c0605;
     --con-warn: #e5aa4b;
     --con-warn-contrast: #201302;
+    --con-info: #22d3ee;
+    --con-info-contrast: #061f26;
 
     --con-none: #94a3b8;
     --con-paper: #98a3ff;
@@ -232,10 +244,11 @@
   gap: 16px;
   align-items: stretch;
   border: 1px solid var(--con-line);
+  /* Flat surface + accent left-rule, not a gradient wash (2026-07-08 UI-audit,
+     Package G item 4) — the gradient read as decoration without meaning. */
+  border-left: 3px solid var(--con-accent);
   border-radius: var(--con-radius);
-  background:
-    linear-gradient(135deg, color-mix(in oklab, var(--con-accent) 10%, transparent), transparent 46%),
-    var(--con-surface);
+  background: var(--con-surface);
   box-shadow: var(--con-shadow);
   padding: 18px;
 }
@@ -451,11 +464,31 @@
   font-size: var(--con-fs-xs);
 }
 
-/* The header run-state control: Start/Resume when paused, STOP when stopping. */
+/* Coarse-pointer (touch) 44px minimum target — WCAG 2.5.8/2.5.5. Mirrors the
+   `max-sm:min-h-11` floor app/ui/primitives.tsx already bakes in. Covers every
+   .con-btn variant (incl. .con-btn-sm) and the header run-state control below;
+   other chrome triggers (ScopeSelector/StateChip/UserMenu buttons in
+   chrome.tsx) are raw Tailwind utilities with no class hook here — see
+   followUps. */
+@media (pointer: coarse) {
+  .con-btn,
+  .con-start-btn,
+  .con-stop-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* The header run-state control: Start/Resume when paused, STOP when stopping.
+   justify-content + flex-shrink matter: in the crowded phone bar the button was
+   getting flex-squeezed and its start-aligned content read as "STOP shoved
+   right with a missing symbol on the left" (owner report). */
 .con-stop-btn,
 .con-start-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   gap: 6px;
   border-radius: var(--con-radius-sm);
   font-weight: 700;
@@ -482,6 +515,26 @@
   background: color-mix(in oklab, var(--con-pos) 18%, transparent);
 }
 
+/* Profile menu: slide-down entrance for the header dropdown (chrome.tsx UserMenu). */
+@keyframes con-menu-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.con-menu-drop {
+  animation: con-menu-drop 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .con-menu-drop {
+    animation: none;
+  }
+}
+
 /* ── Chips ── */
 .con-chip {
   display: inline-flex;
@@ -500,6 +553,7 @@
 .con-chip-pos { border-color: var(--con-pos-border); color: var(--con-pos); background: var(--con-pos-soft); }
 .con-chip-neg { border-color: var(--con-neg-border); color: var(--con-neg); background: var(--con-neg-soft); }
 .con-chip-warn { border-color: var(--con-warn-border); color: var(--con-warn); background: var(--con-warn-soft); }
+.con-chip-info { border-color: var(--con-info-border); color: var(--con-info); background: var(--con-info-soft); }
 .con-chip-none { border-color: var(--con-none-border); color: var(--con-none); background: var(--con-none-soft); }
 .con-chip-paper { border-color: var(--con-paper-border); color: var(--con-paper); background: var(--con-paper-soft); }
 .con-chip-live { border-color: var(--con-accent-border); color: var(--con-accent); background: var(--con-accent-soft); }
@@ -762,6 +816,11 @@
   overflow-y: auto;
   border-radius: var(--con-radius);
 }
+/* Opt-in wider variant for dialogs whose content needs more horizontal room
+ * (e.g. a multi-column table) — desktop only, see mobile override below. */
+.con-sheet-wide {
+  width: min(920px, calc(100vw - 32px));
+}
 @media (max-width: 767px) {
   .con-sheet {
     top: auto;
@@ -776,6 +835,9 @@
     border-right: none;
     border-bottom: none;
     padding-bottom: env(safe-area-inset-bottom);
+  }
+  .con-sheet-wide {
+    width: 100%;
   }
 }
 .con-sheet-live {

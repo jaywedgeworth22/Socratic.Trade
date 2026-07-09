@@ -19,7 +19,7 @@ import {
 } from "../lib/api";
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
-import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
+import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
@@ -47,6 +47,8 @@ type RedTeamTrigger = NonNullable<NonNullable<TradeProposal["redTeamVerdict"]>["
 
 function redTeamTriggerMeta(trigger?: RedTeamTrigger) {
   switch (trigger) {
+    case "all_openings":
+      return { label: "risk-adding opening", title: "Every risk-adding opening gets the single Red Team review at its finalized size — coverage is structural, not conviction-gated." };
     case "confidence":
       return { label: "confidence", title: "The proposer confidence cleared the configured Red Team conviction threshold." };
     case "notional":
@@ -98,7 +100,10 @@ function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined)
 }
 
 function evidenceLabel(item: SocraticRagAttribution): string {
-  return [item.docType, item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") || "retrieved evidence";
+  return (
+    [plainLabel(item.docType), item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") ||
+    "Retrieved evidence"
+  );
 }
 
 function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
@@ -141,8 +146,12 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // (the policy-derived value can be stale if the owner swapped models since proposing).
   const greenModelPersisted = p.proposedByModel?.trim() || null;
   const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
-  const greenModel = greenModelPersisted ?? greenModelConfigured ?? DEFAULT_GREEN_MODEL_ID;
-  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || greenModel;
+  // No-defaults directive: never display a made-up default model as if it served this proposal.
+  const greenModel = greenModelPersisted ?? greenModelConfigured ?? "unknown";
+  // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
+  // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
+  // predate per-proposal model stamping on a policy whose Red model was since cleared.
+  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || "unknown";
   // FAILED review: attribute honestly — never blame a fallback model that provably never ran.
   const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
   const redFailureModel =
@@ -162,7 +171,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
     } else if (result.status === "blocked") {
       toast.push("warn", "Blocked at approval time", (result.reasons ?? []).join(" ") || "The policy gate re-ran and refused it.");
     } else {
-      toast.push("info", `Result: ${result.status}`, (result.reasons ?? []).join(" ") || undefined);
+      toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
     }
   };
 
@@ -254,7 +263,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
-              {p.tradeThesisTag}
+              {thesisTagLabel(p.tradeThesisTag)}
             </Chip>
             <span className="cursor-default text-[color:var(--con-faint)]" title="The market regime the strategist saw when it proposed this trade.">
               Regime at proposal: {p.entryMarketRegime || EM_DASH}
@@ -272,14 +281,14 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           <p className="mt-2 leading-relaxed text-[color:var(--con-muted)]">{p.rationale}</p>
         </div>
 
-        {/* Red team: the adversarial (bear) model + its verdict — including the FAILURE state,
+        {/* Red team: the single adversarial reviewer + its verdict — including the FAILURE state,
             so a review that could not run is never visually identical to one that never triggered. */}
         {p.redTeamVerdict && (
           <div className="con-team con-team-red">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div
                 className="con-card-title flex items-center gap-1.5"
-                title="Red team = the adversarial reviewer (bear): a model tasked with attacking the proposal before you see it."
+                title="Red team = the single adversarial reviewer: a model tasked with fact-checking and attacking the finalized trade before you see it."
               >
                 <Swords size={12} /> Devil&apos;s advocate (red team)
               </div>
@@ -297,7 +306,11 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--con-fs-xs)]">
               {p.redTeamVerdict.available ? (
                 <span className="font-semibold" style={{ color: p.redTeamVerdict.rejected ? "var(--con-neg)" : "var(--con-pos)" }}>
-                  {p.redTeamVerdict.rejected ? "Verdict: rejected" : "Verdict: survived review"}
+                  {p.redTeamVerdict.verdict === "approve-at-half"
+                    ? "Verdict: approved at HALF size"
+                    : p.redTeamVerdict.rejected
+                      ? "Verdict: rejected"
+                      : "Verdict: survived review"}
                 </span>
               ) : (
                 <span className="font-semibold" style={{ color: "var(--con-warn)" }} title={redFailure.title}>
@@ -319,6 +332,25 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           >
             No adversarial review ran for this proposal — below every dissent trigger.
           </p>
+        )}
+
+        {/* §5.1 / R19 — the review could NOT run: a pending card that exists BECAUSE the Red Team was
+            unavailable must be distinguishable from a routine manual approval. Reads the persisted
+            per-proposal verdict first, with the stored decision flag as the legacy/defensive fallback. */}
+        {((p.redTeamVerdict && !p.redTeamVerdict.available) || pending.decision.adversaryUnavailable === true) && (
+          <div
+            className="rounded-lg border border-[color:var(--con-warn-border)] bg-[color:var(--con-warn-soft)] p-3"
+            title="The adversarial (red team) review was required but could not run, so this trade was routed to you unreviewed — you are the only reviewer it will get."
+          >
+            <div className="con-card-title flex items-center gap-1.5" style={{ color: "var(--con-warn)" }}>
+              <Swords size={12} /> Red Team review unavailable
+              {p.redTeamVerdict?.failureKind ? ` (${p.redTeamVerdict.failureKind.replace(/_/g, " ")})` : ""}
+            </div>
+            <p className="mt-1.5 leading-relaxed text-[color:var(--con-muted)]">
+              {p.redTeamVerdict?.reason ?? pending.decision.adversaryUnavailableReason ?? "The adversarial review could not run for this proposal."}
+              {" "}No model critiqued this trade — review it as the sole adversary.
+            </p>
+          </div>
         )}
 
         {/* Provenance + sizing receipt */}

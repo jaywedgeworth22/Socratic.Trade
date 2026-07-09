@@ -19,7 +19,7 @@ import type { FundamentalRow, AnalystRow } from "@jaywedgeworth22/congress-tradi
 export type AppAFundamentalRow = FundamentalRow & { source?: string | null };
 export type AppAAnalystRow = AnalystRow & { source?: string | null };
 
-import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
+import { resolveAlpacaMarketData, resolveApiKeyWithSource, resolveAlphaVantageKeyPool, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
 import { recordProviderCall } from "./usage-monitor-push";
@@ -29,7 +29,8 @@ import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
-import { withProviderLimit, scrubProviderErrorText, appendErrorCause } from "./provider-rate-limit";
+import { withProviderLimit, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
+import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -683,7 +684,7 @@ function withHealthLane(provider: MarketEnrichmentProvider, source: ApiKeySource
 export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider {
   const providers: MarketEnrichmentProvider[] = [];
   const finnhub = resolveApiKeyWithSource("finnhub", userId);
-  const alphaVantage = resolveApiKeyWithSource("alphavantage", userId);
+  const alphaVantage = resolveAlphaVantageKeyPool(userId);
   const fmp = resolveApiKeyWithSource("fmp", userId);
   const fintech = resolveApiKeyWithSource("fintechstudios", userId);
   const intrinio = resolveApiKeyWithSource("intrinio", userId);
@@ -728,7 +729,7 @@ export function getEnrichmentProvider(userId?: string): MarketEnrichmentProvider
   // Alpaca's free Benzinga news (one batched call covers all scan symbols) — placed ahead of
   // Alpha Vantage so it supplies headlines/sentiment, demoting AV's redundant NEWS_SENTIMENT.
   if (alpacaData.apiKey) providers.push(withHealthLane(new AlpacaNewsEnrichmentProvider(alpacaData.apiKey, alpacaData.secretKey || undefined, alpacaData.source, userId), alpacaData.source));
-  if (alphaVantage.key) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.key, alphaVantage.source, userId), alphaVantage.source));
+  if (alphaVantage.keys.length > 0) providers.push(withHealthLane(new AlphaVantageEnrichmentProvider(alphaVantage.keys, alphaVantage.source, userId), alphaVantage.source));
   if (fmp.key) providers.push(withHealthLane(new FmpEnrichmentProvider(fmp.key, fmp.source, userId), fmp.source));
   // Massive REST: REAL second short-interest source (FINRA short interest / free float) for the
   // Yahoo-vs-Massive disagreement cross-check. Supplies ONLY the carrier shortPercentOfFloatSecondary
@@ -2480,14 +2481,56 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
   private readonly base = "https://www.alphavantage.co/query";
   private readonly scope: CacheScope;
   private readonly keySource: ApiKeySource;
+  private readonly pool: AlphaVantageKeyPool;
+  // Guards the all-exhausted health-log row so ONE enrich() call across many symbol chunks
+  // logs at most once, not once per chunk/symbol. Reset at the top of every enrich() call.
+  private allExhaustedLogged = false;
 
+  /**
+   * `apiKeyOrKeys` accepts either a single key — kept for backward compatibility with existing
+   * single-key call sites/tests (e.g. `new AlphaVantageEnrichmentProvider("test-key")`) — or the
+   * full key list from `resolveAlphaVantageKeyPool`. `pool` is injectable for tests (each test
+   * constructs and passes its own instance so exhaustion state never leaks between tests). When
+   * omitted (the production path, e.g. `getEnrichmentProvider()`), the pool is resolved via
+   * `getPoolForKeys(keys)` (alpha-vantage-key-pool.ts): a registry keyed by the exact SET of keys,
+   * so a per-user stored key and the scheduler's env-key pool get DISTINCT, coexisting pool
+   * instances instead of one construction's key set wholesale-replacing another's rotation/
+   * exhaustion state on a single shared singleton (see `getPoolForKeys`'s doc comment for the
+   * incident this replaces). Two constructions with the SAME key set still share one pool
+   * instance, so `AlphaVantageKeyPool.configure`'s idempotent value-diff (see its own doc comment)
+   * keeps exhaustion memory intact across the per-scan provider reconstruction.
+   */
   constructor(
-    private readonly apiKey: string,
+    apiKeyOrKeys: string | string[],
     keySource: ApiKeySource = "env",
-    private readonly userId?: string
+    private readonly userId?: string,
+    pool?: AlphaVantageKeyPool
   ) {
     this.scope = cacheScopeForKeySource(keySource, userId);
     this.keySource = keySource;
+    const keys = Array.isArray(apiKeyOrKeys) ? apiKeyOrKeys : [apiKeyOrKeys];
+    if (pool) {
+      this.pool = pool;
+      this.pool.configure(keys);
+    } else {
+      this.pool = getPoolForKeys(keys);
+    }
+  }
+
+  /** Logs the "entire key pool exhausted" health row AT MOST ONCE per `enrich()` call — shared by
+   *  both the once-per-chunk gate and the per-symbol dispatch-time gate below (see their call
+   *  sites for why exhaustion can newly appear at either checkpoint). */
+  private logAllExhaustedOnce(): void {
+    if (this.allExhaustedLogged) return;
+    this.allExhaustedLogged = true;
+    const total = this.pool.size();
+    logApiHealth({
+      service: this.name,
+      ok: false,
+      errorText: `Alpha Vantage: entire key pool exhausted for today (${total}/${total} keys hit the 25/day cap)`,
+      keySource: this.keySource,
+      userId: this.userId
+    });
   }
 
   async enrich(symbols: string[]): Promise<Record<string, SymbolEnrichment>> {
@@ -2504,47 +2547,102 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
       else misses.push(symbol);
     }
 
+    this.allExhaustedLogged = false;
+
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
+      // All-exhausted fast-fail, checked once per CONCURRENCY-sized chunk BEFORE dispatching any
+      // network call: a scan that finds every pool key already capped skips the remaining
+      // per-symbol fetch loop entirely instead of paying N x 1.1s of guaranteed-fail serial-paced
+      // latency and writing N near-identical api_health_log rows per scan cycle — the exact prod
+      // pattern this pool is meant to fix (2026-07-09 grounding: 9-19 wasted failures/minute).
+      if (this.pool.allExhausted(now)) {
+        this.logAllExhaustedOnce();
+        for (let j = i; j < misses.length; j++) result[misses[j]] = {};
+        break;
+      }
+
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
+          let dispatchKey: string | undefined;
+          let keyIndex = 0;
           try {
-            const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${this.apiKey}`;
             // deferSuccessLog: true — don't mark 200 healthy until body validates;
             // Alpha Vantage embeds quota/error messages in HTTP 200 responses. Free tier is
             // ~1 req/sec — gate through the shared per-provider pacer (provider-rate-limit.ts)
-            // so this stays strictly serial instead of bursting CONCURRENCY-wide. The
-            // AbortController/timeout is armed INSIDE the pacer callback so the 6s HTTP
-            // timeout starts counting at actual dispatch time, not when this call joins the
-            // (strictly-serial, so potentially long) queue.
+            // so this stays strictly serial instead of bursting CONCURRENCY-wide. The pool's
+            // CURRENT key is read INSIDE the pacer callback (as close to actual dispatch time
+            // as possible, not captured once at construction) so a rotation triggered by an
+            // earlier symbol in the same chunk/batch is honored by later symbols once the
+            // strictly-serial pacer gets to them. The AbortController/timeout is armed in the
+            // same callback so the 6s HTTP timeout starts counting at actual dispatch time, not
+            // when this call joins the (strictly-serial, so potentially long) queue.
             const response = await withProviderLimit(this.name, async () => {
+              // Per-symbol re-check AT DISPATCH TIME (in addition to the once-per-chunk gate
+              // above): every symbol in this CONCURRENCY-sized chunk starts together, but the
+              // alpha-vantage pacer forces effectively serial dispatch (concurrency: 1 in
+              // provider-rate-limit.ts's HARD_DEFAULTS) — so by the time THIS symbol's turn to
+              // actually reach the network arrives, an earlier symbol in the SAME chunk may have
+              // just exhausted the last live key. Without this check, `currentKey()` below would
+              // still happily hand back the earliest-to-recover (but still dead) key — it only
+              // returns undefined for an empty pool, never for an all-exhausted one — so every
+              // remaining queued symbol in the chunk would dispatch one more guaranteed-fail call.
+              if (this.pool.allExhausted(Date.now())) {
+                this.logAllExhaustedOnce();
+                throw new Error("Alpha Vantage: key pool exhausted");
+              }
+              const current = this.pool.currentKey(Date.now());
+              // Shouldn't happen — the allExhausted() gate above already skips this chunk when
+              // every key is capped — but never dispatch a request with no key to attach.
+              if (!current) throw new Error("Alpha Vantage: key pool exhausted");
+              dispatchKey = current.key;
+              keyIndex = current.index;
+              const url = `${this.base}?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${dispatchKey}`;
               const controller = new AbortController();
               const timeout = setTimeout(() => controller.abort(), 6000);
               try {
-                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, apiKey: this.apiKey });
+                return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, apiKey: dispatchKey });
               } finally {
                 clearTimeout(timeout);
               }
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const payload = await response.json() as Record<string, unknown>;
+            // Non-secret key-index tag for health-log visibility (see connections-health / the
+            // ops snapshot) — only shown once the pool actually has >1 key, so a single-key
+            // deployment's log text is byte-identical to before this feature existed.
+            const keyTag = this.pool.size() > 1 ? ` [key ${keyIndex + 1}/${this.pool.size()}]` : "";
 
             if (payload && (payload.Note || payload.Information || payload["Error Message"])) {
+              const rawMsg = String(payload.Note || payload.Information || payload["Error Message"]);
               // Alpha Vantage's own quota/error text has been observed echoing the caller's
-              // API key (e.g. referencing the request URL) — scrub before it ever reaches
-              // api_health_log / the ops snapshot.
-              const msg = scrubProviderErrorText(String(payload.Note || payload.Information || payload["Error Message"]), this.apiKey);
-              logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error: ${msg}`, keySource: this.keySource, userId: this.userId });
+              // API key (e.g. referencing the request URL) — scrub every pool key (not just the
+              // one that dispatched this call) before it ever reaches api_health_log / the ops
+              // snapshot.
+              const msg = scrubProviderErrorTextForPool(rawMsg, this.pool.allKeys());
+              // Discriminator: ONLY the genuine daily-cap message ("detected your api key")
+              // means this key is dead until the next reset. The transient per-second burst
+              // warning shares the same "25 requests per day" upsell text but never contains
+              // that phrase — leave the sticky key in place for it; the existing 1.1s pacer is
+              // what actually addresses that case.
+              if (dispatchKey && isAlphaVantageDailyCapMessage(rawMsg)) {
+                this.pool.markExhausted(dispatchKey);
+              }
+              logApiHealth({ service: this.name, ok: false, errorText: `Alpha Vantage API warning/error${keyTag}: ${msg}`, keySource: this.keySource, userId: this.userId });
               throw new Error(`Alpha Vantage API warning/error: ${msg}`);
             }
-            logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
+            // Same [key i/N] tag on the success row too (stored in errorText, the only free-form
+            // field logApiHealth offers) — for symmetry when diagnosing which key served a given
+            // request. logApiHealth only feeds api_health_error_patterns when !ok, so this never
+            // creates a spurious error-pattern row.
+            logApiHealth({ service: this.name, ok: true, errorText: keyTag ? `key ${keyIndex + 1}/${this.pool.size()}` : undefined, keySource: this.keySource, userId: this.userId });
 
             let sentiment: number | undefined;
             let headlines: string[] = [];
 
             if (payload && Array.isArray(payload.feed)) {
               const feed = payload.feed as Array<Record<string, unknown>>;
-              
+
               // Extract headlines
               headlines = feed
                 .slice(0, 5)
@@ -2554,7 +2652,7 @@ export class AlphaVantageEnrichmentProvider implements MarketEnrichmentProvider 
               // Calculate average sentiment score from ticker_sentiment
               let scoreSum = 0;
               let scoreCount = 0;
-              
+
               for (const item of feed.slice(0, 20)) { // look at top 20 news items
                 const tickerArr = Array.isArray(item.ticker_sentiment) ? item.ticker_sentiment : [];
                 const targetTicker = tickerArr.find((t: { ticker?: string }) => t.ticker === symbol);
@@ -3086,18 +3184,24 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
       const batch = misses.slice(i, i + BATCH_SIZE);
       try {
         const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        let raw: unknown;
-        try {
-          // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
-        // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
-          const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          raw = await response.json();
-        } finally {
-          clearTimeout(timeout);
-        }
+        // Free Basic tier is 8 credits/min — gate through the shared per-provider pacer
+        // (provider-rate-limit.ts) instead of firing one request per BATCH_SIZE chunk back to
+        // back. The AbortController/timeout is armed INSIDE the pacer callback so the 10s HTTP
+        // timeout starts counting at actual dispatch time, not when this call joins the
+        // (strictly-serial) queue — otherwise queue wait eats into the timeout.
+        const response = await withProviderLimit(this.name, async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
+          try {
+            // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
+            // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
+            return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
+          } finally {
+            clearTimeout(timeout);
+          }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw: unknown = await response.json();
 
         if (!raw || typeof raw !== "object") continue;
 

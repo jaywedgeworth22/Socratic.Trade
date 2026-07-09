@@ -12,7 +12,7 @@
  *  - A failed refresh is a non-blocking notice; the last good scan stays up.
  *  - Missing data renders as "—"; P/E's "n/a" means negative/zero earnings. */
 
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { RefreshCw } from "lucide-react";
 import type { MarketScan } from "@/lib/types";
 import type { CongressScoreVerdictRead } from "@/lib/congress-score-gate";
@@ -20,6 +20,7 @@ import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty, type ChipTone } from "../ui/primitives";
 import { useToast } from "../ui/toast";
@@ -42,6 +43,7 @@ export default function ScanPage() {
     : null;
   const live = useLiveScan(scopeKey);
   const [tab, setTab] = useState<Tab>("scan");
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
 
   // Validate the run-captured scan before trusting it — historical/compact
   // strategy_run audits can carry a partial shape the table can't render.
@@ -68,8 +70,30 @@ export default function ScanPage() {
 
   const isFresh = scan !== null && scan === live.scan;
 
+  const tabDefs = [
+    {
+      id: "scan" as Tab,
+      label: scan ? `Market scan (${scan.topCandidates.length})` : "Market scan",
+      title: "Screened and scored candidates from the market scan, with per-field source attribution."
+    },
+    {
+      id: "smart" as Tab,
+      label: smartCount > 0 ? `Smart money (${smartCount})` : "Smart money",
+      title: "Recently disclosed congressional trades and insider (Form 4) activity — everything on file, not just scan overlaps."
+    }
+  ] as const;
+
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const ids = tabDefs.map((t) => t.id);
+    const next = ids[(ids.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1) + ids.length) % ids.length];
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       {/* Header: title · freshness · last-scanned · refresh */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Scan</h1>
@@ -108,23 +132,23 @@ export default function ScanPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 self-start rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">
-        {(
-          [
-            {
-              id: "scan" as Tab,
-              label: scan ? `Market scan (${scan.topCandidates.length})` : "Market scan",
-              title: "Screened and scored candidates from the market scan, with per-field source attribution."
-            },
-            {
-              id: "smart" as Tab,
-              label: smartCount > 0 ? `Smart money (${smartCount})` : "Smart money",
-              title: "Recently disclosed congressional trades and insider (Form 4) activity — everything on file, not just scan overlaps."
-            }
-          ] as const
-        ).map((t) => (
+      <div
+        role="tablist"
+        aria-label="Scan views"
+        onKeyDown={onTabsKeyDown}
+        className="flex gap-1 self-start rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1"
+      >
+        {tabDefs.map((t) => (
           <button
             key={t.id}
+            ref={(el) => {
+              tabRefs.current[t.id] = el;
+            }}
+            id={`scan-tab-${t.id}`}
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls={`scan-tabpanel-${t.id}`}
+            tabIndex={tab === t.id ? 0 : -1}
             type="button"
             onClick={() => setTab(t.id)}
             title={t.title}
@@ -140,19 +164,21 @@ export default function ScanPage() {
         ))}
       </div>
 
-      {tab === "scan" ? (
-        <MarketScanTab
-          scan={scan}
-          refreshing={live.refreshing}
-          error={live.error}
-          onRefresh={() => void onRefresh()}
-          policyLimit={snapshot.policy.marketScanCandidateLimit}
-          congressScoreVerdict={snapshot.smartMoney?.congressScoreVerdict}
-          gatingEnabled={snapshot.policy.tuning?.congressGoNoGoGating ?? false}
-        />
-      ) : (
-        <SmartMoneySection snapshot={snapshot} />
-      )}
+      <div role="tabpanel" id={`scan-tabpanel-${tab}`} aria-labelledby={`scan-tab-${tab}`}>
+        {tab === "scan" ? (
+          <MarketScanTab
+            scan={scan}
+            refreshing={live.refreshing}
+            error={live.error}
+            onRefresh={() => void onRefresh()}
+            policyLimit={snapshot.policy.marketScanCandidateLimit}
+            congressScoreVerdict={snapshot.smartMoney?.congressScoreVerdict}
+            gatingEnabled={snapshot.policy.tuning?.congressGoNoGoGating ?? false}
+          />
+        ) : (
+          <SmartMoneySection snapshot={snapshot} />
+        )}
+      </div>
     </div>
   );
 }

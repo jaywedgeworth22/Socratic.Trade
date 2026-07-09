@@ -100,16 +100,17 @@ describe("usage-budget: evaluateBudgetForRun", () => {
     expect(decision.downgraded).toBe(false);
   });
 
-  it("enforces the effective default model when policy.llmModel is unset (F1)", async () => {
-    // No llmModel → resolves to the OpenAI default (gpt-5.4-mini), which HAS a cheaper tier.
+  it("makes NO decision when policy.llmModel is unset — the run fails closed before any spend (no-defaults)", async () => {
+    // No llmModel → resolves to "" (owner directive 2026-07-07: no model default for anything,
+    // ever); the run never sends an LLM request, so there is nothing to budget or downgrade.
     const decision = await budget.evaluateBudgetForRun(
       "local",
       {},
       { status: status([{ name: "openai", status: "exceeded" }]) }
     );
     expect(decision.skip).toBe(false);
-    expect(decision.downgraded).toBe(true);
-    expect(decision.llmModel).toBeTruthy();
+    expect(decision.downgraded).toBe(false);
+    expect(decision.llmModel).toBeUndefined();
   });
 
   it("does nothing when the LLM provider is under budget", async () => {

@@ -13,6 +13,7 @@ import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
@@ -24,6 +25,7 @@ import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
+import { LearningReviewCard } from "./learning-review";
 import { ModelsCard } from "./models";
 import { DataSharingCard } from "./sharing";
 
@@ -37,7 +39,8 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   proposal_withdrawn: "the strategist took an idea back",
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
-  budget_alert: "a usage budget threshold was crossed"
+  budget_alert: "a usage budget threshold was crossed",
+  learning_review: "the daily learning review posted its findings"
 };
 
 export default function SettingsPage() {
@@ -59,7 +62,7 @@ export default function SettingsPage() {
   if (!snapshot || !reality) return null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
       {/* ── THIS ACCOUNT ── */}
@@ -79,6 +82,9 @@ export default function SettingsPage() {
         {/* llmModel / redTeamLlmModel live on the account's policy — same
             save path (PUT /api/policy) as everything else account-scoped. */}
         <ModelsCard />
+        {/* learningReviewEnabled/Mode/Model are account-policy fields — same
+            PUT /api/policy save path; the review itself runs off the scheduler. */}
+        <LearningReviewCard />
         <AdvancedActionConfirmationCard />
       </section>
 

@@ -1,5 +1,7 @@
 import { DEFAULT_POLICY, DEFAULT_TAX_SETTINGS } from "@/lib/defaults";
-import { getPolicy, setPolicy, setStrategyPrompt } from "@/lib/db";
+import { getPolicy, setPolicy, setStrategyPrompt, resolveLlmCredential } from "@/lib/db";
+import { llmModelFamily } from "@/lib/llm-provider";
+import { isModelRotationSentinel } from "@/lib/llm-request";
 import { isIndexUniverse, normalizeIncludedIndices } from "@/lib/index-universes";
 import { getBrokerGateway } from "@/lib/broker";
 import { stripNullsDeep } from "@/lib/policy-null-stripping";
@@ -88,8 +90,13 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
-  if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
-    delete policy.redTeamLlmModel;
+  // Owner directive 2026-07-07: an empty/cleared Red model is NOT silently deleted (that used to mean
+  // "fall back to the Green model" — a fallback that no longer exists). A blank model is rejected by
+  // validatePolicy so the user must pick one; there is no default for anything.
+  // The learning review model, by contrast, is an OPTIONAL advisory feature: blanking it clears the
+  // selection (→ undefined, feature no-ops) rather than being a rejected mandatory pick.
+  if (typeof body.learningReviewModel === "string" && body.learningReviewModel.trim().length === 0) {
+    delete policy.learningReviewModel;
   }
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
@@ -106,7 +113,16 @@ export async function PUT(request: Request) {
     policy.llmModel !== current.llmModel ||
     policy.redTeamLlmModel !== current.redTeamLlmModel ||
     policy.llmReasoningEffort !== current.llmReasoningEffort;
-  const validationError = await validatePolicy(policy, userId, { enforceInteractiveReasoningRule: reasoningConfigChanged });
+  const validationError = await validatePolicy(policy, userId, {
+    enforceInteractiveReasoningRule: reasoningConfigChanged,
+    // Keyed-provider backstop gating mirrors the reasoning rule: validatePolicy runs against the
+    // MERGED policy, so enforcing it on every save would 400 EVERY unrelated write (notification
+    // prefs, caps, ...) for a user whose STORED model's provider key was since removed. A stored
+    // unkeyed model is already safe at run time (proposeTrades throws / the Red review fails
+    // closed); only a write that actually sets/changes that model must prove its provider is keyed.
+    enforceKeyedGreenModelRule: policy.llmModel !== current.llmModel,
+    enforceKeyedRedModelRule: policy.redTeamLlmModel !== current.redTeamLlmModel
+  });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
   return NextResponse.json(policy);
@@ -115,7 +131,11 @@ export async function PUT(request: Request) {
 async function validatePolicy(
   policy: TradingPolicy,
   userId: string,
-  options: { enforceInteractiveReasoningRule?: boolean } = {}
+  options: {
+    enforceInteractiveReasoningRule?: boolean;
+    enforceKeyedGreenModelRule?: boolean;
+    enforceKeyedRedModelRule?: boolean;
+  } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
   // bad data cannot block unrelated policy updates. Newly added custom Additional Watchlist symbols are
@@ -125,8 +145,32 @@ async function validatePolicy(
   if (policy.socraticOverrideMode !== undefined && !["off", "propose", "execute"].includes(policy.socraticOverrideMode)) return "socraticOverrideMode must be off, propose, or execute.";
   if (policy.socraticOverrideMaxPctOfNav !== undefined && (!Number.isFinite(policy.socraticOverrideMaxPctOfNav) || policy.socraticOverrideMaxPctOfNav <= 0 || policy.socraticOverrideMaxPctOfNav > 100)) return "socraticOverrideMaxPctOfNav must be between 0 and 100.";
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
+  // NOTE: any non-empty id ≤64 chars is deliberately valid here — this includes custom provider
+  // model ids AND the "__rotate__" rotation sentinel (LLM_MODEL_ROTATION_SENTINEL in
+  // src/lib/llm-request.ts; resolved to a concrete model at run start by src/lib/model-rotation.ts).
+  // Do not add a catalog whitelist.
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
+  if (policy.learningReviewEnabled !== undefined && typeof policy.learningReviewEnabled !== "boolean") return "learningReviewEnabled must be a boolean.";
+  if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
+  if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
+  // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
+  // (no defaults; only keyed providers are usable). Same-model-for-both is allowed — independence is
+  // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
+  // server-side backstop. (Mandatory "both models set" is enforced in the Settings UI and at strategy
+  // runtime via fail-closed on an unconfigured model.)
+  // The "__rotate__" rotation sentinel is EXEMPT from the keyed-provider check: it is not a concrete
+  // model with a single provider to key-check — rotation resolves it, per run, to a pick drawn ONLY
+  // from credential-resolvable models (src/lib/model-rotation.ts), so the keyed guarantee is upheld
+  // at serve time, not save time.
+  if ((options.enforceKeyedGreenModelRule ?? true) && typeof policy.llmModel === "string" && policy.llmModel.trim() && !isModelRotationSentinel(policy.llmModel)) {
+    const provider = llmModelFamily(policy.llmModel);
+    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.llmModel.trim()} as your strategist (green team) model.`;
+  }
+  if ((options.enforceKeyedRedModelRule ?? true) && typeof policy.redTeamLlmModel === "string" && policy.redTeamLlmModel.trim() && !isModelRotationSentinel(policy.redTeamLlmModel)) {
+    const provider = llmModelFamily(policy.redTeamLlmModel);
+    if (!resolveLlmCredential(provider, userId).key) return `Add an API key for ${provider} before selecting ${policy.redTeamLlmModel.trim()} as your reviewer (red team) model.`;
+  }
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
   }
@@ -211,13 +255,15 @@ async function validatePolicy(
     return "llmFallbackModels must be an array of model-id strings.";
   }
   if (policy.tuning) {
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, redTeamConvictionThreshold, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse } = policy.tuning;
+    // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
+    // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
+    // tuning JSON are ignored by the runtime; nothing to validate for it here.
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
     if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
     if (sizingFloorPct !== undefined && (!Number.isFinite(sizingFloorPct) || sizingFloorPct < 0 || sizingFloorPct > 100)) return "tuning.sizingFloorPct must be between 0 and 100.";
     if (sizingCeilingPct !== undefined && (!Number.isFinite(sizingCeilingPct) || sizingCeilingPct < 1 || sizingCeilingPct > 100)) return "tuning.sizingCeilingPct must be between 1 and 100.";
     if (sizingFloorPct !== undefined && sizingCeilingPct !== undefined && sizingFloorPct > sizingCeilingPct) return "tuning.sizingFloorPct must not exceed sizingCeilingPct.";
-    if (redTeamConvictionThreshold !== undefined && (!Number.isFinite(redTeamConvictionThreshold) || redTeamConvictionThreshold < 0 || redTeamConvictionThreshold > 100)) return "tuning.redTeamConvictionThreshold must be between 0 and 100.";
     if (crisisMaxOpeningExposurePct !== undefined && (!Number.isFinite(crisisMaxOpeningExposurePct) || crisisMaxOpeningExposurePct < 0 || crisisMaxOpeningExposurePct > 100)) return "tuning.crisisMaxOpeningExposurePct must be between 0 and 100.";
     if (bearVetoFcfYieldFloorPct !== undefined && (!Number.isFinite(bearVetoFcfYieldFloorPct) || bearVetoFcfYieldFloorPct < -100 || bearVetoFcfYieldFloorPct > 100)) return "tuning.bearVetoFcfYieldFloorPct must be between -100 and 100.";
     if (bearVetoDebtToEquityCeiling !== undefined && (!Number.isFinite(bearVetoDebtToEquityCeiling) || bearVetoDebtToEquityCeiling < 0)) return "tuning.bearVetoDebtToEquityCeiling must be a non-negative number.";

@@ -99,6 +99,31 @@ export function listAuditByKind(
   }));
 }
 
+/**
+ * Recent audit rows of ANY of `kinds` created at/after `sinceIso`, newest first. One IN-query
+ * (not N listAuditByKind calls) so the daily learning review's system-history digest — the set of
+ * execution-failure kinds it checks lesson evidence against — is a single cheap read.
+ */
+export function listAuditByKindsSince(
+  kinds: string[],
+  sinceIso: string,
+  userId: string = "local",
+  limit = 200
+): Array<{ id: string; createdAt: string; kind: string; payload: unknown }> {
+  if (kinds.length === 0) return [];
+  const placeholders = kinds.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT id, created_at, kind, payload
+       FROM audit_events
+       WHERE user_id = ? AND kind IN (${placeholders}) AND created_at >= ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+    )
+    .all(userId, ...kinds, sinceIso, limit) as Array<{ id: string; created_at: string; kind: string; payload: string }>;
+  return rows.map((row) => ({ id: row.id, createdAt: row.created_at, kind: row.kind, payload: JSON.parse(row.payload) }));
+}
+
 export interface SignalSnapshotAuditRow {
   rowid: number;
   id: string;
@@ -809,6 +834,19 @@ export function listLearnedContext(userId: string): LearnedContextRow[] {
 
 export function supersedeLearnedContext(oldId: string, newId: string): void {
   getDb().prepare("UPDATE learned_context SET superseded_by = ? WHERE id = ?").run(newId, oldId);
+}
+
+/**
+ * Set an expiry on a live learned_context row (the daily learning review's 'expire' verdict:
+ * "was true, no longer is"). Expired rows stop informing decisions via the existing
+ * `expiresAt` filter in listLearnedContextForDecision but remain in the table for provenance —
+ * softer than deleteLearnedContext. Ownership-scoped; returns false on a no-op.
+ */
+export function expireLearnedContext(id: string, userId: string, expiresAtIso: string = new Date().toISOString()): boolean {
+  const result = getDb()
+    .prepare("UPDATE learned_context SET expires_at = ? WHERE id = ? AND user_id = ?")
+    .run(expiresAtIso, id, userId);
+  return result.changes > 0;
 }
 
 /**
