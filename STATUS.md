@@ -59,6 +59,17 @@ through `calculatePnl` from the entry proposal's `proposedByModel`. Gate: tsc cl
 2997 tests green, route + both pages runtime-smoked on a dev server.
 See `docs/rollouts/2026-07-08-model-cost-drawer.md`.
 
+## 2026-07-09 — Mobile nav + drawer fixes, owner phone feedback wave 3 (MONET)
+Customizable mobile bottom tabs ("Tabs" chooser w/ pin/unpin, default Thesis/Proposals/
+Journal/Orders, localStorage, active-tab state, slide-up grouped menu w/ Core section);
+desktop rail regrouped to match (Settings last); symbol drawer now fetches live single-symbol
+enrichment via new GET /api/quote when the last scan didn't know the symbol (LRCX/AAPL report)
+with the note narrowed to scan-only facts; the "LRCXwasn't" spacing bug root-caused as a
+RUNTIME JSX whitespace drop and fixed; order cards compacted label-left/value-right; console
+page widths standardized on one shared max-w-5xl constant (2-col pages = documented
+exceptions). Gate green (tsc/lint/3109+ tests/build) + driven live desktop+mobile. See
+docs/rollouts/2026-07-09-mobile-nav-drawer-fixes.md.
+
 ## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
 All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
 requirement, implemented by 14 file-disjoint subagents across two workflow waves and

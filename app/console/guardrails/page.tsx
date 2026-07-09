@@ -15,6 +15,7 @@ import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
 import { activeConnectedAccount, deriveReality, deriveRiskUtilization, type UtilizationMeter } from "../lib/derive";
 import { fmtMoney, fmtMoneyWhole, fmtNum, fmtPct } from "../lib/format";
 import { isBlank } from "../lib/policy-diff";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Chip, Dash, Field, Meter, Select, TextInput } from "../ui/primitives";
@@ -193,7 +194,7 @@ export default function GuardrailsPage() {
   });
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Guardrails</h1>
         <Chip tone={reality.tone}>
