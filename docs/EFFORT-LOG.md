@@ -1451,7 +1451,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
 
-
+- **Retire duplicate API client fetchers/stream parsers (AG) — PLANNED 2026-07-06.** Retiring `congress-trade-client.ts`, `congress-trade-events.ts` and others in favor of `@jaywedgeworth22/congress-trading-shared` imports.
 
 
 

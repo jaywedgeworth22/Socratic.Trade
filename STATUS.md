@@ -6982,6 +6982,8 @@ None. Phase 2 backend optimization is complete.
   explicit clean-start script). Added direct vector/SEC/strategy prompt tests. Full
   combined worktree verification passed: `npx tsc --noEmit`, `npm test` (195 tests,
   27 files), `npm run build`. See `docs/rollouts/2026-06-18-rag-review-resolution.md`.
+- 2026-07-06: **Console Tooltip Primitive** — replaced disparate, buggy tooltip logic in the console with a unified, accessible, polymorphic Tooltip primitive built on motion/react. See docs/rollouts/2026-07-06-console-tooltip-primitive.md.
+- 2026-07-06: **Advisory Audit Rollout** — rendered the new advisory audit kinds (`deterministic_bear_veto`, `red_team_veto_overridden`, `prompt_injection_suspected`, `evidence_age_anomaly`) in the console Alert Center and activity feed. See docs/rollouts/2026-07-06-advisory-audit-rollout.md.
 - Near-term engineering focus should be hardening Phase 7/8 before Live use:
   broker support confirmation, persistence/accounting checks, strategy-tuning
   tests, and better tests around short/cover and red-team debate behavior.
