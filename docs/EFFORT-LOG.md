@@ -1201,6 +1201,17 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Intro size-jump + loading-text fix (MONET, intro-anim session, branch
+  `monet/intro-size-jump-3676f7`) — IN PROGRESS 2026-07-09.** Owner (prod, both viewports):
+  wordmark still has a sudden SIZE change ~1s after the candles assemble; also remove the
+  "Socratic Trade / Loading the autonomy desk..." text during load. Diagnosis: (a) the real
+  HeaderLogo's canvas starts at width=height*13.8 (magic estimate) then JUMPS to
+  height*wm.ar when its own effect runs -> width-only size change; the `13.8` estimate is
+  used in header-logo.tsx initial width + shell MobileBrandRow, drifting from the real
+  sampler AR; (b) intro-canvas `curHeader` is a per-effect local so a loading->loaded remount
+  snaps the box. Fix: export single-source WORDMARK_AR from candle-ticker, use everywhere;
+  persist curHeader; drop loading text. Fileset: app/console/ui/candle-ticker.ts,
+  app/console/ui/header-logo.tsx, app/console/components/shell.tsx, app/console/components/intro-canvas.tsx.
 - **Roth Gemini 400 TRUE root cause + async Run-once (MONET, branch
   `monet/roth-gemini-400-runonce-async`) — IN PROGRESS 2026-07-09, gates running, PR via
   land.sh.** Owner-reported: Run-once popped a raw Cloudflare 524 page; Roth Gemini 400

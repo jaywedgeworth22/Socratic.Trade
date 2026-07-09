@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
+Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
+assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
+cause (measured): HeaderLogo canvas reserved width from a `13.8` AR estimate then its effect set
+the real `wm.ar=13.081` (5.2% narrower) → the logo shrank on mount and the intro followed. Fix:
+single-source `WORDMARK_AR=13.081` exported from candle-ticker, used everywhere the `13.8` guess
+lived (header-logo initial width, MobileBrandRow, intro fallback); `curHeader` hoisted to module
+scope so the loading→loaded remount eases instead of snapping; loading text removed (intro is the
+whole load screen). Empirically verified: desktop logo width now a single stable 235px (was
+248→235). Full gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-intro-size-jump-loading-text.md`.
+
 ## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
 Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page
 pickers drop the word "Model" from their labels: "Proposer Model" -> "Proposer", "Reviewer Model" ->

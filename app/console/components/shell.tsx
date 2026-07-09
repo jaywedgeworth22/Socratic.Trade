@@ -31,6 +31,7 @@ import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
 import { ConsoleIntro } from "./intro-canvas";
 import { HeaderLogo } from "../ui/header-logo";
+import { WORDMARK_AR } from "../ui/candle-ticker";
 import { getIntroPhase, subscribeIntroPhase, type IntroPhase } from "../ui/intro-bus";
 import { DesktopRail, MobileTabBar } from "./nav";
 
@@ -61,11 +62,9 @@ function ShellFrame({ children }: { children: ReactNode }) {
         data-console-font={dataConsoleFont}
         suppressHydrationWarning
       >
+        {/* The candlestick intro is the entire load screen — no text label, so
+            the animation plays on a clean backdrop (owner request). */}
         <ConsoleIntro />
-        <div className="text-center">
-          <div className="con-card-title">Socratic Trade</div>
-          <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
-        </div>
       </div>
     );
   }
@@ -162,7 +161,6 @@ function BrandReveal() {
  *  the screen space back. Renders nothing when the intro is skipped. */
 const MOBILE_BRAND_HOLD_MS = 3000;
 const MOBILE_BRAND_SLIDE_MS = 550;
-const WORDMARK_AR = 13.8; // ≈ "SOCRATIC TRADE" aspect ratio (see header-logo.tsx)
 
 function MobileBrandRow() {
   const [state, setState] = useState<"waiting" | "shown" | "leaving" | "gone">(() => {
