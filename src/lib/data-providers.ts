@@ -543,9 +543,12 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           congressFundamentalsEnabled() ? client.getAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AnalystRow[]; }) : Promise.resolve([] as AnalystRow[]),
         ]);
 
-        if (transportError) {
-          logApiHealth({ service: "congress.trade", ok: false, errorText: "Enrichment transport error (degraded overlay)", latencyMs: Date.now() - now });
-        }
+        // Do NOT log a synthetic health failure here: the shared getCongressTradeClient()
+        // fetch wrapper already records a `congress.trade` logApiHealth({ ok: false }) for
+        // every failed HTTP/transport call. Adding a per-symbol failure on top would
+        // double-count into the last-N health window and trip the enrichment circuit
+        // breaker earlier than the real upstream request count warrants. The transportError
+        // flag below is retained solely to gate negative-caching.
         // App A may return multiple fresh rows from different sources; merge the LATEST
         // non-null value per field across all of them (rows are date-ascending), so a
         // partial latest row doesn't discard a field an earlier fresh row supplied.
