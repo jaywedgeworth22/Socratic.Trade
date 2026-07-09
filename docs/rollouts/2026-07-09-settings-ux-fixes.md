@@ -74,8 +74,13 @@ only on `open`, so MONET's caret fix is fully intact.
   (post-merge, includes the new regression test).
 - Manual read of merged `app/console/ui/sheet.tsx` confirming both AG #1231 and
   this lane's changes coexist.
-- Full gate before landing: `npm run lint` && `npx tsc --noEmit` && `npm test`
-  && `npm run build` (results recorded in the landing PR).
+- Full gate before landing (this worktree, post-merge): `npm run lint` 0 errors
+  (370 grandfathered warnings) -> `npx tsc --noEmit` clean (after `npm install`
+  to pick up main's new `drizzle-orm` dependency from #1204) -> `npm test` 308
+  files / 3211 tests passed -> `npm run build` succeeded.
+- Notable: the initial `npm run lint` FAILED on the as-committed diff — the
+  render-time `onCloseRef.current = onClose` write is a react-hooks lint ERROR;
+  fixed mechanically (see the lint-fix section above) and the gate re-run green.
 
 ## Follow-ups
 
