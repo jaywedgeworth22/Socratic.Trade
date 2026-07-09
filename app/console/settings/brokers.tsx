@@ -124,6 +124,11 @@ export function BrokerAccountsCard() {
   const rhNeedsReconnect = (account: ConnectedAccount) =>
     account.broker === "robinhood" && rhHealth !== null && !rhAuthed;
   const hasTestAccount = accounts.some((account) => account.broker === "test");
+  // Exactly one account carries isActive — hoist it as the "Currently Loaded"
+  // account; everything else lists under "Other Accounts". Same isActive flag,
+  // no server/query change.
+  const loaded = accounts.find((account) => account.isActive);
+  const others = accounts.filter((account) => !account.isActive);
 
   const connectRobinhood = () => {
     if (rhAuthed) {
@@ -156,14 +161,154 @@ export function BrokerAccountsCard() {
       await refresh();
       toast.push(
         "pos",
-        result.label ?? "Test Account - Local Mock Paper Account added",
-        "It stays inactive until you make it active. It uses local simulated fills and cannot reach real money."
+        result.label ? `${result.label} added` : "Test Account added",
+        "Not loaded automatically. Load it to practice; it cannot reach real money."
       );
     } catch (error) {
       toast.push("neg", "Could not add test account", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
+  };
+
+  // One row renderer, reused for the loaded account and each "Other" account so
+  // the two sections stay identical in look and behavior.
+  const renderAccountRow = (account: ConnectedAccount) => {
+    const r = realityForAccount(account);
+    const caps = account.capabilities;
+    const needsReconnect = rhNeedsReconnect(account);
+    return (
+      <div
+        key={account.id}
+        tabIndex={0}
+        className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
+              {account.label || brokerName(account.broker)}
+            </span>
+            <Chip tone={r.tone} title={r.clarification}>
+              {r.word} · {r.phrase}
+            </Chip>
+            {needsReconnect && (
+              <Chip tone="warn" title="The Robinhood OAuth session is missing or expired, so this app can't reach the broker for this account until you reconnect.">
+                reconnect needed
+              </Chip>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {needsReconnect && (
+              <Btn
+                size="sm"
+                variant="primary"
+                disabled={busy !== null}
+                onClick={() => {
+                  window.location.href = ROBINHOOD_OAUTH_START_URL;
+                }}
+                title="Re-run Robinhood's OAuth sign-in to restore this connection."
+              >
+                Reconnect
+              </Btn>
+            )}
+            {!account.isActive && (
+              <Btn
+                size="sm"
+                variant="outline"
+                disabled={busy !== null}
+                title="Load this account — the whole console rescopes to it."
+                onClick={async () => {
+                  setBusy(account.id);
+                  try {
+                    await activateAccount(account.id);
+                    await refresh();
+                    toast.push("info", "Account loaded", `Switched to ${account.label || brokerName(account.broker)}.`);
+                  } catch (error) {
+                    toast.push("neg", "Could not load", error instanceof ConsoleApiError ? error.message : String(error));
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                {busy === account.id ? "Loading…" : r.tone === "live" ? (
+                  <>
+                    Load <LiveTag />
+                  </>
+                ) : (
+                  "Load"
+                )}
+              </Btn>
+            )}
+            <Btn
+              size="sm"
+              variant="dangerOutline"
+              disabled={busy !== null}
+              onClick={() => setConfirmRemove(account)}
+              title="Remove this connection (and its stored credentials) from this app. The broker account itself is untouched — open positions and resting orders stay at the broker."
+            >
+              Disconnect
+            </Btn>
+          </div>
+        </div>
+        <p
+          className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
+          title="Broker, environment, account tail, and tax treatment."
+        >
+          {`${brokerName(account.broker)} · ${account.environment}`}
+          {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
+          {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
+          {account.broker === "test" && " — excluded from wash-sale accounting"}
+        </p>
+        {account.broker !== "test" && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {caps ? (
+              <>
+                <Chip
+                  tone="info"
+                  title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
+                >
+                  <Briefcase className="inline size-3.5 mr-1.5" />
+                  stocks
+                </Chip>
+                <Chip
+                  tone="info"
+                  title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
+                >
+                  <ArrowDown className="inline size-3.5 mr-1.5" />
+                  shorting
+                </Chip>
+                {caps.optionsTrading && (
+                  <Chip
+                    tone="info"
+                    title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
+                  >
+                    <Zap className="inline size-3.5 mr-1.5" />
+                    options L{caps.optionsLevel}
+                  </Chip>
+                )}
+                {caps.marginEnabled && (
+                  <Chip
+                    tone="info"
+                    title="Margin trading enabled"
+                  >
+                    <Scale className="inline size-3.5 mr-1.5" />
+                    margin
+                  </Chip>
+                )}
+              </>
+            ) : (
+              <Chip
+                tone="warn"
+                title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+              >
+                <AlertTriangle className="inline size-3.5 mr-1.5" />
+                capabilities unconfirmed
+              </Chip>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -200,8 +345,8 @@ export function BrokerAccountsCard() {
             onClick={() => void connectTest()}
             title={
               hasTestAccount
-                ? "A Test Account - Local Mock Paper Account already exists. It is only used if you make it active."
-                : "Add a local mock paper account for simulated learning trades. It is not selected automatically and cannot reach real money."
+                ? "A Test Account already exists. It is only used if you load it."
+                : "Add a Test Account for practice trades. Not loaded automatically; cannot reach real money."
             }
           >
             {busy === "test" ? "Adding..." : hasTestAccount ? "Test Account Added" : "Add Test Account"}
@@ -210,7 +355,7 @@ export function BrokerAccountsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Connections apply to your whole login. Exactly one account is active at a time; the whole console is scoped to
+        Connections apply to your whole login. Exactly one account is loaded at a time; the whole console is scoped to
         that account, including its authority, strategy, and decision history.
       </p>
 
@@ -220,154 +365,27 @@ export function BrokerAccountsCard() {
           through the broker&apos;s own sign-in, Alpaca through an API key pair.
         </p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {accounts.map((account) => {
-            const r = realityForAccount(account);
-            const caps = account.capabilities;
-            const needsReconnect = rhNeedsReconnect(account);
-            return (
-              <div
-                key={account.id}
-                tabIndex={0}
-                className="rounded-lg border border-[color:var(--con-line)] p-3 transition-colors hover:bg-[color:var(--con-surface-2)] focus-visible:bg-[color:var(--con-surface-2)]"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-semibold" title={`${brokerName(account.broker)} connection${account.accountNumber ? ` · account ${account.accountNumber}` : ""}`}>
-                      {account.label || brokerName(account.broker)}
-                    </span>
-                    {account.broker === "test" && (
-                      <Chip tone="paper" title="Local mock paper account: simulated fills only, no broker login, no real money.">
-                        local mock
-                      </Chip>
-                    )}
-                    <Chip tone={r.tone} title={r.clarification}>
-                      {r.word} · {r.phrase}
-                    </Chip>
-                    {account.isActive && (
-                      <Chip tone="accent" title="The whole console — balances, guardrails, approvals, run state — is currently scoped to this account.">
-                        active
-                      </Chip>
-                    )}
-                    {needsReconnect && (
-                      <Chip tone="warn" title="The Robinhood OAuth session is missing or expired, so this app can't reach the broker for this account until you reconnect.">
-                        reconnect needed
-                      </Chip>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {needsReconnect && (
-                      <Btn
-                        size="sm"
-                        variant="primary"
-                        disabled={busy !== null}
-                        onClick={() => {
-                          window.location.href = ROBINHOOD_OAUTH_START_URL;
-                        }}
-                        title="Re-run Robinhood's OAuth sign-in to restore this connection."
-                      >
-                        Reconnect
-                      </Btn>
-                    )}
-                    {!account.isActive && (
-                      <Btn
-                        size="sm"
-                        variant="outline"
-                        disabled={busy !== null}
-                        title="Make this the active account. Everything in the console rescopes to it."
-                        onClick={async () => {
-                          setBusy(account.id);
-                          try {
-                            await activateAccount(account.id);
-                            await refresh();
-                            toast.push("info", "Active account switched");
-                          } catch (error) {
-                            toast.push("neg", "Could not switch", error instanceof ConsoleApiError ? error.message : String(error));
-                          } finally {
-                            setBusy(null);
-                          }
-                        }}
-                      >
-                        {busy === account.id ? "Switching…" : r.tone === "live" ? (
-                          <>
-                            Make active <LiveTag />
-                          </>
-                        ) : (
-                          "Make active"
-                        )}
-                      </Btn>
-                    )}
-                    <Btn
-                      size="sm"
-                      variant="dangerOutline"
-                      disabled={busy !== null}
-                      onClick={() => setConfirmRemove(account)}
-                      title="Remove this connection (and its stored credentials) from this app. The broker account itself is untouched — open positions and resting orders stay at the broker."
-                    >
-                      Disconnect
-                    </Btn>
-                  </div>
-                </div>
-                <p
-                  className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title="Broker, environment, account tail, and tax treatment."
-                >
-                  {account.broker === "test" ? "Local Mock Paper Account" : `${brokerName(account.broker)} · ${account.environment}`}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-                  {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-                  {account.broker === "test" && " — simulated fills for learning; excluded from real-account wash-sale contribution"}
-                </p>
-                {account.broker !== "test" && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {caps ? (
-                      <>
-                        <Chip
-                          tone="info"
-                          title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
-                        >
-                          <Briefcase className="inline size-3.5 mr-1.5" />
-                          stocks
-                        </Chip>
-                        <Chip
-                          tone="info"
-                          title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
-                        >
-                          <ArrowDown className="inline size-3.5 mr-1.5" />
-                          shorting
-                        </Chip>
-                        {caps.optionsTrading && (
-                          <Chip
-                            tone="info"
-                            title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
-                          >
-                            <Zap className="inline size-3.5 mr-1.5" />
-                            options L{caps.optionsLevel}
-                          </Chip>
-                        )}
-                        {caps.marginEnabled && (
-                          <Chip
-                            tone="info"
-                            title="Margin trading enabled"
-                          >
-                            <Scale className="inline size-3.5 mr-1.5" />
-                            margin
-                          </Chip>
-                        )}
-                      </>
-                    ) : (
-                      <Chip
-                        tone="warn"
-                        title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
-                      >
-                        <AlertTriangle className="inline size-3.5 mr-1.5" />
-                        capabilities unconfirmed
-                      </Chip>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="flex flex-col gap-4">
+          <section>
+            <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
+            {loaded ? (
+              renderAccountRow(loaded)
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No account loaded — select one below.
+              </p>
+            )}
+          </section>
+          <section>
+            <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
+            {others.length > 0 ? (
+              <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
+            ) : (
+              <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                No other accounts. Use the buttons above to connect one.
+              </p>
+            )}
+          </section>
         </div>
       )}
 
@@ -428,8 +446,8 @@ export function BrokerAccountsCard() {
             )}
             {confirmRemove.isActive && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
-                This is the ACTIVE account. Disconnecting it rescopes the console to the next active account, if one
-                remains.
+                This is the currently loaded account. Disconnecting it rescopes the console to the next loaded account,
+                if one remains.
               </p>
             )}
             <div className="flex justify-end gap-2">

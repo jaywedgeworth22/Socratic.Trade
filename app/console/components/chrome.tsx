@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, Sun, UserRound } from "lucide-react";
+import type { ConnectedAccount } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   activeConnectedAccount,
@@ -74,6 +75,9 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
   const [busyId, setBusyId] = useState<string | null>(null);
   const reality = deriveReality(snapshot);
   const active = activeConnectedAccount(snapshot);
+  // Same isActive flag — hoist the loaded account first, list the rest under
+  // "Other Accounts". Mirrors the Broker connections settings card.
+  const others = snapshot.connectedAccounts.filter((a) => !a.isActive);
 
   const label = active
     ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
@@ -84,13 +88,55 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     try {
       await activateAccount(id);
       await refresh();
-      toast.push("info", "Scope switched", "The whole console now shows this account.");
+      toast.push("info", "Account loaded", "The whole console now shows this account.");
       setOpen(false);
     } catch (error) {
-      toast.push("neg", "Could not switch accounts", error instanceof ConsoleApiError ? error.message : undefined);
+      toast.push("neg", "Could not load account", error instanceof ConsoleApiError ? error.message : undefined);
     } finally {
       setBusyId(null);
     }
+  };
+
+  // One row renderer, reused for the loaded account and each "Other" account.
+  const renderAccountRow = (account: ConnectedAccount) => {
+    const r = realityForAccount(account);
+    return (
+      <div
+        key={account.id}
+        className={cx(
+          "rounded-lg border p-3",
+          account.isActive ? "border-[color:var(--con-accent)]" : "border-[color:var(--con-line)]"
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
+            {r.tone !== "live" && (
+              <Chip tone={r.tone}>
+                {r.word} · {r.phrase}
+              </Chip>
+            )}
+            {(() => {
+              const policy = snapshot.connectedAccountPolicies?.[account.id];
+              if (!policy) return null;
+              const st = deriveStateInfo(policy);
+              if (st.state === "halted") return null;
+              return <Chip tone={st.tone}>{st.label}</Chip>;
+            })()}
+          </div>
+          {!account.isActive && (
+            <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
+              {busyId === account.id ? "Loading…" : "Load"}
+            </Btn>
+          )}
+        </div>
+        <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          {`${brokerName(account.broker)} · ${r.tone === "paper" ? "paper account, not real money" : "brokerage account"}`}
+          {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
+          {r.tone !== "live" ? ` — ${r.clarification}` : ""}
+        </p>
+      </div>
+    );
   };
 
   return (
@@ -114,66 +160,43 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
 
       <Sheet open={open} onClose={() => setOpen(false)} title="Account scope">
         <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-          Exactly one account is active at a time. Switching rescopes everything — balances, guardrails, approvals,
+          Exactly one account is loaded at a time. Loading one rescopes everything — balances, guardrails, approvals,
           the run state, and decision history.
         </p>
-        <div className="flex flex-col gap-2">
-          {snapshot.connectedAccounts.length === 0 && (
-            <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">No account connected</span>
-                <Chip tone="none">NO ACCOUNT · no account connected</Chip>
-              </div>
-              <p className="mt-1 text-[color:var(--con-muted)]">
-                Connect a broker account before the app can place orders.
-              </p>
+        {snapshot.connectedAccounts.length === 0 ? (
+          <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">No account connected</span>
+              <Chip tone="none">NO ACCOUNT · no account connected</Chip>
             </div>
-          )}
-          {snapshot.connectedAccounts.map((account) => {
-            const r = realityForAccount(account);
-            return (
-              <div
-                key={account.id}
-                className={cx(
-                  "rounded-lg border p-3",
-                  account.isActive ? "border-[color:var(--con-accent)]" : "border-[color:var(--con-line)]"
-                )}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
-                    {account.broker === "test" && <Chip tone="paper">local mock</Chip>}
-                    {r.tone !== "live" && (
-                      <Chip tone={r.tone}>
-                        {r.word} · {r.phrase}
-                      </Chip>
-                    )}
-                    {account.isActive && <Chip tone="accent">active</Chip>}
-                    {(() => {
-                      const policy = snapshot.connectedAccountPolicies?.[account.id];
-                      if (!policy) return null;
-                      const st = deriveStateInfo(policy);
-                      if (st.state === "halted") return null;
-                      return <Chip tone={st.tone}>{st.label}</Chip>;
-                    })()}
-                  </div>
-                  {!account.isActive && (
-                    <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
-                      {busyId === account.id ? "Switching…" : "Switch"}
-                    </Btn>
-                  )}
-                </div>
-                <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                  {account.broker === "test"
-                    ? "Local Mock Paper Account - simulated fills, not real money"
-                    : `${brokerName(account.broker)} · ${r.tone === "paper" ? "paper account, not real money" : "brokerage account"}`}
-                  {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-                  {r.tone !== "live" ? ` — ${r.clarification}` : ""}
+            <p className="mt-1 text-[color:var(--con-muted)]">
+              Connect a broker account before the app can place orders.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <section>
+              <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
+              {active ? (
+                renderAccountRow(active)
+              ) : (
+                <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                  No account loaded — select one below.
                 </p>
-              </div>
-            );
-          })}
-        </div>
+              )}
+            </section>
+            <section>
+              <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
+              {others.length > 0 ? (
+                <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
+              ) : (
+                <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
+                  No other accounts connected.
+                </p>
+              )}
+            </section>
+          </div>
+        )}
       </Sheet>
     </>
   );

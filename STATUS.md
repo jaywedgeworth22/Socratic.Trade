@@ -19,6 +19,29 @@ scope so the loading→loaded remount eases instead of snapping; loading text re
 whole load screen). Empirically verified: desktop logo width now a single stable 235px (was
 248→235). Full gate green (lint 0/tsc/3168 tests/build). See
 `docs/rollouts/2026-07-09-intro-size-jump-loading-text.md`.
+## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
+Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
+connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
+`isActive` flag into **"Currently Loaded Account"** (hoisted first) + **"Other Accounts"** headings;
+removed the ambiguous `active` chip; per-row action "Make active" → **"Load"** (toasts/tooltips/busy
+text follow). (B) Test Account stops repeating "Local Mock / local mock / simulated": `TEST_ACCOUNT_LABEL`
+→ "Test Account" (db-api-keys + connected-accounts route), `realityForAccount` test-branch deleted so it
+reads "PAPER · NOT real money" like any paper account, "local mock" chips + hardcoded sublines collapsed
+to the generic form, exec-mode clarification simplified. Kept ONE terse "excluded from wash-sale
+accounting" note (verified real: `tax.ts:197` filters `broker !== "test"`). Live/paper reality
+correctness for real broker accounts unchanged. Gate green: tsc 0 / lint 0-err / vitest 3168 / build.
+See `docs/rollouts/2026-07-09-account-mgmt-ui-and-test-label.md`.
+## 2026-07-09 — Scoring-factor weight tooltips (MONET, branch `monet/scoring-factor-tooltips`)
+Owner-directed display-only change, no scoring-logic changes. The eight "Scoring-factor weights"
+controls on the Strategy console page (`app/console/strategy/page.tsx`) previously showed only the
+raw lowercase `ScoringWeights` key plus a numeric "default X" hint — no explanation of what each
+factor measures. Added a new `FACTOR_META` map (capitalized name + one-sentence explanation per
+factor) and wrapped each `Field` label in the existing `Tooltip` primitive (`../ui/primitives`) with
+a small "ⓘ" affordance, plus a screen-reader-only duplicate of the tip text. The card's intro
+paragraph also gained one sentence noting the weights are relative (ratios matter, not absolute
+numbers). No `src/lib/scoring.ts` (or wherever `ScoringWeights` is consumed) changes. Gate green:
+tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
 
 ## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
 Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page

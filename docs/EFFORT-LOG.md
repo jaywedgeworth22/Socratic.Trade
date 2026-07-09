@@ -204,6 +204,16 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Scoring-factor weight tooltips (MONET, S) — COMPLETED 2026-07-09, branch
+  `monet/scoring-factor-tooltips`.** Owner-directed display-only pass: added a
+  hover tooltip (existing `Tooltip` primitive, `app/console/ui/primitives.tsx`)
+  to each of the 8 "Scoring-factor weights" controls on the Strategy console
+  page explaining what the factor measures and which direction more weight
+  pushes candidate ranking, plus one sentence in the card intro clarifying the
+  weights are relative (ratios matter, not absolute numbers). No scoring-math
+  changes. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean.
+  PR #1205 (auto-merge armed). See
+  `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
 - **Shared-dep proper-usage cleanup refresh (CODEX, S) — completed 2026-07-08 via PR #1171.**
   Replaced dirty Cursor PR #1105 without editing the Cursor branch. Merged to `main`
   as `54b6d722`; #1105 closed as superseded and stale PR #856 closed as obsolete. Cleanup uses
@@ -312,6 +322,15 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Connected-accounts UI: "Currently Loaded / Other Accounts" restructure + kill Test-Account
+  mock-label spam (MONET, worktree `~/apps/trading-monet-acct-ui`, branch
+  `monet/account-mgmt-ui`) — IN PROGRESS 2026-07-09.** Display-copy + JSX only; no execution/data
+  model/`isActive` changes. (A) partition account list into loaded-first + Other Accounts headings,
+  remove ambiguous `active` chip, rename "Make active" → "Load"; (B) shorten `TEST_ACCOUNT_LABEL`
+  to "Test Account", drop the `broker === "test"` special-case in `realityForAccount` so it reads as
+  a normal paper account, delete the "local mock" chips + repeated "simulated/local" wording (keep
+  one terse "excluded from wash-sale accounting" note — verified real via `tax.ts:197`). Preserves
+  live/paper reality correctness for real broker accounts.
 - **Single-adversary consolidation — ✅ COMPLETED via PR #1191 (merged 2026-07-09, squash `f9a37611`;
   feature author = Cowork Claude session, landing operator = MONET Mac session).**
   _2026-07-09 (MONET landing): merged `origin/main` into the branch and resolved the conflicts per
