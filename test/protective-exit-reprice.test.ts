@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { executeProposal } from "../src/lib/strategy";
+import { executeProposal, liveApprovalText } from "../src/lib/strategy";
 import { getDb, getProposal, insertProposal, setPolicy, upsertConnectedAccount } from "../src/lib/db";
 import type { MarketQuote, MarketScan, TradeProposal } from "../src/lib/types";
 
@@ -111,12 +111,15 @@ const STORED_EXIT: TradeProposal = {
   entryMarketRegime: "Active Risk Check"
 };
 
-function seedStoredExit(userId: string): string {
+function seedStoredExit(
+  userId: string,
+  opts: { environment?: "paper" | "live"; storedProposal?: TradeProposal } = {}
+): string {
   upsertConnectedAccount({
     id: `acct-${userId}`,
     userId,
     broker: "test",
-    environment: "paper",
+    environment: opts.environment ?? "paper",
     accountNumber: "REPRICE",
     label: "Reprice Test",
     isActive: true
@@ -139,7 +142,7 @@ function seedStoredExit(userId: string): string {
     runId: randomUUID(),
     accountNumber: "REPRICE",
     userId,
-    proposal: STORED_EXIT,
+    proposal: opts.storedProposal ?? STORED_EXIT,
     decision: { approved: true, reasons: [] },
     status: "proposed"
   });
@@ -163,7 +166,11 @@ describe("executeProposal — approval-held protective-exit reprice", () => {
         marketHours: "extended_hours",
         limitPrice: 198.7 // 199 (fresh bid) * (1 - 0.0015) — NOT the stored 219.67
       });
-      expect(getProposal(proposalId, userId)?.status).toBe("placed");
+      const persistedRow = getProposal(proposalId, userId);
+      expect(persistedRow?.status).toBe("placed");
+      // The REPRICED order is persisted back onto the row: Recent/Activity must show the order the
+      // broker actually received, never the stale generation-time price.
+      expect(persistedRow?.proposal).toMatchObject({ type: "limit", marketHours: "extended_hours", limitPrice: 198.7 });
       // The reprice leaves an audit receipt tying the stored card to the placed order.
       const receipts = (getDb()
         .prepare("SELECT payload FROM audit_events WHERE kind = 'protective_exit_repriced'")
@@ -194,6 +201,81 @@ describe("executeProposal — approval-held protective-exit reprice", () => {
         marketHours: "regular_hours"
       });
       expect(broker.placed[0].limitPrice).toBeUndefined();
+      // The degraded market order is what the row shows too, not the stale extended-hours limit.
+      const persistedRow = getProposal(proposalId, userId);
+      expect(persistedRow?.proposal).toMatchObject({ type: "market", marketHours: "regular_hours" });
+      expect(persistedRow?.proposal.limitPrice).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30000);
+
+  it("LIVE + typed confirmation: a MATERIAL reprice routes BACK to approval instead of placing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      const userId = `reprice-live-material-${randomUUID()}`;
+      const proposalId = seedStoredExit(userId, { environment: "live" });
+      // The phrase below confirms the STORED order (limit 219.67); the fresh quote has fallen ~9.5%
+      // through it, so placing the 198.70 reprice under that confirmation would violate the live
+      // typed-confirm invariant — defer to the human (precedent: autoRemediateStaleExitOrders).
+      const result = await executeProposal(proposalId, userId, {
+        liveConfirmation: {
+          proposalId,
+          accountNumber: "REPRICE",
+          executionMode: "broker/live",
+          typedText: liveApprovalText("AAPL")
+        }
+      });
+      expect(result.status).toBe("proposed");
+      expect(result.reasons?.[0]).toContain("approve the repriced order again");
+      expect(broker.placed).toHaveLength(0);
+      // The card stays pending, updated to the repriced order the next Approve will confirm.
+      const persistedRow = getProposal(proposalId, userId);
+      expect(persistedRow?.status).toBe("proposed");
+      expect(persistedRow?.proposal).toMatchObject({ type: "limit", marketHours: "extended_hours", limitPrice: 198.7 });
+      // Honest audit receipt on the defer branch.
+      const receipts = (getDb()
+        .prepare("SELECT payload FROM audit_events WHERE kind = 'protective_exit_reprice_reapproval'")
+        .all() as Array<{ payload: string }>)
+        .map((row) => JSON.parse(row.payload) as { proposalId: string; drift: { material: boolean }; reason: string })
+        .filter((payload) => payload.proposalId === proposalId);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0].drift.material).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30000);
+
+  it("LIVE + typed confirmation: IMMATERIAL drift places normally (with the reprice audited)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      const userId = `reprice-live-immaterial-${randomUUID()}`;
+      // Stored limit 198.73 vs the fresh bid-anchored 198.70 — ~1.5 bps, well inside the 15 bps
+      // buffer tolerance: the confirmed and placed orders are the same trade for practical purposes.
+      const proposalId = seedStoredExit(userId, {
+        environment: "live",
+        storedProposal: { ...STORED_EXIT, limitPrice: 198.73 }
+      });
+      const result = await executeProposal(proposalId, userId, {
+        liveConfirmation: {
+          proposalId,
+          accountNumber: "REPRICE",
+          executionMode: "broker/live",
+          typedText: liveApprovalText("AAPL")
+        }
+      });
+      expect(result.status).toBe("placed");
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({ type: "limit", marketHours: "extended_hours", limitPrice: 198.7 });
+      const receipts = (getDb()
+        .prepare("SELECT payload FROM audit_events WHERE kind = 'protective_exit_repriced'")
+        .all() as Array<{ payload: string }>)
+        .map((row) => JSON.parse(row.payload) as { proposalId: string; drift: { material: boolean } })
+        .filter((payload) => payload.proposalId === proposalId);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0].drift.material).toBe(false);
     } finally {
       vi.useRealTimers();
     }

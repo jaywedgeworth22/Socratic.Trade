@@ -433,7 +433,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
         side: "sell",
         type: "limit",
         marketHours: "extended_hours",
-        limitPrice: 89.37 // 89.5 * (1 - 0.0015), bid-anchored
+        limitPrice: 89.36 // 89.5 * (1 - 0.0015) = 89.36575, bid-anchored, rounded OUTWARD (down) to stay marketable
       });
     } finally {
       vi.useRealTimers();

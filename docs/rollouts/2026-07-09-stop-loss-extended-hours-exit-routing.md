@@ -106,6 +106,50 @@ policy-route/generator suites (`reconciliation-risk`, `strategy-hardening`,
 — all passed; `npx eslint` on touched files — 0 errors (pre-existing warnings only). Full
 lint/test/build runs in the `verify` CI gate.
 
+## Review fixes round 2 (PR #1228, third commit — 5 findings)
+
+1. **Early-close sessions (protective-exit-routing.ts).** `currentMarketSession` hard-codes the
+   16:00 close, so on an NYSE early-close day (13:00 ET — `getEarlyCloseDays` in
+   `market-calendar.ts`) 13:00–16:00 was misclassified as "regular", downgrading an extended-hours
+   protective limit to a regular-hours market order that queues to the NEXT open. New
+   `protectiveExitMarketSession` wraps `currentMarketSession` and treats post-close time on an
+   early-close date as "post"; `extendedHoursExitBufferBps` (both exit paths + the approval reprice)
+   uses it.
+2. **Live typed-confirm invariant (strategy.ts).** A reprice after a live typed confirmation could
+   place an order materially different from what the phrase confirmed. Following the
+   `autoRemediateStaleExitOrders` precedent (PR #1036), on broker/live with
+   `requireTypedConfirmation` on, a MATERIAL reprice (price — or confirmed-notional — drift beyond
+   the validated marketable-limit buffer tolerance, `assessProtectiveExitRepriceDrift`) now routes
+   the card BACK to approval with the repriced order persisted and a
+   `protective_exit_reprice_reapproval` audit + `pending_approval` notification; immaterial drift
+   places normally (drift included in the `protective_exit_repriced` audit payload). A degrade with
+   no verifiable fresh price is treated as material (defer to human).
+3. **Repriced proposal persisted (strategy.ts + db-proposals.ts).** `trade_proposals.proposal` kept
+   the stale order after a reprice, so Recent/Activity/getProposal showed an order the broker never
+   received. New `updatePendingProposalReprice` (CAS on `status='proposed'`, refreshes
+   `estimated_notional`) persists the repriced JSON BEFORE claiming/placing on every reprice path;
+   a lost CAS stops the approval like the other pending guards.
+4. **validatePolicy over-reach (app/api/policy/route.ts).** The new `marketableLimitBufferBps`
+   bound ran against the MERGED policy, so a stored out-of-range value 400'd EVERY unrelated save.
+   Scoped like the reasoning/keyed-model rules: enforced only when the request sets/changes the
+   field (`enforceMarketableLimitBufferRule`); the runtime clamp
+   (`validatedMarketableLimitBufferBps`, extracted) still guards stale stored values.
+5. **Sub-dollar tick precision (protective-exit-routing.ts).** 2-dp `Math.round` could un-cross a
+   sub-$1 quote (SELL off a $0.496 bid rounded UP to $0.50, resting unfilled).
+   `marketableLimitExitPrice` now rounds tick-aware and OUTWARD — always in the marketable
+   direction (floor for SELL, ceil for COVER) — at 4 dp below $1 (SEC Rule 612 sub-penny increments)
+   and whole pennies at/above $1, with an on-tick float-artifact snap. One synthetic-stops
+   expectation moved a penny outward (89.37 → 89.36).
+
+Regression tests extend the PR's existing files: `test/protective-exit-routing.test.ts`
+(early-close session block, outward/sub-dollar rounding, `assessProtectiveExitRepriceDrift`),
+`test/protective-exit-reprice.test.ts` (live material → routed back to approval + persisted card;
+live immaterial → places; persisted-JSON assertions on the paper paths),
+`test/marketable-limit-buffer-api.test.ts` (stored out-of-range value doesn't block unrelated
+saves; changing writes still 400). Verification: `npx tsc --noEmit` clean; `npx vitest run` on the
+four touched test files — 75 passed; `npx eslint` on touched files — 0 errors (pre-existing
+warnings only).
+
 ## Follow-ups (blocked on other in-flight PRs)
 
 - **field-defs honest copy** (ATR needs `stopLossPct>0` + precedence over beta; beta ignored when

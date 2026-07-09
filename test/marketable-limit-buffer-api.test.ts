@@ -41,4 +41,31 @@ describe("/api/policy — tuning.marketableLimitBufferBps validation", () => {
       expect(await response.text()).toContain("tuning.marketableLimitBufferBps must be greater than 0 and at most 500 (bps).");
     }
   });
+
+  it("a STORED out-of-range value never blocks unrelated policy saves (bound applies only when the request changes the field)", async () => {
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy, setPolicy } = await import("../src/lib/db");
+    const { DEFAULT_POLICY } = await import("../src/lib/defaults");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+    // Seed a stored value the route would reject, as if written before the bound existed. The
+    // runtime already clamps/defaults it (validatedMarketableLimitBufferBps) — validation must not
+    // hold every other setting hostage to it.
+    setPolicy({ ...DEFAULT_POLICY, tuning: { marketableLimitBufferBps: 10_000 } }, DEFAULT_REQUEST_USER_ID);
+
+    const unrelated = await PUT(
+      new Request("http://localhost/api/policy", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ maxDailyOrders: 7 })
+      })
+    );
+    expect(unrelated.status).toBe(200);
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).maxDailyOrders).toBe(7);
+    // The stale stored value passes through untouched (runtime clamps it at use).
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).tuning?.marketableLimitBufferBps).toBe(10_000);
+
+    // A request that actually CHANGES the field is still bounded.
+    const changing = await PUT(putTuning({ marketableLimitBufferBps: 9_999 }));
+    expect(changing.status).toBe(400);
+  });
 });

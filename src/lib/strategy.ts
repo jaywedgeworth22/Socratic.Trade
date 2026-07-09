@@ -22,6 +22,7 @@ import {
   transitionProposalIfPending,
   upsertSocraticDecisionCase,
   createSocraticFrameworkProposal,
+  updatePendingProposalReprice,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -71,7 +72,7 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
-import { extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
+import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
 import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
@@ -3565,26 +3566,62 @@ export async function executeProposal(
     // wall clock (degrading to market/regular_hours when the extended session no longer applies) and
     // review/evaluate/place the repriced order. Everything else passes through untouched.
     const storedProposal = proposal;
-    proposal = repriceStoredProtectiveExit(
-      proposal,
-      policy,
-      protectiveExitQuoteFromScan(
-        approvalScan.quotesBySymbol[proposal.symbol] ?? approvalScan.quotesBySymbol[normalizeSymbol(proposal.symbol)]
-      )
+    const approvalExitQuote = protectiveExitQuoteFromScan(
+      approvalScan.quotesBySymbol[proposal.symbol] ?? approvalScan.quotesBySymbol[normalizeSymbol(proposal.symbol)]
     );
+    proposal = repriceStoredProtectiveExit(proposal, policy, approvalExitQuote);
     if (proposal !== storedProposal) {
-      audit(
-        "protective_exit_repriced",
-        {
-          proposalId,
-          symbol: proposal.symbol,
-          side: proposal.side,
-          from: { type: storedProposal.type, limitPrice: storedProposal.limitPrice, marketHours: storedProposal.marketHours },
-          to: { type: proposal.type, limitPrice: proposal.limitPrice, marketHours: proposal.marketHours }
-        },
-        userId,
-        policy.connectedAccountId
-      );
+      const confirmedNotional = row.estimatedNotional ?? row.review?.estimatedNotional;
+      const drift = assessProtectiveExitRepriceDrift(storedProposal, proposal, policy, approvalExitQuote, confirmedNotional);
+      // Fresh estimate for the persisted card; a degrade to market has no limit price to estimate
+      // from (estimateNotional returns 0), so keep the stored estimate rather than write a zero.
+      const repricedEstimate = estimateNotional(proposal);
+      const repricedNotional = Number.isFinite(repricedEstimate) && repricedEstimate > 0 ? repricedEstimate : undefined;
+      const repriceChange = {
+        proposalId,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        from: { type: storedProposal.type, limitPrice: storedProposal.limitPrice, marketHours: storedProposal.marketHours },
+        to: { type: proposal.type, limitPrice: proposal.limitPrice, marketHours: proposal.marketHours },
+        drift
+      };
+      // LIVE typed-confirmation invariant (repo precedent: autoRemediateStaleExitOrders defers
+      // live+typed-confirm remediation to the human rather than silently substituting): the phrase
+      // the user typed confirmed the STORED order, so a MATERIAL reprice — price or notional beyond
+      // the marketable-limit buffer tolerance — must go back to approval, not to the broker. The
+      // card stays pending with the repriced order persisted so the next Approve confirms the
+      // numbers that will actually be placed. Immaterial drift places normally below (also audited,
+      // via the drift payload on protective_exit_repriced).
+      const typedConfirmGatesLive = executionMode === "broker/live" && policy.requireTypedConfirmation !== false;
+      if (typedConfirmGatesLive && drift.material) {
+        const reason = `Protective exit repriced materially while awaiting approval (price drift ${
+          drift.priceDriftBps !== undefined ? Math.round(drift.priceDriftBps) : "unverifiable"
+        } bps vs ${drift.toleranceBps} bps tolerance) — a live typed confirmation covered the prior order, so approve the repriced order again.`;
+        const persisted = updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId);
+        audit("protective_exit_reprice_reapproval", { ...repriceChange, reason, persisted }, userId, policy.connectedAccountId);
+        if (!persisted) {
+          const current = getProposal(proposalId, userId)?.status ?? "removed";
+          return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+        }
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title: `${proposal.symbol} protective exit repriced — approval needed again`,
+            payload: { proposalId, proposal, previous: storedProposal, drift, reason }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: [reason] };
+      }
+      // Persist the repriced order BEFORE claiming/placing so trade_proposals.proposal (Recent,
+      // Activity, getProposal) shows the order the broker actually received, never the stale
+      // generation-time price. CAS on status='proposed': if the card expired or was rejected while
+      // this approval was in flight, stop here like the other pending guards.
+      if (!updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId)) {
+        const current = getProposal(proposalId, userId)?.status ?? "removed";
+        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+      }
+      audit("protective_exit_repriced", repriceChange, userId, policy.connectedAccountId);
     }
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);

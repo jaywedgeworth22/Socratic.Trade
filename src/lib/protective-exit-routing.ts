@@ -19,7 +19,8 @@
 // the toggle off ⇒ fall back to the market/queue-to-open routing rather than leave a position
 // unprotected.
 
-import { currentMarketSession } from "./market-hours";
+import { getEarlyCloseDays } from "./market-calendar";
+import { currentMarketSession, type MarketSession } from "./market-hours";
 import type { TradeProposal, TradingPolicy } from "./types";
 
 const DEFAULT_MARKETABLE_LIMIT_BUFFER_BPS = 15;
@@ -49,6 +50,51 @@ export interface ProtectiveExitQuote {
 const MARKET_REGULAR: ProtectiveExitRouting = { type: "market", marketHours: "regular_hours" };
 
 /**
+ * The validated marketable-limit buffer (bps) for THIS policy, ignoring session/toggle gating: the
+ * policy route bounds NEW saves, but an already-stored zero/negative buffer would INVERT the
+ * marketable price (a SELL limit at/above the reference rests unfilled) — fall back to the default
+ * rather than price an exit off a nonsense buffer; an absurd stored value clamps to the ceiling.
+ * Also the proportional tolerance for the approval-time reprice materiality check below.
+ */
+export function validatedMarketableLimitBufferBps(policy: TradingPolicy): number {
+  const tuned = policy.tuning?.marketableLimitBufferBps;
+  if (typeof tuned !== "number" || !Number.isFinite(tuned) || tuned <= 0) return DEFAULT_MARKETABLE_LIMIT_BUFFER_BPS;
+  return Math.min(tuned, MAX_MARKETABLE_LIMIT_BUFFER_BPS);
+}
+
+/**
+ * Session resolution for protective-exit routing, EARLY-CLOSE aware. currentMarketSession hard-codes
+ * the 16:00 ET close, so on an NYSE early-close day (13:00 ET close — July 4th eve, Black Friday,
+ * Christmas Eve; see getEarlyCloseDays) it misclassifies 13:00–16:00 ET as "regular", which would
+ * downgrade an extended-hours protective limit to a regular-hours market order that queues to the
+ * NEXT open (or rejects) during a session where after-hours trading is live. Minimal correct model:
+ * on an early-close date, post-close wall-clock time is the "post" session. (The broker may end the
+ * shortened after-hours session earlier than a normal day's 20:00 — that residual mirrors the
+ * existing model's imprecision and fails toward an order the broker rejects into the queue-to-open
+ * fallback, never toward a mispriced fill.)
+ */
+export function protectiveExitMarketSession(now?: Date): MarketSession {
+  const session = currentMarketSession(now);
+  if (session !== "regular") return session;
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now ?? new Date()).map((p) => [p.type, p.value]));
+  const dateStr = `${parts.year}-${parts.month}-${parts.day}`;
+  if (!getEarlyCloseDays(parseInt(parts.year, 10)).has(dateStr)) return session;
+  const hour = parseInt(parts.hour === "24" ? "0" : parts.hour, 10);
+  const totalMinutes = hour * 60 + parseInt(parts.minute, 10);
+  const EARLY_CLOSE = 13 * 60; // 13:00 ET
+  return totalMinutes >= EARLY_CLOSE ? "post" : "regular";
+}
+
+/**
  * The marketable-limit buffer (bps) to use for an extended-hours protective exit RIGHT NOW, or
  * undefined when extended-hours routing does not apply (toggle off, "limit" not permitted, or the
  * current session is regular/closed). Shared by the synthetic monitor and the async strategy run so
@@ -58,14 +104,9 @@ export function extendedHoursExitBufferBps(policy: TradingPolicy, now?: Date): n
   if (policy.allowExtendedHoursSyntheticStops !== true) return undefined;
   // A limit order is mandatory in the extended session; honor the permitted-order-types cage.
   if (!(policy.permittedOrderTypes?.includes("limit") ?? true)) return undefined;
-  const session = currentMarketSession(now);
+  const session = protectiveExitMarketSession(now);
   if (session !== "pre" && session !== "post") return undefined;
-  // Validate the tunable: the policy route bounds NEW saves, but an already-stored zero/negative
-  // buffer would INVERT the marketable price (a SELL limit at/above the reference rests unfilled)
-  // — fall back to the default rather than price an exit off a nonsense buffer.
-  const tuned = policy.tuning?.marketableLimitBufferBps;
-  if (typeof tuned !== "number" || !Number.isFinite(tuned) || tuned <= 0) return DEFAULT_MARKETABLE_LIMIT_BUFFER_BPS;
-  return Math.min(tuned, MAX_MARKETABLE_LIMIT_BUFFER_BPS);
+  return validatedMarketableLimitBufferBps(policy);
 }
 
 /**
@@ -74,8 +115,14 @@ export function extendedHoursExitBufferBps(policy: TradingPolicy, now?: Date): n
  * prices UP off the ASK — pricing a SELL off the composite quote price (ask ?? bid on Alpaca) would
  * leave the limit ABOVE the bid on any spread wider than the buffer, i.e. not marketable at all.
  * The composite `price` is only the fallback anchor when the crossing side is missing. Returns
- * undefined when no usable anchor exists so the caller falls back to a market order. Mirrors the
- * entry marketable-limit rounding (2 dp).
+ * undefined when no usable anchor exists so the caller falls back to a market order.
+ *
+ * Rounding is tick-aware and OUTWARD — always in the marketable direction (down for a SELL, up for
+ * a COVER). Symmetric Math.round can UN-cross a thin quote: a SELL anchored to a $0.496 bid with a
+ * 15 bps buffer rounds UP to $0.50 — above the bid, resting unfilled exactly where the exit must
+ * fill. Sub-$1 prices may quote in $0.0001 increments (SEC Rule 612), so use 4 dp below $1 and
+ * whole pennies at/above $1 (the entry marketable-limit path rounds 2 dp; protective exits need the
+ * finer tick to stay marketable on sub-dollar symbols).
  */
 export function marketableLimitExitPrice(quote: ProtectiveExitQuote, exitSide: "sell" | "cover", bufferBps: number): number | undefined {
   const usable = (value: number | undefined): number | undefined =>
@@ -84,7 +131,17 @@ export function marketableLimitExitPrice(quote: ProtectiveExitQuote, exitSide: "
   if (anchor === undefined) return undefined;
   const buffer = bufferBps / 10_000;
   const raw = exitSide === "cover" ? anchor * (1 + buffer) : anchor * (1 - buffer);
-  const price = Math.round(raw * 100) / 100;
+  const factor = raw < 1 ? 10_000 : 100;
+  const scaled = raw * factor;
+  const nearestTick = Math.round(scaled);
+  // Snap float artifacts (e.g. 99.85 * 100 = 9984.999...94) to the exact tick instead of pushing a
+  // genuinely-on-tick price one tick further out; otherwise round outward.
+  const ticks = Math.abs(scaled - nearestTick) < 1e-6
+    ? nearestTick
+    : exitSide === "cover"
+      ? Math.ceil(scaled)
+      : Math.floor(scaled);
+  const price = ticks / factor;
   return price > 0 ? price : undefined;
 }
 
@@ -135,4 +192,57 @@ export function repriceStoredProtectiveExit(
   const routing = resolveProtectiveExitRouting(policy, proposal.side, quote, now, proposal.quantity);
   if (routing.type === "limit" && routing.limitPrice === proposal.limitPrice) return proposal;
   return { ...proposal, type: routing.type, limitPrice: routing.limitPrice, marketHours: routing.marketHours };
+}
+
+export interface ProtectiveExitRepriceDrift {
+  material: boolean;
+  toleranceBps: number;
+  priceDriftBps?: number;
+  notionalDriftBps?: number;
+}
+
+/**
+ * Materiality of an approval-time protective-exit reprice, for the LIVE typed-confirmation
+ * invariant: the phrase the user typed confirmed the STORED order, so on broker/live with typed
+ * confirmations on, a reprice may only place silently when the change is immaterial — price (and,
+ * when a confirmed notional exists, notional) within the marketable-limit buffer tolerance, the
+ * same validated bps the reprice itself uses. Anything larger goes back to the human (repo
+ * precedent: autoRemediateStaleExitOrders defers live+typed-confirm remediation to the human).
+ *
+ * The fresh reference price is the repriced limit, or — when the reprice degraded to the
+ * market/queue-to-open default — the marketable price a fresh limit WOULD take off the current
+ * quote (so a pure session-expiry degrade with an unmoved quote is immaterial). No stored price or
+ * no usable fresh reference ⇒ material: what would be placed cannot be verified against what was
+ * confirmed, so defer to the human rather than guess.
+ */
+export function assessProtectiveExitRepriceDrift(
+  stored: TradeProposal,
+  repriced: TradeProposal,
+  policy: TradingPolicy,
+  quote: ProtectiveExitQuote | undefined,
+  confirmedNotional?: number
+): ProtectiveExitRepriceDrift {
+  const toleranceBps = validatedMarketableLimitBufferBps(policy);
+  const usable = (value: number | undefined): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+  const storedPrice = usable(stored.limitPrice);
+  const exitSide = repriced.side === "cover" ? "cover" : "sell";
+  const freshRef = repriced.type === "limit"
+    ? usable(repriced.limitPrice)
+    : quote !== undefined
+      ? marketableLimitExitPrice(quote, exitSide, toleranceBps)
+      : undefined;
+  if (storedPrice === undefined || freshRef === undefined) return { material: true, toleranceBps };
+  const priceDriftBps = (Math.abs(freshRef - storedPrice) / storedPrice) * 10_000;
+  const quantity = typeof repriced.quantity === "number" && Number.isFinite(repriced.quantity) ? repriced.quantity : undefined;
+  const confirmed = usable(confirmedNotional);
+  const notionalDriftBps = confirmed !== undefined && quantity !== undefined
+    ? (Math.abs(quantity * freshRef - confirmed) / confirmed) * 10_000
+    : undefined;
+  return {
+    material: priceDriftBps > toleranceBps || (notionalDriftBps !== undefined && notionalDriftBps > toleranceBps),
+    toleranceBps,
+    priceDriftBps,
+    notionalDriftBps
+  };
 }
