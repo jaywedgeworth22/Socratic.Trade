@@ -42,7 +42,14 @@ const LIVE_ORDER_STATES = new Set([
   // Alpaca-flavored resting/working states.
   "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open",
   // Robinhood-flavored resting states (get_equity_orders reports a working stop as one of these).
-  "queued", "confirmed", "unconfirmed"
+  "queued", "confirmed", "unconfirmed",
+  // Non-terminal in-transition states. "pending_cancel"/"pending_replace" are deliberate: an order
+  // whose cancel/replace is merely REQUESTED can still fill, so it must keep counting as live
+  // protection/coverage until the broker confirms it dead — treating it as gone is what lets a
+  // duplicate exit stack on top of it. This set must stay a superset of broker-held-orders.ts's
+  // ACTIVE_BROKER_ORDER_STATES (guarded by a test in broker-side.test.ts) so the two active-state
+  // vocabularies can't silently drift apart again.
+  "submitted", "pending_cancel", "pending_replace", "suspended"
 ]);
 
 export function isLiveOrderState(state: string | undefined | null): boolean {
