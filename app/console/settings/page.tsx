@@ -13,6 +13,7 @@ import type { IraWashSaleHandling, NotificationEventType, TaxationType } from "@
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
@@ -59,7 +60,7 @@ export default function SettingsPage() {
   if (!snapshot || !reality) return null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-6`}>
       <h1 className="text-[length:var(--con-fs-lg)] font-bold">Settings</h1>
 
       {/* ── THIS ACCOUNT ── */}

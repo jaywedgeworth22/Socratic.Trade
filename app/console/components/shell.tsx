@@ -9,7 +9,6 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -44,27 +43,6 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <ShellFrame>{children}</ShellFrame>
       </DirtyGuardProvider>
     </ConsoleDataProvider>
-  );
-}
-
-const THEME_LABEL: Record<ConsoleTheme, string> = {
-  system: "Theme: following your system setting. Click for dark.",
-  dark: "Theme: dark. Click for light.",
-  light: "Theme: light. Click to follow your system setting."
-};
-
-function ThemeToggle({ theme, cycle }: { theme: ConsoleTheme; cycle: () => void }) {
-  const Icon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
-  return (
-    <button
-      type="button"
-      onClick={cycle}
-      title={THEME_LABEL[theme]}
-      aria-label={THEME_LABEL[theme]}
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
-    >
-      <Icon size={15} />
-    </button>
   );
 }
 
@@ -195,6 +173,9 @@ function MobileBrandRow() {
   const [logoH, setLogoH] = useState(24);
 
   useEffect(() => {
+    // Keep this formula in sync with intro-canvas.tsx layout()'s <lg fallback
+    // header box — the splash assembles the wordmark at that size before this
+    // row can be measured, and a mismatch shows as a size pop at reveal.
     const measure = () => setLogoH(Math.max(16, Math.min(34, Math.round((window.innerWidth * 0.88) / WORDMARK_AR))));
     measure();
     window.addEventListener("resize", measure);
@@ -258,16 +239,22 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <MobileBrandRow />
-      <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
+      {/* Phone bar priorities (owner-tuned): the account scope gets the slack
+          (flex-1), the run-state chip is unboxed+stacked, the theme toggle
+          lives inside the profile menu, and nothing squeezes the STOP button.
+          The desktop spacer is hidden below sm so the scope absorbs the room. */}
+      {/* relative: the UserMenu dropdown anchors to this row (right edge of the
+          bar), not to its small button — anchoring to the 44px button pushed the
+          panel off the left edge of phone viewports. */}
+      <div className="relative mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <div className="hidden md:block">
           <CommandPaletteTrigger />
         </div>
-        <ThemeToggle theme={theme} cycle={cycleTheme} />
-        <UserMenu snapshot={snapshot} />
+        <UserMenu snapshot={snapshot} theme={theme} cycleTheme={cycleTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>

@@ -524,15 +524,13 @@ describe("persistence and notifications", () => {
 
       await runStrategyOnce();
 
-      expect(openAiBodies).toHaveLength(2);
-      expect(openAiBodies.map((body) => body.max_output_tokens)).toEqual([
-        LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
-        LLM_OUTPUT_TOKEN_CAPS.strategyCritique
-      ]);
-      // Per-role sampling (composite review B/medium/S): the Bull (proposer, index 0) stays
-      // deterministic; the Bear (adversary/reviewer, index 1) now samples at a non-zero temperature.
+      // Single-adversary consolidation: the in-flow Bear was DELETED, so a zero-proposal run makes
+      // exactly ONE LLM call (the Bull). The Red Team review only runs per risk-adding opening —
+      // its request bounds are covered by test/red-team.test.ts.
+      expect(openAiBodies).toHaveLength(1);
+      expect(openAiBodies[0].max_output_tokens).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+      // The Bull (proposer) stays deterministic, greedy temp-0.
       expect(openAiBodies[0].temperature).toBe(LLM_REQUEST_DEFAULTS.deterministicTemperature);
-      expect(openAiBodies[1].temperature).toBe(LLM_REQUEST_DEFAULTS.adversaryTemperature);
       expect(openAiBodies.every((body) => body.max_completion_tokens === undefined)).toBe(true);
 
       const bullBody = openAiBodies[0];

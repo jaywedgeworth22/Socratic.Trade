@@ -12,6 +12,15 @@ export const LLM_REQUIRED_STRATEGY_MESSAGE = "Connect an LLM provider in Setting
 export const LLM_REQUIRED_CHAT_MESSAGE = "Connect an LLM provider in Settings to chat.";
 
 /**
+ * Shown when a strategy session is attempted with either team model unchosen. NO MODEL DEFAULTS
+ * (owner directive 2026-07-07): both the Green (strategist) and Red (reviewer) models must be
+ * explicitly chosen in Settings — the strategy never invents one, so it fails closed with this
+ * actionable message instead of sending an empty-model request.
+ */
+export const LLM_MODEL_REQUIRED_STRATEGY_MESSAGE =
+  "Choose both the Strategist (green team) and Reviewer (red team) models under Settings → LLM models to run a strategy session.";
+
+/**
  * Thrown deep in the strategy path (the old silent no-key fallback site) so the no-LLM-credential
  * state surfaces as a real failure rather than a fabricated rule-based proposal. The API/UI layers
  * also pre-check with userHasAnyLlmCredential and 4xx early; this is the defense-in-depth backstop.

@@ -19,7 +19,7 @@
 // EXTRA step whenever the green counter wraps a full cycle.
 import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
 import { llmModelFamily } from "./llm-provider";
-import { DEFAULT_OPENAI_MODEL, isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
+import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
 
 export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
 
@@ -127,9 +127,9 @@ function rotationPointerKey(userId: string, accountId: string | undefined, seat:
 /**
  * Resolve the rotation sentinel(s) on a policy into CONCRETE models for one strategy run.
  * Returns `{}` when neither seat is set to rotate. Reads + advances the per-(user, account, seat)
- * pointers and audits every pick (`model_rotation_pick`). Never throws: on any storage error the
- * rotating seats fall back to the app default model (a normal, working run) rather than letting
- * the raw sentinel reach a provider.
+ * pointers and audits every pick (`model_rotation_pick`). Never throws: on an empty eligible pool
+ * or any storage error the rotating seats resolve to "" (the normal unconfigured/fail-closed state
+ * under no-defaults) rather than letting the raw sentinel reach a provider.
  */
 export function resolveModelRotationForRun(input: {
   userId: string;
@@ -143,17 +143,21 @@ export function resolveModelRotationForRun(input: {
   try {
     const { pool, skipped } = eligibleRotationPool(input.userId);
     if (pool.length === 0) {
-      // No provider credential resolves at all — the run will fail on the key check regardless;
-      // substitute the default model so it fails the NORMAL way instead of serving "__rotate__".
+      // No provider credential resolves at all — no eligible model to rotate to. Under no-defaults
+      // (owner 2026-07-07: DEFAULT_OPENAI_MODEL removed) there is nothing to substitute, so resolve
+      // the rotating seat(s) to "" — the SAME unconfigured/fail-closed state any model-less policy
+      // reaches — instead of serving the raw "__rotate__" sentinel. The run then fails closed the
+      // NORMAL way (key/model precheck → actionable Settings message / route-to-human), never a
+      // provider call with a bogus model id.
       audit(
         "model_rotation_pick",
-        { runId: input.runId, outcome: "empty_pool", fallback: DEFAULT_OPENAI_MODEL, skipped },
+        { runId: input.runId, outcome: "empty_pool", fallback: "", skipped },
         input.userId,
         input.accountId
       );
       return {
-        ...(rotateGreen ? { llmModel: DEFAULT_OPENAI_MODEL } : {}),
-        ...(rotateRed ? { redTeamLlmModel: DEFAULT_OPENAI_MODEL } : {})
+        ...(rotateGreen ? { llmModel: "" } : {}),
+        ...(rotateRed ? { redTeamLlmModel: "" } : {})
       };
     }
     const greenKey = rotationPointerKey(input.userId, input.accountId, "green");
@@ -193,10 +197,12 @@ export function resolveModelRotationForRun(input: {
     return out;
   } catch (error) {
     // Fail safe, not silent: a broken pointer store must not kill the run or leak the sentinel.
-    console.error("[model-rotation] pick failed; falling back to default model:", error);
+    // No-defaults (owner 2026-07-07): resolve the rotating seat(s) to "" — the normal
+    // unconfigured/fail-closed state — rather than serving the raw "__rotate__" sentinel.
+    console.error("[model-rotation] pick failed; failing the seat closed (no default model):", error);
     return {
-      ...(rotateGreen ? { llmModel: DEFAULT_OPENAI_MODEL } : {}),
-      ...(rotateRed ? { redTeamLlmModel: DEFAULT_OPENAI_MODEL } : {})
+      ...(rotateGreen ? { llmModel: "" } : {}),
+      ...(rotateRed ? { redTeamLlmModel: "" } : {})
     };
   }
 }

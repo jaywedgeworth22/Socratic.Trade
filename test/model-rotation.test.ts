@@ -188,25 +188,27 @@ describe("resolveModelRotationForRun", () => {
     expect(other.llmModel).toBe(out.llmModel); // acct-A consumed slot 0; acct-B starts fresh at slot 0
   });
 
-  it("falls back to the default model (not the sentinel) when no credential resolves at all", async () => {
+  it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    const { DEFAULT_OPENAI_MODEL } = await import("../src/lib/llm-request");
     const out = resolveModelRotationForRun({
       userId: `rot-nokeys-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
       policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL, redTeamLlmModel: LLM_MODEL_ROTATION_SENTINEL }
     });
-    expect(out).toEqual({ llmModel: DEFAULT_OPENAI_MODEL, redTeamLlmModel: DEFAULT_OPENAI_MODEL });
+    // No-defaults (owner 2026-07-07): an empty pool resolves the rotating seats to "" — the normal
+    // unconfigured/fail-closed state — never the raw "__rotate__" sentinel nor a removed default.
+    expect(out).toEqual({ llmModel: "", redTeamLlmModel: "" });
   });
 });
 
 describe("sentinel handling at the edges", () => {
   it("resolveOpenAiModel treats the sentinel as unset (safety net for non-run consumers)", async () => {
     vi.stubEnv("OPENAI_MODEL", "");
-    const { resolveOpenAiModel, DEFAULT_OPENAI_MODEL, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/llm-request");
-    expect(resolveOpenAiModel({ llmModel: LLM_MODEL_ROTATION_SENTINEL })).toBe(DEFAULT_OPENAI_MODEL);
+    const { resolveOpenAiModel, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/llm-request");
+    // No-defaults: the sentinel (like any unset model) resolves to "" — fail closed, never a default.
+    expect(resolveOpenAiModel({ llmModel: LLM_MODEL_ROTATION_SENTINEL })).toBe("");
     expect(resolveOpenAiModel({ llmModel: "gpt-5.5" })).toBe("gpt-5.5");
   });
 
