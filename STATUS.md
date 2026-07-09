@@ -17,6 +17,17 @@ stuck auto-merge-armed PRs, re-runs flaky verify once, merges the green ones, wr
 a manual-dispatch GH Action. Acts ONLY on auto-merge-armed PRs; reports the rest. Merge≠deploy, so the
 announce-then-deploy step stays the human checkpoint. Dry-run validated against the live backlog.
 
+## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
+Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
+assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
+cause (measured): HeaderLogo canvas reserved width from a `13.8` AR estimate then its effect set
+the real `wm.ar=13.081` (5.2% narrower) → the logo shrank on mount and the intro followed. Fix:
+single-source `WORDMARK_AR=13.081` exported from candle-ticker, used everywhere the `13.8` guess
+lived (header-logo initial width, MobileBrandRow, intro fallback); `curHeader` hoisted to module
+scope so the loading→loaded remount eases instead of snapping; loading text removed (intro is the
+whole load screen). Empirically verified: desktop logo width now a single stable 235px (was
+248→235). Full gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-intro-size-jump-loading-text.md`.
 ## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
 Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
 connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
