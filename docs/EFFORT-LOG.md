@@ -801,6 +801,12 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Delete dead preview-server infra files (MONET, branch `monet/retire-preview-files`) — IN
+  PROGRESS 2026-07-09, landing.** Removed the 4 dead files (`sync-previews.yml`,
+  `sync-preview-lanes.sh`, `sync-watchdog.sh`, `setup-agent-previews.sh`) after the 2026-07-08
+  preview retirement; pre-push hook install is now owned by `land.sh`. Ref-cleanup in
+  README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollouts left intact.
+  Rollout: `docs/rollouts/2026-07-09-retire-preview-infra-files.md`.
 - **Repo AGENTS.md/CLAUDE.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, branch
   `monet/deploy-doc-reconcile`) — IN PROGRESS 2026-07-09, landing.** Closes the repo-doc half of the
   deploy-authorization contradiction the owner ruled on 2026-07-09 (ANNOUNCE-THEN-DEPLOY, codified in

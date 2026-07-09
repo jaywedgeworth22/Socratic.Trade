@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Retire dead preview-server infra files (MONET, `monet/retire-preview-files`)
+Deleted the 4 dead preview files (`.github/workflows/sync-previews.yml`, `scripts/sync-preview-lanes.sh`,
+`scripts/sync-watchdog.sh`, `scripts/setup-agent-previews.sh`) — all dead since the 2026-07-08 preview
+retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push hook) is now owned by
+`scripts/land.sh` (self-heals `core.hooksPath` per-worktree on every run). Reference cleanup in
+README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
+intact as the paper trail. Doc/infra-only, no runtime surface.
+
 ## 2026-07-09 — Repo AGENTS.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, `monet/deploy-doc-reconcile`)
 Doc-only: brought the repo `AGENTS.md`/`CLAUDE.md` prod-deploy language in line with the owner's
 2026-07-09 ruling (production releases = ANNOUNCE-THEN-DEPLOY: one deployer posts a #agent-sync claim

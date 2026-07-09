@@ -125,8 +125,10 @@ names fail CF Universal SSL), the Preview URL Template is a UI-only Coolify fiel
 `socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
 never restore the production DB and trade. To check
 your work: `npm run dev` locally in your own worktree + the verify CI gate.
-`scripts/setup-agent-previews.sh` and the "Preview freshness policy" below are
-historical.
+The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-lanes.sh`,
+`sync-watchdog.sh`) and the CI workflow (`sync-previews.yml`) were deleted 2026-07-09 (all
+dead after the preview retirement; the pre-push hook they used to install is now installed
+by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
 Hosting is now Coolify on the Hetzner box (`91.98.44.8`, dashboard `https://jays.services`
 — direct DNS, no Mac dependency). Exactly ONE application exists there:
@@ -202,8 +204,9 @@ must not silently drift behind beta after work lands.
   is only the fallback if the scope is ever missing — `gh auth refresh -h github.com -s workflow`);
   (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
-- **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
-  by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
+- **A git pre-push hook blocks direct pushes to `main`.** `scripts/land.sh` installs and
+  verifies it per-worktree on every run (it self-heals `git config core.hooksPath scripts/githooks`
+  before pushing — `core.hooksPath` is per-worktree and not inherited). The hook:
   - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
     and `git push origin agent/foo:main`).
   - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
