@@ -1297,6 +1297,17 @@ As of 2026-07-08 (assignment-rule update).
   Journal entries. Reuses the `Ago` primitive (hover = exact time); `DecisionRowData.at`
   wired from SocraticDecisionCase.createdAt / run createdAt / PendingProposal.createdAt.
   Fileset: app/console/page.tsx only.
+- **Alpha Vantage + Twelve Data free-tier fit (MONET, branch `monet/av-twelvedata-freetier-fit`)
+  — IN PROGRESS 2026-07-09, gates running, PR via land.sh.** Owner-directed. Diagnosis: both are
+  free-tier providers too small for hourly multi-account scans (scan itself healthy via
+  Massive/FMP/Finnhub/Yahoo). AV multi-key pool (#1167) already deployed + WORKING — its own log
+  says "pool exhausted (1/1 keys hit 25/day cap)"; just needs more keys added to
+  ALPHAVANTAGE_API_KEYS in Infisical (owner providing via secret-handoff; 4 keys = 100/day,
+  global pacing avoids IP block = the discussed plan). TwelveData was a real batching bug: sent
+  120 symbols/call but /quote costs 1 credit/symbol and free tier is 8 credits/min = instant 429.
+  Fix: cap call to the credit budget (TWELVEDATA_CREDITS_PER_MIN, default 8) + one-call-per-60s
+  window gate that SKIPS (not queues, to avoid stalling parallel scans) + light pacer backstop.
+  Rollout: docs/rollouts/2026-07-09-av-twelvedata-freetier-fit.md.
 - **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
   — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
   makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
