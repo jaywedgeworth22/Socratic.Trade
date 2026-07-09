@@ -1193,7 +1193,12 @@ discrepancies that motivated these rows._
   selected proposal still runs through the existing per-item approval endpoint, preserving
   independent placed/blocked/failed results. Focused test, lint (0 errors), typecheck, full
   Vitest (301 files / 3101 tests via low workers), and `npm run build` are green; build emitted
-  only the existing Sentry Edge-runtime warning. PR #1174 is open.
+  only the existing Sentry Edge-runtime warning. PR #1174 is open. 2026-07-09 review fix:
+  capped approval batches at 20 requests, counted non-placed/non-blocked approve results as
+  failed rows with reasons, and moved bulk typed-confirm validation into the existing server
+  confirmation contract using the actual typed batch phrase. Focused review verification:
+  `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
+  `npx tsc --noEmit`, and `npm run lint -- --quiet`.
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).
 - **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
   2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,

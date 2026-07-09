@@ -5,7 +5,7 @@ import { ListFilter, ShieldAlert } from "lucide-react";
 import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
-import { approveProposal, rejectProposal, type ApproveResult } from "../lib/api";
+import { approveProposal, LiveConfirmationRequiredError, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import { fetchPendingLearnedContext } from "../lib/learned-context";
 import { ApprovalCard } from "../components/approval-card";
@@ -49,6 +49,7 @@ const SORT_OPTIONS: Array<{ value: ApprovalSort; label: string }> = [
  *  mis-click guard, not a ritual: no typed phrase, no modal, just a second
  *  deliberate click within a few seconds. */
 const REJECT_ARM_MS = 4_000;
+const BULK_APPROVE_MAX_REQUESTS = 20;
 
 /** Pending learned-context count for the header's "+N learned" chip — the nav
  *  rail's badge folds trade proposals and learned-context items into one
@@ -119,6 +120,7 @@ export default function ApprovalsPage() {
   const visibleIdSet = useMemo(() => new Set(filtered.map((proposal) => proposal.id)), [filtered]);
   const summary = useMemo(() => summarizePendingProposals(filtered), [filtered]);
   const selection = useMemo(() => summarizeBulkSelection(filtered, effectiveSelectedIds), [filtered, effectiveSelectedIds]);
+  const bulkApproveOverLimit = selection.approveCount > BULK_APPROVE_MAX_REQUESTS;
   const state = snapshot ? deriveStateInfo(snapshot.policy) : null;
   const stopped = snapshot?.policy.systemState === "halted";
   const requiresTypedLiveApproval = snapshot?.policy.requireTypedConfirmation !== false;
@@ -175,39 +177,55 @@ export default function ApprovalsPage() {
     return "other";
   };
 
-  const runBulkApproveBatch = async (selected: PendingProposal[], includeLiveConfirmation: boolean) => {
+  const runBulkApproveBatch = async (selected: PendingProposal[], liveTypedText?: string, liveBatchCount?: number) => {
     if (selected.length === 0) return;
     setBulkBusy("approve");
     let placed = 0;
     let blocked = 0;
     let failed = 0;
+    const failureDetails: string[] = [];
     try {
       for (const proposal of selected) {
         try {
           const liveConfirmation =
-            includeLiveConfirmation && approvalIsLive(proposal)
+            liveTypedText && approvalIsLive(proposal)
               ? {
                   proposalId: proposal.id,
                   accountNumber: proposal.accountNumber ?? null,
                   executionMode: "broker/live" as const,
                   estimatedNotional: approvalEstimatedNotional(proposal),
-                  typedText: liveApprovalText(proposal)
+                  typedText: liveTypedText,
+                  batchLiveCount: liveBatchCount && liveBatchCount > 1 ? liveBatchCount : null
                 }
               : undefined;
           const result = await approveProposal(proposal.id, liveConfirmation);
           const status = finishApproval(result);
           if (status === "placed") placed += 1;
           else if (status === "blocked") blocked += 1;
-        } catch {
+          else {
+            failed += 1;
+            const reasons = result.reasons?.filter(Boolean).join("; ");
+            failureDetails.push(`${proposal.proposal.symbol}: ${reasons || result.status || "approval did not place"}`);
+          }
+        } catch (error) {
           failed += 1;
+          const reasons =
+            error instanceof LiveConfirmationRequiredError
+              ? error.reasons.join("; ")
+              : error instanceof Error
+                ? error.message
+                : "request failed";
+          failureDetails.push(`${proposal.proposal.symbol}: ${reasons || "request failed"}`);
         }
       }
       await refresh();
       resetSelection();
+      const detailParts = [`${blocked} blocked on re-check`, failed > 0 ? `${failed} failed` : undefined].filter(Boolean);
+      const detail = [...detailParts, ...failureDetails.slice(0, 3)].join(" · ");
       toast.push(
         failed > 0 ? "warn" : "pos",
         `Approved ${placed} proposal${placed === 1 ? "" : "s"}`,
-        [`${blocked} blocked on re-check`, failed > 0 ? `${failed} failed` : undefined].filter(Boolean).join(" · ") || undefined
+        detail || undefined
       );
     } finally {
       setBulkBusy(null);
@@ -217,17 +235,22 @@ export default function ApprovalsPage() {
   const runBulkApprove = () => {
     const selected = filtered.filter((proposal) => effectiveSelectedIds.has(proposal.id));
     if (selected.length === 0) return;
+    if (selected.length > BULK_APPROVE_MAX_REQUESTS) {
+      toast.push("warn", "Too many approvals selected", `Select ${BULK_APPROVE_MAX_REQUESTS} or fewer proposals per batch to stay inside the order rate limit.`);
+      return;
+    }
     if (requiresTypedLiveApproval && selected.some(approvalIsLive)) {
       setLiveApproveBatch(selected);
       return;
     }
-    void runBulkApproveBatch(selected, false);
+    void runBulkApproveBatch(selected);
   };
 
-  const submitLiveApproveBatch = async () => {
+  const submitLiveApproveBatch = async (typedText: string) => {
     const selected = liveApproveBatch ?? [];
+    const liveCount = selected.filter(approvalIsLive).length;
     setLiveApproveBatch(null);
-    await runBulkApproveBatch(selected, true);
+    await runBulkApproveBatch(selected, typedText.trim().toUpperCase(), liveCount);
   };
 
   const runBulkReject = async () => {
@@ -374,15 +397,18 @@ export default function ApprovalsPage() {
                   {selection.liveCount} live {requiresTypedLiveApproval ? "need typed confirm" : "one-click"}
                 </Chip>
               )}
+              {bulkApproveOverLimit && <Chip tone="warn">approve max {BULK_APPROVE_MAX_REQUESTS}</Chip>}
               <div className="ml-auto flex flex-wrap gap-2">
                 <Btn
                   variant="pos"
                   size="sm"
-                  disabled={stopped || bulkBusy !== null || selection.approveCount === 0}
+                  disabled={stopped || bulkBusy !== null || selection.approveCount === 0 || bulkApproveOverLimit}
                   onClick={runBulkApprove}
                   title={
                     stopped
                       ? "The system is stopped, so approval actions are refused."
+                      : bulkApproveOverLimit
+                        ? `Select ${BULK_APPROVE_MAX_REQUESTS} or fewer proposals per batch to stay inside the order rate limit.`
                       : selection.liveCount > 0 && requiresTypedLiveApproval
                         ? "Approves selected proposals one by one through the existing server path after one batch live-confirm phrase."
                         : "Approves selected proposals one by one through the existing server path."
@@ -485,7 +511,7 @@ export default function ApprovalsPage() {
         proposals={liveApproveBatch ?? []}
         busy={bulkBusy === "approve"}
         onClose={() => setLiveApproveBatch(null)}
-        onSubmit={() => void submitLiveApproveBatch()}
+        onSubmit={(typedText) => void submitLiveApproveBatch(typedText)}
       />
     </div>
   );
@@ -495,8 +521,9 @@ function liveApprovalText(proposal: PendingProposal): string {
   return `APPROVE LIVE ${proposal.proposal.symbol.toUpperCase()}`;
 }
 
-function bulkLiveApprovalText(count: number): string {
-  return `APPROVE ${count} LIVE ${count === 1 ? "ORDER" : "ORDERS"}`;
+function bulkLiveApprovalText(live: PendingProposal[]): string {
+  if (live.length === 1 && live[0]) return liveApprovalText(live[0]);
+  return `APPROVE ${live.length} LIVE ${live.length === 1 ? "ORDER" : "ORDERS"}`;
 }
 
 function BulkLiveApproveSheet({
@@ -510,12 +537,12 @@ function BulkLiveApproveSheet({
   proposals: PendingProposal[];
   busy: boolean;
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit: (typedText: string) => void;
 }) {
   const [typed, setTyped] = useState("");
   const live = useMemo(() => proposals.filter(approvalIsLive), [proposals]);
   const paperCount = proposals.length - live.length;
-  const expectedText = bulkLiveApprovalText(live.length);
+  const expectedText = bulkLiveApprovalText(live);
   const matches = typed.trim().toUpperCase() === expectedText;
   const liveNotional = live.reduce((sum, proposal) => sum + approvalEstimatedNotional(proposal), 0);
 
@@ -525,8 +552,9 @@ function BulkLiveApproveSheet({
   };
 
   const submit = () => {
+    const typedText = typed.trim().toUpperCase();
     setTyped("");
-    onSubmit();
+    onSubmit(typedText);
   };
 
   return (

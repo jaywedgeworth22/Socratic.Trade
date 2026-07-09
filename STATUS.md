@@ -51,11 +51,16 @@ remains the existing one-click inline confirm. Bulk approve now includes selecte
 if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
 before approval; if the owner has turned that setting off, live bulk approval is one-click. Each
 selected row still calls the existing per-proposal approval endpoint, so broker/account/notional
-re-checks and partial placed/blocked/failed outcomes stay independent. Verification:
+re-checks and partial placed/blocked/failed outcomes stay independent. PR review follow-up capped
+bulk approve to 20 requests, reports non-placed/non-blocked approval results as failed rows, and
+has the server validate the actual typed batch phrase (`APPROVE N LIVE ORDERS`) instead of a
+client-synthesized per-symbol phrase. Verification:
 `./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
 `./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
 full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
-`npm run build` passed with only the existing Sentry Edge-runtime warning. PR #1174 is open.
+`npm run build` passed with only the existing Sentry Edge-runtime warning. Review-fix focused
+verification: `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
+`npx tsc --noEmit`, and `npm run lint -- --quiet` all passed. PR #1174 is open.
 Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
 
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)

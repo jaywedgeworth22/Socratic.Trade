@@ -208,6 +208,7 @@ export interface LiveApprovalConfirmation {
   executionMode?: ExecutionMode | string;
   estimatedNotional?: number | null;
   typedText?: string | null;
+  batchLiveCount?: number | null;
 }
 
 export class LiveApprovalConfirmationError extends Error {
@@ -235,6 +236,10 @@ class StrategyLlmStepFailure extends Error {
 
 export function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${normalizeSymbol(symbol)}`;
+}
+
+export function liveBatchApprovalText(count: number): string {
+  return `APPROVE ${count} LIVE ${count === 1 ? "ORDER" : "ORDERS"}`;
 }
 
 /**
@@ -3224,8 +3229,12 @@ function assertLiveApprovalConfirmation(input: {
   // confirmation off, a live approval is a one-click action like any other — no phrase required.
   // Real money is the app's normal, in-domain case, not a gated exception.
   if (!input.requireTypedConfirmation) return;
-  const expectedText = liveApprovalText(input.proposal.symbol);
   const confirmation = input.confirmation;
+  const batchLiveCount = Number(confirmation?.batchLiveCount);
+  const expectedText =
+    Number.isInteger(batchLiveCount) && batchLiveCount > 1
+      ? liveBatchApprovalText(batchLiveCount)
+      : liveApprovalText(input.proposal.symbol);
   const reasons: string[] = [];
   const typedText = String(confirmation?.typedText ?? "").trim().toUpperCase();
   const expectedNotional = input.estimatedNotional;

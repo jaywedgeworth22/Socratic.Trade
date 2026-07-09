@@ -9,6 +9,7 @@ Branch: `codex/live-bulk-typed-confirm` (worktree `/Users/jay/.codex/worktrees/s
 - When typed confirmation is disabled, selected LIVE proposals approve with the same one-click bulk action as paper proposals.
 - Bulk reject remains the existing inline one-click confirm path; no typed phrase was added there.
 - Each selected proposal still submits through the existing per-item approve endpoint, so placed, blocked, and failed results stay row-honest.
+- PR review follow-up capped bulk approvals at 20 requests, reports non-placed/non-blocked approve results as failed rows with reasons, and validates the actual typed batch phrase server-side.
 
 ## Why
 
@@ -21,7 +22,10 @@ endpoint instead of inventing a new broker path.
 
 - `app/console/approvals/page.tsx`
 - `app/console/approvals/triage.ts`
+- `app/console/lib/api.ts`
+- `src/lib/strategy.ts`
 - `test/approvals-triage-model.test.ts`
+- `test/order-confirmation-status.test.ts`
 - `docs/EFFORT-LOG.md`
 - `STATUS.md`
 - `PLAN.md`
@@ -37,6 +41,9 @@ npm run lint
 npx tsc --noEmit
 npm test -- --reporter=dot --maxWorkers=2
 npm run build
+npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts
+npx tsc --noEmit
+npm run lint -- --quiet
 ```
 
 Passed:
@@ -48,7 +55,10 @@ Passed:
 - `npx tsc --noEmit`: clean
 - Full Vitest: 301 files / 3101 tests (low workers to avoid local resource SIGTERM)
 - `npm run build`: passed with only the existing Sentry Edge-runtime warning
+- Review-fix focused tests: 2 files / 6 tests
+- Review-fix `npx tsc --noEmit`: clean
+- Review-fix `npm run lint -- --quiet`: clean
 
 ## Follow-ups
 
-- If the product later wants server-native aggregate confirmation text, add a dedicated server contract; this branch intentionally keeps the existing per-item endpoint.
+- If the product later wants a dedicated server batch endpoint, add it as a separate contract; this branch intentionally keeps the existing per-item endpoint while validating the typed batch phrase through the existing live-confirm payload.

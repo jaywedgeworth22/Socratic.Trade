@@ -90,10 +90,10 @@ vi.mock("@alpacahq/alpaca-trade-api", () => {
 
 const ACCOUNT = "ACC-CONFIRM";
 
-async function seedLiveProposal(userId: string): Promise<string> {
+async function seedLiveProposal(userId: string, environment: "paper" | "live" = "paper"): Promise<string> {
   const { upsertConnectedAccount, setPolicy, insertProposal } = await import("../src/lib/db");
 
-  // "paper" (not "live") deliberately — this exercises the identical broker/placeEquityOrder
+  // "paper" (not "live") by default — this exercises the identical broker/placeEquityOrder
   // code path (submitsBrokerOrders: true, real gateway, not the local simulator) without also
   // having to satisfy the separate typed live-approval confirmation gate, which is unrelated to
   // what this test verifies.
@@ -101,7 +101,7 @@ async function seedLiveProposal(userId: string): Promise<string> {
     id: "acc-confirm-test",
     userId,
     broker: "alpaca",
-    environment: "paper",
+    environment,
     accountNumber: ACCOUNT,
     baseUrl: "https://paper-api.alpaca.markets",
     apiKey: "AK_TEST",
@@ -116,7 +116,8 @@ async function seedLiveProposal(userId: string): Promise<string> {
       accountNumber: ACCOUNT,
       connectedAccountId: "acc-confirm-test",
       activeBroker: "alpaca",
-      systemState: "active"
+      systemState: "active",
+      requireTypedConfirmation: true
     },
     userId
   );
@@ -188,6 +189,28 @@ describe("executeProposal — broker-agnostic order-placement confirmation", () 
 
     const row = getProposal(proposalId, userId);
     expect(row?.status).toBe("placed");
+  }, 30000);
+
+  it("accepts the actual typed batch phrase for a live bulk approval", async () => {
+    mockOrderStatus = "accepted";
+    const userId = `confirm-live-batch-${randomUUID()}`;
+    const proposalId = await seedLiveProposal(userId, "live");
+
+    const { executeProposal } = await import("../src/lib/strategy");
+
+    const result = await executeProposal(proposalId, userId, {
+      liveConfirmation: {
+        proposalId,
+        accountNumber: ACCOUNT,
+        executionMode: "broker/live",
+        estimatedNotional: 500,
+        typedText: "APPROVE 2 LIVE ORDERS",
+        batchLiveCount: 2
+      }
+    });
+
+    expect(result.status).toBe("placed");
+    expect(result.orderId).toBe("order-confirm-1");
   }, 30000);
 
   it("returns quotes under both canonical and requested share-class symbols", async () => {

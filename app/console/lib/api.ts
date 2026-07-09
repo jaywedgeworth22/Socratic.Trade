@@ -147,6 +147,7 @@ export interface LiveApprovalConfirmationBody {
   executionMode: "broker/live";
   estimatedNotional?: number | null;
   typedText: string;
+  batchLiveCount?: number | null;
 }
 
 export interface ApproveResult {
