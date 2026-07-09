@@ -19,6 +19,20 @@ inputs); (3) hint tooltips for maxGrossExposurePct / maxNetExposurePct in
 `app/console/guardrails/field-defs.ts`. `origin/main` merged in — the expected overlap with AG
 #1231 (`8fd8b3ab`, Sheet focus-loop guard) merged cleanly and both sides are verified present.
 See `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
+## 2026-07-09 — Vitest temp-SQLite leak cleanup (MONET, branch `monet/distracted-albattani-dfc422`)
+The suite leaked every temp DB it created (`DATABASE_URL=file:<tmpdir>/agentic-*.db` beforeAll pattern
+plus older `chat-*`/`trading-test-*`/`llm-provider-test-*` names) — 178k files/~130GB on the fleet Mac
+before the 2026-07-09 manual cleanup; janitor-less machines and CI kept accumulating. Fixed with zero
+test-file edits: `vitest.config.ts` now points the test runtime's TMPDIR/TMP/TEMP at one per-run
+`agentic-vitest-*` dir (vitest spreads `config.env` into worker env at fork), and the new
+`test/global-setup.ts` creates it, `rm -rf`s it on teardown, and sweeps `agentic-*` leftovers >6h old
+from the real temp dir (janitor parity; crashed runs self-heal next run). Verified empirically: DBs
+observed landing inside the per-run dir mid-run, dir gone after teardown, zero new loose tmp entries
+across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 tests / build. See
+`docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
+`origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
+lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
 
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build

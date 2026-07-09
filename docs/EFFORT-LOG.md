@@ -920,15 +920,18 @@ As of 2026-07-08 (assignment-rule update).
   announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
   migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
-  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
-  every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
-  `llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on the fleet Mac
-  before the 2026-07-09 manual cleanup; the disk janitor now reaps them there, but CI and
-  janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
+  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09, PR open via land.sh,
+  auto-merge armed.** MONET's work, landed by CLAUDE under the owner-directed usage-cap pickup
+  (2026-07-09): merged `origin/main` clean, full gate green (lint 0-err / tsc / 308 files 3210
+  tests / build), verified post-run that no `agentic-vitest-*` dir lingers in the real tmpdir.
+  The suite leaks every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/
+  `trading-test-*`/`llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on
+  the fleet Mac before the 2026-07-09 manual cleanup; the disk janitor now reaps them there,
+  but CI and janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
   TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
   `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
   stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
-  test-file edits. PR via land.sh when gate green.
+  test-file edits. Rollout: `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
   PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
   (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
