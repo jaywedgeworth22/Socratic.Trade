@@ -47,17 +47,20 @@ Tests (`test/data-providers.test.ts`, `test/provider-rate-limit.test.ts`):
 call caps to ≤ budget symbols with every input still represented; a second
 same-window scan skips the network entirely (no queue/stall); the pacer default.
 
-## Alpha Vantage — owner action (config, no deploy needed for code)
+## Alpha Vantage — DONE (config): 6 keys wired into Infisical
 
 The pool reads `ALPHAVANTAGE_API_KEYS` (comma-separated), falling back to the
-single `ALPHAVANTAGE_API_KEY`. Add 2–4 keys:
-`ALPHAVANTAGE_API_KEYS=key1,key2,key3,key4` in Infisical prod. Each key adds its
-own 25/day (4 keys = 100/day) while the pool's global ≥1.1s pacing keeps calls
-per minute restricted so no single IP bursts — exactly the "multiple keys +
-per-minute restriction to avoid IP block" plan. (MONET to wire the keys in via
-secret-handoff once the owner provides them.) Honest caveat: even 100/day is
-modest; AV/TD are supplementary, and the realistic long-term options remain
-pay-for-tier or drop-from-cascade if their specific fields aren't wanted.
+single `ALPHAVANTAGE_API_KEY`. **2026-07-09: the owner provided 6 keys via a
+`chmod 600` secret-handoff file (`~/.secrets/alphavantage-keys`, `LABEL=KEY`
+per line); MONET set `ALPHAVANTAGE_API_KEYS` (6 keys) in Infisical prod — values
+never printed; verified 6 keys present on readback.** That's 150/day with the
+pool rotating sticky-until-daily-cap and global ≥1.1s pacing keeping calls per
+minute restricted so no single IP bursts — exactly the "multiple keys +
+per-minute restriction to avoid IP block" plan. **Activates on the next
+prod restart/deploy** (env injected at container start) — bundled with the
+Twelve Data deploy below. Honest caveat: even 150/day is modest; AV/TD are
+supplementary, and the long-term options remain pay-for-tier or drop-from-cascade
+if their specific fields aren't wanted.
 
 ## Verification
 
