@@ -202,6 +202,12 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Shared-dep proper-usage cleanup (CURSOR, S) — started 2026-07-09.**
+  Branch `cursor/shared-dep-adoption-9577`. Use `CONGRESS_EVENT_TYPES` for event-type checks,
+  type outbound payload from shared `SharePayload`, drop unused `API_PATHS`/`MAX_REFS_BATCH`
+  imports from `congress-trade-client.ts`. Verified: tsc clean; congress-trade-events /
+  congress-share / congress-stream / webhook-parity tests pass (77).
+
 - **Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`) — IN PROGRESS
   2026-07-08, landing.** #1091's recovery applied to the uncovered inline Bear parse (silent-full-veto
   fix); helper + 7 tests; superseded cleanly by the single-adversary inline-Bear deletion when it lands.
