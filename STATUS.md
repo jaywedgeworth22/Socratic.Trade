@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Vitest temp-SQLite leak cleanup (MONET, branch `monet/distracted-albattani-dfc422`)
+The suite leaked every temp DB it created (`DATABASE_URL=file:<tmpdir>/agentic-*.db` beforeAll pattern
+plus older `chat-*`/`trading-test-*`/`llm-provider-test-*` names) — 178k files/~130GB on the fleet Mac
+before the 2026-07-09 manual cleanup; janitor-less machines and CI kept accumulating. Fixed with zero
+test-file edits: `vitest.config.ts` now points the test runtime's TMPDIR/TMP/TEMP at one per-run
+`agentic-vitest-*` dir (vitest spreads `config.env` into worker env at fork), and the new
+`test/global-setup.ts` creates it, `rm -rf`s it on teardown, and sweeps `agentic-*` leftovers >6h old
+from the real temp dir (janitor parity; crashed runs self-heal next run). Verified empirically: DBs
+observed landing inside the per-run dir mid-run, dir gone after teardown, zero new loose tmp entries
+across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 tests / build. See
+`docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
 (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep

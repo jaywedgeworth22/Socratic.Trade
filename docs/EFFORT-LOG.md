@@ -1246,6 +1246,16 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
+  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
+  every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
+  `llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on the fleet Mac
+  before the 2026-07-09 manual cleanup; the disk janitor now reaps them there, but CI and
+  janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
+  TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
+  `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
+  stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
+  test-file edits. PR via land.sh when gate green.
 - **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
   — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
   makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
