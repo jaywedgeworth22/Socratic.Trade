@@ -991,8 +991,14 @@ export function upsertBrokerProtectiveStop(stop: Omit<BrokerProtectiveStop, "cre
 }
 
 export function listBrokerProtectiveStops(accountNumber: string, userId: string = "local"): BrokerProtectiveStop[] {
+  // Include BOTH live-resting stops and stops mid-teardown ('pending_cancel'). Rows are hard-deleted
+  // on a successful cancel, so these are the only two statuses that ever persist — returning both is
+  // effectively "every active row". Filtering to status='resting' (the previous behavior) hid a
+  // pending_cancel row from the reconcile loop's retry pass, so a failed cancel could never be
+  // retried and the stop would orphan at the broker. Callers that must act on resting-only rows
+  // (e.g. mismatch replacement) still check `status === 'resting'` themselves.
   const rows = getDb()
-    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status = 'resting' ORDER BY created_at ASC")
+    .prepare("SELECT * FROM broker_protective_stops WHERE user_id = ? AND account_number = ? AND status IN ('resting', 'pending_cancel') ORDER BY created_at ASC")
     .all(userId, accountNumber) as Record<string, unknown>[];
   return rows.map(mapBrokerProtectiveStop);
 }

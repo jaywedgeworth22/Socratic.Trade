@@ -125,16 +125,23 @@ names fail CF Universal SSL), the Preview URL Template is a UI-only Coolify fiel
 `socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
 never restore the production DB and trade. To check
 your work: `npm run dev` locally in your own worktree + the verify CI gate.
-`scripts/setup-agent-previews.sh` and the "Preview freshness policy" below are
-historical.
+The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-lanes.sh`,
+`sync-watchdog.sh`) and the CI workflow (`sync-previews.yml`) were deleted 2026-07-09 (all
+dead after the preview retirement; the pre-push hook they used to install is now installed
+by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
-Hosting is now Coolify on the Hetzner box (`91.98.44.8`, dashboard `https://jays.services`
-— direct DNS, no Mac dependency). Exactly ONE application exists there:
-`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
+Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
+dashboard `https://jays.services` — direct DNS, no Mac dependency; migrated 2026-07-09
+from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the owner deletes
+it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`). The box hosts
+`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
+`github-runner` service (two GitHub Actions deploy runners).
 **Build caveats:** the box's `concurrent_builds` is
-pinned to **1** (two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07, console
-reboot required), and Docker cleanup thresholds matter — a build burst filled the disk on
-2026-07-08 and 500'd the Coolify control plane (see the prod-migration rollout note).
+pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
+console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
+cleanup thresholds matter — a build burst filled the old box's disk on 2026-07-08 and
+500'd the Coolify control plane (cleanup now threshold=60%/hourly; see the prod-migration
+rollout note).
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
@@ -202,8 +209,9 @@ must not silently drift behind beta after work lands.
   is only the fallback if the scope is ever missing — `gh auth refresh -h github.com -s workflow`);
   (8) pushes your agent branch and opens a PR via `gh`.
   After a conflict or failure, fix it and re-run `land.sh` — it is idempotent.
-- **A git pre-push hook blocks direct pushes to `main`.** It is installed in every worktree
-  by `setup-agent-previews.sh` via `git config core.hooksPath scripts/githooks`. The hook:
+- **A git pre-push hook blocks direct pushes to `main`.** `scripts/land.sh` installs and
+  verifies it per-worktree on every run (it self-heals `git config core.hooksPath scripts/githooks`
+  before pushing — `core.hooksPath` is per-worktree and not inherited). The hook:
   - Refuses any push whose remote-ref is `refs/heads/main` (catches both `git push origin main`
     and `git push origin agent/foo:main`).
   - Refuses any push originating from `~/Code/Agentic Trading` (integration worktree).
@@ -455,6 +463,16 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - Standard verification commands live in `README.md`/the "Verify before claiming
  done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
  build`. All pass clean in this environment.
+- Node version: `.nvmrc` pins Node **24**, but the cloud VM's default `node`
+ (`/exec-daemon/node`, which wins on `PATH`) is **v22.x**, and the startup update
+ script (`npm install`) runs under it. The app installs, tests, and builds clean on
+ Node 22 — do not burn time forcing Node 24 via nvm (its bin is later on `PATH` and
+ does not persist into the update-script context).
+- `npm install` alone is sufficient. npm 11 prints an `allow-scripts` warning that
+ install scripts for `better-sqlite3`/`sharp`/`esbuild` were "not covered" — this is
+ harmless here: those native deps load from prebuilt binaries (verified
+ `require('better-sqlite3')` and `require('sharp')` both work), so no
+ `npm approve-scripts`/rebuild step is needed.
 - `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
  `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
  pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s

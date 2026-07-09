@@ -1,5 +1,11 @@
 # Production Deployment
 
+> **Retired/rollback-only:** production cut over to Coolify on 2026-07-07 (app
+> `socratic-trade-prod` on the Hetzner box, ANNOUNCE-THEN-DEPLOY releases). The
+> current runbook is AGENTS.md's "PRODUCTION IS ON COOLIFY" stanza and
+> `docs/rollouts/2026-07-07-prod-coolify-migration.md`. Everything below this
+> point describes the earlier Mac/PM2 path, kept only as rollback reference.
+
 Production is the self-hosted PM2 site at **socratictrade.com**, served by
 `next start` (PM2 app `trading`) from the `~/apps/trading-live` worktree on the
 owner's Apple Silicon Mac.
@@ -96,29 +102,17 @@ pm2 save
   by the integration worktree. See
   `docs/rollouts/2026-06-22-deploy-workflow-activated.md` for the why.
 
-## Preview lane sync
+## Preview lane sync (RETIRED)
 
-`.github/workflows/sync-previews.yml` runs on the same self-hosted Mac after
-every push to `main` and calls `scripts/sync-preview-lanes.sh`.
-
-The sync updates only local preview lanes:
-
-- `trading-beta.jays.services` / PM2 `trading-main` / port `4001`
-- `claude.jays.services` / PM2 `trading-claude` / port `4100`
-- `codex.jays.services` / PM2 `trading-codex` / port `4101`
-- `antigravity.jays.services` / PM2 `trading-antigravity` / port `4102`
-
-Production remains owned by the Deploy workflow. Preview sync skips dirty
-worktrees, unexpected branches, and merge conflicts. If a lane advances but
-fails local `/api/health` or root-page checks, the script rolls that lane back
-to its previous commit and restarts the PM2 app.
-
-Optional PM2 polling fallback:
-
-```bash
-pm2 start ~/Code/Agentic\ Trading/scripts/sync-watchdog.sh --name trading-sync-watchdog
-pm2 save
-```
+Previews were retired (owner decision, 2026-07-08): there are no per-agent PM2
+`next dev` lanes and no `*.jays.services` preview hostnames. The machinery that
+kept them fresh — `.github/workflows/sync-previews.yml`, `scripts/sync-preview-lanes.sh`,
+`scripts/sync-watchdog.sh`, and `scripts/setup-agent-previews.sh` — was deleted
+2026-07-09. Review in-progress work with `npm run dev` in your own worktree plus
+the `verify` CI gate; production is the only hosted environment — see AGENTS.md's
+"PRODUCTION IS ON COOLIFY" stanza and
+`docs/rollouts/2026-07-07-prod-coolify-migration.md` for the current runbook
+(the Mac/PM2 + `deploy.yml` sections in this file are retired/rollback-only).
 
 ## Runner
 

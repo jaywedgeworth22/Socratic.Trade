@@ -424,7 +424,7 @@
 | `riskRules.takeProfitNotional` | Risk | USD | 100–50000 | Alt: absolute $ take-profit |
 | `riskRules.takeProfitTrimPct` | Risk | % | 25–100 | % of position to sell when TP triggers (default 50); rest rides |
 | `riskRules.trailingStopPct` | Risk | % | 2–10 | Trailing stop ratchet (how far back from running high) |
-| `riskRules.shortStopLossPct` | Risk | % | 2–10 | **Mandatory** on shorts; max adverse excursion tolerance |
+| `riskRules.shortStopLossPct` | Risk | % | 2–10 | **Mandatory** on shorts; max adverse excursion tolerance; default 8 (since 2026-07-09) |
 | `riskRules.atrStopPeriod` | Risk | integer | 7–20 | ATR lookback (days) if atrStops enabled; default 14 |
 | `riskRules.atrStopMultiple` | Risk | number | 1.0–3.0 | ATR multiplier for stop distance; default 2.0 |
 | `atrStops` | Risk (policy) | boolean | on/off | Volatility-scaled stops: stopLoss = ATR × multiple × entry% |
