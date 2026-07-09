@@ -782,7 +782,7 @@ As of 2026-07-08 (assignment-rule update).
   `origin/main`. Scope is the smallest remaining gap only: add the existing `SymbolButton`
   affordance to Home evidence cards in `app/console/page.tsx`. Keepout: model-picker files
   and drawer host/API files remain MONET-owned/adjacent. Implementation and full local gate are
-  green; opening PR next.
+  green; PR #1181 is open.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
