@@ -47,6 +47,16 @@ lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
 owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
 deploy, any account without explicit models fails closed with an actionable Settings message —
 owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+## 2026-07-09 — Repo AGENTS.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, `monet/deploy-doc-reconcile`)
+Doc-only: brought the repo `AGENTS.md`/`CLAUDE.md` prod-deploy language in line with the owner's
+2026-07-09 ruling (production releases = ANNOUNCE-THEN-DEPLOY: one deployer posts a #agent-sync claim
+with app+commit+contents+"deploying in N min unless objection", ~10-min objection window, off market
+hours unless a fix, deployer owns verify+boards). Corrected two stale passages — the "owner-run
+release step"/"auto-deploys to beta/integration" board bullet (previews retired, auto-deploy OFF) and
+the "deliberate step" prod stanza — pointing to `/Users/jay/apps/AGENT-SYNC.md` as canonical. Closes
+the repo-doc half of today's deploy-authorization contradiction; AGENT-SYNC.md half already done by
+the ruling lane.
+
 ## 2026-07-09 — Guardrails tooltip sweep (CODEX, `codex/settings-tooltip-sweep`)
 Claimed the smallest safe remainder of the settings affordance row after auditing current
 `origin/main` and MONET handoffs. `app/console/guardrails/page.tsx` now adds native titles

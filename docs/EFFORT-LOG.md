@@ -1196,6 +1196,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Repo AGENTS.md/CLAUDE.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, branch
+  `monet/deploy-doc-reconcile`) — IN PROGRESS 2026-07-09, landing.** Closes the repo-doc half of the
+  deploy-authorization contradiction the owner ruled on 2026-07-09 (ANNOUNCE-THEN-DEPLOY, codified in
+  AGENT-SYNC.md by the ruling lane). Fixes two stale spots in AGENTS.md: board semantics ("owner-run
+  release step" + "auto-deploys to beta/integration" [previews retired/auto-deploy OFF]) and the
+  prod stanza ("deliberate step" → the announce→window→off-hours→deploy→verify protocol). Doc-only.
+  Rollout: `docs/rollouts/2026-07-09-agents-md-announce-then-deploy-reconcile.md`.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
