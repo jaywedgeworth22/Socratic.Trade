@@ -353,6 +353,19 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Stop-loss SETTINGS ACCURACY (MONET, worktree `~/.claude/.../backfill-asof-epoch-09e06b`, branch
+  `monet/stop-loss-settings-defaults-759d07`) — IN PROGRESS 2026-07-09.** Owner-directed audit of stop
+  toggles that behave unlike their labels. **Slice 1 (PR pending):** the "App stops in extended hours"
+  toggle was BROKEN (Alpaca 422 on `market`+`extended_hours`; MCP dropped the flag) → new
+  `src/lib/protective-exit-routing.ts` routes a marketable-limit `extended_hours` exit when the toggle
+  is on + a pre/post session, else market/queue-to-open (owner ruling "limit ON / queue OFF"); wired
+  into `synthetic-stops.ts` + the proactive generator in `strategy.ts`; + honest coexistence protection
+  label in `derive.ts`. Gate green (tsc, lint 0-err, 3183 tests, build). Coordinated w/ peer PR #1221
+  (`shortStopLossPct=8` real default + shorts-surface) + AG PR #1211 (ext-hours tooltips): peer keeps
+  `defaults.ts`/field-defs-short/RH-safety, this lane keeps the short-selling gate + ATR/beta/ext-hours
+  label honesty + behavior-matches. **Follow-ups (blocked on #1221/#1211/peer-RH landing):** field-defs
+  ATR/beta copy, short-selling gate in `page.tsx`, RH resting stop ATR/beta distance. See
+  `docs/rollouts/2026-07-09-stop-loss-extended-hours-exit-routing.md`.
 - **Settings auto-save everywhere (MONET, branch `monet/settings-autosave-99138a`) — IN PROGRESS
   2026-07-09, PR pending via land.sh.** Owner-directed: settings persist on change like Data-sharing,
   except confirmation/review-gated ones. New `app/console/lib/useAutoSave.tsx` + `ui/save-status.tsx`
