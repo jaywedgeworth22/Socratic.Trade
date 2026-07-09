@@ -1341,6 +1341,12 @@ As of 2026-07-08 (assignment-rule update).
   snaps the box. Fix: export single-source WORDMARK_AR from candle-ticker, use everywhere;
   persist curHeader; drop loading text. Fileset: app/console/ui/candle-ticker.ts,
   app/console/ui/header-logo.tsx, app/console/components/shell.tsx, app/console/components/intro-canvas.tsx.
+- **Delete dead preview-server infra files (MONET, branch `monet/retire-preview-files`) — IN
+  PROGRESS 2026-07-09, landing.** Removed the 4 dead files (`sync-previews.yml`,
+  `sync-preview-lanes.sh`, `sync-watchdog.sh`, `setup-agent-previews.sh`) after the 2026-07-08
+  preview retirement; pre-push hook install is now owned by `land.sh`. Ref-cleanup in
+  README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollouts left intact.
+  Rollout: `docs/rollouts/2026-07-09-retire-preview-infra-files.md`.
 - **Roth Gemini 400 TRUE root cause + async Run-once (MONET, branch
   `monet/roth-gemini-400-runonce-async`) — IN PROGRESS 2026-07-09, gates running, PR via
   land.sh.** Owner-reported: Run-once popped a raw Cloudflare 524 page; Roth Gemini 400

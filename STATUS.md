@@ -87,6 +87,14 @@ rather than re-enabling npm-11 default behavior. Extracted from a larger uncommi
 the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
 in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
 `better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
+## 2026-07-09 — Retire dead preview-server infra files (MONET, `monet/retire-preview-files`)
+Deleted the 4 dead preview files (`.github/workflows/sync-previews.yml`, `scripts/sync-preview-lanes.sh`,
+`scripts/sync-watchdog.sh`, `scripts/setup-agent-previews.sh`) — all dead since the 2026-07-08 preview
+retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push hook) is now owned by
+`scripts/land.sh` (self-heals `core.hooksPath` per-worktree on every run). Reference cleanup in
+README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
+intact as the paper trail. Doc/infra-only, no runtime surface.
+
 ## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
 Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
 opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized
