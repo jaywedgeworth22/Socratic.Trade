@@ -35,11 +35,12 @@ import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketR
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
 import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
-import { buildBearSystem, buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
+import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, detectLlmTruncation } from "./llm-call";
+import { resolveModelRotationForRun } from "./model-rotation";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload, detectLlmTruncation } from "./llm-call";
 import { humanizeLlmError, humanizeLlmTransportError } from "./llm-errors";
-import { LlmCredentialRequiredError, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
+import { LlmCredentialRequiredError, LLM_MODEL_REQUIRED_STRATEGY_MESSAGE, LLM_REQUIRED_STRATEGY_MESSAGE } from "./llm-required";
 import { materializeSkippedCandidateCounterfactuals, recordRejectedProposalCounterfactual } from "./counterfactual-learning";
 import { dynamicIndexUniversesForPolicy } from "./index-universes";
 import { normalizeSymbol } from "./money";
@@ -104,7 +105,7 @@ import {
   type InjectionFinding,
   type UntrustedPromptField
 } from "./prompt-safety";
-import { debateProposal } from "./red-team";
+import { debateProposal, type RedTeamDebateResult, type RedTeamReviewContext } from "./red-team";
 import { describeRedTeamFailureKind, routeOnAdversaryUnavailable } from "./red-team-routing";
 import { isEscalationRegime } from "./regime-watch";
 import { isRiskOffFilterRegime, regimeFromLabel, classifyMarketRegime } from "./market-regime";
@@ -132,15 +133,6 @@ import { isTradingDay } from "./market-calendar";
  * is for learning only (never sent to the LLM), so size affects storage, not tokens.
  */
 const MAX_SKIPPED_EVIDENCE = 25;
-const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
-
-// Cooldown for the inline-Bear "Red Team review unavailable" alert (see bearUnavailable() below).
-// Mirrors db-health.ts's HEALTH_ALERT_COOLDOWN_PREFIX/HEALTH_ALERT_COOLDOWN_MS pattern (same 6h
-// window) — a sustained Bear/Red-Team LLM outage is the same class of "provider stuck down" event
-// as any other provider_degraded source, and previously had NO cooldown at all (16 alerts across
-// ~15 hours during the 2026-07-02 outage, roughly one per hourly strategy run).
-const BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY = "bearUnavailableAlertSent";
-const BEAR_UNAVAILABLE_ALERT_COOLDOWN_MS = 6 * 60 * 60_000;
 
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
@@ -358,6 +350,24 @@ export async function runStrategyOnce(
       return result;
     }
 
+    // ── Model rotation (owner testing option) ─────────────────────────────
+    // "__rotate__" as llmModel / redTeamLlmModel round-robins each run through every curated
+    // model whose provider credential resolves, so comparative live history accrues across
+    // models (`proposedByModel` already stamps the CONCRETE serving model on each proposal).
+    // Resolved HERE — after the market-closed early-return (a skipped run must not consume a
+    // rotation slot) and BEFORE any budget preview or LLM endpoint resolution — onto a
+    // RUN-SCOPED override, the same pattern as the usage-budget downgrade below: the persisted
+    // policy keeps the sentinel so the NEXT run rotates again, and the breaker `setPolicy`
+    // calls above/below (which persist `policy`) can never overwrite it with a concrete model.
+    // Every pick is audited (`model_rotation_pick`). See src/lib/model-rotation.ts.
+    // Resolve the picks NOW (so the budget preview/enforcement below can price the concrete models this
+    // run would serve), but DEFER the pointer advance + pick audit to `commitRotation()`: it is called
+    // late, immediately before the Green proposeTrades call, once the run is actually committed to
+    // serving the LLM (after account validation + the usage-budget skip gate). A run that aborts before
+    // that point (account unavailable, over budget, no candidate cleared the threshold) leaves the
+    // pointer untouched, so it never burns a rotation slot on a run that generated no proposal.
+    const { commit: commitRotation, ...rotationOverride } = resolveModelRotationForRun({ userId, accountId: connectedAccountId, runId, policy });
+
     // Cost-aware budget feedback loop (API Usage Monitor) — Phase 1: fire budget alerts for
     // over-budget providers whenever the monitor is configured (fire-and-forget, never blocks a run).
     void checkBudgetAndAlert(userId, policy).catch(() => {});
@@ -376,7 +386,9 @@ export async function runStrategyOnce(
       budgetStatus = await getBudgetStatusCached();
       if (budgetStatus) {
         const enforceOn = usageBudgetEnforceEnabled();
-        const wouldDecide = await previewBudgetDecision(userId, policy, { status: budgetStatus });
+        // Rotation-resolved view: the preview must reason about the CONCRETE models this run
+        // will serve, not the "__rotate__" sentinel (which has no price entry).
+        const wouldDecide = await previewBudgetDecision(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
         audit(
           "usage_budget_status",
           {
@@ -559,7 +571,9 @@ export async function runStrategyOnce(
     // market-closed early-return above).
     let enforceDecision: Awaited<ReturnType<typeof evaluateBudgetForRun>> = { skip: false, downgraded: false };
     try {
-      enforceDecision = await evaluateBudgetForRun(userId, policy, { status: budgetStatus });
+      // Rotation-resolved view (same reason as the advisory preview above): enforcement must
+      // evaluate the CONCRETE models this run will serve, never the "__rotate__" sentinel.
+      enforceDecision = await evaluateBudgetForRun(userId, { ...policy, ...rotationOverride }, { status: budgetStatus });
     } catch {
       /* fail-open — never let usage-budget enforcement break a run */
     }
@@ -578,7 +592,12 @@ export async function runStrategyOnce(
     // object threaded into LLM-model-resolution call sites for this run.
     const runLlmOverride: { llmModel?: string; redTeamLlmModel?: string } = {};
     if (enforceDecision.downgraded) {
-      const before = { llmModel: policy.llmModel, redTeamLlmModel: policy.redTeamLlmModel };
+      // "before" = what this run WOULD have served (rotation already resolved), so the
+      // downgrade audit shows a concrete-model transition, not the "__rotate__" sentinel.
+      const before = {
+        llmModel: rotationOverride.llmModel ?? policy.llmModel,
+        redTeamLlmModel: rotationOverride.redTeamLlmModel ?? policy.redTeamLlmModel
+      };
       if (enforceDecision.llmModel) runLlmOverride.llmModel = enforceDecision.llmModel;
       if (enforceDecision.redTeamLlmModel) runLlmOverride.redTeamLlmModel = enforceDecision.redTeamLlmModel;
       audit(
@@ -599,7 +618,9 @@ export async function runStrategyOnce(
     // proposal revalidation, and the post-mortem reflection pass below) — never passed to setPolicy or
     // autoRevertOnCapBreach, which continue to use the pristine `policy` object so a cap-breach demotion
     // persists ONLY `strategyAuthority`, never the in-run model downgrade.
-    const runPolicy: RunnablePolicy = { ...policy, ...runLlmOverride };
+    // Merge order matters: the usage-budget downgrade (runLlmOverride) intentionally WINS over the
+    // rotation pick — enforcement is the owner's opt-in cost override of whatever would have run.
+    const runPolicy: RunnablePolicy = { ...policy, ...rotationOverride, ...runLlmOverride };
 
     // ── Per-user/day LLM budget ceiling ────────────────────────────────────
     // Computed HERE, AFTER the non-LLM safety work (pending-fill reconciliation + drawdown/volatility
@@ -1105,11 +1126,17 @@ export async function runStrategyOnce(
       }
     }
     let llmProposals: TradeProposal[] = [];
-    // FAIL-CLOSED signal from the inline Bear (Red Team): when its review could not run, these
-    // Bull proposals were NOT critiqued — route them to human review below instead of auto-executing.
-    let bearReviewUnavailable = false;
-    let bearReviewReason: string | undefined;
+    // R7 evidence context for the single Red Team review (built inside proposeTrades alongside the
+    // Bull userContent so the reviewer fact-checks against the SAME candidate evidence the
+    // strategist saw). Undefined when proposal generation was skipped — no openings to review then.
+    let adversaryContext: RedTeamReviewContext | undefined;
     if (!skipLlmDueToScoreThreshold && !skipLlmDueToBudget) {
+      // The run is now committed to serving the Green LLM: advance the rotation pointer(s) + audit the
+      // pick(s) here (a no-op unless a seat is rotating). Committing at this exact point — after account
+      // validation and every usage-budget skip gate, immediately before proposeTrades — is what keeps
+      // rotation sampling even: an aborted/skipped run above never reached here, so it never burned a
+      // slot. Per-account run locks serialize same-account runs, so read-early/commit-late has no TOCTOU.
+      commitRotation();
       const proposed = await proposeTrades({
         runId,
         userId,
@@ -1135,8 +1162,7 @@ export async function runStrategyOnce(
       });
       llmProposals = proposed.proposals;
       llmSteps = proposed.llmSteps;
-      bearReviewUnavailable = proposed.bearReviewUnavailable === true;
-      bearReviewReason = proposed.bearReviewReason;
+      adversaryContext = proposed.adversaryContext;
       // Advisory injection receipts from the prompt-assembly scan (audited inside proposeTrades):
       // fold into kind-'safety' evidence, one item per flagged field, so every decision case this
       // run records carries the receipt. Never alters proposals or routing.
@@ -1250,60 +1276,72 @@ export async function runStrategyOnce(
       });
 
     const debatedProposals: TradeProposal[] = [];
-    // Red Team is REQUIRED for high-conviction trades. If it could not run (no key, provider
-    // error, timeout) we FAIL CLOSED: keep the proposal but route it to a human rather than
-    // auto-executing an un-reviewed high-conviction trade with real capital. The live placement
-    // path below checks this set and downgrades these to status "proposed".
+    // The Red Team review is REQUIRED for every risk-adding opening. If it could not run (no model
+    // chosen, no key, provider error, timeout, malformed verdict) we FAIL CLOSED: keep the proposal
+    // but route it to a human rather than auto-executing an un-reviewed opening with real capital.
+    // The live placement path below checks this set and downgrades these to status "proposed".
     const requiresHumanReview = new Set<TradeProposal>();
-    // Inline Bear review failed → FAIL CLOSED: every un-critiqued opening is routed to human
-    // review. In "propose" mode all proposals already require approval; in "decide" mode this is
-    // what stops a Bear timeout/429/malformed-JSON/missing-key from auto-executing unreviewed
-    // trades.
-    if (bearReviewUnavailable) {
-      // Route only OPENING proposals (buy/short) to human review. Risk-reducing exits (sell/cover)
-      // must still flow through to placement even when the Red Team is down — blocking a de-risking
-      // trade on a Bear outage is itself unsafe (mirrors the rationale-collapse gate below).
-      const bearGatedOpenings = sizedProposals.filter((p) => p.side === "buy" || p.side === "short");
-      for (const p of bearGatedOpenings) {
-        p.rationale += `\n\nInline Red Team (Bear) review was REQUIRED but unavailable (${bearReviewReason ?? "unknown error"}); routed to human approval.`;
-        requiresHumanReview.add(p);
+
+    // ── The SINGLE Red Team review (docs/single-adversary-consolidation.md §3) ──────────────────
+    // Universal coverage (O2): every risk-adding opening is reviewed — no conviction gate, no
+    // stakes-scaled triggering. Exits and net-risk-reducing trades are structurally EXEMPT (§3.5 /
+    // R5): they never reach the reviewer, so a verdict can never block or shrink de-risking.
+    // Reviews run concurrently with a small bounded pool (R4) so universal coverage doesn't extend
+    // the per-user scheduler-lock hold: worst-case wall clock is ceil(openings/3) sequential rounds
+    // instead of `openings` sequential calls.
+    const openingsToReview = sizedProposals.filter((p) => isRiskAddingOpening(p, workingPositions));
+    const reviewResults = new Map<TradeProposal, RedTeamDebateResult>();
+    await mapWithConcurrency(openingsToReview, 3, async (proposal) => {
+      const quote = marketScan.topCandidates.find(
+        (c) => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol)
+      );
+      try {
+        // Pass the run-scoped `runPolicy` explicitly (R17 — rather than letting debateProposal
+        // re-read the user-level getPolicy) so the account-scoped Red model/reasoning AND any
+        // usage-budget Phase 2 downgrade actually reach the reviewer's model resolution.
+        const result = await debateProposal(proposal, quote, userId, runPolicy, {
+          context: adversaryContext,
+          sizing: {
+            estimatedNotional: estimateNotional(proposal),
+            sizeBasis: typeof proposal.quantity === "number" && proposal.quantity > 0 ? "quantity" : "notional"
+          }
+        });
+        reviewResults.set(proposal, result);
+      } catch (error) {
+        // debateProposal's contract is to never throw, but a review that somehow does must still
+        // fail CLOSED, not open.
+        console.error(`[RedTeam] review threw for ${proposal.symbol} ${proposal.side}:`, error);
+        reviewResults.set(proposal, {
+          rejected: false,
+          available: false,
+          reason: `Red Team review threw unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+          failureKind: "provider_error"
+        });
       }
-      if (bearGatedOpenings.length > 0) {
-        audit("strategy_bear_review_routed_to_human", { runId, count: bearGatedOpenings.length, reason: bearReviewReason, mode: policy.strategyAuthority }, userId);
-      }
-    }
+    });
+
     for (const proposal of sizedProposals) {
-      // Stakes-scaled dissent (composite review E/high/S): widen the debate trigger beyond
-      // confidenceScore alone — large-notional and live openings, an escalation-regime entry, or the
-      // proposal itself requesting an owner-preference override all demand a second look regardless
-      // of stated confidence. Advisory routing only: this decides whether a review runs, never a block.
-      const isOpeningSide = proposal.side === "buy" || proposal.side === "short";
-      const dissentContext: RedTeamDissentContext = {
-        notionalPctOfNav:
-          isOpeningSide && workingPortfolio.totalMarketValue > 0
-            ? (estimateNotional(proposal) / workingPortfolio.totalMarketValue) * 100
-            : undefined,
-        isLiveOpening: isOpeningSide && executionState.environment === "live",
-        entryMarketRegime: proposal.entryMarketRegime
-      };
-      if (shouldRunRedTeamDebate(proposal, policy, dissentContext)) {
-        const isBullish = proposal.side === "buy" || proposal.side === "cover";
-        const quote = marketScan.topCandidates.find(c => normalizeSymbol(c.symbol) === normalizeSymbol(proposal.symbol));
-        // Pass the run-scoped `runPolicy` explicitly (rather than letting debateProposal re-read
-        // getPolicy(userId)) so a usage-budget Phase 2 downgrade of redTeamLlmModel — carried on this
-        // run-scoped object only, never persisted onto `policy` — actually reaches the Bear's model choice.
-        const redTeamResult = await debateProposal(proposal, quote, isBullish, userId, runPolicy);
-        // First-class verdict for the dashboard's "Bear Review" block (Agent A renders this). Keep the
+      const redTeamResult = reviewResults.get(proposal);
+      if (!redTeamResult) {
+        // Exempt by §3.5: an exit or a net-risk-reducing trade — passes through untouched, never
+        // reviewed, never holdable by the adversary.
+        debatedProposals.push(proposal);
+        continue;
+      }
+      {
+        // First-class verdict for the approval card's "Red Team Review" block. Keep the
         // rationale-append text below too for backward compatibility with anything reading the string.
         proposal.redTeamVerdict = {
+          ...(redTeamResult.verdict ? { verdict: redTeamResult.verdict } : {}),
           rejected: redTeamResult.rejected,
           available: redTeamResult.available,
           reason: redTeamResult.reason,
-          // The model that actually served the debate (incl. the cross-provider Anthropic path) —
-          // persisted so the approval card's red-team badge doesn't drift with later policy edits.
+          // The model that actually served the review — persisted so the approval card's red-team
+          // badge doesn't drift with later policy edits.
           ...(redTeamResult.model ? { model: redTeamResult.model } : {}),
-          // WHICH stakes-scaled-dissent condition demanded this debate, for the verdict receipt.
-          ...(redTeamDebateTrigger(proposal, policy, dissentContext) ? { trigger: redTeamDebateTrigger(proposal, policy, dissentContext) } : {}),
+          // Universal coverage: every review since the consolidation runs because the trade is a
+          // risk-adding opening. (Legacy persisted verdicts carry the old dissent-trigger values.)
+          trigger: "all_openings",
           // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
           ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
         };
@@ -1380,16 +1418,38 @@ export async function runStrategyOnce(
                 console.warn("[strategy] red-team-vetoed counterfactual failed:", err instanceof Error ? err.message : String(err));
               }
             }
+            // R8 — persist the rejection as a durable trade_proposals row (status
+            // "rejected_by_red_team") before dropping it, matching the policy-block / broker-decline
+            // paths, so the adversary's most important negative verdict is visible in operator
+            // review and learning telemetry, not just the audit feed. Best-effort + non-fatal.
+            try {
+              insertProposal({
+                userId,
+                executionMode,
+                promptVersion: STRATEGY_PROMPT_VERSION,
+                id: crypto.randomUUID(),
+                runId,
+                accountNumber: policy.accountNumber,
+                proposal,
+                decision: {
+                  approved: false,
+                  reasons: [`red_team_veto: ${redTeamResult.reason}`]
+                } satisfies PolicyDecision,
+                estimatedNotional: estimateNotional(proposal),
+                status: "rejected_by_red_team"
+              });
+            } catch (err) {
+              console.warn("[strategy] persisting red-team rejection row failed:", err instanceof Error ? err.message : String(err));
+            }
             // Skip this proposal completely, as the Red Team found a critical flaw
             continue;
           }
         } else if (!redTeamResult.available) {
-          // De-risk-only routing consistency: match the in-flow Bear's openings-only fail-closed
-          // gate. Openings (risk-increasing) ALWAYS hold for human review. Exits (risk-reducing) only
-          // proceed without a hold (loud "RED TEAM FAILED" rationale note instead) when the operator
-          // has opted in via policy.tuning.deRiskExitsOnAdversaryUnavailable — default OFF, so default
-          // behavior is byte-identical to main's unconditional requiresHumanReview.add for every side.
-          // Audit parity with strategy_bear_review_unavailable.
+          // FAIL CLOSED (§3.7): the review could not run for this risk-adding opening — hold it for
+          // human approval across ALL failure modes (not-configured / timeout / provider error /
+          // rate-limit / malformed verdict). Only openings can reach here (§3.5 exempts everything
+          // risk-reducing before the review), so routeOnAdversaryUnavailable's opening branch always
+          // holds; the routing note stays authority-aware for the rationale text.
           const routing = routeOnAdversaryUnavailable(
             proposal.side,
             redTeamResult.failureKind,
@@ -1398,7 +1458,7 @@ export async function runStrategyOnce(
             policy.strategyAuthority === "decide"
           );
           console.warn(
-            `[Debate] Red Team unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); ${routing.holdForHuman ? "routing to human review" : "proceeding without a hold (risk-reducing exit, de-risk opt-in)"}.`
+            `[RedTeam] review unavailable for ${proposal.symbol} ${proposal.side} (${redTeamResult.reason}); routing to human review.`
           );
           proposal.rationale += routing.note;
           if (routing.holdForHuman) requiresHumanReview.add(proposal);
@@ -1408,8 +1468,32 @@ export async function runStrategyOnce(
             userId,
             connectedAccountId
           );
+        } else if (redTeamResult.verdict === "approve-at-half") {
+          // §3.3 / R1 / R2 — the single allowed discrete haircut, applied to the finalized order.
+          // Down-only: when 0.5× is NOT placeable (sub-share limit order, bracket-invalidating
+          // notional), the proposal is HELD for human review at full size — never silently traded
+          // at a size larger than the reviewer approved, never up-sized.
+          const haircut = applyRedTeamHalfSize(proposal);
+          if (haircut.applied) {
+            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason} [${haircut.note}]`;
+            audit(
+              "red_team_approved_at_half",
+              { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, haircut: haircut.note },
+              userId,
+              connectedAccountId
+            );
+          } else {
+            proposal.rationale += `\n\nRed Team verdict: approve-at-half — ${redTeamResult.reason}\n\n⚠ Half-size is not placeable (${haircut.note}); routed to human approval instead of proceeding at full size.`;
+            requiresHumanReview.add(proposal);
+            audit(
+              "red_team_half_size_unplaceable",
+              { runId, symbol: proposal.symbol, side: proposal.side, thesisTag: proposal.tradeThesisTag, reason: redTeamResult.reason, model: redTeamResult.model, why: haircut.note, heldForHuman: true },
+              userId,
+              connectedAccountId
+            );
+          }
         } else {
-          proposal.rationale += `\n\nRed Team Debate Survived: ${redTeamResult.reason}`;
+          proposal.rationale += `\n\nRed Team Review Survived: ${redTeamResult.reason}`;
         }
       }
       debatedProposals.push(proposal);
@@ -1711,6 +1795,30 @@ export async function runStrategyOnce(
         };
       }
 
+      // Single-adversary visibility (R18/R19): persist "the Red Team review could not run" and the
+      // approve-at-half haircut onto the STORED decision — on EVERY insert path this loop reaches
+      // (propose-mode, requiresHumanReview, and even auto-execution) — so the pending-approval
+      // badge and later audit reads come from a stable persisted field, not a transient reason
+      // array or notification payload. Never flips `approved` here: routing is handled by the
+      // requiresHumanReview set / propose authority.
+      const redTeamState = normalizedProposal.redTeamVerdict;
+      if (redTeamState && !redTeamState.available) {
+        decision = {
+          ...decision,
+          adversaryUnavailable: true,
+          adversaryUnavailableReason: redTeamState.reason,
+          reasons: [
+            ...decision.reasons,
+            `Red Team review unavailable (${describeRedTeamFailureKind(redTeamState.failureKind)}): ${redTeamState.reason}`
+          ]
+        };
+      } else if (redTeamState?.verdict === "approve-at-half") {
+        decision = {
+          ...decision,
+          reasons: [...decision.reasons, `Red Team approve-at-half haircut applied: ${redTeamState.reason}`]
+        };
+      }
+
       // Wash-sale proceed trails (auto_proceeded / ira_disregarded) are NEVER silent, but they are
       // audited at the ACTUAL execution point (auditWashSaleProceed at the live-placed path below),
       // NOT here. Under Ask-first/propose authority (and Red-Team-unavailable /
@@ -1908,7 +2016,22 @@ export async function runStrategyOnce(
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
-          { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          {
+            type: "pending_approval",
+            title: `${normalizedProposal.symbol} awaiting approval`,
+            // R18 — a propose-mode insert must carry the adversary-unavailable flag too (this
+            // branch runs BEFORE the requiresHumanReview one, so without this the flag would only
+            // ever surface under decide authority).
+            payload: {
+              runId,
+              proposalId,
+              proposal: normalizedProposal,
+              review,
+              ...(decision.adversaryUnavailable
+                ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
+                : {})
+            }
+          },
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [] });
@@ -1925,7 +2048,21 @@ export async function runStrategyOnce(
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "proposed" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "proposed", review, overrideResolution });
         await sendNotification(
-          { type: "pending_approval", title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`, payload: { runId, proposalId, proposal: normalizedProposal, review } },
+          {
+            type: "pending_approval",
+            title: `${normalizedProposal.symbol} awaiting approval (Red Team unavailable)`,
+            // §5.2 — payload metadata flag so formatNotificationDisplay can PRESERVE this title
+            // instead of unconditionally overwriting pending_approval titles.
+            payload: {
+              runId,
+              proposalId,
+              proposal: normalizedProposal,
+              review,
+              ...(decision.adversaryUnavailable
+                ? { adversaryUnavailable: true, adversaryUnavailableReason: decision.adversaryUnavailableReason }
+                : {})
+            }
+          },
           { policy, userId }
         );
         results.push({ proposal: normalizedProposal, status: "proposed", reasons: [`Red Team review unavailable${failureKindSuffix}; routed to human approval.`] });
@@ -2236,70 +2373,92 @@ export function approvedEscalationsFromDecision(decision: PolicyDecision | undef
     }));
 }
 
-export const DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD = 15;
+// `shouldRunRedTeamDebate`, `redTeamDebateTrigger`, and the conviction/%-of-NAV threshold helpers
+// were REMOVED 2026-07-07 (single-adversary consolidation, decision O2): the Red Team review now
+// runs on EVERY risk-adding opening — universal, structural coverage instead of conviction- or
+// stakes-gated triggering. The only remaining routing question is §3.5's net-risk-direction gate:
 
 /**
- * Stakes-scaled dissent context (composite review E/high/S). All fields optional so every existing
- * 2-arg call site (tests, and any future caller that doesn't have this context yet) is unaffected —
- * `shouldRunRedTeamDebate` degrades to the original confidence-only gate when omitted.
+ * §3.5 / R5 — net-risk-direction gate for the single Red Team review. TRUE only for a trade that
+ * INCREASES |net exposure| in its symbol: a `buy` that opens or adds to a long (net position ≥ 0),
+ * or a `short` that opens or adds to a short (net position ≤ 0). FALSE — structurally EXEMPT from
+ * review, so the adversary can never block or shrink a risk-reducing trade — for:
+ *   - every exit (`sell`/`cover`), and
+ *   - the position-flip edge cases raw-side gating gets wrong: a `buy` against an existing net
+ *     short (it covers), and a `short` against an existing net long (it trims).
+ * Classification is by the SIGN of the existing net position (the same book `applyDeterministicSizing`
+ * reads); an oversized opposite-side order that would flip through zero still counts as risk-adding
+ * only in the rare sign-boundary case, which errs toward MORE review, never less.
  */
-export interface RedTeamDissentContext {
-  /** Estimated order notional as % of portfolio NAV (totalMarketValue). */
-  notionalPctOfNav?: number;
-  /** True for an OPENING (buy/short) proposal on a LIVE (non-paper) account. */
-  isLiveOpening?: boolean;
-  /** The regime label the proposal was scored in (checked via isEscalationRegime). */
-  entryMarketRegime?: string;
+export function isRiskAddingOpening(proposal: TradeProposal, positions: EquityPosition[]): boolean {
+  if (proposal.side !== "buy" && proposal.side !== "short") return false;
+  const sym = normalizeSymbol(proposal.symbol);
+  const netQty = positions
+    .filter((p) => normalizeSymbol(p.symbol) === sym)
+    .reduce((sum, p) => sum + p.quantity, 0);
+  return proposal.side === "buy" ? netQty >= 0 : netQty <= 0;
 }
 
 /**
- * Whether the approval-time Red Team debate (debateProposal) is required for this proposal.
- * Originally gated on confidenceScore ALONE, so a low-confidence but large-notional LIVE trade got
- * no adversarial review while a high-confidence $50 paper trade did (composite review E/high/S:
- * "Stakes-scaled dissent"). Now ANY of the following demands the debate: high confidence (existing
- * behavior, unchanged), notional at/above the policy-tunable %-of-NAV threshold, a LIVE opening, an
- * escalation-regime entry, or the proposal itself carrying a requested autonomyOverride (the agent is
- * already asking to deviate from an owner preference — that deserves a second look). Advisory
- * routing only: this only decides whether a REVIEW runs, never a hard block.
+ * §3.3 / R1 / R2 — apply the Red Team's `approve-at-half` haircut to a FINALIZED opening, mutating
+ * the proposal IN PLACE (reference identity must survive: `requiresHumanReview` and the placement
+ * loop key off the object reference). Down-only and placeability-aware:
+ *   - quantity-routed (marketable-limit conversion cleared `dollarAmount` and set a whole-share
+ *     `quantity`): halve the share count, floored; below 1 share → NOT placeable.
+ *   - dollar-routed: halve the notional, floored to a whole dollar. If the order carries a native
+ *     broker bracket (bracketStopLoss/bracketTakeProfit priced for the FULL size) and the halved
+ *     notional drops below one whole share at the reference price, the bracket the sizer attached
+ *     would be invalid at the broker → NOT placeable (never silently strip protective legs).
+ * Returns `applied: false` when 0.5× is not placeable — the caller must then HOLD the proposal for
+ * human review at full size (R1: never proceed at a size larger than the reviewer approved, never
+ * up-size a haircut).
  */
-export function shouldRunRedTeamDebate(
-  proposal: TradeProposal,
-  policy: TradingPolicy,
-  context: RedTeamDissentContext = {}
-): boolean {
-  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return true;
-  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return true;
-  if (context.isLiveOpening) return true;
-  if (proposal.autonomyOverride?.requested) return true;
-  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return true;
-  return false;
+export function applyRedTeamHalfSize(proposal: TradeProposal): { applied: boolean; note: string } {
+  const quantityRouted =
+    typeof proposal.quantity === "number" &&
+    proposal.quantity > 0 &&
+    (proposal.dollarAmount == null || proposal.dollarAmount <= 0);
+  if (quantityRouted) {
+    const halvedQty = Math.floor((proposal.quantity as number) / 2);
+    if (halvedQty < 1) {
+      return { applied: false, note: "half of this whole-share limit order is below one share" };
+    }
+    const fromQty = proposal.quantity;
+    proposal.quantity = halvedQty;
+    return { applied: true, note: `size halved: ${fromQty} → ${halvedQty} shares` };
+  }
+  if (typeof proposal.dollarAmount === "number" && proposal.dollarAmount > 0) {
+    const halved = Math.floor(proposal.dollarAmount / 2);
+    if (halved < 1) {
+      return { applied: false, note: "half of this notional rounds to $0" };
+    }
+    const hasNativeBracket = proposal.bracketStopLoss != null || proposal.bracketTakeProfit != null;
+    const entryPrice = proposal.referencePrice;
+    if (hasNativeBracket && typeof entryPrice === "number" && entryPrice > 0 && halved < entryPrice) {
+      return {
+        applied: false,
+        note: "half notional drops below one whole share at the reference price, which would invalidate the attached broker bracket"
+      };
+    }
+    const fromNotional = proposal.dollarAmount;
+    proposal.dollarAmount = halved;
+    return { applied: true, note: `size halved: $${fromNotional} → $${halved}` };
+  }
+  return { applied: false, note: "order has neither a positive notional nor a positive quantity" };
 }
 
-/** WHICH trigger demanded the debate (for the verdict receipt) — mirrors shouldRunRedTeamDebate's
- *  checks in the same order so the reported trigger is the first one that actually fired. */
-export function redTeamDebateTrigger(
-  proposal: TradeProposal,
-  policy: TradingPolicy,
-  context: RedTeamDissentContext = {}
-): "confidence" | "notional" | "live_opening" | "override_requested" | "escalation_regime" | undefined {
-  if ((proposal.confidenceScore ?? 0) >= redTeamConvictionThresholdForPolicy(policy)) return "confidence";
-  if (context.notionalPctOfNav !== undefined && context.notionalPctOfNav >= redTeamNotionalPctOfNavThresholdForPolicy(policy)) return "notional";
-  if (context.isLiveOpening) return "live_opening";
-  if (proposal.autonomyOverride?.requested) return "override_requested";
-  if (context.entryMarketRegime && isEscalationRegime(context.entryMarketRegime)) return "escalation_regime";
-  return undefined;
-}
-
-export function redTeamConvictionThresholdForPolicy(policy: TradingPolicy): number {
-  const threshold = policy.tuning?.redTeamConvictionThreshold;
-  if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_CONVICTION_THRESHOLD;
-  return Math.max(0, Math.min(100, threshold));
-}
-
-export function redTeamNotionalPctOfNavThresholdForPolicy(policy: TradingPolicy): number {
-  const threshold = policy.tuning?.redTeamNotionalPctOfNavThreshold;
-  if (threshold === undefined || !Number.isFinite(threshold)) return DEFAULT_RED_TEAM_NOTIONAL_PCT_OF_NAV_THRESHOLD;
-  return Math.max(0, threshold);
+/** Small bounded-concurrency worker pool (R4) — `Promise.all` would burst every Red Team request
+ *  at once and re-trigger the scheduler-lock / rate-limit starvation the cap exists to avoid. */
+async function mapWithConcurrency<T>(items: readonly T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items];
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, queue.length)) }, async () => {
+    for (;;) {
+      const item = queue.shift();
+      if (item === undefined) return;
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
 }
 
 /**
@@ -3719,19 +3878,19 @@ export function rejectProposal(proposalId: string, userId: string = "local"): vo
 export { THESIS_PLAYBOOK };
 
 interface ProposeTradesResult {
+  /** The deterministic-filtered Bull proposals (R6). NO second LLM pass runs in here anymore —
+   *  the single Red Team review happens post-sizing in the strategy loop. */
   proposals: TradeProposal[];
   llmSteps: StrategyLlmStep[];
   /**
-   * Set when the inline Bear (Red Team) review could NOT run — missing key, transport
-   * error/timeout, or an unparseable response. The caller FAILS CLOSED: in autonomous
-   * ("decide") mode these un-critiqued Bull proposals are routed to human review instead of
-   * auto-executed. Absent/false means the Bear review actually ran (approved-or-modified).
+   * R7 — evidence context for the single Red Team review: the same structured candidate evidence
+   * + macro/portfolio/scorecard context the Bull prompt carried, so the reviewer can fact-check
+   * the strategist's claims. Threaded by the caller into every debateProposal call this run.
    */
-  bearReviewUnavailable?: boolean;
-  bearReviewReason?: string;
+  adversaryContext?: RedTeamReviewContext;
   /**
    * Advisory findings from the deterministic prompt-injection scan over the untrusted text
-   * blocks assembled into the Bull/Bear prompts (see src/lib/prompt-safety.ts). Already audited
+   * blocks assembled into the Bull prompt (see src/lib/prompt-safety.ts). Already audited
    * (kind 'prompt_injection_suspected') inside proposeTrades; the caller folds them into
    * decision-case evidence. NEVER affects the proposals themselves.
    */
@@ -3778,6 +3937,12 @@ async function proposeTrades(input: {
   // and silently substituting a non-LLM "Development Fallback" proposal misrepresents what ran. The
   // run loop's catch surfaces this message as the run summary; the route also pre-checks and 412s early.
   if (!openaiKey) throw new LlmCredentialRequiredError(LLM_REQUIRED_STRATEGY_MESSAGE);
+  // NO MODEL DEFAULTS (owner directive 2026-07-07): a blank Green model resolves to "" and MUST fail
+  // closed here — never send an empty-model request. Same legible-failure path as the missing key:
+  // the run summary carries the actionable message and the route pre-checks and 412s early. The Red
+  // (reviewer) model has its own fail-closed backstop inside debateProposal (not_configured), which
+  // routes every un-reviewed opening to human approval rather than aborting the whole run.
+  if (!resolvedModel) throw new LlmCredentialRequiredError(LLM_MODEL_REQUIRED_STRATEGY_MESSAGE);
 
   const maxProposals = input.policy.maxProposalsPerRun ?? 3;
   const remainingNotional = Math.max(0, (input.policy.maxDailyNotional ?? Infinity) - input.dailyNotionalUsed);
@@ -4065,7 +4230,8 @@ async function proposeTrades(input: {
     // references it by name and the data-not-command clause covers it.
     ...(reflection ? { reflectionSummary: `<reflection_summary>\n${reflection}\n</reflection_summary>` } : {}),
     // Episodic decision memory (composite review A1): labeled analogs + owner-coaching blocks.
-    // Mirrored into bearUserContent below — evidence parity between Bull and Bear is the point.
+    // Mirrored into the Red Team review's adversaryContext below — evidence parity between the
+    // strategist and its reviewer is the point.
     ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
     ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {})
   };
@@ -4321,7 +4487,9 @@ async function proposeTrades(input: {
             }
 
             try {
-              const parsed = JSON.parse(text) as { proposals?: TradeProposal[] };
+              // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
+              // fenced JSON on the proposal step must not degrade to zero proposals.
+              const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
               return { text, proposals: parsed.proposals ?? [], truncated };
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
@@ -4419,76 +4587,24 @@ async function proposeTrades(input: {
     }
   }
 
-  // Phase 7: Bear Agent (Red Team) Critique (prompt in ./strategy-prompts, Chat A item 2)
-  const bearSystemPrompt = buildBearSystem({ shortAllowed });
-
-  const bearSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["proposals"],
-    properties: {
-      proposals: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: [
-            "symbol",
-            "side",
-            "type",
-            "quantity",
-            "dollarAmount",
-            "limitPrice",
-            "stopPrice",
-            "timeInForce",
-            "marketHours",
-            "rationale",
-            "tradeThesisTag",
-            "confidenceScore",
-            "autonomyOverride",
-            "bracketStopLoss",
-            "bracketTakeProfit"
-          ],
-          properties: {
-            symbol: { type: "string" },
-            // SHORT_SELLING: short/cover included only when `allowedSides` (computed above) permits —
-            // i.e. policy.shortSellingEnabled AND the connected account reports shortSelling. Default long-only.
-            side: { enum: allowedSides },
-            type: { enum: ["market", "limit", "stop_market", "stop_limit"] },
-            quantity: { type: ["number", "null"] },
-            dollarAmount: { type: ["number", "null"] },
-            limitPrice: { type: ["number", "null"] },
-            stopPrice: { type: ["number", "null"] },
-            timeInForce: { enum: ["gfd", "gtc"] },
-            marketHours: { enum: ["regular_hours", "extended_hours", "all_day_hours"] },
-            rationale: { type: "string" },
-            tradeThesisTag: { enum: THESIS_PLAYBOOK },
-            // FIX (composite review B/high/S): the Bear schema previously omitted confidenceScore from
-            // both `properties` and `required` while `additionalProperties:false` forbid re-emitting it —
-            // strict structured output silently stripped every Bear-surviving proposal's confidence to
-            // undefined, which zeroed shouldRunRedTeamDebate's approval-time trigger (`?? 0`), degraded
-            // sizing to a neutral `?? 50`, and fed the wash-sale auto-edge math the same undefined. The
-            // Bear system prompt (buildBearSystem) now instructs it to preserve the Bull's score unless it
-            // is REVISING conviction, so this is restored as a required, re-emitted field.
-            confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100 — preserve the Bull's score unless you are deliberately revising conviction; state why in the rationale if you change it." },
-            autonomyOverride: autonomyOverrideSchema,
-            bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
-            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." }
-          }
-        }
-      }
-    }
-  };
-
-  // review plus risk context — not a second copy of the full market scan / allowlist.
+  // ── The in-flow Bear LLM pass was DELETED 2026-07-07 (single-adversary consolidation §3.1) ──
+  // proposeTrades now returns the deterministic-filtered Bull output directly (R6) with NO second
+  // LLM call. The one surviving adversary is the post-sizing Red Team review in the strategy loop
+  // (debateProposal), which inherited BOTH of the Bear's jobs. The model-free deterministic
+  // pre-filter above (deterministicBearFilter) is NOT part of the deleted redundancy and stays.
+  // Main's Bear-side additions (bearSchema bracket fields, parseBearSurvivors — PR #1036/#1095)
+  // die with the inline Bear; the Bull schema + enrichOpeningProposal carry the bracket features.
+  //
+  // R7 — evidence context for that single review: the reviewer must fact-check the strategist's
+  // claims against the SAME structured candidate evidence + macro/portfolio context the Bull saw
+  // (a counterexample the Bull rationalized away is reviewer ammunition). Built here so it reuses
+  // the exact userContent blocks assembled above, and returned to the caller for the review calls.
   const proposedSymbols = new Set(bullProposals.map((proposal) => normalizeSymbol(proposal.symbol)));
   const candidatesUnderReview = userContent.marketScan?.topCandidates?.filter((candidate) =>
     typeof candidate.sym === "string" && proposedSymbols.has(normalizeSymbol(candidate.sym))
   );
-  const bearUserContent = {
+  const adversaryContext: RedTeamReviewContext = {
     currentDate: userContent.currentDate,
-    executionMode: userContent.executionMode,
-    executionModeClarification: userContent.executionModeClarification,
     currentMarketRegime: userContent.currentMarketRegime,
     ...(userContent.regimeSeverity ? { regimeSeverity: userContent.regimeSeverity } : {}),
     macroeconomicData: userContent.macroeconomicData,
@@ -4500,238 +4616,17 @@ async function proposeTrades(input: {
     ...(thesisScorecard.length > 0 ? { thesisOutcomes: thesisScorecard.slice(0, 12) } : {}),
     ...(regimeScorecard.length > 0 ? { regimeOutcomes: regimeScorecard.slice(0, 8) } : {}),
     ...(thesisRegimeScorecard.length > 0 ? { comboOutcomes: thesisRegimeScorecard } : {}),
-    // Evidence parity (composite review A1): the Bear critiques with the SAME episodic analogs +
-    // owner coaching the Bull saw — a counterexample the Bull rationalized away is Bear ammunition.
     ...(input.experienceAnalogs ? { closestHistoricalAnalogs: input.experienceAnalogs } : {}),
     ...(input.ownerCoaching ? { ownerCoaching: input.ownerCoaching } : {}),
-    candidatesUnderReview,
-    bullAgentProposals: bullProposals
+    candidatesUnderReview
   };
 
-  const {
-    url: bearUrl,
-    key: bearKey,
-    model: bearModel,
-    provider: bearProvider,
-    keySource: bearKeySource,
-    keyRef: bearKeyRef,
-    transport: bearTransport
-  } = resolveLlmEndpoint(input.policy, input.userId, "https://api.openai.com/v1/responses", "red");
-
-  // Inline Bear (Red Team) review is REQUIRED. If it cannot run — missing key, transport
-  // error/timeout, or an unparseable response — we FAIL CLOSED: carry the Bull proposals but
-  // signal the caller (bearReviewUnavailable) to route them to human review in autonomous mode
-  // rather than silently auto-approving un-critiqued trades. Also emit a loud audit + notification.
-  const bearUnavailable = async (
-    reason: string,
-    status: "skipped" | "fallback"
-  ): Promise<ProposeTradesResult> => {
-    console.warn(
-      `[Bear] Red Team (inline) ${status}: ${reason} Routing ${bullProposals.length} Bull proposal(s) to human review (mode=${input.policy.strategyAuthority}).`
-    );
-    recordStep({
-      step: "bear",
-      label: "Red Team review",
-      provider: bearProvider,
-      model: bearModel,
-      transport: bearTransport,
-      keySource: bearKeySource,
-      status,
-      proposalCount: bullProposals.length,
-      reason: `${reason} Proposals routed to human review.`
-    });
-    // Audit unconditionally — this is the per-run fail-closed forensic trail (and other code/tests
-    // key off "strategy_bear_review_unavailable" existing for THIS run), so it must never be
-    // suppressed by a cooldown. Only the outbound ALERT (sendNotification + notify, below) is
-    // cooldown-gated: a sustained Bear/Red-Team outage previously fired one of these per failed
-    // strategy run with zero cooldown (16 alerts across ~15 hours on 2026-07-02) — every other
-    // provider_degraded source in this codebase (db-health.ts's HEALTH_ALERT_COOLDOWN_MS,
-    // vector-db.ts's RAG_CONNECTION_ALERT_COOLDOWN_MS) already gates its alert this way.
-    audit(
-      "strategy_bear_review_unavailable",
-      {
-        runId: input.runId,
-        reason,
-        status,
-        mode: input.policy.strategyAuthority,
-        proposalCount: bullProposals.length,
-        provider: bearProvider,
-        model: bearModel
-      },
-      input.userId
-    );
-
-    // Same internal-settings cooldown pattern as db-health.ts's HEALTH_ALERT_COOLDOWN_PREFIX, reusing
-    // its 6h window. Keyed GLOBALLY (not per-account/user): there is exactly one inline-Bear LLM
-    // endpoint per deployment (resolveLlmEndpoint above ignores account), so an outage hits every
-    // account identically — a per-account key would just fragment one outage into N cooldown rows
-    // with no added signal, the simpler global key is sufficient.
-    const bearAlertLast = getInternalSetting<string>(BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY);
-    const bearAlertOnCooldown = !!bearAlertLast && Date.now() - Date.parse(bearAlertLast) < BEAR_UNAVAILABLE_ALERT_COOLDOWN_MS;
-    if (!bearAlertOnCooldown) {
-      setInternalSetting(BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY, new Date().toISOString());
-      await sendNotification(
-        {
-          type: "provider_degraded",
-          title: "Red Team (inline Bear) review unavailable",
-          payload: {
-            runId: input.runId,
-            provider: bearProvider,
-            model: bearModel,
-            reason,
-            proposalCount: bullProposals.length,
-            routedToHumanReview: true
-          }
-        },
-        { policy: input.policy, userId: input.userId }
-      );
-      // sendNotification skips the DIRECT alert for provider_degraded (it's in DIRECT_NOTIFY_ALREADY_SENT,
-      // which assumes the provider-tier caller already sent one via notify()). This inline-Bear path has
-      // no prior notify(), so a user WITHOUT a webhook would get no alert at all. Mirror provider-tier:
-      // send the direct notification explicitly (sendNotification above still handles the webhook).
-      await notify(input.userId, {
-        title: "Red Team (inline Bear) review unavailable",
-        body: `${reason} ${bullProposals.length} Bull proposal(s) routed to human review (mode=${input.policy.strategyAuthority}).`,
-        kind: "provider_degraded",
-        data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
-      }).catch((err) => console.error("[Bear] notify error:", err));
-    }
-    return {
-      proposals: bullProposals,
-      llmSteps,
-      bearReviewUnavailable: true,
-      bearReviewReason: reason,
-      ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
-    };
+  return {
+    proposals: bullProposals,
+    llmSteps,
+    adversaryContext,
+    ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {})
   };
-
-  if (!bearKey) {
-    return bearUnavailable("Red Team LLM key is not configured.", "skipped");
-  }
-
-  const bearReasoningEffort = interactiveStrategyReasoningEffort(bearModel, input.policy.llmReasoningEffort);
-  const bearBody = buildLlmRequestBody(
-    { provider: bearProvider, transport: bearTransport },
-    {
-      model: bearModel,
-      systemPrompt: bearSystemPrompt,
-      userContent: JSON.stringify(bearUserContent),
-      schema: { name: "bear_proposals", schema: bearSchema, description: "The proposals that survive Red-Team review." },
-      maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyCritique,
-      reasoningEffort: bearReasoningEffort,
-      // Per-role sampling (composite review B/medium/S): the adversary role runs at a non-zero
-      // temperature so repeated runs can surface different objections instead of the same greedy,
-      // deterministic critique every time. Ignored by reasoning models (they reject temperature and
-      // steer via reasoningEffort instead — see withLlmRequestBounds).
-      temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
-    }
-  );
-
-  const bearStepBase = {
-    step: "bear" as const,
-    label: "Red Team review",
-    provider: bearProvider,
-    model: bearModel,
-    transport: bearTransport,
-    keySource: bearKeySource
-  };
-  recordStep({ ...bearStepBase, status: "started" }, { includeInResult: false });
-  let bearResult: { text?: string; proposals: TradeProposal[]; fallbackToBull?: boolean };
-  try {
-    bearResult = await withLlmGeneration(
-      {
-        name: "trading.strategy.bear",
-        model: bearModel,
-        userId: input.userId,
-        connectedAccountId: input.policy.connectedAccountId,
-        input: summarizeOpenAiRequest(bearBody),
-        metadata: {
-          endpoint: bearUrl,
-          transport: bearTransport,
-          reviewedProposalCount: bullProposals.length,
-          executionMode,
-          currentMarketRegime,
-          promptVersion: STRATEGY_PROMPT_VERSION
-        },
-        tags: ["strategy", "bear-agent", "red-team"],
-        output: (result) => {
-          // Bear-veto decision point: the Bear removed one or more Bull proposals (fewer survived
-          // than were reviewed, and it did not fall back to Bull). Stamp the veto count + a boolean
-          // so a Bear veto is queryable in Langfuse (no-op when Langfuse is unconfigured).
-          const survivorCount = result.proposals.length;
-          const bearVetoCount = result.fallbackToBull ? 0 : Math.max(0, bullProposals.length - survivorCount);
-          return {
-            ...summarizeOpenAiResponseText(result.text),
-            ...summarizeTradeProposals(result.proposals),
-            fallbackToBull: result.fallbackToBull,
-            bearVeto: bearVetoCount > 0,
-            bearVetoCount
-          };
-        }
-      },
-      async () => {
-        const bearSoftTimeoutMs = strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort);
-        // Reasoning-class-aware SOFT wall-clock (see Green Team above); the request is not severed at
-        // the wall — a late reply + its latency are captured for debug rather than discarded.
-        const bearResponse = await llmFetchCapturing(
-          bearUrl,
-          {
-            method: "POST",
-            headers: llmAuthHeaders({ provider: bearProvider, key: bearKey }),
-            body: JSON.stringify(bearBody)
-          },
-          {
-            softTimeoutMs: bearSoftTimeoutMs,
-            onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bear", provider: bearProvider, model: bearModel, softTimeoutMs: bearSoftTimeoutMs })
-          }
-        );
-
-        if (!bearResponse.ok) {
-          console.warn("Bear Agent API failed, falling back to Bull proposals");
-          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-        }
-
-        const bearPayload = await bearResponse.json();
-        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(bearPayload) });
-        const bearText = extractLlmText(bearPayload);
-
-        if (!bearText) {
-          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-        }
-
-        const parsed = parseBearSurvivors(bearText);
-        if (parsed.fallbackToBull) {
-          // Don't discard already-valid Bull proposals because the Bear critique came
-          // back malformed — reuse the existing fall-back-to-Bull path.
-          console.warn("Bear Agent returned unparseable/malformed JSON; falling back to Bull proposals");
-          return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
-        }
-        return { text: bearText, proposals: parsed.proposals, fallbackToBull: false };
-      }
-    );
-  } catch (error) {
-    const reason = humanizeLlmTransportError(error, { provider: bearProvider, model: bearModel, stepLabel: "Red Team review", timeoutMs: strategyLlmTimeoutMs(bearModel, input.policy.llmReasoningEffort) });
-    return bearUnavailable(reason, "fallback");
-  }
-
-  if (bearResult.fallbackToBull) {
-    return bearUnavailable("Red Team review was unavailable or unparseable.", "fallback");
-  }
-
-  const bearProposals = sanitizeProposals(bearResult.proposals, maxProposals).map(p => ({
-    ...p,
-    entryMarketRegime: currentMarketRegime,
-    ...(regimeSeverity ? { entryRegimeSeverity: Number(regimeSeverity.severity.toFixed(2)) } : {}),
-    // Re-stamp after the Bear pass: survivors are re-emitted through the Bear's strict schema,
-    // which strips proposedByModel — the ORIGIN model is still the Bull's served model.
-    proposedByModel: bullServedModel
-  }));
-  recordStep({
-    ...bearStepBase,
-    status: "completed",
-    proposalCount: bearProposals.length
-  });
-  return { proposals: bearProposals, llmSteps, ...(promptSafetyFindings.length > 0 ? { promptSafetyFindings } : {}) };
 }
 
 function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
@@ -4931,41 +4826,6 @@ function recordLlmOutcome(
       audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
     }
   })();
-}
-
-/**
- * Parse the inline Bear (Red Team) reply into surviving proposals — tolerant of the bare-array
- * wrapper some json_object-mode models emit (DeepSeek v4; same drift PR #1091 fixed for the
- * debateProposal verdict), while never letting a malformed reply read as a deliberate full veto.
- *
- * Contract: `{proposals: [...]}` is the schema shape ({proposals: []} = a REAL veto-everything).
- * Recovery + fail-safe semantics:
- *  - bare ARRAY containing at least one proposal-shaped object → treated as the proposals array
- *    (the DeepSeek drift; garbage elements are filtered by sanitizeProposals downstream);
- *  - bare EMPTY array, array of garbage, object MISSING a proposals array, non-object JSON, or
- *    unparseable text → fallbackToBull (malformed) — previously an object without `proposals`
- *    silently became `[]`, i.e. a SILENT full veto with no error anywhere.
- */
-export function parseBearSurvivors(text: string): { proposals: TradeProposal[]; fallbackToBull: boolean } {
-  const malformed = { proposals: [] as TradeProposal[], fallbackToBull: true };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return malformed;
-  }
-  const looksLikeProposal = (v: unknown): boolean =>
-    !!v && typeof v === "object" && typeof (v as { symbol?: unknown }).symbol === "string" && typeof (v as { side?: unknown }).side === "string";
-  if (Array.isArray(parsed)) {
-    // Bare-array recovery (PR #1091 pattern): accept only when something in it is proposal-shaped.
-    return parsed.some(looksLikeProposal) ? { proposals: parsed as TradeProposal[], fallbackToBull: false } : malformed;
-  }
-  if (parsed && typeof parsed === "object") {
-    const proposals = (parsed as { proposals?: unknown }).proposals;
-    if (Array.isArray(proposals)) return { proposals: proposals as TradeProposal[], fallbackToBull: false };
-    return malformed;
-  }
-  return malformed;
 }
 
 function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {

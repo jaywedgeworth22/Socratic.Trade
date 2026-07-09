@@ -16,6 +16,155 @@ retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push ho
 README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
 intact as the paper trail. Doc/infra-only, no runtime surface.
 
+## 2026-07-09 — Reviewer veto value-add in the Model Stats drawer (MONET, branch `monet/reviewer-veto-valueadd-stats`)
+Owner-directed plumbing-only change: the Model Stats drawer's 4th column showed a hard-coded dash for
+the Reviewer (Red Team) role; it now surfaces the ALREADY-BUILT per-reviewer-model **veto value-add**
+(the same measure `getRedTeamEfficacy` computes and the Results 'Red Team veto efficacy' scorecard
+renders). No DB/schema/`strategy.ts` change and no new `reviewedByModel` field — keys off the existing
+`proposal_rejected_by_red_team` audit. Route calls `getRedTeamEfficacy(userId, {auditLimit:500})`
+USER-WIDE and passes `.byModel` into `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf`
+shape + `reviewerPerf` field on `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket
+filtered out. `PerfCell` renders "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone`
+(NEGATIVE avg = GOOD/positive tone; higher good-veto % = better) under the same 20/50 matured-veto gates
+as the scorecard; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+footnote + header comment. Data is forward-only (fills in as vetoes mature ~5 trading days out; no
+retroactive backfill). Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+file). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+`docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
+## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
+Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
+turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
+`docs/EFFORT-LOG.md merge=union` (kills the dominant conflict) + `scripts/merge-shepherd.sh` (re-syncs
+stuck auto-merge-armed PRs, re-runs flaky verify once, merges the green ones, writes a digest to a
+"Merge shepherd status" tracking issue) + a launchd driver (Mac PAT so update-branch re-triggers CI) +
+a manual-dispatch GH Action. Acts ONLY on auto-merge-armed PRs; reports the rest. Merge≠deploy, so the
+announce-then-deploy step stays the human checkpoint. Dry-run validated against the live backlog.
+
+## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
+Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
+assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
+cause (measured): HeaderLogo canvas reserved width from a `13.8` AR estimate then its effect set
+the real `wm.ar=13.081` (5.2% narrower) → the logo shrank on mount and the intro followed. Fix:
+single-source `WORDMARK_AR=13.081` exported from candle-ticker, used everywhere the `13.8` guess
+lived (header-logo initial width, MobileBrandRow, intro fallback); `curHeader` hoisted to module
+scope so the loading→loaded remount eases instead of snapping; loading text removed (intro is the
+whole load screen). Empirically verified: desktop logo width now a single stable 235px (was
+248→235). Full gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-intro-size-jump-loading-text.md`.
+## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
+Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
+connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
+`isActive` flag into **"Currently Loaded Account"** (hoisted first) + **"Other Accounts"** headings;
+removed the ambiguous `active` chip; per-row action "Make active" → **"Load"** (toasts/tooltips/busy
+text follow). (B) Test Account stops repeating "Local Mock / local mock / simulated": `TEST_ACCOUNT_LABEL`
+→ "Test Account" (db-api-keys + connected-accounts route), `realityForAccount` test-branch deleted so it
+reads "PAPER · NOT real money" like any paper account, "local mock" chips + hardcoded sublines collapsed
+to the generic form, exec-mode clarification simplified. Kept ONE terse "excluded from wash-sale
+accounting" note (verified real: `tax.ts:197` filters `broker !== "test"`). Live/paper reality
+correctness for real broker accounts unchanged. Gate green: tsc 0 / lint 0-err / vitest 3168 / build.
+See `docs/rollouts/2026-07-09-account-mgmt-ui-and-test-label.md`.
+## 2026-07-09 — Scoring-factor weight tooltips (MONET, branch `monet/scoring-factor-tooltips`)
+Owner-directed display-only change, no scoring-logic changes. The eight "Scoring-factor weights"
+controls on the Strategy console page (`app/console/strategy/page.tsx`) previously showed only the
+raw lowercase `ScoringWeights` key plus a numeric "default X" hint — no explanation of what each
+factor measures. Added a new `FACTOR_META` map (capitalized name + one-sentence explanation per
+factor) and wrapped each `Field` label in the existing `Tooltip` primitive (`../ui/primitives`) with
+a small "ⓘ" affordance, plus a screen-reader-only duplicate of the tip text. The card's intro
+paragraph also gained one sentence noting the weights are relative (ratios matter, not absolute
+numbers). No `src/lib/scoring.ts` (or wherever `ScoringWeights` is consumed) changes. Gate green:
+tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+
+## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
+Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page
+pickers drop the word "Model" from their labels: "Proposer Model" -> "Proposer", "Reviewer Model" ->
+"Reviewer" (both the field labels and the intro-paragraph prose in `app/console/settings/models.tsx`;
+the Field labels and the Proposer/Red-Team summary line in `app/console/strategy/page.tsx`). This
+collided with the separate AI-review (strategy-tuning) panel, which also said "Reviewer model" and
+defaulted its blank option to "Same As Red Team"/"Same As Green Team" — that panel's model field is
+now "Strategist", its intro sentence says "A strategist model reads...", and the inherited-label
+ternary (`inheritedReviewerLabel`, variable name unchanged) now renders "Reviewer"/"Proposer" instead
+of "Red Team"/"Green Team", so its blank-option text reads "Same As Reviewer" / "Same As Proposer".
+All "Red Team"/"Green Team" concept names elsewhere (approval-card, results page, decisions page,
+model-stats-drawer, `red-team.ts`, hints) are untouched. Gate green: tsc clean, lint 0 errors, 3168
+tests, build clean. See `docs/rollouts/2026-07-09-picker-copy-strategist.md`.
+
+## 2026-07-09 — Model rotation: 3 codex P2 fixes folded into PR #1117 (MONET/Opus, branch `monet/model-rotation`)
+PR #1117 had all checks green + auto-merge armed; the only blocker was three unresolved codex-bot
+review threads (repo enforces `required_conversation_resolution`). All three confirmed real and fixed
+in ONE commit: (1) `policyForTuningReviewer` (`src/lib/strategy-tuning.ts`) is now sentinel-aware —
+`redTeamLlmModel="__rotate__"` no longer degrades the LLM tuning review to local-rules; it falls
+through to the first concrete configured model. (2) `callLessonLlm` (`src/lib/outcome-engine.ts`)
+guard is now `!key || !model` — a rotation policy no longer POSTs `model:""` (400) on every post-mortem
+lesson. (3) rotation pointer is resolve-early/commit-late: `resolveModelRotationForRun`
+(`src/lib/model-rotation.ts`) returns a `commit()` that `strategy.ts` calls immediately before the
+Green `proposeTrades` call (after account validation + all usage-budget skip gates), so an
+aborted/skipped run no longer burns a rotation slot or logs a phantom `model_rotation_pick`. New tests
+in all three test files. Gate green: tsc / lint 0-err / 3168 tests / build. See
+`docs/rollouts/2026-07-09-model-rotation-codex-fixes.md`.
+## 2026-07-08 — Model rotation option "Rotate all models (testing)" (MONET, branch `monet/model-rotation`)
+Owner request: a Proposer/Reviewer picker option that rotates through all model combinations so the
+paper/test accounts accrue comparative live history (attribution is automatic via `proposedByModel`).
+New `"__rotate__"` sentinel selectable on both pickers (Settings→Models + Strategy page); resolved at
+the TOP of `runStrategyOnce` onto the RUN-SCOPED `runPolicy` (same pattern as the usage-budget
+downgrade — the persisted policy keeps the sentinel; breaker `setPolicy` calls can't overwrite it).
+Round-robin per (user, account, seat) via internal settings `model_rotation:<user>:<acct>:<seat>`;
+red pointer advances one extra step on green wrap so combinations shift phase; pool = curated catalog
+minus mistral-small-2603/mistral-medium-3-5 (broken capability map, benchmark 2026-07-08) and
+grok-build-0.1 (coding model), filtered to providers whose credential resolves; every pick audited
+(`model_rotation_pick`). Safety net: `resolveOpenAiModel` treats the sentinel as unset for consumers
+outside a run (chat/lesson pass/tuning). New `src/lib/model-rotation.ts` + 13 tests. See
+`docs/rollouts/2026-07-08-model-rotation.md`.
+## 2026-07-08 — Daily LLM learning review (MONET, branch `monet/daily-learning-review`)
+New once-per-UTC-day job: a frontier-class model (default `claude-fable-5`) reviews the system's
+LEARNING DECISIONS — learned_context rows from the last 7 days + the pending risk-tier queue —
+against a system-history digest (execution-failure audits from 14 days + recent rollout-note
+headlines), catching lessons whose evidence was corrupted by an execution defect (the MU stale-exit
+deadlock produced exactly such thesis-blaming lessons). Default OFF; `annotate` mode audits +
+notifies only; `decide` (owner opt-in) applies verdicts via the existing learned-context mutation
+paths, every application audited; any LLM/parse failure = audit + skip, never mutate. New
+`src/lib/learning-review.ts`, 3 policy fields + validation, scheduler hook, Settings card,
+`learning_review` notification type, 12 tests. Gate: tsc clean, lint 0 errors, 2996 tests green.
+Details: `docs/rollouts/2026-07-08-daily-learning-review.md`.
+## 2026-07-09 — single-adversary consolidation LANDING (MONET, Mac worktree `~/apps/trading-monet-sac`)
+Merged `origin/main` (47 commits ahead of the branch fork) into
+`monet/single-adversary-consolidation` and resolved the money-path conflicts per
+`/Users/jay/apps/monet-handoff-2026-07-09.md`. Six git-marked conflicts + four **semantic**
+(marker-free) conflicts the auto-merge introduced: deleted the dead inline-Bear stopgaps
+(`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert constants, and the two tests that
+guarded removed behavior — `inline-bear-parse`, `strategy-bear-alert-cooldown`); kept main's
+Proposer/Reviewer naming + `ModelStatsButton` drawer while integrating the consolidation's
+no-defaults fail-closed semantics; kept the consolidation's no-default model attribution +
+approve-at-half rendering AND main's honest review-failure attribution on the approval card; reset
+`test/red-team.test.ts` to the consolidation suite + re-added the #1091 bare-array guards on the new
+signature; fixed the main-added `e2e-money-path` test (explicit reviewer model + three-way verdict
+stub) and rewired `benchmark-llm-models.ts` to the single-reviewer API. Migration v15 is the next
+free version (main took v14). **Gate green in this worktree:** `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` 302 files / **3121 tests pass**, `npm run build` ok.
+**Next action:** land via `scripts/land.sh` → PR ready + `--squash --auto`; then close PR #1035 as
+superseded, delete remote branch `claude/single-adversary-consolidation-wip`. Landing operator:
+MONET (this session); feature author: the Cowork Claude session (see
+`docs/rollouts/2026-07-09-single-adversary-landing.md` and `-2026-07-07-...-impl.md`).
+
+## 2026-07-07 — single-adversary consolidation IMPLEMENTED, awaiting land (MONET, Cowork desktop)
+The 2026-07-01-decided, never-implemented `docs/single-adversary-consolidation.md` is now CODE, as
+amended by the owner's 2026-07-07 revision, on branch `monet/single-adversary-consolidation`
+(supersedes preservation draft **PR #1035** — its Stage 1a was cherry-picked cleanly onto current
+`origin/main`; the feared #1014 conflict was a false alarm). One adversary: the in-flow Bear LLM is
+deleted; `debateProposal` reviews EVERY risk-adding opening post-sizing (net-direction-aware exit
+exemption, 3-wide concurrency) with a down-only `approve`/`approve-at-half`/`reject` verdict and
+fail-closed-everywhere semantics (persisted `decision.adversaryUnavailable`, notification flag,
+amber approval-card badge, `rejected_by_red_team` rows). NO MODEL DEFAULTS anywhere — both models
+are mandatory explicit Settings picks (`DEFAULT_POLICY.llmModel` removed too);
+`RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 seeds from a
+live override once). Reliability: `extractJsonPayload` everywhere, strict verdict-shape validation,
+bounded `fetchLlmWithRetry` (no hidden failover). Verified on Linux x64 (CI platform):
+tsc 0 / eslint 0 errors / **2,888 tests pass**; `npm run build` is delegated to the Mac landing
+lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
+**Next action:** Mac-side Claude helper lands via `scripts/land.sh` (branch exists locally in the
+owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
+deploy, any account without explicit models fails closed with an actionable Settings message —
+owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
 ## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
 The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
 failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real

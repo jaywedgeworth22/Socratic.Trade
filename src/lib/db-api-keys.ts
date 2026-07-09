@@ -604,7 +604,7 @@ export function listConnectedAccounts(userId: string = "local"): ConnectedAccoun
   }));
 }
 
-const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+const TEST_ACCOUNT_LABEL = "Test Account";
 
 // Creates a connected "Test" broker account (broker: "test", environment: "paper") backed by
 // TestBrokerGateway (real quotes, deterministic simulated fills). This is TEST INFRASTRUCTURE for

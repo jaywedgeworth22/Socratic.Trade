@@ -17,7 +17,7 @@ import {
 } from "@/lib/llm-request";
 // Pure curated-model DATA (no legacy UI components) — the same catalog the rest
 // of the app offers, so the console review picker stays consistent with it.
-import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED } from "../../ui/llm-model-catalog";
+import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED, ROTATE_ALL_MODELS_ID, ROTATE_ALL_MODELS_LABEL } from "../../ui/llm-model-catalog";
 import {
   activateProfile,
   copyProfileToAccount,
@@ -36,7 +36,7 @@ import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -51,6 +51,44 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
 };
 
 const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS) as Array<keyof ScoringWeights>;
+
+/** Human-readable name + hover explanation for each scoring factor. Display-only —
+ *  does not touch the scoring math in src/lib/scoring.ts (or wherever weights are applied). */
+const FACTOR_META: Record<keyof ScoringWeights, { name: string; tip: string }> = {
+  liquidity: {
+    name: "Liquidity",
+    tip: "How easily you can trade the stock, from recent share volume. More weight favors high-volume names you can enter and exit cleanly, and penalizes thin, illiquid ones."
+  },
+  momentum: {
+    name: "Momentum",
+    tip: "Recent trend strength: intraday move, position within the 52-week range, and technical signals (RSI/MACD/moving averages). More weight favors names that are rising and near their highs."
+  },
+  value: {
+    name: "Value",
+    tip: "Cheapness from P/E and free-cash-flow yield. More weight tilts toward low-multiple, cash-generative names and away from expensive ones."
+  },
+  quality: {
+    name: "Quality",
+    tip: "Financial sturdiness: company size, low debt, and earnings growth. More weight favors large, low-leverage, profitably growing companies."
+  },
+  volatility: {
+    name: "Volatility",
+    tip: "Steadiness, not choppiness — the score is highest for calm, low-beta names. Counter-intuitively, more weight here favors steady stocks and penalizes sharp movers and high-beta risk."
+  },
+  sentiment: {
+    name: "Sentiment",
+    tip: "Aggregate news, analyst, and market sentiment (0–100). More weight favors positively-covered names and discounts negatively-covered ones."
+  },
+  positioning: {
+    name: "Positioning",
+    tip: "Smart-money accumulation: net congressional buying, insider open-market purchases (SEC Form 4), and short-squeeze setups. More weight favors names insiders and Congress are buying."
+  },
+  diversification: {
+    name: "Diversification",
+    tip: "Portfolio fit: a name you don't already hold scores higher than one you do. More weight pushes toward new positions instead of adding to what you already own — it's held-vs-not, not sector spread."
+  }
+};
+
 const CUSTOM_MODEL_OPTION = CUSTOM_MODEL_ID_SEED;
 
 function isCuratedModel(model: string | undefined): boolean {
@@ -64,6 +102,7 @@ function modelSelectValue(model: string | undefined): string {
 
 function modelProviderLabel(model: string | undefined): string {
   if (!model) return "Not Set";
+  if (model === ROTATE_ALL_MODELS_ID) return "Rotating (a different model each run)";
   const group = CURATED_LLM_MODEL_GROUPS.find((g) => g.options.some((option) => option.value === model));
   return group?.label ?? "Custom Provider";
 }
@@ -143,7 +182,7 @@ function ModelSelect({
 }) {
   const selectValue = modelSelectValue(value);
   const custom = selectValue === CUSTOM_MODEL_OPTION;
-  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION ? value : null;
+  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION && value !== ROTATE_ALL_MODELS_ID ? value : null;
   return (
     <div className="flex flex-col gap-2">
       <Select
@@ -155,6 +194,12 @@ function ModelSelect({
         }}
       >
         {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
+        <option
+          value={ROTATE_ALL_MODELS_ID}
+          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+        >
+          {ROTATE_ALL_MODELS_LABEL}
+        </option>
         {customCurrent && (
           <option value={customCurrent} title="A model id outside the curated list, kept exactly as stored.">
             {customCurrent} - custom id
@@ -213,8 +258,14 @@ export default function StrategyPage() {
   const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
   const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
-  const showCustomModelWarning = (proposerModel && !isCuratedModel(proposerModel)) || (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel));
-  const reasoningModels = [proposerModel, effectiveRedTeamModel];
+  // The rotation sentinel is neither a custom id (it only ever serves curated models, so the
+  // custom-cost-fallback warning doesn't apply) nor a model with its own reasoning capability.
+  const isRotate = (m: string) => m === ROTATE_ALL_MODELS_ID;
+  const showCustomModelWarning =
+    (proposerModel && !isCuratedModel(proposerModel) && !isRotate(proposerModel)) ||
+    (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel) && !isRotate(effectiveRedTeamModel));
+  const rotationSelected = isRotate(proposerModel) || isRotate(effectiveRedTeamModel);
+  const reasoningModels = [proposerModel, effectiveRedTeamModel].filter((m) => !isRotate(m));
   const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
     ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
@@ -295,7 +346,7 @@ export default function StrategyPage() {
         }
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer Model" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
+          <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <ModelSelect
@@ -309,7 +360,7 @@ export default function StrategyPage() {
             </div>
           </Field>
           <Field
-            label="Reviewer Model"
+            label="Reviewer"
             hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
@@ -338,8 +389,15 @@ export default function StrategyPage() {
             </div>
           </div>
         )}
+        {rotationSelected && (
+          <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+            audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+            automatically. Intended for paper/test accounts.
+          </div>
+        )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Proposer: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(effectiveRedTeamModel)}.
+          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(effectiveRedTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
@@ -389,13 +447,30 @@ export default function StrategyPage() {
       >
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           The market scan ranks candidates by these eight factors before the strategist ever sees them. Defaults shown
-          under each field.
+          under each field. Weights are relative — raising one factor increases its share of the score and lowers the
+          others&apos;; only the ratios between factors matter, not the absolute numbers.
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {WEIGHT_KEYS.map((key) => {
             const current = weightsDraft?.[key] ?? policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const meta = FACTOR_META[key] ?? { name: key, tip: "A scoring factor used to rank market-scan candidates." };
             return (
-              <Field key={key} label={key} hint={`default ${DEFAULT_WEIGHTS[key]}`} htmlFor={`w-${key}`}>
+              <Field
+                key={key}
+                label={
+                  <Tooltip content={meta.tip}>
+                    <span className="inline-flex cursor-default items-center gap-1">
+                      {meta.name}
+                      <span aria-hidden className="text-[color:var(--con-faint)]">
+                        ⓘ
+                      </span>
+                      <span className="sr-only">{meta.tip}</span>
+                    </span>
+                  </Tooltip>
+                }
+                hint={`default ${DEFAULT_WEIGHTS[key]}`}
+                htmlFor={`w-${key}`}
+              >
                 <RawNumInput
                   id={`w-${key}`}
                   step="0.1"
@@ -596,8 +671,12 @@ function AiReviewPanel({
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
 
-  const inheritedReviewerModel = policy.redTeamLlmModel || policy.llmModel || "";
-  const inheritedReviewerLabel = policy.redTeamLlmModel ? "Red Team" : "Green Team";
+  // The rotation sentinel is not a callable model — when a rotating seat would be inherited,
+  // fall through to the next concrete choice (AI review runs once, outside the per-run rotation).
+  const inheritedReviewerModel =
+    [policy.redTeamLlmModel, policy.llmModel].find((m) => m && m !== ROTATE_ALL_MODELS_ID) || "";
+  const inheritedReviewerLabel =
+    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Reviewer" : "Proposer";
   const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
   const reviewerReasoningValue = reviewerReasoningControl
@@ -661,7 +740,7 @@ function AiReviewPanel({
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        A reviewer model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
+        A strategist model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
         market backdrop, then proposes prompt/weight/guardrail changes. Nothing is applied until you review the exact
         diff and commit it — the same rules as editing by hand, including a typed word for LIVE authority expansion.
       </p>
@@ -670,7 +749,7 @@ function AiReviewPanel({
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-64">
             <Field
-              label="Reviewer model"
+              label="Strategist"
               hint={`Blank = same as ${inheritedReviewerLabel}. AI Review has no separate account-level model.`}
               htmlFor="ai-review-model"
             >
