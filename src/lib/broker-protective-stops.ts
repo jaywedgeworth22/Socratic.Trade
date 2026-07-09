@@ -8,9 +8,12 @@
 //
 // Reconciliation runs from the synthetic-stop monitor each tick: it CANCELS stops for closed
 // positions every time (risk-reducing, always safe) and PLACES missing stops only when the system is
-// running. This self-heals — a restart re-places any missing stops for still-open positions. Gated
-// to live Robinhood with the opt-in policy.robinhoodBrokerStops flag (default off): the synthetic
-// monitor remains the always-on fallback, so this is purely additive protection.
+// running. This self-heals — a restart re-places any missing stops for still-open positions. The
+// opt-in policy.robinhoodBrokerStops flag (default off) gates only PLACEMENT: when the flag is
+// turned off (or the run is no longer live Robinhood), reconcile still CANCELS every stop the
+// feature previously placed for the account, so disabling the feature tears its resting stops down
+// instead of orphaning them. The always-on synthetic monitor remains the fallback, so this is purely
+// additive protection.
 
 import {
   audit,
@@ -85,7 +88,32 @@ export async function reconcileBrokerProtectiveStops(args: {
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0 };
-  if (!brokerProtectiveStopsEnabled(policy, executionMode)) return out;
+
+  // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
+  // (flag off) or no longer applicable (not live Robinhood, no stop-loss %), any stop it previously
+  // placed is still resting live at the broker. Turning the feature off must TEAR THOSE DOWN, not
+  // strand them: an orphaned GTC stop-market SELL would rest forever with no app-side cleanup and
+  // could later sell shares the user no longer intends to protect this way. This teardown is pure
+  // risk reduction (it never places a replacement), so the `liveReplaceBlocked` "never leave a
+  // position unprotected" guard — which only matters when we cancel WITH intent to re-place — does
+  // not apply here. If no rows exist, this is a true no-op (the common disabled/default case).
+  if (!brokerProtectiveStopsEnabled(policy, executionMode)) {
+    for (const row of listBrokerProtectiveStops(accountNumber, userId)) {
+      try {
+        await gateway.cancelEquityOrder(accountNumber, row.brokerOrderId);
+        deleteBrokerProtectiveStop(row.id, userId);
+        out.cancelled++;
+      } catch (err) {
+        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId);
+        // Keep it as pending_cancel so a later tick retries the cancel rather than orphaning the
+        // resting broker stop (listBrokerProtectiveStops returns pending_cancel rows, so the next
+        // disabled reconcile re-attempts it).
+        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+      }
+    }
+    return out;
+  }
+
   const stopPct = policy.riskRules!.stopLossPct!;
 
   // Robinhood is long-only, so protective stops only apply to long positions. Computed UP FRONT

@@ -358,6 +358,60 @@ function maxSymbols(): number {
   return Math.min(value, MAX_SYMBOLS_CAP);
 }
 
+// Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8
+// credits/minute. So the number of symbols we may put in one call (and the ceiling on how many we
+// enrich per scan) is exactly that per-minute credit budget. Env-tunable so a paid plan (which
+// lifts the per-minute credit ceiling) can raise it. Clamped to [1, 800] (800 = free daily cap, a
+// sane upper bound). Pair this with the twelvedata pacer interval in provider-rate-limit.ts so
+// concurrent-account scans can't stack past the per-minute budget.
+const DEFAULT_TWELVEDATA_CREDITS_PER_MIN = 8;
+function twelveDataCreditsPerMin(): number {
+  const value = Number(process.env.TWELVEDATA_CREDITS_PER_MIN ?? DEFAULT_TWELVEDATA_CREDITS_PER_MIN);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_CREDITS_PER_MIN;
+  return Math.min(Math.floor(value), 800);
+}
+
+// Budget window for Twelve Data: the credit budget is per-MINUTE, so allow at most one credit-budget
+// call per this window and SKIP (return best-effort immediately) any other scan that lands inside it,
+// rather than queueing it. Skipping — not queueing — is deliberate: enrichment providers run in
+// parallel in the cascade with no per-provider timeout, so a 60s queue wait would stall the 2nd–5th
+// account's whole scan at the top of the hour. A skipped scan just gets its Twelve Data fields from
+// the other providers / cache this run and picks up the credit next window.
+//
+// Keyed PER CREDENTIAL, not process-globally: a per-USER stored Twelve Data key has its OWN upstream
+// per-minute quota (resolveApiKeyWithSource gives user keys precedence), so one user's window must
+// not gate a different key's scan. The map key is a cheap non-crypto fingerprint of the API key
+// (never the raw key); the map is in-memory only and never serialized. The read+set is synchronous
+// (no await between), so concurrent same-tick scans on the SAME credential can't both pass; the
+// pacer's concurrency:1 covers the rarer cross-tick race.
+const twelveDataWindowStartByCred = new Map<string, number>();
+function twelveDataCredFingerprint(apiKey: string): string {
+  // djb2 — enough to distinguish credential lanes; not a secret store (in-memory Map key only).
+  let h = 5381;
+  for (let i = 0; i < apiKey.length; i++) h = ((h << 5) + h + apiKey.charCodeAt(i)) | 0;
+  return String(h >>> 0);
+}
+const DEFAULT_TWELVEDATA_WINDOW_MS = 60_000;
+function twelveDataWindowMs(): number {
+  const value = Number(process.env.TWELVEDATA_WINDOW_MS ?? DEFAULT_TWELVEDATA_WINDOW_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_WINDOW_MS;
+  return value;
+}
+// Short negative-cache TTL for symbols Twelve Data returns no usable data for, so they don't sit at
+// the FRONT of `misses` forever (starving lower-ranked symbols of the scarce credit budget). Default
+// 30 min: long enough to rotate a no-data symbol out for several scans, short enough that a symbol
+// that later gains coverage isn't suppressed for long.
+const DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS = 30 * 60_000;
+function twelveDataNegativeTtlMs(): number {
+  const value = Number(process.env.TWELVEDATA_NEGATIVE_TTL_MS ?? DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS;
+  return value;
+}
+/** Test-only: reset the per-credential Twelve Data budget windows so cases don't leak state. */
+export function __resetTwelveDataWindowForTests(): void {
+  twelveDataWindowStartByCred.clear();
+}
+
 // One retry on HTTP 429 (rate limit) with a short backoff before giving up.
 async function fetchWithRetry(
   url: string,
@@ -3177,17 +3231,47 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
     if (misses.length === 0) return result;
 
-    // Batch all misses in one request (Twelve Data supports comma-separated symbols).
-    // Chunk at 120 symbols (API limit) in case the scan is very large.
-    const BATCH_SIZE = 120;
-    for (let i = 0; i < misses.length; i += BATCH_SIZE) {
-      const batch = misses.slice(i, i + BATCH_SIZE);
+    // Free-tier CREDIT budget, not symbol count, is the real ceiling: Twelve Data's /quote endpoint
+    // charges ONE credit PER SYMBOL in a comma-separated batch, and the free Basic tier allows only
+    // ~8 credits/minute. The old code sent up to 120 symbols in a single call = 120 credits at once,
+    // which instantly 429s the whole call (observed: 100% failure in prod). So cap a call to at most
+    // `creditsPerMin` symbols (default 8) and make exactly ONE call per enrich() covering the
+    // highest-priority misses (the scan passes candidates best-first). The per-provider pacer
+    // (provider-rate-limit.ts, twelvedata default now 1 call / 60s) then keeps concurrent-account
+    // scans from stacking past the per-minute credit budget. Symbols beyond the budget are left
+    // best-effort — the enrichment cascade fills them from other providers and the shared cache
+    // covers repeats, so coverage accretes across the hourly scans instead of failing outright.
+    // One credit-budget call per rolling window PER CREDENTIAL (see twelveDataWindowStartByCred).
+    // If another scan already spent this credential's window budget, don't queue — return best-effort
+    // now so this account's scan isn't stalled waiting on a scarce free-tier provider the cascade
+    // covers otherwise.
+    const credKey = twelveDataCredFingerprint(this.apiKey);
+    const nowWin = Date.now();
+    if (nowWin - (twelveDataWindowStartByCred.get(credKey) ?? 0) < twelveDataWindowMs()) {
+      for (const symbol of misses) result[symbol] = {};
+      return result;
+    }
+    twelveDataWindowStartByCred.set(credKey, nowWin);
+
+    const creditsPerMin = twelveDataCreditsPerMin();
+    const toQuery = misses.slice(0, creditsPerMin);
+    const skipped = misses.length - toQuery.length;
+    for (const symbol of misses.slice(creditsPerMin)) result[symbol] = {}; // best-effort; not queried this run
+    if (skipped > 0) {
+      // Deliberately NOT a logApiHealth(ok:true) row: that would inflate the success ratio and keep
+      // the circuit breaker from ever seeing a genuinely dead Twelve Data lane (a >8-symbol scan
+      // whose real request below fails would otherwise still record a "success" here). This is a
+      // debug-only note; the actual call's real ok/fail is logged below.
+      console.debug(`[data-providers] TwelveData credit budget: queried ${toQuery.length}/${misses.length} symbols (${skipped} deferred this scan)`);
+    }
+    for (const batch of [toQuery]) {
       try {
         const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
-        // Free Basic tier is 8 credits/min — gate through the shared per-provider pacer
-        // (provider-rate-limit.ts) instead of firing one request per BATCH_SIZE chunk back to
-        // back. The AbortController/timeout is armed INSIDE the pacer callback so the 10s HTTP
-        // timeout starts counting at actual dispatch time, not when this call joins the
+        // `batch` is already capped to the per-minute credit budget above, so this single request
+        // costs at most that many credits. The pacer (provider-rate-limit.ts, twelvedata = 60s
+        // serial) spaces successive calls a full minute apart so concurrent-account scans can't sum
+        // past the budget. The AbortController/timeout is armed INSIDE the pacer callback so the 10s
+        // HTTP timeout starts counting at actual dispatch time, not when this call joins the
         // (strictly-serial) queue — otherwise queue wait eats into the timeout.
         const response = await withProviderLimit(this.name, async () => {
           const controller = new AbortController();
@@ -3229,12 +3313,24 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           }
         }
 
+        // Short negative-cache for a symbol Twelve Data returned NO usable data for (not in the
+        // response, an error row, or all-empty fields). Without this it would stay at the FRONT of
+        // `misses` every scan and permanently starve lower-ranked symbols of the tiny credit budget
+        // (they'd be deferred forever). A short TTL rotates it out for a few scans so others get a
+        // turn; it's per-provider so other providers still enrich the symbol.
+        const negativeCache = (symbol: string) => {
+          writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + twelveDataNegativeTtlMs());
+          result[symbol] = {};
+        };
         for (const symbol of batch) {
           const q = quoteMap[symbol];
-          if (!q) continue;
+          if (!q) {
+            negativeCache(symbol); // Twelve Data didn't return this symbol at all
+            continue;
+          }
           // Skip error responses
           if (q.code || q.status === "error" || q.message) {
-            result[symbol] = {};
+            negativeCache(symbol);
             continue;
           }
 
@@ -3271,8 +3367,10 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
           if (Object.keys(data).length > 0) {
             writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
+            result[symbol] = data;
+          } else {
+            negativeCache(symbol); // returned a row but no usable fields — rotate it out briefly
           }
-          result[symbol] = data;
         }
       } catch (err) {
         if (isTransientError(err)) {

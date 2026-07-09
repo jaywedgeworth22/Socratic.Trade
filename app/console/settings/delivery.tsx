@@ -5,14 +5,20 @@
  *  saved prefs), writes POST /api/notifications, and exercises every enabled
  *  channel via the existing test endpoint. A channel can only be enabled when
  *  the server operator has configured its provider (e.g. email needs a Resend
- *  key) — unavailable ones say so instead of failing silently. Ports the
- *  legacy DeliveryChannelsPanel into the console's grammar with a dirty-guard
- *  draft and per-channel test results. */
+ *  key) — unavailable ones say so instead of failing silently.
+ *
+ *  Auto-saves like every other settings card (owner-directed 2026-07-09):
+ *  channel toggles save on change, each channel's target field saves on
+ *  blur. saveDeliveryPrefs is a whole-object POST, so every write sends the
+ *  full merged prefs (saved ∪ any other in-progress local edits) — never
+ *  just the one changed field — so a toggle never drops a pending target
+ *  edit in a sibling field, and vice versa. */
 
 import { useCallback, useEffect, useState } from "react";
 import { sendTestNotification, ConsoleApiError } from "../lib/api";
-import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useToast } from "../ui/toast";
+import { SaveStatus } from "../ui/save-status";
 import { Btn, Card, Field, TextInput, Toggle } from "../ui/primitives";
 import {
   fetchDeliverySettings,
@@ -29,6 +35,8 @@ const CHANNEL_TITLE: Record<DeliveryChannelDescriptor["id"], string> = {
   sms: "A text message per alert. Needs the server operator's Twilio credentials; carrier rates may apply."
 };
 
+type TargetField = "pushTarget" | "webhookUrl" | "email" | "phone";
+
 interface TestResult {
   channel: string;
   ok: boolean;
@@ -38,15 +46,16 @@ interface TestResult {
 
 export function DeliveryChannelsCard() {
   const toast = useToast();
+  const autoSave = useAutoSave();
   const [channels, setChannels] = useState<DeliveryChannelDescriptor[] | null>(null);
   const [saved, setSaved] = useState<DeliveryPrefs>(EMPTY_DELIVERY_PREFS);
-  const [draft, setDraft] = useState<DeliveryPrefs | null>(null);
+  // Sticky optimistic overlay: seeded from the loaded snapshot, updated
+  // immediately on toggle/blur for instant feedback, reverted per-field by
+  // useAutoSave's onError if a write fails.
+  const [local, setLocal] = useState<DeliveryPrefs | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
   const [results, setResults] = useState<TestResult[] | null>(null);
-
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved);
-  useUnsavedChanges(dirty);
 
   const load = useCallback(async () => {
     try {
@@ -54,7 +63,7 @@ export function DeliveryChannelsCard() {
       setChannels(body.channels ?? []);
       const prefs = { ...EMPTY_DELIVERY_PREFS, ...body.prefs, channels: body.prefs?.channels ?? [] };
       setSaved(prefs);
-      setDraft(null);
+      setLocal(prefs);
       setLoadError(null);
     } catch (error) {
       setLoadError(error instanceof ConsoleApiError ? error.message : "Could not load delivery channels.");
@@ -65,42 +74,62 @@ export function DeliveryChannelsCard() {
     void load();
   }, [load]);
 
-  const prefs = draft ?? saved;
-  const setPrefs = (updater: (p: DeliveryPrefs) => DeliveryPrefs) => setDraft(updater(prefs));
+  const prefs = local ?? saved;
+  const busy = autoSave.saving || testBusy;
 
-  const targetValue = (field: string) => (prefs as unknown as Record<string, unknown>)[field];
-  const setTarget = (field: string, value: string) => setPrefs((p) => ({ ...p, [field]: value }));
-  const toggleChannel = (id: string, on: boolean) =>
-    setPrefs((p) => ({
-      ...p,
-      channels: on ? Array.from(new Set([...p.channels, id])) : p.channels.filter((c) => c !== id)
-    }));
+  // Persist the full merged prefs object (whole-object POST) and adopt the
+  // server's response as the new saved/local baseline.
+  const persist = (next: DeliveryPrefs, opts: { onError: () => void; successToast?: { title: string; detail?: string } }) => {
+    autoSave.save(
+      async () => {
+        const { prefs: persisted } = await saveDeliveryPrefs(next);
+        const merged = { ...EMPTY_DELIVERY_PREFS, ...persisted, channels: persisted?.channels ?? [] };
+        setSaved(merged);
+        setLocal(merged);
+      },
+      opts
+    );
+  };
 
-  const save = async () => {
-    setBusy("save");
-    try {
-      const { prefs: persisted } = await saveDeliveryPrefs(prefs);
-      setSaved({ ...EMPTY_DELIVERY_PREFS, ...persisted, channels: persisted?.channels ?? [] });
-      setDraft(null);
-      toast.push("pos", "Delivery channels saved");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(null);
+  const toggleChannel = (id: string, on: boolean) => {
+    const prevChannels = prefs.channels;
+    const nextChannels = on ? Array.from(new Set([...prefs.channels, id])) : prefs.channels.filter((c) => c !== id);
+    const next = { ...prefs, channels: nextChannels };
+    setLocal(next);
+    const label = channels?.find((c) => c.id === id)?.label ?? id;
+    persist(next, {
+      onError: () => setLocal((l) => (l ? { ...l, channels: prevChannels } : l)),
+      successToast: { title: `${label} delivery ${on ? "on" : "off"}` }
+    });
+  };
+
+  const targetValue = (field: TargetField) => prefs[field];
+  const setTarget = (field: TargetField, value: string) => setLocal((l) => ({ ...(l ?? prefs), [field]: value }));
+
+  const commitTarget = (field: TargetField) => {
+    const raw = targetValue(field);
+    const trimmed = raw.trim();
+    const savedValue = saved[field];
+    if (trimmed === savedValue) {
+      // No real change (or just whitespace trimmed) — no write, but normalize
+      // the visible value.
+      if (trimmed !== raw) setLocal((l) => (l ? { ...l, [field]: trimmed } : l));
+      return;
     }
+    const next = { ...prefs, [field]: trimmed };
+    setLocal(next);
+    persist(next, {
+      onError: () => setLocal((l) => (l ? { ...l, [field]: savedValue } : l))
+    });
   };
 
   const sendTest = async () => {
-    setBusy("test");
+    setTestBusy(true);
     setResults(null);
     try {
-      // The test always uses SAVED prefs — persist the draft first so what you
-      // test is what will actually fire.
-      if (dirty || draft !== null) {
-        const { prefs: persisted } = await saveDeliveryPrefs(prefs);
-        setSaved({ ...EMPTY_DELIVERY_PREFS, ...persisted, channels: persisted?.channels ?? [] });
-        setDraft(null);
-      }
+      // Fires against whatever's already saved on the server — channels now
+      // auto-save on toggle and targets on blur, so there's nothing to
+      // persist first.
       const { results: r } = await sendTestNotification();
       setResults(r);
       const sent = r.filter((x) => x.ok).length;
@@ -109,7 +138,7 @@ export function DeliveryChannelsCard() {
     } catch (error) {
       toast.push("neg", "Test failed", error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
-      setBusy(null);
+      setTestBusy(false);
     }
   };
 
@@ -117,24 +146,15 @@ export function DeliveryChannelsCard() {
     <Card
       title="Delivery channels"
       action={
-        <div className="flex gap-2">
-          {dirty && (
-            <>
-              <Btn variant="ghost" size="sm" onClick={() => setDraft(null)} title="Throw away unsaved channel edits.">
-                Discard
-              </Btn>
-              <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => void save()} title="Persist these channel choices and targets.">
-                {busy === "save" ? "Saving…" : "Save"}
-              </Btn>
-            </>
-          )}
+        <div className="flex items-center gap-3">
+          <SaveStatus status={autoSave.status} />
           <Btn
             size="sm"
-            disabled={busy !== null || channels === null}
+            disabled={busy || channels === null}
             onClick={() => void sendTest()}
-            title="Saves any pending edits, then fires a test alert through every enabled channel so you can confirm it reaches you."
+            title="Fires a test alert through every enabled, saved channel so you can confirm it reaches you."
           >
-            {busy === "test" ? "Sending…" : "Send test"}
+            {testBusy ? "Sending…" : "Send test"}
           </Btn>
         </div>
       }
@@ -162,7 +182,7 @@ export function DeliveryChannelsCard() {
         <div className="flex flex-col gap-2">
           {channels.map((ch) => {
             const on = prefs.channels.includes(ch.id);
-            const target = targetValue(ch.targetField);
+            const target = targetValue(ch.targetField as TargetField);
             return (
               <div
                 key={ch.id}
@@ -192,7 +212,7 @@ export function DeliveryChannelsCard() {
                   </div>
                   <Toggle
                     checked={on}
-                    disabled={!ch.available || busy !== null}
+                    disabled={!ch.available || busy}
                     onChange={(next) => toggleChannel(ch.id, next)}
                     label={`${ch.label} channel`}
                   />
@@ -204,7 +224,8 @@ export function DeliveryChannelsCard() {
                         id={`ch-${ch.id}`}
                         value={typeof target === "string" ? target : ""}
                         placeholder={ch.placeholder}
-                        onChange={(e) => setTarget(ch.targetField, e.target.value)}
+                        onChange={(e) => setTarget(ch.targetField as TargetField, e.target.value)}
+                        onBlur={() => commitTarget(ch.targetField as TargetField)}
                         title={ch.hint}
                       />
                     </Field>
