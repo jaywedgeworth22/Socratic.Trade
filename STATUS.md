@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
+Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
+(`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so npm 11 builds
+native deps deterministically in CI / Coolify / fresh clones — no host `~/.npmrc` tweak — fixing the
+2026-07-06 `better-sqlite3` native-binding crash class. Extracted from a larger uncommitted change in
+the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
+in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
+`better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
+
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
 Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
 realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +

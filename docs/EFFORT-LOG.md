@@ -202,6 +202,14 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **npm `allowScripts` approval in package.json (MONET, branch `monet/allow-scripts-approval`)
+  — IN PROGRESS 2026-07-08, landing.** In-repo approval of the 7 install-script packages
+  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so npm 11
+  builds native deps deterministically without host `~/.npmrc` tweaks (fixes the 2026-07-06
+  `better-sqlite3` native-binding crash class). `package.json`-only; no dep/lockfile change.
+  Deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs in Congress.Trade)
+  and a drifted lockfile regen. Verified: `npm ci` clean + `better_sqlite3.node` builds.
+  Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
 - **Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
   — IN PROGRESS 2026-07-08, landing.** Per-select stats button on both Proposer/Reviewer pickers →
   shared Sheet drawer: cost/call + p50 latency (live `llm_usage`/`llm_call_latency` when >=3 samples,
