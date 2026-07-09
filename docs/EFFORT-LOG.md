@@ -784,6 +784,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
+  replace confusing loose/tight wording with lock/unlock-style affordances, and
+  turn absolute-vs-percent constraint pairs into polished mode switches where
+  they represent alternative ways to express one setting.
+  2026-07-09 CODEX: claimed on branch `codex/settings-tooltip-sweep`
+  (`/Users/jay/.codex/worktrees/socratic-settings-tooltip-sweep`) for the smallest
+  remaining tooltip-only slice: add missing native titles to bare guardrails controls in
+  `app/console/guardrails/page.tsx`. Keepout: MONET-owned model-picker/catalog files.
+  Implementation and full local gate are green; opening PR next.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
@@ -1044,11 +1053,6 @@ As of 2026-07-08 (assignment-rule update).
     errors / tsc clean / 2404 tests / build. See
     docs/rollouts/2026-07-04-w2-reflection-decompose.md.
 
-- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
-  replace confusing loose/tight wording with lock/unlock-style affordances, and
-  turn absolute-vs-percent constraint pairs into polished mode switches where
-  they represent alternative ways to express one setting.
-  _(2026-07-08: stripped CODEX tag — no agent actively working.)_
 - Model/provider control parity - move strategy model controls toward curated
   dropdowns with provider-aware settings, showing reasoning controls only for
   models that actually support them.

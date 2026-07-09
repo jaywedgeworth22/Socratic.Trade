@@ -8,6 +8,16 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Guardrails tooltip sweep (CODEX, `codex/settings-tooltip-sweep`)
+Claimed the smallest safe remainder of the settings affordance row after auditing current
+`origin/main` and MONET handoffs. `app/console/guardrails/page.tsx` now adds native titles
+to the remaining bare Universe controls (base indices, always-include/blocklist text fields,
+permitted order types, Sell-to-Fund select) and Autonomy action buttons. Keepout remains
+MONET-owned model-picker/provider files.
+Verification is green: `npm run lint`, `npx tsc --noEmit`, `npm test` (303 files / 3118 tests),
+`npm run build`, and `git diff --check`.
+Rollout: `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
+
 ## 2026-07-09 — Home evidence symbol drawer parity (CODEX, `codex/console-parity-next`)
 Re-claimed the universal ticker detail drawer parity row after read-only audits of `origin/main`
 and MONET handoff notes. Scope is intentionally narrow: `app/console/page.tsx` only for code.
