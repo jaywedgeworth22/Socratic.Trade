@@ -205,6 +205,9 @@ As of 2026-07-04.
 - **Proposer/Reviewer Model naming + Red description fix (MONET, branch `monet/model-picker-copy2`)
   — IN PROGRESS 2026-07-08, landing.** Copy-only on both pickers; Red attribution gap
   (`reviewedByModel`) queued for the single-adversary lane.
+- **Activity log grouping (MONET, branch `monet/activity-log-grouping`) — IN PROGRESS 2026-07-08,
+  landing.** Generic runId-based consolidation + wider ops bucket in dashboard-feed.ts; real-hour
+  replay 54 events → 9 visual entries; consolidation test added.
 
 - **Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`) — IN PROGRESS
   2026-07-08, landing.** #1091's recovery applied to the uncovered inline Bear parse (silent-full-veto
