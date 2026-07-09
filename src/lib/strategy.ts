@@ -2971,6 +2971,21 @@ export function applyDeterministicSizing(
     }
   }
 
+  // Broker-dollar-minimum floor: Robinhood (and potentially other brokers) reject
+  // dollar-based/fractional orders below a hard minimum notional (Robinhood: $1).
+  // Raise the sized notional to at least that floor when capacity allows, so
+  // proposals never reach the broker with notional values that are certain to be
+  // rejected. When capacity does NOT allow even the minimum, the order is too small
+  // to place — the policy review will block it on per-order-cap grounds.
+  const brokerMinDollar = brokerMinimumDollarNotional(policy);
+  let brokerMinNote = "";
+  if (brokerMinDollar > 0 && targetNotional > 0 && targetNotional < brokerMinDollar) {
+    if (brokerMinDollar <= effectiveOpeningCap) {
+      brokerMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(brokerMinDollar)} to meet ${brokerLabel(policy)}'s minimum dollar-based order size.`;
+      targetNotional = brokerMinDollar;
+    }
+  }
+
   // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
   // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
   // for unproven theses, which already report the exploratory-floor reason below.
@@ -2992,7 +3007,7 @@ export function applyDeterministicSizing(
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
+    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + brokerMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
       : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
   };
@@ -3017,6 +3032,21 @@ function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy
   return typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0
     ? referencePrice
     : undefined;
+}
+
+/** Hard minimum dollar notional a broker requires for dollar-based/fractional orders.
+ *  Returns 0 when the broker has no known minimum (whole-share orders bypass this floor). */
+function brokerMinimumDollarNotional(policy: TradingPolicy): number {
+  // Robinhood rejects dollar-based orders below $1 ("must be at least $1").
+  if (policy.activeBroker === "robinhood") return 1;
+  return 0;
+}
+
+/** Human-readable broker name for sizing notes. */
+function brokerLabel(policy: TradingPolicy): string {
+  if (policy.activeBroker === "robinhood") return "Robinhood";
+  if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") return "Alpaca";
+  return policy.activeBroker ?? "broker";
 }
 
 function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
