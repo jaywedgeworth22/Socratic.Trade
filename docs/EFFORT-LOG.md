@@ -1220,6 +1220,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
+  — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
+  makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
+  auto-merge cant self-heal + land.sh never returns. Fix: `docs/EFFORT-LOG.md merge=union` +
+  `scripts/merge-shepherd.sh` (re-syncs stuck armed PRs, re-runs flaky verify, merges green, digest
+  to a tracking issue) driven by a launchd job (Mac PAT). Only acts on auto-merge-armed PRs.
+  Rollout: `docs/rollouts/2026-07-09-merge-shepherd.md`.
 - **Intro size-jump + loading-text fix (MONET, intro-anim session, branch
   `monet/intro-size-jump-3676f7`) — IN PROGRESS 2026-07-09.** Owner (prod, both viewports):
   wordmark still has a sudden SIZE change ~1s after the candles assemble; also remove the
