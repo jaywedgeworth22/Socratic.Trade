@@ -205,7 +205,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Completed
 - **Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`) —
-  COMPLETED 2026-07-09 (PR via `land.sh`).** Owner-directed console-UI fix: the Model Stats drawer's
+  COMPLETED 2026-07-09, merged to `main` via PR #1213 (auto-merge armed).** Owner-directed console-UI fix: the Model Stats drawer's
   4-column table (Model / Cost / Latency / Realized performance) was cramped inside the shared
   `Sheet` dialog's fixed 560px desktop width. Added an opt-in `wide?: boolean` prop on `Sheet`
   (`app/console/ui/sheet.tsx`) driving a new `.con-sheet-wide` class (`app/console/console.css`,
