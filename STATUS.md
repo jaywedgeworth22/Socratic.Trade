@@ -663,6 +663,22 @@ repoint `socratictrade.com` CNAME(tunnel)->proxied A `91.98.44.8`. Rollback = re
 CNAME + `pm2 start trading litestream` (Mac worktree left intact). **Until
 `docs/rollouts/2026-07-07-prod-coolify-migration.md` records a verified cutover, the Mac
 pm2 lane is still production.**
+## 2026-07-08 — Coolify simplified to integration-only; production migration handed to Monet (Claude cloud)
+Owner reviewed the Coolify preview lanes and concluded the five per-agent lanes were dead weight
+(never used; mostly-backend app has little to preview; they caused the 4GB box OOM-wedge). **Torn
+down all 5 per-agent Coolify apps** (claude/codex/antigravity/cursor/monet) + deleted the unused SSH
+deploy key. Only the **integration app** (`main`) remains, serving on the box at `main.jays.services`
+(the `trading.jays.services` rename is stuck on a post-reboot Coolify build-queue hang — optional).
+Dangling `*.jays.services` DNS for the 5 lanes + a `*.coolify` wildcard are cosmetic (404 via the
+`*.jays.services` wildcard), pending deletion (blocked in auto-mode; needs explicit per-record OK).
+
+**Production → Coolify: handed to MONET.** It's viable (integration proves the app runs on the box)
+but genuinely involved and needs Mac access this cloud session lacks (live prod `data/app.db`,
+Infisical secrets, `pm2 stop trading`). Runbook: `docs/rollouts/2026-07-08-production-coolify-migration-handoff.md`.
+Top risks called out there: **double-trading** (exactly one scheduler live, Mac OR box), the
+**irreplaceable DB** (persistent volume + Litestream + backup-before-migrate), and **box sizing**
+(resize to ≥8GB first — the 4GB box wedges under build load, which for live trading = stalled
+scheduler/missed orders).
 
 ## 2026-07-07 — Strategy exec/stops/LLM-timeout fixes (MONET, branch `monet/strategy-exec-stops-llm-fixes`)
 Owner-directed after prod forensics on Alpaca-paper `PA33IDTHMFK9`. Four money-path fixes; all gates
