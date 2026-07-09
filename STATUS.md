@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Scoring-factor weight tooltips (MONET, branch `monet/scoring-factor-tooltips`)
+Owner-directed display-only change, no scoring-logic changes. The eight "Scoring-factor weights"
+controls on the Strategy console page (`app/console/strategy/page.tsx`) previously showed only the
+raw lowercase `ScoringWeights` key plus a numeric "default X" hint — no explanation of what each
+factor measures. Added a new `FACTOR_META` map (capitalized name + one-sentence explanation per
+factor) and wrapped each `Field` label in the existing `Tooltip` primitive (`../ui/primitives`) with
+a small "ⓘ" affordance, plus a screen-reader-only duplicate of the tip text. The card's intro
+paragraph also gained one sentence noting the weights are relative (ratios matter, not absolute
+numbers). No `src/lib/scoring.ts` (or wherever `ScoringWeights` is consumed) changes. Gate green:
+tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+
 ## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
 Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page
 pickers drop the word "Model" from their labels: "Proposer Model" -> "Proposer", "Reviewer Model" ->

@@ -204,6 +204,16 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Scoring-factor weight tooltips (MONET, S) — COMPLETED 2026-07-09, branch
+  `monet/scoring-factor-tooltips`.** Owner-directed display-only pass: added a
+  hover tooltip (existing `Tooltip` primitive, `app/console/ui/primitives.tsx`)
+  to each of the 8 "Scoring-factor weights" controls on the Strategy console
+  page explaining what the factor measures and which direction more weight
+  pushes candidate ranking, plus one sentence in the card intro clarifying the
+  weights are relative (ratios matter, not absolute numbers). No scoring-math
+  changes. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean.
+  PR #1205 (auto-merge armed). See
+  `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
 - **Shared-dep proper-usage cleanup refresh (CODEX, S) — completed 2026-07-08 via PR #1171.**
   Replaced dirty Cursor PR #1105 without editing the Cursor branch. Merged to `main`
   as `54b6d722`; #1105 closed as superseded and stale PR #856 closed as obsolete. Cleanup uses

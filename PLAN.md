@@ -37,6 +37,12 @@ filling the missing pieces.
 > checks use shared `CONGRESS_EVENT_TYPES`, outbound share payload typing derives
 > from shared `SharePayload`, and stale shared imports were removed. See
 > `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+> **2026-07-09 - Scoring-factor weight tooltips (MONET).** No roadmap scope
+> change, display-only. Each of the 8 "Scoring-factor weights" controls on the
+> Strategy console page now carries a hover tooltip explaining what the factor
+> measures and which direction more weight pushes candidate ranking, plus one
+> sentence clarifying the weights are relative. No scoring-math changes. See
+> `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
 
 > **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
 > Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
