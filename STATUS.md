@@ -449,6 +449,11 @@ This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event 
 Merged via PR #1171 as `54b6d722`; repo effort mirror closeout follows on `codex/shared-dep-closeout`.
 Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
 See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+## 2026-07-09 — Drizzle ORM Migration (AG)
+Refactored the application's database layer to use Drizzle ORM, migrating away from raw custom SQLite implementation. Configured schema definition in `src/lib/db/schema.ts` (tables: `settings`, `user_settings`, `market_data_demands` with constraints). Updated `src/lib/db-settings.ts` to fully use Drizzle queries for read/write operations and upserts utilizing `onConflictDoUpdate`. Verified: linting clean, types pass (`tsc --noEmit`), tests pass (`2970/2970`), and build succeeds. Ready for landing. See `docs/rollouts/2026-07-09-drizzle-orm-migration.md`.
+
+## 2026-07-08 — Centralized Congress API client factory (AG)
+Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags to avoid unnecessary API calls. Fixed type issues across `congress-analytics.ts` and `history.ts`. Verified: tests pass 2970/2970, `npm run build` completed successfully, and tsc is clean. PR via `land.sh`. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
 
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.

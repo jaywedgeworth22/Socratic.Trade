@@ -287,6 +287,7 @@ As of 2026-07-08 (assignment-rule update).
   drawer host/API files remain MONET-owned/adjacent. Full local gate and GitHub
   `verify`/smoke were green before auto-merge. Not yet production-deployed after
   `70c0698e`.
+- **Drizzle ORM Migration (AG, branch `ag/drizzle-orm-migration`) — ✅ COMPLETED 2026-07-09 (PR via land.sh).** Refactored the app's database layer to use Drizzle ORM instead of the custom SQLite wrapper. Created schema definition in `src/lib/db/schema.ts` (tables: `settings`, `user_settings`, `market_data_demands` with constraints). Updated `src/lib/db-settings.ts` to fully use Drizzle queries. Verified: linting clean, types pass (`tsc --noEmit`), tests pass (`2970/2970`), and build succeeds. See `docs/rollouts/2026-07-09-drizzle-orm-migration.md`.
 - **Centralize Congress API Client Factory (AG) — COMPLETED 2026-07-08.** Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags. Verified: tests pass 2970/2970, build green. PR via land.sh.
 - **Consolidate usage telemetry clients in consumer apps (AG) — ✅ COMPLETED 2026-07-06 (PR #1005).** Replaced `postBatch` telemetry sending logic with `@jaywedgeworth22/congress-trading-shared` in Socratic.Trade.
 
