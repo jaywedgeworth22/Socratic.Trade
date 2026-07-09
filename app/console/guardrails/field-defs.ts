@@ -97,7 +97,7 @@ export const SHORTS: FieldDef[] = [
   { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account. Every short must carry a short stop-loss. ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
-  { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Mandatory for any short — a short without one is rejected." }
+  { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Defaults to 8%. Every short carries a stop — a short without one is rejected." }
 ];
 
 export const HYGIENE: FieldDef[] = [

@@ -225,6 +225,20 @@ As of 2026-07-08 (assignment-rule update).
   files / 3181 tests passed, `npm run build` succeeded. No mechanical fixes or test-expectation
   changes were needed — the assembled diff matched the intended fix exactly on inspection.
   `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
+- **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
+  `monet/short-stop-default-and-surface`) — CODE COMPLETE 2026-07-09, PR opened via
+  `scripts/land.sh` (auto-merge to be armed).** Owner-directed fix: enabling short selling with
+  otherwise-default settings rejected every short proposal because the mandatory short-stop gate
+  (`policy.ts:433`) had nothing to pass by default. `DEFAULT_RISK_RULES` (`src/lib/defaults.ts`)
+  now sets `shortStopLossPct: 8` — a real default (not a `?? stopLossPct` gate fallback, per
+  owner's explicit instruction) that flows through `mergePolicy`'s `riskRules` deep-merge to every
+  policy without an override. Gate logic itself unchanged. Also moved the four `SHORTS` fields
+  (`app/console/guardrails/page.tsx`) from a collapsed "Short selling" `AdvancedGroup` in the
+  Advanced rulebook card to the bottom of the main Essentials card, and updated the
+  `shortStopLossPct` hint copy (`field-defs.ts`) to reflect the new default. Sanity-checked:
+  `evaluateTradeProposal` against a default policy with `shortSellingEnabled: true` (no explicit
+  stop override) now approves a well-sized short. Gate green: tsc clean, lint 0 errors, 3168
+  tests, build clean. See `docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
 - **Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`) —
   COMPLETED 2026-07-09, merged to `main` via PR #1213 (auto-merge armed).** Owner-directed console-UI fix: the Model Stats drawer's
   4-column table (Model / Cost / Latency / Realized performance) was cramped inside the shared
