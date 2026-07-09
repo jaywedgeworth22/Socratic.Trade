@@ -27,6 +27,50 @@ Owner still owed: cancel d642d572 pre-open, tiingo 403 key/plan, AV keys #2-4 + 
 Gates: lint 0 err / tsc clean / 3077 tests / build green.
 Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 
+## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
+Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
+realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +
+`app/console/strategy/page.tsx`) opens a shared drawer (`app/console/components/model-stats-drawer.tsx`,
+Sheet + con-table) listing every catalog model: cost/call and p50 latency (live from `llm_usage` /
+`llm_call_latency` when >=3 samples, else the 2026-07-08 benchmark JSON — always labeled which), and a
+performance column gated by sample size (hidden behind "needs >=20 closed trades (n=X)" under 20,
+small-sample caveat 20-49, plain at 50+; Reviewer perf deliberately a dash — Red attribution is
+per-run, not per-trade). New GET `/api/llm-usage/model-stats` (auth mirrors sibling llm-usage route);
+pure rollup in `src/lib/model-stats.ts` (13 unit tests); `ClosedLot.entryModel` additively threaded
+through `calculatePnl` from the entry proposal's `proposedByModel`. Gate: tsc clean, lint 0 errors,
+2997 tests green, route + both pages runtime-smoked on a dev server.
+See `docs/rollouts/2026-07-08-model-cost-drawer.md`.
+
+## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
+All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
+requirement, implemented by 14 file-disjoint subagents across two workflow waves and
+integrated in-session. Highlights: brand accent unified on teal (--brand-accent, both
+themes), "Decisions"→"Proposals" nav rename, primitives parity (Segmented/IconButton/
+RawNumInput/Switch.disabled/Sheet aria/Meter breach/TONE_VAR), PWA icons + offline banner +
+"Open full console" escape, mobile card-lists for wide tables, scan Watch button + tab
+ARIA, orders staleness + manual-entry note, guardrails utilization meters, capability-badge
+de-rainbow, marketing decision-receipt illustration + loop diagram, and a full plain-English
+label system (no raw enums/JSON anywhere; shared maps in src/lib/dashboard-ui.ts +
+app/console/lib/labels.ts; short Order/Run references with full ids in tooltips). Gate:
+tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 375px (zero
+snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
+consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
+`docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+## 2026-07-08 — Intro→logo handoff: hidden-until-assembled + mobile brand row (MONET, branch `monet/intro-logo-handoff-3676f7`)
+Owner: the header logo must not pre-exist the candles (it was visible while they flew onto it),
+and mobile — where the bar logo is display:none and the intro landed on a phantom box — gets a
+full-width "SOCRATIC TRADE" row above the controls bar (~2x-tall chrome) as the landing target,
+holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts` phase channel;
+`BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
+`[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
+DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
 ## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
 Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
 runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and

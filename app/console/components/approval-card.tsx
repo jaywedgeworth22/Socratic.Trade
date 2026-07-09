@@ -19,6 +19,7 @@ import {
 } from "../lib/api";
 import { realityForMode } from "../lib/derive";
 import { cx, fmtMoney, fmtNum, fmtPct, fmtQty, timeUntil, EM_DASH } from "../lib/format";
+import { feedStatusLabel, plainLabel, thesisTagLabel } from "../lib/labels";
 import { DEFAULT_GREEN_MODEL_ID } from "../lib/models";
 import { redTeamFailureMeta, redTeamFailureModel } from "../lib/red-team";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -98,7 +99,10 @@ function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined)
 }
 
 function evidenceLabel(item: SocraticRagAttribution): string {
-  return [item.docType, item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") || "retrieved evidence";
+  return (
+    [plainLabel(item.docType), item.source, finite(item.score) ? `score ${item.score.toFixed(2)}` : undefined].filter(Boolean).join(" · ") ||
+    "Retrieved evidence"
+  );
 }
 
 function expiryIso(p: PendingProposal, policy: TradingPolicy): string | null {
@@ -162,7 +166,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
     } else if (result.status === "blocked") {
       toast.push("warn", "Blocked at approval time", (result.reasons ?? []).join(" ") || "The policy gate re-ran and refused it.");
     } else {
-      toast.push("info", `Result: ${result.status}`, (result.reasons ?? []).join(" ") || undefined);
+      toast.push("info", `Result: ${feedStatusLabel(result.status)}`, (result.reasons ?? []).join(" ") || undefined);
     }
   };
 
@@ -254,7 +258,7 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Chip tone="accent" title="The thesis tag this idea is filed under — its long-run hit rate is tracked on the Results screen.">
-              {p.tradeThesisTag}
+              {thesisTagLabel(p.tradeThesisTag)}
             </Chip>
             <span className="cursor-default text-[color:var(--con-faint)]" title="The market regime the strategist saw when it proposed this trade.">
               Regime at proposal: {p.entryMarketRegime || EM_DASH}

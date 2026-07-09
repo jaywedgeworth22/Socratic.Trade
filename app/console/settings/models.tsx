@@ -13,6 +13,7 @@ import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models"
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Field, Select } from "../ui/primitives";
 import { fetchChatProviders } from "./lib";
@@ -266,42 +267,53 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The strategist (green team) proposes trades; the reviewer / strategy-review
-        model (red team) tries to kill high-conviction ideas before they reach you. Coach is browser-local and also
-        adjustable on the Coach page. Providers without a resolvable key are marked — add one under API keys below.
+        Which models argue about your money. The Proposer Model (aka Green Team or Bull) writes the trade proposals;
+        the Reviewer Model (aka Red Team or Bear) reviews every proposal each run and runs a deeper adversarial debate
+        on high-conviction or dissent-flagged ideas. Coach is browser-local and also adjustable on the Coach page.
+        Providers without a resolvable key are marked — add one under API keys below.
       </p>
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Strategist (green team)"
-          hint="Writes the trade proposals each run."
+          label="Proposer Model"
+          hint="aka Green Team or Bull — writes the trade proposals each run."
           htmlFor="models-green"
         >
-          <ModelSelect
-            id="models-green"
-            value={green}
-            emptyLabel="app default (gpt-5.4-mini)"
-            emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
-            providers={providers}
-            title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
-            role="proposer"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-green"
+                value={green}
+                emptyLabel="app default (gpt-5.4-mini)"
+                emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
+                providers={providers}
+                title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
+                role="proposer"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="proposer" />
+          </div>
         </Field>
         <Field
-          label="Reviewer / Strategy Review (red team)"
-          hint="Argues against high-conviction ideas. Blank = same model as the strategist."
+          label="Reviewer Model"
+          hint="aka Red Team or Bear — reviews every proposal each run + deeper debate on high-conviction ideas. Blank = same as proposer."
           htmlFor="models-red"
         >
-          <ModelSelect
-            id="models-red"
-            value={red}
-            emptyLabel="same as strategist"
-            emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
-            providers={providers}
-            title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
-            role="red-team"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-red"
+                value={red}
+                emptyLabel="same as strategist"
+                emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
+                providers={providers}
+                title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
+                role="red-team"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="red-team" />
+          </div>
         </Field>
         <Field
           label="Coach"

@@ -7,6 +7,7 @@ import type { ConnectedAccount, NotificationEvent } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { acknowledgeAllAttention, acknowledgeNotifications, ConsoleApiError } from "../lib/api";
 import { cx } from "../lib/format";
+import { notificationStatusLabel, notificationTypeLabel } from "../lib/labels";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty, TextInput } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -263,11 +264,11 @@ export function AlertCenter({
                   )}
                 >
                   <div className="flex flex-wrap items-start gap-2">
-                    <Chip tone={acknowledged ? "muted" : row.tone}>{row.event.type}</Chip>
+                    <Chip tone={acknowledged ? "muted" : row.tone}>{notificationTypeLabel(row.event.type)}</Chip>
                     <Chip
                       tone={row.event.status === "failed" ? "neg" : row.event.status === "sent" ? "pos" : "muted"}
                     >
-                      {row.event.status}
+                      {notificationStatusLabel(row.event.status)}
                     </Chip>
                     {row.symbol && <SymbolButton symbol={row.symbol} showLogo={false} className="text-[length:var(--con-fs-xs)]" />}
                     <div className="ml-auto flex items-center gap-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">

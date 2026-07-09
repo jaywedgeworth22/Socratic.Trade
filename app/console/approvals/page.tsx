@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, ShieldAlert } from "lucide-react";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { approveProposal, rejectProposal, type ApproveResult } from "../lib/api";
 import { fmtMoney } from "../lib/format";
+import { fetchPendingLearnedContext } from "../lib/learned-context";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
@@ -41,6 +42,46 @@ const SORT_OPTIONS: Array<{ value: ApprovalSort; label: string }> = [
   { value: "oldest", label: "Oldest first" }
 ];
 
+/** How long a "Reject N?" arm stays live before it silently disarms — a
+ *  mis-click guard, not a ritual: no typed phrase, no modal, just a second
+ *  deliberate click within a few seconds. */
+const REJECT_ARM_MS = 4_000;
+
+/** Pending learned-context count for the header's "+N learned" chip — the nav
+ *  rail's badge folds trade proposals and learned-context items into one
+ *  number, but this page only lists proposals, so the header needs its own
+ *  read of the same queue to explain the difference. Same 60s/visibility
+ *  polling cadence as the nav rail; kept local rather than shared because
+ *  DesktopRail/MobileTabBar's hook isn't exported. */
+function useLearnedPendingCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void fetchPendingLearnedContext()
+        .then((items) => {
+          if (!cancelled) setCount(items.length);
+        })
+        .catch(() => {});
+    };
+    load();
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      load();
+    }, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  return count;
+}
+
 export default function ApprovalsPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -50,6 +91,14 @@ export default function ApprovalsPage() {
   const [sort, setSort] = useState<ApprovalSort>("newest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<"approve" | "reject" | null>(null);
+  // The reject-count this arm was raised for, or null when disarmed. If the
+  // selection changes underneath an armed button (filter change, checkbox
+  // toggle), rejectArmedEffective below falls false on its own — no effect
+  // needed to keep it in sync, and no ref read during render.
+  const [rejectArmedCount, setRejectArmedCount] = useState<number | null>(null);
+  const rejectArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const learnedSectionRef = useRef<HTMLDivElement | null>(null);
+  const learnedPendingCount = useLearnedPendingCount();
   const pending = useMemo(() => snapshot?.pendingProposals ?? [], [snapshot]);
   const pendingIdSet = useMemo(() => new Set(pending.map((proposal) => proposal.id)), [pending]);
   const effectiveSelectedIds = useMemo(() => {
@@ -70,6 +119,26 @@ export default function ApprovalsPage() {
   const stopped = snapshot?.policy.systemState === "halted";
   const activeAccountId = snapshot ? activeConnectedAccount(snapshot)?.id : undefined;
   const allVisibleSelected = filtered.length > 0 && filtered.every((proposal) => effectiveSelectedIds.has(proposal.id));
+  // A stale arm must never fire against a different set of proposals than the
+  // one the owner saw — falls false automatically the instant the selection
+  // changes, no effect required to keep it in sync.
+  const rejectArmedEffective = rejectArmedCount !== null && rejectArmedCount === selection.rejectCount;
+
+  const clearRejectArm = () => {
+    if (rejectArmTimer.current) {
+      clearTimeout(rejectArmTimer.current);
+      rejectArmTimer.current = null;
+    }
+    setRejectArmedCount(null);
+  };
+
+  // Only cleanup on unmount needed — see rejectArmedEffective above for how
+  // selection changes disarm without an effect.
+  useEffect(() => {
+    return () => {
+      if (rejectArmTimer.current) clearTimeout(rejectArmTimer.current);
+    };
+  }, []);
 
   const toggleSelected = (proposalId: string) => {
     setSelectedIds((current) => {
@@ -157,18 +226,47 @@ export default function ApprovalsPage() {
     }
   };
 
+  // First click arms a "Reject N? Confirm" state for a few seconds; the
+  // second click within that window actually rejects. Deliberately no typed
+  // phrase and no modal — this is a mis-click guard, not a ritual.
+  const handleBulkRejectClick = () => {
+    if (!rejectArmedEffective) {
+      setRejectArmedCount(selection.rejectCount);
+      rejectArmTimer.current = setTimeout(() => setRejectArmedCount(null), REJECT_ARM_MS);
+      return;
+    }
+    clearRejectArm();
+    void runBulkReject();
+  };
+
+  const jumpToLearnedContext = () => {
+    learnedSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   if (!snapshot || !state) return null;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-[length:var(--con-fs-lg)] font-bold">
-            Approvals{" "}
-            <span className="con-num text-[color:var(--con-accent)]">
-              ({filtered.length}/{pending.length})
-            </span>
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-[length:var(--con-fs-lg)] font-bold">
+              Approvals{" "}
+              <span className="con-num text-[color:var(--con-accent)]">
+                ({filtered.length}/{pending.length})
+              </span>
+            </h1>
+            {learnedPendingCount > 0 && (
+              <button
+                type="button"
+                className="con-chip con-chip-accent"
+                onClick={jumpToLearnedContext}
+                title={`${learnedPendingCount} learned-context item${learnedPendingCount === 1 ? "" : "s"} also awaiting your decision, below trade proposals — this count is why the nav badge reads higher than the number above. Click to jump there.`}
+              >
+                +{learnedPendingCount} learned
+              </button>
+            )}
+          </div>
           <Chip tone={state.tone === "pos" ? "pos" : state.tone === "neg" ? "neg" : "warn"}>{state.label}</Chip>
         </div>
 
@@ -255,10 +353,16 @@ export default function ApprovalsPage() {
                   variant="dangerOutline"
                   size="sm"
                   disabled={stopped || bulkBusy !== null || selection.rejectCount === 0}
-                  onClick={runBulkReject}
-                  title={stopped ? "The system is stopped, so rejection actions are refused." : "Rejects each selected proposal through the existing server path."}
+                  onClick={handleBulkRejectClick}
+                  title={
+                    stopped
+                      ? "The system is stopped, so rejection actions are refused."
+                      : rejectArmedEffective
+                        ? "Click again to reject — rejects each selected proposal through the existing server path."
+                        : "Rejects each selected proposal through the existing server path. Click once to arm, then again to confirm."
+                  }
                 >
-                  {bulkBusy === "reject" ? "Rejecting..." : `Reject selected (${selection.rejectCount})`}
+                  {bulkBusy === "reject" ? "Rejecting..." : rejectArmedEffective ? `Reject ${selection.rejectCount}? Confirm` : `Reject selected (${selection.rejectCount})`}
                 </Btn>
               </div>
             </div>
@@ -304,8 +408,10 @@ export default function ApprovalsPage() {
           </div>
         )}
 
-        <LearnedContextInbox />
-        <LearnedFactsArchive />
+        <div ref={learnedSectionRef} className="flex scroll-mt-28 flex-col gap-4">
+          <LearnedContextInbox />
+          <LearnedFactsArchive />
+        </div>
 
         <p className="text-center text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Rejections are data, not failures — every idea you pass on keeps being scored, and Results shows how your

@@ -10,6 +10,8 @@ import { type ReactNode } from "react";
 import type { EquityOrder, EquityPosition, PendingProposal } from "@/lib/types";
 import { friendlySource, orderedSourceEntries, provenanceLabel } from "@/lib/dashboard-ui";
 import { cx, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { plainLabel, thesisTagLabel } from "../lib/labels";
+import { readableState } from "../orders/lib";
 import { Ago, Chip, Dash, SignedText, type ChipTone } from "./primitives";
 import {
   buildDerivedTiles,
@@ -145,7 +147,7 @@ export function ExposureSection({
                 </span>
                 {p.proposal.tradeThesisTag && (
                   <Chip tone="muted" title="The thesis tag the strategy filed this idea under.">
-                    {p.proposal.tradeThesisTag}
+                    {thesisTagLabel(p.proposal.tradeThesisTag)}
                   </Chip>
                 )}
                 {typeof p.proposal.confidenceScore === "number" && (
@@ -179,7 +181,7 @@ export function ExposureSection({
               <li
                 key={o.id}
                 className="con-row -mx-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded px-1 py-1.5 text-[length:var(--con-fs-sm)]"
-                title={`${o.side} ${o.type.replace(/_/g, " ")} order · state: ${o.state}${o.placedAgent ? ` · placed by ${o.placedAgent}` : ""}`}
+                title={`${o.side} ${o.type.replace(/_/g, " ")} order · state: ${readableState(o.state)}${o.placedAgent ? ` · placed by ${plainLabel(o.placedAgent)}` : ""}`}
               >
                 {sideChip(o.side)}
                 <span className="con-num">
@@ -192,8 +194,8 @@ export function ExposureSection({
                         : EM_DASH}
                   {typeof o.averagePrice === "number" && o.averagePrice > 0 ? ` @ ${fmtMoney(o.averagePrice)}` : ""}
                 </span>
-                <Chip tone={o.state === "filled" ? "pos" : ["cancelled", "canceled", "rejected", "failed", "expired"].includes(o.state) ? "neg" : "muted"} title={`Order state reported by the broker: ${o.state}.`}>
-                  {o.state}
+                <Chip tone={o.state === "filled" ? "pos" : ["cancelled", "canceled", "rejected", "failed", "expired"].includes(o.state) ? "neg" : "muted"} title={`Order state reported by the broker: ${readableState(o.state)}.`}>
+                  {readableState(o.state)}
                 </Chip>
                 <span className="ml-auto text-[color:var(--con-faint)]">
                   <Ago iso={o.createdAt} />

@@ -9,13 +9,17 @@
 
 import { useMemo, useState } from "react";
 import { toggleIncludedIndex } from "@/lib/index-universes";
-import type { IndexUniverse, OrderType, TaxationType } from "@/lib/types";
+import type { IndexUniverse, OrderType, TaxationType, TradingPolicy } from "@/lib/types";
+import type { DashboardSnapshot } from "../../dashboard-types";
 import { savePolicy, ConsoleApiError, type PolicyPatchBody } from "../lib/api";
-import { activeConnectedAccount, deriveReality } from "../lib/derive";
+import { activeConnectedAccount, deriveReality, deriveRiskUtilization, type UtilizationMeter } from "../lib/derive";
+import { fmtMoney, fmtMoneyWhole, fmtNum, fmtPct } from "../lib/format";
+import { isBlank } from "../lib/policy-diff";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, Select, TextInput } from "../ui/primitives";
+import { Btn, Card, Chip, Dash, Field, Meter, Select, TextInput } from "../ui/primitives";
 import { TypedConfirm } from "../components/chrome";
+import { orderTypeLabel } from "../orders/lib";
 import {
   AdvancedGroup,
   PolicyDualModeRow,
@@ -50,6 +54,96 @@ function isIraTaxation(taxationType: TaxationType | undefined): boolean {
   return taxationType === "roth_ira" || taxationType === "traditional_ira";
 }
 
+/** "market" → "Market", "stop_market" → "Stop-market". orderTypeLabel (../orders/lib)
+ *  already does the underscore→hyphen swap; this only capitalizes the leading letter,
+ *  matching the decided plain-English order-type vocabulary. */
+function orderTypeChoiceLabel(type: string): string {
+  const label = orderTypeLabel(type);
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : label;
+}
+
+/** Exposure utilization derive.ts doesn't already expose (deriveRiskUtilization only covers
+ *  daily notional/orders/invested capital) — computed locally from the same snapshot fields,
+ *  mirroring the CURRENT-state formulas the policy engine uses for its own projected checks
+ *  (src/lib/policy.ts): gross = Σ|marketValue|, net = Σ marketValue, short = Σ|marketValue|
+ *  where quantity < 0, symbol = the single largest |marketValue| among held positions. Missing
+ *  equity data renders the band undefined (row shows "—"), never a fabricated 0 — a real empty
+ *  portfolio still yields real 0% bands once equity is known. */
+function deriveExposureUtilization(snapshot: DashboardSnapshot, policy: TradingPolicy) {
+  const positions = snapshot.positions ?? [];
+  const equity = snapshot.portfolio?.totalMarketValue;
+  const hasEquity = typeof equity === "number" && equity > 0;
+  const pctBand = (used: number, limit: number | undefined): UtilizationMeter => ({
+    used,
+    limit,
+    pct: typeof limit === "number" && limit > 0 ? (used / limit) * 100 : undefined
+  });
+
+  const largest = positions.reduce<{ symbol: string; value: number } | undefined>((max, p) => {
+    const value = Math.abs(p.marketValue);
+    return !max || value > max.value ? { symbol: p.symbol, value } : max;
+  }, undefined);
+
+  const gross = positions.reduce((sum, p) => sum + Math.abs(p.marketValue), 0);
+  const net = positions.reduce((sum, p) => sum + p.marketValue, 0);
+  const short = positions.reduce((sum, p) => (p.quantity < 0 ? sum + Math.abs(p.marketValue) : sum), 0);
+
+  return {
+    symbolNotional: largest ? { ...pctBand(largest.value, policy.maxSymbolExposureNotional), symbol: largest.symbol } : undefined,
+    symbolPct: largest && hasEquity ? { ...pctBand((largest.value / equity!) * 100, policy.maxSymbolExposurePct), symbol: largest.symbol } : undefined,
+    grossPct: hasEquity ? pctBand((gross / equity!) * 100, policy.maxGrossExposurePct) : undefined,
+    netPct: hasEquity ? pctBand((Math.abs(net) / equity!) * 100, policy.maxNetExposurePct) : undefined,
+    shortPct: hasEquity ? pctBand((short / equity!) * 100, policy.maxShortExposurePct) : undefined
+  };
+}
+
+/** Inline utilization sub-label for a numeric cap row: "used X of Y · pct%" plus a Meter,
+ *  matching the Risk utilization card pattern on the dashboard (page.tsx RiskUtilizationCard).
+ *  `band` undefined means no current-usage data applies to this cap — renders "—", never a
+ *  fabricated 0 (see format.ts convention). */
+function CapUtilization({
+  band,
+  kind,
+  note,
+  daily
+}: {
+  band: (UtilizationMeter & { symbol?: string }) | undefined;
+  kind: "money" | "pct" | "count";
+  note?: string;
+  /** True for caps that reset every day (daily notional/orders) — the sub-label reads
+   *  "Used $1,200 of $5,000 today" instead of the point-in-time "Current usage" wording
+   *  used for exposure caps, which have no daily reset. */
+  daily?: boolean;
+}) {
+  const fmtUsed = (v: number) => (kind === "money" ? fmtMoney(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
+  const fmtLimit = (v: number) => (kind === "money" ? fmtMoneyWhole(v) : kind === "pct" ? fmtPct(v, 1) : fmtNum(v));
+  const title = band?.symbol ? `Largest position: ${band.symbol}${note ? ` — ${note}` : ""}` : note;
+
+  if (!band) {
+    return (
+      <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]" title={title}>
+        Current usage: <Dash />
+      </p>
+    );
+  }
+  // Unclamped: values over the cap must pass through as >100 so Meter's own breach
+  // state (hatched fill + "+X% over" tooltip) can surface instead of a solid full bar.
+  const ratio = band.pct ?? 0;
+  return (
+    <div className="mt-1" title={title}>
+      <div className="flex items-center justify-between gap-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        <span>{daily ? "Used" : "Current usage"}</span>
+        <span className="con-num">
+          {fmtUsed(band.used)} of {typeof band.limit === "number" ? fmtLimit(band.limit) : "no cap"}
+          {daily ? " today" : ""}
+          {band.pct !== undefined ? ` · ${fmtPct(band.pct, 1)}` : ""}
+        </span>
+      </div>
+      <Meter value={ratio} max={100} />
+    </div>
+  );
+}
+
 const DEF_BY_PATH = new Map(ALL_DEFS.map((def) => [def.path, def]));
 const ESSENTIAL_FIELD_PATHS = new Set(["maxOrderNotional", "maxOrderPctOfNav"]);
 const EXPOSURE_FIELD_PATHS = new Set(["maxSymbolExposureNotional", "maxSymbolExposurePct"]);
@@ -68,6 +162,8 @@ export default function GuardrailsPage() {
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
   if (!snapshot || !reality) return null;
   const policy = snapshot.policy;
+  const risk = deriveRiskUtilization(snapshot);
+  const exposure = deriveExposureUtilization(snapshot, policy);
 
   // Universe / arrays are replace-whole-value fields → extraPatch.
   const extraPatch: PolicyPatchBody = {};
@@ -112,16 +208,27 @@ export default function GuardrailsPage() {
 
       <Card title="Essentials">
         <div className="divide-y divide-[color:var(--con-line)]">
-          <PolicyDualModeRow
-            label="Max Per Order"
-            moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
-            pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
-            policy={policy}
-            draft={draft}
-            hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
-          />
+          <div>
+            <PolicyDualModeRow
+              label="Max Per Order"
+              moneyDef={DEF_BY_PATH.get("maxOrderNotional")!}
+              pctDef={DEF_BY_PATH.get("maxOrderPctOfNav")!}
+              policy={policy}
+              draft={draft}
+              hint="Choose one expression for the per-order opening cap. Switching modes clears the other value before save."
+            />
+            <CapUtilization
+              band={undefined}
+              kind="money"
+              note="Per-order caps apply to each order individually — no cumulative usage is tracked against this limit."
+            />
+          </div>
           {ESSENTIALS.filter((def) => !ESSENTIAL_FIELD_PATHS.has(def.path)).map((def) => (
-            <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              {def.path === "maxDailyNotional" && <CapUtilization band={risk.dailyNotional} kind="money" daily />}
+              {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
+            </div>
           ))}
         </div>
       </Card>
@@ -133,16 +240,26 @@ export default function GuardrailsPage() {
             demanded an exit can never block that exit.
           </p>
           <AdvancedGroup title="Exposure caps">
-            <PolicyDualModeRow
-              label="Max In One Stock"
-              moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
-              pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
-              policy={policy}
-              draft={draft}
-              hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
-            />
+            <div>
+              <PolicyDualModeRow
+                label="Max In One Stock"
+                moneyDef={DEF_BY_PATH.get("maxSymbolExposureNotional")!}
+                pctDef={DEF_BY_PATH.get("maxSymbolExposurePct")!}
+                policy={policy}
+                draft={draft}
+                hint="Choose whether the single-symbol exposure cap is a dollar ceiling or a share of portfolio value."
+              />
+              <CapUtilization
+                band={isBlank(policy.maxSymbolExposurePct) ? exposure.symbolNotional : exposure.symbolPct}
+                kind={isBlank(policy.maxSymbolExposurePct) ? "money" : "pct"}
+              />
+            </div>
             {EXPOSURE.filter((def) => !EXPOSURE_FIELD_PATHS.has(def.path)).map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                {def.path === "maxGrossExposurePct" && <CapUtilization band={exposure.grossPct} kind="pct" />}
+                {def.path === "maxNetExposurePct" && <CapUtilization band={exposure.netPct} kind="pct" />}
+              </div>
             ))}
           </AdvancedGroup>
           <AdvancedGroup title="Socratic override">
@@ -167,7 +284,10 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Short selling">
             {SHORTS.map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+              <div key={def.path}>
+                <PolicyFieldRow def={def} policy={policy} draft={draft} />
+                {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
+              </div>
             ))}
           </AdvancedGroup>
           <AdvancedGroup title="Proposal hygiene & pace">
@@ -267,7 +387,7 @@ export default function GuardrailsPage() {
                           }))
                         }
                       />
-                      {t.replace("_", " ")}
+                      {orderTypeChoiceLabel(t)}
                     </label>
                   );
                 })}
