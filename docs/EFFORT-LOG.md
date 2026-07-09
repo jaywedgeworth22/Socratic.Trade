@@ -756,6 +756,11 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
+  Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
+  Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
+  shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
+  `congress-trade-client.ts`.
 - **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
   logo (MONET, intro-anim session, branch `monet/intro-landing-fixes-3676f7`) — IN PROGRESS
   2026-07-08.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then

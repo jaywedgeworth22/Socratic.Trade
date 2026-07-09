@@ -11,6 +11,13 @@ filling the missing pieces.
 > reviewer rows plus explicit `unattributed` history when no reviewer model was persisted. This is
 > read-side only and deliberately stays out of `src/lib/red-team.ts` / `src/lib/strategy.ts`.
 > See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+> **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
+> scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
+> via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event
+> checks use shared `CONGRESS_EVENT_TYPES`, outbound share payload typing derives
+> from shared `SharePayload`, and stale shared imports were removed. See
+> `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+
 > **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
 > Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
 > (`app/console/approvals/learned-context.tsx`) and built the "browse + delete what was silently
