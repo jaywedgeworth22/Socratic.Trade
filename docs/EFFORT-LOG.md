@@ -1220,6 +1220,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
+  — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
+  makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
+  auto-merge cant self-heal + land.sh never returns. Fix: `docs/EFFORT-LOG.md merge=union` +
+  `scripts/merge-shepherd.sh` (re-syncs stuck armed PRs, re-runs flaky verify, merges green, digest
+  to a tracking issue) driven by a launchd job (Mac PAT). Only acts on auto-merge-armed PRs.
+  Rollout: `docs/rollouts/2026-07-09-merge-shepherd.md`.
 - **Roth Gemini 400 TRUE root cause + async Run-once (MONET, branch
   `monet/roth-gemini-400-runonce-async`) — IN PROGRESS 2026-07-09, gates running, PR via
   land.sh.** Owner-reported: Run-once popped a raw Cloudflare 524 page; Roth Gemini 400

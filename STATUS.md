@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
+Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
+turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
+`docs/EFFORT-LOG.md merge=union` (kills the dominant conflict) + `scripts/merge-shepherd.sh` (re-syncs
+stuck auto-merge-armed PRs, re-runs flaky verify once, merges the green ones, writes a digest to a
+"Merge shepherd status" tracking issue) + a launchd driver (Mac PAT so update-branch re-triggers CI) +
+a manual-dispatch GH Action. Acts ONLY on auto-merge-armed PRs; reports the rest. Merge≠deploy, so the
+announce-then-deploy step stays the human checkpoint. Dry-run validated against the live backlog.
+
 ## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
 Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
 connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
