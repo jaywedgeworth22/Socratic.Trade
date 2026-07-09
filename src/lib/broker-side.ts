@@ -27,3 +27,24 @@ const TERMINAL_DECLINE_STATES = new Set(["rejected", "canceled", "cancelled", "f
 export function isRejectedOrCanceledState(state: string | undefined | null): boolean {
   return TERMINAL_DECLINE_STATES.has(String(state ?? "").trim().toLowerCase());
 }
+
+// The complementary broker-agnostic check: "this order is still RESTING/LIVE at the broker"
+// (placed, not yet filled/canceled/expired/rejected/failed). Like the decline check above, the raw
+// vocabularies aren't normalized to one enum — Alpaca emits new/accepted/pending_new/…/partially_
+// filled, while Robinhood's resting states are queued/confirmed/unconfirmed. Both vocabularies are
+// listed here so a caller (e.g. the synthetic-stop monitor deciding whether a symbol is already
+// protected by a broker-held stop) recognizes a live order regardless of broker. The two
+// vocabularies are disjoint — Alpaca never emits queued/confirmed/unconfirmed and Robinhood never
+// emits Alpaca's — so recognizing Robinhood's resting states here can never reclassify an Alpaca
+// order. Bias: list only clearly-live states, so a terminal or unknown status is treated as NOT
+// live (when unsure, don't suppress protection).
+const LIVE_ORDER_STATES = new Set([
+  // Alpaca-flavored resting/working states.
+  "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open",
+  // Robinhood-flavored resting states (get_equity_orders reports a working stop as one of these).
+  "queued", "confirmed", "unconfirmed"
+]);
+
+export function isLiveOrderState(state: string | undefined | null): boolean {
+  return LIVE_ORDER_STATES.has(String(state ?? "").trim().toLowerCase());
+}

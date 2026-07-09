@@ -198,6 +198,24 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(broker.placed).toHaveLength(0);
   });
 
+  it.each(["queued", "confirmed", "unconfirmed"])(
+    "treats a RESTING Robinhood broker stop (state=%s) as protection → no duplicate synthetic exit",
+    async (rhState) => {
+      // Regression for the double-exit hazard: a Robinhood broker-held protective stop rests in
+      // queued/confirmed/unconfirmed (not Alpaca's new/accepted). Before the fix those states were
+      // unrecognized, so the monitor didn't see the broker stop, auto-registered a synthetic trailing
+      // stop, and could market-sell on top of the resting broker stop. It must now skip the symbol.
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // would breach a 5% trail off extreme 100 IF registered
+      broker.orders = [{ id: "rh-stop-1", symbol: "AAPL", side: "sell", type: "stop_market", state: rhState }];
+      connectTestAccount(`SYN-RH-${rhState}`, "live");
+      const result = await runSyntheticStopMonitor("local", policyFor(`SYN-RH-${rhState}`), true);
+      // The resting RH broker stop owns the exit — no synthetic stop registered, nothing fired.
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+    }
+  );
+
   it("still auto-registers when the only broker stop for the symbol is terminal (canceled)", async () => {
     broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
     broker.quotes = { AAPL: { price: 90 } };
