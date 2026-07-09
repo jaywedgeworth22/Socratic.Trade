@@ -26,6 +26,17 @@ elsewhere), and updated the `shortStopLossPct` field hint (`field-defs.ts`) to s
 logic is untouched). Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
 `docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
 
+## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
+Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
+(`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
+install approvals live in-repo (no fragile host `~/.npmrc` tweak) and stay valid when npm's future
+default flips to *blocking* unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still
+runs install scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash was caused by
+host `~/.npmrc` skipping scripts, not npm 11's default gating; this block removes that host dependency
+rather than re-enabling npm-11 default behavior. Extracted from a larger uncommitted change in
+the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
+in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
+`better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
 ## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
 Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
 opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized
