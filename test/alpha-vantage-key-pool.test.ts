@@ -527,9 +527,9 @@ describe("getPoolForKeys", () => {
     const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
 
-    const ENV_KEY_1 = "integration-env-key-1";
-    const ENV_KEY_2 = "integration-env-key-2";
-    const USER_KEY = "integration-user-key-1";
+    const ENV_KEY_1 = "integration-env-key-1"; // gitleaks:allow — obviously-fake test fixture, not a credential
+    const ENV_KEY_2 = "integration-env-key-2"; // gitleaks:allow — obviously-fake test fixture, not a credential
+    const USER_KEY = "integration-user-key-1"; // gitleaks:allow — obviously-fake test fixture, not a credential
     const requestedKeys: string[] = [];
 
     vi.stubGlobal("fetch", async (url: string) => {
@@ -578,8 +578,8 @@ describe("AlphaVantageEnrichmentProvider mid-chunk fast-stop", () => {
     const { resetProviderRateLimiterState } = await import("../src/lib/provider-rate-limit");
     clearEnrichmentCache();
     const pool = new AlphaVantageKeyPool();
-    const KEY_1 = "midchunk-key-1";
-    const KEY_2 = "midchunk-key-2";
+    const KEY_1 = "midchunk-key-1"; // gitleaks:allow — obviously-fake test fixture, not a credential
+    const KEY_2 = "midchunk-key-2"; // gitleaks:allow — obviously-fake test fixture, not a credential
 
     // Force TRUE serial dispatch: alpha-vantage's real pacer default (provider-rate-limit.ts's
     // HARD_DEFAULTS) is concurrency: 1 — the min-interval spacing is overridden to a SMALL but
