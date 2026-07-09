@@ -191,10 +191,17 @@ export function deriveProtection(
       ? rules.shortStopLossPct
       : rules.stopLossPct
     : rules.stopLossPct;
-  const trailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
-  const stopPct = trailing ? rules.trailingStopPct : baseStopPct;
-  if (typeof stopPct === "number" && stopPct > 0) {
-    const word = `App ${trailing ? "trailing " : ""}${isShort ? "short " : ""}stop −${stopPct}%`;
+  // A fixed stop and a trailing stop COEXIST — they are not alternatives. The fixed % drives the
+  // proactive risk-exit (and any broker bracket); the trailing % drives the synthetic scheduler-tick
+  // monitor, which runs on top. Naming ONLY the trailing one implied it replaced the fixed stop, so a
+  // held name with both configured looked protected by a single, wider trail. Show whichever apply.
+  const hasFixed = typeof baseStopPct === "number" && baseStopPct > 0;
+  const hasTrailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
+  if (hasFixed || hasTrailing) {
+    const parts: string[] = [];
+    if (hasFixed) parts.push(`stop −${baseStopPct}%`);
+    if (hasTrailing) parts.push(`trailing −${rules.trailingStopPct}%`);
+    const word = `App ${isShort ? "short " : ""}${parts.join(" + ")}`;
     if (policy.systemState === "halted") {
       return {
         label: `${word} · paused`,
