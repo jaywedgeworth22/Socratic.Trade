@@ -209,8 +209,10 @@ As of 2026-07-08 (assignment-rule update).
   changes were needed — the assembled diff matched the intended fix exactly on inspection.
   `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
 - **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
-  `monet/short-stop-default-and-surface`) — CODE COMPLETE 2026-07-09, PR opened via
-  `scripts/land.sh` (auto-merge to be armed).** Owner-directed fix: enabling short selling with
+  `monet/short-stop-default-and-surface`) — NOT YET MERGED: PR #1221 open, auto-merge armed
+  2026-07-09 (code complete; this row stays out of the "merged to `main`" sense of Completed
+  until the merge actually lands — kept here rather than duplicated under In Progress).**
+  Owner-directed fix: enabling short selling with
   otherwise-default settings rejected every short proposal because the mandatory short-stop gate
   (`policy.ts:433`) had nothing to pass by default. `DEFAULT_RISK_RULES` (`src/lib/defaults.ts`)
   now sets `shortStopLossPct: 8` — a real default (not a `?? stopLossPct` gate fallback, per
