@@ -43,6 +43,12 @@ filling the missing pieces.
 > measures and which direction more weight pushes candidate ranking, plus one
 > sentence clarifying the weights are relative. No scoring-math changes. See
 > `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+> **2026-07-09 - Model Stats drawer widened on desktop (MONET).** No roadmap
+> scope change, display-only. The shared `Sheet` component gained an opt-in
+> `wide` prop (920px desktop max-width vs. the 560px default; mobile bottom
+> sheet unaffected), used only by the Model Stats drawer's 4-column table.
+> No other `Sheet` call-site changed. See
+> `docs/rollouts/2026-07-09-model-stats-drawer-wide.md`.
 
 > **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
 > Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue

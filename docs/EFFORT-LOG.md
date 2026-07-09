@@ -204,6 +204,16 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`) —
+  COMPLETED 2026-07-09, merged to `main` via PR #1213 (auto-merge armed).** Owner-directed console-UI fix: the Model Stats drawer's
+  4-column table (Model / Cost / Latency / Realized performance) was cramped inside the shared
+  `Sheet` dialog's fixed 560px desktop width. Added an opt-in `wide?: boolean` prop on `Sheet`
+  (`app/console/ui/sheet.tsx`) driving a new `.con-sheet-wide` class (`app/console/console.css`,
+  `min(920px, calc(100vw - 32px))` on desktop; explicitly re-pinned to `width: 100%` inside the
+  existing mobile `@media (max-width: 767px)` block so the bottom-sheet is unaffected). Only
+  `ModelStatsButton` (`app/console/components/model-stats-drawer.tsx`) opts in — the other ~12
+  `Sheet` call-sites are untouched. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean.
+  See `docs/rollouts/2026-07-09-model-stats-drawer-wide.md`.
 - **Scoring-factor weight tooltips (MONET, S) — COMPLETED 2026-07-09, branch
   `monet/scoring-factor-tooltips`.** Owner-directed display-only pass: added a
   hover tooltip (existing `Tooltip` primitive, `app/console/ui/primitives.tsx`)
@@ -333,6 +343,22 @@ As of 2026-07-08 (assignment-rule update).
   reload. Flagged to owner: strategy prompt/weights auto-save (soft call), guardrails kept review.
   Rollout: `docs/rollouts/2026-07-09-settings-autosave.md`.
 
+- **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
+  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
+  2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the
+  ALREADY-BUILT per-reviewer-model veto value-add in the drawer's 4th column, replacing the hard-coded
+  dash for the Reviewer role. No DB/schema/`strategy.ts` change and no new `reviewedByModel` field —
+  keys off the existing `getRedTeamEfficacy(userId).byModel`. Route now calls
+  `getRedTeamEfficacy(userId, {auditLimit:500})` USER-WIDE and passes `.byModel` into
+  `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf` shape + `reviewerPerf` field on
+  `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket filtered out. PerfCell renders
+  "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone` (NEGATIVE avg = GOOD, positive
+  tone; higher good-veto % = better) under the same 20/50 matured-veto gates as the Results 'Red Team veto
+  efficacy' card; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+  footnote + drawer header comment. Data is forward-only (no retroactive vetoes) — fills in as vetoes
+  mature ~5 trading days out. Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+  file; clean hunk-level merge). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+  `docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
 - **Connected-accounts UI: "Currently Loaded / Other Accounts" restructure + kill Test-Account
   mock-label spam (MONET, worktree `~/apps/trading-monet-acct-ui`, branch
   `monet/account-mgmt-ui`) — IN PROGRESS 2026-07-09.** Display-copy + JSX only; no execution/data
@@ -1231,6 +1257,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
+  — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
+  makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
+  auto-merge cant self-heal + land.sh never returns. Fix: `docs/EFFORT-LOG.md merge=union` +
+  `scripts/merge-shepherd.sh` (re-syncs stuck armed PRs, re-runs flaky verify, merges green, digest
+  to a tracking issue) driven by a launchd job (Mac PAT). Only acts on auto-merge-armed PRs.
+  Rollout: `docs/rollouts/2026-07-09-merge-shepherd.md`.
 - **Intro size-jump + loading-text fix (MONET, intro-anim session, branch
   `monet/intro-size-jump-3676f7`) — IN PROGRESS 2026-07-09.** Owner (prod, both viewports):
   wordmark still has a sudden SIZE change ~1s after the candles assemble; also remove the
@@ -1290,6 +1323,16 @@ As of 2026-07-08 (assignment-rule update).
   twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
   threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
   docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+- **npm `allowScripts` approval in package.json (MONET, branch `monet/allow-scripts-approval`)
+  — IN PROGRESS 2026-07-08, landing.** In-repo approval of the 7 install-script packages
+  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so install
+  approvals live in-repo (no host `~/.npmrc` tweaks) and stay valid when npm's future default flips to
+  blocking unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still runs install
+  scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash came from host `~/.npmrc`
+  skipping scripts, not npm 11's default. `package.json`-only; no dep/lockfile change.
+  Deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs in Congress.Trade)
+  and a drifted lockfile regen. Verified: `npm ci` clean + `better_sqlite3.node` builds.
+  Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
   2026-07-08, PR #1116 open, auto-merge armed (gate green: tsc/lint/2996 tests/build).** Once-per-UTC-day Fable-class review of learned_context / pending learning
   decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence
