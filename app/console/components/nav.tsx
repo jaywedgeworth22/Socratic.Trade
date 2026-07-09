@@ -78,7 +78,7 @@ interface Destination {
 
 export const DESTINATIONS: Destination[] = [
   { href: "/console", label: "Thesis", icon: LayoutDashboard, desc: "Live thesis, actions, evidence, dissent, and framework learning." },
-  { href: "/console/approvals", label: "Decisions", icon: Inbox, desc: "Pending trade proposals and learned-context changes awaiting a decision." },
+  { href: "/console/approvals", label: "Proposals", icon: Inbox, desc: "Trade proposals awaiting your judgment." },
   { href: "/console/activity", label: "Journal", icon: ActivityIcon, desc: "Decision journal: everything the agent did, newest first." },
   { href: "/console/scan", label: "Evidence", icon: Radar, desc: "The market scan: screened and scored symbols from the latest run." },
   { href: "/console/watchlist", label: "Watchlist", icon: Eye, desc: "Symbols the agent monitors, with price alerts that notify you when a level is crossed." },
@@ -128,8 +128,37 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
   );
 }
 
-const MOBILE_PRIMARY = DESTINATIONS.slice(0, 3);
-const MOBILE_MORE = DESTINATIONS.slice(3);
+/** Mobile primary-3: the tabs that earn a permanent thumb-reach on a phone —
+ *  deliberately Thesis (home) / Proposals (action queue) / Journal (history),
+ *  not "whichever three happen to sit first in DESTINATIONS". Everything else
+ *  lives one tap away behind More. */
+const MOBILE_PRIMARY_HREFS: readonly string[] = ["/console", "/console/approvals", "/console/activity"];
+const MOBILE_PRIMARY = DESTINATIONS.filter((d) => MOBILE_PRIMARY_HREFS.includes(d.href));
+const MOBILE_MORE = DESTINATIONS.filter((d) => !MOBILE_PRIMARY_HREFS.includes(d.href));
+
+/** More-sheet clusters: group the secondary destinations by verb so scanning
+ *  the sheet answers "what kind of screen is this" before "which one".
+ *  Anything not explicitly placed here falls into the last cluster so every
+ *  destination stays reachable even if the destination list changes. */
+const MOBILE_MORE_CLUSTERS: { label: string; hrefs: string[] }[] = [
+  { label: "Monitor", hrefs: ["/console/watchlist", "/console/macro", "/console/orders"] },
+  { label: "Configure", hrefs: ["/console/strategy", "/console/guardrails", "/console/settings"] },
+  { label: "Review", hrefs: ["/console/assistant", "/console/results", "/console/usage"] }
+];
+
+function clusteredMore(destinations: Destination[]): { label: string; items: Destination[] }[] {
+  const placed = new Set<string>();
+  const groups = MOBILE_MORE_CLUSTERS.map((cluster) => {
+    const items = cluster.hrefs
+      .map((href) => destinations.find((d) => d.href === href))
+      .filter((d): d is Destination => d !== undefined);
+    items.forEach((d) => placed.add(d.href));
+    return { label: cluster.label, items };
+  });
+  const unmapped = destinations.filter((d) => !placed.has(d.href));
+  if (unmapped.length > 0) groups[groups.length - 1].items.push(...unmapped);
+  return groups;
+}
 
 export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname() ?? "";
@@ -184,25 +213,32 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
       </nav>
 
       <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More">
-        <div className="flex flex-col gap-1">
-          {MOBILE_MORE.map((d) => {
-            const Icon = d.icon;
-            return (
-              <Link
-                key={d.href}
-                href={d.href}
-                className="con-nav-item"
-                data-active={isActive(pathname, d.href)}
-                title={d.desc}
-                onClick={(e) => {
-                  if (guardNav(e)) setMoreOpen(false);
-                }}
-              >
-                <Icon size={16} />
-                {d.label}
-              </Link>
-            );
-          })}
+        <div className="flex flex-col gap-3">
+          {clusteredMore(MOBILE_MORE).map((cluster) => (
+            <div key={cluster.label} className="flex flex-col gap-1">
+              <div className="px-3 pb-0.5 text-[length:var(--con-fs-xs)] font-semibold uppercase tracking-[0.07em] text-[color:var(--con-faint)]">
+                {cluster.label}
+              </div>
+              {cluster.items.map((d) => {
+                const Icon = d.icon;
+                return (
+                  <Link
+                    key={d.href}
+                    href={d.href}
+                    className="con-nav-item"
+                    data-active={isActive(pathname, d.href)}
+                    title={d.desc}
+                    onClick={(e) => {
+                      if (guardNav(e)) setMoreOpen(false);
+                    }}
+                  >
+                    <Icon size={16} />
+                    {d.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </Sheet>
     </>

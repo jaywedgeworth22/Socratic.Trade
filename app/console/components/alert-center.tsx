@@ -6,6 +6,7 @@ import { formatNotificationDisplay } from "@/lib/dashboard-ui";
 import type { ConnectedAccount, NotificationEvent } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { cx } from "../lib/format";
+import { notificationStatusLabel, notificationTypeLabel } from "../lib/labels";
 import { Ago, Card, Chip, Empty, TextInput } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
 
@@ -202,11 +203,11 @@ export function AlertCenter({
             {visibleRows.map((row) => (
               <article key={row.event.id} className="rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-3">
                 <div className="flex flex-wrap items-start gap-2">
-                  <Chip tone={row.tone}>{row.event.type}</Chip>
+                  <Chip tone={row.tone}>{notificationTypeLabel(row.event.type)}</Chip>
                   <Chip
                     tone={row.event.status === "failed" ? "neg" : row.event.status === "sent" ? "pos" : "muted"}
                   >
-                    {row.event.status}
+                    {notificationStatusLabel(row.event.status)}
                   </Chip>
                   {row.symbol && <SymbolButton symbol={row.symbol} showLogo={false} className="text-[length:var(--con-fs-xs)]" />}
                   <div className="ml-auto text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">

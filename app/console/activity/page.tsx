@@ -11,6 +11,7 @@ import { OPS_AUDIT_KINDS, type UnifiedActivitySubEvent } from "@/lib/dashboard-f
 import type { UnifiedActivityGroup } from "../../dashboard-types";
 import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { feedStatusLabel } from "../lib/labels";
 import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
 import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
@@ -208,7 +209,7 @@ function FeedGroupCard({ g, multiAccount }: { g: UnifiedActivityGroup; multiAcco
             {g.detail}
           </span>
         </span>
-        {g.status && <Chip tone={statusTone(g.status)}>{g.status}</Chip>}
+        {g.status && <Chip tone={statusTone(g.status)}>{feedStatusLabel(g.status)}</Chip>}
         <span className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
           <Ago iso={g.updatedAt} />
         </span>
@@ -322,7 +323,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                   {run.proposedCount} proposed · {run.placedCount} placed · {run.paperCount} simulated · {run.blockedCount} blocked
                 </span>
               </span>
-              <Chip tone={run.status === "failed" ? "neg" : run.status === "running" ? "accent" : "pos"}>{run.status}</Chip>
+              <Chip tone={run.status === "failed" ? "neg" : run.status === "running" ? "accent" : "pos"}>{feedStatusLabel(run.status)}</Chip>
             </summary>
             <div className="border-t border-[color:var(--con-line)] py-2">
               {run.summary && <p className="mb-2 text-[length:var(--con-fs-sm)] leading-relaxed text-[color:var(--con-muted)]">{run.summary}</p>}
@@ -350,7 +351,7 @@ function RunsList({ runs, recentProposals }: { runs: StrategyRunRow[]; recentPro
                                   ? `${fmtQty(p.proposal.quantity)} sh`
                                   : EM_DASH}
                           </span>
-                          <Chip tone={statusTone(p.status)}>{p.status}</Chip>
+                          <Chip tone={statusTone(p.status)}>{feedStatusLabel(p.status)}</Chip>
                           <Chip tone={r.tone}>{r.word}</Chip>
                           {typeof p.performanceSinceProposalPct === "number" && (
                             <Tooltip content="Raw side-adjusted move since the proposal's reference price, not benchmark-relative. For a rejected idea this is the counterfactual; SPY comparison lives in Results.">
@@ -415,7 +416,7 @@ function FillsList({ fills }: { fills: FillEvent[] }) {
             </Chip>
             {f.status !== "filled" && (
               <Chip tone={statusTone(f.status)} title="Recorded intent awaiting broker-truth reconciliation — it cannot double-place.">
-                {f.status}
+                {feedStatusLabel(f.status)}
               </Chip>
             )}
             <span className="ml-auto text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">

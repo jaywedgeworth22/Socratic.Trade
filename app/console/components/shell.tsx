@@ -18,7 +18,16 @@ import { useConsoleTheme, type ConsoleTheme } from "../lib/useConsoleTheme";
 import { DirtyGuardProvider } from "../lib/useDirtyGuard";
 import { SymbolDrawerProvider } from "../ui/symbol-drawer";
 import { ToastProvider } from "../ui/toast";
-import { FreshnessStrip, RealityBanner, RunOnceButton, RunStateButton, ScopeSelector, StateChip, UserMenu } from "./chrome";
+import {
+  FreshnessStrip,
+  MobileFreshnessBar,
+  RealityBanner,
+  RunOnceButton,
+  RunStateButton,
+  ScopeSelector,
+  StateChip,
+  UserMenu
+} from "./chrome";
 import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
 import { ConsoleIntro } from "./intro-canvas";
@@ -119,10 +128,13 @@ function ShellFrame({ children }: { children: ReactNode }) {
           flex column layout is unchanged; the toasts div is position:fixed. */}
       <SymbolDrawerProvider>
         <ToastProvider>
-          {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile. */}
+          {/* Sticky chrome: reality + STOP stay reachable on every screen, especially mobile.
+              MobileFreshnessBar lives here (not bottom-anchored) because the fixed bottom tab
+              bar (nav.tsx) overlays anything at document end on phones. */}
           <div className="sticky top-0 z-50 bg-[color:var(--con-bg)]">
             <RealityBanner snapshot={snapshot} />
             <ChromeBar snapshot={snapshot} theme={theme} cycleTheme={cycle} />
+            <MobileFreshnessBar snapshot={snapshot} fetchedAt={fetchedAt} error={error} stream={stream} />
           </div>
           <div className="mx-auto flex w-full max-w-[1400px] flex-1">
             <DesktopRail pendingCount={snapshot.pendingProposals.length} />

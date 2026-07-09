@@ -1881,50 +1881,50 @@ brackets; effort S/M/L.
 
 ### Action - clear recommendation (Planned)
 - [P1][A11y][S] AlertCenter filter buttons color-only -> add aria-pressed to the 4 filter buttons. _→ DONE 2026-07-08 (MONET): folded into the owner-requested Alert Center pill redesign (clipped tile headings) — aria-pressed + bold-weight non-color cue + hover hints; see `docs/rollouts/2026-07-08-alert-center-filter-pills.md`._
-- [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers.
-- [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header.
-- [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons.
-- [P1][UX][S] Decision-trace back always returns to /console -> router.back() guarded, fallback to Journal.
-- [P1][UX][S] Scan has no add-to-watchlist -> per-row Watch button -> POST /api/watchlist (or ?add=SYMBOL prefill).
-- [P1][Visual][S] Capability badges 9-hue rainbow -> collapse to --info chips (+icons), --warn only for OAuth-needed.
+- [P1][A11y][S] Console has no 44px touch-target floor -> min-h/min-w 44px on @media(pointer:coarse) for .con-btn + compact chrome triggers. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P1][Mobile][S] PWA traps users on /mobile -> add "Open full console" link in the /mobile header. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P1][Mobile][S] Table row actions ~26px -> mobile-only ~40px min-height on Cancel/Replace row buttons. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P1][UX][S] Decision-trace back always returns to /console -> router.back() guarded, fallback to Journal. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P1][UX][S] Scan has no add-to-watchlist -> per-row Watch button -> POST /api/watchlist (or ?add=SYMBOL prefill). _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P1][Visual][S] Capability badges 9-hue rainbow -> collapse to --info chips (+icons), --warn only for OAuth-needed. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
 - [P2][DS][S] pos/neg vs up/down tone vocab -> standardize on pos/neg across both systems (keystone unification). _→ DONE 2026-07-08 (MONET, owner-endorsed rename): ui system renamed to pos/neg (tokens, Tone union, all call sites); console already conformed; colors byte-identical both themes; see `docs/rollouts/2026-07-08-tone-rename-pos-neg.md`._
-- [P2][DS][S] Console lacks Segmented primitive -> port a console Segmented; refactor policy-form to use it.
-- [P2][DS][S] Radius scales unmapped -> agree one card-corner + one control-corner value both systems reference.
-- [P2][DS][M] Primitive parity gaps -> build a parity matrix; port IconButton + RawNumInput both ways.
-- [P2][A11y][S] Console Sheet has no accessible name -> useId heading id + aria-labelledby.
-- [P2][Mobile][M] Wide tables no mobile layout -> lg:hidden card-list per row for Scan/Orders/Positions.
-- [P2][Mobile][S] apple-touch-icon SVG-only -> add 180x180 + 192/512 PNG icons.
-- [P2][Mobile][S] FreshnessStrip behind tab bar -> surface daily-spend + data-as-of in sticky top chrome on mobile.
-- [P2][Mobile][S] Mobile "More" flat list -> group into Monitor/Configure/Review clusters.
-- [P2][Data][S] Equity chart exaggerates flat moves -> minimum +/-0.5% Y-span.
-- [P2][Data][M] Guardrails caps show no utilization -> inline deriveRiskUtilization meter/sub-label per row.
-- [P2][Data][S] Meter caps at 100%, hides breach -> hatched breach fill + "+$X over" when value>max.
-- [P2][Data][S] Orders last-price staleness only on hover -> persistent "scan Nm ago" age suffix.
-- [P2][UX][S] Bulk-reject no confirm -> one-click inline confirm (NO typed phrase; philosophy-aligned).
-- [P2][UX][S] Nav noun collision Decisions vs /decisions/[id] -> rename to resolve the clash, keep branded names.
+- [P2][DS][S] Console lacks Segmented primitive -> port a console Segmented; refactor policy-form to use it. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][DS][S] Radius scales unmapped -> agree one card-corner + one control-corner value both systems reference. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][DS][M] Primitive parity gaps -> build a parity matrix; port IconButton + RawNumInput both ways. _→ MOSTLY DONE 2026-07-09 (ports landed both ways + Switch.disabled; the formal parity MATRIX doc was not built — residual S item) (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][A11y][S] Console Sheet has no accessible name -> useId heading id + aria-labelledby. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Mobile][M] Wide tables no mobile layout -> lg:hidden card-list per row for Scan/Orders/Positions. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Mobile][S] apple-touch-icon SVG-only -> add 180x180 + 192/512 PNG icons. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Mobile][S] FreshnessStrip behind tab bar -> surface daily-spend + data-as-of in sticky top chrome on mobile. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Mobile][S] Mobile "More" flat list -> group into Monitor/Configure/Review clusters. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Data][S] Equity chart exaggerates flat moves -> minimum +/-0.5% Y-span. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Data][M] Guardrails caps show no utilization -> inline deriveRiskUtilization meter/sub-label per row. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Data][S] Meter caps at 100%, hides breach -> hatched breach fill + "+$X over" when value>max. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][Data][S] Orders last-price staleness only on hover -> persistent "scan Nm ago" age suffix. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][UX][S] Bulk-reject no confirm -> one-click inline confirm (NO typed phrase; philosophy-aligned). _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P2][UX][S] Nav noun collision Decisions vs /decisions/[id] -> rename to resolve the clash, keep branded names. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
 - [P2][FE][M] page.tsx/strategy monoliths -> extract pure derive* into lib/derive.ts + presentational sub-components.
-- [P2][FE][S] Repeated !snapshot guards -> narrowed useConsoleSnapshot() hook for top-level pages.
-- [P2][Visual][M] Marketing pages text-only -> add a console decision-trace mock (welcome) + loop diagram (how-it-works).
-- [P3][DS][S] ui Switch lacks disabled -> add disabled to Switch.
-- [P3][FE][S] Console 3 tone->token maps -> one exported TONE_VAR map.
-- [P3][UX][S] Approvals header vs nav badge disagree -> show learned-context count in the header + jump anchor.
-- [P3][UX][M] Guardrails framing inconsistent -> give equally-consequential settings the same one-sentence note.
-- [P3][Mobile][S] Mobile no offline handling -> navigator.onLine offline banner.
-- [P3][Data][S] No short-P&L sign test -> add the unit test.
-- [P3][Data][S] Allocation no concentration cue -> warn/neg tint on segments over maxSymbolExposurePct.
-- [P3][UX][S] Scan tab switcher no ARIA -> role=tablist/tab/tabpanel + aria-selected.
-- [P3][Visual][S] Login border-border undefined class -> border-line; Apple button -> bg-fg text-bg tokens.
-- [P3][Visual][S] Thesis-hero gradient wash -> drop it / reduce to a 3px accent left-rule (flat surface for reasoning text).
+- [P2][FE][S] Repeated !snapshot guards -> narrowed useConsoleSnapshot() hook for top-level pages. _→ DEFERRED 2026-07-09 (MONET ui-audit-sweep: pure refactor colliding with concurrent page edits)._
+- [P2][Visual][M] Marketing pages text-only -> add a console decision-trace mock (welcome) + loop diagram (how-it-works). _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][DS][S] ui Switch lacks disabled -> add disabled to Switch. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][FE][S] Console 3 tone->token maps -> one exported TONE_VAR map. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][UX][S] Approvals header vs nav badge disagree -> show learned-context count in the header + jump anchor. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][UX][M] Guardrails framing inconsistent -> give equally-consequential settings the same one-sentence note. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][Mobile][S] Mobile no offline handling -> navigator.onLine offline banner. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][Data][S] No short-P&L sign test -> add the unit test. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][Data][S] Allocation no concentration cue -> warn/neg tint on segments over maxSymbolExposurePct. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][UX][S] Scan tab switcher no ARIA -> role=tablist/tab/tabpanel + aria-selected. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][Visual][S] Login border-border undefined class -> border-line; Apple button -> bg-fg text-bg tokens. _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
+- [P3][Visual][S] Thesis-hero gradient wash -> drop it / reduce to a 3px accent left-rule (flat surface for reasoning text). _→ DONE 2026-07-09 (MONET ui-audit-sweep, two-wave subagent team; see `docs/rollouts/2026-07-09-ui-audit-sweep.md`)._
 
 ### TBD - no strong CLAUDE opinion; owner/design decision
-- [P1][DS][S] Brand accent green vs teal: the MECHANISM is clear (both derive from one --brand-accent), but the HUE is an owner brand call. TBD (lean: green, the documented brand color).
-- [P1][Visual][M] Fourth palette at /design/socratic-trade: delete vs rebuild-on-tokens. TBD (is that showcase route wanted? lean: delete).
+- [P1][DS][S] Brand accent green vs teal: the MECHANISM is clear (both derive from one --brand-accent), but the HUE is an owner brand call. TBD (lean: green, the documented brand color). _→ DECIDED+DONE 2026-07-09 (MONET, owner-delegated): TEAL — --brand-accent #12616f/#58c7d3 shared token, ui derives; accent stays distinct from pos-green gain semantics. See `docs/rollouts/2026-07-09-ui-audit-sweep.md`._
+- [P1][Visual][M] Fourth palette at /design/socratic-trade: delete vs rebuild-on-tokens. TBD (is that showcase route wanted? lean: delete). _→ DECIDED+DONE 2026-07-09 (MONET): deleted the showcase route._
 - [P2][DS][M] Dark-mode dual mechanism (.dark vs data-theme) can desync: consistency nicety, unclear ROI (each renders fine alone). TBD.
 - [P2][DS][L] console.css -> @theme migration (full token/utility unification): large epic; design direction recommends DEFER. TBD (scope as its own project or drop).
 - [P2][FE][L] app/ui vs console/ui full primitive merge: out of scope per console's own charter. TBD (share a headless pos/neg Tone vocab; defer the merge).
-- [P2][Mobile][S] Mobile primary-3 tabs chosen by array index: which 3 to prioritize is a usage/product judgment. TBD (owner: which 3?).
+- [P2][Mobile][S] Mobile primary-3 tabs chosen by array index: which 3 to prioritize is a usage/product judgment. TBD (owner: which 3?). _→ DECIDED+DONE 2026-07-09 (MONET): ratified Thesis/Proposals/Journal deliberately (named constant + rationale comment)._
 - [P2][Data][M] Scan "Vol" column blended semantics: fix depends on whether the enrichment layer carries a per-row semantic flag (unverified). TBD (needs data-layer check first).
-- [P2][UX][S] No manual/discretionary order-entry path: is manual trading in scope? TBD (owner). If not, add a note that orders originate from approved proposals only.
+- [P2][UX][S] No manual/discretionary order-entry path: is manual trading in scope? TBD (owner). If not, add a note that orders originate from approved proposals only. _→ DECIDED+DONE 2026-07-09 (MONET): honest note on Orders page (orders originate from approved proposals); the feature itself stays an owner call._
 - [P3][FE][M] Zero React.memo/useMemo perf: "low priority given small data volumes" per the finding. TBD (defer unless refresh-flicker appears).
 - [P3][FE][S] useConsoleData unconditional abort of in-flight refresh: TBD (defer unless refresh-storm symptoms appear).
 - [P3][Data][S] Partial/stale/status spread across 3 order columns: optional; row already highlights when stale. TBD (low value).
