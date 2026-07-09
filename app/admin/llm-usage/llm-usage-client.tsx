@@ -339,7 +339,7 @@ export function LlmUsageClient({
       </div>
 
       {error && (
-        <div className="text-sm text-down bg-down/10 border border-down/20 rounded-lg p-3 mb-4">
+        <div className="text-sm text-neg bg-neg/10 border border-neg/20 rounded-lg p-3 mb-4">
           {error}
         </div>
       )}

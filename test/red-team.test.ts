@@ -177,6 +177,39 @@ describe("debateProposal — shape-violation fail-closed (Deliverable A + B)", (
     expect(result.rejected).toBe(true);
     expect(result.failureKind).toBeUndefined();
   });
+
+  // DeepSeek v4 Flash and other json_object-mode providers can return a bare array
+  // ([{rejected, reason}]) instead of the bare object {rejected, reason}. The
+  // parser recovers the first element so a structurally-valid verdict inside an
+  // array wrapper is not lost to a malformed_response fail-closed.
+  it("recovers a valid verdict wrapped in a bare array (json_object-mode recovery)", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY");
+    stubOpenAiJsonBody([{ rejected: true, reason: "Array-wrapped verdict." }]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(true);
+    expect(result.rejected).toBe(true);
+    expect(result.reason).toBe("Array-wrapped verdict.");
+  });
+
+  it("fails closed when the bare array element is not a valid verdict object", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY_BAD");
+    stubOpenAiJsonBody([123, "not an object"]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(false);
+    expect(result.failureKind).toBe("malformed_response");
+  });
+
+  it("recovers a verdict from a bare array even when the array has extra elements", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY_MANY");
+    stubOpenAiJsonBody([{ rejected: false, reason: "Approved." }, { extra: "ignored" }]);
+    const result = await debateProposal(buyProposal(), undefined, true);
+    expect(result.available).toBe(true);
+    expect(result.rejected).toBe(false);
+    expect(result.reason).toBe("Approved.");
+  });
 });
 
 describe("debateProposal LLM request bounds", () => {
@@ -297,5 +330,82 @@ describe("debateProposal — Claude Red Team (first-class anthropic routing)", (
     expect(calls[0].body.system[0].cache_control).toEqual({ type: "ephemeral" });
     expect(calls[0].body.tool_choice).toEqual({ type: "tool", name: "red_team_verdict" });
     expect(calls[0].body.max_tokens).toBeGreaterThan(0);
+  });
+});
+
+describe("debateProposal — connectedAccountId threaded into recordLlmUsage (completes PR #1030)", () => {
+  const buyProposal = (): any => ({
+    symbol: "AAPL",
+    side: "buy",
+    type: "market",
+    timeInForce: "gfd",
+    marketHours: "regular_hours",
+    rationale: "momentum",
+    confidenceScore: 90,
+    tradeThesisTag: "t",
+    entryMarketRegime: "t"
+  });
+
+  it("attributes the OpenAI-compatible red-team debate to the run's connected account", async () => {
+    const { setStrategyPrompt } = await import("../src/lib/db");
+    const { getLlmUsageSummary } = await import("../src/lib/llm-usage");
+    const { debateProposal } = await import("../src/lib/red-team");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+    setStrategyPrompt("BASE STRATEGY");
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify({ rejected: false, reason: "No fatal flaw found." }) } }] }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    await debateProposal(buyProposal(), undefined, true, "local", {
+      ...DEFAULT_POLICY,
+      accountNumber: "RT_ACCT_ATTR_OPENAI",
+      connectedAccountId: "acct-red-team-openai"
+    });
+
+    const rows = getLlmUsageSummary({ connectedAccountId: "acct-red-team-openai" });
+    const row = rows.find((r) => r.context === "red-team");
+    expect(row).toBeDefined();
+    expect(row?.connectedAccountId).toBe("acct-red-team-openai");
+  });
+
+  it("attributes the cross-provider Anthropic red-team debate (debateViaAnthropic) to the run's connected account", async () => {
+    const { setStrategyPrompt } = await import("../src/lib/db");
+    const { getLlmUsageSummary } = await import("../src/lib/llm-usage");
+    const { debateProposal } = await import("../src/lib/red-team");
+
+    const originalProvider = process.env.RED_TEAM_LLM_PROVIDER;
+    process.env.RED_TEAM_LLM_PROVIDER = "anthropic";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    setStrategyPrompt("BASE STRATEGY");
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify({ rejected: false, reason: "No fatal flaw found." }) }],
+          usage: { input_tokens: 10, output_tokens: 5 }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    try {
+      await debateProposal(buyProposal(), undefined, true, "local", {
+        ...DEFAULT_POLICY,
+        accountNumber: "RT_ACCT_ATTR_ANTHROPIC",
+        connectedAccountId: "acct-red-team-anthropic"
+      });
+    } finally {
+      if (originalProvider === undefined) delete process.env.RED_TEAM_LLM_PROVIDER;
+      else process.env.RED_TEAM_LLM_PROVIDER = originalProvider;
+    }
+
+    const rows = getLlmUsageSummary({ connectedAccountId: "acct-red-team-anthropic" });
+    const row = rows.find((r) => r.context === "red-team");
+    expect(row).toBeDefined();
+    expect(row?.connectedAccountId).toBe("acct-red-team-anthropic");
   });
 });

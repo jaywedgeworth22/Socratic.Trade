@@ -13,6 +13,7 @@ import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models"
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Field, Select } from "../ui/primitives";
 import { fetchChatProviders } from "./lib";
@@ -33,13 +34,28 @@ interface ModelGroup {
   options: ModelOption[];
 }
 
+// Label + recommendation conventions (owner rulings 2026-07-08):
+// - Descriptors are ROLE-NEUTRAL noun phrases — this one catalog feeds BOTH the Green (proposer)
+//   and Red (reviewer) pickers, so no label may bake in a role (no "critique"/"review").
+// - Recommendations are EMPIRICAL, not per-provider quotas and not read off model naming/marketing:
+//   a model carries recommendedGreen/recommendedRed only when THIS ACCOUNT's call history (llm_step
+//   outcomes in the audit trail + llm_usage) shows a solid record in that role. Snapshot as of
+//   2026-07-08 (excluding two fixed incident classes — the Gemini bear format incident, fixed
+//   2026-07-02, and the pre-#1036 60s reasoning-timeout aborts): gemini-3.5-flash bear 46/46 clean
+//   post-fix + bull 27/0; gpt-5.4-mini bull 22/2 + bear 18/1; deepseek-v4-pro bear 17/3 (all 3 were
+//   the fixed timeout class) but NO successful Green history. Models with ZERO calls in a role carry
+//   no rec for it regardless of pedigree (claude-sonnet-5, gemini-3.1-pro-preview) — until they earn
+//   one. Key-level quota/rate limits (e.g. the 2026-07 Anthropic usage cap, the OpenAI rate-limit
+//   failures in gpt-5.5's bull record) are OWNER-ADJUSTABLE account settings, NOT model qualities —
+//   never hold them against a model here; they only mean the history is thin/noisy until the owner
+//   raises the limit and real calls accrue. Re-derive these flags from the history as it accrues.
 const MODEL_GROUPS: ModelGroup[] = [
   {
     provider: "openai",
     label: "OpenAI",
     options: [
       { value: "gpt-5.4-nano", label: "gpt-5.4-nano — lowest cost OpenAI · $" },
-      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true },
+      { value: "gpt-5.4-mini", label: "gpt-5.4-mini — balanced default · $$", recommendedGreen: true, recommendedRed: true },
       { value: "gpt-5.4", label: "gpt-5.4 — stronger analysis · $$$" },
       { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" }
     ]
@@ -48,9 +64,9 @@ const MODEL_GROUPS: ModelGroup[] = [
     provider: "anthropic",
     label: "Anthropic (Claude)",
     options: [
-      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast Claude review · $" },
-      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$", recommendedRed: true },
-      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude critique · $$$" },
+      { value: "claude-haiku-4-5", label: "claude-haiku-4-5 — fast low-cost Claude · $" },
+      { value: "claude-sonnet-5", label: "claude-sonnet-5 — balanced Claude analysis · $$" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
       { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" }
     ]
   },
@@ -67,8 +83,8 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "Google (Gemini)",
     options: [
       { value: "gemini-3.1-flash-lite", label: "gemini-3.1-flash-lite — low-cost Gemini · $" },
-      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true },
-      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — preview Pro reasoning · $$$", recommendedRed: true }
+      { value: "gemini-3.5-flash", label: "gemini-3.5-flash — stable flagship Flash · $$", recommendedGreen: true, recommendedRed: true },
+      { value: "gemini-3.1-pro-preview", label: "gemini-3.1-pro-preview — deepest Gemini reasoning · $$$" }
     ]
   },
   {
@@ -84,7 +100,7 @@ const MODEL_GROUPS: ModelGroup[] = [
     label: "DeepSeek",
     options: [
       { value: "deepseek-v4-flash", label: "deepseek-v4-flash — fast DeepSeek V4 · $" },
-      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedGreen: true, recommendedRed: true }
+      { value: "deepseek-v4-pro", label: "deepseek-v4-pro — stronger DeepSeek V4 · $$", recommendedRed: true }
     ]
   }
 ];
@@ -251,42 +267,53 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The strategist (green team) proposes trades; the reviewer / strategy-review
-        model (red team) tries to kill high-conviction ideas before they reach you. Coach is browser-local and also
-        adjustable on the Coach page. Providers without a resolvable key are marked — add one under API keys below.
+        Which models argue about your money. The Proposer Model (aka Green Team or Bull) writes the trade proposals;
+        the Reviewer Model (aka Red Team or Bear) reviews every proposal each run and runs a deeper adversarial debate
+        on high-conviction or dissent-flagged ideas. Coach is browser-local and also adjustable on the Coach page.
+        Providers without a resolvable key are marked — add one under API keys below.
       </p>
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Strategist (green team)"
-          hint="Writes the trade proposals each run."
+          label="Proposer Model"
+          hint="aka Green Team or Bull — writes the trade proposals each run."
           htmlFor="models-green"
         >
-          <ModelSelect
-            id="models-green"
-            value={green}
-            emptyLabel="app default (gpt-5.4-mini)"
-            emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
-            providers={providers}
-            title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
-            role="proposer"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-green"
+                value={green}
+                emptyLabel="app default (gpt-5.4-mini)"
+                emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
+                providers={providers}
+                title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
+                role="proposer"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="proposer" />
+          </div>
         </Field>
         <Field
-          label="Reviewer / Strategy Review (red team)"
-          hint="Argues against high-conviction ideas. Blank = same model as the strategist."
+          label="Reviewer Model"
+          hint="aka Red Team or Bear — reviews every proposal each run + deeper debate on high-conviction ideas. Blank = same as proposer."
           htmlFor="models-red"
         >
-          <ModelSelect
-            id="models-red"
-            value={red}
-            emptyLabel="same as strategist"
-            emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
-            providers={providers}
-            title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
-            role="red-team"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-red"
+                value={red}
+                emptyLabel="same as strategist"
+                emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
+                providers={providers}
+                title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
+                role="red-team"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="red-team" />
+          </div>
         </Field>
         <Field
           label="Coach"

@@ -4227,7 +4227,7 @@ async function proposeTrades(input: {
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
             }
             const payload = await response.json();
-            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, ...extractLlmUsage(payload) });
+            recordLlmUsage({ userId: input.userId, provider: attempt.provider, model: attempt.model, context: "strategy", keySource: attempt.keySource, keyRef: attempt.keyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(payload) });
             if (i > 0) {
               bullServedProvider = attempt.provider;
               bullServedModel = attempt.model;
@@ -4596,22 +4596,21 @@ async function proposeTrades(input: {
         }
 
         const bearPayload = await bearResponse.json();
-        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, ...extractLlmUsage(bearPayload) });
+        recordLlmUsage({ userId: input.userId, provider: bearProvider, model: bearModel, context: "strategy-bear", keySource: bearKeySource, keyRef: bearKeyRef, connectedAccountId: input.policy.connectedAccountId, ...extractLlmUsage(bearPayload) });
         const bearText = extractLlmText(bearPayload);
 
         if (!bearText) {
           return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
         }
 
-        try {
-          const parsedBear = JSON.parse(bearText) as { proposals?: TradeProposal[] };
-          return { text: bearText, proposals: parsedBear.proposals ?? [], fallbackToBull: false };
-        } catch (error) {
+        const parsed = parseBearSurvivors(bearText);
+        if (parsed.fallbackToBull) {
           // Don't discard already-valid Bull proposals because the Bear critique came
-          // back as malformed JSON — reuse the existing fall-back-to-Bull path.
-          console.warn("Bear Agent returned unparseable JSON; falling back to Bull proposals", error);
+          // back malformed — reuse the existing fall-back-to-Bull path.
+          console.warn("Bear Agent returned unparseable/malformed JSON; falling back to Bull proposals");
           return { text: undefined, proposals: [] as TradeProposal[], fallbackToBull: true };
         }
+        return { text: bearText, proposals: parsed.proposals, fallbackToBull: false };
       }
     );
   } catch (error) {
@@ -4836,6 +4835,41 @@ function recordLlmOutcome(
       audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
     }
   })();
+}
+
+/**
+ * Parse the inline Bear (Red Team) reply into surviving proposals — tolerant of the bare-array
+ * wrapper some json_object-mode models emit (DeepSeek v4; same drift PR #1091 fixed for the
+ * debateProposal verdict), while never letting a malformed reply read as a deliberate full veto.
+ *
+ * Contract: `{proposals: [...]}` is the schema shape ({proposals: []} = a REAL veto-everything).
+ * Recovery + fail-safe semantics:
+ *  - bare ARRAY containing at least one proposal-shaped object → treated as the proposals array
+ *    (the DeepSeek drift; garbage elements are filtered by sanitizeProposals downstream);
+ *  - bare EMPTY array, array of garbage, object MISSING a proposals array, non-object JSON, or
+ *    unparseable text → fallbackToBull (malformed) — previously an object without `proposals`
+ *    silently became `[]`, i.e. a SILENT full veto with no error anywhere.
+ */
+export function parseBearSurvivors(text: string): { proposals: TradeProposal[]; fallbackToBull: boolean } {
+  const malformed = { proposals: [] as TradeProposal[], fallbackToBull: true };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return malformed;
+  }
+  const looksLikeProposal = (v: unknown): boolean =>
+    !!v && typeof v === "object" && typeof (v as { symbol?: unknown }).symbol === "string" && typeof (v as { side?: unknown }).side === "string";
+  if (Array.isArray(parsed)) {
+    // Bare-array recovery (PR #1091 pattern): accept only when something in it is proposal-shaped.
+    return parsed.some(looksLikeProposal) ? { proposals: parsed as TradeProposal[], fallbackToBull: false } : malformed;
+  }
+  if (parsed && typeof parsed === "object") {
+    const proposals = (parsed as { proposals?: unknown }).proposals;
+    if (Array.isArray(proposals)) return { proposals: proposals as TradeProposal[], fallbackToBull: false };
+    return malformed;
+  }
+  return malformed;
 }
 
 function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {

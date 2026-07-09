@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Activity,
   Bell,
   Check,
   CircleStop,
+  ExternalLink,
   Loader2,
   Plus,
   RefreshCw,
@@ -13,6 +15,7 @@ import {
   Smartphone,
   Trash2,
   Wifi,
+  WifiOff,
   X
 } from "lucide-react";
 import { modelDisplayName } from "../console/lib/models";
@@ -133,6 +136,37 @@ function liveApprovalText(symbol: string): string {
   return `APPROVE LIVE ${symbol.trim().toUpperCase()}`;
 }
 
+function systemStateLabel(value?: string | null): string {
+  if (!value) return "unknown";
+  const map: Record<string, string> = {
+    active: "Running",
+    halted: "Stopped",
+    close_only: "Close-only",
+    liquidating: "Winding down"
+  };
+  return map[value] ?? value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function orderTypeLabel(value?: string): string {
+  if (!value) return "unknown";
+  const map: Record<string, string> = {
+    market: "Market",
+    limit: "Limit",
+    stop_market: "Stop-market",
+    stop_limit: "Stop-limit"
+  };
+  return map[value] ?? value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function executionModeLabel(value?: string): string {
+  if (!value) return "mode unknown";
+  const map: Record<string, string> = {
+    "broker/live": "Live",
+    "broker/paper": "Paper"
+  };
+  return map[value] ?? "mode unknown";
+}
+
 export function MobilePwaClient() {
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -145,6 +179,9 @@ export function MobilePwaClient() {
   const [deleteIdentity, setDeleteIdentity] = useState("");
   const [deletePhrase, setDeletePhrase] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // Starts true so server-rendered/first-paint markup matches the client
+  // (navigator is unavailable during SSR); corrected immediately on mount.
+  const [isOnline, setIsOnline] = useState(true);
 
   const load = async () => {
     setError(null);
@@ -173,6 +210,18 @@ export function MobilePwaClient() {
     events.addEventListener("dashboard.market-data", refresh);
     events.addEventListener("dashboard.dirty", refresh);
     return () => events.close();
+  }, []);
+
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
 
   const submitCommand = async (commandType: string, payload: Record<string, unknown> = {}) => {
@@ -267,18 +316,34 @@ export function MobilePwaClient() {
             </div>
             <h1 className="truncate text-lg font-semibold">Socratic Trade</h1>
           </div>
-          <button
-            className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95"
-            onClick={() => void load()}
-            aria-label="Refresh mobile snapshot"
-            title="Refresh"
-          >
-            <RefreshCw className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/console"
+              className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95"
+              aria-label="Open full console"
+              title="Open the full desktop console"
+            >
+              <ExternalLink className="h-5 w-5" />
+            </Link>
+            <button
+              className="grid h-11 w-11 place-items-center rounded-md border border-line bg-surface text-muted active:scale-95"
+              onClick={() => void load()}
+              aria-label="Refresh mobile snapshot"
+              title="Refresh"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-xl space-y-4 px-4 py-4">
+        {!isOnline && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            Offline — data may be stale
+          </div>
+        )}
         {error && (
           <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100">
             {error}
@@ -289,7 +354,7 @@ export function MobilePwaClient() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-faint">Mode</p>
-              <p className="text-xl font-semibold capitalize">{snapshot?.readiness.systemState ?? "unknown"}</p>
+              <p className="text-xl font-semibold">{systemStateLabel(snapshot?.readiness.systemState)}</p>
             </div>
             <div className="rounded-md border border-line bg-surface px-3 py-2 text-right">
               <p className="text-xs text-faint">Authority</p>
@@ -372,7 +437,7 @@ export function MobilePwaClient() {
                     <div>
                       <p className="text-base font-semibold">{proposal.proposal.symbol}</p>
                       <p className="text-xs uppercase text-faint">
-                        {proposal.proposal.side} · {proposal.proposal.type} · {proposal.executionMode ?? "mode unknown"}
+                        {proposal.proposal.side} · {orderTypeLabel(proposal.proposal.type)} · {executionModeLabel(proposal.executionMode)}
                       </p>
                     </div>
                     <p className="text-sm font-medium">{money(proposal.estimatedNotional)}</p>
@@ -580,7 +645,7 @@ export function MobilePwaClient() {
                   <span className="capitalize">{commandLabel(command.commandType)}</span>
                   <span className="ml-auto">{shortTime(command.updatedAt)}</span>
                 </div>
-                {command.error && <p className="mt-1 text-xs">{command.error}</p>}
+                {command.error && <p className="mt-1 line-clamp-3 text-xs" title={command.error}>{command.error}</p>}
               </div>
             ))
           )}

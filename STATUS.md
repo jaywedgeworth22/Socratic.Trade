@@ -8,6 +8,156 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
+Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
+realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +
+`app/console/strategy/page.tsx`) opens a shared drawer (`app/console/components/model-stats-drawer.tsx`,
+Sheet + con-table) listing every catalog model: cost/call and p50 latency (live from `llm_usage` /
+`llm_call_latency` when >=3 samples, else the 2026-07-08 benchmark JSON — always labeled which), and a
+performance column gated by sample size (hidden behind "needs >=20 closed trades (n=X)" under 20,
+small-sample caveat 20-49, plain at 50+; Reviewer perf deliberately a dash — Red attribution is
+per-run, not per-trade). New GET `/api/llm-usage/model-stats` (auth mirrors sibling llm-usage route);
+pure rollup in `src/lib/model-stats.ts` (13 unit tests); `ClosedLot.entryModel` additively threaded
+through `calculatePnl` from the entry proposal's `proposedByModel`. Gate: tsc clean, lint 0 errors,
+2997 tests green, route + both pages runtime-smoked on a dev server.
+See `docs/rollouts/2026-07-08-model-cost-drawer.md`.
+
+## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
+All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
+requirement, implemented by 14 file-disjoint subagents across two workflow waves and
+integrated in-session. Highlights: brand accent unified on teal (--brand-accent, both
+themes), "Decisions"→"Proposals" nav rename, primitives parity (Segmented/IconButton/
+RawNumInput/Switch.disabled/Sheet aria/Meter breach/TONE_VAR), PWA icons + offline banner +
+"Open full console" escape, mobile card-lists for wide tables, scan Watch button + tab
+ARIA, orders staleness + manual-entry note, guardrails utilization meters, capability-badge
+de-rainbow, marketing decision-receipt illustration + loop diagram, and a full plain-English
+label system (no raw enums/JSON anywhere; shared maps in src/lib/dashboard-ui.ts +
+app/console/lib/labels.ts; short Order/Run references with full ids in tooltips). Gate:
+tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 375px (zero
+snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
+consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
+`docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+## 2026-07-08 — Intro→logo handoff: hidden-until-assembled + mobile brand row (MONET, branch `monet/intro-logo-handoff-3676f7`)
+Owner: the header logo must not pre-exist the candles (it was visible while they flew onto it),
+and mobile — where the bar logo is display:none and the intro landed on a phantom box — gets a
+full-width "SOCRATIC TRADE" row above the controls bar (~2x-tall chrome) as the landing target,
+holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts` phase channel;
+`BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
+`[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
+DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
+## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
+Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
+runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
+widens the housekeeping bucket (notify.sent/error delivery mechanics, due-jobs drain, vector_store,
+recoverable_issue, llm_cache_usage). Real-hour replay: 54 raw events → 8 main cards + 1 collapsed
+system row. All data preserved/expandable. See `docs/rollouts/2026-07-08-activity-log-grouping.md`.
+
+## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
+UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
+Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/
+--neg-fg + @theme), Tone union + maps in app/ui/primitives.tsx, price-chart cssVar reads,
+all call sites (error page + 4 admin clients + model-picker), visual-system.md. Pure
+rename: computed colors verified byte-identical in light AND dark. tsc/lint/2972 tests
+green; PR via land.sh. See `docs/rollouts/2026-07-08-tone-rename-pos-neg.md`.
+## 2026-07-08 — PROD RELEASE rjskkyzx: production = main@4af98aaa exactly (MONET, owner-directed)
+Owner asked to get all completed work to production. Coolify deploy `rjskkyzx` of
+`socratic-trade-prod` finished + verified (deployment commit 4af98aaa = main HEAD, app
+running:healthy, edge 307→/login 200). Ships #1095 (inline-Bear bare-array recovery — no more
+silent full veto on malformed Bear replies) + #1097 (sweep docs close-out) on top of n1v296.
+Every merged effort is now live. **OWNER ACTION: confirm `ALLOW_LIVE_TRADING` in Infisical —
+it's opt-OUT since #1036, so the Robinhood live account trades on its environment unless set
+to `false`.** Boards trued up (intro #1089 + #1036 rows → Deployed; #1095 row added). See
+`docs/rollouts/2026-07-08-prod-release-4af98aaa.md`.
+
+## 2026-07-08 — Troubleshoot sweep MERGED (#1087) + PRODUCTION DEPLOYED + Deploy-workflow hazard closed (MONET)
+PR #1087 (10-issue sweep) merged 10:35Z; Coolify deployment n1v296 (commit ea779bbf, includes
+the day's sibling PRs) health-verified: ok/db/scheduler ticking, finnhub dependency back to
+ok:true with the new rate limiter live. Post-merge actions: (1) the PR's gitleaks red was a
+FALSE POSITIVE on the fake scrubber-test fixture (defused in follow-up PR);
+(2) **`.github/workflows/deploy.yml` DISABLED via `gh workflow disable`** — it auto-ran on
+every main push on the Mac self-hosted runner ending in `pm2 restart trading` (the
+"accidentally re-started twice" source from the previews-retired note); if the rollback pm2
+lane were ever started it would resurrect the double-scheduler scenario on the next merge.
+Re-enable only for a deliberate Mac rollback. Owner still owed: congress SSE env decision,
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000, Alpha Vantage key rotation + tier decision, MU order
+4EED5BE7 fill confirmation. Addendum: `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`.
+## 2026-07-08 — Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`)
+PR #1091's DeepSeek bare-array fix applied to the parser it didn't cover: the inline Bear in
+strategy.ts, where a bare array (or any object missing `proposals`) silently read as a deliberate
+FULL VETO. New `parseBearSurvivors` helper: bare proposal-arrays recovered, `{proposals: []}` stays a
+real veto, everything malformed → fallbackToBull. Latent exposure (live Bear = gemini) closed until
+the single-adversary consolidation deletes the path (their deletion supersedes). See
+`docs/rollouts/2026-07-08-inline-bear-array-recovery.md`.
+
+## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
+Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
+chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act is preserved
+verbatim behind `CENTER_WORDMARK_STEP: boolean = false` in
+`app/console/components/intro-canvas.tsx` — flip to `true` to restore. Full verify gate green.
+See `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
+## 2026-07-08 — LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`)
+New operator script `scripts/benchmark-llm-models.ts`: benchmarks every curated-catalog model in
+BOTH strategy roles (Green proposer + Red reviewer) through the app's REAL request paths
+(resolveLlmEndpoint -> buildLlmRequestBody w/ the strategy schemas+prompts -> llmFetchCapturing),
+input pack reconstructed from the real signal_snapshot/macro/portfolio data, app DB strictly
+read-only (scratch-DB isolation for credential resolution). Cache-aware (#1086-guarded) cost +
+cold/warm round split. Verified end-to-end with real DeepSeek calls against the trading-live
+standby data. See `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
+## 2026-07-08 — Multi-issue troubleshoot sweep: 10 owner-reported issues diagnosed, 7 fixed in code (MONET, `monet/multi-issue-troubleshooting-5b55ad`)
+22-agent investigation (per-issue investigator + adversarial verifier + prod scout + critic)
+then 6 implementation lanes + 2-lens diff review + fix round. Diagnosed: scan blanks (provider
+quota pile-up + Yahoo rate-limiting the new Hetzner egress IP — container-verified, IPv6 fine),
+framework-card link to wrong page, fake outcomes compare toggle, LLM usage attribution gap
+(the deferred half of #1030), font selector merged-but-unwired (#1007 dead hook), Finnhub 25-wide
+bursts, congress SSE missing env (CONGRESS_STREAM_* absent in Infisical prod), Alpha Vantage
+burst+daily-cap (+ its error text LEAKED the raw API key into health logs — scrubbed now, rotate
+the key), MU exit saga (blocking $991 limit EXPIRED 07-07; flat-5% trailingStopPct remnant fired
+market sell 4eed5be7 after hours — check it filled at the 07-08 open; 3 synthetic-stops bugs found
++ fixed: filled-at-quote misbooking, all-night re-arm/422 loop, resting-order blindness), short
+order labels. Bonus: 10-K RAG ingestion effectively stalled by free-tier throttle (lower
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000 in Infisical — Voyage is paid); litestream confirmed RUNNING
+in-container (health "unknown" is a reporting gap); Roth IRA runs failing on Gemini 400 (separate).
+Prod actions listed in `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`. NOTE: several fixes
+in this saga were merged-but-never-deployed (auto-deploy OFF) — deploy after merge.
+## 2026-07-08 — LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`)
+Owner cache tip audited: Anthropic transport already sends `cache_control` (llm-call.ts); other
+providers auto-cache server-side. Fixed the real gap: `extractLlmUsage` now surfaces cache-read/
+creation tokens (all 4 provider shapes), `estimateLlmCostUsd` prices them at 0.1x/1.25x input
+(cost was overstated on cached calls), and `recordLlmUsage` writes an `llm_cache_usage` audit on
+cache activity — hit rates + savings queryable, zero schema migration. See
+`docs/rollouts/2026-07-08-llm-cache-observability.md`.
+
+## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
+Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
+empirical (llm_step outcomes + llm_usage, excluding the fixed Gemini bear format incident and the
+fixed pre-#1036 60s-timeout class): gemini-3.5-flash = Green+Red (bear 46/46 post-fix, bull 27/0);
+gpt-5.4-mini = Green+Red (22/2, 18/1); deepseek-v4-pro = Red only (bear 17/3 w/ fixed cause; no
+successful Green history); claude-sonnet-5 + gemini-3.1-pro-preview = NO recs (zero calls ever;
+Anthropic key also capped until 2026-08-01). Convention comments in both catalogs now state the
+empirical derivation + snapshot. #1078's role-neutral labels stand. See the FINAL banner in
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
+## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)
+Owner review: role-flavored descriptors ("premium Claude critique", "fast Claude review") made
+role-neutral + grammatically parallel (opus = "premium Claude reasoning", haiku = "fast low-cost
+Claude"), and the Gemini Red-team recommendation moved off the *preview* build
+(`gemini-3.1-pro-preview` → stable `gemini-3.5-flash`); recommendation principle documented in both
+catalog copies (console/settings/models.tsx + ui/llm-model-catalog.ts, display-only flags). See
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+## 2026-07-08 — Alert Center filter pills (MONET)
+Owner-reported clipped tile headings ("DELIVERIE…") in the Alert Center. Replaced the fixed
+4-column stat-tile filter grid with a wrapping sentence-case pill row (counts inline, hover
+hints, aria-pressed + bold non-color selected cue, coarse-pointer 44px floor). Driven live at
+641px/309px container widths — no clipping, clean wrap. Closes the 55-findings AlertCenter
+aria-pressed row in passing. See `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
+
 ## 2026-07-08 — Model attribution on every decision surface (MONET)
 Every decision surface now shows which LLM model made — or FAILED to make — the decision:
 approval cards render the previously-invisible failed-review state (failureKind + the failed

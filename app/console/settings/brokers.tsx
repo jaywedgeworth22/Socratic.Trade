@@ -15,6 +15,7 @@ import { useConsoleData } from "../lib/useConsoleData";
 import { useToast } from "../ui/toast";
 import { Sheet } from "../ui/sheet";
 import { Btn, Card, Chip, Field, LiveTag, Select, TextInput } from "../ui/primitives";
+import { Briefcase, ArrowDown, Zap, Scale, AlertTriangle } from "lucide-react";
 import {
   connectAlpacaAccount,
   connectTestAccount,
@@ -309,17 +310,61 @@ export function BrokerAccountsCard() {
                 </div>
                 <p
                   className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                  title="Broker, environment, account tail, tax treatment, and what the broker last said this account may trade."
+                  title="Broker, environment, account tail, and tax treatment."
                 >
                   {account.broker === "test" ? "Local Mock Paper Account" : `${brokerName(account.broker)} · ${account.environment}`}
                   {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
                   {account.taxationType ? ` · ${TAXATION_WORD[account.taxationType] ?? account.taxationType}` : ""}
-                  {account.broker === "test"
-                    ? " — simulated fills for learning; excluded from real-account wash-sale contribution"
-                    : caps
-                    ? ` — broker allows: stocks ${caps.equityTrading ? "yes" : "no"} · shorting ${caps.shortSelling ? "yes" : "no"} · options ${caps.optionsTrading ? `level ${caps.optionsLevel ?? "?"}` : "no"} · margin ${caps.marginEnabled ? "yes" : "no"}`
-                    : " — capabilities not confirmed by the broker yet: everything reads as off"}
+                  {account.broker === "test" && " — simulated fills for learning; excluded from real-account wash-sale contribution"}
                 </p>
+                {account.broker !== "test" && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {caps ? (
+                      <>
+                        <Chip
+                          tone="info"
+                          title={`Stocks trading: ${caps.equityTrading ? "enabled" : "disabled"}`}
+                        >
+                          <Briefcase className="inline size-3.5 mr-1.5" />
+                          stocks
+                        </Chip>
+                        <Chip
+                          tone="info"
+                          title={`Short selling: ${caps.shortSelling ? "enabled" : "disabled"}`}
+                        >
+                          <ArrowDown className="inline size-3.5 mr-1.5" />
+                          shorting
+                        </Chip>
+                        {caps.optionsTrading && (
+                          <Chip
+                            tone="info"
+                            title={`Options trading at level ${caps.optionsLevel ?? "?"}`}
+                          >
+                            <Zap className="inline size-3.5 mr-1.5" />
+                            options L{caps.optionsLevel}
+                          </Chip>
+                        )}
+                        {caps.marginEnabled && (
+                          <Chip
+                            tone="info"
+                            title="Margin trading enabled"
+                          >
+                            <Scale className="inline size-3.5 mr-1.5" />
+                            margin
+                          </Chip>
+                        )}
+                      </>
+                    ) : (
+                      <Chip
+                        tone="warn"
+                        title="Broker has not yet confirmed this account's trading capabilities. All capabilities read as off until confirmed."
+                      >
+                        <AlertTriangle className="inline size-3.5 mr-1.5" />
+                        capabilities unconfirmed
+                      </Chip>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

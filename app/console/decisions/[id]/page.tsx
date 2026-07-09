@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, BookOpen, Brain, Database, GitBranch, MessageSquare, Swords, TrendingUp } from "lucide-react";
 import type { SocraticDecisionCase, SocraticDecisionTrace, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution, StrategyRunRow } from "@/lib/types";
 import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
+import { authorityLabel, decisionStatusLabel, evidenceKindLabel, feedStatusLabel, frameworkStatusLabel, plainLabel, thesisTagLabel } from "../../lib/labels";
 import { redTeamFailureMeta } from "../../lib/red-team";
 import { Btn, Card, Chip, SignedText, TextArea } from "../../ui/primitives";
 import { ModelBadge } from "../../ui/provider-logo";
@@ -20,6 +20,7 @@ const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "S
 
 export default function DecisionTracePage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const decisionId = String(params.id ?? "");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [note, setNote] = useState("");
@@ -54,6 +55,17 @@ export default function DecisionTracePage() {
   useEffect(() => {
     queueMicrotask(() => void load());
   }, [load]);
+
+  // Prefer real browser back (returns to whatever list/filter the owner was on) —
+  // only fall back to a fixed destination when there's no history to go back to
+  // (e.g. this trace was opened directly, in a new tab, or via a deep link).
+  const goBack = useCallback(() => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/console/activity");
+    }
+  }, [router]);
 
   const buildCoachPayload = () => {
     const trimmed = note.trim();
@@ -117,9 +129,13 @@ export default function DecisionTracePage() {
   if (state.status === "error") {
     return (
       <div className="mx-auto max-w-3xl">
-        <Link href="/console" className="mb-4 inline-flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-          <ArrowLeft size={13} /> Back to console
-        </Link>
+        <button
+          type="button"
+          onClick={goBack}
+          className="mb-4 inline-flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+        >
+          <ArrowLeft size={13} /> Back
+        </button>
         <Card>
           <p className="text-[color:var(--con-warn)]">{state.message}</p>
         </Card>
@@ -133,15 +149,19 @@ export default function DecisionTracePage() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/console" className="inline-flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-          <ArrowLeft size={13} /> Back to console
-        </Link>
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+        >
+          <ArrowLeft size={13} /> Back
+        </button>
         <div className="flex flex-wrap gap-2">
           <Chip tone="accent" title="Decision status persisted on the Socratic case file.">
-            {decision.status}
+            {decisionStatusLabel(decision.status)}
           </Chip>
-          <Chip tone="muted" title="Authority mode at decision time.">
-            {decision.authority}
+          <Chip tone="muted" title={authorityLabel(decision.authority).title || "Authority mode at decision time."}>
+            {authorityLabel(decision.authority).label}
           </Chip>
           {decision.updatedAt && (
             <Chip tone="muted" title={new Date(decision.updatedAt).toLocaleString()}>
@@ -165,7 +185,7 @@ export default function DecisionTracePage() {
                 <SymbolButton symbol={decision.symbol} showLogo={false} className="text-inherit" />
               </Chip>
             )}
-            {decision.thesisTag && <Chip tone="muted">{decision.thesisTag}</Chip>}
+            {decision.thesisTag && <Chip tone="muted">{thesisTagLabel(decision.thesisTag)}</Chip>}
             {decision.regime && <Chip tone="muted">{decision.regime}</Chip>}
             {typeof decision.confidenceScore === "number" && <Chip tone="pos">confidence {decision.confidenceScore}</Chip>}
             {run && <Chip tone="muted">run {timeAgo(run.startedAt)}</Chip>}
@@ -257,7 +277,7 @@ export default function DecisionTracePage() {
               <div className="grid gap-3 text-[length:var(--con-fs-sm)]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[color:var(--con-faint)]">Status</span>
-                  <strong>{outcome.status}</strong>
+                  <strong>{feedStatusLabel(outcome.status)}</strong>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[color:var(--con-faint)]">Return</span>
@@ -342,7 +362,7 @@ export default function DecisionTracePage() {
                   <article key={proposal.id} className="con-evidence-card con-evidence-accent">
                     <div className="flex items-start justify-between gap-3">
                       <strong>{proposal.title}</strong>
-                      <span>{proposal.status}</span>
+                      <span>{frameworkStatusLabel(proposal.status)}</span>
                     </div>
                     <p>{proposal.proposedChange}</p>
                     {proposal.ownerResponse && (
@@ -402,7 +422,7 @@ function EvidenceList({ items, empty }: { items: SocraticEvidenceItem[]; empty: 
         <article key={`${item.kind}-${item.title}-${index}`} className={`con-evidence-card con-evidence-${toneFromSocratic(item.tone)}`}>
           <div className="flex items-start justify-between gap-3">
             <strong>{item.title}</strong>
-            <span>{[item.kind, item.source].filter(Boolean).join(" · ")}</span>
+            <span>{[evidenceKindLabel(item.kind), item.source].filter(Boolean).join(" · ")}</span>
           </div>
           <p>{item.summary}</p>
         </article>
@@ -412,7 +432,9 @@ function EvidenceList({ items, empty }: { items: SocraticEvidenceItem[]; empty: 
 }
 
 function RagItem({ item }: { item: SocraticRagAttribution }) {
-  const meta = [item.docType, item.source, typeof item.score === "number" ? `score ${item.score.toFixed(2)}` : item.symbol].filter(Boolean).join(" · ");
+  const meta = [plainLabel(item.docType), item.source, typeof item.score === "number" ? `score ${item.score.toFixed(2)}` : item.symbol]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <article className="con-evidence-card con-evidence-accent">
       <div className="flex items-start justify-between gap-3">

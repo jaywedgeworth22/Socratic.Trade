@@ -693,6 +693,52 @@ export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 // ── Freshness strip ──────────────────────────────────────────────────────────
 
+/** Freshness label shared by the desktop strip and the mobile bar: "delayed"
+ *  while the last refresh errored, "loading" before the first fetch lands,
+ *  "aging" while the push stream is reconnecting, otherwise "fresh". */
+function deriveFreshnessLabel(fetchedAt: Date | null, error: string | null, stream: ConsoleStreamHealth): string {
+  return error ? "delayed"
+    : fetchedAt == null ? "loading"
+    : stream.status === "reconnecting" ? "aging"
+    : "fresh";
+}
+
+/** Compact one-line freshness + today's spend, rendered in the STICKY TOP
+ *  chrome (below ChromeBar) on phones — the fixed bottom tab bar (nav.tsx)
+ *  overlays anything at document end there, so a bottom-anchored strip is
+ *  invisible on mobile. This is the only mobile freshness surface; the
+ *  desktop-only FreshnessStrip below no longer renders a mobile variant. */
+export function MobileFreshnessBar({
+  snapshot,
+  fetchedAt,
+  error,
+  stream
+}: {
+  snapshot: DashboardSnapshot;
+  fetchedAt: Date | null;
+  error: string | null;
+  stream: ConsoleStreamHealth;
+}) {
+  const spend = deriveSpend(snapshot);
+  const freshnessLabel = deriveFreshnessLabel(fetchedAt, error, stream);
+  return (
+    <div className="flex items-center gap-3 border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] px-4 py-1.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] lg:hidden">
+      <span title="When this console last fetched data. It refreshes about every 15 seconds.">
+        Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · {freshnessLabel}
+      </span>
+      <span className="con-num ml-auto flex items-center gap-1.5" title="Opening orders only. Exits never consume the daily cap.">
+        <ShieldCheck size={12} />
+        Today: {fmtMoney(spend.usedNotional)}
+      </span>
+      {error && (
+        <span className="shrink-0 font-semibold text-[color:var(--con-warn)]" title={error}>
+          delayed
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function FreshnessStrip({
   snapshot,
   fetchedAt,
@@ -707,11 +753,7 @@ export function FreshnessStrip({
   const spend = deriveSpend(snapshot);
   const scanAt = snapshot.latestStrategyRun?.marketScan?.generatedAt;
   const nextRun = snapshot.scheduler?.nextRunAt;
-  const freshnessLabel =
-    error ? "delayed"
-    : fetchedAt == null ? "loading"
-    : stream.status === "reconnecting" ? "aging"
-    : "fresh";
+  const freshnessLabel = deriveFreshnessLabel(fetchedAt, error, stream);
   const streamLabel =
     stream.status === "live"
       ? "stream live"
@@ -729,7 +771,11 @@ export function FreshnessStrip({
           ? "Opening the push stream now."
           : "This browser does not expose EventSource, so the console is using polling only.";
   return (
-    <div className="border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+    // Desktop only — the mobile equivalent is MobileFreshnessBar, rendered in
+    // the sticky TOP chrome (shell.tsx) instead of a bottom-anchored strip,
+    // since the fixed bottom tab bar (nav.tsx) overlays anything at document
+    // end on phones.
+    <div className="hidden border-t border-[color:var(--con-line)] bg-[color:var(--con-surface)] text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)] lg:block">
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5">
         <span title="When this console last fetched data. It refreshes about every 15 seconds.">
           Data as of {fetchedAt ? fmtClock(fetchedAt) : EM_DASH} · {freshnessLabel} · quotes may be delayed
