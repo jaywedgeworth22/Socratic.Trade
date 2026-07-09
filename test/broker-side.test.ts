@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { toBrokerSide, isShortIntent, isRejectedOrCanceledState, isLiveOrderState } from "../src/lib/broker-side";
+import { ACTIVE_BROKER_ORDER_STATES } from "../src/lib/broker-held-orders";
 import { toMcpOrder } from "../src/lib/robinhood";
 import type { EquityOrderInput, OrderSide } from "../src/lib/types";
 
@@ -77,6 +78,22 @@ describe("isLiveOrderState — broker-agnostic resting/live check", () => {
     expect(isLiveOrderState("queued")).toBe(true);
     expect(isLiveOrderState("confirmed")).toBe(true);
     expect(isLiveOrderState("unconfirmed")).toBe(true);
+  });
+
+  it("recognizes non-terminal in-transition states — a pending_cancel exit can still fill", () => {
+    // These are known-active in broker-held-orders.ts but were missing here, so an exit order
+    // mid-cancel/replace stopped counting as coverage and a duplicate protective exit could stack
+    // on top of an order that could still execute.
+    expect(isLiveOrderState("submitted")).toBe(true);
+    expect(isLiveOrderState("pending_cancel")).toBe(true);
+    expect(isLiveOrderState("pending_replace")).toBe(true);
+    expect(isLiveOrderState("suspended")).toBe(true);
+  });
+
+  it("is a superset of broker-held-orders' active vocabulary — the two sets must not drift", () => {
+    for (const state of ACTIVE_BROKER_ORDER_STATES) {
+      expect(isLiveOrderState(state), `broker-held-orders counts "${state}" as active — it must be live here too`).toBe(true);
+    }
   });
 
   it("is case-insensitive and trims", () => {

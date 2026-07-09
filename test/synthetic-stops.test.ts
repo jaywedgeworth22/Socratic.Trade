@@ -10,6 +10,7 @@ import {
   listFillEvents,
   listSyntheticStops,
   revertSyntheticStopClaim,
+  upsertBrokerProtectiveStop,
   upsertConnectedAccount,
   upsertSyntheticStop
 } from "../src/lib/db";
@@ -28,6 +29,7 @@ const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
   quotes: {} as Record<string, { price?: number }>,
   placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string }>,
+  cancelled: [] as string[],
   orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
   // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
   // placed after hours); "filled" = synchronous fill (the Test broker's behavior).
@@ -62,6 +64,10 @@ vi.mock("../src/lib/broker", () => ({
       broker.placed.push(order);
       if (broker.placeError) throw broker.placeError;
       return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
+    },
+    cancelEquityOrder: async (_accountNumber: string, orderId: string) => {
+      broker.cancelled.push(orderId);
+      return { orderId, refId: "x", state: "cancel_requested", raw: {} };
     }
   })
 }));
@@ -139,6 +145,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.positions = [];
     broker.quotes = {};
     broker.placed = [];
+    broker.cancelled = [];
     broker.orders = [];
     broker.placeState = "accepted";
     broker.ordersError = null;
@@ -226,6 +233,78 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(result.exited).toBe(1);
     expect(broker.placed).toHaveLength(1);
     expect(broker.placed[0].side).toBe("sell");
+  });
+
+  it("a FULL-size live broker stop suppresses registration via quantity-aware coverage", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    // Explicit quantity == position: coverage (not any symbol-level shortcut) is what suppresses.
+    broker.orders = [{ id: "rh-full", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 10 }];
+    connectTestAccount("SYN-FULLSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-FULLSTOP"), true);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    expect(listSyntheticStops("SYN-FULLSTOP", "local")).toHaveLength(0);
+  });
+
+  it("a PARTIAL-size live broker stop no longer suppresses protection for the uncovered shares", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { MU: { price: 90 } }; // breaches a 5% trail off extreme 100
+    // A live broker stop covering only 40 of the 100 shares (e.g. an owner-placed manual RH stop).
+    // The old symbol-level "has a live stop" guard was quantity-blind and suppressed registration
+    // entirely — 60 shares rode through a crash unprotected. Coverage must register the synthetic
+    // and fire it for exactly the uncovered remainder.
+    broker.orders = [{ id: "rh-part", symbol: "MU", side: "sell", type: "stop_market", state: "queued", quantity: 40 }];
+    connectTestAccount("SYN-PARTSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-PARTSTOP"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(60);
+  });
+
+  it("a live stop-BUY (entry/add-on) is NOT protection for a long — the synthetic registers and fires", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    // A stop-entry BUY above the market on a symbol we're long. The old symbol-level guard was
+    // side-blind — any live /stop/i order marked the symbol broker-protected. A buy can never exit
+    // a long, so it must not suppress the trailing stop.
+    broker.orders = [{ id: "buystop-1", symbol: "MU", side: "buy", type: "stop_market", state: "queued", quantity: 5 }];
+    connectTestAccount("SYN-BUYSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-BUYSTOP"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(10);
+  });
+
+  it("disabled-teardown tick: the just-cancelled broker stop is pruned, so the synthetic registers the SAME tick", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    // The RH protective stop the feature placed while it was ON — the order list is fetched BEFORE
+    // reconcile runs, so this tick it still shows the stop as live even after the teardown cancels it.
+    broker.orders = [{ id: "prot-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 10 }];
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-SYN-TEARDOWN-AAPL", userId: "local", accountNumber: "SYN-TEARDOWN",
+      symbol: "AAPL", brokerOrderId: "prot-1", quantity: 10, stopPrice: 92, status: "resting"
+    });
+    connectTestAccount("SYN-TEARDOWN", "live");
+    // policyFor leaves robinhoodBrokerStops at its default (off) → reconcile tears the stop down mid-tick.
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-TEARDOWN"), true);
+    expect(broker.cancelled).toEqual(["prot-1"]); // the teardown actually cancelled it
+    // The cancelled stop must NOT suppress auto-registration — the position would otherwise carry
+    // NEITHER protection until the next tick. The synthetic row exists (armed) this same tick.
+    expect(listSyntheticStops("SYN-TEARDOWN", "local")).toHaveLength(1);
+    // The FIRE path deliberately still honors the stale order for this one tick (a cancel the
+    // broker merely accepted can still fill) — no exit stacks on it.
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    // Next tick the broker's list no longer shows the cancelled stop: the armed synthetic takes over.
+    broker.orders = [];
+    const second = await runSyntheticStopMonitor("local", policyFor("SYN-TEARDOWN"), true);
+    expect(second.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 10 });
   });
 
   it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {

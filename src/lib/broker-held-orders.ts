@@ -4,7 +4,9 @@ import type { EquityOrder, EquityPosition, TradeProposal } from "./types";
 
 const EPSILON = 1e-6;
 
-const ACTIVE_BROKER_ORDER_STATES = new Set([
+// Exported so broker-side.test.ts can assert LIVE_ORDER_STATES (broker-side.ts) stays a superset —
+// an order this module counts as active/held must also count as live protection over there.
+export const ACTIVE_BROKER_ORDER_STATES = new Set([
   "accepted",
   "accepted_for_bidding",
   "confirmed",
