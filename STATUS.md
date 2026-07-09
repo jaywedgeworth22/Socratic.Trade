@@ -60,6 +60,28 @@ Owner still owed: cancel d642d572 pre-open, tiingo 403 key/plan, AV keys #2-4 + 
 Gates: lint 0 err / tsc clean / 3077 tests / build green.
 Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 
+## 2026-07-08 — LIVE bulk approval typed-confirm flow (CODEX, branch `codex/live-bulk-typed-confirm`)
+Resumed the Codex approvals lane after MONET confirmed the owner/product constraints. Bulk reject
+remains the existing one-click inline confirm. Bulk approve now includes selected LIVE proposals:
+if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
+before approval; if the owner has turned that setting off, live bulk approval is one-click. Each
+selected batch now posts to a server-side bulk approval route, which computes the live batch
+membership server-side, validates the aggregate phrase, then runs each row through the normal
+`executeProposal` path so broker/account/notional re-checks and partial placed/blocked/failed
+outcomes stay independent. PR review follow-up capped bulk approve to 20 approvals, reports
+non-placed/non-blocked approval results as failed rows, keeps the per-proposal live-confirm
+contract symbol-specific, and stabilizes the sheet close handler so typing does not reset focus.
+Verification:
+`./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
+`./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
+full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
+`npm run build` passed with only the existing Sentry Edge-runtime warning. Review-fix focused
+verification: `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
+`npx tsc --noEmit`, and `npm run lint -- --quiet` all passed; after merge-forward to current
+`origin/main`, full `npm test -- --reporter=dot --maxWorkers=2` passed (302 files / 3112 tests)
+and `npm run build` passed. PR #1174 is open.
+Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
+
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
 Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
 realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +

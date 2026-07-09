@@ -177,6 +177,31 @@ export async function approveProposal(
   }
 }
 
+export interface BulkApproveResult extends ApproveResult {
+  proposalId: string;
+  symbol?: string;
+}
+
+export async function bulkApproveProposals(
+  proposalIds: string[],
+  liveConfirmation?: { typedText: string }
+): Promise<{ results: BulkApproveResult[] }> {
+  try {
+    return await request<{ results: BulkApproveResult[] }>("/api/proposals/bulk-approve", {
+      method: "POST",
+      body: JSON.stringify({ proposalIds, ...(liveConfirmation ? { liveConfirmation } : {}) })
+    });
+  } catch (error) {
+    if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
+      const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
+      if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
+        throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+      }
+    }
+    throw error;
+  }
+}
+
 export function rejectProposal(id: string): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/proposals/${encodeURIComponent(id)}/reject`, { method: "POST" });
 }

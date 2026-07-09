@@ -26,6 +26,13 @@ filling the missing pieces.
 > `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
 > `LearnedFactsArchive` component on the Approvals page. See
 > `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
+> **2026-07-08 - Live bulk approval typed-confirm flow (Codex).** No roadmap change.
+> This closes the deliberately deferred #807 approval-triage gap: selected LIVE proposals can now
+> be approved in bulk, with one aggregate typed-confirm sheet only when
+> `policy.requireTypedConfirmation` is enabled. Bulk reject stays the existing inline one-click
+> confirm, and every approval still uses the existing per-item endpoint so partial blocked/failed
+> outcomes remain visible. See `docs/rollouts/2026-07-08-live-bulk-typed-confirm.md`.
 > **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
 > (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
 > stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
