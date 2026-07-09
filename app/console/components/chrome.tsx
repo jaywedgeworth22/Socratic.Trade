@@ -588,6 +588,11 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
       await refresh();
       if (result.status === "failed") {
         setBlock(classifyRunFailure(result.summary || "The run failed."));
+      } else if (result.status === "started") {
+        // The route launched the run and returned before it finished (real runs can take several
+        // minutes on LLM-heavy steps) — reflect "started", not "complete". Activity/snapshot
+        // polling already renders the strategy_runs row this created as it progresses.
+        toast.push("pos", "Run started", result.summary || "Check Activity for progress.");
       } else {
         toast.push("pos", "Run complete", result.summary);
       }

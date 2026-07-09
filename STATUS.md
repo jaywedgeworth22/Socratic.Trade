@@ -16,6 +16,23 @@ retirement. `setup-agent-previews.sh`'s one live job (installing the pre-push ho
 README/AGENTS/deployment.md + pre-push/land.sh comments; historical rollout notes/EFFORT-LOG left
 intact as the paper trail. Doc/infra-only, no runtime surface.
 
+## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
+The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
+failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real
+buildLlmRequestBody, operator AND user-stored key decrypted in-memory) found the real trigger:
+**maxItems:8** (Roth maxProposalsPerRun) — Gemini's structured-output validator expands the array
+item subtree per maxItems slot against an internal complexity budget; the post-#1036 15-property
+item schema overflows at x8 (byte-identical 400 reproduced; 3-7 pass; minus the #1036 bracket
+fields passes at 8; Bear has no maxItems = never failed; onset = first post-#1036 run). Fix:
+Gemini wire schema drops maxItems/minItems (bound folded into description; sanitizeProposals
+already truncates app-side) + llm-errors.ts captures full Google-RPC details (was 240-char
+truncation) + idempotency guard kills the "Gemini error: Gemini error:" stutter. ALSO: Run-once
+is now async (8s sync window -> 202 "started"; fast pre-flight blocks stay synchronous; run
+tracked via existing Activity polling) and the console api client shields ALL dialogs from raw
+HTML error pages (the owner saw Cloudflare's raw 524 page in the Run-once dialog; that run had
+actually executed server-side). Note: a subagent accidentally edited the integration tree —
+relocated + tree restored, documented in the rollout note.
+Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
 ## 2026-07-09 — Repo AGENTS.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, `monet/deploy-doc-reconcile`)
 Doc-only: brought the repo `AGENTS.md`/`CLAUDE.md` prod-deploy language in line with the owner's
 2026-07-09 ruling (production releases = ANNOUNCE-THEN-DEPLOY: one deployer posts a #agent-sync claim
