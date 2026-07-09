@@ -61,8 +61,8 @@ export const SOCRATIC_OVERRIDE: FieldDef[] = [
 export const EXPOSURE: FieldDef[] = [
   { path: "maxSymbolExposurePct", label: "Max in one stock (%)", kind: "pct", optional: true, looserWhen: "up" },
   { path: "maxSymbolExposureNotional", label: "Max in one stock ($)", kind: "money", optional: true, looserWhen: "up" },
-  { path: "maxGrossExposurePct", label: "Max gross exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
-  { path: "maxNetExposurePct", label: "Max net exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
+  { path: "maxGrossExposurePct", label: "Max gross exposure (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Total market exposure — every position's size added up (longs + shorts) as a % of portfolio. Caps how much of the book is deployed vs held in cash. Risk-reducing exits always pass." },
+  { path: "maxNetExposurePct", label: "Max net exposure (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Directional exposure — longs minus shorts as a % of portfolio. Bounds net market risk; equals gross for a long-only book. Risk-reducing exits always pass." },
   { path: "maxPortfolioBeta", label: "Max portfolio beta", kind: "int", optional: true, looserWhen: "up", hint: "Risk-reducing trades always pass." },
   { path: "maxAvgCorrelation", label: "Max avg correlation (0–1)", kind: "int", optional: true, looserWhen: "up", hint: "Skips opening a name too correlated with current holdings. Never blocks exits." },
   { path: "maxOrderPctOfAdv", label: "Max order vs daily volume (%)", kind: "pct", optional: true, looserWhen: "up", hint: "Market-impact cap: an opening order may not exceed this share of the name's recent daily dollar volume." }
