@@ -76,7 +76,9 @@ const MODEL_DISPLAY_NAME: Record<string, string> = {
   "mistral-large-2512": "Mistral Large 2512",
   // DeepSeek
   "deepseek-v4-flash": "DeepSeek V4 Flash",
-  "deepseek-v4-pro": "DeepSeek V4 Pro"
+  "deepseek-v4-pro": "DeepSeek V4 Pro",
+  "deepseek-chat": "DeepSeek Chat",
+  "deepseek-reasoner": "DeepSeek Reasoner"
 };
 
 /** Human display name for a model id; falls back to the raw id (trimmed) when

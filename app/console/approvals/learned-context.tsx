@@ -40,6 +40,43 @@ const ORIGIN_LABEL: Record<PendingLearnedItem["origin"], string> = {
   chat: "chat" // defensive: chat-origin risk items are hard-capped server-side and never queued
 };
 
+function sourceLabel(value?: string): string {
+  if (!value) return "-";
+  const map: Record<string, string> = {
+    "market_scan": "Market scan",
+    "candidate": "Candidate",
+    "rag": "Retrieved evidence",
+    "red_team": "Red team",
+    "policy": "Policy gate",
+    "outcome": "Outcome",
+    "learning": "Learning",
+    "coaching": "Coaching",
+    "framework": "Framework",
+    "override": "Owner override",
+    "safety": "Safety",
+    "owner-chat": "Owner chat",
+    "experience-memory": "Experience memory",
+    "document-ingest": "Document ingest",
+    "autonomous-run": "Autonomous run"
+  };
+  return map[value] ?? value.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function kindLabel(value?: string): string {
+  if (!value) return "-";
+  const map: Record<string, string> = {
+    "pattern": "Pattern",
+    "decision": "Decision",
+    "fact": "Fact"
+  };
+  return map[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function capitalizeFirstLetter(text: string): string {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function tierMeta(tier: PendingLearnedItem["riskTier"]): { label: string; tone: "warn" | "accent"; explain: string } {
   return tier === "risk"
     ? {
@@ -68,19 +105,19 @@ function Provenance({ item }: { item: PendingLearnedItem }) {
       </Tooltip>
       <Tooltip content="What the producer cited as the basis for this item.">
         <span>
-          Source <span className="text-[color:var(--con-muted)]">{item.source}</span>
+          Source <span className="text-[color:var(--con-muted)]">{sourceLabel(item.source)}</span>
         </span>
       </Tooltip>
       <Tooltip content="The type of learned item: a pattern, a decision, or a fact.">
         <span>
-          Kind <span className="text-[color:var(--con-muted)]">{item.kind}</span>
+          Kind <span className="text-[color:var(--con-muted)]">{kindLabel(item.kind)}</span>
         </span>
       </Tooltip>
       {item.classifierReason && (
         <Tooltip
           content="Why the fail-closed classifier routed this to your confirmation queue instead of storing it automatically.">
-          (<span>Why it queued <span className="text-[color:var(--con-muted)]">{item.classifierReason}</span>
-          </span>)
+          <span>Queued because <span className="text-[color:var(--con-muted)]">{capitalizeFirstLetter(item.classifierReason.trim())}</span>
+          </span>
         </Tooltip>
       )}
     </div>
@@ -148,10 +185,10 @@ function LearnedItemCard({
         </Tooltip>
         {item.symbol && (
           <Tooltip content="The ticker this item is about.">
-            (<span
+            <span
               className="con-mono text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
               <SymbolButton symbol={item.symbol} showLogo={false} />
-            </span>)
+            </span>
           </Tooltip>
         )}
         <div className="flex-1" />
@@ -309,8 +346,7 @@ export function LearnedContextInbox() {
             {count > 0 && (
               <Tooltip
                 content={`${count} learned item${count === 1 ? "" : "s"} awaiting your decision.`}>
-                (<span className="con-num text-[color:var(--con-accent)]">({count})
-                              </span>)
+                <span className="con-num text-[color:var(--con-accent)]">({count})</span>
               </Tooltip>
             )}
           </h2>
@@ -486,12 +522,12 @@ function LearnedFactCard({
           </Tooltip>
           <Tooltip content="What the producer cited as the basis for this row.">
             <span>
-              Source <span className="text-[color:var(--con-muted)]">{item.source}</span>
+              Source <span className="text-[color:var(--con-muted)]">{sourceLabel(item.source)}</span>
             </span>
           </Tooltip>
           <Tooltip content="The type of learned row: a pattern, a decision, or a fact.">
             <span>
-              Kind <span className="text-[color:var(--con-muted)]">{item.kind}</span>
+              Kind <span className="text-[color:var(--con-muted)]">{kindLabel(item.kind)}</span>
             </span>
           </Tooltip>
         </div>

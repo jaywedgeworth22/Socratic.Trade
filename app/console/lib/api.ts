@@ -4,7 +4,7 @@
  *  non-blocking notice. The live-approval typed-confirmation contract mirrors
  *  app/api/proposals/[id]/approve/route.ts exactly. */
 
-import type { LlmReasoningEffort, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
+import type { LlmReasoningEffort, PerformanceSummary, StrategyTuningProposal, SystemState, TradingPolicy } from "@/lib/types";
 
 export class ConsoleApiError extends Error {
   status: number;
@@ -177,6 +177,31 @@ export async function approveProposal(
   }
 }
 
+export interface BulkApproveResult extends ApproveResult {
+  proposalId: string;
+  symbol?: string;
+}
+
+export async function bulkApproveProposals(
+  proposalIds: string[],
+  liveConfirmation?: { typedText: string }
+): Promise<{ results: BulkApproveResult[] }> {
+  try {
+    return await request<{ results: BulkApproveResult[] }>("/api/proposals/bulk-approve", {
+      method: "POST",
+      body: JSON.stringify({ proposalIds, ...(liveConfirmation ? { liveConfirmation } : {}) })
+    });
+  } catch (error) {
+    if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
+      const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
+      if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
+        throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+      }
+    }
+    throw error;
+  }
+}
+
 export function rejectProposal(id: string): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/proposals/${encodeURIComponent(id)}/reject`, { method: "POST" });
 }
@@ -185,6 +210,22 @@ export function rejectProposal(id: string): Promise<{ status: string }> {
 
 export function activateAccount(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/connected-accounts/${encodeURIComponent(id)}/activate`, { method: "POST" });
+}
+
+export interface AccountPerformanceResult {
+  account: { id: string; label: string; broker: string; environment: "paper" | "live" };
+  performance: PerformanceSummary | null;
+  /** True when `performance`'s unrealized-P&L fields were computed with no live quotes
+   *  (this endpoint never fetches them) -- render unrealized as unavailable ("-"), not
+   *  as the real $0.00 it would be for an account with genuinely no open positions. */
+  pricesUnavailable: boolean;
+}
+
+/** Results-page comparison picker: performance for ONE OTHER connected account, by id.
+ *  The server resolves accountNumber itself (scoped to the requesting user) — this never
+ *  sends an accountNumber from the client. */
+export function fetchAccountPerformance(id: string): Promise<AccountPerformanceResult> {
+  return request<AccountPerformanceResult>(`/api/connected-accounts/${encodeURIComponent(id)}/performance`);
 }
 
 /** Library-activate a preset (flips the library's active flag and writes the
@@ -223,4 +264,29 @@ export interface NotifyTestResult {
 
 export function sendTestNotification(): Promise<NotifyTestResult> {
   return request<NotifyTestResult>("/api/notifications/test", { method: "POST", body: JSON.stringify({}) });
+}
+
+// ── Alert lifecycle (acknowledge) ───────────────────────────────────────────
+
+export interface AcknowledgeNotificationsResult {
+  acknowledged: number;
+}
+
+/** Acknowledge specific Alert Center rows by id. */
+export function acknowledgeNotifications(ids: string[]): Promise<AcknowledgeNotificationsResult> {
+  return request<AcknowledgeNotificationsResult>("/api/notifications/ack", {
+    method: "POST",
+    body: JSON.stringify({ ids })
+  });
+}
+
+/** Bulk-acknowledge every currently-unacknowledged row matching the Attention filter. Pass the
+ *  active connected account id so the ack is scoped to what the Alert Center is actually showing
+ *  (that account + account-less rows) — otherwise a hidden other-account alert the user never saw
+ *  would get silently acknowledged too. */
+export function acknowledgeAllAttention(connectedAccountId?: string): Promise<AcknowledgeNotificationsResult> {
+  return request<AcknowledgeNotificationsResult>("/api/notifications/ack", {
+    method: "POST",
+    body: JSON.stringify({ all: true, filter: "attention", ...(connectedAccountId ? { connectedAccountId } : {}) })
+  });
 }

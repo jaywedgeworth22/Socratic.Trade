@@ -128,7 +128,9 @@ function sanitizeAuditDetail(kind: string, payload: unknown): string {
   const reason = typeof p.reason === "string" ? p.reason : "";
   const summary = typeof p.summary === "string" ? p.summary : "";
   const message = typeof p.message === "string" ? p.message : "";
-  return reason || summary || message || JSON.stringify(p).slice(0, 240);
+  const error = typeof p.error === "string" ? p.error : "";
+  const note = typeof p.note === "string" ? p.note : "";
+  return reason || summary || message || error || note || JSON.stringify(p).slice(0, 500);
 }
 
 function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, string>): OpsStrategyRunRow[] {

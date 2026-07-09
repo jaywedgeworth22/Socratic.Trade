@@ -336,7 +336,9 @@ describe("persistence and notifications", () => {
 
       const result = await runStrategyOnce();
       expect(result.status).toBe("failed");
-      expect(result.summary).toContain("Green Team proposal timed out after 60s using OpenAI gpt-5.5");
+      // gpt-5.5 is a reasoning model, so the strategy call gets the reasoning-class-aware timeout
+      // (150s) rather than the base 60s — the message reports the actual bound that elapsed.
+      expect(result.summary).toContain("Green Team proposal timed out after 150s using OpenAI gpt-5.5");
       expect(result.llmSteps).toMatchObject([
         {
           step: "bull",

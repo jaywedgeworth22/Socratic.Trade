@@ -822,6 +822,13 @@ export interface TradingPolicy {
    * 0 or undefined disables the stale-limit alert. Default 15.
    */
   staleLimitOrderMinutes?: number;
+  /**
+   * Auto-cancel-and-replace a STALE EXIT limit order (sell/cover) with a market order once it passes
+   * staleLimitOrderMinutes, so a protective exit a resting limit failed to fill cannot strand the
+   * position (the MU deadlock). Default ON. On a live account it defers to human typed confirmation
+   * when requireTypedConfirmation is on; entries are never auto-forced to market. Owner-tunable.
+   */
+  autoRemediateStaleExits?: boolean;
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
@@ -1625,6 +1632,17 @@ export interface PolicyDecision {
 export interface ReviewedOrder {
   estimatedNotional: number;
   alerts: string[];
+  /**
+   * Structured pre-flight rejection signal parsed from the broker's own order-review response
+   * (e.g. Robinhood's `order_checks.alertType` == EQUITY_DOLLAR_BASED_MINIMUM_AMOUNT_ERROR /
+   * EQUITY_SUB_DOLLAR_SHARE_BASED_ORDER). When present, the broker has already told us this exact
+   * order WILL be rejected — callers should skip placement/proposal instead of retrying a
+   * guaranteed failure every run. Absent when the review carries no recognized blocking signal.
+   */
+  preflightBlock?: {
+    alertTypes: string[];
+    message: string;
+  };
   raw: unknown;
 }
 
@@ -1929,6 +1947,9 @@ export interface NotificationEvent {
    *  triggered it). Absent for user-wide events and rows written before the
    *  column was surfaced — consumers must not assume the ACTIVE account. */
   connectedAccountId?: string;
+  /** When the user (or an auto-ack sweep/repeat-dedup) marked this event as seen.
+   *  Undefined means still unacknowledged — the row still counts toward "Attention". */
+  acknowledgedAt?: string;
 }
 
 // --- Out-of-app multi-channel alert delivery (ported from Atlas) ---

@@ -82,6 +82,14 @@ export const DEFAULT_POLICY: TradingPolicy = {
   volPanicSkewThreshold: 160,
   brokerBracketsEnabled: true, // attach broker-held stop/take brackets on native-bracket brokers (Alpaca)
   robinhoodBrokerStops: false, // opt-in: true broker-held resting stop on live Robinhood (verify RH MCP stop semantics first)
+  // Per-symbol stop intelligence ON by default (owner decision 2026-07-07 — no more one-size-fits-all
+  // stops). ATR stops scale the protective stop DISTANCE to each name's realized volatility
+  // (atrStopMultiple × ATR as a % of entry); beta-scaling widens the stop for high-beta names and
+  // tightens it for low-beta. ATR takes precedence over beta for the stop distance when both apply;
+  // each falls back to the flat riskRules.stopLossPct when its per-symbol input is unavailable. Both
+  // are owner-tunable off-switches in Settings — preferences, not cages.
+  atrStops: true,
+  betaScaledStops: true,
   maxDailyOrders: 10,
   maxProposalsPerRun: 3,
   marketScanCandidateLimit: DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT,
@@ -89,6 +97,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   proposalExpiryMinutes: 2880,
   proposalRevalidateCadenceHours: 0,
   staleLimitOrderMinutes: 15,
+  autoRemediateStaleExits: true, // cancel-replace a stale EXIT limit with a market order so a stop can't strand the position (MU deadlock); owner-tunable, defers to human typed-confirm on live
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,

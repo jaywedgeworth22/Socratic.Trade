@@ -6,7 +6,11 @@ import {
   interactiveStrategyReasoningEffort,
   isDisallowedInteractiveStrategyReasoningConfig,
   reasoningCapabilityForModel,
-  normalizeReasoningEffortForModel
+  normalizeReasoningEffortForModel,
+  strategyLlmTimeoutMs,
+  llmFetchCapturing,
+  LLM_TIMEOUT_MS,
+  type LlmCallOutcome
 } from "../src/lib/llm-request";
 
 describe("llm-request — model resolution", () => {
@@ -58,9 +62,32 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("gpt-5.4-mini", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("gemini-3.1-pro-preview", "none")).toBe("minimal");
     expect(normalizeReasoningEffortForModel("claude-opus-4-8", undefined)).toBe("medium");
-    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("high");
-    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("high");
+    // DeepSeek high-effort thinking is OPT-IN: a sub-high request (incl. the undefined default and the
+    // app's "medium") resolves to the FAST "none" tier, NOT a silent upgrade to the slow "high" tier
+    // that spends a long hidden-reasoning phase and blew the 60s request timeout. Only an explicit
+    // high/xhigh/max enables thinking. The settings UI resolves through this same function, so the
+    // effort shown always equals the effort sent.
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", undefined)).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "medium")).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("none");
+    expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "high")).toBe("high");
     expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "xhigh")).toBe("max");
+  });
+
+  it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
+    // Non-reasoning model: base bound regardless of the requested effort.
+    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
+    // DeepSeek at the default (medium => none, thinking OFF): base bound (fast, no widening).
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "medium")).toBe(LLM_TIMEOUT_MS);
+    // DeepSeek with an explicit high effort (thinking ON): widened past the base.
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // OpenAI reasoning model actually thinking at medium: widened.
+    expect(strategyLlmTimeoutMs("gpt-5.5", "medium")).toBeGreaterThan(LLM_TIMEOUT_MS);
+    // Both bounds are env-tunable.
+    vi.stubEnv("STRATEGY_LLM_TIMEOUT_MS", "30000");
+    vi.stubEnv("STRATEGY_LLM_REASONING_TIMEOUT_MS", "200000");
+    expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(30000);
+    expect(strategyLlmTimeoutMs("deepseek-v4-pro", "high")).toBe(200000);
   });
 });
 
@@ -208,5 +235,39 @@ describe("llm-request — withLlmRequestBounds", () => {
         ).toBeGreaterThanOrEqual(requestedCap);
       }
     }
+  });
+});
+
+describe("llm-request — llmFetchCapturing (latency capture, never sever a slow reply)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the response within the soft timeout and reports late=false", async () => {
+    vi.stubGlobal("fetch", (async () => new Response("fast", { status: 200 })) as unknown as typeof fetch);
+    const outcomes: LlmCallOutcome[] = [];
+    const res = await llmFetchCapturing("https://x/llm", { method: "POST" }, { softTimeoutMs: 1000, onOutcome: (o) => outcomes.push(o) });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 5)); // let the background outcome microtask run
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!).toMatchObject({ late: false, ok: true, status: 200 });
+  });
+
+  it("rejects at the soft timeout but STILL captures the late reply + its duration", async () => {
+    vi.stubGlobal("fetch", (async () => {
+      await new Promise((r) => setTimeout(r, 80));
+      return new Response("late-reply", { status: 200 });
+    }) as unknown as typeof fetch);
+    const outcomes: LlmCallOutcome[] = [];
+    // The caller (strategy tick) sees a timeout and moves on...
+    await expect(
+      llmFetchCapturing("https://x/llm", { method: "POST" }, { softTimeoutMs: 20, onOutcome: (o) => outcomes.push(o) })
+    ).rejects.toThrow(/soft timeout/i);
+    // ...but the request keeps running and the eventual reply is captured for debug.
+    await new Promise((r) => setTimeout(r, 130));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!.late).toBe(true);
+    expect(outcomes[0]!.ok).toBe(true);
+    expect(outcomes[0]!.durationMs).toBeGreaterThanOrEqual(20);
+    expect(outcomes[0]!.response).toBeDefined();
+    expect(await outcomes[0]!.response!.text()).toBe("late-reply");
   });
 });

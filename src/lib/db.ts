@@ -1202,6 +1202,23 @@ function migrate(database: Database.Database): void {
     database.exec("ALTER TABLE fill_events ADD COLUMN mfe REAL");
   }
 
+  // Synthetic-stop refire hardening (2026-07-08 MU incident, round 2): per-row exit-attempt state
+  // (additive, guarded). fire_generation counts prior protective-exit attempts whose broker order
+  // was POSITIVELY confirmed dead — it is monotonic (advance-only; nothing ever resets it back), and
+  // the fire path appends "-g<generation>" to the deterministic client_order_id when it is > 0, so a
+  // legitimately re-armed stop places under a fresh id instead of 422-colliding forever with a dead
+  // order's id. last_attempt_ref_id remembers the client_order_id of the most recent attempt whose
+  // outcome is NOT yet confirmed dead (e.g. placement threw after the broker accepted), so an
+  // ambiguous retry reuses it verbatim and the broker's own dedupe fails safe toward a 422 instead
+  // of a duplicate protective sell.
+  const syntheticStopColumns = database.prepare("PRAGMA table_info(synthetic_trailing_stops)").all() as Array<{ name: string }>;
+  if (!syntheticStopColumns.some((c) => c.name === "fire_generation")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN fire_generation INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!syntheticStopColumns.some((c) => c.name === "last_attempt_ref_id")) {
+    database.exec("ALTER TABLE synthetic_trailing_stops ADD COLUMN last_attempt_ref_id TEXT");
+  }
+
   // Outcome engine (Wave 2): multi-horizon outcome rows + terminal-unresolvable reason on
   // skipped-candidate counterfactuals (additive, guarded). See docs/rollouts/2026-07-04-w2-outcome-engine.md.
   const skippedCfColumns = database.prepare("PRAGMA table_info(skipped_candidate_counterfactuals)").all() as Array<{ name: string }>;
@@ -1243,6 +1260,16 @@ function migrate(database: Database.Database): void {
     "notification_events"
   ]) {
     addAccountColumn(table);
+  }
+
+  // Alert lifecycle (2026-07-09): acknowledge state on notification_events, so the Alert Center's
+  // "Attention" pill can be cleared instead of growing forever (see docs/rollouts for the
+  // triage that motivated this). Additive, guarded — existing rows keep acknowledged_at NULL
+  // (unacknowledged) until acted on or resolved by the auto-ack sweep in db-notifications.ts.
+  const notificationEventColumns = database.prepare("PRAGMA table_info(notification_events)").all() as Array<{ name: string }>;
+  if (!notificationEventColumns.some((c) => c.name === "acknowledged_at")) {
+    database.exec("ALTER TABLE notification_events ADD COLUMN acknowledged_at TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_notification_events_unacked ON notification_events (user_id, acknowledged_at)");
   }
 
   // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table

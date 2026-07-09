@@ -185,9 +185,17 @@ export function normalizeReasoningEffortForModel(
   const capability = reasoningCapabilityForModel(model);
   if (!capability) return undefined;
   if (capability.provider === "deepseek") {
-    if (effort === "none") return "none";
+    // DeepSeek V4 exposes only three tiers: thinking OFF ("none"), "high", and "max". A sub-high
+    // request (none/minimal/low/medium — including the app's "medium" DEFAULT) resolves to the FAST
+    // "none" tier, NOT a silent upgrade to "high". "high" spends a long, unbounded hidden-reasoning
+    // phase server-side before emitting any visible JSON; on a non-streaming whole-response await that
+    // routinely blew the 60s request timeout (Green/Bear "timed out after 60s using DeepSeek"). High-
+    // effort DeepSeek thinking is now OPT-IN: choose "high"/"xhigh"/"max" explicitly. The settings UI
+    // resolves the displayed effort through this SAME function, so the effort shown is always exactly
+    // the effort sent — the user can never select a value different from what actually runs.
     if (effort === "max" || effort === "xhigh") return "max";
-    return "high";
+    if (effort === "high") return "high";
+    return "none";
   }
   return normalizeReasoningEffortForOptions(capability.options, effort);
 }
@@ -253,6 +261,83 @@ export const LLM_TIMEOUT_MS = 60_000;
  */
 export function llmFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(LLM_TIMEOUT_MS) });
+}
+
+/**
+ * Wall-clock cap for a strategy Green/Bear LLM call, widened for a thinking-enabled reasoning model.
+ * A reasoning model that is ACTUALLY thinking (effort resolves to something other than "none") can
+ * legitimately spend well past the 60s default generating hidden reasoning tokens before it emits the
+ * visible JSON, so a non-streaming whole-response await would otherwise abort a call that was still
+ * making progress (this is the DeepSeek "timed out after 60s" failure). Both bounds are env-tunable —
+ * STRATEGY_LLM_TIMEOUT_MS for the base, STRATEGY_LLM_REASONING_TIMEOUT_MS for the thinking bound.
+ * Trade-off: a longer bound holds the per-user run lock longer (see LLM_TIMEOUT_MS), so the widening
+ * applies ONLY when the model is in a thinking mode the user explicitly opted into (never at the fast
+ * default). A non-reasoning or thinking-off model keeps the base 60s bound unchanged.
+ */
+export function strategyLlmTimeoutMs(model: string | undefined, effort: LlmReasoningEffort | undefined): number {
+  const base = Number(process.env.STRATEGY_LLM_TIMEOUT_MS) || LLM_TIMEOUT_MS;
+  const normalized = normalizeReasoningEffortForModel(model, effort);
+  const thinking = !!normalized && normalized !== "none";
+  if (!thinking) return base;
+  return Math.max(base, Number(process.env.STRATEGY_LLM_REASONING_TIMEOUT_MS) || 150_000);
+}
+
+/** The eventual result of an LLM call, reported once the request finally settles (fast OR late). */
+export interface LlmCallOutcome {
+  /** Wall-clock ms from request start to settle. */
+  durationMs: number;
+  /** True when it settled AFTER the soft timeout (i.e. the strategy tick had already given up on it). */
+  late: boolean;
+  ok: boolean;
+  status?: number;
+  error?: string;
+  /** The eventual Response. On the LATE path the caller (which bailed at the soft timeout and never
+   *  read the body) may read this to capture the reply for debugging. Absent when the request errored. */
+  response?: Response;
+}
+
+/**
+ * A strategy LLM fetch that CAPTURES latency and never severs a slow reply. It resolves with the
+ * Response if it arrives within `softTimeoutMs`; otherwise it rejects with a TimeoutError — so the
+ * caller's existing timeout/fallback path runs and the tick moves on — BUT the underlying request
+ * keeps running (up to a generous `hardCapMs` leak backstop, default max(2×soft, 300s)) and its
+ * eventual outcome (duration, status, and the late Response) is reported via `onOutcome`. This is what
+ * lets us record how long a model like DeepSeek actually takes and keep the reply we already paid for,
+ * instead of aborting at the wall and discarding the evidence. Unlike `llmFetch`, no soft-timeout
+ * abort signal is attached to the fetch — only the hard cap.
+ */
+export function llmFetchCapturing(
+  url: string,
+  init: RequestInit,
+  opts: { softTimeoutMs: number; hardCapMs?: number; onOutcome?: (outcome: LlmCallOutcome) => void }
+): Promise<Response> {
+  const started = Date.now();
+  const softMs = opts.softTimeoutMs;
+  const hardCap = Math.max(softMs, opts.hardCapMs ?? Math.max(softMs * 2, 300_000));
+  const fetchPromise = fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(hardCap) });
+
+  const emit = opts.onOutcome;
+  if (emit) {
+    fetchPromise.then(
+      (response) => {
+        const durationMs = Date.now() - started;
+        emit({ durationMs, late: durationMs > softMs, ok: response.ok, status: response.status, response });
+      },
+      (error) => {
+        const durationMs = Date.now() - started;
+        emit({ durationMs, late: durationMs > softMs, ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    );
+  }
+
+  let softTimer: ReturnType<typeof setTimeout> | undefined;
+  const softTimeout = new Promise<never>((_, reject) => {
+    softTimer = setTimeout(() => reject(new DOMException(`Strategy LLM soft timeout after ${softMs}ms`, "TimeoutError")), softMs);
+  });
+  // Clear the soft timer once the fetch settles so it can't reject a race nobody is watching anymore.
+  const clear = () => { if (softTimer) clearTimeout(softTimer); };
+  fetchPromise.then(clear, clear);
+  return Promise.race([fetchPromise, softTimeout]);
 }
 
 /** HTTP statuses worth failing over to another provider (rate limit / transient upstream errors). */

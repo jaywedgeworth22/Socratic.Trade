@@ -125,7 +125,7 @@ const RED_TEAM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 45_000;
 
 /** Verdict shape the Red Team must return — strict json_schema on OpenAI-compatible transports and
  *  the forced-tool input_schema on Anthropic (both via buildLlmRequestBody). */
-const RED_TEAM_VERDICT_SCHEMA: Record<string, unknown> = {
+export const RED_TEAM_VERDICT_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
   required: ["verdict", "reason"],
@@ -339,6 +339,13 @@ export async function debateProposal(
               model
             )
           };
+        }
+        // Bare-array unwrap (#1091): DeepSeek v4 Flash and other small/fast json_object-mode
+        // providers sometimes wrap a correct verdict object in an array (e.g.
+        // [{verdict:"reject",reason:"…"}]). Extract the first element instead of failing the
+        // whole review as malformed — the shape validation below still gates the payload.
+        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null) {
+          parsed = parsed[0];
         }
         const verdict = validateRedTeamVerdictShape(parsed);
         if (!verdict) {

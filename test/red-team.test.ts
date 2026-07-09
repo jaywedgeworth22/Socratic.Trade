@@ -178,6 +178,32 @@ describe("debateProposal — three-way verdict + shape-violation fail-closed (§
     expect(result.rejected).toBe(true);
   });
 
+  // #1091: DeepSeek v4 Flash and other json_object-mode providers sometimes wrap a correct
+  // verdict object in a bare array ([{verdict,reason}]). The parse unwraps the first element
+  // instead of failing the whole review as malformed. This regression guard must survive the
+  // single-adversary rewrite (the unwrap lives in debateProposal, before shape validation).
+  it("recovers a valid verdict wrapped in a bare array (#1091 json_object-mode recovery)", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY");
+    stubOpenAiJsonBody([{ verdict: "reject", reason: "Array-wrapped verdict." }]);
+
+    const result = await debateProposal(buyProposal(), undefined);
+    expect(result.available).toBe(true);
+    expect(result.verdict).toBe("reject");
+    expect(result.rejected).toBe(true);
+    expect(result.reason).toBe("Array-wrapped verdict.");
+  });
+
+  it("fails closed when a bare-array element is not a valid verdict object (#1091 guard)", async () => {
+    const { debateProposal } = await import("../src/lib/red-team");
+    await setupOpenAi("RT_ARRAY_BAD");
+    stubOpenAiJsonBody([123, "not an object"]);
+
+    const result = await debateProposal(buyProposal(), undefined);
+    expect(result.available).toBe(false);
+    expect(result.failureKind).toBe("malformed_response");
+  });
+
   it("classifies a persistent 429 as rate_limited (after the bounded retry)", async () => {
     const { debateProposal } = await import("../src/lib/red-team");
     await setupOpenAi("RT_429");
