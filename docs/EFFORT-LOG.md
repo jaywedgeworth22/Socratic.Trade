@@ -1278,6 +1278,12 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Autonomous-actions relative timestamps (MONET, intro-anim session, branch
+  `monet/autonomous-actions-timing-3676f7`) — IN PROGRESS 2026-07-09.** Owner: the Home
+  "Autonomous actions" rows should show relative timing top-right (15m ago / 1d ago) like
+  Journal entries. Reuses the `Ago` primitive (hover = exact time); `DecisionRowData.at`
+  wired from SocraticDecisionCase.createdAt / run createdAt / PendingProposal.createdAt.
+  Fileset: app/console/page.tsx only.
 - **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
   — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
   makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
