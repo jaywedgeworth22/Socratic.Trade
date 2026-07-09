@@ -170,6 +170,64 @@ describe("proposeStrategyTuning", () => {
     expect(requestedModels).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
   });
 
+  it("skips the rotation sentinel and reviews with the concrete Green model (no local-rules degradation)", async () => {
+    // Finding 3 / rotation-sentinel fallthrough: with redTeamLlmModel = "__rotate__" (a run-scoped
+    // rotation marker that only resolves inside runStrategyOnce), the tuning reviewer must NOT resolve
+    // the raw sentinel — resolveOpenAiModel would map it to "" and silently degrade this LLM review to
+    // local rules even though the UI panel promised a Green-model review. policyForTuningReviewer must
+    // fall through the sentinel to the concrete Green model.
+    const userId = `tune-review-rotate-${randomUUID()}`;
+    const { setPolicy, setStrategyPrompt } = await import("../src/lib/db");
+    const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_API_URL = "https://api.openai.com/v1/responses";
+    setStrategyPrompt("ROTATE REVIEW STRATEGY", userId);
+    setPolicy({
+      ...DEFAULT_POLICY,
+      accountNumber: "TUNE-ROTATE-INHERIT",
+      llmModel: "gpt-5.5",
+      redTeamLlmModel: "__rotate__",
+      scoringWeights: { ...DEFAULT_POLICY.scoringWeights }
+    }, userId);
+
+    const requestedModels: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      requestedModels.push(body.model);
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify({
+            summary: "Tune conservatively",
+            rationale: "Concrete Green model served the review.",
+            marketContext: "Macro is stable.",
+            performanceReadout: "No closed-lot evidence yet.",
+            proposedPrompt: "UNCHANGED",
+            scoringWeights: {
+              liquidity: null, momentum: null, value: null, quality: null,
+              volatility: null, sentiment: null, positioning: null, diversification: null
+            },
+            policy: {
+              maxOrderNotional: null, maxDailyNotional: null, maxSymbolExposurePct: null,
+              maxDailyOrders: null, maxProposalsPerRun: null, runCadenceMinutes: null,
+              strategyAuthority: null, runDuringExtendedHours: null
+            },
+            riskRules: { stopLossPct: null, takeProfitPct: null, trailingStopPct: null },
+            cautions: [],
+            confidenceScore: 70
+          })
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const proposal = await proposeStrategyTuning(userId);
+    // The reviewer used the concrete Green model, NOT the "__rotate__" sentinel — and did NOT degrade
+    // to local rules (which would mean generatedBy "local_rules" and zero fetch calls).
+    expect(requestedModels).toEqual(["gpt-5.5"]);
+    expect(proposal.generatedBy).toBe("llm");
+  });
+
   it("withholds factor-weight changes until 20 closed lots, even on weak performance", async () => {
     const { insertFillEvent, setPolicy, setStrategyPrompt } = await import("../src/lib/db");
     const { proposeStrategyTuning } = await import("../src/lib/strategy-tuning");

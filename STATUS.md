@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Model rotation: 3 codex P2 fixes folded into PR #1117 (MONET/Opus, branch `monet/model-rotation`)
+PR #1117 had all checks green + auto-merge armed; the only blocker was three unresolved codex-bot
+review threads (repo enforces `required_conversation_resolution`). All three confirmed real and fixed
+in ONE commit: (1) `policyForTuningReviewer` (`src/lib/strategy-tuning.ts`) is now sentinel-aware —
+`redTeamLlmModel="__rotate__"` no longer degrades the LLM tuning review to local-rules; it falls
+through to the first concrete configured model. (2) `callLessonLlm` (`src/lib/outcome-engine.ts`)
+guard is now `!key || !model` — a rotation policy no longer POSTs `model:""` (400) on every post-mortem
+lesson. (3) rotation pointer is resolve-early/commit-late: `resolveModelRotationForRun`
+(`src/lib/model-rotation.ts`) returns a `commit()` that `strategy.ts` calls immediately before the
+Green `proposeTrades` call (after account validation + all usage-budget skip gates), so an
+aborted/skipped run no longer burns a rotation slot or logs a phantom `model_rotation_pick`. New tests
+in all three test files. Gate green: tsc / lint 0-err / 3168 tests / build. See
+`docs/rollouts/2026-07-09-model-rotation-codex-fixes.md`.
 ## 2026-07-08 — Model rotation option "Rotate all models (testing)" (MONET, branch `monet/model-rotation`)
 Owner request: a Proposer/Reviewer picker option that rotates through all model combinations so the
 paper/test accounts accrue comparative live history (attribution is automatic via `proposedByModel`).

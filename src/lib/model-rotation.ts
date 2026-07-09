@@ -16,7 +16,13 @@
 // POINTER STATE: independent per-seat round-robin counters persisted via internal settings, keyed
 // `model_rotation:<userId>:<accountId>:<seat>`. To vary green/red COMBINATIONS rather than locking
 // phase (both counters advancing by 1 per run = a fixed pairing), the red counter advances one
-// EXTRA step whenever the green counter wraps a full cycle.
+// EXTRA step whenever the green counter wraps a full cycle. The pointer advance + pick audit are
+// COMMITTED LATE: `resolveModelRotationForRun` computes the picks early (so the budget preview can
+// price the concrete models) but returns a `commit()` the caller only invokes once the run is
+// actually committed to serving the LLM — after account validation and the usage-budget skip gate.
+// A run that aborts earlier holds the pointer, so a rotation slot is never burned on a run that
+// generated no proposal (no `proposedByModel` to match). Per-account run locks serialize same-account
+// runs, so the read-early / commit-late window has no TOCTOU.
 import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
 import { llmModelFamily } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
@@ -125,10 +131,16 @@ function rotationPointerKey(userId: string, accountId: string | undefined, seat:
 }
 
 /**
- * Resolve the rotation sentinel(s) on a policy into CONCRETE models for one strategy run.
- * Returns `{}` when neither seat is set to rotate. Reads + advances the per-(user, account, seat)
- * pointers and audits every pick (`model_rotation_pick`). Never throws: on an empty eligible pool
- * or any storage error the rotating seats resolve to "" (the normal unconfigured/fail-closed state
+ * Resolve the rotation sentinel(s) on a policy into CONCRETE models for one strategy run, and return
+ * a `commit()` that PERSISTS the side effects (per-seat pointer advance + `model_rotation_pick`
+ * audit). The picks are computed EARLY so the caller's budget preview can reason about the concrete
+ * models this run would serve, but the pointer only advances when `commit()` is called — the caller
+ * invokes it once the run is actually committed to serving the LLM (AFTER account validation + the
+ * usage-budget skip gate, immediately before the Green proposeTrades call). A run that aborts before
+ * that leaves the pointer untouched, so an aborted run never burns a rotation slot nor logs a phantom
+ * pick with no `proposedByModel` to match (Finding 3). `commit` is ALWAYS present (a no-op when
+ * neither seat rotates, on an empty eligible pool, or on any storage error). Never throws: an empty
+ * pool or storage error resolves the rotating seats to "" (the normal unconfigured/fail-closed state
  * under no-defaults) rather than letting the raw sentinel reach a provider.
  */
 export function resolveModelRotationForRun(input: {
@@ -136,10 +148,10 @@ export function resolveModelRotationForRun(input: {
   accountId?: string;
   runId: string;
   policy: { llmModel?: string | null; redTeamLlmModel?: string | null };
-}): { llmModel?: string; redTeamLlmModel?: string } {
+}): { llmModel?: string; redTeamLlmModel?: string; commit: () => void } {
   const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
   const rotateRed = isModelRotationSentinel(input.policy.redTeamLlmModel);
-  if (!rotateGreen && !rotateRed) return {};
+  if (!rotateGreen && !rotateRed) return { commit: () => {} };
   try {
     const { pool, skipped } = eligibleRotationPool(input.userId);
     if (pool.length === 0) {
@@ -157,7 +169,8 @@ export function resolveModelRotationForRun(input: {
       );
       return {
         ...(rotateGreen ? { llmModel: "" } : {}),
-        ...(rotateRed ? { redTeamLlmModel: "" } : {})
+        ...(rotateRed ? { redTeamLlmModel: "" } : {}),
+        commit: () => {}
       };
     }
     const greenKey = rotationPointerKey(input.userId, input.accountId, "green");
@@ -170,31 +183,43 @@ export function resolveModelRotationForRun(input: {
       redCounter: getInternalSetting<number>(redKey) ?? 0
     });
     const out: { llmModel?: string; redTeamLlmModel?: string } = {};
+    // Per-seat side effects (pointer advance + pick audit) are DEFERRED into `commit`: the models are
+    // known now (so the budget preview can price them) but the pointer must only advance once the run
+    // is committed to serving the LLM. If the caller returns/throws/skips before calling commit(), the
+    // pointer holds and nothing is audited — no rotation slot burned on an aborted run (Finding 3).
+    const commits: Array<() => void> = [];
     for (const [seat, pick, key] of [
       ["green", advance.green, greenKey],
       ["red", advance.red, redKey]
     ] as const) {
       if (!pick) continue;
-      setInternalSetting(key, pick.nextPointer);
-      audit(
-        "model_rotation_pick",
-        {
-          runId: input.runId,
-          seat,
-          model: pick.model,
-          pointer: pick.pointer,
-          nextPointer: pick.nextPointer,
-          wrapped: pick.wrapped,
-          poolSize: pool.length,
-          skippedNoCredential: skipped
-        },
-        input.userId,
-        input.accountId
-      );
+      commits.push(() => {
+        setInternalSetting(key, pick.nextPointer);
+        audit(
+          "model_rotation_pick",
+          {
+            runId: input.runId,
+            seat,
+            model: pick.model,
+            pointer: pick.pointer,
+            nextPointer: pick.nextPointer,
+            wrapped: pick.wrapped,
+            poolSize: pool.length,
+            skippedNoCredential: skipped
+          },
+          input.userId,
+          input.accountId
+        );
+      });
       if (seat === "green") out.llmModel = pick.model;
       else out.redTeamLlmModel = pick.model;
     }
-    return out;
+    return {
+      ...out,
+      commit: () => {
+        for (const runCommit of commits) runCommit();
+      }
+    };
   } catch (error) {
     // Fail safe, not silent: a broken pointer store must not kill the run or leak the sentinel.
     // No-defaults (owner 2026-07-07): resolve the rotating seat(s) to "" — the normal
@@ -202,7 +227,8 @@ export function resolveModelRotationForRun(input: {
     console.error("[model-rotation] pick failed; failing the seat closed (no default model):", error);
     return {
       ...(rotateGreen ? { llmModel: "" } : {}),
-      ...(rotateRed ? { redTeamLlmModel: "" } : {})
+      ...(rotateRed ? { redTeamLlmModel: "" } : {}),
+      commit: () => {}
     };
   }
 }

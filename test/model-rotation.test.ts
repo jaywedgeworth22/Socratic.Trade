@@ -116,16 +116,18 @@ describe("eligibleRotationPool (credential-missing skip)", () => {
 });
 
 describe("resolveModelRotationForRun", () => {
-  it("returns {} when neither seat holds the sentinel", async () => {
+  it("returns no override (only a no-op commit) when neither seat holds the sentinel", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun } = await import("../src/lib/model-rotation");
-    const out = resolveModelRotationForRun({
+    const { commit, ...override } = resolveModelRotationForRun({
       userId: `rot-none-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
       policy: { llmModel: "gpt-5.4-mini", redTeamLlmModel: "claude-haiku-4-5" }
     });
-    expect(out).toEqual({});
+    expect(override).toEqual({});
+    expect(typeof commit).toBe("function");
+    expect(() => commit()).not.toThrow(); // no-op — nothing to persist
   });
 
   it("rotates the green seat per run with a persisted pointer, never returning the sentinel", async () => {
@@ -149,8 +151,9 @@ describe("resolveModelRotationForRun", () => {
       expect(out.llmModel).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
       expect(out.redTeamLlmModel).toBeUndefined(); // red seat not rotating
       served.push(out.llmModel!);
+      out.commit(); // commit-late: the pointer only advances once the run serves the LLM
     }
-    // One full cycle serves every eligible model exactly once, in pool order.
+    // One full cycle of COMMITTED runs serves every eligible model exactly once, in pool order.
     expect(served).toEqual(pool);
   });
 
@@ -169,6 +172,7 @@ describe("resolveModelRotationForRun", () => {
     });
     expect(out.llmModel).toMatch(/^gpt-/);
     expect(out.redTeamLlmModel).toMatch(/^gpt-/);
+    out.commit(); // pick audits + pointer advance are only written on commit (Finding 3: commit-late)
     const audits = getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
       .all(userId) as Array<{ payload: string }>;
@@ -191,7 +195,7 @@ describe("resolveModelRotationForRun", () => {
   it("fails the rotating seats closed (empty override models, not the sentinel) when no credential resolves at all", async () => {
     noEnvKeys();
     const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
-    const out = resolveModelRotationForRun({
+    const { commit, ...override } = resolveModelRotationForRun({
       userId: `rot-nokeys-${randomUUID()}`,
       accountId: "acct-1",
       runId: randomUUID(),
@@ -199,7 +203,57 @@ describe("resolveModelRotationForRun", () => {
     });
     // No-defaults (owner 2026-07-07): an empty pool resolves the rotating seats to "" — the normal
     // unconfigured/fail-closed state — never the raw "__rotate__" sentinel nor a removed default.
-    expect(out).toEqual({ llmModel: "", redTeamLlmModel: "" });
+    expect(override).toEqual({ llmModel: "", redTeamLlmModel: "" });
+    expect(typeof commit).toBe("function");
+    expect(() => commit()).not.toThrow(); // no-op — no pointer to advance on an empty pool
+  });
+
+  it("defers the pointer advance and pick audit until commit() is called (commit-late)", async () => {
+    noEnvKeys();
+    const userId = `rot-commit-${randomUUID()}`;
+    const accountId = "acct-commit";
+    const { upsertUserApiKey, getDb, getInternalSetting } = await import("../src/lib/db");
+    const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    const pointerKey = `model_rotation:${userId}:${accountId}:green`;
+    const auditCount = () =>
+      (getDb()
+        .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
+        .get(userId) as { n: number }).n;
+    const out = resolveModelRotationForRun({
+      userId,
+      accountId,
+      runId: randomUUID(),
+      policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL }
+    });
+    expect(out.llmModel).toBeTruthy();
+    // Resolve alone must NOT persist the pointer or write the pick audit.
+    expect(getInternalSetting<number>(pointerKey)).toBeUndefined();
+    expect(auditCount()).toBe(0);
+    // commit() (the run reached the LLM) persists both.
+    out.commit();
+    expect(getInternalSetting<number>(pointerKey)).toBe(1);
+    expect(auditCount()).toBe(1);
+  });
+
+  it("holds the pointer when a run aborts before commit — no rotation slot burned (Finding 3)", async () => {
+    noEnvKeys();
+    const userId = `rot-abort-${randomUUID()}`;
+    const accountId = "acct-abort";
+    const { upsertUserApiKey, getInternalSetting } = await import("../src/lib/db");
+    const { resolveModelRotationForRun, LLM_MODEL_ROTATION_SENTINEL } = await import("../src/lib/model-rotation");
+    upsertUserApiKey(userId, "openai", "sk-test", "test");
+    const pointerKey = `model_rotation:${userId}:${accountId}:green`;
+    // Run 1 resolves a pick but ABORTS before commit (e.g. account unavailable / over budget) — never commits.
+    const first = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    // Run 2 resolves next: because run 1 never committed, the pointer is still at slot 0, so it serves the SAME model.
+    const second = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    expect(second.llmModel).toBe(first.llmModel);
+    expect(getInternalSetting<number>(pointerKey)).toBeUndefined(); // no slot consumed by the aborted runs
+    // Run 2 now actually serves the LLM and commits → the pointer finally advances, so run 3 gets a different model.
+    second.commit();
+    const third = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
+    expect(third.llmModel).not.toBe(first.llmModel);
   });
 });
 
