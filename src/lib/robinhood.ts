@@ -46,6 +46,53 @@ export interface RobinhoodMcpHealth {
   warning?: string;
 }
 
+/**
+ * Robinhood's minimum dollar-based/fractional equity order size. Below this, `review_equity_order`
+ * returns an `order_checks` alertType telling us the order will be rejected outright (see
+ * ROBINHOOD_SUB_MINIMUM_ALERT_TYPES). Exposed as a named per-broker constant — never hardcode the
+ * literal `1` in a caller for this.
+ */
+export const ROBINHOOD_MIN_ORDER_NOTIONAL = 1;
+
+/**
+ * `order_checks.alertType` values that mean the order is a GUARANTEED reject for being below
+ * Robinhood's minimum order size — not a soft warning, an unconditional floor no sizing/retry can
+ * satisfy for the same notional. `review_equity_order` is a genuine pre-flight: if either of these
+ * comes back, placing the order anyway will fail every time.
+ */
+export const ROBINHOOD_SUB_MINIMUM_ALERT_TYPES = new Set([
+  "EQUITY_DOLLAR_BASED_MINIMUM_AMOUNT_ERROR",
+  "EQUITY_SUB_DOLLAR_SHARE_BASED_ORDER"
+]);
+
+/**
+ * Tolerantly normalize Robinhood's `review_equity_order` `order_checks` field, which can come back
+ * as a single check object, an array of check objects, or be absent entirely — the MCP server's
+ * exact envelope isn't documented, so this is deliberately liberal about shape. Extracts every
+ * present alertType-shaped value plus any human-readable message/description/reason so callers can
+ * build a pre-flight rejection signal without depending on one exact schema.
+ */
+export function parseRobinhoodOrderChecks(raw: unknown): { alertTypes: string[]; messages: string[] } {
+  const root = raw as Record<string, unknown> | undefined;
+  const rawChecks = root?.order_checks ?? (root as Record<string, unknown> | undefined)?.orderChecks;
+  const rows: unknown[] = Array.isArray(rawChecks)
+    ? rawChecks
+    : rawChecks && typeof rawChecks === "object"
+      ? [rawChecks]
+      : [];
+  const alertTypes: string[] = [];
+  const messages: string[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const check = row as Record<string, unknown>;
+    const alertType = check.alertType ?? check.alert_type ?? check.type;
+    if (alertType !== undefined && alertType !== null && alertType !== "") alertTypes.push(String(alertType));
+    const message = check.message ?? check.description ?? check.detail ?? check.reason;
+    if (message !== undefined && message !== null && message !== "") messages.push(String(message));
+  }
+  return { alertTypes, messages };
+}
+
 export function getRobinhoodGateway(userId: string): BrokerGateway {
   // Robinhood is MCP-only. When it isn't connected, the MCP gateway surfaces honest
   // errors and the health card shows "not connected" — it never returns fabricated data.
@@ -350,11 +397,25 @@ class HttpMcpRobinhoodGateway implements BrokerGateway {
 
   async reviewEquityOrder(input: EquityOrderInput): Promise<ReviewedOrder> {
     const raw = await this.callTool("review_equity_order", toMcpOrder(input)) as Record<string, unknown>;
+    // Robinhood's own pre-flight review already tells us when an order is a guaranteed reject (e.g.
+    // the sub-$1 minimum) via `order_checks`, not the top-level `alerts` array read below — surface
+    // it as a structured signal so callers can skip a doomed order instead of placing (and
+    // rejecting, and alerting on) it anyway.
+    const { alertTypes, messages } = parseRobinhoodOrderChecks(raw);
+    const blockingAlertTypes = alertTypes.filter((alertType) => ROBINHOOD_SUB_MINIMUM_ALERT_TYPES.has(alertType));
     return {
       estimatedNotional: number(
         raw.estimated_cost ?? raw.estimated_notional ?? raw.notional ?? raw.total ?? raw.estimated_amount ?? input.dollarAmount ?? 0
       ),
       alerts: Array.isArray(raw.alerts) ? raw.alerts.map(String) : [],
+      ...(blockingAlertTypes.length > 0
+        ? {
+            preflightBlock: {
+              alertTypes: blockingAlertTypes,
+              message: messages[0] ?? `Robinhood rejects this order (${blockingAlertTypes.join(", ")}).`
+            }
+          }
+        : {}),
       raw
     };
   }

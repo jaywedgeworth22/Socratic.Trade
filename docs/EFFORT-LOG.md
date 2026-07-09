@@ -756,6 +756,17 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
+  `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
+  tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
+  adversarial verify): Gemini Bull-schema 400 fixed (llm-call.ts dialect shaping); Robinhood
+  $1-minimum trim loop fixed (order_checks + cooldown receipt + dust-exit exemption); ACTIVE
+  naked-short remediation bug fixed (held-leg exclusion auto+manual, position guard, TOCTOU
+  re-verify, in-flight lock — owner push-notified to cancel resting d642d572 pre-open);
+  ALPHAVANTAGE_API_KEYS pool; acknowledged_at lifecycle + auto-ack sweep + repeat-dedup;
+  twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
+  threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
+  docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
   2026-07-08, PR #1116 open, auto-merge armed (gate green: tsc/lint/2996 tests/build).** Once-per-UTC-day Fable-class review of learned_context / pending learning
   decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence

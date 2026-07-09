@@ -240,11 +240,19 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
 /**
  * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
  * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
- * within STALE_THRESHOLD_MS (default 10 min) is marked failed with a receipted reason.
+ * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
+ * still has recent audit activity (see the in-loop check below), in which case it's left alone.
  *
  * Returns the number of repaired rows for logging/auditing.
  */
-const STALE_RUN_THRESHOLD_MS = 10 * 60_000; // 10 min — a tick-cadence run takes ~1-2 min at most
+// 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
+// slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
+// threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later
+// having already placed 4 real trades — a live run was declared dead while it was still trading.
+// 30 min comfortably clears worst-case multi-step LLM runs with margin; a tick-cadence run still
+// normally finishes in ~1-2 min, so this only widens the window for the genuine crash case, it
+// doesn't meaningfully delay detecting an actual stuck/killed process.
+const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
 export function markStaleRunningRuns(now: number = Date.now()): number {
   const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
   const db = getDb();
@@ -261,6 +269,16 @@ export function markStaleRunningRuns(now: number = Date.now()): number {
     }>;
   let count = 0;
   for (const row of stale) {
+    // Extra grace beyond the raised threshold: audit_events has no run_id COLUMN, but nearly every
+    // strategy-run audit kind carries `runId` in its JSON payload (e.g. strategy_bear_review_unavailable,
+    // order placements) — so a run that's still emitting audit rows more recently than the cutoff is
+    // demonstrably still alive, just slow, not crashed. This json_extract only runs for rows ALREADY
+    // past the time cutoff (typically 0-1 per sweep tick), so it's cheap despite no index on payload.
+    const recentActivity = db
+      .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
+      .get(row.id, cutoff);
+    if (recentActivity) continue;
+
     const res = db
       .prepare(
         `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
