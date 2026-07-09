@@ -202,6 +202,12 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
+  — IN PROGRESS 2026-07-08, landing.** Per-select stats button on both Proposer/Reviewer pickers →
+  shared Sheet drawer: cost/call + p50 latency (live `llm_usage`/`llm_call_latency` when >=3 samples,
+  else labeled 2026-07-08 benchmark), perf column sample-gated (hidden <20 closed trades, caveat to
+  50; Red perf deliberately dashed — per-run attribution). New `/api/llm-usage/model-stats` + pure
+  `src/lib/model-stats.ts` (13 tests) + additive `ClosedLot.entryModel`.
 - **Proposer/Reviewer Model naming + Red description fix (MONET, branch `monet/model-picker-copy2`)
   — IN PROGRESS 2026-07-08, landing.** Copy-only on both pickers; Red attribution gap
   (`reviewedByModel`) queued for the single-adversary lane.

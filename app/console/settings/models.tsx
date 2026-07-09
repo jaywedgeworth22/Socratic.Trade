@@ -13,6 +13,7 @@ import { CHAT_MODEL_STORAGE_KEY, DEFAULT_CHAT_MODEL } from "../assistant/models"
 import { savePolicy, ConsoleApiError } from "../lib/api";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
 import { Btn, Card, Field, Select } from "../ui/primitives";
 import { fetchChatProviders } from "./lib";
@@ -277,32 +278,42 @@ export function ModelsCard() {
           hint="aka Green Team or Bull — writes the trade proposals each run."
           htmlFor="models-green"
         >
-          <ModelSelect
-            id="models-green"
-            value={green}
-            emptyLabel="app default (gpt-5.4-mini)"
-            emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
-            providers={providers}
-            title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
-            role="proposer"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-green"
+                value={green}
+                emptyLabel="app default (gpt-5.4-mini)"
+                emptyTitle="No explicit choice — the app's default strategist model is used (server config can override)."
+                providers={providers}
+                title="The model that generates trade proposals for this account. Cost tiers: $ cheapest — $$$ premium."
+                role="proposer"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), llmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="proposer" />
+          </div>
         </Field>
         <Field
           label="Reviewer Model"
           hint="aka Red Team or Bear — reviews every proposal each run + deeper debate on high-conviction ideas. Blank = same as proposer."
           htmlFor="models-red"
         >
-          <ModelSelect
-            id="models-red"
-            value={red}
-            emptyLabel="same as strategist"
-            emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
-            providers={providers}
-            title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
-            role="red-team"
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
-          />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <ModelSelect
+                id="models-red"
+                value={red}
+                emptyLabel="same as strategist"
+                emptyTitle="No separate reviewer — the strategist model reviews its own high-conviction ideas."
+                providers={providers}
+                title="The adversarial reviewer model. A different provider here gives a genuinely independent second opinion."
+                role="red-team"
+                onChange={(next) => setDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: next }))}
+              />
+            </div>
+            <ModelStatsButton role="red-team" />
+          </div>
         </Field>
         <Field
           label="Coach"

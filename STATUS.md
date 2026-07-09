@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
+Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
+realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +
+`app/console/strategy/page.tsx`) opens a shared drawer (`app/console/components/model-stats-drawer.tsx`,
+Sheet + con-table) listing every catalog model: cost/call and p50 latency (live from `llm_usage` /
+`llm_call_latency` when >=3 samples, else the 2026-07-08 benchmark JSON — always labeled which), and a
+performance column gated by sample size (hidden behind "needs >=20 closed trades (n=X)" under 20,
+small-sample caveat 20-49, plain at 50+; Reviewer perf deliberately a dash — Red attribution is
+per-run, not per-trade). New GET `/api/llm-usage/model-stats` (auth mirrors sibling llm-usage route);
+pure rollup in `src/lib/model-stats.ts` (13 unit tests); `ClosedLot.entryModel` additively threaded
+through `calculatePnl` from the entry proposal's `proposedByModel`. Gate: tsc clean, lint 0 errors,
+2997 tests green, route + both pages runtime-smoked on a dev server.
+See `docs/rollouts/2026-07-08-model-cost-drawer.md`.
+
 ## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
 All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
 requirement, implemented by 14 file-disjoint subagents across two workflow waves and

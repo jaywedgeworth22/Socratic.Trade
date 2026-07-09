@@ -62,6 +62,9 @@ export interface ClosedLot {
   mae?: number;
   /** Max Favorable Excursion (% from entry price, typically positive for longs) persisted after post-mortem. */
   mfe?: number;
+  /** Model that proposed the ENTRY (proposedByModel stamped on the opening proposal), for the
+   * per-model realized-performance rollup behind the model pickers (src/lib/model-stats.ts). */
+  entryModel?: string;
 }
 
 /** Realized-outcome stats grouped by the thesis a position was opened under. */
@@ -370,6 +373,7 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
       sector?: string;
       dominantFactor?: MarketFactor;
       entryAt?: string;
+      entryModel?: string;
     }>
   >();
   const closedLots: ClosedLot[] = [];
@@ -392,7 +396,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         confidence: meta.confidence,
         sector: meta.sector,
         dominantFactor: meta.dominantFactor,
-        entryAt: fill.filledAt
+        entryAt: fill.filledAt,
+        entryModel: meta.entryModel
       });
       addAttribution(attribution, fill, 0);
       continue;
@@ -434,7 +439,8 @@ export function calculatePnl(fills: FillEvent[], currentPrices: Record<string, n
         sector: lot.sector,
         dominantFactor: lot.dominantFactor,
         mae: fill.mae,
-        mfe: fill.mfe
+        mfe: fill.mfe,
+        entryModel: lot.entryModel
       });
       addAttribution(attribution, fill, pnl);
       // Change A: dual-sided credit — also credit the ENTRY run (the run that opened this lot).
@@ -1334,7 +1340,7 @@ const MARKET_FACTOR_KEYS = new Set<string>([
   "liquidity", "momentum", "value", "quality", "volatility", "sentiment", "positioning", "diversification"
 ]);
 
-function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor } {
+function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: string; confidence?: number; sector?: string; dominantFactor?: MarketFactor; entryModel?: string } {
   const raw = fill.raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
@@ -1352,7 +1358,8 @@ function thesisMetaFromFill(fill: FillEvent): { thesisTag?: string; regime?: str
     regime: typeof p.entryMarketRegime === "string" ? p.entryMarketRegime : undefined,
     confidence: typeof p.confidenceScore === "number" ? p.confidenceScore : undefined,
     sector,
-    dominantFactor
+    dominantFactor,
+    entryModel: typeof p.proposedByModel === "string" && p.proposedByModel ? p.proposedByModel : undefined
   };
 }
 
