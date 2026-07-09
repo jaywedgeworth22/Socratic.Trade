@@ -27,6 +27,19 @@ Owner still owed: cancel d642d572 pre-open, tiingo 403 key/plan, AV keys #2-4 + 
 Gates: lint 0 err / tsc clean / 3077 tests / build green.
 Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 
+## 2026-07-08 — LIVE bulk approval typed-confirm flow (CODEX, branch `codex/live-bulk-typed-confirm`)
+Resumed the Codex approvals lane after MONET confirmed the owner/product constraints. Bulk reject
+remains the existing one-click inline confirm. Bulk approve now includes selected LIVE proposals:
+if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
+before approval; if the owner has turned that setting off, live bulk approval is one-click. Each
+selected row still calls the existing per-proposal approval endpoint, so broker/account/notional
+re-checks and partial placed/blocked/failed outcomes stay independent. Verification:
+`./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
+`./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
+full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
+`npm run build` passed with only the existing Sentry Edge-runtime warning.
+Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
+
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
 Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
 realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +

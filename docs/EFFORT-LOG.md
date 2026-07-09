@@ -1155,11 +1155,21 @@ discrepancies that motivated these rows._
   2026-07-04 12:38; NO PR in `gh pr list --state all`. Stacked base (`w2-episodic-retrieval`) already
   merged via #437, so it can now be merge-forwarded onto main standalone. Rotting since 07-04.
   action=open-PR._
-- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M)** — Extend #807's
+- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M) — IN PROGRESS 2026-07-08.**
+  Branch/worktree: `codex/live-bulk-typed-confirm` /
+  `/Users/jay/.codex/worktrees/socratic-live-bulk-typed-confirm`.
+  Extend #807's
   bulk actions to LIVE proposals with a single aggregate typed confirmation (per-item provenance
   preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
   bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
-  confirms are the exact ceremony the product philosophy says to minimize.)_
+  confirms are the exact ceremony the product philosophy says to minimize.)_ 2026-07-08 CODEX:
+  MONET guidance received and implemented in-progress: bulk reject remains the existing one-click
+  inline confirm; LIVE bulk approve opens one aggregate typed-confirm sheet only when
+  `policy.requireTypedConfirmation` is on; when it is off, live bulk approve is one-click. Each
+  selected proposal still runs through the existing per-item approval endpoint, preserving
+  independent placed/blocked/failed results. Focused test, lint (0 errors), typecheck, full
+  Vitest (301 files / 3101 tests via low workers), and `npm run build` are green; build emitted
+  only the existing Sentry Edge-runtime warning.
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).
 - **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
   2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,

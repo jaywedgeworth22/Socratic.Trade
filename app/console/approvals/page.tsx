@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ListFilter, ShieldAlert } from "lucide-react";
+import type { PendingProposal } from "@/lib/types";
 import { deriveStateInfo, activeConnectedAccount } from "../lib/derive";
 import { useConsoleData } from "../lib/useConsoleData";
 import { approveProposal, rejectProposal, type ApproveResult } from "../lib/api";
@@ -10,8 +11,10 @@ import { fetchPendingLearnedContext } from "../lib/learned-context";
 import { ApprovalCard } from "../components/approval-card";
 import { AlertCenter } from "../components/alert-center";
 import { Card, Chip, Btn, Select, TextInput } from "../ui/primitives";
+import { Sheet } from "../ui/sheet";
 import { LearnedContextInbox, LearnedFactsArchive } from "./learned-context";
 import {
+  approvalEstimatedNotional,
   approvalIsLive,
   summarizeBulkSelection,
   summarizePendingProposals,
@@ -91,6 +94,7 @@ export default function ApprovalsPage() {
   const [sort, setSort] = useState<ApprovalSort>("newest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<"approve" | "reject" | null>(null);
+  const [liveApproveBatch, setLiveApproveBatch] = useState<PendingProposal[] | null>(null);
   // The reject-count this arm was raised for, or null when disarmed. If the
   // selection changes underneath an armed button (filter change, checkbox
   // toggle), rejectArmedEffective below falls false on its own — no effect
@@ -117,6 +121,7 @@ export default function ApprovalsPage() {
   const selection = useMemo(() => summarizeBulkSelection(filtered, effectiveSelectedIds), [filtered, effectiveSelectedIds]);
   const state = snapshot ? deriveStateInfo(snapshot.policy) : null;
   const stopped = snapshot?.policy.systemState === "halted";
+  const requiresTypedLiveApproval = snapshot?.policy.requireTypedConfirmation !== false;
   const activeAccountId = snapshot ? activeConnectedAccount(snapshot)?.id : undefined;
   const allVisibleSelected = filtered.length > 0 && filtered.every((proposal) => effectiveSelectedIds.has(proposal.id));
   // A stale arm must never fire against a different set of proposals than the
@@ -165,12 +170,12 @@ export default function ApprovalsPage() {
 
   const finishApproval = (result: ApproveResult) => {
     if (result.status === "placed") return "placed";
+    if (result.status === "paper") return "placed";
     if (result.status === "blocked") return "blocked";
     return "other";
   };
 
-  const runBulkApprove = async () => {
-    const selected = filtered.filter((proposal) => effectiveSelectedIds.has(proposal.id) && !approvalIsLive(proposal));
+  const runBulkApproveBatch = async (selected: PendingProposal[], includeLiveConfirmation: boolean) => {
     if (selected.length === 0) return;
     setBulkBusy("approve");
     let placed = 0;
@@ -179,7 +184,17 @@ export default function ApprovalsPage() {
     try {
       for (const proposal of selected) {
         try {
-          const result = await approveProposal(proposal.id);
+          const liveConfirmation =
+            includeLiveConfirmation && approvalIsLive(proposal)
+              ? {
+                  proposalId: proposal.id,
+                  accountNumber: proposal.accountNumber ?? null,
+                  executionMode: "broker/live" as const,
+                  estimatedNotional: approvalEstimatedNotional(proposal),
+                  typedText: liveApprovalText(proposal)
+                }
+              : undefined;
+          const result = await approveProposal(proposal.id, liveConfirmation);
           const status = finishApproval(result);
           if (status === "placed") placed += 1;
           else if (status === "blocked") blocked += 1;
@@ -191,12 +206,28 @@ export default function ApprovalsPage() {
       resetSelection();
       toast.push(
         failed > 0 ? "warn" : "pos",
-        `Approved ${placed} safe proposal${placed === 1 ? "" : "s"}`,
+        `Approved ${placed} proposal${placed === 1 ? "" : "s"}`,
         [`${blocked} blocked on re-check`, failed > 0 ? `${failed} failed` : undefined].filter(Boolean).join(" · ") || undefined
       );
     } finally {
       setBulkBusy(null);
     }
+  };
+
+  const runBulkApprove = () => {
+    const selected = filtered.filter((proposal) => effectiveSelectedIds.has(proposal.id));
+    if (selected.length === 0) return;
+    if (requiresTypedLiveApproval && selected.some(approvalIsLive)) {
+      setLiveApproveBatch(selected);
+      return;
+    }
+    void runBulkApproveBatch(selected, false);
+  };
+
+  const submitLiveApproveBatch = async () => {
+    const selected = liveApproveBatch ?? [];
+    setLiveApproveBatch(null);
+    await runBulkApproveBatch(selected, true);
   };
 
   const runBulkReject = async () => {
@@ -338,16 +369,26 @@ export default function ApprovalsPage() {
                 Select visible
               </label>
               <Chip tone="muted">{selection.selectedCount} selected</Chip>
-              {selection.liveCount > 0 && <Chip tone="warn">{selection.liveCount} live need typed confirm</Chip>}
+              {selection.liveCount > 0 && (
+                <Chip tone={requiresTypedLiveApproval ? "warn" : "live"}>
+                  {selection.liveCount} live {requiresTypedLiveApproval ? "need typed confirm" : "one-click"}
+                </Chip>
+              )}
               <div className="ml-auto flex flex-wrap gap-2">
                 <Btn
                   variant="pos"
                   size="sm"
-                  disabled={stopped || bulkBusy !== null || selection.safeApproveCount === 0}
+                  disabled={stopped || bulkBusy !== null || selection.approveCount === 0}
                   onClick={runBulkApprove}
-                  title={stopped ? "The system is stopped, so approval actions are refused." : "Approves the selected paper-safe ideas one by one through the existing server path."}
+                  title={
+                    stopped
+                      ? "The system is stopped, so approval actions are refused."
+                      : selection.liveCount > 0 && requiresTypedLiveApproval
+                        ? "Approves selected proposals one by one through the existing server path after one batch live-confirm phrase."
+                        : "Approves selected proposals one by one through the existing server path."
+                  }
                 >
-                  {bulkBusy === "approve" ? "Approving..." : `Approve safe (${selection.safeApproveCount})`}
+                  {bulkBusy === "approve" ? "Approving..." : `Approve selected (${selection.approveCount})`}
                 </Btn>
                 <Btn
                   variant="dangerOutline"
@@ -420,13 +461,13 @@ export default function ApprovalsPage() {
       </div>
 
       <div className="flex min-w-0 flex-col gap-4">
-        {selection.liveCount > 0 && (
+        {selection.liveCount > 0 && requiresTypedLiveApproval && (
           <Card>
             <div className="flex items-start gap-2 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
               <ShieldAlert size={15} className="mt-0.5 shrink-0 text-[color:var(--con-warn)]" />
               <p>
-                Bulk approve deliberately skips LIVE proposals. Those still use the server-authoritative typed phrase on the
-                individual receipt so the broker path stays unchanged.
+                Bulk approve now supports LIVE proposals with one batch typed phrase. Each selected order still goes
+                through the existing per-proposal server approval path and can block independently.
               </p>
             </div>
           </Card>
@@ -439,6 +480,114 @@ export default function ApprovalsPage() {
           maxItems={8}
         />
       </div>
+      <BulkLiveApproveSheet
+        open={liveApproveBatch !== null}
+        proposals={liveApproveBatch ?? []}
+        busy={bulkBusy === "approve"}
+        onClose={() => setLiveApproveBatch(null)}
+        onSubmit={() => void submitLiveApproveBatch()}
+      />
     </div>
+  );
+}
+
+function liveApprovalText(proposal: PendingProposal): string {
+  return `APPROVE LIVE ${proposal.proposal.symbol.toUpperCase()}`;
+}
+
+function bulkLiveApprovalText(count: number): string {
+  return `APPROVE ${count} LIVE ${count === 1 ? "ORDER" : "ORDERS"}`;
+}
+
+function BulkLiveApproveSheet({
+  open,
+  proposals,
+  busy,
+  onClose,
+  onSubmit
+}: {
+  open: boolean;
+  proposals: PendingProposal[];
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const live = useMemo(() => proposals.filter(approvalIsLive), [proposals]);
+  const paperCount = proposals.length - live.length;
+  const expectedText = bulkLiveApprovalText(live.length);
+  const matches = typed.trim().toUpperCase() === expectedText;
+  const liveNotional = live.reduce((sum, proposal) => sum + approvalEstimatedNotional(proposal), 0);
+
+  const close = () => {
+    setTyped("");
+    onClose();
+  };
+
+  const submit = () => {
+    setTyped("");
+    onSubmit();
+  };
+
+  return (
+    <Sheet open={open} onClose={close} title="Approve live batch" tone="live">
+      <div className="mb-3 rounded-lg border border-[color:var(--con-live-border)] bg-[color:var(--con-surface-2)] p-3 text-[length:var(--con-fs-sm)]">
+        <div className="font-bold">
+          {live.length} live order{live.length === 1 ? "" : "s"} selected
+        </div>
+        <p className="con-num mt-1">
+          Estimated live notional <strong>{fmtMoney(liveNotional)}</strong>
+          {paperCount > 0 ? ` · plus ${paperCount} paper proposal${paperCount === 1 ? "" : "s"}` : ""}
+        </p>
+        <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+          The server re-checks each proposal separately at approval time. If one row blocks or expires, the other rows keep
+          their own result.
+        </p>
+      </div>
+
+      <div className="mb-3 max-h-48 overflow-auto rounded-lg border border-[color:var(--con-line)]">
+        {live.map((proposal) => (
+          <div key={proposal.id} className="flex items-center justify-between gap-3 border-b border-[color:var(--con-line)] px-3 py-2 last:border-b-0">
+            <div>
+              <div className="font-semibold">
+                {proposal.proposal.side.toUpperCase()} {proposal.proposal.symbol}
+              </div>
+              <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                {proposal.accountNumber ? `account ...${proposal.accountNumber.slice(-4)}` : "active live account"}
+              </div>
+            </div>
+            <div className="con-num shrink-0 text-[length:var(--con-fs-sm)]">{fmtMoney(approvalEstimatedNotional(proposal))}</div>
+          </div>
+        ))}
+      </div>
+
+      <label className="con-label" htmlFor="bulk-live-typed-confirm">
+        Type exactly: <span className="con-mono text-[color:var(--con-fg)]">{expectedText}</span>
+      </label>
+      <TextInput
+        id="bulk-live-typed-confirm"
+        value={typed}
+        onChange={(event) => setTyped(event.target.value)}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="characters"
+        spellCheck={false}
+        onPaste={(event) => event.preventDefault()}
+        placeholder={expectedText}
+        className="con-mono"
+      />
+      <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+        This is one batch confirmation. The app still submits every proposal through the existing approval endpoint.
+      </p>
+
+      <div className="mt-4 flex justify-end gap-2">
+        <Btn variant="ghost" onClick={close} disabled={busy}>
+          Cancel
+        </Btn>
+        <Btn variant="primary" disabled={!matches || busy || live.length === 0} onClick={submit}>
+          {busy ? "Approving..." : "Approve live batch"}
+        </Btn>
+      </div>
+    </Sheet>
   );
 }
