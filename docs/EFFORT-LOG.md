@@ -1539,3 +1539,4 @@ brackets; effort S/M/L.
 | 2026-07-09 | Socratic.Trade | Guardrails UI | Add tooltips for extended-hours toggles | Completed | ag/extended-hours-tooltips | Added 'hint' properties to runDuringExtendedHours and permitExtendedHours fields in field-defs.ts. |
 - **Verify Lint and Tests (AG)** — COMPLETED 2026-07-09. Ran `npm run lint` and `npm run test` across `trading-antigravity`. 0 errors and 0 failing tests found. No fixes required.
 | 2026-07-09 | Socratic.Trade | Next.js Server | Fix SSE deadlock exhaustively locking HTTP connection pool in useConsoleData | Completed | ag/sse-deadlock-fix | Added visibility state check to properly close EventSource for background tabs. |
+| 2026-07-09 | Socratic.Trade | UI | Turn static LoadingBrand into a fast, pulsing candlestick animation | Completed | ag/loading-animation | Exposed speedMs on HeaderLogo and applied animate-pulse to LoadingBrand. |

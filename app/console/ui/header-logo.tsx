@@ -16,7 +16,7 @@ function model() {
   return CACHED;
 }
 
-export function HeaderLogo({ height = 18 }: { height?: number }) {
+export function HeaderLogo({ height = 18, speedMs = 1000 }: { height?: number; speedMs?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -38,13 +38,13 @@ export function HeaderLogo({ height = 18 }: { height?: number }) {
     let raf = 0, start: number | null = null, lastTick = -1;
     const loop = (now: number) => {
       if (start == null) start = now;
-      const tick = Math.floor((now - start) / 1000);
+      const tick = Math.floor((now - start) / speedMs);
       if (tick !== lastTick) { lastTick = tick; render(tick); }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [height]);
+  }, [height, speedMs]);
 
   return (
     <canvas

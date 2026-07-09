@@ -7183,3 +7183,4 @@ Update this file when any of the following change:
 
 - 2026-07-09: Added explanatory tooltips to the 'Run during extended hours' and 'Allow extended-hours orders' fields in the Guardrails UI. See docs/rollouts/2026-07-09-extended-hours-tooltips.md.
 - 2026-07-09: **SSE Deadlock Fix** — Fixed a deadlock issue where long-lived EventSource connections for the dashboard exhausted the HTTP/1.1 connection pool by implementing visibility state tracking in useConsoleData. See docs/rollouts/2026-07-09-sse-deadlock-fix.md.
+- 2026-07-09: **Loading Animation** — Converted the static loading screen brandmark into an animated, fast-moving candlestick ticker with a subtle opacity pulse, providing explicit loading feedback for both desktop and mobile users. See docs/rollouts/2026-07-09-loading-animation.md.

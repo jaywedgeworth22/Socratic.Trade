@@ -173,8 +173,8 @@ function LoadingBrand() {
   }, []);
   if (!skipped) return null;
   return (
-    <div className="flex items-center justify-center opacity-70" aria-hidden>
-      <HeaderLogo height={26} />
+    <div className="flex items-center justify-center opacity-70 animate-pulse" aria-hidden>
+      <HeaderLogo height={26} speedMs={40} />
     </div>
   );
 }
