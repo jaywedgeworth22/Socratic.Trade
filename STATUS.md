@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Effort log assignment rules + ops snapshot fix deployed + branch cleanup (MONET, `copilot-effort-log-assignment-rules`)
+Completed this session:
+- **Effort log assignment rules ratified**: agents must only be assigned to efforts they are actively working on — no pre-assigning the backlog. Rule 4 (fundamentals-veto) ratified by owner as "keep current risk approach where most things are just suggestions."
+- **Ops snapshot truncation fix** (PR #1119): `auditEntrySummary()` now checks `error`/`note` keys (used by `order_placement_uncertain` payloads), identifier composition, JSON fallback 240→500 chars. Deployed to production via Coolify (commit `15f78b21`).
+- **Branch cleanup**: 77 stale branches pruned from origin. PR #873 (dependabot motion) merged.
+- **PR #1169** (Codex autofix: broker-minimum sizing floor): Codex autofix threads resolved, CI passed, auto-merge scheduled — branch needs `update-branch` before merge.
+- **New Planned effort**: Pre-proposal broker health/availability gate — before LLM proposal generation, check broker connectivity, error rate, minimum notional, account status. See effort log.
+- **Remaining owner questions**: Q4 (main-protection ruleset), Q5 (Alert Center filter pills), Q6 (strip stale agent tags).
+
 ## 2026-07-09 — Codex autofix PR #1169: broker-min floor skipped zero-rounded sizes (Claude, `copilot-effort-log-assignment-rules`)
 Codex P2 on the broker minimum dollar-notional floor (`src/lib/strategy.ts`): the raise guarded on
 the POST-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (e.g. an

@@ -187,6 +187,32 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Mobile chrome bar fixes, 6 owner-reported items (MONET) — COMPLETED 2026-07-08, merged
+  to `main` as PR #1173.** Owner (prod phone
+  screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
+  unboxed + stacked two-line small on mobile (looked like a second dropdown); (3) profile
+  button 44px tap target on mobile; (4) theme toggle moves INTO the profile menu (off the
+  bar); (5) profile menu becomes a slide-DOWN dropdown under the header (old bottom Sheet
+  was covered by the mobile tab bar -> sign-out unreachable); (6) profile button shows the
+  Google/GitHub avatar (snapshot.currentUser.imageUrl already wired, never rendered); plus
+  STOP button squeeze fix (shrink-0 + centered content). Fileset:
+  app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
+  app/console/console.css.
+- **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
+  logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
+  popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
+  cause: intro can finish against the loading shell and lands on a stale hard-coded fallback
+  box; reveal then has no mounted logo. Fix in `intro-canvas.tsx` only: fallback box now
+  matches the real logo geometry per viewport (<lg = MobileBrandRow formula, >=lg = bar
+  logo), landing box eases to the measured target instead of snapping, natural fade waits
+  for a settled measured target (8s timeout safety; skip stays immediate).
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — completed 2026-07-08 via PR #1171.**
+  Replaced dirty Cursor PR #1105 without editing the Cursor branch. Merged to `main`
+  as `54b6d722`; #1105 closed as superseded and stale PR #856 closed as obsolete. Cleanup uses
+  shared `CONGRESS_EVENT_TYPES` for event-type checks, derives outbound payload typing from shared
+  `SharePayload`, and drops unused `API_PATHS`/`MAX_REFS_BATCH` imports. Verified locally and in CI:
+  lint 0 errors, tsc clean, 3101 tests, build, smoke, verify, gitleaks, Cursor Approval all green;
+  zero active unresolved review threads.
 - **Centralize Congress API Client Factory (AG) — COMPLETED 2026-07-08.** Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags. Verified: tests pass 2970/2970, build green. PR via land.sh.
 - **Consolidate usage telemetry clients in consumer apps (AG) — ✅ COMPLETED 2026-07-06 (PR #1005).** Replaced `postBatch` telemetry sending logic with `@jaywedgeworth22/congress-trading-shared` in Socratic.Trade.
 
@@ -305,6 +331,18 @@ As of 2026-07-08 (assignment-rule update).
   -- --quiet`, focused live-data vitest (`4`), full `npm test` (`257` files / `2510` tests),
   `npm run build`, `npx tsc --noEmit` (after build regenerated `.next/types`). Keepout: settings,
   approvals, Monet risk, Claude memory/RAG, unrelated tooltip sweeps respected.
+- **PR #810 - Coach chat -> framework primitives (CODEX, M).** Merged to `main`
+  2026-07-05T17:40:38Z (verify/smoke/gitleaks green, auto-merge). Decision-trace coach-note POST
+  can optionally promote into lesson/framework primitives, framework review carries explicit
+  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
+  Verification pre-merge: focused `test/socratic-db.test.ts` (3 tests), TypeScript, quiet lint,
+  full `npm test` (256 files / 2507 tests), and `npm run build`.
+- **PR #806 - Scan table column customization parity (CODEX, M).** Merged to `main`
+  2026-07-05T15:01:24Z (verify/smoke/gitleaks green, auto-merge after review threads resolved).
+  `/console/scan` now supports browser-local column visibility, ordering, reset, and saved state;
+  review fixes pin `symbol` as the first/sticky column and defer saved `localStorage` state until
+  after mount to avoid hydration mismatch. Verification included focused scan-column tests, lint,
+  TypeScript, full suite, build, and review-fix reruns.
 
 - **Pre-policy vetoes advisory-overridable (CLAUDE, #799 follow-up) — merged PR #814 (verify+smoke green).**
   _2026-07-05 (CLAUDE next-wave): CORRECTION — this row's text already said COMPLETED/merged but it
@@ -601,32 +639,6 @@ As of 2026-07-08 (assignment-rule update).
 - **Accessible tooltip/popover primitive everywhere (AG, S) — ✅ COMPLETED 2026-07-06.** Reassigned from Codex.
   Created `antigravity/console-tooltip-primitive`. Reusable tooltip/popover primitive in `app/console/ui/primitives.tsx` using Tailwind `group-hover`. High-value console-native `title` replacements applied across `app/console/` (Chips, Stats, Logos, Draft Cards, Drilldown factors, Chat items). PR #1008 is open.
   Blocked on merging due to broken global test/lint state on `main`. Requires a separate fix for the test suite and ESLint configuration before it can safely merge to production.
-- **Coach chat -> framework primitives (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-coach-framework-primitives`, branch
-  `codex/coach-framework-primitives`. Focused slice for issue #473: decision-trace coach-note POST
-  can optionally promote into lesson/framework primitives, framework review now carries explicit
-  rewrite/ownerResponse semantics, and the trace renders linked run metadata when available.
-  Keepout: live-data/settings/tooltip lanes, Monet risk files, Claude memory/RAG files, workflows,
-  AGENTS, and Slack scripts. 2026-07-05 update: merge-forwarded to `origin/main` @ `0bfa4f1e`;
-  verification green in the branch worktree — `test/socratic-db.test.ts` (3 tests), `tsc`,
-  quiet lint, full `npm test` (256 files / 2507 tests), and `npm run build`. PR #810 is open and
-  squash auto-merge is armed pending `verify`.
-- **Scan table column customization parity (CODEX, M) — IN PROGRESS 2026-07-04.** Worktree
-  `/Users/jay/.codex/worktrees/socratic-scan-column-customization`, branch
-  `codex/scan-column-customization`. Scope: bring `/console/scan` to legacy dashboard parity for
-  column visibility, ordering, reset, and saved browser-local state; allow only tightly related
-  ticker-drawer parity if the scan surface needs it. Keepout: no broad settings/approvals/live-data/
-  coach/tooltip conversions in this lane. PR #806 open with auto-merge enabled; merge-forward
-  through PR #807 pushed 2026-07-05 as `63c69d05`; later blocker identified as unresolved Codex
-  review thread and addressed locally by pinning `symbol` as the first/sticky column during
-  saved-state sanitization and reordering; second review follow-up defers saved `localStorage`
-  column state until after mount to avoid hydration mismatch.
-  Verification green: focused scan-column test (4), lint 0 errors / 308 existing warnings,
-  land.sh tsc clean, full suite 2508 tests / 256 files, build green. Review follow-up verification:
-  focused scan-column test (4), TypeScript clean, `git diff --check` clean; hydration follow-up
-  verification: focused scan-column test (4), TypeScript clean, lint 0 errors, `git diff --check`
-  clean.
-
 - **CODEX assigned backlog implementation train (Codex, 2026-07-05) — IN PROGRESS.**
   Scope: owner-directed CODEX rows from the backlog exhaustiveness pass: scan column customization,
   approvals triage + alert center, console live-data build-out, `/console/settings` IA pass,
@@ -756,26 +768,20 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Codex autofix PR #1169 — broker-minimum floor skipped zero-rounded sizes (CLAUDE, branch
-  `copilot-effort-log-assignment-rules`) — IN PROGRESS 2026-07-09.** Addressed Codex P2 on the
-  broker minimum dollar-notional floor in `applyDeterministicSizing`: the raise guarded on the
-  post-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (advised
-  `$0.22`, or a positive fallback under `$1`) returned `dollarAmount: 0` (guaranteed reject). Fix
-  guards on the PRE-rounding source and raises to the floor when capacity covers it; new
-  `test/broker-minimum-sizing.test.ts` (4 tests). Gates: tsc clean, sizing suites green, build
-  green (full `npm test` LLM failures pre-existing/credential-driven in the CI VM). Rollout:
-  docs/rollouts/2026-07-09-codex-autofix-pr1169-broker-min-floor.md.
-- **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
-  `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
-  tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
-  adversarial verify): Gemini Bull-schema 400 fixed (llm-call.ts dialect shaping); Robinhood
-  $1-minimum trim loop fixed (order_checks + cooldown receipt + dust-exit exemption); ACTIVE
-  naked-short remediation bug fixed (held-leg exclusion auto+manual, position guard, TOCTOU
-  re-verify, in-flight lock — owner push-notified to cancel resting d642d572 pre-open);
-  ALPHAVANTAGE_API_KEYS pool; acknowledged_at lifecycle + auto-ack sweep + repeat-dedup;
-  twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
-  threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
-  docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+- **Mobile nav + drawer fixes, owner phone feedback wave 3 (MONET, ui-sweep session, branch
+  `monet/mobile-nav-drawer-fixes-99138a`) — IN PROGRESS 2026-07-08/09.** Owner screenshots +
+  redesign spec: (1) drawer "LRCXwasn't" missing space — root-caused as a RUNTIME JSX whitespace
+  drop (source had the space since PR #330; reproduced locally; fixed with the explicit-string
+  idiom, verified live); (2) drawer near-empty for traded/held symbols not in the last scan →
+  on-demand single-symbol enrichment via a read-side route (factor scores/signals stay honestly
+  scan-only); (3) finished-order card stat boxes → label-left/value-right single-line compaction;
+  (4) customizable mobile bottom tabs — "More"→"Tabs" chooser (pin/unpin, max 4 + Tabs, default
+  Thesis/Proposals/Journal/Orders, localStorage), active-tab state, slide-up menu, Core section
+  on top, clearer section hierarchy; (5) desktop rail regrouped to match (Core/Monitor/Review/
+  Configure, Settings LAST); (6) console page-width parity via one shared width constant
+  (keepout pages approvals/results = follow-ups). 4-package workflow (2 sonnet-high, 1 sonnet,
+  1 haiku); honors live-lane keepouts (chrome/shell/console.css = intro lane; approvals/** =
+  CODEX live-bulk; results+dashboard.ts = CODEX efficacy).
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
   2026-07-08, PR #1116 open, auto-merge armed (gate green: tsc/lint/2996 tests/build).** Once-per-UTC-day Fable-class review of learned_context / pending learning
   decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence
@@ -788,17 +794,28 @@ As of 2026-07-08 (assignment-rule update).
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS 2026-07-08 (subagent).** Owner-designed meta-reviewer: once-daily Fable-class call reviews learned-context lessons/pending + learning mutations against a system-history digest (execution-failure audits + rollouts) applying the three tests; annotate (default) or decide (opt-in) modes, everything audited.
 - **Alert triage (all ~75 in-app alerts) + Alpha Vantage multi-key pool (MONET, session worktree
   `~/.claude/projects/Socratic.Trade/multi-issue-troubleshooting-5b55ad`, branch
-  `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09.** Owner-directed: (1) review and
-  address every alert in the app (prod notification_events 7-day mix = 87 run_failed /
-  73 provider_degraded / 58 fill / 40 limit_order_stale / 32 block / 9 pending_approval /
-  6 proposal_withdrawn; fresh run_failed 23:19Z + limit_order_stale 23:30Z post-deploy under
-  investigation); (2) Alpha Vantage 2-4 key pool (owner rotated a fresh ALPHAVANTAGE_API_KEY
-  into Infisical after the health-log leak); (3) VECTOR_EMBED_BATCH_DELAY_MS=2000 SET in
-  Infisical prod (was absent = free-tier throttle) — activates on next restart/deploy.
+  `monet/alert-triage-av-multikey`) — ✅ COMPLETED + DEPLOYED TO PRODUCTION 2026-07-09: PR #1167
+  squash-merged (verify+smoke+gitleaks green; gitleaks needed .gitleaksignore union for fake
+  test fixtures); Coolify deployment v2jyfhr6 health-verified, acknowledged_at +
+  fire_generation migrations confirmed live in the container DB.** All 305 7-day prod alerts
+  root-caused (9-agent triage + adversarial verify). Shipped: Gemini Bull-schema 400 fix (Roth
+  IRA blackout — llm-call.ts dialect shaping); ACTIVE naked-short remediation bug fixed
+  (held-leg exclusion auto+manual, position-backed guard, TOCTOU re-verify, in-flight lock;
+  owner push-notified to cancel resting paper order d642d572 pre-open + PG -12 short decision);
+  Robinhood order_checks + sub-$1 trim guard (dust-exit exempt); ALPHAVANTAGE_API_KEYS pool
+  (sticky-until-daily-cap, persisted exhaustion, all-exhausted fast-fail); acknowledged_at
+  alert lifecycle (account-scoped bulk ack, auto-ack sweep incl. 137 orphaned pending_approvals,
+  broker-verification alerts excluded, symbol-aware repeat-dedup); twelvedata limiter; bear
+  cooldown; RAG double-alert fix; push em-dash fix; stale-run threshold. Config live:
+  VECTOR_EMBED_BATCH_DELAY_MS=2000. Owner still owed: cancel d642d572, tiingo 403 key/plan,
+  AV keys #2-4 + ToS call. Repo-mirror board update rides next commit.
+  Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 - **UI-audit sweep: all remaining unclaimed 55-findings UI rows + plain-English pass (MONET,
-  branch `monet/ui-audit-sweep-99138a`) — ✅ COMPLETED 2026-07-09: PR #1110 squash-merged to
+  branch `monet/ui-audit-sweep-99138a`) — 🚀 DEPLOYED 2026-07-09: PR #1110 squash-merged to
   `main` @ 01:21Z (verify green, auto-merge; landed AFTER hand-merging forward #1107 feed
-  consolidation + #1112 intro handoff — both co-verified). 14 subagents in two workflow waves +
+  consolidation + #1112 intro handoff — both co-verified); in prod via the alert-triage lane's
+  Coolify deployment `v2jyfhr6` (post-#1167 main, `#1110 ⊆ 30345f03` ancestry-verified;
+  health verified by that lane). 14 subagents in two workflow waves +
   in-session integration; ~30 rows closed, 4 TBD decisions recorded, deferred rows annotated;
   driven live both themes desktop+375px, zero raw-enum/JSON leaks page-swept. Rollout:
   `docs/rollouts/2026-07-09-ui-audit-sweep.md` (mirror row flips rode the PR). Owner-directed
@@ -910,6 +927,8 @@ As of 2026-07-08 (assignment-rule update).
 
 
 - **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ (unassigned) — PLANNED 2026-07-05, awaiting seat responses.** _(2026-07-08: stripped FLEET tag — no agent is actively working on this.)_ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
+
+- **Pre-proposal broker health/availability gate (unassigned) — PLANNED 2026-07-08.** The proposal pipeline currently runs LLM generation before checking whether the broker can actually execute trades. `deriveExecutionState()` only checks "is an account connected?" — it doesn't check broker health, minimum notional, recent `order_placement_uncertain` rate, or account suspension. The scheduler calls `deriveExecutionState()` at line 396 and only throws for "no account," then proceeds to generate proposals for accounts that return errors at execution time. The fix: add a pre-proposal gate (before the LLM call) that checks broker connectivity, recent error rate, account status, and per-account minimum notional; skip proposal generation for unhealthy accounts. Touches `src/lib/execution-mode.ts` (extend `deriveExecutionState` with health signals), `src/lib/strategy.ts` (gate before LLM call at ~line 360), and `src/lib/scheduler.ts` (per-account skip logic at line 396). Related to the Robinhood `order_placement_uncertain` errors identified 2026-07-08 (Agentic AAPL near-zero notional rejects).
 
 - **CI standard rollout (cross-app, unassigned) — RESERVED, RE-SCOPED 2026-07-04.** _(2026-07-08: stripped Claude tag — no agent is actively working on this; deferred pending PR #372.)_
   Deferred until the hybrid resource-aware routing PR above lands and proves itself. Scope when
@@ -1134,11 +1153,19 @@ discrepancies that motivated these rows._
   evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
   whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
   surfaces don't surface them; #807's alert center is the natural home and just merged.)_
-- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M)** — Surface the veto-efficacy
+- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M) — IN PROGRESS 2026-07-08.**
+  Branch/worktree: `codex/red-team-efficacy-console` /
+  `/Users/jay/.codex/worktrees/socratic-red-team-efficacy-console`. Surface the veto-efficacy
   metrics (API/db-level since the w1-learning-loops landing) on the console, including
   override-vs-non-override splits now that #814 protects the metric. _(why now: The w1 row
   explicitly deferred UI wiring to the console lane and it was never tracked as its own row; #814's
-  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_
+  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_ 2026-07-09 CODEX:
+  MONET guidance narrowed the lane to Results/snapshot/test/docs only; keepouts unchanged for
+  approvals/typed-confirm and single-adversary files. Status: local slice now built in this
+  worktree (`redTeamEfficacy` snapshot payload + Results card + focused regression + rollout note);
+  PR #1175 is open.
+  Verified here with `npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`,
+  `npx tsc --noEmit`, and `npm run lint -- --quiet`.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
   first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
   (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
@@ -1164,11 +1191,19 @@ discrepancies that motivated these rows._
   2026-07-04 12:38; NO PR in `gh pr list --state all`. Stacked base (`w2-episodic-retrieval`) already
   merged via #437, so it can now be merge-forwarded onto main standalone. Rotting since 07-04.
   action=open-PR._
-- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M)** — Extend #807's
-  bulk actions to LIVE proposals with a single aggregate typed confirmation (per-item provenance
-  preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
-  bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
-  confirms are the exact ceremony the product philosophy says to minimize.)_
+- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M) — IN PROGRESS 2026-07-08.**
+  Branch/worktree: `codex/live-bulk-typed-confirm` /
+  `/Users/jay/.codex/worktrees/socratic-live-bulk-typed-confirm`. Extend #807's bulk actions to
+  LIVE proposals with a single aggregate typed confirmation (per-item provenance preserved), instead
+  of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped bulk LIVE out; with the
+  owner running real money and multiple proposals per run, one-by-one typed confirms are the exact
+  ceremony the product philosophy says to minimize.)_ 2026-07-08 MONET guidance received: proceed
+  under the stated constraints. LIVE bulk approve gets one aggregate typed phrase only when
+  `policy.requireTypedConfirmation` is on; when off, it is one-click. Bulk reject remains the
+  existing inline one-click confirmation. Approval still calls the existing per-item endpoint so
+  partial failures stay honest. CODEX implementation is in the worktree with focused test,
+  lint (0 errors), typecheck, full Vitest (301 files / 3101 tests via low workers), and
+  `npm run build` green; build emitted only the existing Sentry Edge-runtime warning. PR #1174 is open.
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).
 - **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
   2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,
