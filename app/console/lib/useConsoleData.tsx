@@ -61,9 +61,19 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stream, setStream] = useState<ConsoleStreamHealth>(UNSUPPORTED_STREAM);
+  const [isVisible, setIsVisible] = useState(
+    typeof document !== "undefined" ? document.visibilityState === "visible" : true
+  );
   const inFlight = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const queuedRefresh = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleVis = () => setIsVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", handleVis);
+    return () => document.removeEventListener("visibilitychange", handleVis);
+  }, []);
 
   const refresh = useCallback(async () => {
     inFlight.current?.abort();
@@ -117,6 +127,8 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       setStream(UNSUPPORTED_STREAM);
       return;
     }
+    if (!isVisible) return; // Prevent background tabs from exhausting the HTTP connection pool
+
     setStream((prev) => ({ ...prev, status: "connecting" }));
     const events = new EventSource("/api/events/stream");
 
@@ -177,7 +189,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       for (const { type, handler } of handlers) events.removeEventListener(type, handler);
       events.close();
     };
-  }, [queueRefresh]);
+  }, [queueRefresh, isVisible]);
 
   const value = useMemo<ConsoleData>(
     () => ({ snapshot, fetchedAt, loading: snapshot === null && error === null, error, stream, refresh }),
