@@ -6,11 +6,12 @@ import { assertLivePreflight } from "./preflight-live-guard";
 import { isActiveBrokerOrderState } from "./broker-held-orders";
 import { listStaleLimitOrders } from "./stale-limit-orders";
 import { normalizeSymbol } from "./money";
-import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, ExecutionMode, TradingPolicy } from "./types";
+import type { BrokerGateway, ConnectedAccount, EquityOrder, EquityOrderInput, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
 
 const CANCEL_SETTLE_MS = 750;
 const MARKET_REPLACE_TYPES = new Set(["limit", "stop_limit"]);
 const POST_CANCEL_ACTIVE_STATES = new Set(["done_for_day", "stopped", "calculated"]);
+const POSITION_EPSILON = 1e-6;
 
 // Per-order cooldown for auto-remediation: once a stale EXIT limit is cancel-replaced, do not remediate
 // the SAME order again for this long. A slow broker can keep listing the just-cancelled order as
@@ -20,6 +21,18 @@ const REMEDIATION_COOLDOWN_MS = 5 * 60_000;
 const remediationHost = globalThis as unknown as { __recentlyRemediatedExits?: Map<string, number> };
 const recentlyRemediatedExits: Map<string, number> =
   remediationHost.__recentlyRemediatedExits ?? (remediationHost.__recentlyRemediatedExits = new Map<string, number>());
+
+// In-flight replacement lock shared by BOTH the auto-remediation loop and the manual
+// /api/orders/replace-market route (both funnel through replaceStaleLimitOrderWithMarket).
+// A cancel-and-replace spans 1s+ (cancel + settle + refetch + review), and the manual path never
+// consults the auto path's cooldown map — so a human click racing the 60s auto tick (or a
+// double-click) could otherwise cancel-replace the SAME order twice: two market sells for one lot.
+// Keyed by account:orderId; the entry is removed in try/finally. globalThis-hosted like the cooldown
+// map above so Next.js HMR module duplication can't split it. Node is single-threaded, so the
+// synchronous has()/add() pair before the first await is race-free.
+const inFlightHost = globalThis as unknown as { __inFlightMarketReplaces?: Set<string> };
+const inFlightMarketReplaces: Set<string> =
+  inFlightHost.__inFlightMarketReplaces ?? (inFlightHost.__inFlightMarketReplaces = new Set<string>());
 
 export interface MarketReplaceConfirmation {
   orderId?: string | null;
@@ -64,7 +77,7 @@ export function marketReplaceText(symbol: string): string {
   return `REPLACE LIVE ${normalizeSymbol(symbol)}`;
 }
 
-export async function replaceStaleLimitOrderWithMarket(input: {
+export interface MarketReplaceInput {
   userId?: string;
   policy: TradingPolicy & { accountNumber: string };
   activeAccount?: ConnectedAccount;
@@ -72,7 +85,27 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   orderId: string;
   liveConfirmation?: MarketReplaceConfirmation;
   cancelSettleMs?: number;
-}): Promise<MarketReplaceResult> {
+}
+
+export async function replaceStaleLimitOrderWithMarket(input: MarketReplaceInput): Promise<MarketReplaceResult> {
+  // Concurrency gate: only ONE cancel-and-replace may run per order at a time, across the auto loop
+  // AND the manual route. Second entrant 409s instead of double-cancelling / double-selling.
+  const inFlightKey = `${input.policy.accountNumber}:${input.orderId}`;
+  if (inFlightMarketReplaces.has(inFlightKey)) {
+    throw new MarketReplacePreconditionError(
+      "This order is already being replaced by another request (auto-remediation or a concurrent click). Wait for that replacement to finish, then refresh Activity.",
+      409
+    );
+  }
+  inFlightMarketReplaces.add(inFlightKey);
+  try {
+    return await executeMarketReplace(input);
+  } finally {
+    inFlightMarketReplaces.delete(inFlightKey);
+  }
+}
+
+async function executeMarketReplace(input: MarketReplaceInput): Promise<MarketReplaceResult> {
   const userId = input.userId ?? "local";
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   if (!executionState.submitsBrokerOrders || !executionState.mode) {
@@ -89,6 +122,38 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   }
   if (!MARKET_REPLACE_TYPES.has(String(original.type ?? "").toLowerCase())) {
     throw new MarketReplacePreconditionError("Only limit and stop-limit orders can be replaced with a market order here.", 400);
+  }
+
+  const symbol = normalizeSymbol(original.symbol);
+  const isExit = original.side === "sell" || original.side === "cover";
+
+  // Broker-HELD legs are rejected HERE, in the shared path, not only in the auto loop's skip: "held"
+  // is an active state to listStaleLimitOrders, so a held bracket/OTO/OCO protective leg reaches this
+  // function via the manual /api/orders/replace-market route too — and an OLD position for the same
+  // symbol can satisfy the position-backed guard below (e.g. holding 100 XYZ from an old lot while a
+  // new 50-share bracket entry is unfilled: 100 >= 50 passes). Cancelling the held leg destroys the
+  // bracket's protection AND market-sells shares of the old lot the bracket never bought.
+  if (String(original.state ?? "").trim().toLowerCase() === "held") {
+    audit(
+      "order_replace_market_rejected_held_leg",
+      {
+        orderId: original.id,
+        symbol,
+        side: original.side,
+        state: original.state,
+        orderQuantity: original.quantity,
+        filledQuantity: original.filledQuantity ?? 0,
+        remainingQuantity: stale.remainingQuantity
+      },
+      userId,
+      input.policy.connectedAccountId
+    );
+    throw new MarketReplacePreconditionError(
+      `${symbol} ${original.side} order is broker-held — a contingency leg of a bracket/OTO/OCO that activates only when its entry order fills. ` +
+        "It cannot be cancel-replaced with a market order: cancelling it would destroy the entry's protection and trade shares the entry never bought. " +
+        "If the trade is unwanted, cancel the ENTRY order instead. Nothing was canceled.",
+      409
+    );
   }
 
   assertMarketReplaceConfirmation({
@@ -108,6 +173,43 @@ export async function replaceStaleLimitOrderWithMarket(input: {
     symbol: original.symbol,
     side: original.side
   });
+
+  // Position-backed guard (2026-07-08 PG/T incident, PR #1036 regression): a market replacement for an
+  // EXIT must be covered by a real broker position, or the "replacement" opens a naked short (sell) /
+  // an unintended long (cover). Checked BEFORE the cancel phase so an unbacked order is left fully
+  // intact — cancelling a bracket/OTO leg also cancels its paired entry, which is unrecoverable.
+  // Broker position qty is TOTAL shares (holds reduce availability, not qty) and cancelling this order
+  // releases its own hold, so total-vs-remaining is the right comparison; a residual hold from some
+  // OTHER order surfaces as a broker rejection of the replacement, never as an unbacked fill.
+  if (isExit) {
+    const positions = await input.gateway.getEquityPositions(input.policy.accountNumber);
+    const { signedQuantity, backingQuantity } = exitBackingQuantity(positions, symbol, original.side);
+    if (backingQuantity + POSITION_EPSILON < stale.remainingQuantity) {
+      audit(
+        "stale_exit_remediation_skipped_no_position",
+        {
+          orderId: original.id,
+          symbol,
+          side: original.side,
+          state: original.state,
+          orderQuantity: original.quantity,
+          filledQuantity: original.filledQuantity ?? 0,
+          remainingQuantity: stale.remainingQuantity,
+          positionQuantity: signedQuantity,
+          backingQuantity,
+          reason: backingQuantity <= POSITION_EPSILON ? "no_position" : "position_smaller_than_order"
+        },
+        userId,
+        input.policy.connectedAccountId
+      );
+      throw new MarketReplacePreconditionError(
+        `${symbol} ${original.side} order is not backed by the broker position ` +
+          `(position ${signedQuantity}, order remaining ${stale.remainingQuantity}). ` +
+          "Market replacement skipped; the original order was left untouched.",
+        409
+      );
+    }
+  }
 
   const cancelResult = await input.gateway.cancelEquityOrder(input.policy.accountNumber, original.id);
   await delay(input.cancelSettleMs ?? CANCEL_SETTLE_MS);
@@ -133,6 +235,42 @@ export async function replaceStaleLimitOrderWithMarket(input: {
       input.policy.connectedAccountId
     );
     return { status: "already_filled", canceledOrderId: original.id, remainingQuantity: 0 };
+  }
+
+  // TOCTOU re-verify: the position-backed check above ran BEFORE the cancel phase, and 1s+ has
+  // elapsed since (cancel + settle delay + order refetch). Re-verify the backing position NOW,
+  // immediately before placing the market order — a concurrent fill (another exit, a short, a manual
+  // trade) can shrink it in that window. If backing dropped below the remaining qty, place NOTHING:
+  // the original order is already canceled and cannot be resurrected, so emit a DISTINCT receipt
+  // (stale_exit_replacement_aborted_post_cancel) so the human surface explains the order is now
+  // canceled-but-NOT-replaced, unlike the pre-cancel skip which leaves the order untouched.
+  if (isExit) {
+    const positionsNow = await input.gateway.getEquityPositions(input.policy.accountNumber);
+    const { signedQuantity, backingQuantity } = exitBackingQuantity(positionsNow, symbol, original.side);
+    if (backingQuantity + POSITION_EPSILON < remainingQuantity) {
+      audit(
+        "stale_exit_replacement_aborted_post_cancel",
+        {
+          orderId: original.id,
+          symbol,
+          side: original.side,
+          remainingQuantity,
+          positionQuantity: signedQuantity,
+          backingQuantity,
+          cancelResult,
+          reason: backingQuantity <= POSITION_EPSILON ? "no_position_after_cancel" : "position_shrank_below_remaining"
+        },
+        userId,
+        input.policy.connectedAccountId
+      );
+      throw new MarketReplacePreconditionError(
+        `${symbol} ${original.side} replacement aborted after cancel: the backing position shrank to ${signedQuantity} ` +
+          `before the market order could be placed (order remaining ${remainingQuantity}). ` +
+          "The original order is now CANCELED and was NOT replaced — no market order was placed. " +
+          "Review the position and place a fresh exit manually if one is still needed.",
+        409
+      );
+    }
   }
 
   const marketOrder: EquityOrderInput = {
@@ -171,7 +309,6 @@ export async function replaceStaleLimitOrderWithMarket(input: {
   // B8: a paper EXIT (sell/cover) booked here at the simulated mid pays no execution cost otherwise,
   // overstating realized edge on the losing tail that feeds the tuner/sizer. Debit the exit-side cost for
   // paper exits only; entries and live fills are unchanged. applyPaperExitCost no-ops on non-paper sources.
-  const isExit = original.side === "sell" || original.side === "cover";
   const price = isExit ? applyPaperExitCost(rawPrice, original.side, source) : rawPrice;
   insertFillEvent({
     userId,
@@ -255,6 +392,16 @@ export async function autoRemediateStaleExitOrders(input: {
   for (const item of stale) {
     const side = String(item.order.side ?? "").toLowerCase();
     if (side !== "sell" && side !== "cover") continue; // EXITS only — never force an entry to market
+    // Broker-HELD legs are never stranded exits. Alpaca reports "held" only for a contingency leg the
+    // broker itself is holding pending activation — the protective exit of a bracket/OTO whose ENTRY
+    // has not filled, or the dormant half of an OCO — never for a plain resting exit. EquityOrder
+    // carries no parent-order linkage (mapAlpacaOrder drops Alpaca's `legs`), so the held state alone
+    // is the exclusion signal, and it is sufficient: the genuinely stranded exit this backstop exists
+    // for (the MU deadlock) rests in an ACTIVE state ("new"/"accepted"/"partially_filled"). Cancel-
+    // replacing a held leg cancels its unfilled entry AND market-sells shares that were never bought
+    // (the 2026-07-08 PG -12 naked short). Silent skip like the entry-side filter above — this runs
+    // every scheduler tick, and the stale-limit notifier already alerts the human on these orders.
+    if (String(item.order.state ?? "").trim().toLowerCase() === "held") continue;
     const symbol = normalizeSymbol(item.order.symbol);
     if (liveNeedsHuman) {
       out.deferred++;
@@ -340,6 +487,19 @@ function assertMarketReplaceConfirmation(input: {
 function isPostCancelActiveState(state: string | undefined): boolean {
   const normalized = String(state ?? "").trim().toLowerCase();
   return isActiveBrokerOrderState(normalized) || POST_CANCEL_ACTIVE_STATES.has(normalized);
+}
+
+// Shared by the pre-cancel guard and the post-cancel TOCTOU re-verify: how many shares of the broker
+// position actually back this exit. A sell needs a LONG position; a cover needs a SHORT one.
+function exitBackingQuantity(
+  positions: EquityPosition[],
+  symbol: string,
+  side: EquityOrder["side"]
+): { signedQuantity: number; backingQuantity: number } {
+  const existing = positions.find((position) => normalizeSymbol(position.symbol) === symbol);
+  const signedQuantity = existing?.quantity ?? 0;
+  const backingQuantity = side === "sell" ? Math.max(signedQuantity, 0) : Math.max(-signedQuantity, 0);
+  return { signedQuantity, backingQuantity };
 }
 
 function remainingAfterCancel(original: EquityOrder, afterCancel?: EquityOrder): number {

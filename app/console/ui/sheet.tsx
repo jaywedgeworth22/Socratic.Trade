@@ -3,7 +3,7 @@
 /** Modal sheet: centered dialog on desktop, bottom sheet on mobile.
  *  `tone="live"` adds the real-money border treatment. */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../lib/format";
 
@@ -56,6 +56,7 @@ export function Sheet({
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const headingId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -132,10 +133,11 @@ export function Sheet({
         className={cx("con-sheet", tone === "live" && "con-sheet-live")}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? headingId : undefined}
         tabIndex={-1}
       >
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
-          <h2 className="text-[length:var(--con-fs-md)] font-semibold">{title}</h2>
+          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">{title}</h2>
           <button
             type="button"
             aria-label="Close"

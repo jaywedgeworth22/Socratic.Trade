@@ -3,7 +3,6 @@ import {
   isReasoningModel,
   resolveOpenAiModel,
   withLlmRequestBounds,
-  DEFAULT_OPENAI_MODEL,
   interactiveStrategyReasoningEffort,
   isDisallowedInteractiveStrategyReasoningConfig,
   reasoningCapabilityForModel,
@@ -26,13 +25,16 @@ describe("llm-request — model resolution", () => {
     expect(isReasoningModel(undefined)).toBe(false);
   });
 
-  it("resolves per-user policy model over env over default", () => {
+  it("resolves ONLY the explicit per-user policy model — no env, no default (owner 2026-07-07)", () => {
+    // No model is a default for anything, ever. An explicit choice is used verbatim; a blank/unset
+    // policy resolves to "" (unconfigured — callers fail closed), NOT the OPENAI_MODEL env and NOT
+    // any hardcoded default.
     vi.stubEnv("OPENAI_MODEL", "gpt-4.1-mini");
     expect(resolveOpenAiModel({ llmModel: "gpt-5.5" })).toBe("gpt-5.5");
-    expect(resolveOpenAiModel({ llmModel: "  " })).toBe("gpt-4.1-mini"); // blank policy → env
-    expect(resolveOpenAiModel(null)).toBe("gpt-4.1-mini");
+    expect(resolveOpenAiModel({ llmModel: "  " })).toBe("");
+    expect(resolveOpenAiModel(null)).toBe("");
     vi.unstubAllEnvs();
-    expect(resolveOpenAiModel(null)).toBe(DEFAULT_OPENAI_MODEL);
+    expect(resolveOpenAiModel(null)).toBe("");
   });
 
   it("disallows the slowest gpt-5.5 high-reasoning combo for interactive strategy runs", () => {

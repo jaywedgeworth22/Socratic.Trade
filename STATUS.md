@@ -8,9 +8,471 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override
+## 2026-07-09 — Reviewer veto value-add in the Model Stats drawer (MONET, branch `monet/reviewer-veto-valueadd-stats`)
+Owner-directed plumbing-only change: the Model Stats drawer's 4th column showed a hard-coded dash for
+the Reviewer (Red Team) role; it now surfaces the ALREADY-BUILT per-reviewer-model **veto value-add**
+(the same measure `getRedTeamEfficacy` computes and the Results 'Red Team veto efficacy' scorecard
+renders). No DB/schema/`strategy.ts` change and no new `reviewedByModel` field — keys off the existing
+`proposal_rejected_by_red_team` audit. Route calls `getRedTeamEfficacy(userId, {auditLimit:500})`
+USER-WIDE and passes `.byModel` into `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf`
+shape + `reviewerPerf` field on `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket
+filtered out. `PerfCell` renders "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone`
+(NEGATIVE avg = GOOD/positive tone; higher good-veto % = better) under the same 20/50 matured-veto gates
+as the scorecard; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+footnote + header comment. Data is forward-only (fills in as vetoes mature ~5 trading days out; no
+retroactive backfill). Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+file). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+`docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
+## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
+Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
+turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
+`docs/EFFORT-LOG.md merge=union` (kills the dominant conflict) + `scripts/merge-shepherd.sh` (re-syncs
+stuck auto-merge-armed PRs, re-runs flaky verify once, merges the green ones, writes a digest to a
+"Merge shepherd status" tracking issue) + a launchd driver (Mac PAT so update-branch re-triggers CI) +
+a manual-dispatch GH Action. Acts ONLY on auto-merge-armed PRs; reports the rest. Merge≠deploy, so the
+announce-then-deploy step stays the human checkpoint. Dry-run validated against the live backlog.
 
-Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected.
+## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
+Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
+assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
+cause (measured): HeaderLogo canvas reserved width from a `13.8` AR estimate then its effect set
+the real `wm.ar=13.081` (5.2% narrower) → the logo shrank on mount and the intro followed. Fix:
+single-source `WORDMARK_AR=13.081` exported from candle-ticker, used everywhere the `13.8` guess
+lived (header-logo initial width, MobileBrandRow, intro fallback); `curHeader` hoisted to module
+scope so the loading→loaded remount eases instead of snapping; loading text removed (intro is the
+whole load screen). Empirically verified: desktop logo width now a single stable 235px (was
+248→235). Full gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-intro-size-jump-loading-text.md`.
+## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
+Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
+connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
+`isActive` flag into **"Currently Loaded Account"** (hoisted first) + **"Other Accounts"** headings;
+removed the ambiguous `active` chip; per-row action "Make active" → **"Load"** (toasts/tooltips/busy
+text follow). (B) Test Account stops repeating "Local Mock / local mock / simulated": `TEST_ACCOUNT_LABEL`
+→ "Test Account" (db-api-keys + connected-accounts route), `realityForAccount` test-branch deleted so it
+reads "PAPER · NOT real money" like any paper account, "local mock" chips + hardcoded sublines collapsed
+to the generic form, exec-mode clarification simplified. Kept ONE terse "excluded from wash-sale
+accounting" note (verified real: `tax.ts:197` filters `broker !== "test"`). Live/paper reality
+correctness for real broker accounts unchanged. Gate green: tsc 0 / lint 0-err / vitest 3168 / build.
+See `docs/rollouts/2026-07-09-account-mgmt-ui-and-test-label.md`.
+## 2026-07-09 — Scoring-factor weight tooltips (MONET, branch `monet/scoring-factor-tooltips`)
+Owner-directed display-only change, no scoring-logic changes. The eight "Scoring-factor weights"
+controls on the Strategy console page (`app/console/strategy/page.tsx`) previously showed only the
+raw lowercase `ScoringWeights` key plus a numeric "default X" hint — no explanation of what each
+factor measures. Added a new `FACTOR_META` map (capitalized name + one-sentence explanation per
+factor) and wrapped each `Field` label in the existing `Tooltip` primitive (`../ui/primitives`) with
+a small "ⓘ" affordance, plus a screen-reader-only duplicate of the tip text. The card's intro
+paragraph also gained one sentence noting the weights are relative (ratios matter, not absolute
+numbers). No `src/lib/scoring.ts` (or wherever `ScoringWeights` is consumed) changes. Gate green:
+tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+
+## 2026-07-09 — Picker copy: "Proposer"/"Reviewer" + AI-review panel "Strategist" (MONET, branch `monet/picker-copy-strategist`)
+Owner-directed pure display-copy pass, no functional changes. The Settings→Models and Strategy-page
+pickers drop the word "Model" from their labels: "Proposer Model" -> "Proposer", "Reviewer Model" ->
+"Reviewer" (both the field labels and the intro-paragraph prose in `app/console/settings/models.tsx`;
+the Field labels and the Proposer/Red-Team summary line in `app/console/strategy/page.tsx`). This
+collided with the separate AI-review (strategy-tuning) panel, which also said "Reviewer model" and
+defaulted its blank option to "Same As Red Team"/"Same As Green Team" — that panel's model field is
+now "Strategist", its intro sentence says "A strategist model reads...", and the inherited-label
+ternary (`inheritedReviewerLabel`, variable name unchanged) now renders "Reviewer"/"Proposer" instead
+of "Red Team"/"Green Team", so its blank-option text reads "Same As Reviewer" / "Same As Proposer".
+All "Red Team"/"Green Team" concept names elsewhere (approval-card, results page, decisions page,
+model-stats-drawer, `red-team.ts`, hints) are untouched. Gate green: tsc clean, lint 0 errors, 3168
+tests, build clean. See `docs/rollouts/2026-07-09-picker-copy-strategist.md`.
+
+## 2026-07-09 — Model rotation: 3 codex P2 fixes folded into PR #1117 (MONET/Opus, branch `monet/model-rotation`)
+PR #1117 had all checks green + auto-merge armed; the only blocker was three unresolved codex-bot
+review threads (repo enforces `required_conversation_resolution`). All three confirmed real and fixed
+in ONE commit: (1) `policyForTuningReviewer` (`src/lib/strategy-tuning.ts`) is now sentinel-aware —
+`redTeamLlmModel="__rotate__"` no longer degrades the LLM tuning review to local-rules; it falls
+through to the first concrete configured model. (2) `callLessonLlm` (`src/lib/outcome-engine.ts`)
+guard is now `!key || !model` — a rotation policy no longer POSTs `model:""` (400) on every post-mortem
+lesson. (3) rotation pointer is resolve-early/commit-late: `resolveModelRotationForRun`
+(`src/lib/model-rotation.ts`) returns a `commit()` that `strategy.ts` calls immediately before the
+Green `proposeTrades` call (after account validation + all usage-budget skip gates), so an
+aborted/skipped run no longer burns a rotation slot or logs a phantom `model_rotation_pick`. New tests
+in all three test files. Gate green: tsc / lint 0-err / 3168 tests / build. See
+`docs/rollouts/2026-07-09-model-rotation-codex-fixes.md`.
+## 2026-07-08 — Model rotation option "Rotate all models (testing)" (MONET, branch `monet/model-rotation`)
+Owner request: a Proposer/Reviewer picker option that rotates through all model combinations so the
+paper/test accounts accrue comparative live history (attribution is automatic via `proposedByModel`).
+New `"__rotate__"` sentinel selectable on both pickers (Settings→Models + Strategy page); resolved at
+the TOP of `runStrategyOnce` onto the RUN-SCOPED `runPolicy` (same pattern as the usage-budget
+downgrade — the persisted policy keeps the sentinel; breaker `setPolicy` calls can't overwrite it).
+Round-robin per (user, account, seat) via internal settings `model_rotation:<user>:<acct>:<seat>`;
+red pointer advances one extra step on green wrap so combinations shift phase; pool = curated catalog
+minus mistral-small-2603/mistral-medium-3-5 (broken capability map, benchmark 2026-07-08) and
+grok-build-0.1 (coding model), filtered to providers whose credential resolves; every pick audited
+(`model_rotation_pick`). Safety net: `resolveOpenAiModel` treats the sentinel as unset for consumers
+outside a run (chat/lesson pass/tuning). New `src/lib/model-rotation.ts` + 13 tests. See
+`docs/rollouts/2026-07-08-model-rotation.md`.
+## 2026-07-08 — Daily LLM learning review (MONET, branch `monet/daily-learning-review`)
+New once-per-UTC-day job: a frontier-class model (default `claude-fable-5`) reviews the system's
+LEARNING DECISIONS — learned_context rows from the last 7 days + the pending risk-tier queue —
+against a system-history digest (execution-failure audits from 14 days + recent rollout-note
+headlines), catching lessons whose evidence was corrupted by an execution defect (the MU stale-exit
+deadlock produced exactly such thesis-blaming lessons). Default OFF; `annotate` mode audits +
+notifies only; `decide` (owner opt-in) applies verdicts via the existing learned-context mutation
+paths, every application audited; any LLM/parse failure = audit + skip, never mutate. New
+`src/lib/learning-review.ts`, 3 policy fields + validation, scheduler hook, Settings card,
+`learning_review` notification type, 12 tests. Gate: tsc clean, lint 0 errors, 2996 tests green.
+Details: `docs/rollouts/2026-07-08-daily-learning-review.md`.
+## 2026-07-09 — single-adversary consolidation LANDING (MONET, Mac worktree `~/apps/trading-monet-sac`)
+Merged `origin/main` (47 commits ahead of the branch fork) into
+`monet/single-adversary-consolidation` and resolved the money-path conflicts per
+`/Users/jay/apps/monet-handoff-2026-07-09.md`. Six git-marked conflicts + four **semantic**
+(marker-free) conflicts the auto-merge introduced: deleted the dead inline-Bear stopgaps
+(`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert constants, and the two tests that
+guarded removed behavior — `inline-bear-parse`, `strategy-bear-alert-cooldown`); kept main's
+Proposer/Reviewer naming + `ModelStatsButton` drawer while integrating the consolidation's
+no-defaults fail-closed semantics; kept the consolidation's no-default model attribution +
+approve-at-half rendering AND main's honest review-failure attribution on the approval card; reset
+`test/red-team.test.ts` to the consolidation suite + re-added the #1091 bare-array guards on the new
+signature; fixed the main-added `e2e-money-path` test (explicit reviewer model + three-way verdict
+stub) and rewired `benchmark-llm-models.ts` to the single-reviewer API. Migration v15 is the next
+free version (main took v14). **Gate green in this worktree:** `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` 302 files / **3121 tests pass**, `npm run build` ok.
+**Next action:** land via `scripts/land.sh` → PR ready + `--squash --auto`; then close PR #1035 as
+superseded, delete remote branch `claude/single-adversary-consolidation-wip`. Landing operator:
+MONET (this session); feature author: the Cowork Claude session (see
+`docs/rollouts/2026-07-09-single-adversary-landing.md` and `-2026-07-07-...-impl.md`).
+
+## 2026-07-07 — single-adversary consolidation IMPLEMENTED, awaiting land (MONET, Cowork desktop)
+The 2026-07-01-decided, never-implemented `docs/single-adversary-consolidation.md` is now CODE, as
+amended by the owner's 2026-07-07 revision, on branch `monet/single-adversary-consolidation`
+(supersedes preservation draft **PR #1035** — its Stage 1a was cherry-picked cleanly onto current
+`origin/main`; the feared #1014 conflict was a false alarm). One adversary: the in-flow Bear LLM is
+deleted; `debateProposal` reviews EVERY risk-adding opening post-sizing (net-direction-aware exit
+exemption, 3-wide concurrency) with a down-only `approve`/`approve-at-half`/`reject` verdict and
+fail-closed-everywhere semantics (persisted `decision.adversaryUnavailable`, notification flag,
+amber approval-card badge, `rejected_by_red_team` rows). NO MODEL DEFAULTS anywhere — both models
+are mandatory explicit Settings picks (`DEFAULT_POLICY.llmModel` removed too);
+`RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 seeds from a
+live override once). Reliability: `extractJsonPayload` everywhere, strict verdict-shape validation,
+bounded `fetchLlmWithRetry` (no hidden failover). Verified on Linux x64 (CI platform):
+tsc 0 / eslint 0 errors / **2,888 tests pass**; `npm run build` is delegated to the Mac landing
+lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
+**Next action:** Mac-side Claude helper lands via `scripts/land.sh` (branch exists locally in the
+owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
+deploy, any account without explicit models fails closed with an actionable Settings message —
+owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
+The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
+failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real
+buildLlmRequestBody, operator AND user-stored key decrypted in-memory) found the real trigger:
+**maxItems:8** (Roth maxProposalsPerRun) — Gemini's structured-output validator expands the array
+item subtree per maxItems slot against an internal complexity budget; the post-#1036 15-property
+item schema overflows at x8 (byte-identical 400 reproduced; 3-7 pass; minus the #1036 bracket
+fields passes at 8; Bear has no maxItems = never failed; onset = first post-#1036 run). Fix:
+Gemini wire schema drops maxItems/minItems (bound folded into description; sanitizeProposals
+already truncates app-side) + llm-errors.ts captures full Google-RPC details (was 240-char
+truncation) + idempotency guard kills the "Gemini error: Gemini error:" stutter. ALSO: Run-once
+is now async (8s sync window -> 202 "started"; fast pre-flight blocks stay synchronous; run
+tracked via existing Activity polling) and the console api client shields ALL dialogs from raw
+HTML error pages (the owner saw Cloudflare's raw 524 page in the Run-once dialog; that run had
+actually executed server-side). Note: a subagent accidentally edited the integration tree —
+relocated + tree restored, documented in the rollout note.
+Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
+## 2026-07-09 — Repo AGENTS.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, `monet/deploy-doc-reconcile`)
+Doc-only: brought the repo `AGENTS.md`/`CLAUDE.md` prod-deploy language in line with the owner's
+2026-07-09 ruling (production releases = ANNOUNCE-THEN-DEPLOY: one deployer posts a #agent-sync claim
+with app+commit+contents+"deploying in N min unless objection", ~10-min objection window, off market
+hours unless a fix, deployer owns verify+boards). Corrected two stale passages — the "owner-run
+release step"/"auto-deploys to beta/integration" board bullet (previews retired, auto-deploy OFF) and
+the "deliberate step" prod stanza — pointing to `/Users/jay/apps/AGENT-SYNC.md` as canonical. Closes
+the repo-doc half of today's deploy-authorization contradiction; AGENT-SYNC.md half already done by
+the ruling lane.
+
+## 2026-07-09 — Guardrails tooltip sweep (CODEX, `codex/settings-tooltip-sweep`)
+Claimed the smallest safe remainder of the settings affordance row after auditing current
+`origin/main` and MONET handoffs. `app/console/guardrails/page.tsx` now adds native titles
+to the remaining bare Universe controls (base indices, always-include/blocklist text fields,
+permitted order types, Sell-to-Fund select) and Autonomy action buttons. Keepout remains
+MONET-owned model-picker/provider files.
+Verification is green: `npm run lint`, `npx tsc --noEmit`, `npm test` (303 files / 3118 tests),
+`npm run build`, and `git diff --check`. PR #1184 merged to `main` as `8b468260`.
+Not production-deployed yet; MONET confirmed it rides the next natural release.
+Rollout: `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
+
+## 2026-07-09 — Home evidence symbol drawer parity (CODEX, `codex/console-parity-next`)
+Re-claimed the universal ticker detail drawer parity row after read-only audits of `origin/main`
+and MONET handoff notes. Scope is intentionally narrow: `app/console/page.tsx` only for code.
+Home evidence cards derived from market-scan candidates now carry `symbol` and the current
+`MarketQuote`, rendering the title through the existing `SymbolButton` so the shared right-side
+symbol drawer opens with row-matched quote context. Keepout remains MONET-owned model/provider
+files and drawer host/API files. Verification passed: `npm run lint`, `npx tsc --noEmit`,
+`npm test` (303 files / 3118 tests), and `npm run build`.
+PR #1181 merged to `main` as `70c0698e`; production deploy is still pending after that merge.
+Rollout: `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
+
+## 2026-07-09 — Red Team efficacy scorecard wired into Results (CODEX, `codex/red-team-efficacy-console`)
+Deployment close-out: PR #1175 merged to `main` as `9cc99963` and shipped to production in
+Coolify deploy `krk1db6x` at `main@8bc0967f` alongside PR #1174. MONET verified the
+deployment record/container health, `/api/health` ok, and scheduler ticking; Codex also checked
+`/api/health` 200 during the deploy watch.
+
+MONET narrowed this lane to read-side Results/snapshot/test/docs only: no `approvals/**`,
+no `approval-card.tsx`, no `src/lib/red-team.ts`, no `src/lib/strategy.ts`. The active
+account dashboard snapshot now carries `redTeamEfficacy` plus the override split
+(`overrideVetoes`, `appliedOverrideVetoes`, `vetoDecisions`, `overrideSharePct`) derived from
+existing `proposal_rejected_by_red_team`, `red_team_veto_overridden`, and
+`socratic_override_applied` audits. Results renders a new
+Red Team veto efficacy card with overall stats, honest 20/50 sample gating on reviewer rows,
+and a recent resolved-veto table that labels missing `redTeamVerdict.model` history as
+`unattributed` instead of fabricating attribution; the unattributed rollup now comes from the
+full `getRedTeamEfficacy()` history, not the recent records slice. Focused verification here:
+`npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
+test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet` — all green.
+PR #1175 is merged and deployed.
+Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+## 2026-07-08 — Mobile chrome bar fixes: scope width, run-state chip, profile menu, avatar, STOP (MONET, branch `monet/mobile-chrome-fixes-3676f7`)
+Six owner phone-screenshot items: account scope flex-1 on phones; run-state chip unboxed +
+stacked (<sm) so it stops reading as a dropdown; profile button 44px on phones + shows the
+Google/GitHub avatar (imageUrl was in the snapshot, never rendered); theme toggle moved into the
+profile menu; profile menu is now a slide-DOWN dropdown anchored to the bar (old bottom Sheet sat
+under the mobile tab bar — Sign out unreachable); STOP button no longer flex-squeezed (shrink-0 +
+centered content). Verified live at 375×812 and 1280×800 incl. theme cycling from the menu.
+See `docs/rollouts/2026-07-08-mobile-chrome-fixes.md`.
+
+## 2026-07-08 — Intro landing fixes: slow-load size pop + vanish gap (MONET, branch `monet/intro-landing-fixes-3676f7`)
+Owner-reported on prod: mobile wordmark assembled small then popped larger; desktop logo vanished
+~1s before the page finished loading. Root cause: intro completes against the loading shell and
+lands on a stale fallback box; the fade didn't wait for a real logo. Fix (intro-canvas.tsx): the
+fallback box now mirrors the real logo per viewport, the landing box eases to the measured target,
+and the natural fade waits for a settled measured logo (45s backstop; skip instant) — the ticking
+wordmark doubles as branded loading chrome meanwhile. Verified live on cold-compile slow loads,
+mobile + desktop. See `docs/rollouts/2026-07-08-intro-landing-fixes.md`.
+
+## 2026-07-09 — Alert triage: all ~75 Attention alerts root-caused + fixed; AV key pool; alert lifecycle (MONET, `monet/alert-triage-av-multikey`)
+Owner-directed. 9-agent triage (per alert family + adversarial verify) on the prod DB: 76 of 87
+run_failed = ONE bug (Gemini rejects the Bull schema's type:["number","null"]/anyOf-null — fixed
+with Gemini-dialect schema shaping in llm-call.ts; Bear 46/46 vs Bull 0/27 was the proof); 11 =
+Robinhood $1-minimum trim loop (order_checks now parsed; sub-minimum trims skip w/ 24h-cooldown
+receipt; whole-position dust exits exempt). ACTIVE MONEY-PATH BUG found & fixed: stale-exit
+remediator (PR #1036) market-replaced broker-HELD legs of unfilled entries → naked shorts on
+paper (PG -12; T 93-sh order d642d572 resting for the 07-09 open — owner push-notified to cancel;
+UNH d5e28482). Fixed w/ held-leg exclusion (auto+manual), position-backed guard, post-cancel
+re-verify, cross-path in-flight lock. Plus: ALPHAVANTAGE_API_KEYS multi-key pool; alert
+lifecycle (acknowledged_at, account-scoped bulk ack, auto-ack sweep incl. 137 orphaned
+pending_approvals — broker-verification alerts excluded, run_failed repeat-dedup); twelvedata
+limiter; bear-unavailable cooldown; RAG double-alert consolidation; push em-dash crash fix;
+stale-run sweep threshold. MU: closed at $938.29 at the 07-08 open (verified). Config done:
+VECTOR_EMBED_BATCH_DELAY_MS=2000 in Infisical prod (live); congress SSE fixed by sibling session.
+Owner still owed: cancel d642d572 pre-open, tiingo 403 key/plan, AV keys #2-4 + ToS call.
+Gates: lint 0 err / tsc clean / 3077 tests / build green.
+Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+
+## 2026-07-08 — LIVE bulk approval typed-confirm flow (CODEX, branch `codex/live-bulk-typed-confirm`)
+Deployment close-out: PR #1174 merged to `main` as `8bc0967f` and shipped to production in
+Coolify deploy `krk1db6x` at `main@8bc0967f` alongside PR #1175. MONET verified the
+deployment record/container health, `/api/health` ok, and scheduler ticking; Codex also checked
+`/api/health` 200 during the deploy watch.
+
+Resumed the Codex approvals lane after MONET confirmed the owner/product constraints. Bulk reject
+remains the existing one-click inline confirm. Bulk approve now includes selected LIVE proposals:
+if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
+before approval; if the owner has turned that setting off, live bulk approval is one-click. Each
+selected batch now posts to a server-side bulk approval route, which computes the live batch
+membership server-side, validates the aggregate phrase, then runs each row through the normal
+`executeProposal` path so broker/account/notional re-checks and partial placed/blocked/failed
+outcomes stay independent. PR review follow-up capped bulk approve to 20 approvals, reports
+non-placed/non-blocked approval results as failed rows, keeps the per-proposal live-confirm
+contract symbol-specific, and stabilizes the sheet close handler so typing does not reset focus.
+Verification:
+`./node_modules/.bin/vitest run test/approvals-triage-model.test.ts` passed,
+`./node_modules/.bin/tsc --noEmit --pretty false` passed, `npm run lint -- --quiet` passed, and
+full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
+`npm run build` passed with only the existing Sentry Edge-runtime warning. Review-fix focused
+verification: `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
+`npx tsc --noEmit`, and `npm run lint -- --quiet` all passed; after merge-forward to current
+`origin/main`, full `npm test -- --reporter=dot --maxWorkers=2` passed (302 files / 3112 tests)
+and `npm run build` passed. PR #1174 is merged and deployed.
+Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
+
+## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
+Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
+realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +
+`app/console/strategy/page.tsx`) opens a shared drawer (`app/console/components/model-stats-drawer.tsx`,
+Sheet + con-table) listing every catalog model: cost/call and p50 latency (live from `llm_usage` /
+`llm_call_latency` when >=3 samples, else the 2026-07-08 benchmark JSON — always labeled which), and a
+performance column gated by sample size (hidden behind "needs >=20 closed trades (n=X)" under 20,
+small-sample caveat 20-49, plain at 50+; Reviewer perf deliberately a dash — Red attribution is
+per-run, not per-trade). New GET `/api/llm-usage/model-stats` (auth mirrors sibling llm-usage route);
+pure rollup in `src/lib/model-stats.ts` (13 unit tests); `ClosedLot.entryModel` additively threaded
+through `calculatePnl` from the entry proposal's `proposedByModel`. Gate: tsc clean, lint 0 errors,
+2997 tests green, route + both pages runtime-smoked on a dev server.
+See `docs/rollouts/2026-07-08-model-cost-drawer.md`.
+
+## 2026-07-09 — Mobile nav + drawer fixes, owner phone feedback wave 3 (MONET)
+Customizable mobile bottom tabs ("Tabs" chooser w/ pin/unpin, default Thesis/Proposals/
+Journal/Orders, localStorage, active-tab state, slide-up grouped menu w/ Core section);
+desktop rail regrouped to match (Settings last); symbol drawer now fetches live single-symbol
+enrichment via new GET /api/quote when the last scan didn't know the symbol (LRCX/AAPL report)
+with the note narrowed to scan-only facts; the "LRCXwasn't" spacing bug root-caused as a
+RUNTIME JSX whitespace drop and fixed; order cards compacted label-left/value-right; console
+page widths standardized on one shared max-w-5xl constant (2-col pages = documented
+exceptions). Gate green (tsc/lint/3109+ tests/build) + driven live desktop+mobile. See
+docs/rollouts/2026-07-09-mobile-nav-drawer-fixes.md.
+
+## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
+All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
+requirement, implemented by 14 file-disjoint subagents across two workflow waves and
+integrated in-session. Highlights: brand accent unified on teal (--brand-accent, both
+themes), "Decisions"→"Proposals" nav rename, primitives parity (Segmented/IconButton/
+RawNumInput/Switch.disabled/Sheet aria/Meter breach/TONE_VAR), PWA icons + offline banner +
+"Open full console" escape, mobile card-lists for wide tables, scan Watch button + tab
+ARIA, orders staleness + manual-entry note, guardrails utilization meters, capability-badge
+de-rainbow, marketing decision-receipt illustration + loop diagram, and a full plain-English
+label system (no raw enums/JSON anywhere; shared maps in src/lib/dashboard-ui.ts +
+app/console/lib/labels.ts; short Order/Run references with full ids in tooltips). Gate:
+tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 375px (zero
+snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
+consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
+`docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+## 2026-07-08 — Intro→logo handoff: hidden-until-assembled + mobile brand row (MONET, branch `monet/intro-logo-handoff-3676f7`)
+Owner: the header logo must not pre-exist the candles (it was visible while they flew onto it),
+and mobile — where the bar logo is display:none and the intro landed on a phantom box — gets a
+full-width "SOCRATIC TRADE" row above the controls bar (~2x-tall chrome) as the landing target,
+holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts` phase channel;
+`BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
+`[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
+DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
+## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
+Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
+runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
+widens the housekeeping bucket (notify.sent/error delivery mechanics, due-jobs drain, vector_store,
+recoverable_issue, llm_cache_usage). Real-hour replay: 54 raw events → 8 main cards + 1 collapsed
+system row. All data preserved/expandable. See `docs/rollouts/2026-07-08-activity-log-grouping.md`.
+## 2026-07-09 — Shared-dep proper-usage cleanup refresh (CODEX replacing dirty Cursor PR #1105)
+Cross-app audit: Socratic.Trade already used shared client/SSE/share/telemetry well.
+This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event checks,
+`SharePayload`-based outbound type, dead imports. Refreshed on branch
+`codex/refresh-shared-dep-usage` from dirty Cursor PR #1105 without editing the Cursor branch.
+Merged via PR #1171 as `54b6d722`; repo effort mirror closeout follows on `codex/shared-dep-closeout`.
+Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
+See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+
+## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
+UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
+Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/
+--neg-fg + @theme), Tone union + maps in app/ui/primitives.tsx, price-chart cssVar reads,
+all call sites (error page + 4 admin clients + model-picker), visual-system.md. Pure
+rename: computed colors verified byte-identical in light AND dark. tsc/lint/2972 tests
+green; PR via land.sh. See `docs/rollouts/2026-07-08-tone-rename-pos-neg.md`.
+## 2026-07-08 — PROD RELEASE rjskkyzx: production = main@4af98aaa exactly (MONET, owner-directed)
+Owner asked to get all completed work to production. Coolify deploy `rjskkyzx` of
+`socratic-trade-prod` finished + verified (deployment commit 4af98aaa = main HEAD, app
+running:healthy, edge 307→/login 200). Ships #1095 (inline-Bear bare-array recovery — no more
+silent full veto on malformed Bear replies) + #1097 (sweep docs close-out) on top of n1v296.
+Every merged effort is now live. **OWNER ACTION: confirm `ALLOW_LIVE_TRADING` in Infisical —
+it's opt-OUT since #1036, so the Robinhood live account trades on its environment unless set
+to `false`.** Boards trued up (intro #1089 + #1036 rows → Deployed; #1095 row added). See
+`docs/rollouts/2026-07-08-prod-release-4af98aaa.md`.
+
+## 2026-07-08 — Troubleshoot sweep MERGED (#1087) + PRODUCTION DEPLOYED + Deploy-workflow hazard closed (MONET)
+PR #1087 (10-issue sweep) merged 10:35Z; Coolify deployment n1v296 (commit ea779bbf, includes
+the day's sibling PRs) health-verified: ok/db/scheduler ticking, finnhub dependency back to
+ok:true with the new rate limiter live. Post-merge actions: (1) the PR's gitleaks red was a
+FALSE POSITIVE on the fake scrubber-test fixture (defused in follow-up PR);
+(2) **`.github/workflows/deploy.yml` DISABLED via `gh workflow disable`** — it auto-ran on
+every main push on the Mac self-hosted runner ending in `pm2 restart trading` (the
+"accidentally re-started twice" source from the previews-retired note); if the rollback pm2
+lane were ever started it would resurrect the double-scheduler scenario on the next merge.
+Re-enable only for a deliberate Mac rollback. Owner still owed: congress SSE env decision,
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000, Alpha Vantage key rotation + tier decision, MU order
+4EED5BE7 fill confirmation. Addendum: `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`.
+## 2026-07-08 — Inline-Bear bare-array recovery (MONET, branch `monet/inline-bear-array-recovery`)
+PR #1091's DeepSeek bare-array fix applied to the parser it didn't cover: the inline Bear in
+strategy.ts, where a bare array (or any object missing `proposals`) silently read as a deliberate
+FULL VETO. New `parseBearSurvivors` helper: bare proposal-arrays recovered, `{proposals: []}` stays a
+real veto, everything malformed → fallbackToBull. Latent exposure (live Bear = gemini) closed until
+the single-adversary consolidation deletes the path (their deletion supersedes). See
+`docs/rollouts/2026-07-08-inline-bear-array-recovery.md`.
+
+## 2026-07-08 — Intro skips the centered-wordmark act (MONET, branch `monet/candlesticks-intro-animation-360f5f`)
+Owner: intro too long; drop the big centered SOCRATIC / TRADE middle step. Candles now fly
+chart → top-left header logo directly (~6.1s total, was ~9.3s). The middle act is preserved
+verbatim behind `CENTER_WORDMARK_STEP: boolean = false` in
+`app/console/components/intro-canvas.tsx` — flip to `true` to restore. Full verify gate green.
+See `docs/rollouts/2026-07-08-intro-skip-center-wordmark.md`.
+## 2026-07-08 — LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`)
+New operator script `scripts/benchmark-llm-models.ts`: benchmarks every curated-catalog model in
+BOTH strategy roles (Green proposer + Red reviewer) through the app's REAL request paths
+(resolveLlmEndpoint -> buildLlmRequestBody w/ the strategy schemas+prompts -> llmFetchCapturing),
+input pack reconstructed from the real signal_snapshot/macro/portfolio data, app DB strictly
+read-only (scratch-DB isolation for credential resolution). Cache-aware (#1086-guarded) cost +
+cold/warm round split. Verified end-to-end with real DeepSeek calls against the trading-live
+standby data. See `docs/rollouts/2026-07-08-llm-model-benchmark.md`.
+## 2026-07-08 — Multi-issue troubleshoot sweep: 10 owner-reported issues diagnosed, 7 fixed in code (MONET, `monet/multi-issue-troubleshooting-5b55ad`)
+22-agent investigation (per-issue investigator + adversarial verifier + prod scout + critic)
+then 6 implementation lanes + 2-lens diff review + fix round. Diagnosed: scan blanks (provider
+quota pile-up + Yahoo rate-limiting the new Hetzner egress IP — container-verified, IPv6 fine),
+framework-card link to wrong page, fake outcomes compare toggle, LLM usage attribution gap
+(the deferred half of #1030), font selector merged-but-unwired (#1007 dead hook), Finnhub 25-wide
+bursts, congress SSE missing env (CONGRESS_STREAM_* absent in Infisical prod), Alpha Vantage
+burst+daily-cap (+ its error text LEAKED the raw API key into health logs — scrubbed now, rotate
+the key), MU exit saga (blocking $991 limit EXPIRED 07-07; flat-5% trailingStopPct remnant fired
+market sell 4eed5be7 after hours — check it filled at the 07-08 open; 3 synthetic-stops bugs found
++ fixed: filled-at-quote misbooking, all-night re-arm/422 loop, resting-order blindness), short
+order labels. Bonus: 10-K RAG ingestion effectively stalled by free-tier throttle (lower
+VECTOR_EMBED_BATCH_DELAY_MS ≤5000 in Infisical — Voyage is paid); litestream confirmed RUNNING
+in-container (health "unknown" is a reporting gap); Roth IRA runs failing on Gemini 400 (separate).
+Prod actions listed in `docs/rollouts/2026-07-08-multi-issue-troubleshoot.md`. NOTE: several fixes
+in this saga were merged-but-never-deployed (auto-deploy OFF) — deploy after merge.
+## 2026-07-08 — LLM prompt-cache observability + cache-aware cost (MONET, branch `monet/llm-cache-observability`)
+Owner cache tip audited: Anthropic transport already sends `cache_control` (llm-call.ts); other
+providers auto-cache server-side. Fixed the real gap: `extractLlmUsage` now surfaces cache-read/
+creation tokens (all 4 provider shapes), `estimateLlmCostUsd` prices them at 0.1x/1.25x input
+(cost was overstated on cached calls), and `recordLlmUsage` writes an `llm_cache_usage` audit on
+cache activity — hit rates + savings queryable, zero schema migration. See
+`docs/rollouts/2026-07-08-llm-cache-observability.md`.
+
+## 2026-07-08 — Model recommendations re-derived from CALL HISTORY (MONET, follow-up to #1078, owner directive)
+Owner: "check the history of calls and base it on that not on the wording of the model." Flags now
+empirical (llm_step outcomes + llm_usage, excluding the fixed Gemini bear format incident and the
+fixed pre-#1036 60s-timeout class): gemini-3.5-flash = Green+Red (bear 46/46 post-fix, bull 27/0);
+gpt-5.4-mini = Green+Red (22/2, 18/1); deepseek-v4-pro = Red only (bear 17/3 w/ fixed cause; no
+successful Green history); claude-sonnet-5 + gemini-3.1-pro-preview = NO recs (zero calls ever;
+Anthropic key also capped until 2026-08-01). Convention comments in both catalogs now state the
+empirical derivation + snapshot. #1078's role-neutral labels stand. See the FINAL banner in
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+
+## 2026-07-08 — Model-picker labels + Red-team rec fix (MONET, branch `monet/model-picker-copy-recs`)
+Owner review: role-flavored descriptors ("premium Claude critique", "fast Claude review") made
+role-neutral + grammatically parallel (opus = "premium Claude reasoning", haiku = "fast low-cost
+Claude"), and the Gemini Red-team recommendation moved off the *preview* build
+(`gemini-3.1-pro-preview` → stable `gemini-3.5-flash`); recommendation principle documented in both
+catalog copies (console/settings/models.tsx + ui/llm-model-catalog.ts, display-only flags). See
+`docs/rollouts/2026-07-08-model-picker-copy-recs.md`.
+## 2026-07-08 — Alert Center filter pills (MONET)
+Owner-reported clipped tile headings ("DELIVERIE…") in the Alert Center. Replaced the fixed
+4-column stat-tile filter grid with a wrapping sentence-case pill row (counts inline, hover
+hints, aria-pressed + bold non-color selected cue, coarse-pointer 44px floor). Driven live at
+641px/309px container widths — no clipping, clean wrap. Closes the 55-findings AlertCenter
+aria-pressed row in passing. See `docs/rollouts/2026-07-08-alert-center-filter-pills.md`.
+
+## 2026-07-08 — Model attribution on every decision surface (MONET)
+Every decision surface now shows which LLM model made — or FAILED to make — the decision:
+approval cards render the previously-invisible failed-review state (failureKind + the failed
+reviewer's ModelBadge, honest "no reviewer model configured" for not_configured) plus an
+explicit "no adversarial review ran" empty state; the decision trace badges the deciding +
+reviewer models (was raw text) incl. a failed-review card; console-home evidence rows surface
+failed reviews; mobile proposal cards get a compact text attribution line (payload already
+carried the fields). New pure helper `app/console/lib/red-team.ts` + 6 unit tests. Verified:
+tsc clean, lint 0 errors, 2895 tests + 6 new green, build clean, all three states driven live
+on a seeded dev DB (console + mobile). See
+`docs/rollouts/2026-07-08-model-attribution-ui-labels.md`. PR pending via land.sh.
+
+## 2026-07-06 — Congress Score Eval UI Wiring (AG)
+Added the UI to surface the `congressScoreVerdict` in the Market Scan tab of the console dashboard. This completes the "Wire congress-score-eval go/no-go into scan/scoring" feature. The signal's verdict, stats, and gating status are now explicitly visible to the user. All tests and the Next.js build passed locally. See `docs/rollouts/2026-07-06-congress-score-eval-wiring.md`.
 ## 2026-07-06 — CURSOR full itemization + P0/P1 sweeps (CURSOR, `cursor/full-itemization-pass`)
 Materialized the previously-claimed ~45 CURSOR rows from the "full itemization" pass as 27
 individual discrete rows in `docs/EFFORT-LOG.md` (P0 Security 5, P1 Mechanical 9, P2 Ops 9,
@@ -415,9 +877,9 @@ still needs: secrets transfer (broker/LLM API keys), safe DB migration/cutover p
 Backups enabled in Coolify for that app specifically (the preview lanes deliberately skip
 Coolify Backups as not worth the 20% cost for fully-reproducible state; production is not
 reproducible and must not skip this). See `docs/rollouts/2026-07-06-coolify-migration.md`.
-## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override
+## 2026-07-06 — Antigravity (AG) fix: Red Team explicitly chosen model override (SUPERSEDED by #1191)
 
-Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected.
+Fixed an issue where the Red Team debate was silently forcing Anthropic as a cross-provider Bear (via `RED_TEAM_LLM_PROVIDER=anthropic`), even when a user explicitly selected a different model (e.g., `deepseek-v4-pro`) in their policy. The `debateProposal` logic now respects the explicit choice and only falls back to the Anthropic override when no custom model is selected. _(Merge-forward note 2026-07-09: superseded by PR #1191's single-adversary consolidation, which deleted the Anthropic special-case entirely — the explicit `redTeamLlmModel` is now the sole source via `resolveLlmEndpoint(role: "red")`. PR #989 no longer carries a `red-team.ts` diff.)_
 
 
 ## 2026-07-06 — CLAUDE next-wave RAG cluster: 5 PRs merged (#970/#973/#974/#977/#979)

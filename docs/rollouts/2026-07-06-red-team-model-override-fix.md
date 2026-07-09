@@ -1,5 +1,11 @@
 # 2026-07-06: Red Team explicitly chosen model override fix
 
+> **SUPERSEDED by PR #1191 (single-adversary consolidation, merged 2026-07-09).** That rewrite of
+> `src/lib/red-team.ts` deleted the Anthropic cross-provider special-case entirely and made the
+> user's explicit `redTeamLlmModel` the sole source via `resolveLlmEndpoint(role: "red")` — this
+> note's fix is fully realized by design there. The PR #989 merge-forward (2026-07-09) took main's
+> `red-team.ts` wholesale; the code change described below no longer exists as a distinct diff.
+
 ## Summary
 Fixed an issue where `debateProposal` (the Red Team step) was completely ignoring the user's explicitly chosen `redTeamLlmModel` (e.g. `deepseek-v4-pro`) if the global environment variable `RED_TEAM_LLM_PROVIDER` was set to `anthropic` and the user had an Anthropic API key configured. 
 

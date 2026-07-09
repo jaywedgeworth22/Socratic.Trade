@@ -4,14 +4,39 @@ import { join } from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { evaluateStop, runSyntheticStopMonitor } from "../src/lib/synthetic-stops";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
-import { listFillEvents, upsertConnectedAccount } from "../src/lib/db";
-import type { TradingPolicy } from "../src/lib/types";
+import {
+  claimSyntheticStop,
+  getDb,
+  listFillEvents,
+  listSyntheticStops,
+  revertSyntheticStopClaim,
+  upsertConnectedAccount,
+  upsertSyntheticStop
+} from "../src/lib/db";
+import { reconcilePendingFills } from "../src/lib/strategy";
+import type { BrokerGateway, EquityOrder, TradingPolicy } from "../src/lib/types";
+
+vi.mock("../src/lib/vector-db", () => ({
+  findRelevantExperiences: async () => [],
+  upsertExperiences: async () => {},
+  retrieveContext: async () => [],
+  storeContext: async () => {},
+  storeContexts: async () => {}
+}));
 
 const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
   quotes: {} as Record<string, { price?: number }>,
-  placed: [] as Array<{ side: string; quantity: number; symbol: string }>,
-  orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string }>
+  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string }>,
+  orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
+  // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
+  // placed after hours); "filled" = synchronous fill (the Test broker's behavior).
+  placeState: "accepted",
+  // When set, getEquityOrders throws (broker order list unreadable this tick).
+  ordersError: null as Error | null,
+  // When set, placeEquityOrder records the placement (the broker ACCEPTED it) and then throws —
+  // the "placement threw but the broker may have taken the order" money-path trap.
+  placeError: null as Error | null
 }));
 
 vi.mock("../src/lib/broker", () => ({
@@ -25,14 +50,18 @@ vi.mock("../src/lib/broker", () => ({
       cash: 5000
     }),
     getEquityPositions: async () => broker.positions,
-    getEquityOrders: async () => broker.orders,
+    getEquityOrders: async () => {
+      if (broker.ordersError) throw broker.ordersError;
+      return broker.orders;
+    },
     getEquityQuotes: async () => broker.quotes,
     getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
       symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
     ),
-    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string }) => {
+    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string }) => {
       broker.placed.push(order);
-      return { orderId: "ord-1" };
+      if (broker.placeError) throw broker.placeError;
+      return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
     }
   })
 }));
@@ -111,7 +140,20 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.quotes = {};
     broker.placed = [];
     broker.orders = [];
+    broker.placeState = "accepted";
+    broker.ordersError = null;
+    broker.placeError = null;
   });
+
+  /** Audit receipts of one kind for one symbol (payloads are JSON with a `symbol` field). */
+  function auditPayloads(kind: string, symbol: string): Array<Record<string, unknown>> {
+    const rows = getDb()
+      .prepare("SELECT payload FROM audit_events WHERE kind = ? ORDER BY created_at ASC")
+      .all(kind) as Array<{ payload: string }>;
+    return rows
+      .map((r) => JSON.parse(r.payload) as Record<string, unknown>)
+      .filter((p) => p.symbol === symbol);
+  }
 
   it("auto-registers and fires a SELL to exit a long when the trail breaches (running)", async () => {
     broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
@@ -178,5 +220,245 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(fills).toHaveLength(1);
     expect(fills[0].status).toBe("pending_reconciliation"); // reconcilePendingFills books the real fill
     expect(fills[0].brokerOrderId).toBe("ord-1");
+  });
+
+  // ── Regressions for the 2026-07-08 overnight MU incident (Alpaca paper) ─────────────
+
+  it("books an after-hours PAPER exit as pending (not filled-at-quote) and reconciliation finalizes the true fill", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } }; // breaches a 5% trail off extreme 100
+    broker.placeState = "accepted"; // the market sell RESTS at the broker until the next open
+    connectTestAccount("SYN-AFTERHOURS");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-AFTERHOURS"), true);
+    expect(result.exited).toBe(1);
+    let fills = listFillEvents("SYN-AFTERHOURS", "paper", 10, "local");
+    expect(fills).toHaveLength(1);
+    // The incident booked this as status "filled" at the placement-time quote — realized P&L was
+    // fabricated hours before the true open fill. It must sit pending until the broker reports it.
+    expect(fills[0].status).toBe("pending_reconciliation");
+    expect(fills[0].brokerOrderId).toBe("ord-1");
+
+    // Next morning: the resting order fills at the open — the EXISTING reconciliation path books it.
+    const openFillGateway = {
+      getEquityOrders: async () => [{
+        id: "ord-1",
+        symbol: "MU",
+        side: "sell",
+        type: "market",
+        state: "filled",
+        filledQuantity: 10,
+        averagePrice: 93.85,
+        createdAt: new Date().toISOString(),
+        updatedAt: "2026-07-08T13:30:05.000Z"
+      } as EquityOrder]
+    } as unknown as BrokerGateway;
+    await reconcilePendingFills(openFillGateway, "SYN-AFTERHOURS", "local");
+    fills = listFillEvents("SYN-AFTERHOURS", "paper", 10, "local");
+    expect(fills[0].status).toBe("filled");
+    expect(fills[0].price).toBe(93.85); // the true open fill, not the after-hours quote
+    expect(fills[0].notional).toBeCloseTo(938.5);
+    expect(fills[0].filledAt).toBe("2026-07-08T13:30:05.000Z");
+  });
+
+  it("does NOT re-arm or re-fire a triggered stop while its exit order is still resting", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    connectTestAccount("SYN-REFIRE");
+    const first = await runSyntheticStopMonitor("local", policyFor("SYN-REFIRE"), true);
+    expect(first.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    // The exit rests at the broker all night, visible as a live open MARKET order.
+    broker.orders = [{ id: "ord-1", symbol: "MU", side: "sell", type: "market", state: "new" }];
+    // Next tick (and every ~60s all night in the incident): must not fire again.
+    const second = await runSyntheticStopMonitor("local", policyFor("SYN-REFIRE"), true);
+    expect(second.exited).toBe(0);
+    expect(broker.placed).toHaveLength(1); // no duplicate protective sell
+    expect(listSyntheticStops("SYN-REFIRE", "local", "triggered")).toHaveLength(1); // still claimed
+    expect(listSyntheticStops("SYN-REFIRE", "local")).toHaveLength(0); // never resurrected to active
+  });
+
+  it("treats a resting NON-STOP exit order (limit sell) as protection — nothing registered or fired on top of it", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } }; // would breach a 5% trail IF a stop were registered
+    broker.orders = [{ id: "lim-1", symbol: "MU", side: "sell", type: "limit", state: "new" }];
+    connectTestAccount("SYN-LIMIT");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-LIMIT"), true);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    expect(listSyntheticStops("SYN-LIMIT", "local")).toHaveLength(0); // registration deferred, not stacked
+  });
+
+  it("does not fire an ACTIVE stop on top of a resting exit order (fire-path protection check)", async () => {
+    connectTestAccount("SYN-SKIPFIRE");
+    upsertSyntheticStop({
+      id: "stop-skipfire", userId: "local", accountNumber: "SYN-SKIPFIRE", symbol: "MU",
+      side: "long", quantity: 10, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active"
+    });
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    broker.orders = [{ id: "lim-2", symbol: "MU", side: "sell", type: "limit", state: "new" }];
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-SKIPFIRE"), true);
+    expect(result.triggered).toBe(1); // the trail breached…
+    expect(result.exited).toBe(0); // …but no order is stacked on the resting exit
+    expect(broker.placed).toHaveLength(0);
+    expect(listSyntheticStops("SYN-SKIPFIRE", "local")).toHaveLength(1); // stays active/armed, not claimed
+  });
+
+  it("upsertSyntheticStop cannot resurrect a 'triggered' row to 'active' (revertSyntheticStopClaim is the only re-arm path)", () => {
+    const stop = {
+      id: "stop-resurrect", userId: "local", accountNumber: "SYN-UPS", symbol: "MU",
+      side: "long" as const, quantity: 10, entryPrice: 100, extremePrice: 100, trailPercent: 5,
+      status: "active" as const
+    };
+    upsertSyntheticStop(stop);
+    expect(claimSyntheticStop("stop-resurrect", "local")).toBe(true);
+    upsertSyntheticStop(stop); // the incident's auto-register overwrite (status: "active")
+    expect(listSyntheticStops("SYN-UPS", "local", "triggered")).toHaveLength(1); // guard held
+    expect(listSyntheticStops("SYN-UPS", "local")).toHaveLength(0);
+    revertSyntheticStopClaim("stop-resurrect", "local"); // the deliberate confirmed-terminal path
+    expect(listSyntheticStops("SYN-UPS", "local")).toHaveLength(1);
+  });
+
+  it("re-arms and re-fires under a FRESH refId once the exit order is confirmed dead with the position still open", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    connectTestAccount("SYN-REARM");
+    const first = await runSyntheticStopMonitor("local", policyFor("SYN-REARM"), true);
+    expect(first.exited).toBe(1);
+    // The resting exit later dies unfilled — reconciliation confirms it terminal.
+    const expiredGateway = {
+      getEquityOrders: async () => [{
+        id: "ord-1", symbol: "MU", side: "sell", type: "market", state: "expired",
+        createdAt: new Date().toISOString()
+      } as EquityOrder]
+    } as unknown as BrokerGateway;
+    await reconcilePendingFills(expiredGateway, "SYN-REARM", "local");
+    expect(listFillEvents("SYN-REARM", "paper", 10, "local")[0].status).toBe("expired");
+    // Age the triggered row past the re-arm confirmation grace window.
+    getDb()
+      .prepare("UPDATE synthetic_trailing_stops SET updated_at = ? WHERE account_number = ? AND user_id = ?")
+      .run(new Date(Date.now() - 16 * 60_000).toISOString(), "SYN-REARM", "local");
+    broker.orders = [{ id: "ord-1", symbol: "MU", side: "sell", type: "market", state: "expired" }];
+    const second = await runSyntheticStopMonitor("local", policyFor("SYN-REARM"), true);
+    // Protection restored: still breached, so a fresh exit fires — under a NEW client order id,
+    // so the broker's client_order_id uniqueness cannot 422 the legitimate replacement. The id
+    // rolls forward via the per-row fire generation ("-g1"), persisted on the stop itself.
+    expect(second.exited).toBe(1);
+    expect(broker.placed).toHaveLength(2);
+    expect(broker.placed[1].refId).not.toBe(broker.placed[0].refId);
+    expect(broker.placed[1].refId).toBe(`${broker.placed[0].refId}-g1`);
+    const rowAfter = listSyntheticStops("SYN-REARM", "local", "triggered")[0];
+    expect(rowAfter.fireGeneration).toBe(1);
+    expect(rowAfter.lastAttemptRefId).toBe(broker.placed[1].refId);
+  });
+
+  // ── Round 2 (adversarial review): per-row fire_generation / last_attempt_ref_id ─────
+
+  it("reverted-after-throw path: reuses the SAME refId while ambiguous and advances to -g1 only after confirmed-terminal", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    connectTestAccount("SYN-THROW");
+
+    // Tick 1: the broker ACCEPTS the market sell but the placement call throws (response lost).
+    // No fill is booked, the claim reverts — but the attempted client_order_id must be remembered.
+    broker.placeError = new Error("socket hang up");
+    const first = await runSyntheticStopMonitor("local", policyFor("SYN-THROW"), true);
+    expect(first.exited).toBe(0);
+    expect(broker.placed).toHaveLength(1);
+    const r0 = broker.placed[0].refId;
+    expect(r0).not.toContain("-g"); // generation 0 keeps the original unsuffixed id format
+    expect(listFillEvents("SYN-THROW", "paper", 10, "local")).toHaveLength(0); // nothing booked
+    let row = listSyntheticStops("SYN-THROW", "local")[0]; // reverted to active…
+    expect(row.lastAttemptRefId).toBe(r0); // …but the possibly-live order's id is remembered
+    expect(row.fireGeneration).toBe(0);
+
+    // Tick 2: the order list is UNREADABLE — the prior order's fate is ambiguous, so the retry
+    // must reuse the exact same client_order_id (a 422 collision fails safe; a fresh id could
+    // double-sell on top of an order the broker actually took).
+    broker.ordersError = new Error("504 gateway timeout");
+    await runSyntheticStopMonitor("local", policyFor("SYN-THROW"), true);
+    expect(broker.placed).toHaveLength(2);
+    expect(broker.placed[1].refId).toBe(r0); // verbatim reuse — generation did NOT advance
+    expect(listSyntheticStops("SYN-THROW", "local")[0].fireGeneration).toBe(0);
+
+    // Tick 3: the order list is readable and POSITIVELY shows the prior attempt dead (no live
+    // exit order, r0's client_order_id nowhere live, no fill pending). Only now does the
+    // generation advance and the replacement place under a fresh "-g1" id.
+    broker.ordersError = null;
+    broker.placeError = null;
+    broker.orders = [];
+    const third = await runSyntheticStopMonitor("local", policyFor("SYN-THROW"), true);
+    expect(third.exited).toBe(1);
+    expect(broker.placed).toHaveLength(3);
+    expect(broker.placed[2].refId).toBe(`${r0}-g1`);
+    row = listSyntheticStops("SYN-THROW", "local", "triggered")[0];
+    expect(row.fireGeneration).toBe(1);
+    expect(row.lastAttemptRefId).toBe(`${r0}-g1`);
+  });
+
+  it("partial coverage: a 10-of-100-share resting trim leaves 90 shares protected — the stop fires for the UNCOVERED remainder", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { MU: { price: 90 } }; // breaches a 5% trail off extreme 100
+    // A live GTC take-profit trim for 10 of the 100 shares. Before quantity-aware coverage, ANY
+    // live sell suppressed registration AND firing — 90 shares rode through a crash unprotected.
+    broker.orders = [{ id: "trim-1", symbol: "MU", side: "sell", type: "limit", state: "new", quantity: 10 }];
+    connectTestAccount("SYN-PARTIAL");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-PARTIAL"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(90); // only the shares the trim does NOT already cover
+  });
+
+  it("partial coverage counts REMAINING quantity: a partially filled trim covers only its open shares", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { MU: { price: 90 } };
+    // 20-share trim, 5 already filled → 15 still resting; the stop must fire for the other 85.
+    broker.orders = [{ id: "trim-2", symbol: "MU", side: "sell", type: "limit", state: "partially_filled", quantity: 20, filledQuantity: 5 }];
+    connectTestAccount("SYN-PARTFILL");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-PARTFILL"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed[0].quantity).toBe(85);
+  });
+
+  it("full-size resting exit (whatever its price) blocks the fire with an audit receipt — those shares are broker-held", async () => {
+    connectTestAccount("SYN-FULLCOVER");
+    upsertSyntheticStop({
+      id: "stop-fullcover", userId: "local", accountNumber: "SYN-FULLCOVER", symbol: "FULLC",
+      side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active"
+    });
+    broker.positions = [{ symbol: "FULLC", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { FULLC: { price: 90 } };
+    // A full-size limit sell far above the market still holds all 100 shares at the broker — a
+    // second sell would be rejected anyway; the stale-limit-order notifier is what flags it.
+    broker.orders = [{ id: "lim-full", symbol: "FULLC", side: "sell", type: "limit", state: "new", quantity: 100 }];
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-FULLCOVER"), true);
+    expect(result.triggered).toBe(1);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    expect(listSyntheticStops("SYN-FULLCOVER", "local")).toHaveLength(1); // stays armed, not claimed
+    const receipts = auditPayloads("synthetic_stop_skipped_resting_exit", "FULLC");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].coveredQty).toBe(100);
+    expect(receipts[0].unknownOrderQuantity).toBe(false);
+  });
+
+  it("unknowable exit-order quantity is treated as FULL coverage (no fire) with the reason on the audit receipt", async () => {
+    connectTestAccount("SYN-UNKNOWNQTY");
+    upsertSyntheticStop({
+      id: "stop-unknownqty", userId: "local", accountNumber: "SYN-UNKNOWNQTY", symbol: "UNKQ",
+      side: "long", quantity: 100, entryPrice: 100, extremePrice: 100, trailPercent: 5, status: "active"
+    });
+    broker.positions = [{ symbol: "UNKQ", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { UNKQ: { price: 90 } };
+    // e.g. a notional/dollarAmount sell reports no share quantity — coverage is unknowable, so it
+    // must fail toward no-duplicate-sell (skip firing), never toward a possible oversell.
+    broker.orders = [{ id: "notional-1", symbol: "UNKQ", side: "sell", type: "limit", state: "new" }];
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-UNKNOWNQTY"), true);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    const receipts = auditPayloads("synthetic_stop_skipped_resting_exit", "UNKQ");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].unknownOrderQuantity).toBe(true);
   });
 });

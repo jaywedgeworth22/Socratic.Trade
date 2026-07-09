@@ -1,4 +1,5 @@
 import { normalizeSymbol } from "./money";
+import { shortOrderLabel } from "./order-labels";
 import type { EquityOrder, EquityPosition, TradeProposal } from "./types";
 
 const EPSILON = 1e-6;
@@ -73,7 +74,7 @@ export function evaluateBrokerHeldExitAvailability(
 
 export function brokerHeldExitBlockReason(availability: BrokerHeldExitAvailability): string {
   const orderList = availability.heldOrderIds.length > 0
-    ? ` Related open order(s): ${availability.heldOrderIds.join(", ")}.`
+    ? ` Related open order(s): ${availability.heldOrderIds.map(shortOrderLabel).join(", ")}.`
     : "";
   return (
     `Existing open ${availability.side === "sell" ? "sell" : "cover"} order(s) already hold ` +
