@@ -444,6 +444,8 @@ type EvidenceRow = {
   meta: string;
   metaTitle?: string;
   body: string;
+  symbol?: string;
+  quote?: MarketQuote;
   tone?: "pos" | "warn" | "neg" | "accent";
 };
 
@@ -609,6 +611,8 @@ function evidenceFromCandidate(candidate: MarketQuote): EvidenceRow {
   const sources = sourceListFromQuote(candidate) || evidenceSourceLabel(candidate.provider);
   return {
     title: candidate.symbol,
+    symbol: candidate.symbol,
+    quote: candidate,
     meta: `score ${Math.round(candidate.score)}${sources ? ` · ${sources}` : ""}`,
     metaTitle: sources ? `Data sources: ${sources}` : undefined,
     body:
@@ -720,11 +724,17 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
   );
 }
 
-function EvidenceCard({ title, meta, metaTitle, body, tone = "accent" }: EvidenceRow) {
+function EvidenceCard({ title, meta, metaTitle, body, symbol, quote, tone = "accent" }: EvidenceRow) {
   return (
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
-        <strong>{title}</strong>
+        {symbol ? (
+          <SymbolButton symbol={symbol} quote={quote} showLogo={false}>
+            {title}
+          </SymbolButton>
+        ) : (
+          <strong>{title}</strong>
+        )}
         <span title={metaTitle}>{meta}</span>
       </div>
       <p>{body}</p>

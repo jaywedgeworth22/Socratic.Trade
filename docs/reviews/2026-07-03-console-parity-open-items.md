@@ -14,6 +14,8 @@ Socratic Trade reframe.
 - Live thesis headline is reframed as a market thesis, with ticker-specific
   action shown as the current expression rather than the thesis itself.
 - Home ticker references now open the shared right-side symbol drawer.
+- Home evidence-card ticker references now open the shared right-side symbol
+  drawer with the same candidate quote the card is rendering.
 - Strategy Green/Red models use curated dropdowns instead of raw text boxes.
 - Strategy and AI Review model controls now expose provider-specific
   reasoning/thinking options for OpenAI, Anthropic, Gemini, xAI, and Mistral.
@@ -40,9 +42,10 @@ Socratic Trade reframe.
 - Only two absolute-vs-percent setting pairs have been converted to polished
   mode switches. Remaining duplicated constraints need the same treatment where
   the pair is semantically either/or.
-- The shared symbol drawer is restored for many ticker surfaces, but full
-  app-wide coverage still needs a grep-driven pass for every remaining ticker
-  render in the console, legacy dashboard, mobile, and admin surfaces.
+- The shared symbol drawer is restored across the documented console ticker
+  surfaces: scan, Home action rows, Home evidence cards, proposals, orders,
+  activity, outcomes, approvals, and watchlist. Legacy dashboard/admin surfaces
+  remain separate from the console parity row.
 - The market scan company-info popup/drawer behavior still needs live UI
   verification on desktop and mobile after the drawer migration.
 - Admin/API connection health has broader placeholders now, but each provider

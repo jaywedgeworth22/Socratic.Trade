@@ -8,7 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Home evidence symbol drawer parity (CODEX, `codex/console-parity-next`)
+Re-claimed the universal ticker detail drawer parity row after read-only audits of `origin/main`
+and MONET handoff notes. Scope is intentionally narrow: `app/console/page.tsx` only for code.
+Home evidence cards derived from market-scan candidates now carry `symbol` and the current
+`MarketQuote`, rendering the title through the existing `SymbolButton` so the shared right-side
+symbol drawer opens with row-matched quote context. Keepout remains MONET-owned model/provider
+files and drawer host/API files. Verification passed: `npm run lint`, `npx tsc --noEmit`,
+`npm test` (303 files / 3118 tests), and `npm run build`.
+PR #1181 is open.
+Rollout: `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
+
 ## 2026-07-09 — Red Team efficacy scorecard wired into Results (CODEX, `codex/red-team-efficacy-console`)
+Deployment close-out: PR #1175 merged to `main` as `9cc99963` and shipped to production in
+Coolify deploy `krk1db6x` at `main@8bc0967f` alongside PR #1174. MONET verified the
+deployment record/container health, `/api/health` ok, and scheduler ticking; Codex also checked
+`/api/health` 200 during the deploy watch.
+
 MONET narrowed this lane to read-side Results/snapshot/test/docs only: no `approvals/**`,
 no `approval-card.tsx`, no `src/lib/red-team.ts`, no `src/lib/strategy.ts`. The active
 account dashboard snapshot now carries `redTeamEfficacy` plus the override split
@@ -21,7 +37,7 @@ and a recent resolved-veto table that labels missing `redTeamVerdict.model` hist
 full `getRedTeamEfficacy()` history, not the recent records slice. Focused verification here:
 `npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
 test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet` — all green.
-PR #1175 is open.
+PR #1175 is merged and deployed.
 Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
 ## 2026-07-08 — Mobile chrome bar fixes: scope width, run-state chip, profile menu, avatar, STOP (MONET, branch `monet/mobile-chrome-fixes-3676f7`)
 Six owner phone-screenshot items: account scope flex-1 on phones; run-state chip unboxed +
@@ -61,6 +77,11 @@ Gates: lint 0 err / tsc clean / 3077 tests / build green.
 Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
 
 ## 2026-07-08 — LIVE bulk approval typed-confirm flow (CODEX, branch `codex/live-bulk-typed-confirm`)
+Deployment close-out: PR #1174 merged to `main` as `8bc0967f` and shipped to production in
+Coolify deploy `krk1db6x` at `main@8bc0967f` alongside PR #1175. MONET verified the
+deployment record/container health, `/api/health` ok, and scheduler ticking; Codex also checked
+`/api/health` 200 during the deploy watch.
+
 Resumed the Codex approvals lane after MONET confirmed the owner/product constraints. Bulk reject
 remains the existing one-click inline confirm. Bulk approve now includes selected LIVE proposals:
 if `policy.requireTypedConfirmation` is enabled, the page opens one aggregate typed-confirm sheet
@@ -79,7 +100,7 @@ full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests)
 verification: `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
 `npx tsc --noEmit`, and `npm run lint -- --quiet` all passed; after merge-forward to current
 `origin/main`, full `npm test -- --reporter=dot --maxWorkers=2` passed (302 files / 3112 tests)
-and `npm run build` passed. PR #1174 is open.
+and `npm run build` passed. PR #1174 is merged and deployed.
 Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
 
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)

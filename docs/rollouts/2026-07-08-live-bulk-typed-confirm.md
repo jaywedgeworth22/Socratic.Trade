@@ -67,4 +67,5 @@ Passed:
 
 ## Follow-ups
 
-- Resolve PR #1174 review threads after this review-fix push lands and CI re-runs; all current findings have code/tests in this note.
+- PR #1174 review threads were resolved, CI passed, and the PR merged to `main` as `8bc0967f`.
+- Production deployment is recorded in `docs/rollouts/2026-07-09-codex-lanes-prod-release.md`.
