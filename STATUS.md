@@ -6989,3 +6989,5 @@ Update this file when any of the following change:
 - expected verification workflow
 - handoff reading order
 - roadmap meaningfully changes
+
+- 2026-07-09: Added explanatory tooltips to the 'Run during extended hours' and 'Allow extended-hours orders' fields in the Guardrails UI. See docs/rollouts/2026-07-09-extended-hours-tooltips.md.
