@@ -6,7 +6,7 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
-const TEST_ACCOUNT_LABEL = "Test Account - Local Mock Paper Account";
+const TEST_ACCOUNT_LABEL = "Test Account";
 const TEST_ACCOUNT_NUMBER = "TEST";
 
 function isAlpacaPaperCredential(input: { accountNumber?: unknown; apiKey?: unknown }): boolean {

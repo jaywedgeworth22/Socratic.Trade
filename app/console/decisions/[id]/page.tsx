@@ -6,6 +6,7 @@ import { ArrowLeft, BookOpen, Brain, Database, GitBranch, MessageSquare, Swords,
 import type { SocraticDecisionCase, SocraticDecisionTrace, SocraticEvidenceItem, SocraticFrameworkProposal, SocraticRagAttribution, StrategyRunRow } from "@/lib/types";
 import { fmtMoney, fmtPct, timeAgo, EM_DASH } from "../../lib/format";
 import { authorityLabel, decisionStatusLabel, evidenceKindLabel, feedStatusLabel, frameworkStatusLabel, plainLabel, thesisTagLabel } from "../../lib/labels";
+import { CONSOLE_PAGE_WIDTH } from "../../lib/page-width";
 import { redTeamFailureMeta } from "../../lib/red-team";
 import { Btn, Card, Chip, SignedText, TextArea } from "../../ui/primitives";
 import { ModelBadge } from "../../ui/provider-logo";
@@ -120,7 +121,7 @@ export default function DecisionTracePage() {
 
   if (state.status === "loading") {
     return (
-      <div className="mx-auto max-w-5xl">
+      <div className={CONSOLE_PAGE_WIDTH}>
         <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">Loading decision trace...</p>
       </div>
     );
@@ -128,7 +129,7 @@ export default function DecisionTracePage() {
 
   if (state.status === "error") {
     return (
-      <div className="mx-auto max-w-3xl">
+      <div className={CONSOLE_PAGE_WIDTH}>
         <button
           type="button"
           onClick={goBack}
@@ -146,6 +147,12 @@ export default function DecisionTracePage() {
   const { decision, framework, run } = state;
   const outcome = decision.outcome;
 
+  // Intentionally wider than CONSOLE_PAGE_WIDTH: this page reuses the
+  // con-thesis-hero + xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]
+  // two-column trace/aside layout (same shape as the console home page).
+  // Squeezing that into CONSOLE_PAGE_WIDTH's 768px would starve the main
+  // column to satisfy the aside's 320px floor. See
+  // docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">

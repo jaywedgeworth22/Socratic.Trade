@@ -10,7 +10,7 @@
  *  reveal/slide-away) goes through ../ui/intro-bus.ts. */
 
 import { useEffect, useRef, useState } from "react";
-import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS } from "../ui/candle-ticker";
+import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS, WORDMARK_AR } from "../ui/candle-ticker";
 import { setIntroPhase } from "../ui/intro-bus";
 
 type Cell = { nx: number; ntop: number; nh: number };
@@ -42,6 +42,10 @@ const CENTER_WORDMARK_STEP: boolean = false;
 let introStart: number | null = null;
 let introDone = false;
 let MODEL: Model | null = null;
+// The eased landing box, persisted at module scope so a loading->loaded remount
+// (which re-runs the effect) does NOT reset it to null and SNAP to the newly
+// mounted real logo — it keeps easing smoothly from wherever the candles were.
+let introCurHeader: { x: number; y: number; w: number; h: number } | null = null;
 
 function buildModel(): Model {
   const mulberry32 = (a: number) => () => {
@@ -128,13 +132,25 @@ function buildModel(): Model {
     const portrait = vh > vw;
     const stackW = Math.min(portrait ? vw * 0.9 : vw * 0.8, vh * STACK_AR * 0.62), stackH = stackW / STACK_AR;
     const cm = Math.max(18, vw * 0.03);
-    // Fallback header box (used only until the real top-bar logo can be measured):
-    // small, top-left, matching the persistent HeaderLogo's ~18px height.
-    const pad = Math.max(14, vw * 0.014), logoH = Math.min(Math.max(vh * 0.024, 16), 22, (vw - 2 * pad) / HEADER_AR);
+    // Fallback header box, used until the real logo can be measured (the shell may
+    // still be on its loading screen for the whole flight — owner hit this on prod).
+    // It must match the REAL landing target's geometry per viewport so a late mount
+    // is a small glide, not a size pop:
+    //  - <lg (1024): the MobileBrandRow wordmark — SAME height formula as shell.tsx
+    //    (clamp(16..34, 88% of width / WORDMARK_AR)), centered near the top.
+    //  - >=lg: the bar HeaderLogo — 18px tall at the left edge of the centered
+    //    max-w-[1400px] px-4 bar (y ~= py-2 + half the 32px control row).
+    let header: Layout["header"];
+    if (vw < 1024) {
+      const lh = Math.max(16, Math.min(34, Math.round((vw * 0.88) / WORDMARK_AR)));
+      header = { x: (vw - lh * HEADER_AR) / 2, y: 10, w: lh * HEADER_AR, h: lh };
+    } else {
+      header = { x: Math.max(16, (vw - 1400) / 2 + 16), y: 15, w: 18 * HEADER_AR, h: 18 };
+    }
     return {
       portrait, stackW, stackH, stackX: (vw - stackW) / 2, stackY: (vh - stackH) * 0.46,
       chart: { x0: cm, x1: vw - cm, midY: vh * (portrait ? 0.42 : 0.5), amp: vh * (portrait ? 0.34 : 0.4) },
-      header: { x: pad, y: pad, w: logoH * HEADER_AR, h: logoH }, sizeScale: stackW / blockW,
+      header, sizeScale: stackW / blockW,
     };
   };
   const chartGeom = (j: number, t: number, L: Layout): Geo => {
@@ -267,14 +283,43 @@ export function ConsoleIntro() {
     setIntroPhase("playing");
 
     let dissolved = false;
+    // The landing box (introCurHeader, module-scoped) eases toward its target
+    // (measured logo, else the layout fallback) instead of snapping, so a header
+    // that mounts mid-flight or post-landing (slow first load) glides the
+    // wordmark into place — and survives the loading->loaded remount.
+    let lastNow: number | null = null;
+    // While the page is still loading there's no logo to hand off to, so the
+    // ticking wordmark simply stays up — it doubles as branded loading chrome
+    // (the overlay is transparent after LIFT, so the loading/error screen shows
+    // through beneath it). This backstop exists only for pages that never mount
+    // a logo at all (e.g. the error shell): fade out eventually rather than
+    // living forever. Keep it LONG — a short grace re-creates the owner-reported
+    // "logo vanishes then reappears" gap on slow first loads. Click/Esc skips
+    // instantly regardless.
+    const MEASURE_WAIT = 45;
     const loop = (now: number) => {
       if (introStart == null) introStart = now;
       const t = (now - introStart) / 1000;
+      const dt = lastNow == null ? 0.016 : Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
       // Solid backdrop holds until the first candle lifts off, then dissolves so the
       // console/page reveals behind the rising candles (the canvas stays opaque).
       if (!dissolved && t >= model.LIFT) { dissolved = true; if (bg) bg.style.opacity = "0"; }
       if (!headerBox) measureHeader();      // the top bar may mount after the intro starts
-      if (headerBox) L.header = headerBox;  // land the shrinking candles on the real logo box
+      const target = headerBox ?? L.header; // real logo box, else viewport-matched fallback
+      let cur: { x: number; y: number; w: number; h: number };
+      if (introCurHeader) {
+        const a = 1 - Math.exp(-dt * 10);
+        cur = {
+          x: introCurHeader.x + (target.x - introCurHeader.x) * a,
+          y: introCurHeader.y + (target.y - introCurHeader.y) * a,
+          w: introCurHeader.w + (target.w - introCurHeader.w) * a,
+          h: introCurHeader.h + (target.h - introCurHeader.h) * a
+        };
+      } else {
+        cur = { ...target };
+      }
+      introCurHeader = cur;
+      L.header = cur;
       ctx.clearRect(0, 0, VW, VH);
       for (let j = 0; j < model.M; j++) {
         const c = model.candleAt(j, t, L); const col = c.col || "#18b271";
@@ -282,7 +327,13 @@ export function ConsoleIntro() {
         ctx.beginPath(); ctx.moveTo(c.x, c.wt); ctx.lineTo(c.x, c.wb); ctx.stroke();
         ctx.fillStyle = col; const bh = Math.max(1.4, c.bb - c.bt); roundRect(ctx, c.x - c.bw / 2, c.bt, c.bw, bh, Math.min(2, c.bw * 0.25)); ctx.fill();
       }
-      if (!fading && t > model.END) startFade();
+      // Natural fade waits until the REAL logo exists and the glide has settled on
+      // it — revealing the persistent logo under a wordmark that's elsewhere (or
+      // under nothing at all, on a slow first load) caused a visible pop/gap.
+      // User skip (click/Escape) still fades immediately via skip().
+      const settled = !!headerBox && Math.abs(cur.x - headerBox.x) < 2 &&
+        Math.abs(cur.y - headerBox.y) < 2 && Math.abs(cur.w - headerBox.w) < 2;
+      if (!fading && t > model.END && (settled || t > model.END + MEASURE_WAIT)) startFade();
       if (!done) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

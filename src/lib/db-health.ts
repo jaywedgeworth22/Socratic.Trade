@@ -7,6 +7,17 @@ import { getDb } from "./db";
 // single cold failure can trip. Exported so consumers key off the condition, not a brittle string.
 export const HEALTH_REASON_CONSECUTIVE_FAILURES = "Last 5 consecutive calls all failed";
 
+// RAG services (Pinecone, Voyage embed, Voyage rerank) already get their OWN explicit,
+// operation-scoped alert from vector-db.ts's withRagApiHealth -> alertRagConnectionFailure (richer
+// message: which operation failed, usage-limit escalation via alertUsageLimitHit, its own 1h
+// cooldown). Without this exclusion, logApiHealth's automatic alertConnectionFailure below ALSO
+// fires for the same failure (generic "<service> connection failed" text, its own separate 6h
+// cooldown clock) — two uncoordinated alerts, ~1s apart, for one underlying event (confirmed
+// 2026-07-07T14:01Z and 22:01Z in prod). Keep the richer vector-db.ts alert as the single source of
+// truth for these three lanes; every OTHER provider (finnhub, tiingo, twelvedata, etc.) has no
+// dedicated alerter, so it still needs this generic automatic path.
+const RAG_SERVICES_WITH_OWN_ALERTING = new Set(["pinecone", "voyage", "voyage-rerank"]);
+
 /**
  * Per-credential-lane health for the API circuit breaker. A "lane" is (service, keySource) — the SAME
  * granularity `getServiceHealthSummaries` and the whole health store already use — NOT per-user, so a
@@ -153,7 +164,7 @@ export function logApiHealth(opts: {
       }
     })();
 
-    if (!opts.ok && opts.errorText) {
+    if (!opts.ok && opts.errorText && !RAG_SERVICES_WITH_OWN_ALERTING.has(opts.service)) {
       const keySource = opts.keySource ?? null;
       // Scope the streak that gates the alert to this user's own history for user-key lanes, so
       // tenant A's failures don't fire a provider-degraded alert to tenant B on the shared lane.

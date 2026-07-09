@@ -39,9 +39,12 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
-   means merged to `main` (auto-deploys to beta/integration only); "Deployed to production" is the
-   separate owner-run release step (`~/apps/trading-live`) — do not mark it deployed unless that
-   release actually happened.
+   means merged to `main` (which auto-deploys NOWHERE — auto-deploy is OFF and previews are retired);
+   "Deployed to production" is a separate **ANNOUNCE-THEN-DEPLOY** release (owner ruling 2026-07-09):
+   one deployer posts a #agent-sync claim (app + exact commit + contents + "deploying in N min unless
+   objection"), honors a ~10-min objection window, avoids market hours unless it's a fix, then triggers
+   the Coolify deploy and owns health-verify + boards — canonical protocol detail in
+   `/Users/jay/apps/AGENT-SYNC.md`. Do not mark it deployed unless that release actually happened.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
 5. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
@@ -135,9 +138,12 @@ reboot required), and Docker cleanup thresholds matter — a build burst filled 
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
-branch `main`, nixpacks, auto-deploy OFF). **A production release is a deliberate step:
-trigger a Coolify deploy of `socratic-trade-prod` — `~/apps/trading-publish.sh` is
-DEPRECATED** (it targets the stopped Mac pm2 lane). Boot path:
+branch `main`, nixpacks, auto-deploy OFF). **A production release follows ANNOUNCE-THEN-DEPLOY
+(owner ruling 2026-07-09):** one deployer posts a #agent-sync claim (app + exact commit + contents +
+"deploying in N min unless objection"), honors a ~10-min objection window, avoids market hours unless
+it's a fix, then triggers a Coolify deploy of `socratic-trade-prod` and owns health-verify + board
+updates. `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
+protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
 in-container CLI, one-time litestream 0.5.14 restore from the R2 replica
 (marker-guarded), then `litestream replicate -exec` (backup continuity lives in the

@@ -5,6 +5,40 @@ import type { NotificationEvent, NotificationEventType, TradingPolicy } from "./
 type Fetcher = typeof fetch;
 const DIRECT_NOTIFY_ALREADY_SENT = new Set<NotificationEventType>(["price_alert", "provider_degraded"]);
 
+// The ntfy push channel (notify.ts's CHANNELS.push.send) carries the message TITLE as a raw HTTP
+// header value. The Fetch/Headers spec requires header values to be ByteString (Latin-1, code
+// points 0x00-0xFF) — anything outside that range throws `TypeError: Cannot convert argument to a
+// ByteString` at send time. Observed in prod: alert titles built from provider-health strings that
+// use an em dash (U+2014, code point 8212) silently dropped the push channel end-to-end (the throw
+// was caught and recorded as a `notify.error` audit row, never surfaced to the user). Transliterate
+// the common offenders to ASCII first (readable), then strip anything else outside Latin-1 rather
+// than let the send throw.
+//
+// NOTE: notify.ts keeps its OWN copy of this (see its push channel) rather than importing this one,
+// to avoid a notify.ts <-> notifications.ts import cycle (notifications.ts already imports `notify`
+// from notify.ts). Keep the two in sync if the character set below changes.
+const NON_LATIN1_TRANSLITERATIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/[\u2012\u2013\u2014\u2015]/g, "-"], // figure/en/em/horizontal-bar dashes
+  [/\u2026/g, "..."], // horizontal ellipsis
+  [/[\u2192\u21D2\u27F6\u279D\u27A1]/g, "->"], // rightwards arrow variants
+  [/[\u2190\u21D0\u27F5]/g, "<-"], // leftwards arrow variants
+  [/[\u2018\u2019]/g, "'"], // curly single quotes
+  [/[\u201C\u201D]/g, '"'] // curly double quotes
+];
+
+/** Make `text` safe to carry as a raw HTTP header value (e.g. the ntfy push channel's `title`
+ *  header): transliterate common non-Latin-1 punctuation to its ASCII equivalent, then strip
+ *  anything else outside Latin-1 (the U+0000-U+00FF ByteString range Headers requires).
+ *  Pure/no-op on already-ASCII text. */
+export function sanitizePushHeaderText(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const [pattern, replacement] of NON_LATIN1_TRANSLITERATIONS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out.replace(/[^\u0000-\u00FF]/g, "");
+}
+
 export async function sendNotification(
   input: {
     type: NotificationEventType;
@@ -130,6 +164,8 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
       return String(payload.reason ?? input.title);
+    case "learning_review":
+      return String(payload.summary ?? input.title);
     case "budget_alert": {
       const provider = payload.provider ? String(payload.provider) : "provider";
       const operation = payload.operation ? String(payload.operation) : "usage check";

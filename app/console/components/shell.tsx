@@ -9,7 +9,6 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
 import { useConsoleFont } from "../lib/useConsoleFont";
@@ -32,6 +31,7 @@ import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
 import { ConsoleIntro } from "./intro-canvas";
 import { HeaderLogo } from "../ui/header-logo";
+import { WORDMARK_AR } from "../ui/candle-ticker";
 import { getIntroPhase, subscribeIntroPhase, type IntroPhase } from "../ui/intro-bus";
 import { DesktopRail, MobileTabBar } from "./nav";
 
@@ -44,27 +44,6 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <ShellFrame>{children}</ShellFrame>
       </DirtyGuardProvider>
     </ConsoleDataProvider>
-  );
-}
-
-const THEME_LABEL: Record<ConsoleTheme, string> = {
-  system: "Theme: following your system setting. Click for dark.",
-  dark: "Theme: dark. Click for light.",
-  light: "Theme: light. Click to follow your system setting."
-};
-
-function ThemeToggle({ theme, cycle }: { theme: ConsoleTheme; cycle: () => void }) {
-  const Icon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
-  return (
-    <button
-      type="button"
-      onClick={cycle}
-      title={THEME_LABEL[theme]}
-      aria-label={THEME_LABEL[theme]}
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
-    >
-      <Icon size={15} />
-    </button>
   );
 }
 
@@ -83,11 +62,12 @@ function ShellFrame({ children }: { children: ReactNode }) {
         data-console-font={dataConsoleFont}
         suppressHydrationWarning
       >
+        {/* The candlestick intro is the entire load screen — no text label, so
+            the animation plays on a clean backdrop (owner request). LoadingBrand
+            shows a small STATIC candlestick mark only when the intro is skipped
+            (returning tab / reduced motion), so those loads aren't a blank flash. */}
         <ConsoleIntro />
-        <div className="text-center">
-          <div className="con-card-title">Socratic Trade</div>
-          <p className="mt-2 text-[color:var(--con-muted)]">Loading the autonomy desk…</p>
-        </div>
+        <LoadingBrand />
       </div>
     );
   }
@@ -176,6 +156,29 @@ function BrandReveal() {
   );
 }
 
+/** Loading-screen fallback brand mark. Shown ONLY when the intro splash won't
+ *  animate — a returning tab (`st.introShown`) or prefers-reduced-motion — so
+ *  those loads show a small centered candlestick "SOCRATIC TRADE" instead of a
+ *  blank screen during the snapshot fetch. On a first visit it renders nothing
+ *  (the intro owns the load screen). HeaderLogo self-selects a static frame
+ *  under reduced motion. Starts hidden and only reveals after the client-side
+ *  check, so the SSR/first paint never flashes it before the intro. */
+function LoadingBrand() {
+  const [skipped, setSkipped] = useState(false);
+  useEffect(() => {
+    let shown = false;
+    try { shown = sessionStorage.getItem("st.introShown") === "1"; } catch { /* ignore */ }
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (shown || reduce) setSkipped(true);
+  }, []);
+  if (!skipped) return null;
+  return (
+    <div className="flex items-center justify-center opacity-70" aria-hidden>
+      <HeaderLogo height={26} />
+    </div>
+  );
+}
+
 /** Mobile-only intro brand row (the bar logo is display:none below lg). While
  *  the splash plays, the chrome reserves a full-width row above the controls
  *  bar — roughly doubling its height — whose big "SOCRATIC TRADE" is the
@@ -184,7 +187,6 @@ function BrandReveal() {
  *  the screen space back. Renders nothing when the intro is skipped. */
 const MOBILE_BRAND_HOLD_MS = 3000;
 const MOBILE_BRAND_SLIDE_MS = 550;
-const WORDMARK_AR = 13.8; // ≈ "SOCRATIC TRADE" aspect ratio (see header-logo.tsx)
 
 function MobileBrandRow() {
   const [state, setState] = useState<"waiting" | "shown" | "leaving" | "gone">(() => {
@@ -195,6 +197,9 @@ function MobileBrandRow() {
   const [logoH, setLogoH] = useState(24);
 
   useEffect(() => {
+    // Keep this formula in sync with intro-canvas.tsx layout()'s <lg fallback
+    // header box — the splash assembles the wordmark at that size before this
+    // row can be measured, and a mismatch shows as a size pop at reveal.
     const measure = () => setLogoH(Math.max(16, Math.min(34, Math.round((window.innerWidth * 0.88) / WORDMARK_AR))));
     measure();
     window.addEventListener("resize", measure);
@@ -258,16 +263,22 @@ function ChromeBar({
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
       <MobileBrandRow />
-      <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
+      {/* Phone bar priorities (owner-tuned): the account scope gets the slack
+          (flex-1), the run-state chip is unboxed+stacked, the theme toggle
+          lives inside the profile menu, and nothing squeezes the STOP button.
+          The desktop spacer is hidden below sm so the scope absorbs the room. */}
+      {/* relative: the UserMenu dropdown anchors to this row (right edge of the
+          bar), not to its small button — anchoring to the 44px button pushed the
+          panel off the left edge of phone viewports. */}
+      <div className="relative mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
         <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <div className="hidden md:block">
           <CommandPaletteTrigger />
         </div>
-        <ThemeToggle theme={theme} cycle={cycleTheme} />
-        <UserMenu snapshot={snapshot} />
+        <UserMenu snapshot={snapshot} theme={theme} cycleTheme={cycleTheme} />
         <div className="hidden sm:block">
           <RunOnceButton snapshot={snapshot} />
         </div>

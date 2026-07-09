@@ -5,6 +5,45 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-07 - Single-adversary consolidation IMPLEMENTED (MONET).** Roadmap-relevant change to
+> the Phase-7 strategy engine's adversarial review: the two adversarial LLM passes (in-flow Bear +
+> escalated `debateProposal`) are consolidated into ONE post-sizing Red Team review per risk-adding
+> opening, per `docs/single-adversary-consolidation.md` as amended by the owner's 2026-07-07
+> revision — three-way down-only verdict (approve / approve-at-half / reject), exits structurally
+> exempt, fail-closed + visible on every failure mode, and NO model defaults anywhere (both team
+> models are now mandatory explicit Settings picks; the `RED_TEAM_LLM_PROVIDER` env override and
+> every silent fallback are gone — supersedes older notes below that describe blank-reviewer
+> inheritance). Branch `monet/single-adversary-consolidation`, supersedes draft PR #1035. See
+> `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+> **2026-07-09 - Red Team efficacy Results wiring (Codex).** No roadmap scope change. The
+> active-account dashboard snapshot now carries `redTeamEfficacy` plus the override split from
+> persisted audit history, and Results renders the scorecard with honest 20/50 sample gating for
+> reviewer rows plus explicit `unattributed` history when no reviewer model was persisted. This is
+> read-side only and deliberately stays out of `src/lib/red-team.ts` / `src/lib/strategy.ts`.
+> See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`. Production close-out:
+> PR #1175 shipped with PR #1174 in Coolify deploy `krk1db6x` at `main@8bc0967f`.
+> **2026-07-09 - Home evidence symbol drawer parity (Codex).** No roadmap scope
+> change. The remaining console-side universal ticker drawer gap is closed by
+> rendering market-scan candidate evidence cards through the existing `SymbolButton`,
+> passing the current quote into the shared drawer. See
+> `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
+> **2026-07-09 - Guardrails tooltip sweep (Codex).** No roadmap scope change.
+> Guardrails Universe and Autonomy controls now carry native titles for the
+> remaining bare checkbox/text/select/button controls. See
+> `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
+> **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
+> scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
+> via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event
+> checks use shared `CONGRESS_EVENT_TYPES`, outbound share payload typing derives
+> from shared `SharePayload`, and stale shared imports were removed. See
+> `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
+> **2026-07-09 - Scoring-factor weight tooltips (MONET).** No roadmap scope
+> change, display-only. Each of the 8 "Scoring-factor weights" controls on the
+> Strategy console page now carries a hover tooltip explaining what the factor
+> measures and which direction more weight pushes candidate ranking, plus one
+> sentence clarifying the weights are relative. No scoring-math changes. See
+> `docs/rollouts/2026-07-09-scoring-factor-tooltips.md`.
+
 > **2026-07-06 - Learned-context copy fix + browse/delete archive (Claude).** No roadmap change.
 > Reworded the awkward/overclaiming empty-state copy on the Learned Context approval queue
 > (`app/console/approvals/learned-context.tsx`) and built the "browse + delete what was silently
@@ -13,6 +52,15 @@ filling the missing pieces.
 > `deleteLearnedContext` in `src/lib/db-learning.ts`, and a collapsed-by-default
 > `LearnedFactsArchive` component on the Approvals page. See
 > `docs/rollouts/2026-07-06-learned-context-archive.md`.
+
+> **2026-07-08 - Live bulk approval typed-confirm flow (Codex).** No roadmap change.
+> This closes the deliberately deferred #807 approval-triage gap: selected LIVE proposals can now
+> be approved in bulk, with one aggregate typed-confirm sheet only when
+> `policy.requireTypedConfirmation` is enabled. Bulk reject stays the existing inline one-click
+> confirm, and every approval still uses the existing per-item endpoint so partial blocked/failed
+> outcomes remain visible. See `docs/rollouts/2026-07-08-live-bulk-typed-confirm.md`.
+> Production close-out: PR #1174 shipped with PR #1175 in Coolify deploy `krk1db6x`
+> at `main@8bc0967f`.
 > **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
 > (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
 > stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
