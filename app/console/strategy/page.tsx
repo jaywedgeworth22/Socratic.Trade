@@ -293,7 +293,7 @@ export default function StrategyPage() {
         }
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer model" hint="The bull-side strategist." htmlFor="llm-model">
+          <Field label="Proposer Model" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
             <ModelSelect
               id="llm-model"
               value={proposerModel}
@@ -302,8 +302,8 @@ export default function StrategyPage() {
             />
           </Field>
           <Field
-            label="Red-team model"
-            hint="The bear-side reviewer that tries to kill high-conviction ideas. Blank = same as proposer."
+            label="Reviewer Model"
+            hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
             <ModelSelect

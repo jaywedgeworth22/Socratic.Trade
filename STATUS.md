@@ -8,6 +8,13 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
 ## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
 Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
 runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
