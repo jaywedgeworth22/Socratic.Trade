@@ -73,5 +73,14 @@
   "overrides": {
     "axios": "^1.18.0",
     "postcss": "^8.5.15"
+  },
+  "allowScripts": {
+    "@sentry/cli@2.58.6": true,
+    "better-sqlite3@12.11.1": true,
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true,
+    "sharp@0.34.5": true,
+    "esbuild@0.23.1": true,
+    "unrs-resolver@1.12.2": true
   }
 }

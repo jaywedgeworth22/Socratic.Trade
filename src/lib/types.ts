@@ -38,7 +38,11 @@ export const NOTIFICATION_EVENT_TYPES = [
   "limit_order_stale",
   "provider_degraded",
   "budget_alert",
-  "learning_review"
+  "learning_review",
+  "deterministic_bear_veto",
+  "red_team_veto_overridden",
+  "prompt_injection_suspected",
+  "evidence_age_anomaly"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
