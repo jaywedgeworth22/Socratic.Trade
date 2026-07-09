@@ -16,7 +16,7 @@ Home evidence cards derived from market-scan candidates now carry `symbol` and t
 symbol drawer opens with row-matched quote context. Keepout remains MONET-owned model/provider
 files and drawer host/API files. Verification passed: `npm run lint`, `npx tsc --noEmit`,
 `npm test` (303 files / 3118 tests), and `npm run build`.
-PR #1181 is open.
+PR #1181 merged to `main` as `70c0698e`; production deploy is still pending after that merge.
 Rollout: `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
 
 ## 2026-07-09 — Red Team efficacy scorecard wired into Results (CODEX, `codex/red-team-efficacy-console`)

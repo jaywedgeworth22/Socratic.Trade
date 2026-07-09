@@ -5,7 +5,8 @@
 Closed the remaining console-side universal ticker drawer gap found by the
 read-only audit of `origin/main`: Home evidence cards now render candidate
 symbols as `SymbolButton`s and pass through the current `MarketQuote` to the
-existing shared drawer. PR #1181 is open.
+existing shared drawer. PR #1181 merged to `main` as `70c0698e`; production
+deploy is still pending after that merge.
 
 ## Why
 

@@ -204,6 +204,17 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- Universal ticker detail drawer parity - restore old-site discoverability by
+  making ticker symbols open a shared right-side drilldown drawer consistently
+  across scan, home, evidence cards, proposals, orders, activity, outcomes,
+  approvals, and watchlist.
+  2026-07-09 CODEX: COMPLETED via PR #1181 (`70c0698e`). Re-claimed on branch
+  `codex/console-parity-next` after read-only audit of `origin/main`. Scope was the
+  smallest remaining gap only: add the existing `SymbolButton` affordance to Home
+  evidence cards in `app/console/page.tsx`. Keepout honored: model-picker files and
+  drawer host/API files remain MONET-owned/adjacent. Full local gate and GitHub
+  `verify`/smoke were green before auto-merge. Not yet production-deployed after
+  `70c0698e`.
 - **Centralize Congress API Client Factory (AG) — COMPLETED 2026-07-08.** Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags. Verified: tests pass 2970/2970, build green. PR via land.sh.
 - **Consolidate usage telemetry clients in consumer apps (AG) — ✅ COMPLETED 2026-07-06 (PR #1005).** Replaced `postBatch` telemetry sending logic with `@jaywedgeworth22/congress-trading-shared` in Socratic.Trade.
 
@@ -773,16 +784,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- Universal ticker detail drawer parity - restore old-site discoverability by
-  making ticker symbols open a shared right-side drilldown drawer consistently
-  across scan, home, evidence cards, proposals, orders, activity, outcomes,
-  approvals, and watchlist.
-  2026-07-09 CODEX: re-claimed on branch `codex/console-parity-next`
-  (`/Users/jay/.codex/worktrees/socratic-codex-console-parity`) after read-only audit of
-  `origin/main`. Scope is the smallest remaining gap only: add the existing `SymbolButton`
-  affordance to Home evidence cards in `app/console/page.tsx`. Keepout: model-picker files
-  and drawer host/API files remain MONET-owned/adjacent. Implementation and full local gate are
-  green; PR #1181 is open.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
