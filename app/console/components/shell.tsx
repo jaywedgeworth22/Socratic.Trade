@@ -8,6 +8,7 @@
  *  (persisted, applied as data-theme on this root). */
 
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import { ConsoleDataProvider, useConsoleData } from "../lib/useConsoleData";
@@ -31,6 +32,7 @@ import { CommandPalette, CommandPaletteTrigger } from "./command-palette";
 import { ConsentGate } from "./consent-gate";
 import { ConsoleIntro } from "./intro-canvas";
 import { HeaderLogo } from "../ui/header-logo";
+import { getIntroPhase, subscribeIntroPhase, type IntroPhase } from "../ui/intro-bus";
 import { DesktopRail, MobileTabBar } from "./nav";
 
 export function ConsoleShell({ children }: { children: ReactNode }) {
@@ -151,6 +153,99 @@ function ShellFrame({ children }: { children: ReactNode }) {
   );
 }
 
+/** Desktop bar logo: invisible until the intro's candles assemble it (the
+ *  splash lands on this exact element), then fades in and stays. Keeps its
+ *  layout box while hidden so the splash can measure the landing target and
+ *  the bar doesn't shift on reveal. Visible immediately when the intro is
+ *  skipped (repeat visit, reduced motion). */
+function BrandReveal() {
+  const [phase, setPhase] = useState<IntroPhase>(getIntroPhase);
+  useEffect(() => {
+    setPhase(getIntroPhase()); // catch a phase change between render and subscribe
+    return subscribeIntroPhase(setPhase);
+  }, []);
+  const shown = phase === "landed" || phase === "done";
+  return (
+    <div
+      className="hidden shrink-0 pr-2 lg:block"
+      style={{ opacity: shown ? 1 : 0, transition: "opacity .3s ease" }}
+      aria-hidden={!shown}
+    >
+      <HeaderLogo />
+    </div>
+  );
+}
+
+/** Mobile-only intro brand row (the bar logo is display:none below lg). While
+ *  the splash plays, the chrome reserves a full-width row above the controls
+ *  bar — roughly doubling its height — whose big "SOCRATIC TRADE" is the
+ *  splash's landing target. The wordmark stays invisible until the candles
+ *  assemble it, holds a beat, then the whole row slides up and away to give
+ *  the screen space back. Renders nothing when the intro is skipped. */
+const MOBILE_BRAND_HOLD_MS = 3000;
+const MOBILE_BRAND_SLIDE_MS = 550;
+const WORDMARK_AR = 13.8; // ≈ "SOCRATIC TRADE" aspect ratio (see header-logo.tsx)
+
+function MobileBrandRow() {
+  const [state, setState] = useState<"waiting" | "shown" | "leaving" | "gone">(() => {
+    const p = getIntroPhase();
+    return p === "landed" || p === "done" ? "gone" : "waiting";
+  });
+  // Two words across most of the width; height follows from the aspect ratio.
+  const [logoH, setLogoH] = useState(24);
+
+  useEffect(() => {
+    const measure = () => setLogoH(Math.max(16, Math.min(34, Math.round((window.innerWidth * 0.88) / WORDMARK_AR))));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  useEffect(() => {
+    let hold = 0, slide = 0, landedHandled = false;
+    const apply = (p: IntroPhase) => {
+      if (p === "landed" && !landedHandled) {
+        landedHandled = true;
+        setState("shown");
+        hold = window.setTimeout(() => {
+          setState("leaving");
+          slide = window.setTimeout(() => setState("gone"), MOBILE_BRAND_SLIDE_MS);
+        }, MOBILE_BRAND_HOLD_MS);
+      } else if (p === "done") {
+        // intro skipped without ever landing (repeat visit / reduced motion):
+        // drop the row instantly; a post-landing "done" changes nothing.
+        setState((s) => (s === "waiting" ? "gone" : s));
+      }
+    };
+    apply(getIntroPhase());
+    const un = subscribeIntroPhase(apply);
+    return () => { un(); window.clearTimeout(hold); window.clearTimeout(slide); };
+  }, []);
+
+  if (state === "gone") return null;
+  const rowH = logoH + 20;
+  const leaving = state === "leaving";
+  return (
+    <div
+      className="overflow-hidden lg:hidden"
+      style={{ height: leaving ? 0 : rowH, transition: `height ${MOBILE_BRAND_SLIDE_MS}ms ease` }}
+      aria-hidden={state !== "shown"}
+    >
+      <div
+        className="flex items-center justify-center"
+        style={{
+          height: rowH,
+          opacity: state === "waiting" ? 0 : 1,
+          transform: leaving ? "translateY(-100%)" : "translateY(0)",
+          transition: `transform ${MOBILE_BRAND_SLIDE_MS}ms ease, opacity .3s ease`
+        }}
+      >
+        <HeaderLogo height={logoH} />
+      </div>
+    </div>
+  );
+}
+
 function ChromeBar({
   snapshot,
   theme,
@@ -162,8 +257,9 @@ function ChromeBar({
 }) {
   return (
     <header className="border-b border-[color:var(--con-line)] bg-[color:var(--con-surface)]">
+      <MobileBrandRow />
       <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-4 py-2">
-        <div className="hidden shrink-0 pr-2 lg:block"><HeaderLogo /></div>
+        <BrandReveal />
         <ScopeSelector snapshot={snapshot} />
         <StateChip snapshot={snapshot} />
         <div className="flex-1" />

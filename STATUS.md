@@ -23,6 +23,21 @@ tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 37
 snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
 consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
 `docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+## 2026-07-08 — Intro→logo handoff: hidden-until-assembled + mobile brand row (MONET, branch `monet/intro-logo-handoff-3676f7`)
+Owner: the header logo must not pre-exist the candles (it was visible while they flew onto it),
+and mobile — where the bar logo is display:none and the intro landed on a phantom box — gets a
+full-width "SOCRATIC TRADE" row above the controls bar (~2x-tall chrome) as the landing target,
+holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts` phase channel;
+`BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
+`[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
+DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
 ## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
 Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
 runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
