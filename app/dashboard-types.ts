@@ -4,7 +4,7 @@ import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
-import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
 import type {
     BrokerageAccount,
@@ -106,6 +106,14 @@ export interface DashboardSnapshot {
     news?: MarketNewsItem[];
   };
   performance?: PerformanceSummary;
+  redTeamEfficacy?: RedTeamEfficacy & {
+    /** Openings whose Bear veto was later explicitly overridden at approval time. */
+    overriddenVetoes: number;
+    /** Total opening veto decisions observed = non-overridden vetoes + overridden vetoes. */
+    reviewedOpenings: number;
+    /** overriddenVetoes / reviewedOpenings (%), 0 when no veto decisions exist. */
+    overrideRatePct: number;
+  };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
   tax?: TaxSummary;

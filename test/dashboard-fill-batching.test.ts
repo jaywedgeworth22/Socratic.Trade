@@ -146,6 +146,68 @@ describe("getDashboardSnapshot fill/proposal batching", () => {
     const batchedIds = getProposalsByIdsSpy.mock.calls.flatMap((args) => args[0] as string[]);
     expect(batchedIds).toContain(proposalId);
   });
+
+  it("includes red-team efficacy plus the override split in the snapshot", async () => {
+    const db = await import("../src/lib/db");
+    const { getDashboardSnapshot } = await import("../src/lib/dashboard");
+
+    const userId = `dash-red-team-${randomUUID()}`;
+    const connectedAccountId = `acct-${userId}`;
+
+    db.upsertConnectedAccount({
+      id: connectedAccountId,
+      userId,
+      broker: "test",
+      environment: "paper",
+      accountNumber: "TEST",
+      label: "Red Team Snapshot Account",
+      isActive: true
+    });
+
+    db.audit(
+      "proposal_rejected_by_red_team",
+      { runId: "run-rt-1", symbol: "AAPL", side: "buy", thesisTag: "Momentum", reason: "Overbought.", model: "gpt-4.1-mini" },
+      userId,
+      connectedAccountId
+    );
+    db.insertSkippedCounterfactualCandidate({
+      userId,
+      connectedAccountId,
+      runId: "run-rt-1",
+      symbol: "AAPL",
+      snapshotAt: "2026-06-01T00:00:00.000Z",
+      refPrice: 100,
+      horizonDays: 5,
+      targetDate: "2026-06-06"
+    });
+    db.markSkippedCounterfactualMatured({
+      id: `${userId}:run-rt-1:AAPL:5`,
+      userId,
+      exitDate: "2026-06-06",
+      exitPrice: 90,
+      returnPct: -10
+    });
+
+    db.audit(
+      "red_team_veto_overridden",
+      { runId: "run-rt-2", symbol: "MSFT", side: "buy", thesisTag: "Momentum", reason: "Too early.", model: "claude-opus", mode: "execute" },
+      userId,
+      connectedAccountId
+    );
+
+    const snapshot = await getDashboardSnapshot(userId);
+
+    expect(snapshot.redTeamEfficacy).toBeDefined();
+    expect(snapshot.redTeamEfficacy).toMatchObject({
+      totalVetoes: 1,
+      maturedVetoes: 1,
+      overriddenVetoes: 1,
+      reviewedOpenings: 2,
+      overrideRatePct: 50,
+      vetoValueAddRate: 100
+    });
+    expect(snapshot.redTeamEfficacy?.records[0]?.symbol).toBe("AAPL");
+  });
 });
 
 describe("getProposalsByIds", () => {

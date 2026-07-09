@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Red Team efficacy scorecard wired into Results (CODEX, `codex/red-team-efficacy-console`)
+MONET narrowed this lane to read-side Results/snapshot/test/docs only: no `approvals/**`,
+no `approval-card.tsx`, no `src/lib/red-team.ts`, no `src/lib/strategy.ts`. The active
+account dashboard snapshot now carries `redTeamEfficacy` plus the override split
+(`overriddenVetoes`, `reviewedOpenings`, `overrideRatePct`) derived from existing
+`proposal_rejected_by_red_team` / `red_team_veto_overridden` audits. Results renders a new
+Red Team veto efficacy card with overall stats, honest 20/50 sample gating on reviewer rows,
+and a recent resolved-veto table that labels missing `redTeamVerdict.model` history as
+`unattributed` instead of fabricating attribution. Focused verification here: `npx vitest run
+test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`,
+and `npm run lint -- --quiet` — all green.
+Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+
 ## 2026-07-09 — Alert triage: all ~75 Attention alerts root-caused + fixed; AV key pool; alert lifecycle (MONET, `monet/alert-triage-av-multikey`)
 Owner-directed. 9-agent triage (per alert family + adversarial verify) on the prod DB: 76 of 87
 run_failed = ONE bug (Gemini rejects the Bull schema's type:["number","null"]/anyOf-null — fixed
