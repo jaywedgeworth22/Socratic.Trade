@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Autonomous actions: relative timestamps top-right (MONET, branch `monet/autonomous-actions-timing-3676f7`)
+Owner ask: the Home "Autonomous actions" rows show relative timing top-right ("15m ago") like
+Journal entries. `DecisionRowData.at` wired from all three row sources (Socratic decision / run /
+pending proposal `createdAt`), rendered with the shared `Ago` primitive (hover = exact time) in
+the Journal's faint/xs treatment. Verified live with an injected 15-min-old row ("15m ago"
+rendered, correct dateTime). Gate green (lint 0/tsc/3168 tests/build). See
+`docs/rollouts/2026-07-09-autonomous-actions-timing.md`.
+
 ## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
 Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
 turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
