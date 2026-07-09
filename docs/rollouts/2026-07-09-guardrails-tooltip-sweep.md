@@ -3,7 +3,8 @@
 ## Summary
 
 Added native `title` affordances to the remaining bare Guardrails controls in
-the Universe and Autonomy sections. PR #1184 is open with auto-merge armed.
+the Universe and Autonomy sections. PR #1184 merged to `main` as `8b468260`.
+It is not production-deployed yet; MONET confirmed it rides the next natural release.
 
 ## Why
 

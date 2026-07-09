@@ -15,7 +15,8 @@ to the remaining bare Universe controls (base indices, always-include/blocklist 
 permitted order types, Sell-to-Fund select) and Autonomy action buttons. Keepout remains
 MONET-owned model-picker/provider files.
 Verification is green: `npm run lint`, `npx tsc --noEmit`, `npm test` (303 files / 3118 tests),
-`npm run build`, and `git diff --check`. PR #1184 is open with auto-merge armed.
+`npm run build`, and `git diff --check`. PR #1184 merged to `main` as `8b468260`.
+Not production-deployed yet; MONET confirmed it rides the next natural release.
 Rollout: `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
 
 ## 2026-07-09 — Home evidence symbol drawer parity (CODEX, `codex/console-parity-next`)
