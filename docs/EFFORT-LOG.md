@@ -887,6 +887,24 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Hetzner server migration: prod box 91.98.44.8 (4GB fsn1) -> 135.181.192.190 (8GB hel1)
+  (CLAUDE, worktree `.claude/worktrees/hetzner-server-migration-d59cd1`) — IN PROGRESS
+  2026-07-09 ~17:50 CDT.** Owner-directed in-conversation. Full Coolify-instance migration
+  (pg_dump coolify DB + /data/coolify incl. source/.env + ssh keys — preserves the GitHub App
+  source), rsync of the prod SQLite volume (restore-marker intact so no R2 re-restore /
+  single-litestream-writer preserved), redeploy socratic-trade-prod + github-runner service on
+  the new box, then flip the 6 Cloudflare A records (jays.services apex/*/prod +
+  socratictrade.com apex/*/admin) to the new IP. Old box kept STOPPED as rollback. #agent-sync
+  claim posted ~17:49 CDT with deploy-hold request; cutover after the in-flight c4d1bfa deploy
+  reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
+  cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
+  old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
+  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
+  PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
+  (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
+  session was permission-blocked from creating firewall rules on that zone); first
+  announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
+  migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
   every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
