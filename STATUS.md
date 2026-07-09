@@ -8,6 +8,25 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Alert triage: all ~75 Attention alerts root-caused + fixed; AV key pool; alert lifecycle (MONET, `monet/alert-triage-av-multikey`)
+Owner-directed. 9-agent triage (per alert family + adversarial verify) on the prod DB: 76 of 87
+run_failed = ONE bug (Gemini rejects the Bull schema's type:["number","null"]/anyOf-null — fixed
+with Gemini-dialect schema shaping in llm-call.ts; Bear 46/46 vs Bull 0/27 was the proof); 11 =
+Robinhood $1-minimum trim loop (order_checks now parsed; sub-minimum trims skip w/ 24h-cooldown
+receipt; whole-position dust exits exempt). ACTIVE MONEY-PATH BUG found & fixed: stale-exit
+remediator (PR #1036) market-replaced broker-HELD legs of unfilled entries → naked shorts on
+paper (PG -12; T 93-sh order d642d572 resting for the 07-09 open — owner push-notified to cancel;
+UNH d5e28482). Fixed w/ held-leg exclusion (auto+manual), position-backed guard, post-cancel
+re-verify, cross-path in-flight lock. Plus: ALPHAVANTAGE_API_KEYS multi-key pool; alert
+lifecycle (acknowledged_at, account-scoped bulk ack, auto-ack sweep incl. 137 orphaned
+pending_approvals — broker-verification alerts excluded, run_failed repeat-dedup); twelvedata
+limiter; bear-unavailable cooldown; RAG double-alert consolidation; push em-dash crash fix;
+stale-run sweep threshold. MU: closed at $938.29 at the 07-08 open (verified). Config done:
+VECTOR_EMBED_BATCH_DELAY_MS=2000 in Infisical prod (live); congress SSE fixed by sibling session.
+Owner still owed: cancel d642d572 pre-open, tiingo 403 key/plan, AV keys #2-4 + ToS call.
+Gates: lint 0 err / tsc clean / 3077 tests / build green.
+Rollout: docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
+
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)
 Owner request: every Proposer/Reviewer model option gets visible COST (mainly) + latency + eventual
 realized performance. New per-select stats button (both pickers: `app/console/settings/models.tsx` +

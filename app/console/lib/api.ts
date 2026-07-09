@@ -240,3 +240,28 @@ export interface NotifyTestResult {
 export function sendTestNotification(): Promise<NotifyTestResult> {
   return request<NotifyTestResult>("/api/notifications/test", { method: "POST", body: JSON.stringify({}) });
 }
+
+// ── Alert lifecycle (acknowledge) ───────────────────────────────────────────
+
+export interface AcknowledgeNotificationsResult {
+  acknowledged: number;
+}
+
+/** Acknowledge specific Alert Center rows by id. */
+export function acknowledgeNotifications(ids: string[]): Promise<AcknowledgeNotificationsResult> {
+  return request<AcknowledgeNotificationsResult>("/api/notifications/ack", {
+    method: "POST",
+    body: JSON.stringify({ ids })
+  });
+}
+
+/** Bulk-acknowledge every currently-unacknowledged row matching the Attention filter. Pass the
+ *  active connected account id so the ack is scoped to what the Alert Center is actually showing
+ *  (that account + account-less rows) — otherwise a hidden other-account alert the user never saw
+ *  would get silently acknowledged too. */
+export function acknowledgeAllAttention(connectedAccountId?: string): Promise<AcknowledgeNotificationsResult> {
+  return request<AcknowledgeNotificationsResult>("/api/notifications/ack", {
+    method: "POST",
+    body: JSON.stringify({ all: true, filter: "attention", ...(connectedAccountId ? { connectedAccountId } : {}) })
+  });
+}

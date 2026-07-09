@@ -350,6 +350,39 @@ export function resolveApiKey(service: string, userId?: string): string | undefi
   return resolveApiKeyWithSource(service, userId).key;
 }
 
+/**
+ * Resolve Alpha Vantage's key POOL (the one service with operator-level multi-key pooling — see
+ * src/lib/alpha-vantage-key-pool.ts). Precedence: a per-user stored key wins first (single-item
+ * pool, source "user") -> plural `ALPHAVANTAGE_API_KEYS` env (comma-separated, trimmed, deduped,
+ * order-preserving; source "env", envVar "ALPHAVANTAGE_API_KEYS") -> singular
+ * `ALPHAVANTAGE_API_KEY` as a one-item pool (source "env", envVar "ALPHAVANTAGE_API_KEY") ->
+ * empty pool (source "none"). The singular fallback means the pool works unchanged with today's
+ * single Infisical-provisioned key — zero config needed until a second key is added.
+ *
+ * Deliberately DUPLICATES (rather than generalizes) resolveApiKeyWithSource's per-user-then-env
+ * precedence, scoped only to alphavantage, so that widely-shared function's signature (consumed
+ * by ~9 other provider constructors) stays untouched. A per-user stored key stays a single-item
+ * pool on purpose — multi-key pooling is an operator/env-level concept only; there is no product
+ * surface asking an individual user for several personal AV keys.
+ */
+export function resolveAlphaVantageKeyPool(userId?: string): { keys: string[]; source: ApiKeySource; envVar: string } {
+  if (userId) {
+    const userKey = getUserApiKey(userId, "alphavantage");
+    if (userKey?.apiKey) return { keys: [userKey.apiKey], source: "user", envVar: "ALPHAVANTAGE_API_KEY" };
+  }
+
+  const pluralRaw = process.env.ALPHAVANTAGE_API_KEYS;
+  if (pluralRaw && pluralRaw.trim()) {
+    const parsed = Array.from(new Set(pluralRaw.split(",").map((k) => k.trim()).filter(Boolean)));
+    if (parsed.length > 0) return { keys: parsed, source: "env", envVar: "ALPHAVANTAGE_API_KEYS" };
+  }
+
+  const singular = process.env.ALPHAVANTAGE_API_KEY?.trim();
+  if (singular) return { keys: [singular], source: "env", envVar: "ALPHAVANTAGE_API_KEY" };
+
+  return { keys: [], source: "none", envVar: "ALPHAVANTAGE_API_KEY" };
+}
+
 function rankConnectedAlpacaAccounts(
   accounts: ReturnType<typeof listConnectedAccounts>
 ): ReturnType<typeof listConnectedAccounts> {

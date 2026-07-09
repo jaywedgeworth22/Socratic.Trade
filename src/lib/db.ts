@@ -1219,6 +1219,16 @@ function migrate(database: Database.Database): void {
     addAccountColumn(table);
   }
 
+  // Alert lifecycle (2026-07-09): acknowledge state on notification_events, so the Alert Center's
+  // "Attention" pill can be cleared instead of growing forever (see docs/rollouts for the
+  // triage that motivated this). Additive, guarded — existing rows keep acknowledged_at NULL
+  // (unacknowledged) until acted on or resolved by the auto-ack sweep in db-notifications.ts.
+  const notificationEventColumns = database.prepare("PRAGMA table_info(notification_events)").all() as Array<{ name: string }>;
+  if (!notificationEventColumns.some((c) => c.name === "acknowledged_at")) {
+    database.exec("ALTER TABLE notification_events ADD COLUMN acknowledged_at TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_notification_events_unacked ON notification_events (user_id, acknowledged_at)");
+  }
+
   // Per-account watermarks need (user_id, connected_account_id) as the PK, but the original table
   // was created with user_id as the SOLE primary key — a nullable column alone can't express
   // per-account rows. Rebuild it once: the account-agnostic watermark becomes connected_account_id=''

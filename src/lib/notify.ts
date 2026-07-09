@@ -85,6 +85,28 @@ async function postOrThrow(fetchImpl: typeof fetch, url: string, init: RequestIn
   return res;
 }
 
+// Duplicated (not imported) from notifications.ts's sanitizePushHeaderText to avoid a
+// notify.ts <-> notifications.ts import cycle (notifications.ts already imports `notify` from
+// this file). Keep the two copies in sync if the character set changes. See the ntfy branch of
+// CHANNELS.push.send below for why this exists (ByteString-only HTTP header values).
+const NTFY_TITLE_TRANSLITERATIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/[\u2012\u2013\u2014\u2015]/g, "-"], // figure/en/em/horizontal-bar dashes
+  [/\u2026/g, "..."], // horizontal ellipsis
+  [/[\u2192\u21D2\u27F6\u279D\u27A1]/g, "->"], // rightwards arrow variants
+  [/[\u2190\u21D0\u27F5]/g, "<-"], // leftwards arrow variants
+  [/[\u2018\u2019]/g, "'"], // curly single quotes
+  [/[\u201C\u201D]/g, '"'] // curly double quotes
+];
+
+function sanitizeNtfyTitleHeader(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const [pattern, replacement] of NTFY_TITLE_TRANSLITERATIONS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out.replace(/[^\u0000-\u00FF]/g, "");
+}
+
 const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
   webhook: {
     available: () => true,
@@ -153,7 +175,12 @@ const CHANNELS: Record<NotifyChannelId, ChannelDef> = {
         await postOrThrow(
           fetchImpl,
           `${base}/${topic}`,
-          { method: "POST", headers: { "content-type": "text/plain", title: msg.title }, body: msg.body },
+          // ntfy carries the title as a raw HTTP header value, which the Fetch/Headers spec requires
+          // to be ByteString (Latin-1 only) — an em dash or other non-Latin-1 char in msg.title (e.g.
+          // from a provider-health alert string) throws `TypeError: Cannot convert argument to a
+          // ByteString` here and silently drops the whole push send. Sanitize just the header value
+          // (the body isn't header-encoded, so it can stay as-is).
+          { method: "POST", headers: { "content-type": "text/plain", title: sanitizeNtfyTitleHeader(msg.title) }, body: msg.body },
           timeoutMs
         );
       }

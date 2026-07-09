@@ -77,6 +77,7 @@ import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
+import { describeBrokerMinimumOrderBlock, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
@@ -132,6 +133,14 @@ import { isTradingDay } from "./market-calendar";
  */
 const MAX_SKIPPED_EVIDENCE = 25;
 const DEFAULT_RED_TEAM_CONVICTION_THRESHOLD = 80;
+
+// Cooldown for the inline-Bear "Red Team review unavailable" alert (see bearUnavailable() below).
+// Mirrors db-health.ts's HEALTH_ALERT_COOLDOWN_PREFIX/HEALTH_ALERT_COOLDOWN_MS pattern (same 6h
+// window) — a sustained Bear/Red-Team LLM outage is the same class of "provider stuck down" event
+// as any other provider_degraded source, and previously had NO cooldown at all (16 alerts across
+// ~15 hours during the 2026-07-02 outage, roughly one per hourly strategy run).
+const BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY = "bearUnavailableAlertSent";
+const BEAR_UNAVAILABLE_ALERT_COOLDOWN_MS = 6 * 60 * 60_000;
 
 /**
  * corpus-coverage-receipt (2026-07-06, redesigned same day — see
@@ -1620,6 +1629,42 @@ export async function runStrategyOnce(
       }
 
       const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+
+      // Broker-minimum pre-flight guard: skip an order the broker has already told us (or that basic
+      // sizing math tells us) is a GUARANTEED reject for landing below its minimum dollar/fractional
+      // order size (e.g. Robinhood's $1 floor) — rather than placing it, getting rejected, and
+      // alerting on it every single run forever. The outward alert is cooldown-gated (this condition
+      // is NAV-bound and persistent, not transient) but the audit/proposal receipt is not, so the
+      // run history and Activity feed stay accurate every time.
+      // positionQuantity lets the guard exempt a whole-position dust exit (Robinhood allows
+      // selling an entire fractional position even below its $1 minimum).
+      const heldForMinimumGuard = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
+      const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      if (brokerMinimumBlockReason) {
+        const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
+        const proposalId = crypto.randomUUID();
+        insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
+        recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
+        audit(
+          "order_skipped_broker_minimum",
+          { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
+          userId,
+          connectedAccountId
+        );
+        if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, normalizedProposal.symbol)) {
+          await sendNotification(
+            {
+              type: "block",
+              title: `${normalizedProposal.side.charAt(0).toUpperCase() + normalizedProposal.side.slice(1)} ${normalizedProposal.symbol} skipped (below broker minimum)`,
+              payload: { runId, proposalId, decision, review, proposal: normalizedProposal }
+            },
+            { policy, userId }
+          );
+        }
+        results.push({ proposal: normalizedProposal, status: "blocked", reasons: [brokerMinimumBlockReason] });
+        continue;
+      }
+
       const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
       const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const isLiveExecution = executionMode === "broker/live";
@@ -3345,6 +3390,35 @@ export async function executeProposal(
     }
 
     const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+
+    // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
+    // proposal creation and a human clicking Approve, so re-check here too rather than let a
+    // known-doomed order reach the broker from this path.
+    // Same whole-position dust-exit exemption as the autonomous loop (see the guard).
+    const heldForMinimumGuard = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
+    const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+    if (brokerMinimumBlockReason) {
+      const blockedDecision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
+      updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, blockedDecision);
+      audit(
+        "order_skipped_broker_minimum",
+        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
+        userId,
+        policy.connectedAccountId
+      );
+      if (shouldAlertBrokerMinimumOrderBlock(policy.accountNumber, proposal.symbol)) {
+        await sendNotification(
+          {
+            type: "block",
+            title: `${proposal.side.charAt(0).toUpperCase() + proposal.side.slice(1)} ${proposal.symbol} skipped (below broker minimum)`,
+            payload: { proposalId, decision: blockedDecision, review, proposal }
+          },
+          { policy, userId }
+        );
+      }
+      return { status: "blocked", reasons: [brokerMinimumBlockReason] };
+    }
+
     const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
     const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
     const isLiveExecution = executionState.environment === "live";
@@ -4492,6 +4566,13 @@ async function proposeTrades(input: {
       proposalCount: bullProposals.length,
       reason: `${reason} Proposals routed to human review.`
     });
+    // Audit unconditionally — this is the per-run fail-closed forensic trail (and other code/tests
+    // key off "strategy_bear_review_unavailable" existing for THIS run), so it must never be
+    // suppressed by a cooldown. Only the outbound ALERT (sendNotification + notify, below) is
+    // cooldown-gated: a sustained Bear/Red-Team outage previously fired one of these per failed
+    // strategy run with zero cooldown (16 alerts across ~15 hours on 2026-07-02) — every other
+    // provider_degraded source in this codebase (db-health.ts's HEALTH_ALERT_COOLDOWN_MS,
+    // vector-db.ts's RAG_CONNECTION_ALERT_COOLDOWN_MS) already gates its alert this way.
     audit(
       "strategy_bear_review_unavailable",
       {
@@ -4505,31 +4586,42 @@ async function proposeTrades(input: {
       },
       input.userId
     );
-    await sendNotification(
-      {
-        type: "provider_degraded",
+
+    // Same internal-settings cooldown pattern as db-health.ts's HEALTH_ALERT_COOLDOWN_PREFIX, reusing
+    // its 6h window. Keyed GLOBALLY (not per-account/user): there is exactly one inline-Bear LLM
+    // endpoint per deployment (resolveLlmEndpoint above ignores account), so an outage hits every
+    // account identically — a per-account key would just fragment one outage into N cooldown rows
+    // with no added signal, the simpler global key is sufficient.
+    const bearAlertLast = getInternalSetting<string>(BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY);
+    const bearAlertOnCooldown = !!bearAlertLast && Date.now() - Date.parse(bearAlertLast) < BEAR_UNAVAILABLE_ALERT_COOLDOWN_MS;
+    if (!bearAlertOnCooldown) {
+      setInternalSetting(BEAR_UNAVAILABLE_ALERT_COOLDOWN_KEY, new Date().toISOString());
+      await sendNotification(
+        {
+          type: "provider_degraded",
+          title: "Red Team (inline Bear) review unavailable",
+          payload: {
+            runId: input.runId,
+            provider: bearProvider,
+            model: bearModel,
+            reason,
+            proposalCount: bullProposals.length,
+            routedToHumanReview: true
+          }
+        },
+        { policy: input.policy, userId: input.userId }
+      );
+      // sendNotification skips the DIRECT alert for provider_degraded (it's in DIRECT_NOTIFY_ALREADY_SENT,
+      // which assumes the provider-tier caller already sent one via notify()). This inline-Bear path has
+      // no prior notify(), so a user WITHOUT a webhook would get no alert at all. Mirror provider-tier:
+      // send the direct notification explicitly (sendNotification above still handles the webhook).
+      await notify(input.userId, {
         title: "Red Team (inline Bear) review unavailable",
-        payload: {
-          runId: input.runId,
-          provider: bearProvider,
-          model: bearModel,
-          reason,
-          proposalCount: bullProposals.length,
-          routedToHumanReview: true
-        }
-      },
-      { policy: input.policy, userId: input.userId }
-    );
-    // sendNotification skips the DIRECT alert for provider_degraded (it's in DIRECT_NOTIFY_ALREADY_SENT,
-    // which assumes the provider-tier caller already sent one via notify()). This inline-Bear path has
-    // no prior notify(), so a user WITHOUT a webhook would get no alert at all. Mirror provider-tier:
-    // send the direct notification explicitly (sendNotification above still handles the webhook).
-    await notify(input.userId, {
-      title: "Red Team (inline Bear) review unavailable",
-      body: `${reason} ${bullProposals.length} Bull proposal(s) routed to human review (mode=${input.policy.strategyAuthority}).`,
-      kind: "provider_degraded",
-      data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
-    }).catch((err) => console.error("[Bear] notify error:", err));
+        body: `${reason} ${bullProposals.length} Bull proposal(s) routed to human review (mode=${input.policy.strategyAuthority}).`,
+        kind: "provider_degraded",
+        data: { runId: input.runId, provider: bearProvider, model: bearModel, reason, proposalCount: bullProposals.length, routedToHumanReview: true }
+      }).catch((err) => console.error("[Bear] notify error:", err));
+    }
     return {
       proposals: bullProposals,
       llmSteps,
