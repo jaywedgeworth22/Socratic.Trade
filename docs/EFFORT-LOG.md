@@ -204,6 +204,13 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — completed 2026-07-08 via PR #1171.**
+  Replaced dirty Cursor PR #1105 without editing the Cursor branch. Merged to `main`
+  as `54b6d722`; #1105 closed as superseded and stale PR #856 closed as obsolete. Cleanup uses
+  shared `CONGRESS_EVENT_TYPES` for event-type checks, derives outbound payload typing from shared
+  `SharePayload`, and drops unused `API_PATHS`/`MAX_REFS_BATCH` imports. Verified locally and in CI:
+  lint 0 errors, tsc clean, 3101 tests, build, smoke, verify, gitleaks, Cursor Approval all green;
+  zero active unresolved review threads.
 - Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
   replace confusing loose/tight wording with lock/unlock-style affordances, and
   turn absolute-vs-percent constraint pairs into polished mode switches where
@@ -805,11 +812,6 @@ As of 2026-07-08 (assignment-rule update).
   STOP button squeeze fix (shrink-0 + centered content). Fileset:
   app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
   app/console/console.css.
-- **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
-  Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
-  Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
-  shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
-  `congress-trade-client.ts`.
 - **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
   logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
   popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root

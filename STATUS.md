@@ -180,6 +180,7 @@ Cross-app audit: Socratic.Trade already used shared client/SSE/share/telemetry w
 This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event checks,
 `SharePayload`-based outbound type, dead imports. Refreshed on branch
 `codex/refresh-shared-dep-usage` from dirty Cursor PR #1105 without editing the Cursor branch.
+Merged via PR #1171 as `54b6d722`; repo effort mirror closeout follows on `codex/shared-dep-closeout`.
 Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
 See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
 
