@@ -1,10 +1,20 @@
-# Commit-scoped gitleaks false positives (fingerprint format: commit:file:rule:line).
-# All entries below are OBVIOUSLY-FAKE test fixtures (e.g. "integration-env-key-1",
-# "fixture-secret-value-123") that trip the generic-api-key rule's KEY="..." shape
-# heuristic. gitleaks scans every commit in a PR, so inline gitleaks:allow comments
-# added in later commits cannot silence the original commit's finding — only these
-# fingerprints can. Never add a fingerprint here without confirming the flagged
-# value is fake; real leaks get rotated, not ignored.
+# gitleaks accepted false positives (fingerprint = commit:file:rule:line).
+#
+# These three are FAKE SSE-subscription-token fixtures in test/congress-stream.test.ts flagged by the
+# generic-api-key rule on their introducing commit's diff (Workstream C1 / PR #291). They are not real
+# secrets -- placeholder values used only to assert the App A subscription-model connect contract -- and
+# were shortened to <10-char values in a follow-up commit, so they no longer appear in the current tree.
+# gitleaks scans commit history, so it still flags the original introduction; these fingerprints suppress
+# that. (The PR squash-merges, so the intermediate commit never reaches main.)
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:80
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:81
+63d5537df6fa29cb5faeced0c830ebe9cf0f4adc:test/congress-stream.test.ts:generic-api-key:98
+#
+# These are OBVIOUSLY-FAKE test fixtures (e.g. "integration-env-key-1", "fixture-secret-value-123")
+# tripping the generic-api-key rule's KEY="..." shape heuristic on their introducing commits
+# (PRs #1087 / #1167). Inline gitleaks:allow comments added in later commits cannot silence the
+# original commit's finding -- only these fingerprints can. Never add a fingerprint here without
+# confirming the flagged value is fake; real leaks get rotated, not ignored.
 edc62261e8cc085ab494c567462e6e97755db0d9:test/provider-rate-limit.test.ts:generic-api-key:374
 9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:530
 9f1ab3b0ec5d67fa62d213899bf8c883af8f5b81:test/alpha-vantage-key-pool.test.ts:generic-api-key:531
