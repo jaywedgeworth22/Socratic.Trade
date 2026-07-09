@@ -26,6 +26,17 @@ failure); `listBrokerProtectiveStops` (`src/lib/db-api-keys.ts`) now returns bot
 needed; the assembled diff was inspected and matches the intended fix exactly. See
 `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
 
+## 2026-07-09 — Settings auto-save everywhere (MONET)
+Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
+section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
+inline indicator (serialized writes, optimistic+revert, error-toast); converted Event
+notifications, Tax treatment, Market-scan shape (settings/page.tsx), Delivery channels, LLM models,
+and the Strategy page's model selects/prompt/scoring-weights. Excluded (unchanged): guardrails
+review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/account-deletion, learned-
+context queue, kill switch, typed-confirmation master switch. Toggles/selects save on change;
+text/number on blur. Verified live: every control type persists across reload. Two soft calls
+flagged to owner (strategy prompt/weights now blur-save; guardrails kept review-and-commit). See
+docs/rollouts/2026-07-09-settings-autosave.md.
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
 (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
