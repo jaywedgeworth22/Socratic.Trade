@@ -284,7 +284,7 @@ describe("enrichment cache consent gate", () => {
     else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
-  it("TwelveData window-gate SKIPS (does not queue) a second scan inside the same budget window", async () => {
+  it("TwelveData window-gate SKIPS (does not queue) a second SAME-credential scan inside the window", async () => {
     const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
     clearEnrichmentCache();
     __resetTwelveDataWindowForTests();
@@ -299,10 +299,11 @@ describe("enrichment cache consent gate", () => {
       return new Response(JSON.stringify(body));
     });
 
-    // Two different accounts scanning inside the same minute: only the FIRST spends the budget;
-    // the second returns best-effort immediately (no second network call, no stall/queue).
-    const a = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env", `u-${randomUUID()}`);
-    const b = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env", `u-${randomUUID()}`);
+    // Two accounts sharing the SAME operator key scan inside the same minute: only the FIRST spends
+    // the budget; the second returns best-effort immediately (no second network call, no stall/queue).
+    const sharedKey = `env-key-${randomUUID()}`;
+    const a = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
+    const b = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
     const resA = await a.enrich(["AAA", "BBB"]);
     const resB = await b.enrich(["CCC", "DDD"]);
 
@@ -310,6 +311,67 @@ describe("enrichment cache consent gate", () => {
     expect(resA.AAA?.price).toBe(50); // first scan got real data
     expect(resB.CCC).toEqual({}); // second scan deferred (best-effort empty), not a hang
     expect(resB.DDD).toEqual({});
+  });
+
+  it("TwelveData window is PER-CREDENTIAL: a different key is not gated by another key's window", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let fetchCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCalls++;
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "77" };
+      return new Response(JSON.stringify(body));
+    });
+
+    // Two DIFFERENT keys (e.g. a per-user stored key vs the operator env key) have independent
+    // upstream quotas, so the second must NOT be gated by the first's window — both call.
+    const a = new TwelveDataEnrichmentProvider(`key-a-${randomUUID()}`, "env");
+    const b = new TwelveDataEnrichmentProvider(`key-b-${randomUUID()}`, "user", `u-${randomUUID()}`);
+    const resA = await a.enrich(["AAA"]);
+    const resB = await b.enrich(["BBB"]);
+
+    expect(fetchCalls).toBe(2); // independent credential lanes each got their call
+    expect(resA.AAA?.price).toBe(77);
+    expect(resB.BBB?.price).toBe(77);
+  });
+
+  it("TwelveData negative-caches a no-data symbol so it rotates out of misses (doesn't starve others)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    const queried: string[][] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      queried.push(syms);
+      const body: Record<string, unknown> = {};
+      // NODATA returns an error row (no usable fields); the others return a real quote.
+      for (const s of syms) body[s] = s === "NODATA" ? { code: 400, status: "error", message: "no data" } : { symbol: s, close: "10" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    // Budget of 1 symbol/call so NODATA (front of misses) would otherwise be queried every scan.
+    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "1";
+
+    const p1 = new TwelveDataEnrichmentProvider(key, "env");
+    await p1.enrich(["NODATA", "GOOD"]); // scan 1 queries NODATA (front), gets error → negative-cached
+    __resetTwelveDataWindowForTests(); // simulate the credit window elapsing before the next scan
+    const p2 = new TwelveDataEnrichmentProvider(key, "env");
+    await p2.enrich(["NODATA", "GOOD"]); // scan 2: NODATA is negative-cached (a hit), so GOOD gets the budget
+
+    expect(queried[0]).toEqual(["NODATA"]); // scan 1 spent its 1-symbol budget on the front symbol
+    expect(queried[1]).toEqual(["GOOD"]);   // scan 2 rotated past the negative-cached NODATA to GOOD
+
+    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
+    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {

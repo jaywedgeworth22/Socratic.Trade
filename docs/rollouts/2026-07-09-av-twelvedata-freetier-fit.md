@@ -43,9 +43,23 @@ supplementary.
 serialization backstop (concurrency 1, 2s) rather than the primary control —
 NOT 60s, which would re-introduce the scan stall the window gate avoids.
 
+Three review findings (codex-connector P2) addressed in the same PR:
+- **Window keyed per-credential**, not process-global: a per-user stored Twelve
+  Data key has its own upstream quota, so its scan is no longer gated by a
+  different key's window (map keyed by a cheap in-memory fingerprint of the key).
+- **Deferred-count is a `console.debug`, not a `logApiHealth(ok:true)` row**: the
+  old success row inflated the health success ratio and could keep the circuit
+  breaker from ever marking a genuinely dead Twelve Data lane down.
+- **No-data symbols are short negative-cached** (`TWELVEDATA_NEGATIVE_TTL_MS`,
+  default 30m): a symbol Twelve Data returns nothing usable for no longer sits at
+  the FRONT of `misses` every scan starving lower-ranked symbols of the tiny
+  budget — it rotates out for a few scans so others get a turn.
+
 Tests (`test/data-providers.test.ts`, `test/provider-rate-limit.test.ts`):
 call caps to ≤ budget symbols with every input still represented; a second
-same-window scan skips the network entirely (no queue/stall); the pacer default.
+SAME-credential scan skips the network (no queue/stall); a DIFFERENT credential
+is independent (not gated); a no-data symbol negative-caches and rotates out so
+a lower-ranked symbol gets the next window's budget; the pacer default.
 
 ## Alpha Vantage — DONE (config): 6 keys wired into Infisical
 
