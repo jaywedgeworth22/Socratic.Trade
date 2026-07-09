@@ -8,6 +8,9 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Centralized Congress API client factory (AG)
+Refactored Congress Trade API interaction into a central factory `src/lib/api-clients/congress.ts`. Replaced `src/lib/congress-trade-client.ts`. Updated features to reliably check `CONGRESS_TRADE_READS_ENABLED` and `CONGRESS_TRADE_ANALYTICS_ENABLED` gating flags to avoid unnecessary API calls. Fixed type issues across `congress-analytics.ts` and `history.ts`. Verified: tests pass 2970/2970, `npm run build` completed successfully, and tsc is clean. PR via `land.sh`. See `docs/rollouts/2026-07-08-congress-api-client-refactor.md`.
+
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
 Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/

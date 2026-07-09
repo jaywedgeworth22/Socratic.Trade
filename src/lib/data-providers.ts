@@ -11,13 +11,14 @@
 
 import { fromAlpacaSymbol, normalizeSymbol, toAlpacaSymbol } from "./money";
 import {
-  congressReadsEnabled,
   congressFundamentalsEnabled,
-  getAppAFundamentals,
-  getAppAAnalyst,
-  type AppAFundamental,
-  type AppAAnalyst,
-} from "./congress-trade-client";
+  getCongressTradeClient
+} from "./api-clients/congress";
+import type { FundamentalRow, AnalystRow } from "@jaywedgeworth22/congress-trading-shared";
+
+export type AppAFundamentalRow = FundamentalRow & { source?: string | null };
+export type AppAAnalystRow = AnalystRow & { source?: string | null };
+
 import { resolveAlpacaMarketData, resolveApiKeyWithSource, hasDataPoolConsent, type ApiKeySource } from "./db";
 import { logApiHealth, getServiceHealthSummaries, HEALTH_REASON_CONSECUTIVE_FAILURES } from "./db-health";
 import { apiCircuitBreakerShouldSkip, CircuitOpenError } from "./api-circuit-breaker";
@@ -526,6 +527,7 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
     }
     if (misses.length === 0) return result;
 
+    const client = getCongressTradeClient();
     await Promise.all(
       misses.map(async (symbol) => {
         // Track whether EITHER read failed at the transport level (timeout/5xx/401 →
@@ -536,32 +538,36 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
         // Bound the pull to the freshness window: rowIsFresh discards anything older than
         // CONGRESS_TRADE_MAX_STALE_DAYS, so there's no point downloading the full history.
         const fromDate = new Date(now - congressMaxStaleMs()).toISOString().slice(0, 10);
-        const [funds, analysts] = await Promise.all([
-          getAppAFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAFundamental[]; }),
-          getAppAAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AppAAnalyst[]; }),
+        const [fundamentals, analyst] = await Promise.all([
+          congressFundamentalsEnabled() ? client.getFundamentals(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as FundamentalRow[]; }) : Promise.resolve([] as FundamentalRow[]),
+          congressFundamentalsEnabled() ? client.getAnalyst(symbol, { from: fromDate }).catch(() => { transportError = true; return [] as AnalystRow[]; }) : Promise.resolve([] as AnalystRow[]),
         ]);
+
+        if (transportError) {
+          logApiHealth({ service: "congress.trade", ok: false, errorText: "Enrichment transport error (degraded overlay)", latencyMs: Date.now() - now });
+        }
         // App A may return multiple fresh rows from different sources; merge the LATEST
         // non-null value per field across all of them (rows are date-ascending), so a
         // partial latest row doesn't discard a field an earlier fresh row supplied.
-        const freshFunds = funds.filter((r) => rowIsFresh(r, now));
-        const freshAnalysts = analysts.filter((r) => rowIsFresh(r, now));
-        const latestFund = <K extends keyof AppAFundamental>(
+        const freshFunds = fundamentals.filter((r) => rowIsFresh(r, now));
+        const freshAnalysts = analyst.filter((r) => rowIsFresh(r, now));
+        const latestFund = <K extends keyof FundamentalRow>(
           key: K,
-          valid: (v: NonNullable<AppAFundamental[K]>) => boolean = () => true
-        ): NonNullable<AppAFundamental[K]> | undefined => {
+          valid: (v: NonNullable<FundamentalRow[K]>) => boolean = () => true
+        ): NonNullable<FundamentalRow[K]> | undefined => {
           for (let i = freshFunds.length - 1; i >= 0; i--) {
             const v = freshFunds[i][key];
-            if (v != null && valid(v as NonNullable<AppAFundamental[K]>)) return v as NonNullable<AppAFundamental[K]>;
+            if (v != null && valid(v as NonNullable<FundamentalRow[K]>)) return v as NonNullable<FundamentalRow[K]>;
           }
           return undefined;
         };
-        const latestAnalyst = <K extends keyof AppAAnalyst>(
+        const latestAnalyst = <K extends keyof AnalystRow>(
           key: K,
-          valid: (v: NonNullable<AppAAnalyst[K]>) => boolean = () => true
-        ): NonNullable<AppAAnalyst[K]> | undefined => {
+          valid: (v: NonNullable<AnalystRow[K]>) => boolean = () => true
+        ): NonNullable<AnalystRow[K]> | undefined => {
           for (let i = freshAnalysts.length - 1; i >= 0; i--) {
             const v = freshAnalysts[i][key];
-            if (v != null && valid(v as NonNullable<AppAAnalyst[K]>)) return v as NonNullable<AppAAnalyst[K]>;
+            if (v != null && valid(v as NonNullable<AnalystRow[K]>)) return v as NonNullable<AnalystRow[K]>;
           }
           return undefined;
         };
@@ -594,7 +600,7 @@ export class CongressTradeEnrichmentProvider implements MarketEnrichmentProvider
           // the counts it came from), rather than mixing a rating from one source with
           // counts from another.
           for (let i = freshAnalysts.length - 1; i >= 0; i--) {
-            const a = freshAnalysts[i];
+            const a = freshAnalysts[i] as AppAAnalystRow;
             const counts = {
               strongBuy: a.strongBuy ?? 0,
               buy: a.buy ?? 0,
