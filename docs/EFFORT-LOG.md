@@ -204,6 +204,23 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — completed 2026-07-08 via PR #1171.**
+  Replaced dirty Cursor PR #1105 without editing the Cursor branch. Merged to `main`
+  as `54b6d722`; #1105 closed as superseded and stale PR #856 closed as obsolete. Cleanup uses
+  shared `CONGRESS_EVENT_TYPES` for event-type checks, derives outbound payload typing from shared
+  `SharePayload`, and drops unused `API_PATHS`/`MAX_REFS_BATCH` imports. Verified locally and in CI:
+  lint 0 errors, tsc clean, 3101 tests, build, smoke, verify, gitleaks, Cursor Approval all green;
+  zero active unresolved review threads.
+- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
+  replace confusing loose/tight wording with lock/unlock-style affordances, and
+  turn absolute-vs-percent constraint pairs into polished mode switches where
+  they represent alternative ways to express one setting.
+  2026-07-09 CODEX: COMPLETED via PR #1184 (`8b468260`). Scope was the smallest
+  remaining tooltip-only slice: added missing native titles to bare Guardrails controls in
+  `app/console/guardrails/page.tsx`. Keepout honored: MONET-owned model-picker/catalog
+  files were not touched. Full local gate and GitHub `verify`/smoke were green before
+  auto-merge. Not yet production-deployed after `8b468260`; MONET confirmed it rides the
+  next natural release.
 - Universal ticker detail drawer parity - restore old-site discoverability by
   making ticker symbols open a shared right-side drilldown drawer consistently
   across scan, home, evidence cards, proposals, orders, activity, outcomes,
@@ -795,6 +812,13 @@ As of 2026-07-08 (assignment-rule update).
   Google-RPC details capture + de-stutter. Run-once now async (8s sync window -> 202 started;
   fast pre-flight blocks stay sync) + shared HTML-error shield in console api client.
   Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
+- **Repo AGENTS.md/CLAUDE.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, branch
+  `monet/deploy-doc-reconcile`) — IN PROGRESS 2026-07-09, landing.** Closes the repo-doc half of the
+  deploy-authorization contradiction the owner ruled on 2026-07-09 (ANNOUNCE-THEN-DEPLOY, codified in
+  AGENT-SYNC.md by the ruling lane). Fixes two stale spots in AGENTS.md: board semantics ("owner-run
+  release step" + "auto-deploys to beta/integration" [previews retired/auto-deploy OFF]) and the
+  prod stanza ("deliberate step" → the announce→window→off-hours→deploy→verify protocol). Doc-only.
+  Rollout: `docs/rollouts/2026-07-09-agents-md-announce-then-deploy-reconcile.md`.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
@@ -806,11 +830,6 @@ As of 2026-07-08 (assignment-rule update).
   STOP button squeeze fix (shrink-0 + centered content). Fileset:
   app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
   app/console/console.css.
-- **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
-  Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
-  Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
-  shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
-  `congress-trade-client.ts`.
 - **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
   logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
   popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
@@ -1055,11 +1074,6 @@ As of 2026-07-08 (assignment-rule update).
     errors / tsc clean / 2404 tests / build. See
     docs/rollouts/2026-07-04-w2-reflection-decompose.md.
 
-- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
-  replace confusing loose/tight wording with lock/unlock-style affordances, and
-  turn absolute-vs-percent constraint pairs into polished mode switches where
-  they represent alternative ways to express one setting.
-  _(2026-07-08: stripped CODEX tag — no agent actively working.)_
 - Model/provider control parity - move strategy model controls toward curated
   dropdowns with provider-aware settings, showing reasoning controls only for
   models that actually support them.

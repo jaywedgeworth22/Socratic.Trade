@@ -31,14 +31,16 @@ Socratic Trade reframe.
   expansion/restriction is shown with lock/unlock language.
 - The first absolute-vs-percent duplicate cap pairs now render as a mode switch:
   Max Per Order and Max In One Stock.
+- Guardrails universe and autonomy controls now carry native titles for the
+  checkbox/text/select/button controls that were previously bare.
 
 ## Still incomplete / needs follow-up
 
 - `admin.socratictrade.com` is not implemented. Admin pages remain in-app routes;
   DNS/routing/middleware split still needs a dedicated admin host plan.
 - Universal tooltips are not complete. Many console controls have `title` hints,
-  but this has not been proven across every button, setting, metric, table cell,
-  and data point.
+  and the Guardrails universe/autonomy controls have been swept, but this has
+  not been proven across every button, setting, metric, table cell, and data point.
 - Only two absolute-vs-percent setting pairs have been converted to polished
   mode switches. Remaining duplicated constraints need the same treatment where
   the pair is semantically either/or.

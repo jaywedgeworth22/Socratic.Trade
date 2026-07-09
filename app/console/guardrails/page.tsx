@@ -63,6 +63,15 @@ function orderTypeChoiceLabel(type: string): string {
   return label ? label.charAt(0).toUpperCase() + label.slice(1) : label;
 }
 
+function orderTypeChoiceTitle(type: OrderType): string {
+  const label = orderTypeChoiceLabel(type);
+  if (type === "market") return "Allow market orders when immediacy is more important than a limit price.";
+  if (type === "limit") return "Allow limit orders that cap the acceptable fill price.";
+  if (type === "stop_market") return "Allow stop-market orders for protective exits and stop-triggered trades.";
+  if (type === "stop_limit") return "Allow stop-limit orders that require both a stop trigger and a limit price.";
+  return `Allow ${label} orders when the broker supports them.`;
+}
+
 /** Exposure utilization derive.ts doesn't already expose (deriveRiskUtilization only covers
  *  daily notional/orders/invested capital) — computed locally from the same snapshot fields,
  *  mirroring the CURRENT-state formulas the policy engine uses for its own projected checks
@@ -327,10 +336,12 @@ export default function GuardrailsPage() {
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                 {INDICES.map((idx) => {
                   const on = indices.includes(idx.id);
+                  const title = `Include ${idx.label} in the base scan universe. Overlapping S&P and Nasdaq families replace each other.`;
                   return (
-                    <label key={idx.id} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
+                    <label key={idx.id} title={title} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
                       <input
                         type="checkbox"
+                        title={title}
                         checked={on}
                         onChange={(e) => {
                           const checked = e.currentTarget.checked;
@@ -356,6 +367,7 @@ export default function GuardrailsPage() {
               <Field label="Always include (symbols)" hint="Comma or space separated. Exempt from the universe floor." htmlFor="add-syms">
                 <TextInput
                   id="add-syms"
+                  title="Comma or space separated tickers that stay in the scan universe even if they miss the normal universe floor."
                   value={universeDraft.additionalSymbols ?? (policy.additionalSymbols ?? []).join(", ")}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, additionalSymbols: e.target.value }))}
                 />
@@ -363,6 +375,7 @@ export default function GuardrailsPage() {
               <Field label="Never touch (blocklist)" hint="Blocking a stock never blocks selling it — exits are always allowed." htmlFor="block-syms">
                 <TextInput
                   id="block-syms"
+                  title="Comma or space separated tickers the strategy must not open. Exits are still allowed."
                   value={universeDraft.blocklist ?? (policy.blocklist ?? []).join(", ")}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, blocklist: e.target.value }))}
                 />
@@ -376,10 +389,12 @@ export default function GuardrailsPage() {
               <div className="flex flex-wrap gap-3">
                 {ORDER_TYPES.map((t) => {
                   const on = orderTypes.includes(t);
+                  const title = orderTypeChoiceTitle(t);
                   return (
-                    <label key={t} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
+                    <label key={t} title={title} className="flex cursor-pointer items-center gap-2 text-[length:var(--con-fs-sm)]">
                       <input
                         type="checkbox"
+                        title={title}
                         checked={on}
                         onChange={() =>
                           setUniverseDraft((d) => ({
@@ -402,6 +417,7 @@ export default function GuardrailsPage() {
               >
                 <Select
                   id="stf"
+                  title="Choose how the strategy should raise cash when intended buys exceed buying power. Off means never sell just to fund buys."
                   value={universeDraft.sellToFundBuy ?? policy.sellToFundBuy ?? "off"}
                   onChange={(e) => setUniverseDraft((d) => ({ ...d, sellToFundBuy: e.target.value }))}
                 >
@@ -473,11 +489,22 @@ function AutonomyCard() {
           </p>
         </div>
         {decide ? (
-          <Btn variant="pos" size="sm" disabled={busy} onClick={() => void setAuthority("propose")}>
+          <Btn
+            variant="pos"
+            size="sm"
+            disabled={busy}
+            title="Switch this account back to Ask-first, so every trade waits for approval."
+            onClick={() => void setAuthority("propose")}
+          >
             {busy ? "Switching…" : "Switch to Ask-first"}
           </Btn>
         ) : (
-          <Btn variant="outline" size="sm" onClick={() => setArming((v) => !v)}>
+          <Btn
+            variant="outline"
+            size="sm"
+            title="Open the typed confirmation for Autopilot on this account."
+            onClick={() => setArming((v) => !v)}
+          >
             Turn on Autopilot…
           </Btn>
         )}

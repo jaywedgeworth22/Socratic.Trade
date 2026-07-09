@@ -25,6 +25,26 @@ HTML error pages (the owner saw Cloudflare's raw 524 page in the Run-once dialog
 actually executed server-side). Note: a subagent accidentally edited the integration tree —
 relocated + tree restored, documented in the rollout note.
 Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
+## 2026-07-09 — Repo AGENTS.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, `monet/deploy-doc-reconcile`)
+Doc-only: brought the repo `AGENTS.md`/`CLAUDE.md` prod-deploy language in line with the owner's
+2026-07-09 ruling (production releases = ANNOUNCE-THEN-DEPLOY: one deployer posts a #agent-sync claim
+with app+commit+contents+"deploying in N min unless objection", ~10-min objection window, off market
+hours unless a fix, deployer owns verify+boards). Corrected two stale passages — the "owner-run
+release step"/"auto-deploys to beta/integration" board bullet (previews retired, auto-deploy OFF) and
+the "deliberate step" prod stanza — pointing to `/Users/jay/apps/AGENT-SYNC.md` as canonical. Closes
+the repo-doc half of today's deploy-authorization contradiction; AGENT-SYNC.md half already done by
+the ruling lane.
+
+## 2026-07-09 — Guardrails tooltip sweep (CODEX, `codex/settings-tooltip-sweep`)
+Claimed the smallest safe remainder of the settings affordance row after auditing current
+`origin/main` and MONET handoffs. `app/console/guardrails/page.tsx` now adds native titles
+to the remaining bare Universe controls (base indices, always-include/blocklist text fields,
+permitted order types, Sell-to-Fund select) and Autonomy action buttons. Keepout remains
+MONET-owned model-picker/provider files.
+Verification is green: `npm run lint`, `npx tsc --noEmit`, `npm test` (303 files / 3118 tests),
+`npm run build`, and `git diff --check`. PR #1184 merged to `main` as `8b468260`.
+Not production-deployed yet; MONET confirmed it rides the next natural release.
+Rollout: `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
 
 ## 2026-07-09 — Home evidence symbol drawer parity (CODEX, `codex/console-parity-next`)
 Re-claimed the universal ticker detail drawer parity row after read-only audits of `origin/main`
@@ -187,6 +207,7 @@ Cross-app audit: Socratic.Trade already used shared client/SSE/share/telemetry w
 This pass removes remaining contract drift — `CONGRESS_EVENT_TYPES` for event checks,
 `SharePayload`-based outbound type, dead imports. Refreshed on branch
 `codex/refresh-shared-dep-usage` from dirty Cursor PR #1105 without editing the Cursor branch.
+Merged via PR #1171 as `54b6d722`; repo effort mirror closeout follows on `codex/shared-dep-closeout`.
 Paired with Congress.Trade / shared v1.4.2 / api-usage-monitor idempotency restore.
 See `docs/rollouts/2026-07-09-shared-dep-proper-usage.md`.
 
