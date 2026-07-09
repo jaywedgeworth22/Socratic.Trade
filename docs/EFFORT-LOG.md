@@ -784,6 +784,17 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Roth Gemini 400 TRUE root cause + async Run-once (MONET, branch
+  `monet/roth-gemini-400-runonce-async`) — IN PROGRESS 2026-07-09, gates running, PR via
+  land.sh.** Owner-reported: Run-once popped a raw Cloudflare 524 page; Roth Gemini 400
+  SURVIVED the #1167 schema-dialect fix. Fable forensic hunt (live-endpoint proof matrix, both
+  keys) found the REAL trigger: maxItems:8 (maxProposalsPerRun) x post-#1036 15-property item
+  schema overflows Gemini's structured-output complexity budget — Bear never failed because
+  its schema has no maxItems. Fix: toGeminiJsonSchema strips maxItems/minItems (bound folded
+  into description; app-side sanitizeProposals already truncates) + llm-errors.ts full
+  Google-RPC details capture + de-stutter. Run-once now async (8s sync window -> 202 started;
+  fast pre-flight blocks stay sync) + shared HTML-error shield in console api client.
+  Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator

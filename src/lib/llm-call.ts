@@ -136,20 +136,27 @@ export function buildLlmRequestBody(
 
 /**
  * Recursively rewrites a JSON Schema node so Gemini's OpenAI-compatible endpoint (an
- * OpenAPI-3.0-derived structured-output dialect) accepts it. Gemini's schema validator rejects two
- * JSON-Schema constructs that OpenAI/Anthropic accept fine:
+ * OpenAPI-3.0-derived structured-output dialect) reliably accepts it. Three rewrites:
  *   1. `type: [T, "null"]` union-type arrays (the app's standard "optional numeric/string field"
  *      encoding — see the Bull trade-proposal schema's quantity/dollarAmount/limitPrice/stopPrice/
- *      bracketStopLoss/bracketTakeProfit in strategy.ts) — Gemini wants a single `type` plus a
- *      separate `nullable: true` instead.
+ *      bracketStopLoss/bracketTakeProfit in strategy.ts) → a single `type` plus `nullable: true`
+ *      (Gemini's OpenAPI-3.0 dialect).
  *   2. An `anyOf` branch that is just `{ type: "null" }` (the app's "optional whole sub-object"
  *      encoding — see `autonomyOverrideSchema` in strategy.ts) — same fix, collapsed to the
  *      non-null branch with `nullable: true` added.
- * This is what makes Gemini viable as a Bull model: every Bull call previously failed 400
- * INVALID_ARGUMENT in ~1s because the six nullable price/quantity fields (plus autonomyOverride) hit
- * case 1/2 above, while the Bear/Red-Team verdict schema (red-team.ts) has no nullable fields at all
- * and always succeeded — that contrast is the diagnostic signal that isolated this as a schema-shape
- * bug rather than an account/model/quota problem.
+ *   3. `maxItems`/`minItems` on array nodes are STRIPPED from the wire schema and folded into the
+ *      node's `description` instead. Root cause of the 2026-07-08 Roth Bull outage (400
+ *      INVALID_ARGUMENT in ~1s, no field details): Gemini's structured-output validator expands an
+ *      array's item subtree ONCE PER `maxItems` slot against an undocumented internal complexity
+ *      budget, so `maxItems × <rich item schema>` overflows it — empirically, the 15-property Bull
+ *      item schema passed at maxItems<=7 and was rejected at maxItems=8, while the SAME schema with
+ *      two fewer properties passed at 8, and the Bear proposal schema (no maxItems, but the SAME
+ *      nullable fields and anyOf) always passed. The count bound is advisory-for-the-model anyway:
+ *      every consumer truncates deterministically app-side (`sanitizeProposals(..., maxProposals)`),
+ *      so stripping it can never let extra proposals through — the description keeps the model
+ *      aiming for the right count. (Constructs 1/2 are dialect-compat conversions kept from the
+ *      earlier fix attempt; the raw unions were later shown to be accepted too, but the converted
+ *      form is Gemini's documented dialect, so we keep emitting it.)
  *
  * Returns `unsupported: true` when the walk hits a shape this transform can't collapse into Gemini's
  * dialect (a `type` array or `anyOf` with more than one remaining non-null alternative — nothing in
@@ -173,8 +180,21 @@ export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupporte
 
     const obj = value as Record<string, unknown>;
     const result: Record<string, unknown> = {};
+    // Item-count bounds stripped off this node (rewrite 3 above) — folded into `description` below.
+    let minItems: number | undefined;
+    let maxItems: number | undefined;
 
     for (const [key, val] of Object.entries(obj)) {
+      if (key === "maxItems" || key === "minItems") {
+        // Gemini's validator multiplies the item subtree by the bound (complexity blow-up, see the
+        // doc comment) — never forward it; keep the intent as prose for the model instead. A
+        // non-numeric bound (malformed schema) is stripped without a prose fold.
+        if (typeof val === "number" && Number.isFinite(val)) {
+          if (key === "maxItems") maxItems = val;
+          else minItems = val;
+        }
+        continue;
+      }
       if (key === "type" && Array.isArray(val)) {
         const nonNullTypes = val.filter((t) => t !== "null");
         const hadNull = nonNullTypes.length !== val.length;
@@ -206,6 +226,17 @@ export function toGeminiJsonSchema(node: unknown): { schema: unknown; unsupporte
         continue;
       }
       result[key] = walk(val);
+    }
+    if (maxItems !== undefined || minItems !== undefined) {
+      const bound =
+        maxItems !== undefined && minItems !== undefined
+          ? `between ${minItems} and ${maxItems}`
+          : maxItems !== undefined
+            ? `at most ${maxItems}`
+            : `at least ${minItems}`;
+      const constraint = `Return ${bound} items.`;
+      const existing = typeof result.description === "string" && result.description.trim().length > 0 ? `${result.description.trim()} ` : "";
+      result.description = `${existing}${constraint}`;
     }
     return result;
   };
