@@ -49,6 +49,15 @@ semantically complementary:
 
 Both verified present in the merged file by manual read.
 
+## Landing-session lint fix (only deviation from "committed as-is")
+
+The full gate's `npm run lint` flagged MONET's render-time ref write
+(`onCloseRef.current = onClose` in the component body) as an ERROR
+(react-hooks "Cannot access refs during render"), which blocks the gate.
+Mechanical fix by the landing session, semantics unchanged: the ref is now
+updated in a tiny `useEffect(..., [onClose])`; the focus effect still depends
+only on `open`, so MONET's caret fix is fully intact.
+
 ## Files
 
 - `app/console/guardrails/field-defs.ts` — hints on maxGrossExposurePct / maxNetExposurePct

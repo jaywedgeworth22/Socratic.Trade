@@ -63,13 +63,16 @@ export function Sheet({
   const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
 
-  // Keep the latest onClose without making it an effect dependency. Callers pass an inline arrow
-  // (e.g. `() => setOpen(false)`) that is a NEW reference on every render, so if the focus effect
-  // below depended on onClose it would re-run on every parent re-render — including on each
+  // Keep the latest onClose without making it a dependency of the FOCUS effect below. Callers pass
+  // an inline arrow (e.g. `() => setOpen(false)`) that is a NEW reference on every render, so if the
+  // focus effect depended on onClose it would re-run on every parent re-render — including on each
   // keystroke in a TypedConfirm field — and re-focus the first focusable element (the header X),
-  // yanking the caret out of the input. The effect now depends only on `open`.
+  // yanking the caret out of the input. The focus effect now depends only on `open`; this tiny
+  // effect just keeps the ref current (writing the ref during render trips react-hooks lint).
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
