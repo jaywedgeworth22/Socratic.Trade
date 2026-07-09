@@ -1920,3 +1920,4 @@ brackets; effort S/M/L.
 - [P3][FE][M] Zero React.memo/useMemo perf: "low priority given small data volumes" per the finding. TBD (defer unless refresh-flicker appears).
 - [P3][FE][S] useConsoleData unconditional abort of in-flight refresh: TBD (defer unless refresh-storm symptoms appear).
 - [P3][Data][S] Partial/stale/status spread across 3 order columns: optional; row already highlights when stale. TBD (low value).
+| 2026-07-09 | Socratic.Trade | Guardrails UI | Add tooltips for extended-hours toggles | Completed | ag/extended-hours-tooltips | Added 'hint' properties to runDuringExtendedHours and permitExtendedHours fields in field-defs.ts. |
