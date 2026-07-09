@@ -62,7 +62,9 @@ Verification:
 full `npm test -- --reporter=dot --maxWorkers=2` passed (301 files / 3101 tests).
 `npm run build` passed with only the existing Sentry Edge-runtime warning. Review-fix focused
 verification: `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
-`npx tsc --noEmit`, and `npm run lint -- --quiet` all passed. PR #1174 is open.
+`npx tsc --noEmit`, and `npm run lint -- --quiet` all passed; after merge-forward to current
+`origin/main`, full `npm test -- --reporter=dot --maxWorkers=2` passed (302 files / 3112 tests)
+and `npm run build` passed. PR #1174 is open.
 Rollout: docs/rollouts/2026-07-08-live-bulk-typed-confirm.md.
 
 ## 2026-07-08 — Model-picker cost/latency/performance stats drawer (MONET, branch `monet/model-cost-drawer`)

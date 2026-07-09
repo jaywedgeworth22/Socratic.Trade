@@ -46,6 +46,8 @@ npm run build
 npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts
 npx tsc --noEmit
 npm run lint -- --quiet
+npm test -- --reporter=dot --maxWorkers=2
+npm run build
 ```
 
 Passed:
@@ -60,6 +62,8 @@ Passed:
 - Review-fix focused tests: 2 files / 8 tests
 - Review-fix `npx tsc --noEmit`: clean
 - Review-fix `npm run lint -- --quiet`: clean
+- Post-merge-forward full Vitest: 302 files / 3112 tests
+- Post-merge-forward `npm run build`: clean
 
 ## Follow-ups
 
