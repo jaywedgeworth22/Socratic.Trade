@@ -8,9 +8,9 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronDown, LogOut, OctagonMinus, Play, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, Sun, UserRound } from "lucide-react";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
   activeConnectedAccount,
@@ -30,6 +30,7 @@ import {
 import { cx, fmtClock, fmtMoney, fmtMoneyWhole, timeAgo, timeUntil, EM_DASH, fmtExact } from "../lib/format";
 import type { ConsoleStreamHealth } from "../lib/useConsoleData";
 import { useConsoleData } from "../lib/useConsoleData";
+import type { ConsoleTheme } from "../lib/useConsoleTheme";
 import { useToast } from "../ui/toast";
 import { Btn, Chip, Dot, Meter, TextInput } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
@@ -97,7 +98,7 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex min-w-[112px] max-w-[44vw] items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:max-w-none"
+        className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:min-w-[112px] sm:flex-none sm:max-w-none"
         title="Switch which account this console shows"
       >
         <span className="min-w-0">
@@ -190,16 +191,28 @@ const STATE_TONE: Record<string, "pos" | "warn" | "neg" | "muted"> = {
 export function StateChip({ snapshot }: { snapshot: DashboardSnapshot }) {
   const [open, setOpen] = useState(false);
   const info = deriveStateInfo(snapshot.policy);
+  // On phones the boxed single-line chip read as a second dropdown next to the
+  // account selector and crowded the bar (owner report) — below sm it renders
+  // unboxed with the state stacked over the authority in smaller type. Desktop
+  // keeps the boxed single-line form.
+  const [word, mode] = info.label.split(" · ");
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 transition-colors hover:border-[color:var(--con-accent)]"
+        className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 text-left transition-colors sm:border-[color:var(--con-line-strong)] sm:bg-[color:var(--con-surface-2)] sm:px-3 sm:py-1.5 sm:hover:border-[color:var(--con-accent)]"
         title={info.detail}
       >
         <Dot tone={STATE_TONE[info.tone]} pulse={info.state === "active" && snapshot.policy.strategyAuthority === "decide"} />
-        <span className="whitespace-nowrap text-[length:var(--con-fs-sm)] font-semibold">{info.label}</span>
+        <span className="flex flex-col leading-tight sm:flex-row sm:items-center sm:gap-1">
+          <span className="whitespace-nowrap text-[length:var(--con-fs-xs)] font-semibold sm:text-[length:var(--con-fs-sm)]">{word}</span>
+          {mode && (
+            <span className="whitespace-nowrap text-[10px] text-[color:var(--con-muted)] sm:text-[length:var(--con-fs-sm)] sm:font-semibold sm:text-inherit sm:before:content-['·_']">
+              {mode}
+            </span>
+          )}
+        </span>
       </button>
       <ControlSheet snapshot={snapshot} open={open} onClose={() => setOpen(false)} />
     </>
@@ -642,52 +655,124 @@ export function RunOnceButton({ snapshot, size }: { snapshot: DashboardSnapshot;
 
 // ── Signed-in identity + sign out ────────────────────────────────────────────
 
-export function UserMenu({ snapshot }: { snapshot: DashboardSnapshot }) {
+const THEME_LABEL: Record<ConsoleTheme, string> = {
+  system: "Theme: following your system setting. Click for dark.",
+  dark: "Theme: dark. Click for light.",
+  light: "Theme: light. Click to follow your system setting."
+};
+const THEME_WORD: Record<ConsoleTheme, string> = { system: "System", dark: "Dark", light: "Light" };
+
+function Avatar({ imageUrl, size, iconSize }: { imageUrl?: string; size: string; iconSize: number }) {
+  // Google/GitHub profile photo when the session has one (imageUrl comes from
+  // the Auth.js session via snapshot.currentUser); generic icon otherwise.
+  // no-referrer: googleusercontent 403s avatar requests with a referrer.
+  return imageUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element -- external avatar host; next/image needs remotePatterns per provider
+    <img src={imageUrl} alt="" referrerPolicy="no-referrer" className={cx(size, "rounded-[inherit] object-cover")} />
+  ) : (
+    <UserRound size={iconSize} />
+  );
+}
+
+/** Profile menu: a slide-DOWN dropdown anchored under the header button — NOT a
+ *  bottom sheet, which the fixed mobile tab bar covered (sign out was
+ *  unreachable on phones). Holds identity, the theme control (moved off the
+ *  bar), and sign out. Button is a 44px target on phones and shows the
+ *  provider avatar when the session has one. */
+export function UserMenu({
+  snapshot,
+  theme,
+  cycleTheme
+}: {
+  snapshot: DashboardSnapshot;
+  theme: ConsoleTheme;
+  cycleTheme: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const user = snapshot.currentUser;
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   // No session identity (single-user/local operation) → nothing to sign out of.
   if (!user) return null;
 
   const who = user.name ?? user.email ?? user.userId;
+  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
 
   return (
-    <>
+    // Not position:relative — the dropdown anchors to the bar row (the nearest
+    // positioned ancestor, set in shell.tsx) so it hugs the viewport-right edge
+    // instead of overflowing left off small screens.
+    <div className="shrink-0">
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        title={`Signed in as ${user.email ?? who}. Click for account and sign out.`}
+        onClick={() => setOpen((o) => !o)}
+        title={`Signed in as ${user.email ?? who}. Click for account, theme, and sign out.`}
         aria-label={`Signed in as ${user.email ?? who} — account menu`}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)] sm:h-8 sm:w-8"
       >
-        <UserRound size={15} />
+        <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={15} />
       </button>
 
-      <Sheet open={open} onClose={() => setOpen(false)} title="Your session">
-        <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
-          <div>
-            <div className="font-semibold">{who}</div>
-            {user.email && user.name && <div className="text-[color:var(--con-muted)]">{user.email}</div>}
-            <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              {user.loginProvider ? `Signed in via ${user.loginProvider}` : "Signed in"}
-              {user.isAdmin ? " · operator/admin rights" : ""}
+      {open && (
+        <>
+          {/* invisible click-away backdrop; the panel sits above it */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
+          <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
+            <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[color:var(--con-line)] text-[color:var(--con-muted)]">
+                  <Avatar imageUrl={user.imageUrl} size="h-full w-full" iconSize={18} />
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate font-semibold">{who}</div>
+                  {user.email && user.name && <div className="truncate text-[color:var(--con-muted)]">{user.email}</div>}
+                  <div className="mt-0.5 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                    {user.loginProvider ? `Signed in via ${user.loginProvider}` : "Signed in"}
+                    {user.isAdmin ? " · operator/admin rights" : ""}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-[color:var(--con-line)] px-3 py-2">
+                <span className="text-[color:var(--con-muted)]">Theme</span>
+                <button
+                  type="button"
+                  onClick={cycleTheme}
+                  title={THEME_LABEL[theme]}
+                  aria-label={THEME_LABEL[theme]}
+                  className="flex items-center gap-2 rounded-lg border border-[color:var(--con-line-strong)] px-2.5 py-1.5 text-[color:var(--con-muted)] transition-colors hover:border-[color:var(--con-accent)] hover:text-[color:var(--con-accent)]"
+                >
+                  <ThemeIcon size={14} />
+                  {THEME_WORD[theme]}
+                </button>
+              </div>
+              <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
+                Signing out only ends this browser session. The strategy keeps its current run state on the server —
+                it does not stop, start, or sell anything.
+              </p>
+              {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
+              <a
+                href="/logout"
+                className="con-btn con-btn-outline self-start"
+                title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
+              >
+                <LogOut size={14} />
+                Sign out
+              </a>
             </div>
           </div>
-          <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-faint)]">
-            Signing out only ends this browser session. The strategy keeps its current run state on the server — it
-            does not stop, start, or sell anything.
-          </p>
-          {/* Server route: clears the Auth.js session cookies and redirects to /login. */}
-          <a
-            href="/logout"
-            className="con-btn con-btn-outline self-start"
-            title="End this browser session and return to the sign-in page. Does not change the strategy's run state."
-          >
-            <LogOut size={14} />
-            Sign out
-          </a>
-        </div>
-      </Sheet>
-    </>
+        </>
+      )}
+    </div>
   );
 }
 
