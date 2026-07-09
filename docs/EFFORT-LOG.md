@@ -43,6 +43,23 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## Deployed
+- **PROD RELEASE 2026-07-09 (owner-directed in-session, MONET prod-release): Coolify
+  deploy `krk1db6x` FINISHED + verified — production = `main@8bc0967f` EXACTLY.**
+  Ships Codex PR #1175 (Red Team efficacy Results card) and PR #1174 (LIVE bulk
+  typed-confirm approval flow) on top of prior production `6a59a7eb`. Verified by
+  MONET via Coolify/container health plus `/api/health` ok and scheduler ticking; Codex
+  independently checked `/api/health` 200 during the deploy watch.
+- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M) — IN PROGRESS 2026-07-08.**
+  STATE CORRECTION 2026-07-09: deployed to production via Coolify deploy `krk1db6x`
+  at `main@8bc0967f` after PR #1175 (`9cc99963`) merged. The deployed Results card
+  surfaces the veto-efficacy snapshot, sample gating, override splits, and
+  `unattributed` reviewer history described in the rollout note.
+- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M) — IN PROGRESS 2026-07-08.**
+  STATE CORRECTION 2026-07-09: deployed to production via Coolify deploy `krk1db6x`
+  at `main@8bc0967f` after PR #1174 (`8bc0967f`) merged. The deployed approval flow
+  uses the server-side bulk route, server-derived live batch membership, 20-row cap,
+  row-honest partial outcomes, and aggregate typed phrase when the owner setting
+  requires it.
 - **Intro->logo handoff polish + mobile brand row (MONET) — DEPLOYED 2026-07-08 (merged as
   PR #1112 = `7209f0f3`; in production via the SSE-fix Coolify RESTART `y8ie6lgx`, whose
   deployment record shows commit 7209f0f3 exactly — a Coolify "restart" on this git-sourced
@@ -756,6 +773,16 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- Universal ticker detail drawer parity - restore old-site discoverability by
+  making ticker symbols open a shared right-side drilldown drawer consistently
+  across scan, home, evidence cards, proposals, orders, activity, outcomes,
+  approvals, and watchlist.
+  2026-07-09 CODEX: re-claimed on branch `codex/console-parity-next`
+  (`/Users/jay/.codex/worktrees/socratic-codex-console-parity`) after read-only audit of
+  `origin/main`. Scope is the smallest remaining gap only: add the existing `SymbolButton`
+  affordance to Home evidence cards in `app/console/page.tsx`. Keepout: model-picker files
+  and drawer host/API files remain MONET-owned/adjacent. Implementation and full local gate are
+  green; opening PR next.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
@@ -1016,11 +1043,6 @@ As of 2026-07-08 (assignment-rule update).
     errors / tsc clean / 2404 tests / build. See
     docs/rollouts/2026-07-04-w2-reflection-decompose.md.
 
-- Universal ticker detail drawer parity - restore old-site discoverability by
-  making ticker symbols open a shared right-side drilldown drawer consistently
-  across scan, home, evidence cards, proposals, orders, activity, outcomes,
-  approvals, and watchlist.
-  _(2026-07-08: stripped CODEX tag — no agent actively working; Codex quota-capped to Jul 8.)_
 - Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
   replace confusing loose/tight wording with lock/unlock-style affordances, and
   turn absolute-vs-percent constraint pairs into polished mode switches where
@@ -1149,22 +1171,6 @@ discrepancies that motivated these rows._
   evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
   whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
   surfaces don't surface them; #807's alert center is the natural home and just merged.)_
-- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M) — IN PROGRESS 2026-07-08.**
-  Branch/worktree: `codex/red-team-efficacy-console` /
-  `/Users/jay/.codex/worktrees/socratic-red-team-efficacy-console`. Surface the veto-efficacy
-  metrics (API/db-level since the w1-learning-loops landing) on the console, including
-  override-vs-non-override splits now that #814 protects the metric. _(why now: The w1 row
-  explicitly deferred UI wiring to the console lane and it was never tracked as its own row; #814's
-  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_ 2026-07-09 CODEX:
-  scope corrected per MONET to the narrow Results/snapshot/test/docs fileset only. Local slice now
-  built in this worktree (`redTeamEfficacy` snapshot payload + Results card + focused regression +
-  rollout note); PR #1175 is open. 2026-07-09 review fix: reviewer `unattributed` rows now come
-  from full-history `getRedTeamEfficacy()` `byModel`, the card labels persisted counts as veto
-  decisions rather than all reviewed openings, and override share counts only actually applied
-  Socratic overrides while still disclosing override-path vetoes. Verified here with
-  `npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
-  test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet`.
-  Keepout remains approval bulk-confirm, Monet model/alert lanes, AG tooltip/sheet PRs, and Claude memory/RAG.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
   first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
   (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout
@@ -1190,28 +1196,6 @@ discrepancies that motivated these rows._
   2026-07-04 12:38; NO PR in `gh pr list --state all`. Stacked base (`w2-episodic-retrieval`) already
   merged via #437, so it can now be merge-forwarded onto main standalone. Rotting since 07-04.
   action=open-PR._
-- **Batch typed-confirm flow for LIVE proposals in approvals triage (CODEX, M) — IN PROGRESS 2026-07-08.**
-  Branch/worktree: `codex/live-bulk-typed-confirm` /
-  `/Users/jay/.codex/worktrees/socratic-live-bulk-typed-confirm`.
-  Extend #807's
-  bulk actions to LIVE proposals with a single aggregate typed confirmation (per-item provenance
-  preserved), instead of forcing one-by-one confirms. _(why now: #807's rollout explicitly scoped
-  bulk LIVE out; with the owner running real money and multiple proposals per run, one-by-one typed
-  confirms are the exact ceremony the product philosophy says to minimize.)_ 2026-07-08 CODEX:
-  MONET guidance received and implemented in-progress: bulk reject remains the existing one-click
-  inline confirm; LIVE bulk approve opens one aggregate typed-confirm sheet only when
-  `policy.requireTypedConfirmation` is on; when it is off, live bulk approve is one-click. Each
-  selected batch now posts to a server-side bulk approval route that validates the aggregate
-  live phrase against server-derived batch membership, then runs each row through the normal
-  `executeProposal` path, preserving independent placed/blocked/failed results. Focused test, lint (0 errors), typecheck, full
-  Vitest (301 files / 3101 tests via low workers), and `npm run build` are green; build emitted
-  only the existing Sentry Edge-runtime warning. PR #1174 is open. 2026-07-09 review fix:
-  capped approval batches at 20 approvals, counted non-placed/non-blocked approve results as
-  failed rows with reasons, kept the per-proposal live-confirm contract symbol-specific, and
-  stabilized the bulk sheet close handler so typing does not reset focus. Focused review verification:
-  `npx vitest run test/approvals-triage-model.test.ts test/order-confirmation-status.test.ts`,
-  `npx tsc --noEmit`, and `npm run lint -- --quiet`. Post-merge-forward full gate also passed:
-  `npm test -- --reporter=dot --maxWorkers=2` (302 files / 3112 tests) and `npm run build`.
 - **Sweep settings-table keys for remaining cross-user shared-row races (CURSOR, S)** — In Progress (branch `cursor/settings-race-audit`, PR #997 auto-merge armed). Audit complete: 26 keys classified. Fixed providerTier (the only classic RMW race — read→2-8s HTTP probe→write on shared key). All other shared keys safe (12 per-user, 1 single-writer, 3 intentionally shared, 1 legacy read-only, 11 benign idempotent caches).
 - **MONET risk-row handback (MONET)** — the five risk rows picked up cross-seat by CLAUDE on
   2026-07-05 (changepoint throttle, correlation/blackout/stress, fractional Kelly, regime scorer,

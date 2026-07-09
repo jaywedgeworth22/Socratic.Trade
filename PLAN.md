@@ -10,7 +10,13 @@ filling the missing pieces.
 > persisted audit history, and Results renders the scorecard with honest 20/50 sample gating for
 > reviewer rows plus explicit `unattributed` history when no reviewer model was persisted. This is
 > read-side only and deliberately stays out of `src/lib/red-team.ts` / `src/lib/strategy.ts`.
-> See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+> See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`. Production close-out:
+> PR #1175 shipped with PR #1174 in Coolify deploy `krk1db6x` at `main@8bc0967f`.
+> **2026-07-09 - Home evidence symbol drawer parity (Codex).** No roadmap scope
+> change. The remaining console-side universal ticker drawer gap is closed by
+> rendering market-scan candidate evidence cards through the existing `SymbolButton`,
+> passing the current quote into the shared drawer. See
+> `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
 > **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
 > scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
 > via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event
@@ -33,6 +39,8 @@ filling the missing pieces.
 > `policy.requireTypedConfirmation` is enabled. Bulk reject stays the existing inline one-click
 > confirm, and every approval still uses the existing per-item endpoint so partial blocked/failed
 > outcomes remain visible. See `docs/rollouts/2026-07-08-live-bulk-typed-confirm.md`.
+> Production close-out: PR #1174 shipped with PR #1175 in Coolify deploy `krk1db6x`
+> at `main@8bc0967f`.
 > **2026-07-06 - Coolify/Hetzner hosting migration + Cursor promoted to peer agent lane
 > (Claude cloud).** No roadmap scope change; infrastructure/ops only. Self-hosted Coolify
 > stood up on Hetzner behind `jays.services` to offload local agent/dev-server resource
