@@ -8,6 +8,45 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — single-adversary consolidation LANDING (MONET, Mac worktree `~/apps/trading-monet-sac`)
+Merged `origin/main` (47 commits ahead of the branch fork) into
+`monet/single-adversary-consolidation` and resolved the money-path conflicts per
+`/Users/jay/apps/monet-handoff-2026-07-09.md`. Six git-marked conflicts + four **semantic**
+(marker-free) conflicts the auto-merge introduced: deleted the dead inline-Bear stopgaps
+(`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert constants, and the two tests that
+guarded removed behavior — `inline-bear-parse`, `strategy-bear-alert-cooldown`); kept main's
+Proposer/Reviewer naming + `ModelStatsButton` drawer while integrating the consolidation's
+no-defaults fail-closed semantics; kept the consolidation's no-default model attribution +
+approve-at-half rendering AND main's honest review-failure attribution on the approval card; reset
+`test/red-team.test.ts` to the consolidation suite + re-added the #1091 bare-array guards on the new
+signature; fixed the main-added `e2e-money-path` test (explicit reviewer model + three-way verdict
+stub) and rewired `benchmark-llm-models.ts` to the single-reviewer API. Migration v15 is the next
+free version (main took v14). **Gate green in this worktree:** `npx tsc --noEmit` clean,
+`npm run lint` 0 errors, `npm test` 302 files / **3121 tests pass**, `npm run build` ok.
+**Next action:** land via `scripts/land.sh` → PR ready + `--squash --auto`; then close PR #1035 as
+superseded, delete remote branch `claude/single-adversary-consolidation-wip`. Landing operator:
+MONET (this session); feature author: the Cowork Claude session (see
+`docs/rollouts/2026-07-09-single-adversary-landing.md` and `-2026-07-07-...-impl.md`).
+
+## 2026-07-07 — single-adversary consolidation IMPLEMENTED, awaiting land (MONET, Cowork desktop)
+The 2026-07-01-decided, never-implemented `docs/single-adversary-consolidation.md` is now CODE, as
+amended by the owner's 2026-07-07 revision, on branch `monet/single-adversary-consolidation`
+(supersedes preservation draft **PR #1035** — its Stage 1a was cherry-picked cleanly onto current
+`origin/main`; the feared #1014 conflict was a false alarm). One adversary: the in-flow Bear LLM is
+deleted; `debateProposal` reviews EVERY risk-adding opening post-sizing (net-direction-aware exit
+exemption, 3-wide concurrency) with a down-only `approve`/`approve-at-half`/`reject` verdict and
+fail-closed-everywhere semantics (persisted `decision.adversaryUnavailable`, notification flag,
+amber approval-card badge, `rejected_by_red_team` rows). NO MODEL DEFAULTS anywhere — both models
+are mandatory explicit Settings picks (`DEFAULT_POLICY.llmModel` removed too);
+`RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 seeds from a
+live override once). Reliability: `extractJsonPayload` everywhere, strict verdict-shape validation,
+bounded `fetchLlmWithRetry` (no hidden failover). Verified on Linux x64 (CI platform):
+tsc 0 / eslint 0 errors / **2,888 tests pass**; `npm run build` is delegated to the Mac landing
+lane (Cowork sandbox 45s process cap) — `land.sh` re-runs the full trio.
+**Next action:** Mac-side Claude helper lands via `scripts/land.sh` (branch exists locally in the
+owner's repo; PR ready-not-draft, `--squash --auto`), then close PR #1035 as superseded. After
+deploy, any account without explicit models fails closed with an actionable Settings message —
+owner picks Green+Red once. See `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
 ## 2026-07-09 — Roth Gemini 400 TRUE root cause (maxItems x schema complexity) + async Run-once (MONET, `monet/roth-gemini-400-runonce-async`)
 The #1167 Gemini schema-dialect fix did NOT clear the Roth Bull 400 (owner's 05:20Z manual run
 failed on the new image). Fable forensic hunt with a live-endpoint proof matrix (repo's real

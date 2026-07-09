@@ -5,6 +5,16 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-07 - Single-adversary consolidation IMPLEMENTED (MONET).** Roadmap-relevant change to
+> the Phase-7 strategy engine's adversarial review: the two adversarial LLM passes (in-flow Bear +
+> escalated `debateProposal`) are consolidated into ONE post-sizing Red Team review per risk-adding
+> opening, per `docs/single-adversary-consolidation.md` as amended by the owner's 2026-07-07
+> revision — three-way down-only verdict (approve / approve-at-half / reject), exits structurally
+> exempt, fail-closed + visible on every failure mode, and NO model defaults anywhere (both team
+> models are now mandatory explicit Settings picks; the `RED_TEAM_LLM_PROVIDER` env override and
+> every silent fallback are gone — supersedes older notes below that describe blank-reviewer
+> inheritance). Branch `monet/single-adversary-consolidation`, supersedes draft PR #1035. See
+> `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
 > **2026-07-09 - Red Team efficacy Results wiring (Codex).** No roadmap scope change. The
 > active-account dashboard snapshot now carries `redTeamEfficacy` plus the override split from
 > persisted audit history, and Results renders the scorecard with honest 20/50 sample gating for

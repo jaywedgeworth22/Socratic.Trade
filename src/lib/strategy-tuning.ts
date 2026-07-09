@@ -14,7 +14,7 @@ import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmFillSource, llmModeClarification, type ExecutionState } from "./execution-mode";
 import { policyUniverseSymbolCount } from "./index-universes";
 import { LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { fetchMacroData } from "./macro";
@@ -428,8 +428,13 @@ export async function proposeStrategyTuning(
   };
 
   const policyForResolution = policyForTuningReviewer(policy, modelOverride);
-  const { key: llmKey } = resolveLlmEndpoint(policyForResolution, userId);
-  if (!llmKey) {
+  const { key: llmKey, model: llmModel } = resolveLlmEndpoint(policyForResolution, userId);
+  // No-defaults contract (owner 2026-07-07; llm-request.ts `resolveOpenAiModel`): a blank model is
+  // "unconfigured" EXACTLY like a missing key — callers MUST fail closed rather than send `model:""`.
+  // Tuning has a deterministic local-rules fallback, so degrade to it in BOTH cases. Without the
+  // model guard a keyed-but-model-less (un-migrated) policy would reach requestLlmTuning and fire a
+  // provider 400 for an empty model instead of producing a usable local proposal.
+  if (!llmKey || !llmModel) {
     const localProposal = localRulesProposal({ policy, prompt, performance, fills, latestDecision, closedLotCount, missedOpportunities, factorScorecard, showPaperSide: source === "paper" });
     return applyOosGate(localProposal, userId);
   }
@@ -687,7 +692,8 @@ async function requestLlmTuning(
       recordLlmUsage({ userId, provider, model, context: "strategy-tuning", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
       const text = extractLlmText(payload);
       if (!text) throw new Error("Empty strategy tuning response returned from LLM API.");
-      return { text, payload: JSON.parse(text) as LlmTuningPayload };
+      // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+      return { text, payload: JSON.parse(extractJsonPayload(text)) as LlmTuningPayload };
     }
   );
 

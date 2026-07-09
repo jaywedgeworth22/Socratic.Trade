@@ -349,3 +349,51 @@ export function extractLlmText(payload: unknown): string | undefined {
   // Fall back to an empty OpenAI chat string (preserves prior `typeof content === "string"` semantics).
   return typeof chatText === "string" ? chatText : undefined;
 }
+
+/**
+ * Extract a JSON object/array payload from an LLM text response that may be wrapped in
+ * markdown code fences or surrounded by prose. Root-cause fix for the `gemini-3.5-flash`
+ * failure where a fenced / prose-wrapped reply made a bare `JSON.parse(text)` throw and
+ * silently disabled the adversarial review (see docs/single-adversary-consolidation.md
+ * §4.1 + review point R9).
+ *
+ * Strategy: (1) strip an enclosing ```json / ``` fence; (2) if the remainder still isn't
+ * bare JSON, return the FIRST BALANCED `{…}` or `[…]` block, scanned string- and
+ * escape-aware so braces inside string values don't miscount. This is deliberately NOT a
+ * greedy first-`{`-to-last-`}` slice (R9): that corrupts output when prose contains a
+ * stray bracket or multiple JSON-looking blocks. When no balanced block is found (e.g. a
+ * truncated response), returns the trimmed/unfenced text unchanged so the caller's own
+ * `JSON.parse` try/catch still governs the failure — never fabricates valid JSON.
+ */
+export function extractJsonPayload(text: string): string {
+  const unfenced = text
+    .trim()
+    .replace(/^```(?:json5?|jsonc)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  return firstBalancedJson(unfenced) ?? unfenced;
+}
+
+/** First balanced `{…}`/`[…]` block starting at the first opener, or undefined if none/unbalanced. */
+function firstBalancedJson(text: string): string | undefined {
+  const start = text.search(/[[{]/);
+  if (start === -1) return undefined;
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === open) depth++;
+    else if (ch === close && --depth === 0) return text.slice(start, i + 1);
+  }
+  return undefined; // unbalanced (e.g. truncated) — let the caller's JSON.parse fail loudly
+}
