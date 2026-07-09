@@ -266,14 +266,15 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The strategist (green team) proposes trades; the reviewer / strategy-review
-        model (red team) tries to kill high-conviction ideas before they reach you. Coach is browser-local and also
-        adjustable on the Coach page. Providers without a resolvable key are marked — add one under API keys below.
+        Which models argue about your money. The Proposer Model (aka Green Team or Bull) writes the trade proposals;
+        the Reviewer Model (aka Red Team or Bear) reviews every proposal each run and runs a deeper adversarial debate
+        on high-conviction or dissent-flagged ideas. Coach is browser-local and also adjustable on the Coach page.
+        Providers without a resolvable key are marked — add one under API keys below.
       </p>
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Strategist (green team)"
-          hint="Writes the trade proposals each run."
+          label="Proposer Model"
+          hint="aka Green Team or Bull — writes the trade proposals each run."
           htmlFor="models-green"
         >
           <ModelSelect
@@ -288,8 +289,8 @@ export function ModelsCard() {
           />
         </Field>
         <Field
-          label="Reviewer / Strategy Review (red team)"
-          hint="Argues against high-conviction ideas. Blank = same model as the strategist."
+          label="Reviewer Model"
+          hint="aka Red Team or Bear — reviews every proposal each run + deeper debate on high-conviction ideas. Blank = same as proposer."
           htmlFor="models-red"
         >
           <ModelSelect

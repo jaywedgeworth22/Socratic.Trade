@@ -16,6 +16,19 @@ holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts
 `BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
 `[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
 DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+## 2026-07-08 — Proposer/Reviewer Model naming + Red-team description fix (MONET, branch `monet/model-picker-copy2`)
+Owner-reviewed copy: "Proposer Model (aka Green Team or Bull)" / "Reviewer Model (aka Red Team or
+Bear)" on both picker surfaces; stale "kills high-conviction ideas" replaced with the accurate
+dual role (reviews EVERY proposal each run + deeper debate on high-conviction/dissent-flagged).
+Attribution answer recorded: Green = per-proposal `proposedByModel` ✓; Red = debate verdict carries
+model + per-run llm_step audits; `reviewedByModel` per-proposal stamp queued as single-adversary
+follow-up. See `docs/rollouts/2026-07-08-model-picker-naming.md`.
+## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
+Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
+runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
+widens the housekeeping bucket (notify.sent/error delivery mechanics, due-jobs drain, vector_store,
+recoverable_issue, llm_cache_usage). Real-hour replay: 54 raw events → 8 main cards + 1 collapsed
+system row. All data preserved/expandable. See `docs/rollouts/2026-07-08-activity-log-grouping.md`.
 
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
