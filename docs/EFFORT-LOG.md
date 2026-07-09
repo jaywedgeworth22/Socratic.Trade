@@ -322,6 +322,15 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Connected-accounts UI: "Currently Loaded / Other Accounts" restructure + kill Test-Account
+  mock-label spam (MONET, worktree `~/apps/trading-monet-acct-ui`, branch
+  `monet/account-mgmt-ui`) — IN PROGRESS 2026-07-09.** Display-copy + JSX only; no execution/data
+  model/`isActive` changes. (A) partition account list into loaded-first + Other Accounts headings,
+  remove ambiguous `active` chip, rename "Make active" → "Load"; (B) shorten `TEST_ACCOUNT_LABEL`
+  to "Test Account", drop the `broker === "test"` special-case in `realityForAccount` so it reads as
+  a normal paper account, delete the "local mock" chips + repeated "simulated/local" wording (keep
+  one terse "excluded from wash-sale accounting" note — verified real via `tax.ts:197`). Preserves
+  live/paper reality correctness for real broker accounts.
 - **Single-adversary consolidation — ✅ COMPLETED via PR #1191 (merged 2026-07-09, squash `f9a37611`;
   feature author = Cowork Claude session, landing operator = MONET Mac session).**
   _2026-07-09 (MONET landing): merged `origin/main` into the branch and resolved the conflicts per

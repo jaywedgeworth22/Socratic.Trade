@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Connected-accounts UI: Loaded/Other restructure + kill Test-Account mock-label spam (MONET, branch `monet/account-mgmt-ui`)
+Owner-directed, display-copy + JSX only (no execution/data-model/`isActive` changes). (A) Broker
+connections card (`brokers.tsx`) + top-nav Account scope sheet (`chrome.tsx`) now partition the same
+`isActive` flag into **"Currently Loaded Account"** (hoisted first) + **"Other Accounts"** headings;
+removed the ambiguous `active` chip; per-row action "Make active" → **"Load"** (toasts/tooltips/busy
+text follow). (B) Test Account stops repeating "Local Mock / local mock / simulated": `TEST_ACCOUNT_LABEL`
+→ "Test Account" (db-api-keys + connected-accounts route), `realityForAccount` test-branch deleted so it
+reads "PAPER · NOT real money" like any paper account, "local mock" chips + hardcoded sublines collapsed
+to the generic form, exec-mode clarification simplified. Kept ONE terse "excluded from wash-sale
+accounting" note (verified real: `tax.ts:197` filters `broker !== "test"`). Live/paper reality
+correctness for real broker accounts unchanged. Gate green: tsc 0 / lint 0-err / vitest 3168 / build.
+See `docs/rollouts/2026-07-09-account-mgmt-ui-and-test-label.md`.
 ## 2026-07-09 — Scoring-factor weight tooltips (MONET, branch `monet/scoring-factor-tooltips`)
 Owner-directed display-only change, no scoring-logic changes. The eight "Scoring-factor weights"
 controls on the Strategy console page (`app/console/strategy/page.tsx`) previously showed only the
