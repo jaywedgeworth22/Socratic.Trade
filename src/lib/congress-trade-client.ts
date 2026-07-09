@@ -36,11 +36,7 @@ import type {
   PriceClose,
   PriceSeries,
 } from "@jaywedgeworth22/congress-trading-shared";
-import {
-  API_PATHS,
-  MAX_REFS_BATCH,
-  TransactionsPageSchema,
-} from "@jaywedgeworth22/congress-trading-shared";
+import { TransactionsPageSchema } from "@jaywedgeworth22/congress-trading-shared";
 
 import type { OHLCBar } from "./indicators";
 import { normalizeSymbol } from "./money";

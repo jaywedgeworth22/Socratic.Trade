@@ -756,6 +756,11 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
+  Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
+  Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
+  shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
+  `congress-trade-client.ts`.
 - **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
   `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
   tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
