@@ -458,6 +458,16 @@ local multi-worktree/PM2 setup and does NOT apply here.
 - Standard verification commands live in `README.md`/the "Verify before claiming
  done" section: `npm run lint`, `npx tsc --noEmit`, `npm test` (vitest), `npm run
  build`. All pass clean in this environment.
+- Node version: `.nvmrc` pins Node **24**, but the cloud VM's default `node`
+ (`/exec-daemon/node`, which wins on `PATH`) is **v22.x**, and the startup update
+ script (`npm install`) runs under it. The app installs, tests, and builds clean on
+ Node 22 — do not burn time forcing Node 24 via nvm (its bin is later on `PATH` and
+ does not persist into the update-script context).
+- `npm install` alone is sufficient. npm 11 prints an `allow-scripts` warning that
+ install scripts for `better-sqlite3`/`sharp`/`esbuild` were "not covered" — this is
+ harmless here: those native deps load from prebuilt binaries (verified
+ `require('better-sqlite3')` and `require('sharp')` both work), so no
+ `npm approve-scripts`/rebuild step is needed.
 - `npm run lint` is now configured (`eslint.config.mjs`, flat config extending
  `eslint-config-next`) and is a REQUIRED step in the `verify` CI gate. It is
  pinned to ESLint 9 (ESLint 10 is incompatible with `eslint-config-next@16`'s
