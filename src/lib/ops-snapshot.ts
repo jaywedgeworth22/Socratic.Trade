@@ -130,7 +130,15 @@ function sanitizeAuditDetail(kind: string, payload: unknown): string {
   const message = typeof p.message === "string" ? p.message : "";
   const error = typeof p.error === "string" ? p.error : "";
   const note = typeof p.note === "string" ? p.note : "";
-  return reason || summary || message || error || note || JSON.stringify(p).slice(0, 500);
+  const semantic = reason || summary || message || error || note;
+  if (!semantic) return JSON.stringify(p).slice(0, 500);
+  // append key identifiers so failure rows link back to the proposal/order
+  const ids: string[] = [];
+  if (typeof p.refId === "string" && p.refId) ids.push(`refId=${p.refId}`);
+  if (typeof p.proposalId === "string" && p.proposalId) ids.push(`proposalId=${p.proposalId}`);
+  if (typeof p.symbol === "string" && p.symbol) ids.push(`symbol=${p.symbol}`);
+  if (typeof p.runId === "string" && p.runId) ids.push(`runId=${p.runId}`);
+  return ids.length > 0 ? `${semantic} (${ids.join(" ")})` : semantic;
 }
 
 function listOpsStrategyRuns(userId: string, limit: number, labels: Map<string, string>): OpsStrategyRunRow[] {
