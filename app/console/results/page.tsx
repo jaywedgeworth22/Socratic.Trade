@@ -12,6 +12,7 @@ import { ConsoleApiError, fetchAccountPerformance } from "../lib/api";
 import { EquityChart } from "../components/equity-chart";
 import { deriveReality } from "../lib/derive";
 import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, EM_DASH } from "../lib/format";
+import { thesisTagLabel } from "../lib/labels";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Card, Chip, Dash, Empty, Select, SignedText, Stat } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -247,7 +248,7 @@ export default function ResultsPage() {
         <ScorecardCard
           title="By thesis"
           rows={(snapshot.thesisScorecard ?? []).map((t: ThesisStat) => ({
-            name: t.thesisTag,
+            name: thesisTagLabel(t.thesisTag),
             trades: t.trades,
             winRate: t.winRate,
             avgReturnPct: t.avgReturnPct,

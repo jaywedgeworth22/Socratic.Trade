@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — UI-audit sweep + plain-English pass (MONET, two-wave subagent team)
+All remaining unclaimed 55-findings UI rows (~30 items) plus the owner's plain-English
+requirement, implemented by 14 file-disjoint subagents across two workflow waves and
+integrated in-session. Highlights: brand accent unified on teal (--brand-accent, both
+themes), "Decisions"→"Proposals" nav rename, primitives parity (Segmented/IconButton/
+RawNumInput/Switch.disabled/Sheet aria/Meter breach/TONE_VAR), PWA icons + offline banner +
+"Open full console" escape, mobile card-lists for wide tables, scan Watch button + tab
+ARIA, orders staleness + manual-entry note, guardrails utilization meters, capability-badge
+de-rainbow, marketing decision-receipt illustration + loop diagram, and a full plain-English
+label system (no raw enums/JSON anywhere; shared maps in src/lib/dashboard-ui.ts +
+app/console/lib/labels.ts; short Order/Run references with full ids in tooltips). Gate:
+tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 375px (zero
+snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
+consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
+`docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
 Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/
