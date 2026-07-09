@@ -307,6 +307,48 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 10 });
   });
 
+  it("mismatch cancel/REPLACE tick: the just-placed replacement stop defers registration — no same-tick fire, replacement never cancelled", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { MU: { price: 90 } }; // would breach a 5% trail off extreme 100 IF a synthetic registered
+    // A tracked-but-undersized RH broker stop (position grew 40 -> 100 since it was placed). The
+    // monitor's order list is fetched BEFORE reconcile runs, so this tick it still shows only the
+    // stale 40-share stop — and can never show the full-size replacement reconcile places mid-tick.
+    broker.orders = [{ id: "prot-old", symbol: "MU", side: "sell", type: "stop_market", state: "queued", quantity: 40 }];
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-SYN-REPLACE-MU", userId: "local", accountNumber: "SYN-REPLACE",
+      symbol: "MU", brokerOrderId: "prot-old", quantity: 40, stopPrice: 92, status: "resting"
+    });
+    connectTestAccount("SYN-REPLACE", "live");
+    const policy: TradingPolicy = {
+      ...policyFor("SYN-REPLACE"),
+      activeBroker: "robinhood",
+      robinhoodBrokerStops: true,
+      riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5, stopLossPct: 8 }
+    };
+    const result = await runSyntheticStopMonitor("local", policy, true);
+    // Reconcile cancelled the mismatched stop and placed a full-size replacement mid-tick...
+    expect(broker.cancelled).toEqual(["prot-old"]); // ...and the replacement (ord-1) was NOT cancelled
+    expect(broker.placed).toHaveLength(1); // ONLY reconcile's replacement — no synthetic market sell
+    expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 100 });
+    // Before the fix: registration coverage (pruned of prot-old, blind to the just-placed ord-1)
+    // saw 0 covered shares, registered the synthetic, fired a 60-share market sell against the
+    // stale 40-share coverage, and cancelBrokerProtectiveStop then cancelled the fresh full-size
+    // replacement — shares double-sold AND the remainder left unprotected until the re-arm grace.
+    // Now: the just-placed symbol is broker-covered for THIS tick's registration; nothing fires.
+    expect(result.exited).toBe(0);
+    expect(listSyntheticStops("SYN-REPLACE", "local")).toHaveLength(0); // registration deferred
+    expect(listSyntheticStops("SYN-REPLACE", "local", "triggered")).toHaveLength(0);
+
+    // Next tick: the fresh order fetch sees the replacement resting full-size — normal
+    // quantity-aware coverage suppresses registration; nothing new placed or cancelled.
+    broker.orders = [{ id: "ord-1", symbol: "MU", side: "sell", type: "stop_market", state: "queued", quantity: 100 }];
+    const second = await runSyntheticStopMonitor("local", policy, true);
+    expect(second.exited).toBe(0);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.cancelled).toEqual(["prot-old"]);
+    expect(listSyntheticStops("SYN-REPLACE", "local")).toHaveLength(0);
+  });
+
   it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {
     broker.positions = [{ symbol: "NVDA", quantity: 10, averageCost: 100, marketValue: 1000 }];
     broker.quotes = { NVDA: { price: 90 } }; // breaches a 5% trail off extreme 100

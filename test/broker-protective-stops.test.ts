@@ -71,6 +71,7 @@ describe("reconcileBrokerProtectiveStops", () => {
       positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
     });
     expect(r.placed).toBe(1);
+    expect(r.placedStopSymbols).toEqual(["AAPL"]); // callers use this to defer same-tick synthetic registration
     expect(gw.placed).toHaveLength(1);
     expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", type: "stop_market", quantity: 10, stopPrice: 92, timeInForce: "gtc" });
   });
@@ -107,7 +108,7 @@ describe("reconcileBrokerProtectiveStops", () => {
 
   it("no-ops entirely when disabled (paper mode / flag off / wrong broker)", async () => {
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5"), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
-    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [] });
+    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] });
     expect(gw.placed).toHaveLength(0);
   });
 

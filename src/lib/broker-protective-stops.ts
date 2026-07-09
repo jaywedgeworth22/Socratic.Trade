@@ -77,6 +77,17 @@ export interface ReconcileResult {
    * stop suppresses synthetic registration and leaves the position with neither protection.
    */
   cancelledOrderIds: string[];
+  /**
+   * Normalized symbols this reconcile successfully PLACED a resting broker stop for (one per
+   * `placed` count) — the mirror image of `cancelledOrderIds` for the same pre-reconcile-fetch
+   * staleness: the caller's order list CANNOT contain these just-placed orders, so quantity-aware
+   * coverage would undercount them. On a mismatch cancel/REPLACE tick that undercount is what let
+   * the synthetic monitor register + fire against the pruned pre-replace coverage and then cancel
+   * the fresh full-size replacement. The caller must treat these symbols as broker-covered for
+   * THIS tick's synthetic REGISTRATION only (never the fire path of already-registered rows);
+   * the next tick's fresh order fetch sees the real resting order.
+   */
+  placedStopSymbols: string[];
 }
 
 /**
@@ -94,7 +105,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   running: boolean;
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [] };
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] };
 
   // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
   // (flag off) or no longer applicable (not live Robinhood, no stop-loss %), any stop it previously
@@ -252,6 +263,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         status: "resting"
       });
       out.placed++;
+      out.placedStopSymbols.push(sym);
       audit("broker_protective_stop_placed", { symbol: sym, stopPrice, quantity: qty, brokerOrderId: exec.orderId }, userId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);
