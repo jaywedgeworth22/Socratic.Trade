@@ -40,12 +40,15 @@ const HARD_DEFAULTS: Record<string, { perMin?: number; minIntervalMs?: number; c
   // No published limit, but the prod egress IP gets HTTP 429 on a cold burst while paced,
   // low-concurrency requests succeed — gentle pacing, not parallel bursts.
   "yahoo-finance": { minIntervalMs: 400, concurrency: 2 },
-  // Free "Basic" tier is 8 API credits/min (see docs/data-provider-mcp-evaluation.md) — each
-  // batch call here already folds up to 120 symbols into ONE request, so strictly serial with
-  // 10s spacing (6/min) leaves headroom under the 8/min cap instead of chasing it exactly, and
-  // keeps back-to-back batch chunks (large scans) from bursting. Prod was 100% HTTP 429 on this
-  // provider even after the 2026-07-08 rate-limiter deploy because this entry didn't exist yet.
-  twelvedata: { minIntervalMs: 10_000, concurrency: 1 }
+  // Free "Basic" tier is 8 API credits/min and each symbol in a batch /quote costs ONE credit
+  // (see docs/data-provider-mcp-evaluation.md). The REAL budget control now lives in the provider
+  // (data-providers.ts): it caps a call to `twelveDataCreditsPerMin()` symbols AND gates to one
+  // credit-budget call per rolling minute window, SKIPPING (not queueing) extra scans so they
+  // aren't stalled. This entry is just a light serialization backstop (concurrency 1, short spacing)
+  // for any cross-path race; it deliberately does NOT use a 60s interval, which would re-introduce
+  // the multi-minute scan stall the window-gate exists to avoid. The old 10s/120-symbol config
+  // burst ~120 credits in one call and was 100% HTTP 429 in prod.
+  twelvedata: { minIntervalMs: 2_000, concurrency: 1 }
 };
 
 function envKeyFor(provider: string): string {

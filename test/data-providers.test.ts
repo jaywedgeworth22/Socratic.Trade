@@ -251,6 +251,67 @@ describe("enrichment cache consent gate", () => {
     expect(resB.AAPL?.companyName).toBeUndefined();
   });
 
+  it("TwelveData caps a call to the free-tier credit budget and defers the rest (no 120-symbol 429 burst)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "8";
+
+    const queriedSymbolCounts: number[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      queriedSymbolCounts.push(syms.length);
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "100", volume: "1000" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const symbols = Array.from({ length: 20 }, (_, i) => `SYM${i}`);
+    const provider = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const res = await provider.enrich(symbols);
+
+    // Exactly ONE call, carrying at most the credit budget (8) symbols — never the full 20 (which
+    // would cost 20 credits at once and 429 on the 8-credit/min free tier).
+    expect(queriedSymbolCounts).toHaveLength(1);
+    expect(queriedSymbolCounts[0]).toBeLessThanOrEqual(8);
+    // Every input symbol still appears in the result: queried ones enriched, deferred ones best-effort {}.
+    for (const s of symbols) expect(res[s]).toBeDefined();
+    expect(res.SYM0?.price).toBe(100); // a queried (highest-priority) symbol got real data
+
+    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
+    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+  });
+
+  it("TwelveData window-gate SKIPS (does not queue) a second scan inside the same budget window", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let fetchCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCalls++;
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "50" };
+      return new Response(JSON.stringify(body));
+    });
+
+    // Two different accounts scanning inside the same minute: only the FIRST spends the budget;
+    // the second returns best-effort immediately (no second network call, no stall/queue).
+    const a = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env", `u-${randomUUID()}`);
+    const b = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env", `u-${randomUUID()}`);
+    const resA = await a.enrich(["AAA", "BBB"]);
+    const resB = await b.enrich(["CCC", "DDD"]);
+
+    expect(fetchCalls).toBe(1); // second scan skipped the network entirely
+    expect(resA.AAA?.price).toBe(50); // first scan got real data
+    expect(resB.CCC).toEqual({}); // second scan deferred (best-effort empty), not a hang
+    expect(resB.DDD).toEqual({});
+  });
+
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;

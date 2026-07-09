@@ -357,6 +357,41 @@ function maxSymbols(): number {
   return Math.min(value, MAX_SYMBOLS_CAP);
 }
 
+// Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8
+// credits/minute. So the number of symbols we may put in one call (and the ceiling on how many we
+// enrich per scan) is exactly that per-minute credit budget. Env-tunable so a paid plan (which
+// lifts the per-minute credit ceiling) can raise it. Clamped to [1, 800] (800 = free daily cap, a
+// sane upper bound). Pair this with the twelvedata pacer interval in provider-rate-limit.ts so
+// concurrent-account scans can't stack past the per-minute budget.
+const DEFAULT_TWELVEDATA_CREDITS_PER_MIN = 8;
+function twelveDataCreditsPerMin(): number {
+  const value = Number(process.env.TWELVEDATA_CREDITS_PER_MIN ?? DEFAULT_TWELVEDATA_CREDITS_PER_MIN);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_CREDITS_PER_MIN;
+  return Math.min(Math.floor(value), 800);
+}
+
+// Budget window for Twelve Data: the credit budget is per-MINUTE, so allow at most one credit-budget
+// call per this window and SKIP (return best-effort immediately) any other scan that lands inside it,
+// rather than queueing it. Skipping — not queueing — is deliberate: enrichment providers run in
+// parallel in the cascade with no per-provider timeout, so a 60s queue wait would stall the 2nd–5th
+// account's whole scan at the top of the hour. A skipped scan just gets its Twelve Data fields from
+// the other providers / cache this run and picks up the credit next window. Module-scoped so the
+// gate is shared across every account/provider instance in the process (the free credit budget is
+// per-KEY, i.e. process-wide, not per-account). The read+set is synchronous (no await between), so
+// concurrent same-tick scans can't both pass; the pacer's concurrency:1 covers the rarer cross-tick
+// race as defense-in-depth.
+let twelveDataWindowStartMs = 0;
+const DEFAULT_TWELVEDATA_WINDOW_MS = 60_000;
+function twelveDataWindowMs(): number {
+  const value = Number(process.env.TWELVEDATA_WINDOW_MS ?? DEFAULT_TWELVEDATA_WINDOW_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_WINDOW_MS;
+  return value;
+}
+/** Test-only: reset the shared Twelve Data budget window so cases don't leak state into each other. */
+export function __resetTwelveDataWindowForTests(): void {
+  twelveDataWindowStartMs = 0;
+}
+
 // One retry on HTTP 429 (rate limit) with a short backoff before giving up.
 async function fetchWithRetry(
   url: string,
@@ -3168,17 +3203,47 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
 
     if (misses.length === 0) return result;
 
-    // Batch all misses in one request (Twelve Data supports comma-separated symbols).
-    // Chunk at 120 symbols (API limit) in case the scan is very large.
-    const BATCH_SIZE = 120;
-    for (let i = 0; i < misses.length; i += BATCH_SIZE) {
-      const batch = misses.slice(i, i + BATCH_SIZE);
+    // Free-tier CREDIT budget, not symbol count, is the real ceiling: Twelve Data's /quote endpoint
+    // charges ONE credit PER SYMBOL in a comma-separated batch, and the free Basic tier allows only
+    // ~8 credits/minute. The old code sent up to 120 symbols in a single call = 120 credits at once,
+    // which instantly 429s the whole call (observed: 100% failure in prod). So cap a call to at most
+    // `creditsPerMin` symbols (default 8) and make exactly ONE call per enrich() covering the
+    // highest-priority misses (the scan passes candidates best-first). The per-provider pacer
+    // (provider-rate-limit.ts, twelvedata default now 1 call / 60s) then keeps concurrent-account
+    // scans from stacking past the per-minute credit budget. Symbols beyond the budget are left
+    // best-effort — the enrichment cascade fills them from other providers and the shared cache
+    // covers repeats, so coverage accretes across the hourly scans instead of failing outright.
+    // One credit-budget call per rolling window across the whole process (see twelveDataWindowStartMs).
+    // If another scan already spent this window's budget, don't queue — return best-effort now so this
+    // account's scan isn't stalled waiting on a scarce free-tier provider the cascade covers otherwise.
+    const nowWin = Date.now();
+    if (nowWin - twelveDataWindowStartMs < twelveDataWindowMs()) {
+      for (const symbol of misses) result[symbol] = {};
+      return result;
+    }
+    twelveDataWindowStartMs = nowWin;
+
+    const creditsPerMin = twelveDataCreditsPerMin();
+    const toQuery = misses.slice(0, creditsPerMin);
+    const skipped = misses.length - toQuery.length;
+    for (const symbol of misses.slice(creditsPerMin)) result[symbol] = {}; // best-effort; not queried this run
+    if (skipped > 0) {
+      logApiHealth({
+        service: this.name,
+        ok: true,
+        errorText: `TwelveData free-tier credit budget: queried ${toQuery.length} of ${misses.length} symbols this scan (${skipped} deferred to a later scan / other providers)`,
+        keySource: this.keySource,
+        userId: this.userId
+      });
+    }
+    for (const batch of [toQuery]) {
       try {
         const url = `https://api.twelvedata.com/quote?symbol=${batch.join(",")}&apikey=${this.apiKey}&country=US`;
-        // Free Basic tier is 8 credits/min — gate through the shared per-provider pacer
-        // (provider-rate-limit.ts) instead of firing one request per BATCH_SIZE chunk back to
-        // back. The AbortController/timeout is armed INSIDE the pacer callback so the 10s HTTP
-        // timeout starts counting at actual dispatch time, not when this call joins the
+        // `batch` is already capped to the per-minute credit budget above, so this single request
+        // costs at most that many credits. The pacer (provider-rate-limit.ts, twelvedata = 60s
+        // serial) spaces successive calls a full minute apart so concurrent-account scans can't sum
+        // past the budget. The AbortController/timeout is armed INSIDE the pacer callback so the 10s
+        // HTTP timeout starts counting at actual dispatch time, not when this call joins the
         // (strictly-serial) queue — otherwise queue wait eats into the timeout.
         const response = await withProviderLimit(this.name, async () => {
           const controller = new AbortController();
