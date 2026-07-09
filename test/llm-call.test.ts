@@ -322,6 +322,89 @@ describe("toGeminiJsonSchema", () => {
     expect(unsupported).toBe(true);
   });
 
+  // ── maxItems/minItems stripping (2026-07-09 Roth Bull 400 root cause) ─────────────────────────
+  // Gemini's structured-output validator expands an array's item subtree once per maxItems slot
+  // against an internal complexity budget: the 15-property Bull item schema at maxItems=8
+  // (maxProposalsPerRun=8) was rejected 400 INVALID_ARGUMENT in ~1s, while maxItems<=7 — or the same
+  // schema minus two properties, or no maxItems at all (the Bear shape) — passed. The bound is
+  // advisory-for-the-model only (sanitizeProposals truncates app-side), so the transform strips it
+  // and folds the intent into the node's description.
+
+  it("strips maxItems from an array node and folds the bound into the description", () => {
+    const { schema, unsupported } = toGeminiJsonSchema({
+      type: "array",
+      maxItems: 8,
+      items: { type: "string" }
+    });
+    expect(unsupported).toBe(false);
+    expect((schema as any).maxItems).toBeUndefined();
+    expect((schema as any).description).toBe("Return at most 8 items.");
+    expect((schema as any).items).toEqual({ type: "string" });
+  });
+
+  it("appends the folded bound to an existing description instead of replacing it", () => {
+    const { schema } = toGeminiJsonSchema({
+      type: "array",
+      maxItems: 3,
+      minItems: 1,
+      description: "The trade proposals.",
+      items: { type: "string" }
+    });
+    expect((schema as any).maxItems).toBeUndefined();
+    expect((schema as any).minItems).toBeUndefined();
+    expect((schema as any).description).toBe("The trade proposals. Return between 1 and 3 items.");
+  });
+
+  it("strips a malformed (non-numeric) maxItems without folding prose", () => {
+    const { schema } = toGeminiJsonSchema({ type: "array", maxItems: "8", items: { type: "string" } });
+    expect((schema as any).maxItems).toBeUndefined();
+    expect((schema as any).description).toBeUndefined();
+  });
+
+  it("removes every maxItems from the full real Bull proposal schema (the maxProposalsPerRun=8 400)", () => {
+    const eightProposals = JSON.parse(JSON.stringify(BULL_PROPOSAL_SCHEMA));
+    eightProposals.properties.proposals.maxItems = 8; // the Roth IRA policy value that triggered the 400
+    const { schema, unsupported } = toGeminiJsonSchema(eightProposals);
+    expect(unsupported).toBe(false);
+    const wire = JSON.stringify(schema);
+    expect(wire).not.toContain('"maxItems"');
+    expect(wire).not.toContain('"minItems"');
+    expect((schema as any).properties.proposals.description).toBe("Return at most 8 items.");
+    // The nullable rewrites still happen alongside the strip.
+    expect(wire).not.toMatch(/"type":\["/);
+    expect(wire).not.toContain('"anyOf"');
+  });
+
+  it("buildLlmRequestBody(gemini) never puts maxItems on the wire but stays strict json_schema", () => {
+    const eightProposals = JSON.parse(JSON.stringify(BULL_PROPOSAL_SCHEMA));
+    eightProposals.properties.proposals.maxItems = 8;
+    const body = buildLlmRequestBody(
+      { provider: "gemini", transport: "chat-completions" },
+      {
+        model: "gemini-3.5-flash",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: { name: "trade_proposals", schema: eightProposals },
+        maxOutputTokens: 1500
+      }
+    ) as Record<string, any>;
+    expect(body.response_format.type).toBe("json_schema");
+    expect(body.response_format.json_schema.strict).toBe(true);
+    expect(JSON.stringify(body.response_format.json_schema.schema)).not.toContain('"maxItems"');
+    // Non-Gemini providers keep the bound untouched (the strip is a Gemini-dialect concern only).
+    const openai = buildLlmRequestBody(
+      { provider: "openai", transport: "chat-completions" },
+      {
+        model: "gpt-5.4-mini",
+        systemPrompt: "sys",
+        userContent: "{}",
+        schema: { name: "trade_proposals", schema: eightProposals },
+        maxOutputTokens: 1500
+      }
+    ) as Record<string, any>;
+    expect(openai.response_format.json_schema.schema.properties.proposals.maxItems).toBe(8);
+  });
+
   it("falls back to json_object and logs when the schema is unsupported for gemini", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
