@@ -1143,7 +1143,7 @@ discrepancies that motivated these rows._
   FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_ 2026-07-09 CODEX:
   scope corrected per MONET to the narrow Results/snapshot/test/docs fileset only. Local slice now
   built in this worktree (`redTeamEfficacy` snapshot payload + Results card + focused regression +
-  rollout note). Verified here with `npx vitest run test/red-team-efficacy-ui.test.ts
+  rollout note); PR #1175 is open. Verified here with `npx vitest run test/red-team-efficacy-ui.test.ts
   test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet`.
   Keepout remains approval bulk-confirm, Monet model/alert lanes, AG tooltip/sheet PRs, and Claude memory/RAG.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist

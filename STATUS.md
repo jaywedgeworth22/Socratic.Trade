@@ -18,7 +18,7 @@ Red Team veto efficacy card with overall stats, honest 20/50 sample gating on re
 and a recent resolved-veto table that labels missing `redTeamVerdict.model` history as
 `unattributed` instead of fabricating attribution. Focused verification here: `npx vitest run
 test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`,
-and `npm run lint -- --quiet` — all green.
+and `npm run lint -- --quiet` — all green. PR #1175 is open.
 Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
 ## 2026-07-08 — Intro landing fixes: slow-load size pop + vanish gap (MONET, branch `monet/intro-landing-fixes-3676f7`)
 Owner-reported on prod: mobile wordmark assembled small then popped larger; desktop logo vanished
