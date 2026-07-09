@@ -12,6 +12,7 @@ import type { UnifiedActivityGroup } from "../../dashboard-types";
 import { activeConnectedAccount, realityForMode } from "../lib/derive";
 import { cx, dayKey, fmtDay, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
 import { feedStatusLabel } from "../lib/labels";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { AlertCenter } from "../components/alert-center";
 import { Ago, Card, Chip, Empty, SignedText, Tooltip, type ChipTone } from "../ui/primitives";
@@ -32,7 +33,7 @@ export default function ActivityPage() {
   if (!snapshot) return null;
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Activity</h1>
         <div className="flex gap-1 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface)] p-1">

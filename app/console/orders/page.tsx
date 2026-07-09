@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { EquityOrder } from "@/lib/types";
 import { deriveReality } from "../lib/derive";
 import { cx, fmtExact, fmtMoney, fmtPct, fmtQty, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Dash, Empty, type ChipTone } from "../ui/primitives";
 import { SymbolButton } from "../ui/symbol-drilldown";
@@ -247,7 +248,7 @@ export default function OrdersPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Orders</h1>
         <Chip tone={reality.tone} title={reality.clarification}>
@@ -590,18 +591,20 @@ function OpenOrderCard({ row, quotes, companyName, halted, noAccount, live, onRe
           </Chip>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-1.5 text-[length:var(--con-fs-sm)]">
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1" title="Order size as the broker holds it; partial fills shown underneath.">
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</div>
-          <div className="con-num">
-            {sizeText(order)}
-            {view.filled > 0 && row.remaining > 0 && (
-              <span className="ml-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">({fmtQty(view.filled)} filled)</span>
-            )}
+      <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
+        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size as the broker holds it; partial fills shown underneath.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
+            <div className="con-num truncate">
+              {sizeText(order)}
+              {view.filled > 0 && row.remaining > 0 && (
+                <span className="ml-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">({fmtQty(view.filled)} filled)</span>
+              )}
+            </div>
           </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1"
+          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             view.limit !== undefined && view.stop !== undefined
               ? `Stop-limit: triggers at the ${fmtMoney(view.stop)} stop, then rests as a ${fmtMoney(view.limit)} limit.`
@@ -612,38 +615,44 @@ function OpenOrderCard({ row, quotes, companyName, halted, noAccount, live, onRe
                   : "The broker reported no limit or stop price for this order."
           }
         >
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Limit / Stop</div>
-          <div className="con-num">{view.limit === undefined && view.stop === undefined ? <Dash /> : fmtMoney(view.limit ?? view.stop)}</div>
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Limit / Stop</span>
+            <div className="con-num truncate">{view.limit === undefined && view.stop === undefined ? <Dash /> : fmtMoney(view.limit ?? view.stop)}</div>
+          </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1"
+          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             view.scan
               ? `From the latest market scan${view.scan.provider ? ` (${view.scan.provider})` : ""}${view.scan.asOf ? `, as of ${fmtExact(view.scan.asOf)}` : ""} — not a live broker quote.`
               : "The latest market scan didn't cover this symbol, so no recent price is available here."
           }
         >
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Last price</div>
-          <div className="con-num">
-            <OrderPriceInfo view={view} />
+          <div className="flex justify-between items-start gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Last price</span>
+            <div className="con-num text-right">
+              <OrderPriceInfo view={view} />
+            </div>
           </div>
         </div>
         <div
-          className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1"
+          className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5"
           title={
             row.thresholdMinutes > 0
               ? `How long the order has been working. Limit/stop-limit orders older than your ${row.thresholdMinutes}-minute policy threshold with an unfilled remainder are flagged stale.`
               : "How long the order has been working. Stale-limit detection is disabled (policy stale threshold is 0)."
           }
         >
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Age</div>
-          <div className="con-num">
-            <Ago iso={order.createdAt} />
-            {row.stale && (
-              <Chip tone="warn" className="ml-1" title={`Working ${fmtMinutes(row.ageMinutes)} without filling — past your ${row.thresholdMinutes}-minute stale threshold.`}>
-                stale
-              </Chip>
-            )}
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Age</span>
+            <div className="con-num text-right">
+              <Ago iso={order.createdAt} />
+              {row.stale && (
+                <Chip tone="warn" className="ml-1" title={`Working ${fmtMinutes(row.ageMinutes)} without filling — past your ${row.thresholdMinutes}-minute stale threshold.`}>
+                  stale
+                </Chip>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -663,27 +672,35 @@ function FinishedOrderCard({ order }: { order: EquityOrder }) {
           {readableState(order.state)}
         </Chip>
       </div>
-      <div className="grid grid-cols-2 gap-1.5 text-[length:var(--con-fs-sm)]">
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1" title={SIDE_TITLE[order.side] ?? "Order direction."}>
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Side</div>
-          <div className={isExit(order.side) ? "font-semibold text-[color:var(--con-warn)]" : "font-semibold"}>
-            {SIDE_LABEL[order.side] ?? String(order.side).toUpperCase()}
+      <div className="grid grid-cols-2 gap-2 text-[length:var(--con-fs-sm)]">
+        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title={SIDE_TITLE[order.side] ?? "Order direction."}>
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Side</span>
+            <div className={cx("con-num truncate", isExit(order.side) ? "font-semibold text-[color:var(--con-warn)]" : "font-semibold")}>
+              {SIDE_LABEL[order.side] ?? String(order.side).toUpperCase()}
+            </div>
           </div>
         </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1" title="Order size: share quantity or approximate dollar amount.">
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</div>
-          <div className="con-num">{sizeText(order)}</div>
-        </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1" title="Average price the broker reports for the executed part; '—' when nothing executed.">
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Avg fill</div>
-          <div className="con-num">
-            {typeof order.averagePrice === "number" && Number.isFinite(order.averagePrice) ? fmtMoney(order.averagePrice) : <Dash />}
+        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Order size: share quantity or approximate dollar amount.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Size</span>
+            <div className="con-num truncate">{sizeText(order)}</div>
           </div>
         </div>
-        <div className="rounded-md bg-[color:var(--con-surface-2)] px-2 py-1" title="When the broker last updated the order.">
-          <div className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Updated</div>
-          <div className="con-num">
-            <Ago iso={order.updatedAt ?? order.createdAt} />
+        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="Average price the broker reports for the executed part; '—' when nothing executed.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Avg fill</span>
+            <div className="con-num truncate">
+              {typeof order.averagePrice === "number" && Number.isFinite(order.averagePrice) ? fmtMoney(order.averagePrice) : <Dash />}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-md bg-[color:var(--con-surface-2)] px-1.5 py-0.5" title="When the broker last updated the order.">
+          <div className="flex justify-between items-baseline gap-0.5">
+            <span className="text-[length:var(--con-fs-xs)] uppercase tracking-[0.06em] text-[color:var(--con-faint)]">Updated</span>
+            <div className="con-num text-right">
+              <Ago iso={order.updatedAt ?? order.createdAt} />
+            </div>
           </div>
         </div>
       </div>

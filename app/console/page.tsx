@@ -68,6 +68,12 @@ export default function ConsoleHomePage() {
   const frameworkRows = deriveFrameworkRows(snapshot);
   const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
 
+  // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
+  // this is a two-column dashboard (main column + aside, aside floored at
+  // 320px via xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] below), not
+  // a single reading column like the other console pages. Capping it to
+  // CONSOLE_PAGE_WIDTH would starve the main column to satisfy the aside's
+  // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
       <section className="con-thesis-hero">

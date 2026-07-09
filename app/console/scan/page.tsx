@@ -20,6 +20,7 @@ import { formatSourceList } from "@/lib/dashboard-ui";
 import { DEFAULT_MARKET_SCAN_CANDIDATE_LIMIT } from "@/lib/scan-settings";
 import { activeConnectedAccount } from "../lib/derive";
 import { cx, fmtExact, EM_DASH } from "../lib/format";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { Ago, Btn, Card, Chip, Empty, type ChipTone } from "../ui/primitives";
 import { useToast } from "../ui/toast";
@@ -92,7 +93,7 @@ export default function ScanPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4">
+    <div className={cx(CONSOLE_PAGE_WIDTH, "flex flex-col gap-4")}>
       {/* Header: title · freshness · last-scanned · refresh */}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Scan</h1>
