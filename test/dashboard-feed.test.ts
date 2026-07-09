@@ -264,6 +264,48 @@ describe("dashboard feed helpers", () => {
     expect(formatShareQuantity(12345.6, "NVDA")).toBe("12,346");
   });
 
+  it("consolidates ALL runId-tagged audit kinds + run-scoped notifications into one run card (owner request 2026-07-08)", () => {
+    const runId = "run-xyz";
+    const feed = buildUnifiedFeed({
+      audit: [
+        { id: "r1", createdAt: "2026-07-08T14:01:40.000Z", kind: "strategy_run", payload: { runId, status: "completed", summary: "Evaluated 1 proposal(s)." } },
+        // Previously NON-allowlisted run-scoped kinds — each used to render as its own card:
+        { id: "r2", createdAt: "2026-07-08T14:01:03.000Z", kind: "rag_retrieval_status", payload: { runId, rows: [] } },
+        { id: "r3", createdAt: "2026-07-08T14:01:05.000Z", kind: "experience_retrieval", payload: { runId } },
+        { id: "r4", createdAt: "2026-07-08T14:01:06.000Z", kind: "evidence_age_anomaly", payload: { runId } },
+        { id: "r5", createdAt: "2026-07-08T14:01:33.000Z", kind: "llm_call_latency", payload: { runId, step: "bull", durationMs: 9700 } },
+        { id: "r6", createdAt: "2026-07-08T14:01:39.000Z", kind: "socratic_outcome_job", payload: { runId } },
+        // Allowlisted-before kinds still join:
+        { id: "r7", createdAt: "2026-07-08T14:01:40.100Z", kind: "candidates_considered", payload: { runId, llmSteps: [] } },
+        // A DIFFERENT run stays its own group:
+        { id: "q1", createdAt: "2026-07-08T13:01:40.000Z", kind: "strategy_run", payload: { runId: "run-other", status: "completed", summary: "ok" } }
+      ],
+      notifications: [
+        // Run-scoped alert (carries runId, no proposalId) — used to be a standalone sibling card.
+        { id: "n-run", createdAt: "2026-07-08T14:01:41.000Z", type: "run_failed", title: "Run failed", status: "sent", payload: { runId, summary: "boom" } }
+      ],
+      fills: [],
+      orders: [],
+      symbolMetaBySymbol: {},
+      getProposalById: () => undefined
+    });
+
+    const runGroup = feed.find((g) => g.id === `run-${runId}`);
+    expect(runGroup).toBeDefined();
+    // ONE card containing all seven audit sub-events plus the run-scoped notification:
+    expect(runGroup!.events).toHaveLength(8);
+    // Title stays anchored on the strategy_run summary event, not a sub-component:
+    expect(runGroup!.events.some((ev) => ev.id === "r1")).toBe(true);
+    const other = feed.find((g) => g.id === "run-run-other");
+    expect(other).toBeDefined();
+    // No stray standalone cards for the consolidated kinds:
+    const strayIds = ["r2", "r3", "r4", "r5", "r6", "r7", "n-run"];
+    for (const g of feed) {
+      if (g.id === `run-${runId}`) continue;
+      for (const ev of g.events) expect(strayIds).not.toContain(ev.id);
+    }
+  });
+
   it("applies Paper prefixing, custom notification tags, and grouping correctly in buildUnifiedFeed", () => {
     const feed = buildUnifiedFeed({
       audit: [

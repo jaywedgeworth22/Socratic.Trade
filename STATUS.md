@@ -23,6 +23,12 @@ tsc/lint clean, 2983 tests, build green; driven live both themes at desktop + 37
 snake_case/JSON leaks page-swept). Landing after merging forward PR #1107 (activity-feed
 consolidation, same dashboard-feed.ts — deliberate hand-resolve). Details:
 `docs/rollouts/2026-07-09-ui-audit-sweep.md`.
+## 2026-07-08 — Activity log grouping: 40 cards/hour → ~9 (MONET, branch `monet/activity-log-grouping`)
+Owner request: bundle overlapping/simultaneous activity entries. Feed builder now groups ANY
+runId-tagged audit event + run-scoped notifications into one run card (was a 5-kind allowlist), and
+widens the housekeeping bucket (notify.sent/error delivery mechanics, due-jobs drain, vector_store,
+recoverable_issue, llm_cache_usage). Real-hour replay: 54 raw events → 8 main cards + 1 collapsed
+system row. All data preserved/expandable. See `docs/rollouts/2026-07-08-activity-log-grouping.md`.
 
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.

@@ -565,20 +565,32 @@ const WEB_SOURCE_LABELS: Record<string, string> = {
 
 /** Pure-ops audit kinds: background data refreshes and housekeeping that are not
  *  account decisions. The console collapses these into a "System" group. */
-export const OPS_AUDIT_KINDS = new Set(["web_source_refresh", "congress_share_daily", "notify.bridge.error"]);
-
-/** Audit kinds that belong to one strategy run and are consolidated into a single
- *  `run-<runId>` group in the unified feed (plus any `run_skipped_*` kind). */
-const RUN_SCOPED_AUDIT_KINDS = new Set([
-  "strategy_run",
-  "rationale_diversity",
-  "candidates_considered",
-  "signal_snapshot",
-  "llm_step"
+// Housekeeping/background kinds: bundled into the collapsed System bucket instead of one card
+// each. notify.sent / notify.error are channel-DELIVERY mechanics — the `notification` panel row
+// (which carries the alert's content + status) still renders in the main feed; these are the
+// per-channel webhook/email/push plumbing that used to add 2-4 rows per alert.
+export const OPS_AUDIT_KINDS = new Set([
+  "web_source_refresh",
+  "congress_share_daily",
+  "notify.bridge.error",
+  "notify.sent",
+  "notify.error",
+  "due_jobs_intraday_sample_drain",
+  "vector_store",
+  "recoverable_issue",
+  "llm_cache_usage"
 ]);
 
-function runGroupIdForAudit(kind: string, payload: Record<string, unknown>): string | undefined {
-  if (!RUN_SCOPED_AUDIT_KINDS.has(kind) && !kind.startsWith("run_skipped_")) return undefined;
+/**
+ * Consolidate ANY audit event that carries a `runId` into its `run-<runId>` group (owner request
+ * 2026-07-08: an hour of activity showed 30-40 separate cards because only 5 allowlisted kinds
+ * joined the run group while a real run emits 15+ runId-tagged kinds — rag_retrieval_status,
+ * experience_retrieval, llm_call_latency, evidence_age_anomaly, socratic_outcome_job, …).
+ * Grouping is generic-by-runId, so new run-scoped audit kinds bundle automatically instead of
+ * needing an allowlist entry. Proposal-linked events still take `prop-<id>` precedence at the
+ * call site, and the run card's title stays anchored on the `strategy_run` summary event.
+ */
+function runGroupIdForAudit(_kind: string, payload: Record<string, unknown>): string | undefined {
   const runId = stringValue(payload.runId);
   return runId ? `run-${runId}` : undefined;
 }
@@ -878,7 +890,11 @@ export function buildUnifiedFeed(input: {
       raw: event.payload
     };
 
-    const groupId = proposalId ? `prop-${proposalId}` : `notif-${event.id}`;
+    // Precedence: proposal group > run group > standalone. Run-scoped alerts ("Sell MU blocked",
+    // "run failed", "Red Team routed to human") carry a runId in their payload — folding them into
+    // the run card removes the 2-3 sibling rows that always appeared next to every run entry.
+    const notifRunId = stringValue(payload.runId);
+    const groupId = proposalId ? `prop-${proposalId}` : notifRunId ? `run-${notifRunId}` : `notif-${event.id}`;
     if (proposalId) {
       proposalIdByGroupId.set(groupId, proposalId);
     }
