@@ -214,11 +214,20 @@ async function runLoop(): Promise<void> {
     try {
       await connectOnce();
     } catch (err) {
-      console.error("[congress-stream] connection error:", err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[congress-stream] connection error:", msg);
+      
+      // Do not pollute api_health_log or loop infinitely if we legitimately lack credentials
+      if (msg.includes("no subscription configured")) {
+        console.warn("[congress-stream] disabling stream until credentials are provided.");
+        state.closing = true;
+        break;
+      }
+
       logApiHealth({
         service: "congress.trade:sse",
         ok: false,
-        errorText: err instanceof Error ? err.message : String(err),
+        errorText: msg,
       });
     }
     if (state.closing) break;

@@ -8,6 +8,7 @@
  *  authority, its 409 reasons and expectedText render verbatim. */
 
 import { useMemo, useState } from "react";
+import { shortOrderLabel } from "@/lib/order-labels";
 import type { RealityInfo } from "../lib/derive";
 import { fmtQty } from "../lib/format";
 import { useConsoleData } from "../lib/useConsoleData";
@@ -96,7 +97,7 @@ export function ReplaceMarketSheet({
           "pos",
           `Market replacement submitted for ${order.symbol}`,
           [
-            result.replacementOrderId ? `Order ${result.replacementOrderId}.` : undefined,
+            result.replacementOrderId ? `Order ${shortOrderLabel(result.replacementOrderId)}.` : undefined,
             result.brokerState ? `Broker state: ${readableState(result.brokerState)}.` : undefined
           ]
             .filter(Boolean)

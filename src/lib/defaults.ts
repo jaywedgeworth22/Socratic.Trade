@@ -38,7 +38,10 @@ export const DEFAULT_RISK_RULES: RiskRules = {
   takeProfitPct: 20,
   // Take partial profit at the target and let the rest ride (laddered per take-profit band).
   takeProfitTrimPct: 50,
-  trailingStopPct: 0
+  trailingStopPct: 0,
+  // Mandatory for any short (see policy.ts's short-selling gate) — mirrors the long stopLossPct
+  // default so a short-enabled policy isn't rejected out of the box for lacking a stop.
+  shortStopLossPct: 8
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -62,8 +65,16 @@ export const DEFAULT_POLICY: TradingPolicy = {
   socraticOverrideMode: "execute",
   socraticOverrideMaxPctOfNav: 100,
   sellToFundBuy: "off",
-  llmModel: "gpt-5.4-mini",
+  // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
+  // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
+  // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
+  // are REQUIRED explicit picks in Settings → LLM models; unset fails closed with an actionable
+  // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   llmReasoningEffort: "medium",
+  // Daily LLM learning review — default OFF; "annotate" never mutates anything (audits + a
+  // notification only). "decide" (apply verdicts) is a separate owner opt-in in Settings.
+  learningReviewEnabled: false,
+  learningReviewMode: "annotate",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,

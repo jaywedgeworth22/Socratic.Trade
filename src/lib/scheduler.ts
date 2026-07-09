@@ -7,9 +7,11 @@
 import { checkAllUserPriceAlerts } from "./alerts";
 import { runCongressDailyShareIfDue } from "./congress-share";
 import { audit, getActiveConnectedAccount, getAutoResumeOnBoot, getLastStrategyRunStartedAt, getPolicy, listConnectedAccounts, listUsers, listWatchlistSymbols, setInternalSetting, setPolicy } from "./db";
+import { runDailyLearningReviewIfDue } from "./learning-review";
 import { isRunAllowedNow } from "./market-hours";
 import { runProviderTierCheckIfDue } from "./provider-tier";
 import { expireStalePendingProposals } from "./proposal-revalidation";
+import { markStaleRunningRuns } from "./db-execution";
 import { checkRegimeFlip } from "./regime-watch";
 import { getBrokerGateway } from "./broker";
 import { deriveExecutionState } from "./execution-mode";
@@ -249,6 +251,16 @@ async function tick(): Promise<void> {
     }
   }
 
+  // Crashed-run sweep: mark strategy_runs left in status='running' after a process crash/kill.
+  // Must run BEFORE the single-leader gate so stale rows are always repaired (idempotent: the
+  // UPDATE has a `WHERE status = 'running'` guard, so even two concurrent sweeps won't double-count).
+  try {
+    const repaired = markStaleRunningRuns(Date.now());
+    if (repaired > 0) console.log(`[scheduler] marked ${repaired} stale running run(s) as failed`);
+  } catch (err) {
+    console.error("[scheduler] stale-run sweep error:", err);
+  }
+
   // Single-leader gate (additive; flag default OFF). When SCHEDULER_SINGLE_LEADER=1 (or
   // true/on/yes), only the lease holder runs the background updates and per-account tick body
   // — preventing duplicate API scrapes and broker EXIT orders on multi-process deploys.
@@ -307,6 +319,16 @@ async function tick(): Promise<void> {
   for (const userId of listUsers()) {
     void checkRegimeFlip(userId).catch((err) =>
       console.error(`[scheduler] regime check error for ${userId}:`, err)
+    );
+  }
+
+  // Once-per-day LLM learning review (default OFF; policy.learningReviewEnabled): a frontier-class
+  // model audits recent learned-context rows + the pending learning queue against a system-history
+  // digest, so lessons built on corrupted evidence (execution defects blamed on theses) get caught.
+  // Annotate-only unless the owner opted into "decide". No-op unless enabled + due; self-guarded.
+  for (const userId of listUsers()) {
+    void runDailyLearningReviewIfDue(userId).catch((err) =>
+      console.error(`[scheduler] learning-review error for ${userId}:`, err)
     );
   }
 

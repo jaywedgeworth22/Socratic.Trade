@@ -24,6 +24,16 @@ import { EquityChart } from "./components/equity-chart";
 import { PositionsCard } from "./components/positions";
 import { deriveDayPnl, deriveMarkToMarket, deriveReality, deriveRiskUtilization, deriveSpend, deriveStateInfo, selectEquityWindow } from "./lib/derive";
 import { EM_DASH, fmtExact, fmtMoney, fmtMoneyWhole, fmtPct, fmtSignedMoney, timeUntil } from "./lib/format";
+import {
+  decisionStatusLabel,
+  evidenceKindLabel,
+  frameworkPriorityLabel,
+  frameworkStatusLabel,
+  frameworkSubsystemLabel,
+  plainLabel,
+  thesisTagLabel
+} from "./lib/labels";
+import { redTeamFailureMeta } from "./lib/red-team";
 import { useConsoleData } from "./lib/useConsoleData";
 import { RunOnceButton } from "./components/chrome";
 import { Ago, Card, Chip, Dash, Meter, SignedText, Stat } from "./ui/primitives";
@@ -56,7 +66,14 @@ export default function ConsoleHomePage() {
   const evidenceRows = deriveEvidenceRows(snapshot, latest, primaryDecision);
   const actionRows = deriveActionRows(snapshot, latest);
   const frameworkRows = deriveFrameworkRows(snapshot);
+  const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
 
+  // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
+  // this is a two-column dashboard (main column + aside, aside floored at
+  // 320px via xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] below), not
+  // a single reading column like the other console pages. Capping it to
+  // CONSOLE_PAGE_WIDTH would starve the main column to satisfy the aside's
+  // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
       <section className="con-thesis-hero">
@@ -75,7 +92,7 @@ export default function ConsoleHomePage() {
             </Chip>
             {primaryProposal?.tradeThesisTag && (
               <Chip tone="accent" title="The thesis bucket this reasoning is filed under for later outcome scoring.">
-                {primaryProposal.tradeThesisTag}
+                {thesisTagLabel(primaryProposal.tradeThesisTag)}
               </Chip>
             )}
             {primaryProposal?.entryMarketRegime && (
@@ -256,12 +273,18 @@ export default function ConsoleHomePage() {
               </span>
             }
             action={
-              <Link href="/console/strategy" className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]">
-                Framework <ArrowRight size={12} />
+              // The fallback body below renders thesis/regime scorecard rows, not framework
+              // proposals — that data lives (and is fully rendered) on Results, not Strategy.
+              // Only link to Strategy when framework proposals are actually shown here.
+              <Link
+                href={hasFrameworkProposals ? "/console/strategy" : "/console/results#thesis-regime"}
+                className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+              >
+                {hasFrameworkProposals ? "Framework" : "Results"} <ArrowRight size={12} />
               </Link>
             }
           >
-            {(snapshot.socratic?.frameworkProposals?.length ?? 0) > 0 ? (
+            {hasFrameworkProposals ? (
               <FrameworkProposalList proposals={snapshot.socratic?.frameworkProposals ?? []} refresh={refresh} />
             ) : (
               <div className="flex flex-col gap-2">
@@ -396,7 +419,7 @@ function RiskUtilizationCard({ risk }: { risk: ReturnType<typeof deriveRiskUtili
                 {row.pct !== undefined ? ` · ${fmtPct(row.pct, 1)}` : ""}
               </span>
             </div>
-            <Meter value={row.pct !== undefined ? Math.min(row.pct, 100) : 0} max={100} />
+            <Meter value={row.pct !== undefined ? row.pct : 0} max={100} />
           </div>
         ))}
       </div>
@@ -414,6 +437,9 @@ type DecisionRowData = {
   href?: string;
   title?: string;
   confidence?: number;
+  /** ISO timestamp of the decision/proposal — rendered top-right as a relative
+   *  "15m ago" (like Journal entries); absent for rows with no known time. */
+  at?: string;
 };
 
 type EvidenceRow = {
@@ -421,6 +447,8 @@ type EvidenceRow = {
   meta: string;
   metaTitle?: string;
   body: string;
+  symbol?: string;
+  quote?: MarketQuote;
   tone?: "pos" | "warn" | "neg" | "accent";
 };
 
@@ -463,8 +491,9 @@ function deriveActionRows(snapshot: DashboardSnapshot, latest: StrategyDecision 
   const latestRows =
     latest?.proposals
       ?.slice(0, 5)
-      .map((item) => decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons)) ??
-    [];
+      .map((item) =>
+        decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+      ) ?? [];
   if (latestRows.length > 0) return latestRows;
   return snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
 }
@@ -483,11 +512,12 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
     rationale: withBlockReasons(rationale, decision.status, reasons),
     href: `/console/decisions/${encodeURIComponent(decision.id)}`,
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
-    confidence: decision.confidenceScore
+    confidence: decision.confidenceScore,
+    at: decision.createdAt
   };
 }
 
-function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = []): DecisionRowData {
+function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = [], at?: string): DecisionRowData {
   return {
     id,
     symbol: proposal.symbol,
@@ -496,14 +526,15 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
     status,
     rationale: withBlockReasons(proposal.rationale, status, reasons),
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
-    confidence: proposal.confidenceScore
+    confidence: proposal.confidenceScore,
+    at
   };
 }
 
 function decisionFromPending(pending: PendingProposal): DecisionRowData {
   const proposal = pending.proposal;
   return {
-    ...decisionFromProposal(pending.id, proposal, "pending"),
+    ...decisionFromProposal(pending.id, proposal, "pending", [], pending.createdAt),
     size: pending.estimatedNotional ? fmtMoney(pending.estimatedNotional) : proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : EM_DASH
   };
 }
@@ -515,7 +546,7 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
       const source = evidenceSourceLabel(item.source);
       rows.push({
         title: item.title,
-        meta: [plainLabel(item.kind), source].filter(Boolean).join(" · "),
+        meta: [evidenceKindLabel(item.kind), source].filter(Boolean).join(" · "),
         metaTitle: source ? `Source: ${source}` : undefined,
         body: item.summary,
         tone: toneFromSocratic(item.tone)
@@ -558,13 +589,25 @@ function deriveEvidenceRows(snapshot: DashboardSnapshot, latest: StrategyDecisio
       tone: "pos"
     });
   }
-  if (proposal?.redTeamVerdict?.available) {
-    rows.push({
-      title: "Adversarial review",
-      meta: proposal.redTeamVerdict.model ?? "red team",
-      body: proposal.redTeamVerdict.reason,
-      tone: proposal.redTeamVerdict.rejected ? "neg" : "warn"
-    });
+  if (proposal?.redTeamVerdict) {
+    const verdict = proposal.redTeamVerdict;
+    if (verdict.available) {
+      rows.push({
+        title: "Adversarial review",
+        meta: verdict.model ?? "red team",
+        body: verdict.reason,
+        tone: verdict.rejected ? "neg" : "warn"
+      });
+    } else {
+      const failure = redTeamFailureMeta(verdict.failureKind);
+      rows.push({
+        title: "Adversarial review FAILED",
+        meta: [verdict.model, failure.label].filter(Boolean).join(" · ") || failure.label,
+        metaTitle: failure.title,
+        body: verdict.reason,
+        tone: "warn"
+      });
+    }
   }
   return rows.slice(0, 6);
 }
@@ -574,6 +617,8 @@ function evidenceFromCandidate(candidate: MarketQuote): EvidenceRow {
   const sources = sourceListFromQuote(candidate) || evidenceSourceLabel(candidate.provider);
   return {
     title: candidate.symbol,
+    symbol: candidate.symbol,
+    quote: candidate,
     meta: `score ${Math.round(candidate.score)}${sources ? ` · ${sources}` : ""}`,
     metaTitle: sources ? `Data sources: ${sources}` : undefined,
     body:
@@ -588,7 +633,7 @@ function deriveDissentRows(proposal: TradeProposal | undefined, latest: Strategy
   if (decision?.dissent?.length) {
     return decision.dissent.slice(0, 4).map((item) => ({
       title: item.title,
-      meta: [item.kind, item.source].filter(Boolean).join(" · "),
+      meta: [evidenceKindLabel(item.kind), item.source].filter(Boolean).join(" · "),
       body: item.summary,
       tone: toneFromSocratic(item.tone)
     }));
@@ -646,7 +691,7 @@ function deriveFrameworkRows(snapshot: DashboardSnapshot): EvidenceRow[] {
 function frameworkToEvidenceRow(proposal: SocraticFrameworkProposal): EvidenceRow {
   return {
     title: proposal.title,
-    meta: `${proposal.status} · ${proposal.subsystem} · ${proposal.priority}`,
+    meta: `${frameworkStatusLabel(proposal.status)} · ${frameworkSubsystemLabel(proposal.subsystem)} · ${frameworkPriorityLabel(proposal.priority)}`,
     body: proposal.proposedChange,
     tone: proposal.priority === "high" ? "warn" : proposal.status === "accepted" || proposal.status === "applied" ? "pos" : "accent"
   };
@@ -666,11 +711,19 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
         <div className="flex flex-wrap items-center gap-2">
           {row.symbol === "Portfolio" ? <strong>{row.symbol}</strong> : <SymbolButton symbol={row.symbol} showLogo={false} />}
           <span>{row.verb}</span>
-          <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>{row.status}</Chip>
+          <Chip tone={row.status === "blocked" || row.status === "failed" ? "warn" : row.status === "pending" ? "accent" : "pos"}>
+            {decisionStatusLabel(row.status)}
+          </Chip>
         </div>
         <p>{row.rationale}</p>
       </div>
       <div className="text-right">
+        {/* relative decision time, top-right — same treatment as Journal entries */}
+        {row.at && (
+          <div className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            <Ago iso={row.at} />
+          </div>
+        )}
         <div className="con-num font-semibold">{row.size}</div>
         {typeof row.confidence === "number" && <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">conf {row.confidence}</div>}
         {row.href && (
@@ -683,11 +736,17 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
   );
 }
 
-function EvidenceCard({ title, meta, metaTitle, body, tone = "accent" }: EvidenceRow) {
+function EvidenceCard({ title, meta, metaTitle, body, symbol, quote, tone = "accent" }: EvidenceRow) {
   return (
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
-        <strong>{title}</strong>
+        {symbol ? (
+          <SymbolButton symbol={symbol} quote={quote} showLogo={false}>
+            {title}
+          </SymbolButton>
+        ) : (
+          <strong>{title}</strong>
+        )}
         <span title={metaTitle}>{meta}</span>
       </div>
       <p>{body}</p>
@@ -710,15 +769,6 @@ function sourceListFromQuote(candidate: MarketQuote): string {
   const sources = Object.values(candidate.sources ?? {}).filter(Boolean);
   if (candidate.provider) sources.unshift(candidate.provider);
   return formatSourceList(sources.join("+"));
-}
-
-function plainLabel(raw?: string | null): string {
-  if (!raw) return "";
-  return raw
-    .replace(/[._-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function CoachNoteForm({ decision, refresh }: { decision?: SocraticDecisionCase; refresh: () => Promise<void> }) {
@@ -807,7 +857,7 @@ function FrameworkProposalList({ proposals, refresh }: { proposals: SocraticFram
         <article key={proposal.id} className="con-evidence-card con-evidence-accent">
           <div className="flex items-start justify-between gap-3">
             <strong>{proposal.title}</strong>
-            <span>{proposal.status}</span>
+            <span>{frameworkStatusLabel(proposal.status)}</span>
           </div>
           <p>{proposal.proposedChange}</p>
           <textarea

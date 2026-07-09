@@ -1,6 +1,6 @@
 // db-execution.ts — DAILY_RESET_TIME_ZONE, daily stats, day-trade counting,
 // run lock (acquireStrategyLock / releaseStrategyLock), strategy runs.
-import { getDb } from "./db";
+import { audit, getDb } from "./db";
 import type { StrategyRunRow } from "./types";
 
 /**
@@ -235,6 +235,72 @@ export function finishStrategyRun(id: string, status: "completed" | "failed", su
   getDb()
     .prepare("UPDATE strategy_runs SET finished_at = ?, status = ?, summary = ? WHERE id = ? AND user_id = ?")
     .run(new Date().toISOString(), status, summary, id, userId);
+}
+
+/**
+ * Sweep strategy_runs rows left in status='running' after a process crash / kill / unhandled
+ * rejection (the normal `finishStrategyRun` exit paths never ran). A run that hasn't finished
+ * within STALE_THRESHOLD_MS (default 30 min) is marked failed with a receipted reason — UNLESS it
+ * still has recent audit activity (see the in-loop check below), in which case it's left alone.
+ *
+ * Returns the number of repaired rows for logging/auditing.
+ */
+// 30 min — raised from 10 min after a 2026-07-08 incident: an evening run (id 5d49c9b5) with
+// slow LLM steps (150s+ each observed under load) was still genuinely running past the old 10-min
+// threshold, got marked "crashed" by this sweep at the ~11-minute mark, and then completed 5s later
+// having already placed 4 real trades — a live run was declared dead while it was still trading.
+// 30 min comfortably clears worst-case multi-step LLM runs with margin; a tick-cadence run still
+// normally finishes in ~1-2 min, so this only widens the window for the genuine crash case, it
+// doesn't meaningfully delay detecting an actual stuck/killed process.
+const STALE_RUN_THRESHOLD_MS = 30 * 60_000;
+export function markStaleRunningRuns(now: number = Date.now()): number {
+  const cutoff = new Date(now - STALE_RUN_THRESHOLD_MS).toISOString();
+  const db = getDb();
+  const stale = db
+    .prepare(
+      `SELECT id, user_id, connected_account_id, started_at FROM strategy_runs
+       WHERE status = 'running' AND started_at < ?`
+    )
+    .all(cutoff) as Array<{
+      id: string;
+      user_id: string;
+      connected_account_id: string | null;
+      started_at: string;
+    }>;
+  let count = 0;
+  for (const row of stale) {
+    // Extra grace beyond the raised threshold: audit_events has no run_id COLUMN, but nearly every
+    // strategy-run audit kind carries `runId` in its JSON payload (e.g. strategy_bear_review_unavailable,
+    // order placements) — so a run that's still emitting audit rows more recently than the cutoff is
+    // demonstrably still alive, just slow, not crashed. This json_extract only runs for rows ALREADY
+    // past the time cutoff (typically 0-1 per sweep tick), so it's cheap despite no index on payload.
+    const recentActivity = db
+      .prepare(`SELECT 1 FROM audit_events WHERE json_extract(payload, '$.runId') = ? AND created_at >= ? LIMIT 1`)
+      .get(row.id, cutoff);
+    if (recentActivity) continue;
+
+    const res = db
+      .prepare(
+        `UPDATE strategy_runs SET status = 'failed', finished_at = ?, summary = 'Process restarted mid-run — marked failed by stale-run sweep (started at ' || ? || ')'
+         WHERE id = ? AND status = 'running'`
+      )
+      .run(new Date().toISOString(), row.started_at, row.id);
+    // Only receipt+count rows this sweep actually transitioned. If a concurrent scheduler
+    // instance already repaired the row between our SELECT and UPDATE, `changes === 0` — skip
+    // it so we don't emit a duplicate `strategy_run_crashed` audit or over-report `count`.
+    if (res.changes === 0) continue;
+    // `audit` is imported statically from ./db (top of file). The db → db-execution cycle is safe
+    // under ESM live bindings because audit is only called here at runtime, never at module init.
+    audit(
+      "strategy_run_crashed",
+      { runId: row.id, startedAt: row.started_at, reason: "marked failed by stale-run sweep" },
+      row.user_id,
+      // Scope the receipt to the run's account so per-account ops queries can filter it.
+      row.connected_account_id ?? undefined
+    );
+    count++;
+  }
+  return count;
 }
 
 /**

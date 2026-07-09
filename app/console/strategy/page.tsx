@@ -17,7 +17,7 @@ import {
 } from "@/lib/llm-request";
 // Pure curated-model DATA (no legacy UI components) — the same catalog the rest
 // of the app offers, so the console review picker stays consistent with it.
-import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED } from "../../ui/llm-model-catalog";
+import { CURATED_LLM_MODEL_GROUPS, CURATED_LLM_MODEL_IDS, CUSTOM_MODEL_ID_SEED, ROTATE_ALL_MODELS_ID, ROTATE_ALL_MODELS_LABEL } from "../../ui/llm-model-catalog";
 import {
   activateProfile,
   copyProfileToAccount,
@@ -29,12 +29,16 @@ import {
 import { activeConnectedAccount, deriveReality, type RealityInfo } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
 import { classify, getAtPath, type FieldDef } from "../lib/policy-diff";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
+import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -49,6 +53,44 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
 };
 
 const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS) as Array<keyof ScoringWeights>;
+
+/** Human-readable name + hover explanation for each scoring factor. Display-only —
+ *  does not touch the scoring math in src/lib/scoring.ts (or wherever weights are applied). */
+const FACTOR_META: Record<keyof ScoringWeights, { name: string; tip: string }> = {
+  liquidity: {
+    name: "Liquidity",
+    tip: "How easily you can trade the stock, from recent share volume. More weight favors high-volume names you can enter and exit cleanly, and penalizes thin, illiquid ones."
+  },
+  momentum: {
+    name: "Momentum",
+    tip: "Recent trend strength: intraday move, position within the 52-week range, and technical signals (RSI/MACD/moving averages). More weight favors names that are rising and near their highs."
+  },
+  value: {
+    name: "Value",
+    tip: "Cheapness from P/E and free-cash-flow yield. More weight tilts toward low-multiple, cash-generative names and away from expensive ones."
+  },
+  quality: {
+    name: "Quality",
+    tip: "Financial sturdiness: company size, low debt, and earnings growth. More weight favors large, low-leverage, profitably growing companies."
+  },
+  volatility: {
+    name: "Volatility",
+    tip: "Steadiness, not choppiness — the score is highest for calm, low-beta names. Counter-intuitively, more weight here favors steady stocks and penalizes sharp movers and high-beta risk."
+  },
+  sentiment: {
+    name: "Sentiment",
+    tip: "Aggregate news, analyst, and market sentiment (0–100). More weight favors positively-covered names and discounts negatively-covered ones."
+  },
+  positioning: {
+    name: "Positioning",
+    tip: "Smart-money accumulation: net congressional buying, insider open-market purchases (SEC Form 4), and short-squeeze setups. More weight favors names insiders and Congress are buying."
+  },
+  diversification: {
+    name: "Diversification",
+    tip: "Portfolio fit: a name you don't already hold scores higher than one you do. More weight pushes toward new positions instead of adding to what you already own — it's held-vs-not, not sector spread."
+  }
+};
+
 const CUSTOM_MODEL_OPTION = CUSTOM_MODEL_ID_SEED;
 
 function isCuratedModel(model: string | undefined): boolean {
@@ -62,6 +104,7 @@ function modelSelectValue(model: string | undefined): string {
 
 function modelProviderLabel(model: string | undefined): string {
   if (!model) return "Not Set";
+  if (model === ROTATE_ALL_MODELS_ID) return "Rotating (a different model each run)";
   const group = CURATED_LLM_MODEL_GROUPS.find((g) => g.options.some((option) => option.value === model));
   return group?.label ?? "Custom Provider";
 }
@@ -110,6 +153,19 @@ function reasoningSummary(control: ReturnType<typeof reasoningControlForModels>)
   return `${control.capabilities.map((capability) => capability.label).join(" + ")} active.`;
 }
 
+/** Whenever a model selection changes, the previously-saved reasoning effort may no longer be a
+ *  valid/offered value for the new model pairing (e.g. a provider-specific "xhigh" that the newly
+ *  chosen model doesn't expose). Recompute + include a renormalized value in the SAME save so a
+ *  model-only write can never leave the stored (model, effort) combo in an invalid state — mirrors
+ *  what the old single "Save models" button did by bundling the recomputed effort into one PUT. */
+function reasoningPatchFor(models: string[], effort: LlmReasoningEffort | undefined): { llmReasoningEffort?: LlmReasoningEffort } {
+  const candidates = models.filter((m) => m && m !== ROTATE_ALL_MODELS_ID);
+  const control = reasoningControlForModels(candidates);
+  if (!control) return {};
+  const value = normalizeReasoningValueForControl(candidates, control, effort);
+  return value ? { llmReasoningEffort: value } : {};
+}
+
 function normalizeReasoningValueForControl(
   models: string[],
   control: ReturnType<typeof reasoningControlForModels>,
@@ -127,32 +183,54 @@ function normalizeReasoningValueForControl(
 function ModelSelect({
   id,
   value,
-  onChange,
+  onPick,
+  onCustomTextChange,
+  onCustomTextBlur,
+  disabled,
   allowBlank,
   blankLabel,
   role
 }: {
   id: string;
   value: string | undefined;
-  onChange: (model: string) => void;
+  /** A concrete model choice from the dropdown (curated id, blank, or rotate) — persist immediately. */
+  onPick: (model: string) => void;
+  /** Local-only update per keystroke while typing a custom id — never persists. */
+  onCustomTextChange: (text: string) => void;
+  /** Persist the typed custom id (if any) on blur. */
+  onCustomTextBlur: () => void;
+  disabled?: boolean;
   allowBlank?: boolean;
   blankLabel?: string;
   role: "proposer" | "red-team";
 }) {
   const selectValue = modelSelectValue(value);
   const custom = selectValue === CUSTOM_MODEL_OPTION;
-  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION ? value : null;
+  const customCurrent = value && !isCuratedModel(value) && value !== CUSTOM_MODEL_OPTION && value !== ROTATE_ALL_MODELS_ID ? value : null;
   return (
     <div className="flex flex-col gap-2">
       <Select
         id={id}
         value={selectValue}
+        disabled={disabled}
         onChange={(event) => {
           const next = event.target.value;
-          onChange(next === CUSTOM_MODEL_OPTION ? (custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION) : next);
+          if (next === CUSTOM_MODEL_OPTION) {
+            // Entering (or re-entering) custom-id entry mode is a UI-mode switch, not a concrete
+            // model choice — don't persist until a real id is typed and blurred.
+            onCustomTextChange(custom ? (value ?? CUSTOM_MODEL_OPTION) : CUSTOM_MODEL_OPTION);
+            return;
+          }
+          onPick(next);
         }}
       >
         {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
+        <option
+          value={ROTATE_ALL_MODELS_ID}
+          title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
+        >
+          {ROTATE_ALL_MODELS_LABEL}
+        </option>
         {customCurrent && (
           <option value={customCurrent} title="A model id outside the curated list, kept exactly as stored.">
             {customCurrent} - custom id
@@ -180,8 +258,9 @@ function ModelSelect({
         <TextInput
           value={value && value !== CUSTOM_MODEL_OPTION ? value : ""}
           placeholder="provider-model-id"
-          onChange={(event) => onChange(event.target.value)}
-          title="Type an exact provider model ID if it is not in the curated list."
+          onChange={(event) => onCustomTextChange(event.target.value)}
+          onBlur={onCustomTextBlur}
+          title="Type an exact provider model ID if it is not in the curated list. Saves when you click away."
         />
       )}
     </div>
@@ -192,48 +271,103 @@ export default function StrategyPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
 
+  // Prompt: local text while typing, persist on blur (see commitPrompt below).
   const [promptDraft, setPromptDraft] = useState<string | null>(null);
-  const [modelDraft, setModelDraft] = useState<{ llmModel?: string; redTeamLlmModel?: string; llmReasoningEffort?: LlmReasoningEffort } | null>(null);
-  const [weightsDraft, setWeightsDraft] = useState<Partial<Record<keyof ScoringWeights, number>> | null>(null);
+  const autoSavePrompt = useAutoSave();
+  // Models: sticky optimistic overlay per field — each select persists immediately on
+  // change; the custom-id text fields persist on blur. Reverted by useAutoSave's onError.
+  const [localProposerModel, setLocalProposerModel] = useState<string | null>(null);
+  const [localRedTeamModel, setLocalRedTeamModel] = useState<string | null>(null);
+  const [localReasoningEffort, setLocalReasoningEffort] = useState<LlmReasoningEffort | null>(null);
+  const autoSaveModels = useAutoSave();
+  // Scoring weights: local text while typing each factor, persist on blur (per-field patch —
+  // the server deep-merges scoringWeights, see commitWeight below).
+  const [weightsOverlay, setWeightsOverlay] = useState<Partial<Record<keyof ScoringWeights, number>>>({});
+  const autoSaveWeights = useAutoSave();
+  // Presets ("Apply to this account") is a discrete action button, not auto-saved.
   const [busy, setBusy] = useState<string | null>(null);
 
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
-  // Unsaved-draft registration must run unconditionally (before the null return).
-  useUnsavedChanges(
-    (promptDraft !== null && promptDraft !== snapshot?.strategyPrompt) || modelDraft !== null || weightsDraft !== null
-  );
   if (!snapshot || !reality) return null;
 
   const policy = snapshot.policy;
   const activeAccount = activeConnectedAccount(snapshot);
   const prompt = promptDraft ?? snapshot.strategyPrompt;
-  const promptDirty = promptDraft !== null && promptDraft !== snapshot.strategyPrompt;
-  const proposerModel = modelDraft?.llmModel ?? policy.llmModel ?? "";
-  const redTeamModel = modelDraft?.redTeamLlmModel ?? policy.redTeamLlmModel ?? "";
+  const proposerModel = localProposerModel ?? policy.llmModel ?? "";
+  const redTeamModel = localRedTeamModel ?? policy.redTeamLlmModel ?? "";
   const effectiveRedTeamModel = redTeamModel || proposerModel;
-  const showCustomModelWarning = (proposerModel && !isCuratedModel(proposerModel)) || (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel));
-  const reasoningModels = [proposerModel, effectiveRedTeamModel];
+  // The rotation sentinel is neither a custom id (it only ever serves curated models, so the
+  // custom-cost-fallback warning doesn't apply) nor a model with its own reasoning capability.
+  const isRotate = (m: string) => m === ROTATE_ALL_MODELS_ID;
+  const showCustomModelWarning =
+    (proposerModel && !isCuratedModel(proposerModel) && !isRotate(proposerModel)) ||
+    (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel) && !isRotate(effectiveRedTeamModel));
+  const rotationSelected = isRotate(proposerModel) || isRotate(effectiveRedTeamModel);
+  const reasoningModels = [proposerModel, effectiveRedTeamModel].filter((m) => !isRotate(m));
   const reasoningControl = reasoningControlForModels(reasoningModels);
   const reasoningValue = reasoningControl
-    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, modelDraft?.llmReasoningEffort ?? policy.llmReasoningEffort)
+    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, localReasoningEffort ?? policy.llmReasoningEffort)
     : undefined;
 
-  const save = async (label: string, body: Record<string, unknown>, after?: () => void) => {
-    setBusy(label);
-    try {
-      await savePolicy(body);
-      await refresh();
-      after?.();
-      toast.push("pos", `${label} saved`, "Takes effect on the next run.");
-    } catch (error) {
-      toast.push("neg", `${label} not saved`, error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(null);
-    }
+  // Prompt: skip the write if blur leaves it unchanged from the saved copy.
+  const commitPrompt = () => {
+    if (promptDraft === null || promptDraft === snapshot.strategyPrompt) return;
+    const next = promptDraft;
+    const prev = snapshot.strategyPrompt;
+    autoSavePrompt.save(() => savePolicy({ strategyPrompt: next }).then(() => refresh()), {
+      onError: () => setPromptDraft(prev),
+      errorTitle: "Prompt not saved"
+    });
+  };
+
+  // Persist one team's model choice (from either the select or a blurred custom-id text field).
+  // Bundles a renormalized reasoning effort into the SAME write whenever the model set changes —
+  // see reasoningPatchFor — so a model-only save can never leave (model, effort) invalid.
+  const commitProposerModel = (model: string, prev: string) => {
+    if (model === (policy.llmModel ?? "")) return; // unchanged from the saved value -> no write
+    const patch = {
+      llmModel: model,
+      ...reasoningPatchFor([model, redTeamModel || model], localReasoningEffort ?? policy.llmReasoningEffort)
+    };
+    setLocalProposerModel(model);
+    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+      onError: () => setLocalProposerModel(prev),
+      errorTitle: "Proposer not saved"
+    });
+  };
+  const commitRedTeamModel = (model: string, prev: string) => {
+    if (model === (policy.redTeamLlmModel ?? "")) return; // unchanged from the saved value -> no write
+    const patch = {
+      // "" (blank = same as proposer) -> null: the policy route strips nulls back to absent,
+      // which is how this optional field is actually cleared (an empty string is rejected).
+      redTeamLlmModel: model || null,
+      ...reasoningPatchFor([proposerModel, model || proposerModel], localReasoningEffort ?? policy.llmReasoningEffort)
+    };
+    setLocalRedTeamModel(model);
+    autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
+      onError: () => setLocalRedTeamModel(prev),
+      errorTitle: "Reviewer not saved"
+    });
+  };
+  const commitReasoningEffort = (effort: LlmReasoningEffort) => {
+    const prev = localReasoningEffort ?? policy.llmReasoningEffort;
+    setLocalReasoningEffort(effort);
+    autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }).then(() => refresh()), {
+      onError: () => setLocalReasoningEffort(prev ?? null),
+      errorTitle: "Reasoning effort not saved"
+    });
+  };
+
+  // Scoring weights: one factor per blur, skip the write if unchanged from the saved value.
+  const commitWeight = (key: keyof ScoringWeights, next: number, saved: number) => {
+    if (next === saved) return;
+    autoSaveWeights.save(() => savePolicy({ scoringWeights: { [key]: next } }).then(() => refresh()), {
+      onError: () => setWeightsOverlay((d) => ({ ...d, [key]: saved }))
+    });
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Strategy</h1>
         <Chip tone={reality.tone}>
@@ -245,75 +379,69 @@ export default function StrategyPage() {
       </div>
 
       {/* Prompt */}
-      <Card
-        title="The strategist's written instructions"
-        action={
-          promptDirty ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setPromptDraft(null)}>
-                Discard
-              </Btn>
-              <Btn variant="primary" size="sm" disabled={busy !== null} onClick={() => void save("Prompt", { strategyPrompt: promptDraft }, () => setPromptDraft(null))}>
-                {busy === "Prompt" ? "Saving…" : "Save prompt"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="The strategist's written instructions" action={<SaveStatus status={autoSavePrompt.status} />}>
         <p className="mb-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           Free-text brief the proposer LLM runs under: objective, selection logic, sell rules, sizing guidance, output
           contract. The deterministic policy gate still constrains everything it proposes.
         </p>
-        <TextArea rows={16} value={prompt} onChange={(e) => setPromptDraft(e.target.value)} spellCheck={false} />
+        <TextArea
+          rows={16}
+          value={prompt}
+          onChange={(e) => setPromptDraft(e.target.value)}
+          onBlur={commitPrompt}
+          spellCheck={false}
+          title="Saves when you click away."
+        />
       </Card>
 
       {/* Models */}
-      <Card
-        title="Models"
-        action={
-          modelDraft ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setModelDraft(null)}>
-                Discard
-              </Btn>
-              <Btn
-                variant="primary"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => {
-                  if (!modelDraft) return;
-                  const body = reasoningControl && reasoningValue ? { ...modelDraft, llmReasoningEffort: reasoningValue } : modelDraft;
-                  void save("Models", body, () => setModelDraft(null));
-                }}
-              >
-                {busy === "Models" ? "Saving…" : "Save models"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="Models" action={<SaveStatus status={autoSaveModels.status} />}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer model" hint="The bull-side strategist." htmlFor="llm-model">
-            <ModelSelect
-              id="llm-model"
-              value={proposerModel}
-              role="proposer"
-              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), llmModel: model }))}
-            />
+          <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <ModelSelect
+                  id="llm-model"
+                  value={proposerModel}
+                  role="proposer"
+                  disabled={autoSaveModels.saving}
+                  onPick={(model) => commitProposerModel(model, proposerModel)}
+                  onCustomTextChange={(text) => setLocalProposerModel(text)}
+                  onCustomTextBlur={() => {
+                    const typed = (localProposerModel ?? "").trim();
+                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                    commitProposerModel(typed, policy.llmModel ?? "");
+                  }}
+                />
+              </div>
+              <ModelStatsButton role="proposer" />
+            </div>
           </Field>
           <Field
-            label="Red-team model"
-            hint="The bear-side reviewer that tries to kill high-conviction ideas. Blank = same as proposer."
+            label="Reviewer"
+            hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
-            <ModelSelect
-              id="rt-model"
-              value={redTeamModel}
-              allowBlank
-              blankLabel="Same As Proposer"
-              role="red-team"
-              onChange={(model) => setModelDraft((d) => ({ ...(d ?? {}), redTeamLlmModel: model }))}
-            />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <ModelSelect
+                  id="rt-model"
+                  value={redTeamModel}
+                  allowBlank
+                  blankLabel="Same As Proposer"
+                  role="red-team"
+                  disabled={autoSaveModels.saving}
+                  onPick={(model) => commitRedTeamModel(model, redTeamModel)}
+                  onCustomTextChange={(text) => setLocalRedTeamModel(text)}
+                  onCustomTextBlur={() => {
+                    const typed = (localRedTeamModel ?? "").trim();
+                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                    commitRedTeamModel(typed, policy.redTeamLlmModel ?? "");
+                  }}
+                />
+              </div>
+              <ModelStatsButton role="red-team" />
+            </div>
           </Field>
         </div>
         {showCustomModelWarning && (
@@ -326,8 +454,15 @@ export default function StrategyPage() {
             </div>
           </div>
         )}
+        {rotationSelected && (
+          <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+            Rotation: each run picks the next curated model whose provider key resolves (round-robin per account,
+            audited). Every proposal records the concrete model that wrote it, so per-model history accrues
+            automatically. Intended for paper/test accounts.
+          </div>
+        )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Proposer: {modelProviderLabel(proposerModel)}. Red Team: {modelProviderLabel(effectiveRedTeamModel)}.
+          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(effectiveRedTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
@@ -341,7 +476,8 @@ export default function StrategyPage() {
               <Select
                 id="effort"
                 value={reasoningValue}
-                onChange={(e) => setModelDraft((d) => ({ ...(d ?? {}), llmReasoningEffort: e.target.value as LlmReasoningEffort }))}
+                disabled={autoSaveModels.saving}
+                onChange={(e) => commitReasoningEffort(e.target.value as LlmReasoningEffort)}
               >
                 {reasoningControl.options.map((option) => (
                   <option key={option.value} value={option.value} title={option.hint}>
@@ -355,42 +491,43 @@ export default function StrategyPage() {
       </Card>
 
       {/* Scoring weights */}
-      <Card
-        title="Scoring-factor weights"
-        action={
-          weightsDraft ? (
-            <div className="flex gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => setWeightsDraft(null)}>
-                Discard
-              </Btn>
-              <Btn
-                variant="primary"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => void save("Weights", { scoringWeights: weightsDraft }, () => setWeightsDraft(null))}
-              >
-                {busy === "Weights" ? "Saving…" : "Save weights"}
-              </Btn>
-            </div>
-          ) : undefined
-        }
-      >
+      <Card title="Scoring-factor weights" action={<SaveStatus status={autoSaveWeights.status} />}>
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           The market scan ranks candidates by these eight factors before the strategist ever sees them. Defaults shown
-          under each field.
+          under each field. Weights are relative — raising one factor increases its share of the score and lowers the
+          others&apos;; only the ratios between factors matter, not the absolute numbers.
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {WEIGHT_KEYS.map((key) => {
-            const current = weightsDraft?.[key] ?? policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const saved = policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const current = weightsOverlay[key] ?? saved;
+            const meta = FACTOR_META[key] ?? { name: key, tip: "A scoring factor used to rank market-scan candidates." };
             return (
-              <Field key={key} label={key} hint={`default ${DEFAULT_WEIGHTS[key]}`} htmlFor={`w-${key}`}>
+              <Field
+                key={key}
+                label={
+                  <Tooltip content={meta.tip}>
+                    <span className="inline-flex cursor-default items-center gap-1">
+                      {meta.name}
+                      <span aria-hidden className="text-[color:var(--con-faint)]">
+                        ⓘ
+                      </span>
+                      <span className="sr-only">{meta.tip}</span>
+                    </span>
+                  </Tooltip>
+                }
+                hint={`default ${DEFAULT_WEIGHTS[key]}`}
+                htmlFor={`w-${key}`}
+              >
                 <RawNumInput
                   id={`w-${key}`}
                   step="0.1"
                   min="0"
                   value={String(current)}
                   emptyValue={DEFAULT_WEIGHTS[key]}
-                  onValueChange={(parsed) => setWeightsDraft((d) => ({ ...(d ?? {}), [key]: parsed }))}
+                  title="Saves when you click away."
+                  onValueChange={(parsed) => setWeightsOverlay((d) => ({ ...d, [key]: parsed }))}
+                  onBlur={() => commitWeight(key, current, saved)}
                 />
               </Field>
             );
@@ -584,8 +721,12 @@ function AiReviewPanel({
   const [typed, setTyped] = useState("");
   useUnsavedChanges(review !== null);
 
-  const inheritedReviewerModel = policy.redTeamLlmModel || policy.llmModel || "";
-  const inheritedReviewerLabel = policy.redTeamLlmModel ? "Red Team" : "Green Team";
+  // The rotation sentinel is not a callable model — when a rotating seat would be inherited,
+  // fall through to the next concrete choice (AI review runs once, outside the per-run rotation).
+  const inheritedReviewerModel =
+    [policy.redTeamLlmModel, policy.llmModel].find((m) => m && m !== ROTATE_ALL_MODELS_ID) || "";
+  const inheritedReviewerLabel =
+    policy.redTeamLlmModel && policy.redTeamLlmModel !== ROTATE_ALL_MODELS_ID ? "Reviewer" : "Proposer";
   const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
   const reviewerReasoningValue = reviewerReasoningControl
@@ -649,7 +790,7 @@ function AiReviewPanel({
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        A reviewer model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
+        A strategist model reads this account&apos;s recent performance, missed opportunities, factor evidence, and the
         market backdrop, then proposes prompt/weight/guardrail changes. Nothing is applied until you review the exact
         diff and commit it — the same rules as editing by hand, including a typed word for LIVE authority expansion.
       </p>
@@ -658,7 +799,7 @@ function AiReviewPanel({
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-64">
             <Field
-              label="Reviewer model"
+              label="Strategist"
               hint={`Blank = same as ${inheritedReviewerLabel}. AI Review has no separate account-level model.`}
               htmlFor="ai-review-model"
             >

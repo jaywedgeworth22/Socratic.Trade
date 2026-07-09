@@ -22,6 +22,7 @@ import {
   type EnrichmentContext,
   type SymbolEnrichment
 } from "../src/lib/data-providers";
+import { getServiceHealthLog } from "../src/lib/db-health";
 
 // Each test file gets its own isolated SQLite db so db module singleton state
 // (user API keys, consent records) does not leak between test files.
@@ -31,6 +32,10 @@ beforeAll(() => {
   // circuit breaker (default ON) would otherwise trip a lane mid-file (the temp health log accumulates
   // failures across tests) and skip those follow-up calls. The breaker has its own dedicated test.
   process.env.API_CIRCUIT_BREAKER_DISABLED = "1";
+  // These tests don't exercise real provider pacing (that lives in provider-rate-limit.test.ts) —
+  // without this, Finnhub/Alpha Vantage/Yahoo calls here would inherit real-world spacing (real
+  // 400ms-1.2s waits per request) since the pacer is unaware it's under test.
+  process.env.PROVIDER_RATE_LIMIT_DISABLED = "1";
 });
 
 describe("market enrichment provider", () => {
@@ -244,6 +249,129 @@ describe("enrichment cache consent gate", () => {
     const resB = await providerB.enrich(["AAPL"]);
     // env-key provider reads shared scope — userA's private entry is not visible there
     expect(resB.AAPL?.companyName).toBeUndefined();
+  });
+
+  it("TwelveData caps a call to the free-tier credit budget and defers the rest (no 120-symbol 429 burst)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "8";
+
+    const queriedSymbolCounts: number[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      queriedSymbolCounts.push(syms.length);
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "100", volume: "1000" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const symbols = Array.from({ length: 20 }, (_, i) => `SYM${i}`);
+    const provider = new TwelveDataEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const res = await provider.enrich(symbols);
+
+    // Exactly ONE call, carrying at most the credit budget (8) symbols — never the full 20 (which
+    // would cost 20 credits at once and 429 on the 8-credit/min free tier).
+    expect(queriedSymbolCounts).toHaveLength(1);
+    expect(queriedSymbolCounts[0]).toBeLessThanOrEqual(8);
+    // Every input symbol still appears in the result: queried ones enriched, deferred ones best-effort {}.
+    for (const s of symbols) expect(res[s]).toBeDefined();
+    expect(res.SYM0?.price).toBe(100); // a queried (highest-priority) symbol got real data
+
+    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
+    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+  });
+
+  it("TwelveData window-gate SKIPS (does not queue) a second SAME-credential scan inside the window", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let fetchCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCalls++;
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "50" };
+      return new Response(JSON.stringify(body));
+    });
+
+    // Two accounts sharing the SAME operator key scan inside the same minute: only the FIRST spends
+    // the budget; the second returns best-effort immediately (no second network call, no stall/queue).
+    const sharedKey = `env-key-${randomUUID()}`;
+    const a = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
+    const b = new TwelveDataEnrichmentProvider(sharedKey, "env", `u-${randomUUID()}`);
+    const resA = await a.enrich(["AAA", "BBB"]);
+    const resB = await b.enrich(["CCC", "DDD"]);
+
+    expect(fetchCalls).toBe(1); // second scan skipped the network entirely
+    expect(resA.AAA?.price).toBe(50); // first scan got real data
+    expect(resB.CCC).toEqual({}); // second scan deferred (best-effort empty), not a hang
+    expect(resB.DDD).toEqual({});
+  });
+
+  it("TwelveData window is PER-CREDENTIAL: a different key is not gated by another key's window", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let fetchCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      fetchCalls++;
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) body[s] = { symbol: s, close: "77" };
+      return new Response(JSON.stringify(body));
+    });
+
+    // Two DIFFERENT keys (e.g. a per-user stored key vs the operator env key) have independent
+    // upstream quotas, so the second must NOT be gated by the first's window — both call.
+    const a = new TwelveDataEnrichmentProvider(`key-a-${randomUUID()}`, "env");
+    const b = new TwelveDataEnrichmentProvider(`key-b-${randomUUID()}`, "user", `u-${randomUUID()}`);
+    const resA = await a.enrich(["AAA"]);
+    const resB = await b.enrich(["BBB"]);
+
+    expect(fetchCalls).toBe(2); // independent credential lanes each got their call
+    expect(resA.AAA?.price).toBe(77);
+    expect(resB.BBB?.price).toBe(77);
+  });
+
+  it("TwelveData negative-caches a no-data symbol so it rotates out of misses (doesn't starve others)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    const queried: string[][] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      queried.push(syms);
+      const body: Record<string, unknown> = {};
+      // NODATA returns an error row (no usable fields); the others return a real quote.
+      for (const s of syms) body[s] = s === "NODATA" ? { code: 400, status: "error", message: "no data" } : { symbol: s, close: "10" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    // Budget of 1 symbol/call so NODATA (front of misses) would otherwise be queried every scan.
+    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "1";
+
+    const p1 = new TwelveDataEnrichmentProvider(key, "env");
+    await p1.enrich(["NODATA", "GOOD"]); // scan 1 queries NODATA (front), gets error → negative-cached
+    __resetTwelveDataWindowForTests(); // simulate the credit window elapsing before the next scan
+    const p2 = new TwelveDataEnrichmentProvider(key, "env");
+    await p2.enrich(["NODATA", "GOOD"]); // scan 2: NODATA is negative-cached (a hit), so GOOD gets the budget
+
+    expect(queried[0]).toEqual(["NODATA"]); // scan 1 spent its 1-symbol budget on the front symbol
+    expect(queried[1]).toEqual(["GOOD"]);   // scan 2 rotated past the negative-cached NODATA to GOOD
+
+    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
+    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
@@ -590,6 +718,35 @@ describe("Alpha Vantage Warning Detection", () => {
     expect(fetchCount).toBe(1);
   });
 
+  // Composite review (e): Alpha Vantage's quota/error text has been observed echoing the
+  // caller's own API key (e.g. referencing the request URL). That text is stored verbatim in
+  // api_health_log and surfaced through connections-health/the ops snapshot — a real secret
+  // leak if not scrubbed before logging.
+  it("scrubs the caller's own API key out of the warning/error text before it reaches api_health_log", async () => {
+    const { AlphaVantageEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    const secretKey = "SUPER_SECRET_AV_KEY_123";
+    vi.stubGlobal("fetch", async () => {
+      return new Response(JSON.stringify({
+        Note: `Thank you for using Alpha Vantage! Please visit https://www.alphavantage.co/premium/?apikey=${secretKey} for a higher rate limit.`
+      }));
+    });
+
+    const provider = new AlphaVantageEnrichmentProvider(secretKey);
+    const res = await provider.enrich(["AAPL"]);
+    expect(res.AAPL).toEqual({});
+
+    const rows = getServiceHealthLog("alpha-vantage", 5);
+    expect(rows.length).toBeGreaterThan(0);
+    const errorTexts = rows.map((r) => r.error_text).filter((t): t is string => typeof t === "string");
+    expect(errorTexts.length).toBeGreaterThan(0);
+    for (const text of errorTexts) {
+      expect(text).not.toContain(secretKey);
+    }
+    expect(errorTexts.some((t) => t.includes("apikey=***"))).toBe(true);
+  });
+
   describe("Fintech Studios / PowerIntell", () => {
     it("adds FintechStudiosEnrichmentProvider to cascade when key is set", async () => {
       process.env.FINTECH_STUDIOS_API_KEY = "test-key-fts";
@@ -657,6 +814,99 @@ describe("Alpha Vantage Warning Detection", () => {
       expect(res2.AAPL).toEqual({});
       expect(fetchCount).toBe(2);
     });
+  });
+});
+
+describe("Yahoo Finance provider — cookie/crumb handshake retry", () => {
+  const originalFinnhubKey = process.env.FINNHUB_API_KEY;
+  const originalFmpKey = process.env.FMP_API_KEY;
+  const originalAlphaVantageKey = process.env.ALPHAVANTAGE_API_KEY;
+
+  beforeEach(() => {
+    delete process.env.FINNHUB_API_KEY;
+    delete process.env.FMP_API_KEY;
+    delete process.env.ALPHAVANTAGE_API_KEY;
+  });
+
+  afterEach(() => {
+    if (originalFinnhubKey) process.env.FINNHUB_API_KEY = originalFinnhubKey;
+    else delete process.env.FINNHUB_API_KEY;
+    if (originalFmpKey) process.env.FMP_API_KEY = originalFmpKey;
+    else delete process.env.FMP_API_KEY;
+    if (originalAlphaVantageKey) process.env.ALPHAVANTAGE_API_KEY = originalAlphaVantageKey;
+    else delete process.env.ALPHAVANTAGE_API_KEY;
+  });
+
+  // Composite review (d): getCreds() used to be all-or-nothing — one failed handshake blanked
+  // Yahoo enrichment for EVERY symbol this run. It now retries once with a short backoff.
+  it("retries the cookie/crumb handshake once after a transient failure, instead of blanking the whole batch", async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    let cookieAttempts = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "https://fc.yahoo.com") {
+        cookieAttempts++;
+        if (cookieAttempts === 1) throw new Error("network blip");
+        return new Response(null, { status: 200, headers: { "set-cookie": "A=1; Path=/" } });
+      }
+      if (url.startsWith("https://query1.finance.yahoo.com/v1/test/getcrumb")) {
+        return new Response("test-crumb", { status: 200 });
+      }
+      if (url.startsWith("https://query1.finance.yahoo.com/v10/finance/quoteSummary/")) {
+        return new Response(
+          JSON.stringify({
+            quoteSummary: {
+              result: [{ summaryDetail: { trailingPE: { raw: 31.4 } }, assetProfile: { sector: "Technology" } }]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    // Not an exact-match: unrelated describe blocks in this file may leave a provider key set
+    // (e.g. FINTECH_STUDIOS_API_KEY) depending on run order — irrelevant to what's under test
+    // here (Yahoo's own handshake retry), and any such extra provider's fetch calls are caught
+    // by CascadingEnrichmentProvider without affecting Yahoo's result.
+    expect(provider.name).toContain("yahoo-finance");
+
+    vi.useFakeTimers();
+    try {
+      const resultPromise = provider.enrich(["AAPL"]);
+      // Let the failed first attempt run, then cross the retry backoff.
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await resultPromise;
+      expect(result.AAPL?.peRatio).toBe(31.4);
+      expect(result.AAPL?.sector).toBe("Technology");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(cookieAttempts).toBe(2); // failed once, retried once, succeeded
+  });
+
+  it("still degrades to empty (never throws) when the retry also fails", async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url === "https://fc.yahoo.com") throw new Error("network down");
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+
+    const provider = getEnrichmentProvider();
+    vi.useFakeTimers();
+    try {
+      const resultPromise = provider.enrich(["AAPL"]);
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await resultPromise;
+      expect(result.AAPL?.peRatio).toBeUndefined();
+      expect(result.AAPL?.sector).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

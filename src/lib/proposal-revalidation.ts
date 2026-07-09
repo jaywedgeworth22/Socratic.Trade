@@ -20,7 +20,7 @@ import { audit, listPendingProposals, markProposalRevalidated, updateProposalSta
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { emitDashboardEvent } from "./events";
 import { interactiveStrategyReasoningEffort, LLM_OUTPUT_TOKEN_CAPS, llmFetch } from "./llm-request";
-import { buildLlmRequestBody, llmAuthHeaders, extractLlmText } from "./llm-call";
+import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { humanizeLlmError } from "./llm-errors";
 import { determineMarketRegime, fetchMacroData } from "./macro";
@@ -278,7 +278,8 @@ export async function revalidatePendingProposals(input: {
         recordLlmUsage({ userId, provider, model, context: "proposal-revalidation", keySource, keyRef, connectedAccountId: policy.connectedAccountId, ...extractLlmUsage(payload) });
         const text = extractLlmText(payload);
         if (!text) return { text: undefined, assessments: [] as RevalidationAssessment[] };
-        const parsed = JSON.parse(text) as { assessments?: RevalidationAssessment[] };
+        // §4.1 defense-in-depth: tolerate a fenced/prose-wrapped reply before parsing.
+        const parsed = JSON.parse(extractJsonPayload(text)) as { assessments?: RevalidationAssessment[] };
         return { text, assessments: parsed.assessments ?? [] };
       }
     );

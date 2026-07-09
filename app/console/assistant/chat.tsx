@@ -406,9 +406,9 @@ export function AssistantChat() {
         {historyState === "failed" && (
           <Tooltip
             content="Only loading old messages failed — sending new ones still works.">
-            (<div
+            <div
               className="rounded-md bg-[color:var(--con-warn-soft)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">Couldn't load the earlier conversation. New messages still work; reload the page to retry.
-                        </div>)
+                        </div>
           </Tooltip>
         )}
         {historyState === "ready" && messages.length === 0 && (

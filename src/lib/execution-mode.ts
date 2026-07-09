@@ -61,7 +61,7 @@ export function deriveExecutionState(policy: ExecutionPolicy, activeAccount?: Ex
       submitsBrokerOrders: true,
       clarification:
         isTestAccount
-          ? "Test Account - Local Mock Paper Account uses local simulated fills. It is not a broker account and cannot reach real money."
+          ? "The Test Account uses simulated fills and cannot reach real money."
           : `${brokerLabel(activeAccount.broker)} Paper is a broker-hosted sandbox account; real capital is not at risk.`
     };
   }

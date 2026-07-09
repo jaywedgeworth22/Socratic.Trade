@@ -12,6 +12,13 @@
 import type { IndexUniverse, OrderType } from "@/lib/types";
 import type { FieldDef } from "../lib/policy-diff";
 
+/** Consistent one-sentence framing for the consequential protection/authority rows below —
+ *  the same guardrails philosophy the two circuit breakers already spelled out in their own
+ *  words (Daily loss stop, Max drawdown stop), applied uniformly so equally-consequential
+ *  settings never read as "safer" or "scarier" than one another based on which one happened
+ *  to get a longer hint. Decision: session lead, UI-audit sweep. */
+const ADVISORY_NOTE = "Advisory: the agent decides and logs everything — adjust or override this at any time.";
+
 export const ESSENTIALS: FieldDef[] = [
   { path: "maxOrderNotional", label: "Max per order", kind: "money", optional: true, looserWhen: "up", hint: "Hard dollar cap on any single order. Blank = no per-order dollar cap (the % of portfolio cap below still applies)." },
   { path: "maxOrderPctOfNav", label: "Max per order (% of portfolio)", kind: "pct", optional: true, looserWhen: "up" },
@@ -20,11 +27,11 @@ export const ESSENTIALS: FieldDef[] = [
   { path: "riskRules.stopLossPct", label: "Stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Sell automatically if a position drops this far. Wider = looser protection." },
   { path: "riskRules.takeProfitPct", label: "Take profit at", kind: "pct", optional: true },
   { path: "riskRules.takeProfitTrimPct", label: "Take-profit trim", kind: "pct", optional: true, hint: "How much of the position to sell when take-profit triggers (100 = full exit)." },
-  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: "Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off." },
-  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: "Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt)." },
+  { path: "riskRules.maxDailyLossNotional", label: "Daily loss stop", kind: "money", optional: true, looserWhen: "up", hint: `Advisory circuit breaker: if the account loses this much in a day, it logs a receipt and tells the agent — which decides how to react (default: advisory, no auto-halt). Set drawdownBreakerAction to close_only/halt for hard enforcement. Blank = off. ${ADVISORY_NOTE}` },
+  { path: "riskRules.maxDrawdownPct", label: "Max drawdown stop", kind: "pct", optional: true, looserWhen: "up", hint: `Advisory circuit breaker on the fall from the account's high-water mark. On breach it logs a receipt and surfaces the drawdown to the agent, which decides (default: advisory, no auto-halt). ${ADVISORY_NOTE}` },
   { path: "runCadenceMinutes", label: "Run every", kind: "minutes" },
-  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on" },
-  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on" }
+  { path: "runDuringExtendedHours", label: "Run during extended hours", kind: "bool", looserWhen: "on", hint: "Allows the system to run scheduled or event-triggered strategy scans during extended hours (pre-market and after-hours)." },
+  { path: "permitExtendedHours", label: "Allow extended-hours orders", kind: "bool", looserWhen: "on", hint: "Permits the agent to place orders configured to fill outside regular market hours." }
 ];
 
 export const SOCRATIC_OVERRIDE: FieldDef[] = [
@@ -39,7 +46,7 @@ export const SOCRATIC_OVERRIDE: FieldDef[] = [
     ],
     looseRank: { off: 0, propose: 1, execute: 2 },
     hint:
-      "Lets Socratic Trade challenge owner-preference gates with a structured thesis. Broker, account, tax-hard, and integrity refusals still block."
+      `Lets Socratic Trade challenge owner-preference gates with a structured thesis. Broker, account, tax-hard, and integrity refusals still block. ${ADVISORY_NOTE}`
   },
   {
     path: "socraticOverrideMaxPctOfNav",
@@ -70,7 +77,7 @@ export const ENTRY_QUALITY: FieldDef[] = [
 
 export const STOPS_PLUMBING: FieldDef[] = [
   { path: "riskRules.trailingStopPct", label: "Trailing stop", kind: "pct", optional: true },
-  { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: "Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime. Turning this OFF is looser.", looserWhen: "off" },
+  { path: "brokerBracketsEnabled", label: "Broker-held brackets", kind: "bool", hint: `Stop/take-profit legs rest at the broker (where supported) so protection survives app downtime. Turning this OFF is looser. ${ADVISORY_NOTE}`, looserWhen: "off" },
   { path: "robinhoodBrokerStops", label: "Robinhood resting stops", kind: "bool", hint: "Opt-in true broker-side stop for live Robinhood positions." },
   { path: "betaScaledStops", label: "Beta-scaled stops", kind: "bool", hint: "Stop distance scaled by the name's beta (clamped 0.5–2.0×)." },
   { path: "atrStops", label: "ATR-based stops", kind: "bool", hint: "Stop distance from the name's own realized daily range instead of a flat %." },
@@ -80,17 +87,17 @@ export const STOPS_PLUMBING: FieldDef[] = [
 ];
 
 export const PANIC_BRAKE: FieldDef[] = [
-  { path: "volPanicBrakeEnabled", label: "Volatility panic brake", kind: "bool", looserWhen: "off", hint: "A rare tail-extreme reading on VIX/VVIX/SKEW flips the system to Exit-only automatically. Turning OFF is looser." },
+  { path: "volPanicBrakeEnabled", label: "Volatility panic brake", kind: "bool", looserWhen: "off", hint: `A rare tail-extreme reading on VIX/VVIX/SKEW flips the system to Exit-only automatically. Turning OFF is looser. ${ADVISORY_NOTE}` },
   { path: "volPanicVixThreshold", label: "VIX threshold", kind: "int", optional: true, looserWhen: "up" },
   { path: "volPanicVvixThreshold", label: "VVIX threshold", kind: "int", optional: true, looserWhen: "up" },
   { path: "volPanicSkewThreshold", label: "SKEW threshold", kind: "int", optional: true, looserWhen: "up" }
 ];
 
 export const SHORTS: FieldDef[] = [
-  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: "Also requires the broker to allow shorting on this account. Every short must carry a short stop-loss." },
+  { path: "shortSellingEnabled", label: "Short selling", kind: "bool", looserWhen: "on", hint: `Also requires the broker to allow shorting on this account. Every short must carry a short stop-loss. ${ADVISORY_NOTE}` },
   { path: "maxShortOrderNotional", label: "Max short order", kind: "money", optional: true, looserWhen: "up" },
   { path: "maxShortExposurePct", label: "Max short exposure (%)", kind: "pct", optional: true, looserWhen: "up" },
-  { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Mandatory for any short — a short without one is rejected." }
+  { path: "riskRules.shortStopLossPct", label: "Short stop-loss", kind: "pct", optional: true, looserWhen: "up", hint: "Defaults to 8%. Every short carries a stop — a short without one is rejected." }
 ];
 
 export const HYGIENE: FieldDef[] = [

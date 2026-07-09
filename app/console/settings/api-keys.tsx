@@ -12,21 +12,26 @@ import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Field, TextInput } from "../ui/primitives";
 import { deleteApiKey, listApiKeys, saveApiKey, type ApiKeyEntry } from "./lib";
 
-const SOURCE_COPY: Record<ApiKeyEntry["source"], { chip: string; title: string; tone: "pos" | "accent" | "muted" }> = {
-  user: {
-    chip: "your key",
-    title: "You stored a key for this service. It always wins over any server-level credential.",
-    tone: "pos"
-  },
-  env: {
-    chip: "server key",
-    title: "No key of your own — the server operator's credential is serving this for you. Add your own to take over.",
-    tone: "accent"
-  },
-  none: {
-    chip: "not set",
-    title: "No key resolves for this service. The features it unlocks stay unavailable until one is added.",
-    tone: "muted"
+const getSourceCopy = (source: ApiKeyEntry["source"], credName: string) => {
+  switch (source) {
+    case "user":
+      return {
+        chip: `your ${credName}`,
+        title: `You stored a ${credName} for this service. It always wins over any server-level credential.`,
+        tone: "pos" as const
+      };
+    case "env":
+      return {
+        chip: `server ${credName}`,
+        title: `No ${credName} of your own — the server operator's credential is serving this for you. Add your own to take over.`,
+        tone: "accent" as const
+      };
+    case "none":
+      return {
+        chip: "not set",
+        title: `No ${credName} resolves for this service. The features it unlocks stay unavailable until one is added.`,
+        tone: "muted" as const
+      };
   }
 };
 
@@ -64,13 +69,14 @@ export function ApiKeysCard() {
 
   const removeKey = async (entry: ApiKeyEntry) => {
     setBusy(entry.service);
+    const credName = entry.credentialName ?? "key";
     try {
       await deleteApiKey(entry.service);
       await load();
       setConfirmingDelete(null);
-      toast.push("pos", `${entry.label} key removed`, "Features it unlocked fall back to the server key if one exists, otherwise turn off.");
+      toast.push("pos", `${entry.label} ${credName} removed`, "Features it unlocked fall back to the server key if one exists, otherwise turn off.");
     } catch (error) {
-      toast.push("neg", "Could not remove key", error instanceof ConsoleApiError ? error.message : String(error));
+      toast.push("neg", `Could not remove ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
     } finally {
       setBusy(null);
     }
@@ -105,7 +111,8 @@ export function ApiKeysCard() {
             </div>
             <div className="flex flex-col divide-y divide-[color:var(--con-line)] rounded-lg border border-[color:var(--con-line)]">
               {list.map((entry) => {
-                const source = SOURCE_COPY[entry.source] ?? SOURCE_COPY.none;
+                const credName = entry.credentialName ?? "key";
+                const source = getSourceCopy(entry.source, credName);
                 const isEditing = editing === entry.service;
                 const isConfirmingDelete = confirmingDelete === entry.service;
                 return (
@@ -151,11 +158,11 @@ export function ApiKeysCard() {
                           }}
                           title={
                             entry.source === "user"
-                              ? "Replace your stored key with a new value. The old one is overwritten server-side."
-                              : "Store your own key for this service."
+                              ? `Replace your stored ${credName} with a new value. The old one is overwritten server-side.`
+                              : `Store your own ${credName} for this service.`
                           }
                         >
-                          {isEditing ? "Close" : entry.source === "user" ? "Replace" : "Add key"}
+                          {isEditing ? "Close" : entry.source === "user" ? "Replace" : `Add ${credName}`}
                         </Btn>
                         {entry.source === "user" && (
                           <Btn
@@ -166,7 +173,7 @@ export function ApiKeysCard() {
                               setConfirmingDelete(isConfirmingDelete ? null : entry.service);
                               setEditing(null);
                             }}
-                            title="Delete your stored key from the server. Falls back to the server key if one exists."
+                            title={`Delete your stored ${credName} from the server. Falls back to the server ${credName} if one exists.`}
                           >
                             Remove
                           </Btn>
@@ -179,10 +186,10 @@ export function ApiKeysCard() {
                     {isConfirmingDelete && (
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--con-neg-border)] bg-[color:var(--con-neg-soft)] p-2.5">
                         <span className="text-[length:var(--con-fs-xs)]">
-                          Remove your {entry.label} key? This can&apos;t be undone — you&apos;d have to paste a new key.
+                          Remove your {entry.label} {credName}? This can&apos;t be undone — you&apos;d have to paste a new {credName}.
                         </span>
                         <div className="flex gap-2">
-                          <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title="Keep the key.">
+                          <Btn size="sm" variant="ghost" onClick={() => setConfirmingDelete(null)} title={`Keep the ${credName}.`}>
                             Cancel
                           </Btn>
                           <Btn
@@ -190,9 +197,9 @@ export function ApiKeysCard() {
                             variant="danger"
                             disabled={busy !== null}
                             onClick={() => void removeKey(entry)}
-                            title="Delete the stored key now."
+                            title={`Delete the stored ${credName} now.`}
                           >
-                            {busy === entry.service ? "Removing…" : "Remove key"}
+                            {busy === entry.service ? "Removing…" : `Remove ${credName}`}
                           </Btn>
                         </div>
                       </div>
@@ -208,9 +215,9 @@ export function ApiKeysCard() {
                             await saveApiKey(entry.service, value, label);
                             await load();
                             setEditing(null);
-                            toast.push("pos", `${entry.label} key saved`, "Stored server-side. It won't be shown again.");
+                            toast.push("pos", `${entry.label} ${credName} saved`, "Stored server-side. It won't be shown again.");
                           } catch (error) {
-                            toast.push("neg", "Could not save key", error instanceof ConsoleApiError ? error.message : String(error));
+                            toast.push("neg", `Could not save ${credName}`, error instanceof ConsoleApiError ? error.message : String(error));
                           } finally {
                             setBusy(null);
                           }
@@ -242,12 +249,14 @@ function KeyEditor({
   const [value, setValue] = useState("");
   const [label, setLabel] = useState(entry.savedLabel ?? "");
 
+  const credName = entry.credentialName ?? "key";
+
   return (
     <div className="mt-2 rounded-lg border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] p-2.5">
       <div className="grid gap-2.5 sm:grid-cols-[1fr_auto]">
         <div className="grid gap-2.5 sm:grid-cols-2">
           <Field
-            label={entry.source === "user" ? "New key (replaces the stored one)" : "Key"}
+            label={entry.source === "user" ? `New ${credName} (replaces the stored one)` : credName.charAt(0).toUpperCase() + credName.slice(1)}
             htmlFor={`key-${entry.service}`}
           >
             <TextInput
@@ -256,7 +265,7 @@ function KeyEditor({
               value={value}
               autoComplete="off"
               spellCheck={false}
-              placeholder="paste the key — sent once, never shown again"
+              placeholder={`paste the ${credName} — sent once, never shown again`}
               onChange={(e) => setValue(e.target.value)}
               title="The secret value from the provider. Stored server-side; this field is the only place it ever appears."
             />
@@ -280,9 +289,9 @@ function KeyEditor({
             variant="primary"
             disabled={busy || value.trim().length === 0}
             onClick={() => void onSave(value.trim(), label)}
-            title="Store this key server-side for your user."
+            title={`Store this ${credName} server-side for your user.`}
           >
-            {busy ? "Saving…" : "Save key"}
+            {busy ? "Saving…" : `Save ${credName}`}
           </Btn>
         </div>
       </div>

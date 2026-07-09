@@ -1,19 +1,24 @@
 import crypto from "crypto";
 import {
+  advanceSyntheticStopGeneration,
   audit,
   claimSyntheticStop,
   dailyExecutionStats,
   deleteSyntheticStop,
   getActiveConnectedAccount,
   insertFillEvent,
+  listPendingBrokerReconciliationFills,
   listSyntheticStops,
+  recordSyntheticStopAttempt,
   revertSyntheticStopClaim,
   upsertSyntheticStop,
   type SyntheticTrailingStop
 } from "./db";
 import { getBrokerGateway } from "./broker";
+import { isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
+import { resolveProtectiveExitRouting } from "./protective-exit-routing";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
@@ -21,16 +26,66 @@ import type { EquityOrder, EquityPosition, ExecutionMode, FillSource, TradePropo
 
 const BAD_TICK_PCT = 0.1; // ignore a single print deviating >10% from the last good price
 
-// Order states that mean a broker order is still RESTING (not filled/canceled/expired/rejected).
-// We list only clearly-live states so a terminal or unknown-status order never makes us skip
-// synthetic protection (bias: when unsure, protect).
-const LIVE_ORDER_STATES = new Set([
-  "new", "accepted", "pending_new", "accepted_for_bidding", "held", "calculated", "partially_filled", "open"
-]);
-
-/** A resting broker-held stop leg (e.g. an Alpaca OCO bracket stop) — a live order whose type is a stop. */
+/**
+ * A resting broker-held stop leg (an Alpaca OCO bracket stop, or a Robinhood broker-held protective
+ * stop) — a live order whose type is a stop. Liveness is the broker-agnostic `isLiveOrderState`
+ * (broker-side.ts), so a Robinhood stop RESTING in queued/confirmed/unconfirmed counts here just
+ * like an Alpaca stop in new/accepted/held. This is what lets the monitor see that a symbol is
+ * ALREADY protected by a broker stop and skip auto-registering a synthetic trailing stop on top of
+ * it — without that, the synthetic could market-sell shares the resting broker stop is also covering
+ * (a double exit).
+ */
 function isLiveBrokerStop(order: EquityOrder): boolean {
-  return /stop/i.test(order.type) && LIVE_ORDER_STATES.has(String(order.state).trim().toLowerCase());
+  return /stop/i.test(order.type) && isLiveOrderState(order.state);
+}
+
+/**
+ * A live open order that EXITS the position — market, limit, or stop; any of them reduces the
+ * position when it executes, so any of them counts as protection. Only recognizing /stop/i-type
+ * orders is what let the 2026-07-08 MU monitor fire again on top of its own resting market sell.
+ * A long exits with a sell; a short exits with a cover, which brokers that infer open/close from
+ * the position (Alpaca) report as a raw "buy".
+ */
+function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "short"): boolean {
+  if (!isLiveOrderState(order.state)) return false;
+  const side = String(order.side).trim().toLowerCase();
+  return positionSide === "long" ? side === "sell" : side === "cover" || side === "buy";
+}
+
+// A 'triggered' stop may only re-arm after this long without any sign of its exit order — long
+// enough that a slow in-flight placement (broker call spanning ticks) or a lagging position/order
+// feed can't race a re-arm into a duplicate exit.
+const REARM_CONFIRM_GRACE_MS = 15 * 60_000;
+
+// Share-count tolerance for coverage comparisons (mirrors the position-size epsilon used below).
+const QTY_EPSILON = 0.000001;
+
+/**
+ * Quantity-aware protection coverage from live exit orders. `coveredQty` sums the REMAINING open
+ * quantity (quantity - filledQuantity, per the stale-limit-orders convention) across live exit
+ * orders for the symbol/side. `unknownQty` is true when any live exit order's remaining quantity is
+ * unknowable (e.g. a notional/dollarAmount order reports no share quantity) — callers must then
+ * treat the position as fully covered, failing toward no-duplicate-sell: those shares are
+ * broker-held, and a second sell of them would be rejected anyway. A FULL-size resting exit at any
+ * price correctly blocks firing for the same reason — the stale-limit-order notifier is the surface
+ * that flags a far-from-market full-size limit, not a duplicate market sell from here.
+ */
+function liveExitOrderCoverage(
+  orders: EquityOrder[],
+  symbol: string,
+  positionSide: "long" | "short"
+): { coveredQty: number; unknownQty: boolean } {
+  let coveredQty = 0;
+  let unknownQty = false;
+  for (const order of orders) {
+    if (normalizeSymbol(order.symbol) !== symbol || !isLiveExitOrder(order, positionSide)) continue;
+    if (typeof order.quantity !== "number" || !Number.isFinite(order.quantity) || order.quantity <= 0) {
+      unknownQty = true;
+      continue;
+    }
+    coveredQty += Math.max(order.quantity - (order.filledQuantity ?? 0), 0);
+  }
+  return { coveredQty, unknownQty };
 }
 
 export interface StopEvaluation {
@@ -111,18 +166,87 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // Keyed off ACTUAL resting orders (not policy inference) so a position is never left unprotected —
   // if listing orders fails or no live broker stop exists, the synthetic still registers below.
   let brokerStopSymbols = new Set<string>();
+  let brokerOrders: EquityOrder[] = [];
+  let brokerOrdersListed = false;
   try {
-    const openOrders = await gateway.getEquityOrders(accountNumber);
-    brokerStopSymbols = new Set(openOrders.filter(isLiveBrokerStop).map((o) => normalizeSymbol(o.symbol)));
+    brokerOrders = await gateway.getEquityOrders(accountNumber);
+    brokerOrdersListed = true;
+    brokerStopSymbols = new Set(brokerOrders.filter(isLiveBrokerStop).map((o) => normalizeSymbol(o.symbol)));
   } catch {
     // Can't list orders — fall back to registering synthetic stops (protection over dedup).
   }
+  // Quantity-BLIND presence check — used only by the confirmed-terminal gate, where ANY live exit
+  // order (even a partial trim) must block a generation advance: while anything for the symbol is
+  // still working we cannot positively rule the prior attempt dead. Registration and firing use the
+  // quantity-AWARE liveExitOrderCoverage instead, so a 10-of-100-share trim can't leave the other
+  // 90 shares unprotected forever.
+  const hasAnyLiveExitOrder = (symbol: string, positionSide: "long" | "short"): boolean =>
+    brokerOrders.some((o) => normalizeSymbol(o.symbol) === symbol && isLiveExitOrder(o, positionSide));
+  const isLiveState = (state: string): boolean => isLiveOrderState(state);
 
-  // Purge stops whose position has closed (size hit 0).
-  for (const stop of listSyntheticStops(accountNumber, userId)) {
+  // Synthetic protective exits whose outcome hasn't been reconciled yet (booked pending at
+  // placement, finalized by reconcilePendingFills from broker truth). While one is pending for a
+  // symbol, that exit may still have executed — never treat the attempt as dead.
+  const pendingExitSymbols = new Set(
+    listPendingBrokerReconciliationFills(accountNumber, userId)
+      .filter((f) => Boolean((f.raw as Record<string, unknown> | undefined)?.syntheticStop))
+      .map((f) => normalizeSymbol(f.symbol))
+  );
+
+  /**
+   * POSITIVE confirmation that the prior protective-exit attempt's order is dead — the ONLY state in
+   * which fire_generation may advance (rolling the client_order_id forward is safe exactly when the
+   * old id's order can no longer execute). Layered, and ambiguity always fails to `false`:
+   *  - the broker's order list was successfully fetched THIS tick (a failed fetch proves nothing);
+   *  - it shows NO live exit order for the symbol (any working exit blocks — quantity-blind);
+   *  - the recorded last_attempt_ref_id (if any) appears in no live-state order, matched by
+   *    client_order_id directly so it can't hide behind symbol/side parsing;
+   *  - no synthetic-exit fill for the symbol is still pending reconciliation;
+   *  - (re-arm pass only) the row is older than the 15-min grace, so a slow in-flight placement
+   *    spanning ticks can't race a re-arm. The grace is keyed off updated_at, which for ACTIVE rows
+   *    is refreshed by the per-tick extreme persistence — so the fire path must not require it, or a
+   *    reverted-after-throw stop could never roll its id forward (the permanent-422 loop again).
+   */
+  const confirmedPriorExitDead = (stop: SyntheticTrailingStop, requireGrace: boolean): boolean => {
+    if (!brokerOrdersListed) return false;
+    const sym = normalizeSymbol(stop.symbol);
+    if (hasAnyLiveExitOrder(sym, stop.side)) return false;
+    if (stop.lastAttemptRefId && brokerOrders.some((o) => o.clientOrderId === stop.lastAttemptRefId && isLiveState(o.state))) return false;
+    if (pendingExitSymbols.has(sym)) return false;
+    if (requireGrace && Date.now() - Date.parse(stop.updatedAt) < REARM_CONFIRM_GRACE_MS) return false;
+    return true;
+  };
+
+  // Purge stops whose position has closed (size hit 0) — including 'triggered' ones, whose exit
+  // order has by then done its job. A lingering triggered row would otherwise block auto-registering
+  // a fresh stop if the symbol is re-entered later.
+  for (const stop of [...listSyntheticStops(accountNumber, userId), ...listSyntheticStops(accountNumber, userId, "triggered")]) {
     if (!liveSymbols.has(stop.symbol.toUpperCase())) {
       deleteSyntheticStop(stop.id, userId);
       result.purged++;
+    }
+  }
+
+  // Re-arm 'triggered' stops whose protective exit order is confirmed dead while the position is
+  // still open (canceled/expired/rejected without closing it — or terminal after only a partial).
+  // Confirmation is the strict layered check above (order list visible, no live exit order, the
+  // recorded client_order_id in no live state, nothing pending reconciliation, 15-min grace).
+  // Anything short of that leaves the stop 'triggered' — never re-fire on top of an exit that may
+  // still execute. On confirmation the generation advances (this is the positive-confirmation
+  // moment), so the next fire places under a fresh "-g<n>" client_order_id instead of 422-colliding
+  // with the dead order's id forever.
+  if (brokerOrdersListed) {
+    for (const stop of listSyntheticStops(accountNumber, userId, "triggered")) {
+      if (!liveSymbols.has(normalizeSymbol(stop.symbol))) continue; // position closed — purged above
+      if (!confirmedPriorExitDead(stop, true)) continue;
+      advanceSyntheticStopGeneration(stop.id, userId);
+      revertSyntheticStopClaim(stop.id, userId);
+      audit("synthetic_stop_rearmed", {
+        symbol: stop.symbol,
+        side: stop.side,
+        fireGeneration: stop.fireGeneration + 1,
+        note: "protective exit order confirmed terminal with the position still open — trailing protection restored"
+      }, userId);
     }
   }
 
@@ -139,13 +263,27 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // selling is enabled) trail from a low-watermark and exit with a cover.
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
   if (trailPct > 0) {
-    const existing = new Set(listSyntheticStops(accountNumber, userId).map((s) => s.symbol.toUpperCase()));
+    // "Already protected" includes TRIGGERED stops: a triggered stop's exit order may still be
+    // resting at the broker (e.g. a market sell placed after hours). Re-registering over it flipped
+    // the row back to 'active' and re-fired the same stop every tick all night (MU, 2026-07-08).
+    const existing = new Set(
+      [...listSyntheticStops(accountNumber, userId), ...listSyntheticStops(accountNumber, userId, "triggered")]
+        .map((s) => s.symbol.toUpperCase())
+    );
     for (const pos of positions) {
       const sym = normalizeSymbol(pos.symbol);
       // Skip symbols already covered by a broker-held stop — the broker bracket is the exit path there.
       if (Math.abs(pos.quantity) <= 0.000001 || existing.has(sym) || brokerStopSymbols.has(sym)) continue;
       const isShort = pos.quantity < 0;
       if (isShort && !policy.shortSellingEnabled) continue;
+      // Live open exit orders (market/limit/stop) are protection too — but only for the shares they
+      // actually cover. Skip registering ONLY when the whole position is covered (or a live exit
+      // order's quantity is unknowable — then assume full coverage, failing toward no-duplicate-
+      // sell). A partial exit (e.g. a 10-of-100-share GTC take-profit trim) must NOT leave the
+      // remaining shares trailing-stop-less through a crash: the stop registers, and the fire path
+      // below sells only the uncovered remainder. Re-checked every tick.
+      const coverage = liveExitOrderCoverage(brokerOrders, sym, isShort ? "short" : "long");
+      if (coverage.unknownQty || coverage.coveredQty >= Math.abs(pos.quantity) - QTY_EPSILON) continue;
       const mark = pos.marketValue / pos.quantity; // sign-correct for long (+/+) and short (-/-)
       upsertSyntheticStop({
         id: `synstop-${userId}-${accountNumber}-${sym}`,
@@ -181,8 +319,6 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];
     return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
   };
-  const marketHours = policy.allowExtendedHoursSyntheticStops ? "extended_hours" : "regular_hours";
-
   for (const stop of stops) {
     const price = priceFor(stop.symbol);
     result.evaluated++;
@@ -201,19 +337,45 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
 
     // Gated execution: fire the protective market exit (sell a long / cover a short).
     const posQty = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(stop.symbol))?.quantity ?? stop.quantity;
-    const qty = Math.abs(posQty); // order/fill quantity is always a positive magnitude (cover qty for shorts)
-    if (qty <= 0.000001) {
+    const positionQty = Math.abs(posQty); // order/fill quantity is always a positive magnitude (cover qty for shorts)
+    if (positionQty <= QTY_EPSILON) {
       deleteSyntheticStop(stop.id, userId);
       continue;
     }
+    // Quantity-aware double-exit guard: shares already covered by live exit orders are broker-held —
+    // selling them again is a duplicate exit. Fully covered (or any live exit order with unknowable
+    // quantity — assume full coverage, failing toward no-duplicate-sell): skip firing entirely and
+    // leave the stop armed — if that order fills the position closes and the stop purges; if it dies
+    // the stop can fire on a later tick. Partially covered (e.g. a 10-of-100-share GTC trim): fire
+    // for ONLY the uncovered remainder, so the rest of the position isn't left unprotected.
+    const coverage = liveExitOrderCoverage(brokerOrders, normalizeSymbol(stop.symbol), stop.side);
+    if (coverage.unknownQty || coverage.coveredQty >= positionQty - QTY_EPSILON) {
+      audit("synthetic_stop_skipped_resting_exit", {
+        symbol: stop.symbol,
+        positionQty,
+        coveredQty: coverage.coveredQty,
+        unknownOrderQuantity: coverage.unknownQty,
+        note: coverage.unknownQty
+          ? "a live exit order with unknowable quantity rests for this symbol — treated as fully covering, not stacking another protective exit"
+          : "live exit orders already cover the full position — not stacking another protective exit"
+      }, userId);
+      continue;
+    }
+    const qty = Math.min(positionQty, Math.max(positionQty - coverage.coveredQty, 0));
     const exitSide = stop.side === "long" ? "sell" : "cover";
+    // Route the protective exit: a plain market order that queues to the regular open by default, or a
+    // marketable-limit tagged extended_hours when "App stops in extended hours" is on AND we are in the
+    // pre/post session (a market order with extended_hours=true is broker-rejected). `price` is the
+    // triggering quote, used as the limit basis (a sell crosses down, a cover crosses up).
+    const routing = resolveProtectiveExitRouting(policy, exitSide, price);
     const exitProposal: TradeProposal = {
       symbol: normalizeSymbol(stop.symbol),
       side: exitSide,
-      type: "market",
+      type: routing.type,
       quantity: qty,
+      limitPrice: routing.limitPrice,
       timeInForce: "gfd",
-      marketHours,
+      marketHours: routing.marketHours,
       rationale: "Synthetic trailing stop fired from the protective scheduler.",
       tradeThesisTag: "Synthetic Stop",
       entryMarketRegime: "Risk Exit"
@@ -250,29 +412,75 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     }
     // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
     // monitor is still mid-placement (slow broker call spanning the next 60s tick), it already
-    // claimed the stop and this run skips it — so the same protective exit can't fire twice.
+    // claimed the stop and this run skips it — so the same protective exit can't fire twice. The
+    // claim also serializes the generation/refId bookkeeping below against concurrent monitor runs.
     if (!claimSyntheticStop(stop.id, userId)) {
       audit("synthetic_stop_skipped_inflight", { symbol: stop.symbol, note: "already claimed/triggered by a concurrent monitor run" }, userId);
       continue;
     }
-    // Deterministic ref id (stop id + trigger price) so the broker's own client_order_id
-    // dedupe is a second line of defense against a duplicate exit.
-    const refId = `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}`;
+    // Deterministic ref id (stop id + trigger price + fire generation) so the broker's own
+    // client_order_id dedupe stays the LAST-RESORT double-sell guard:
+    //  - A row with NO last_attempt_ref_id has no possibly-live prior order; its id comes from the
+    //    row's fire_generation ("-g<n>" appended only when > 0, so a first-generation fire keeps the
+    //    original unsuffixed id format and dedupe semantics unchanged).
+    //  - A row that still CARRIES last_attempt_ref_id was reverted after an uncertain placement
+    //    (threw after the broker may have accepted — no fill was booked). Only on POSITIVE
+    //    confirmation that that order is dead (the same layered check the re-arm pass uses; no
+    //    time grace here — see confirmedPriorExitDead for why updated_at can't gate active rows)
+    //    does the generation advance and a fresh id get computed. Anything ambiguous — order list
+    //    fetch failed, the old id or any exit order still live, a fill still pending — reuses the
+    //    recorded id VERBATIM, so if the prior order is alive at the broker the retry 422s instead
+    //    of double-selling. Failing safe here is the whole point: a 422 costs a tick; a duplicate
+    //    market sell costs money.
+    // The id is persisted (recordSyntheticStopAttempt) BEFORE the broker call, so even a placement
+    // that throws mid-flight leaves a durable record of the possibly-live order.
+    let generation = stop.fireGeneration;
+    let refId: string | undefined;
+    if (stop.lastAttemptRefId) {
+      if (confirmedPriorExitDead(stop, false)) {
+        advanceSyntheticStopGeneration(stop.id, userId);
+        generation += 1;
+      } else {
+        refId = stop.lastAttemptRefId;
+      }
+    }
+    refId ??= `sstop-${stop.id}-${Math.round(evaln.triggerPrice * 100)}${generation > 0 ? `-g${generation}` : ""}`;
+    recordSyntheticStopAttempt(stop.id, refId, userId);
     try {
       const exec = await gateway.placeEquityOrder({
         accountNumber,
         symbol: stop.symbol,
         side: exitSide,
-        type: "market",
+        type: routing.type,
         quantity: qty,
+        limitPrice: routing.limitPrice,
         timeInForce: "gfd",
-        marketHours,
+        marketHours: routing.marketHours,
         refId
       });
-      // B8: a paper/test protective exit is booked at the raw quote here (no broker reconciliation), so
-      // debit the same execution-cost model the entry path uses — otherwise the losing tail exits cost-free
-      // and overstates realized edge feeding the tuner/sizer. Live exits are unchanged (reconciled later).
-      const exitPrice = applyPaperExitCost(price, exitSide, source);
+      // A non-throwing broker response can still be a synchronous rejection/cancellation (same
+      // trap as the strategy placement paths). No order will ever execute — don't book a fill,
+      // and re-arm the stop so the position isn't left unprotected behind a stuck 'triggered' row.
+      if (isRejectedOrCanceledState(exec.state)) {
+        revertSyntheticStopClaim(stop.id, userId);
+        audit("synthetic_stop_error", { symbol: stop.symbol, error: `Broker declined the protective exit (state: ${exec.state}).`, orderId: exec.orderId }, userId);
+        continue;
+      }
+      // The fill is FINAL only when the broker confirms it filled synchronously (same rule as the
+      // normal exit-placement paths in strategy.ts). Anything still resting — e.g. a market order
+      // placed after hours that sits at the broker until the open — books as pending_reconciliation
+      // at the provisional quote, and reconcilePendingFills finalizes the real price/qty/time from
+      // the broker (brokerOrderId is the match key). Booking 'filled' at the placement-time quote
+      // fabricated the realized P&L on the 2026-07-08 overnight MU exit.
+      const filledNow = exec.state === "filled";
+      // B8: a synchronously-filled paper/test protective exit is booked at the raw quote (no broker
+      // reconciliation will follow), so debit the same execution-cost model the entry path uses —
+      // otherwise the losing tail exits cost-free and overstates realized edge feeding the tuner/
+      // sizer. Live sync fills prefer the broker's own average price; resting orders book the raw
+      // quote provisionally and get the real fill price at reconciliation.
+      const exitPrice = filledNow
+        ? (source === "live" ? exec.averagePrice ?? price : applyPaperExitCost(price, exitSide, source))
+        : price;
       insertFillEvent({
         userId,
         accountNumber,
@@ -283,11 +491,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         quantity: qty,
         price: exitPrice,
         notional: qty * exitPrice,
-        // Live exits are provisional at the quote price; reconcilePendingFills books the
-        // real fill price/qty from the broker (brokerOrderId is the match key). Booking
-        // 'filled' at the quote understates slippage at the worst possible moment. Paper/
-        // test fills have no reconciliation, so they're final.
-        status: source === "live" ? "pending_reconciliation" : "filled",
+        status: filledNow ? "filled" : "pending_reconciliation",
         brokerOrderId: exec.orderId,
         raw: { syntheticStop: true, triggerPrice: evaln.triggerPrice }
       });
@@ -300,7 +504,10 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId);
     } catch (err) {
       // Placement failed/uncertain — re-arm the stop so a later tick can retry rather than
-      // leaving the position unprotected behind a stuck 'triggered' row.
+      // leaving the position unprotected behind a stuck 'triggered' row. The revert deliberately
+      // KEEPS last_attempt_ref_id (and never touches fire_generation): the broker may have accepted
+      // this order before the call threw, and remembering its client_order_id is what lets the
+      // retry reuse the same id (422-safe) until that order is positively confirmed dead.
       revertSyntheticStopClaim(stop.id, userId);
       audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId);
     }

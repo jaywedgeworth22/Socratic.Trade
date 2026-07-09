@@ -3,7 +3,7 @@
 /** Modal sheet: centered dialog on desktop, bottom sheet on mobile.
  *  `tone="live"` adds the real-money border treatment. */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../lib/format";
 
@@ -46,16 +46,22 @@ export function Sheet({
   onClose,
   title,
   tone,
+  wide,
   children
 }: {
   open: boolean;
   onClose: () => void;
   title?: ReactNode;
   tone?: "live";
+  /** Widens the desktop dialog (920px vs the default 560px) for content that
+   *  needs more horizontal room, e.g. a multi-column table. Mobile bottom
+   *  sheet stays full-width either way. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const headingId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -95,12 +101,20 @@ export function Sheet({
       }
     };
 
+    let isFocusing = false;
     const onFocusIn = (e: FocusEvent) => {
+      if (isFocusing) return;
       const currentSheet = sheetRef.current;
-      if (!currentSheet) return;
+      if (!currentSheet || !currentSheet.isConnected) return;
       if (e.target instanceof Node && currentSheet.contains(e.target)) return;
-      const tabbables = getFocusableElements(currentSheet);
-      focusElement(tabbables[0] ?? currentSheet);
+      
+      isFocusing = true;
+      try {
+        const tabbables = getFocusableElements(currentSheet);
+        focusElement(tabbables[0] ?? currentSheet);
+      } finally {
+        isFocusing = false;
+      }
     };
 
     window.addEventListener("keydown", onKey);
@@ -121,13 +135,14 @@ export function Sheet({
       <div className="con-scrim" onClick={onClose} aria-hidden />
       <div
         ref={sheetRef}
-        className={cx("con-sheet", tone === "live" && "con-sheet-live")}
+        className={cx("con-sheet", wide && "con-sheet-wide", tone === "live" && "con-sheet-live")}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? headingId : undefined}
         tabIndex={-1}
       >
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
-          <h2 className="text-[length:var(--con-fs-md)] font-semibold">{title}</h2>
+          <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">{title}</h2>
           <button
             type="button"
             aria-label="Close"

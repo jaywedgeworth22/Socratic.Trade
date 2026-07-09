@@ -72,7 +72,7 @@ describe("connected accounts route", () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       accountNumber: "TEST",
-      label: "Test Account - Local Mock Paper Account"
+      label: "Test Account"
     });
     expect(getActiveConnectedAccount()).toBeUndefined();
     expect(listConnectedAccounts()).toEqual([
@@ -80,7 +80,7 @@ describe("connected accounts route", () => {
         broker: "test",
         environment: "paper",
         accountNumber: "TEST",
-        label: "Test Account - Local Mock Paper Account",
+        label: "Test Account",
         isActive: false
       })
     ]);

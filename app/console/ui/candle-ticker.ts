@@ -16,6 +16,19 @@ export type Wordmark = {
 export const TICKER_GREENS = ["#0e9358", "#12a565", "#18b271"];
 export const TICKER_REDS = ["#c22648", "#d3365a", "#dd4076"];
 
+/** Measured aspect ratio (width / height) of the "SOCRATIC TRADE" wordmark at
+ *  the shared sample params (700 200px Arial, tracking 10) — i.e. the exact
+ *  value `sampleWordmark("SOCRATIC TRADE").ar` yields at runtime. It is
+ *  hardcoded because the SSR pass and every component's FIRST paint need the
+ *  wordmark's width before any canvas can be rasterized; using the true value
+ *  (not a round guess) means the reserved width never changes when the runtime
+ *  sampler runs, so the logo — and the intro that lands on it — never visibly
+ *  resizes. This MUST equal `sampleWordmark("SOCRATIC TRADE").ar`; if the font
+ *  or wordmark text changes, re-measure (Arial is metric-compatible, so this is
+ *  stable across platforms). Was `13.8`, a ~5% overestimate that made the logo
+ *  width pop narrower on mount — the owner-reported intro size jump. */
+export const WORDMARK_AR = 13.081;
+
 const mulberry32 = (a: number) => () => {
   a |= 0; a = (a + 0x6d2b79f5) | 0;
   let t = Math.imul(a ^ (a >>> 15), 1 | a);

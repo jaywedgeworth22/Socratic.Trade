@@ -23,9 +23,9 @@ export interface RealityInfo {
   mode?: ExecutionMode;
   tone: RealityTone;
   /** The load-bearing word. */
-  word: "NO ACCOUNT" | "TEST ACCOUNT" | "PAPER" | "BROKERAGE";
+  word: "NO ACCOUNT" | "PAPER" | "BROKERAGE";
   /** The load-bearing qualifier next to the word. */
-  phrase: "no account connected" | "Local Mock Paper Account" | "NOT real money" | "connected account";
+  phrase: "no account connected" | "NOT real money" | "connected account";
   /** One-sentence honest clarification. */
   clarification: string;
   account?: ConnectedAccount;
@@ -74,17 +74,10 @@ export function deriveReality(snapshot: DashboardSnapshot): RealityInfo {
 }
 
 /** Reality of a specific account ROW (switcher, connections list), derived from the
- *  account's own `environment` — an account is an account, whatever its broker. */
+ *  account's own `environment` — an account is an account, whatever its broker. The
+ *  Test Account is just a paper account here: it reads "PAPER · NOT real money" like
+ *  any other, rather than getting its own mock-labeled row. */
 export function realityForAccount(account: ConnectedAccount): Pick<RealityInfo, "mode" | "tone" | "word" | "phrase" | "clarification"> {
-  if (account.broker === "test") {
-    return {
-      mode: "broker/paper",
-      tone: "paper",
-      word: "TEST ACCOUNT",
-      phrase: "Local Mock Paper Account",
-      clarification: "Local simulated fills for learning and testing. It is not a broker account and cannot reach real money."
-    };
-  }
   return realityForMode(account.environment === "paper" ? "broker/paper" : "broker/live");
 }
 
@@ -198,10 +191,17 @@ export function deriveProtection(
       ? rules.shortStopLossPct
       : rules.stopLossPct
     : rules.stopLossPct;
-  const trailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
-  const stopPct = trailing ? rules.trailingStopPct : baseStopPct;
-  if (typeof stopPct === "number" && stopPct > 0) {
-    const word = `App ${trailing ? "trailing " : ""}${isShort ? "short " : ""}stop −${stopPct}%`;
+  // A fixed stop and a trailing stop COEXIST — they are not alternatives. The fixed % drives the
+  // proactive risk-exit (and any broker bracket); the trailing % drives the synthetic scheduler-tick
+  // monitor, which runs on top. Naming ONLY the trailing one implied it replaced the fixed stop, so a
+  // held name with both configured looked protected by a single, wider trail. Show whichever apply.
+  const hasFixed = typeof baseStopPct === "number" && baseStopPct > 0;
+  const hasTrailing = !!(rules.trailingStopPct && rules.trailingStopPct > 0);
+  if (hasFixed || hasTrailing) {
+    const parts: string[] = [];
+    if (hasFixed) parts.push(`stop −${baseStopPct}%`);
+    if (hasTrailing) parts.push(`trailing −${rules.trailingStopPct}%`);
+    const word = `App ${isShort ? "short " : ""}${parts.join(" + ")}`;
     if (policy.systemState === "halted") {
       return {
         label: `${word} · paused`,

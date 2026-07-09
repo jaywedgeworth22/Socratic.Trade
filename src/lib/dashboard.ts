@@ -3,11 +3,14 @@ import {
   getActiveStrategyProfile,
   getAutoResumeOnBoot,
   getPolicy,
+  peekPolicy,
   getProposalsByIds,
   getStrategyPrompt,
   latestAuditByKind,
   listAudit,
+  listAuditByKind,
   listNotificationEvents,
+  sweepAutoAcknowledgeNotifications,
   listPendingProposals,
   listRecentProposals,
   listStrategyProfiles,
@@ -23,7 +26,7 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
+import { getPerformanceSummary, getRedTeamEfficacy, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -40,11 +43,12 @@ import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { PrefetchedFills } from "./performance";
-import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
+const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
 
 export interface AccountReadiness {
   ok: boolean;
@@ -204,9 +208,13 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const policy = getPolicy(userId);
   const activeAccount = getActiveConnectedAccount(userId);
   const connectedAccounts = listConnectedAccounts(userId);
+  // Read-only projection: generating a dashboard snapshot must not seed
+  // account_strategy_state. peekPolicy returns the same effective
+  // systemState/strategyAuthority getPolicy would compute on first touch,
+  // without persisting a row (getPolicy writes one for un-seeded accounts).
   const connectedAccountPolicies = Object.fromEntries(
     connectedAccounts.map((account) => {
-      const pol = getPolicy(userId, account.id);
+      const pol = peekPolicy(userId, account.id);
       return [account.id, { systemState: pol.systemState, strategyAuthority: pol.strategyAuthority }];
     })
   );
@@ -375,11 +383,17 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   }
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
+  const redTeamEfficacy = accountNumber ? getDashboardRedTeamEfficacy(userId, policy.connectedAccountId) : undefined;
   const tax = accountNumber
     ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId, prefetchedFills)
     : undefined;
   const profiles = listStrategyProfiles(userId);
   const activeProfile = getActiveStrategyProfile(userId);
+  // Lazy auto-ack sweep: clears alerts whose condition is provably resolved (a pending_approval
+  // whose proposal left "proposed", or a run_failed whose account has since run successfully)
+  // before the snapshot's Attention count is computed. Cheap, bounded, idempotent — see
+  // sweepAutoAcknowledgeNotifications in db-notifications.ts.
+  sweepAutoAcknowledgeNotifications(userId);
   const notifications = listNotificationEvents(userId, 100);
   const latestRunAudit = policy.connectedAccountId
     ? latestAuditByKind("strategy_run", userId, policy.connectedAccountId)
@@ -398,6 +412,29 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const audit = policy.connectedAccountId
     ? listAudit(100, userId, policy.connectedAccountId, true)
     : listAudit(100, userId);
+
+  const advisoryAudits = audit
+    .filter((e) =>
+      [
+        "deterministic_bear_veto",
+        "red_team_veto_overridden",
+        "prompt_injection_suspected",
+        "evidence_age_anomaly"
+      ].includes(e.kind)
+    )
+    .map((e) => ({
+      id: e.id,
+      createdAt: e.createdAt,
+      type: e.kind as NotificationEventType,
+      title: e.kind,
+      status: "sent" as const,
+      payload: e.payload,
+      connectedAccountId: e.connectedAccountId
+    } satisfies NotificationEvent));
+
+  const combinedNotifications = [...notifications, ...advisoryAudits]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 100);
 
   // Unified fills for the feed: merge the pre-fetched live + paper arrays (oldest-first, capped at
   // 500) instead of re-issuing the unfiltered listFillEvents query the feed builder used to trigger.
@@ -425,7 +462,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     addProposalId(asRec(nested.fill).proposalId);
   }
   for (const fill of unifiedFills) addProposalId(fill.proposalId);
-  for (const notification of notifications) {
+  for (const notification of combinedNotifications) {
     const payload = asRec(notification.payload);
     addProposalId(payload.proposalId);
     addProposalId(asRec(payload.fill).proposalId);
@@ -507,7 +544,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   const unifiedFeed = buildUnifiedFeed({
     audit,
-    notifications,
+    notifications: combinedNotifications,
     fills: unifiedFills,
     orders,
     symbolMetaBySymbol,
@@ -518,7 +555,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     id: event.id,
     createdAt: event.createdAt,
     kind: event.kind,
-    payload: null,
+    payload: asRec(event.payload),
     connectedAccountId: event.connectedAccountId
   }));
 
@@ -556,10 +593,11 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     performance,
     thesisScorecard,
     regimeScorecard,
+    redTeamEfficacy,
     tax,
     profiles,
     activeProfile,
-    notifications,
+    notifications: combinedNotifications,
     notificationStatus: {
       configured: Boolean(policy.notificationSettings.webhookUrl?.trim()),
       enabledEvents: policy.notificationSettings.enabledEvents
@@ -584,6 +622,43 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     },
     marketSession: currentMarketSession(),
     macroBoard
+  };
+}
+
+function getDashboardRedTeamEfficacy(userId: string, connectedAccountId?: string) {
+  const efficacy = getRedTeamEfficacy(userId, {
+    auditLimit: RED_TEAM_EFFICACY_AUDIT_LIMIT,
+    connectedAccountId,
+    limit: 12
+  });
+  const redTeamOverrideKeys = new Set<string>();
+  for (const event of listAuditByKind("red_team_veto_overridden", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    redTeamOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  }
+  const appliedOverrideKeys = new Set<string>();
+  for (const event of listAuditByKind("socratic_override_applied", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; conflicts?: unknown } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+    if (!conflicts.some((conflict) => String(conflict).startsWith("red_team_veto:"))) continue;
+    appliedOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  }
+  let appliedOverrideVetoes = 0;
+  for (const key of redTeamOverrideKeys) {
+    if (appliedOverrideKeys.has(key)) appliedOverrideVetoes += 1;
+  }
+  const overrideVetoes = redTeamOverrideKeys.size;
+  const vetoDecisions = efficacy.totalVetoes + overrideVetoes;
+  return {
+    ...efficacy,
+    overrideVetoes,
+    appliedOverrideVetoes,
+    vetoDecisions,
+    overrideSharePct: vetoDecisions > 0 ? Number(((appliedOverrideVetoes / vetoDecisions) * 100).toFixed(1)) : 0
   };
 }
 
