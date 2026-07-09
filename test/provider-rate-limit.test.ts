@@ -367,11 +367,11 @@ describe("queue wait must not consume the caller's request timeout", () => {
 
 describe("secret scrubbing", () => {
   it("redacts apikey=<value> query params regardless of casing", () => {
-    const text = "GET https://example.com/query?function=X&apikey=SUPERSECRET123 failed";
+    const text = "GET https://example.com/query?function=X&apikey=SUPERSECRET123 failed"; // gitleaks:allow
     expect(redactApiKeyParams(text)).toBe("GET https://example.com/query?function=X&apikey=*** failed");
-    expect(redactApiKeyParams("...&ApiKey=abc123&other=1")).toContain("ApiKey=***");
-    expect(redactApiKeyParams("...&token=xyz")).toContain("token=***");
-    expect(redactApiKeyParams("...&access_key=xyz")).toContain("access_key=***");
+    expect(redactApiKeyParams("...&ApiKey=abc123&other=1")).toContain("ApiKey=***"); // gitleaks:allow
+    expect(redactApiKeyParams("...&token=xyz")).toContain("token=***"); // gitleaks:allow
+    expect(redactApiKeyParams("...&access_key=xyz")).toContain("access_key=***"); // gitleaks:allow
   });
 
   it("leaves text with no key-shaped query param untouched", () => {
