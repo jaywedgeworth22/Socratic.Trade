@@ -36,7 +36,7 @@ import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
 import { useToast } from "../ui/toast";
-import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput } from "../ui/primitives";
+import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 
 /** Shipped default weights (src/lib/defaults.ts) — shown as ghost reference. */
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -51,6 +51,44 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
 };
 
 const WEIGHT_KEYS = Object.keys(DEFAULT_WEIGHTS) as Array<keyof ScoringWeights>;
+
+/** Human-readable name + hover explanation for each scoring factor. Display-only —
+ *  does not touch the scoring math in src/lib/scoring.ts (or wherever weights are applied). */
+const FACTOR_META: Record<keyof ScoringWeights, { name: string; tip: string }> = {
+  liquidity: {
+    name: "Liquidity",
+    tip: "How easily you can trade the stock, from recent share volume. More weight favors high-volume names you can enter and exit cleanly, and penalizes thin, illiquid ones."
+  },
+  momentum: {
+    name: "Momentum",
+    tip: "Recent trend strength: intraday move, position within the 52-week range, and technical signals (RSI/MACD/moving averages). More weight favors names that are rising and near their highs."
+  },
+  value: {
+    name: "Value",
+    tip: "Cheapness from P/E and free-cash-flow yield. More weight tilts toward low-multiple, cash-generative names and away from expensive ones."
+  },
+  quality: {
+    name: "Quality",
+    tip: "Financial sturdiness: company size, low debt, and earnings growth. More weight favors large, low-leverage, profitably growing companies."
+  },
+  volatility: {
+    name: "Volatility",
+    tip: "Steadiness, not choppiness — the score is highest for calm, low-beta names. Counter-intuitively, more weight here favors steady stocks and penalizes sharp movers and high-beta risk."
+  },
+  sentiment: {
+    name: "Sentiment",
+    tip: "Aggregate news, analyst, and market sentiment (0–100). More weight favors positively-covered names and discounts negatively-covered ones."
+  },
+  positioning: {
+    name: "Positioning",
+    tip: "Smart-money accumulation: net congressional buying, insider open-market purchases (SEC Form 4), and short-squeeze setups. More weight favors names insiders and Congress are buying."
+  },
+  diversification: {
+    name: "Diversification",
+    tip: "Portfolio fit: a name you don't already hold scores higher than one you do. More weight pushes toward new positions instead of adding to what you already own — it's held-vs-not, not sector spread."
+  }
+};
+
 const CUSTOM_MODEL_OPTION = CUSTOM_MODEL_ID_SEED;
 
 function isCuratedModel(model: string | undefined): boolean {
@@ -409,13 +447,30 @@ export default function StrategyPage() {
       >
         <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
           The market scan ranks candidates by these eight factors before the strategist ever sees them. Defaults shown
-          under each field.
+          under each field. Weights are relative — raising one factor increases its share of the score and lowers the
+          others&apos;; only the ratios between factors matter, not the absolute numbers.
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {WEIGHT_KEYS.map((key) => {
             const current = weightsDraft?.[key] ?? policy.scoringWeights?.[key] ?? DEFAULT_WEIGHTS[key];
+            const meta = FACTOR_META[key] ?? { name: key, tip: "A scoring factor used to rank market-scan candidates." };
             return (
-              <Field key={key} label={key} hint={`default ${DEFAULT_WEIGHTS[key]}`} htmlFor={`w-${key}`}>
+              <Field
+                key={key}
+                label={
+                  <Tooltip content={meta.tip}>
+                    <span className="inline-flex cursor-default items-center gap-1">
+                      {meta.name}
+                      <span aria-hidden className="text-[color:var(--con-faint)]">
+                        ⓘ
+                      </span>
+                      <span className="sr-only">{meta.tip}</span>
+                    </span>
+                  </Tooltip>
+                }
+                hint={`default ${DEFAULT_WEIGHTS[key]}`}
+                htmlFor={`w-${key}`}
+              >
                 <RawNumInput
                   id={`w-${key}`}
                   step="0.1"
