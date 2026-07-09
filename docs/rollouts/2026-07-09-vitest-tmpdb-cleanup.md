@@ -75,6 +75,29 @@ All run in this worktree (`distracted-albattani-dfc422`, fresh `npm ci`):
   running WITHOUT this fix; they'll stop once this lands and sibling worktrees sync.)
 - `npm run build` — clean.
 
+### Landing verification (2026-07-09, CLAUDE — owner-directed usage-cap pickup)
+
+MONET authored and committed this change; CLAUDE landed it under the owner-directed
+usage-cap pickup. Run in the same worktree after merging `origin/main` (clean merge,
+no conflicts):
+
+- `npm run lint` — 0 errors.
+- `npx tsc --noEmit` — clean.
+- `npm test` — 308 files / 3210 tests passed (post-merge count; includes the new
+  `test/api-clients-congress.test.ts` / `test/protective-exit-routing.test.ts` etc.
+  from main).
+- `npm run build` — clean.
+- Meta-irony check (this change redirects vitest tmp usage, so the landing run is
+  itself a test of it): immediately after `npm test`, the real temp dir was checked
+  for `agentic-vitest-*` — none present; the per-run dir was created and torn down as
+  designed. No new loose `agentic-*` DB files from this run either.
+- `docs/EFFORT-LOG.md` resolution note: the branch's copy of the board was a stale
+  snapshot carrying old IN PROGRESS rows for other MONET lanes that `main` already
+  shows as COMPLETED/DEPLOYED (alert triage, intro size-jump #1209, learning review
+  #1116, mobile chrome fixes, etc.). To avoid resurrecting stale duplicates via the
+  union merge driver, the landing commit takes `origin/main`'s board wholesale and
+  annotates ONLY this lane's row — no other lane's row was deleted or altered.
+
 ## Follow-ups
 
 - Sibling agent worktrees pick up the fix on their next `origin/main` sync; until then

@@ -908,96 +908,18 @@ As of 2026-07-08 (assignment-rule update).
   announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
   migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
-  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
-  every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
-  `llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on the fleet Mac
-  before the 2026-07-09 manual cleanup; the disk janitor now reaps them there, but CI and
-  janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
+  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09, PR open via land.sh,
+  auto-merge armed.** MONET's work, landed by CLAUDE under the owner-directed usage-cap pickup
+  (2026-07-09): merged `origin/main` clean, full gate green (lint 0-err / tsc / 308 files 3210
+  tests / build), verified post-run that no `agentic-vitest-*` dir lingers in the real tmpdir.
+  The suite leaks every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/
+  `trading-test-*`/`llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on
+  the fleet Mac before the 2026-07-09 manual cleanup; the disk janitor now reaps them there,
+  but CI and janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
   TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
   `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
   stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
-  test-file edits. PR via land.sh when gate green.
-- **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
-  — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
-  makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
-  auto-merge cant self-heal + land.sh never returns. Fix: `docs/EFFORT-LOG.md merge=union` +
-  `scripts/merge-shepherd.sh` (re-syncs stuck armed PRs, re-runs flaky verify, merges green, digest
-  to a tracking issue) driven by a launchd job (Mac PAT). Only acts on auto-merge-armed PRs.
-  Rollout: `docs/rollouts/2026-07-09-merge-shepherd.md`.
-- **Intro size-jump + loading-text fix (MONET, intro-anim session, branch
-  `monet/intro-size-jump-3676f7`) — IN PROGRESS 2026-07-09.** Owner (prod, both viewports):
-  wordmark still has a sudden SIZE change ~1s after the candles assemble; also remove the
-  "Socratic Trade / Loading the autonomy desk..." text during load. Diagnosis: (a) the real
-  HeaderLogo's canvas starts at width=height*13.8 (magic estimate) then JUMPS to
-  height*wm.ar when its own effect runs -> width-only size change; the `13.8` estimate is
-  used in header-logo.tsx initial width + shell MobileBrandRow, drifting from the real
-  sampler AR; (b) intro-canvas `curHeader` is a per-effect local so a loading->loaded remount
-  snaps the box. Fix: export single-source WORDMARK_AR from candle-ticker, use everywhere;
-  persist curHeader; drop loading text. Fileset: app/console/ui/candle-ticker.ts,
-  app/console/ui/header-logo.tsx, app/console/components/shell.tsx, app/console/components/intro-canvas.tsx.
-- **Roth Gemini 400 TRUE root cause + async Run-once (MONET, branch
-  `monet/roth-gemini-400-runonce-async`) — IN PROGRESS 2026-07-09, gates running, PR via
-  land.sh.** Owner-reported: Run-once popped a raw Cloudflare 524 page; Roth Gemini 400
-  SURVIVED the #1167 schema-dialect fix. Fable forensic hunt (live-endpoint proof matrix, both
-  keys) found the REAL trigger: maxItems:8 (maxProposalsPerRun) x post-#1036 15-property item
-  schema overflows Gemini's structured-output complexity budget — Bear never failed because
-  its schema has no maxItems. Fix: toGeminiJsonSchema strips maxItems/minItems (bound folded
-  into description; app-side sanitizeProposals already truncates) + llm-errors.ts full
-  Google-RPC details capture + de-stutter. Run-once now async (8s sync window -> 202 started;
-  fast pre-flight blocks stay sync) + shared HTML-error shield in console api client.
-  Rollout: docs/rollouts/2026-07-09-roth-gemini-400-runonce-async.md.
-- **Repo AGENTS.md/CLAUDE.md → ANNOUNCE-THEN-DEPLOY reconcile (MONET, branch
-  `monet/deploy-doc-reconcile`) — IN PROGRESS 2026-07-09, landing.** Closes the repo-doc half of the
-  deploy-authorization contradiction the owner ruled on 2026-07-09 (ANNOUNCE-THEN-DEPLOY, codified in
-  AGENT-SYNC.md by the ruling lane). Fixes two stale spots in AGENTS.md: board semantics ("owner-run
-  release step" + "auto-deploys to beta/integration" [previews retired/auto-deploy OFF]) and the
-  prod stanza ("deliberate step" → the announce→window→off-hours→deploy→verify protocol). Doc-only.
-  Rollout: `docs/rollouts/2026-07-09-agents-md-announce-then-deploy-reconcile.md`.
-- **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
-  `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
-  screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
-  unboxed + stacked two-line small on mobile (looked like a second dropdown); (3) profile
-  button 44px tap target on mobile; (4) theme toggle moves INTO the profile menu (off the
-  bar); (5) profile menu becomes a slide-DOWN dropdown under the header (old bottom Sheet
-  was covered by the mobile tab bar -> sign-out unreachable); (6) profile button shows the
-  Google/GitHub avatar (snapshot.currentUser.imageUrl already wired, never rendered); plus
-  STOP button squeeze fix (shrink-0 + centered content). Fileset:
-  app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
-  app/console/console.css.
-- **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
-  logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
-  popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
-  cause: intro can finish against the loading shell and lands on a stale hard-coded fallback
-  box; reveal then has no mounted logo. Fix in `intro-canvas.tsx` only: fallback box now
-  matches the real logo geometry per viewport (<lg = MobileBrandRow formula, >=lg = bar
-  logo), landing box eases to the measured target instead of snapping, natural fade waits
-  for a settled measured target (8s timeout safety; skip stays immediate).
-- **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
-  `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
-  tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
-  adversarial verify): Gemini Bull-schema 400 fixed (llm-call.ts dialect shaping); Robinhood
-  $1-minimum trim loop fixed (order_checks + cooldown receipt + dust-exit exemption); ACTIVE
-  naked-short remediation bug fixed (held-leg exclusion auto+manual, position guard, TOCTOU
-  re-verify, in-flight lock — owner push-notified to cancel resting d642d572 pre-open);
-  ALPHAVANTAGE_API_KEYS pool; acknowledged_at lifecycle + auto-ack sweep + repeat-dedup;
-  twelvedata limiter; bear cooldown; RAG double-alert fix; push em-dash fix; stale-run
-  threshold. Infisical: VECTOR_EMBED_BATCH_DELAY_MS=2000 set (live). Rollout:
-  docs/rollouts/2026-07-09-alert-triage-av-multikey.md.
-- **npm `allowScripts` approval in package.json (MONET, branch `monet/allow-scripts-approval`)
-  — IN PROGRESS 2026-07-08, landing.** In-repo approval of the 7 install-script packages
-  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so install
-  approvals live in-repo (no host `~/.npmrc` tweaks) and stay valid when npm's future default flips to
-  blocking unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still runs install
-  scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash came from host `~/.npmrc`
-  skipping scripts, not npm 11's default. `package.json`-only; no dep/lockfile change.
-  Deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs in Congress.Trade)
-  and a drifted lockfile regen. Verified: `npm ci` clean + `better_sqlite3.node` builds.
-  Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
-- **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
-  2026-07-08, PR #1116 open, auto-merge armed (gate green: tsc/lint/2996 tests/build).** Once-per-UTC-day Fable-class review of learned_context / pending learning
-  decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence
-  lessons (e.g. MU-deadlock blame) get caught; modes annotate (default) / decide (owner opt-in);
-  policy fields learningReviewEnabled/Mode/Model + scheduler hook + settings card + tests.
+  test-file edits. Rollout: `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
   PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
   (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing

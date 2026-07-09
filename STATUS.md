@@ -19,6 +19,10 @@ from the real temp dir (janitor parity; crashed runs self-heal next run). Verifi
 observed landing inside the per-run dir mid-run, dir gone after teardown, zero new loose tmp entries
 across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 tests / build. See
 `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed work): merged
+`origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
+lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
+
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
 while we waited on it). Full Coolify-instance migration: pg_dump + `/data/coolify` (preserves the
