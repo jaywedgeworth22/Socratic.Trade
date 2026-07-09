@@ -3024,11 +3024,22 @@ export function applyDeterministicSizing(
   // to place — the policy review will block it on per-order-cap grounds.
   const brokerMinDollar = brokerMinimumDollarNotional(policy);
   let brokerMinNote = "";
-  if (brokerMinDollar > 0 && targetNotional > 0 && targetNotional < brokerMinDollar) {
-    if (brokerMinDollar <= effectiveOpeningCap) {
-      brokerMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(brokerMinDollar)} to meet ${brokerLabel(policy)}'s minimum dollar-based order size.`;
-      targetNotional = brokerMinDollar;
-    }
+  // Guard on the PRE-rounding source intent, not the post-rounding `targetNotional`. A positive
+  // source size — the LLM-advised notional or the fallback size — that rounded DOWN below the floor
+  // (e.g. an advised $0.22, or any positive fallback under $1) otherwise collapses to $0 and skips
+  // this raise, reaching the broker as a guaranteed reject — the exact zero-notional path this floor
+  // exists to eliminate. Only raise when capacity can actually cover the minimum.
+  const rawSourceNotional = advisedNotional && advisedNotional > 0
+    ? advisedNotional
+    : Math.max(0, fallbackBase) * finalMultiplier;
+  if (
+    brokerMinDollar > 0 &&
+    targetNotional < brokerMinDollar &&
+    (targetNotional > 0 || rawSourceNotional > 0) &&
+    brokerMinDollar <= effectiveOpeningCap
+  ) {
+    brokerMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(brokerMinDollar)} to meet ${brokerLabel(policy)}'s minimum dollar-based order size.`;
+    targetNotional = brokerMinDollar;
   }
 
   // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI

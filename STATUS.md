@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Codex autofix PR #1169: broker-min floor skipped zero-rounded sizes (Claude, `copilot-effort-log-assignment-rules`)
+Codex P2 on the broker minimum dollar-notional floor (`src/lib/strategy.ts`): the raise guarded on
+the POST-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (e.g. an
+LLM-advised `$0.22`, or any positive fallback under `$1`) skipped the floor and returned
+`dollarAmount: 0` — the exact guaranteed-reject path the floor exists to eliminate. Fix guards on the
+PRE-rounding source (`advisedNotional`, or `fallbackBase * finalMultiplier`) and raises to the floor
+when capacity covers the minimum. New regression suite `test/broker-minimum-sizing.test.ts` (4 tests:
+$0.22→$1, $0.9→$1, Alpaca no-floor no-op, capacity-below-floor left small). Gates: tsc clean, sizing
+suites green (43), build green; full `npm test` has pre-existing LLM-credential failures in this VM
+(keys present) unrelated to this change — verified identical on the base tree.
+Rollout: docs/rollouts/2026-07-09-codex-autofix-pr1169-broker-min-floor.md.
+
 ## 2026-07-09 — Alert triage: all ~75 Attention alerts root-caused + fixed; AV key pool; alert lifecycle (MONET, `monet/alert-triage-av-multikey`)
 Owner-directed. 9-agent triage (per alert family + adversarial verify) on the prod DB: 76 of 87
 run_failed = ONE bug (Gemini rejects the Bull schema's type:["number","null"]/anyOf-null — fixed

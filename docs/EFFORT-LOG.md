@@ -756,6 +756,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Codex autofix PR #1169 — broker-minimum floor skipped zero-rounded sizes (CLAUDE, branch
+  `copilot-effort-log-assignment-rules`) — IN PROGRESS 2026-07-09.** Addressed Codex P2 on the
+  broker minimum dollar-notional floor in `applyDeterministicSizing`: the raise guarded on the
+  post-rounding `targetNotional > 0`, so a positive source intent that floored to `$0` (advised
+  `$0.22`, or a positive fallback under `$1`) returned `dollarAmount: 0` (guaranteed reject). Fix
+  guards on the PRE-rounding source and raises to the floor when capacity covers it; new
+  `test/broker-minimum-sizing.test.ts` (4 tests). Gates: tsc clean, sizing suites green, build
+  green (full `npm test` LLM failures pre-existing/credential-driven in the CI VM). Rollout:
+  docs/rollouts/2026-07-09-codex-autofix-pr1169-broker-min-floor.md.
 - **Alert triage (all ~75 Attention alerts) + AV multi-key pool + alert lifecycle (MONET, branch
   `monet/alert-triage-av-multikey`) — IN PROGRESS 2026-07-09, gates green (lint 0/tsc/3077
   tests/build), PR via land.sh.** All 305 7-day prod alerts root-caused (9-agent triage +
