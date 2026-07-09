@@ -240,6 +240,12 @@ export default function GuardrailsPage() {
               {def.path === "maxDailyOrders" && <CapUtilization band={risk.dailyOrders} kind="count" daily />}
             </div>
           ))}
+          {SHORTS.map((def) => (
+            <div key={def.path}>
+              <PolicyFieldRow def={def} policy={policy} draft={draft} />
+              {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
+            </div>
+          ))}
         </div>
       </Card>
 
@@ -290,14 +296,6 @@ export default function GuardrailsPage() {
           <AdvancedGroup title="Volatility panic brake">
             {PANIC_BRAKE.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
-            ))}
-          </AdvancedGroup>
-          <AdvancedGroup title="Short selling">
-            {SHORTS.map((def) => (
-              <div key={def.path}>
-                <PolicyFieldRow def={def} policy={policy} draft={draft} />
-                {def.path === "maxShortExposurePct" && <CapUtilization band={exposure.shortPct} kind="pct" />}
-              </div>
             ))}
           </AdvancedGroup>
           <AdvancedGroup title="Proposal hygiene & pace">

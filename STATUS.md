@@ -8,6 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch `monet/short-stop-default-and-surface`)
+Owner-directed fix for "enabling short selling rejects every short out of the box": the mandatory
+short-stop gate (`policy.ts:433`) had nothing to pass by default since `riskRules.shortStopLossPct`
+was `undefined` unless a user set it. `DEFAULT_RISK_RULES` (`src/lib/defaults.ts`) now sets
+`shortStopLossPct: 8` (mirrors the long `stopLossPct: 8`) — a real default, not a `?? stopLossPct`
+gate fallback, per owner's explicit instruction. Because `mergePolicy` deep-merges `riskRules`
+against `DEFAULT_POLICY.riskRules`, every policy without an override now carries the 8% stop and
+passes the gate; the gate itself is unchanged (still rejects `shortStopLossPct <= 0`). Also moved
+the four `SHORTS` fields (`app/console/guardrails/page.tsx`) from a collapsed
+`<AdvancedGroup title="Short selling">` in the Advanced rulebook card to the bottom of the main
+Essentials card (same `PolicyFieldRow` + `maxShortExposurePct` utilization-meter shape used
+elsewhere), and updated the `shortStopLossPct` field hint (`field-defs.ts`) to say "Defaults to
+8%." instead of reading like an unmet requirement. Sanity-checked with a throwaway script:
+`evaluateTradeProposal` against `{ ...DEFAULT_POLICY, shortSellingEnabled: true }` (no explicit
+`shortStopLossPct`) now approves a well-sized short — no naked-short invariant broken (the gate
+logic is untouched). Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
+
 ## 2026-07-09 — Merge shepherd: auto-land completed background PRs (MONET, `monet/merge-shepherd`)
 Fixes "completed work goes idle & forgotten": every PR edits EFFORT-LOG.md/STATUS.md, so each merge
 turns every other open PR CONFLICTING and native auto-merge can't self-heal — PRs rot. Adds
