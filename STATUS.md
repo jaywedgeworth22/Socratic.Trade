@@ -8,6 +8,15 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Intro→logo handoff: hidden-until-assembled + mobile brand row (MONET, branch `monet/intro-logo-handoff-3676f7`)
+Owner: the header logo must not pre-exist the candles (it was visible while they flew onto it),
+and mobile — where the bar logo is display:none and the intro landed on a phantom box — gets a
+full-width "SOCRATIC TRADE" row above the controls bar (~2x-tall chrome) as the landing target,
+holding ~3s after landing then sliding up/away. New `app/console/ui/intro-bus.ts` phase channel;
+`BrandReveal` + `MobileBrandRow` in shell.tsx; splash lands on the first VISIBLE
+`[data-brand-logo]`. Gate green (lint 0 err / tsc / 2972 tests / build) + live desktop+mobile
+DOM-sampled verification. See `docs/rollouts/2026-07-08-intro-logo-handoff.md`.
+
 ## 2026-07-08 — Tone rename up/down → pos/neg in the ui system (MONET)
 UI-audit finding 1.2, owner-endorsed: one tone vocabulary across both design systems.
 Renamed the ui (glass-token) side to match console — globals.css tokens (--pos/--neg/

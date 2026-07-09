@@ -5,10 +5,13 @@
  *  responsive, any background. Plays once per tab session; skipped for
  *  prefers-reduced-motion. Click to dismiss. The original middle act — assembling a
  *  large centered SOCRATIC / TRADE wordmark before a second flight to the header —
- *  is preserved behind CENTER_WORDMARK_STEP below. */
+ *  is preserved behind CENTER_WORDMARK_STEP below. Phase handoff to the header
+ *  chrome (hide the real logo until the candles assemble it, mobile brand row
+ *  reveal/slide-away) goes through ../ui/intro-bus.ts. */
 
 import { useEffect, useRef, useState } from "react";
 import { sampleCells, buildTickerUnits, TICKER_GREENS, TICKER_REDS } from "../ui/candle-ticker";
+import { setIntroPhase } from "../ui/intro-bus";
 
 type Cell = { nx: number; ntop: number; nh: number };
 type Geo = { x: number; bt: number; bb: number; wt: number; wb: number; bw: number; col?: string; up?: boolean };
@@ -211,7 +214,9 @@ export function ConsoleIntro() {
   useEffect(() => {
     if (introDone) return;
     // deferred so we never call setState synchronously inside the effect body
-    const hide = () => { introDone = true; queueMicrotask(() => setHidden(true)); };
+    // (hide also settles the intro-bus phase: whether the splash finished or
+    // never played, the header may now show the brand logo)
+    const hide = () => { introDone = true; setIntroPhase("done"); queueMicrotask(() => setHidden(true)); };
     let sessionShown = false;
     try { sessionShown = sessionStorage.getItem("st.introShown") === "1"; } catch { /* ignore */ }
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -232,10 +237,13 @@ export function ConsoleIntro() {
     // (e.g. still loading) we fall back to the small computed top-left box.
     let headerBox: { x: number; y: number; w: number; h: number } | null = null;
     const measureHeader = () => {
-      const el = document.querySelector<HTMLElement>("[data-brand-logo]");
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      if (r.width > 2 && r.height > 2) headerBox = { x: r.left, y: r.top, w: r.width, h: r.height };
+      // Several [data-brand-logo] instances can exist (the desktop bar logo is
+      // display:none below lg; the mobile brand row is lg:hidden) — land on the
+      // first VISIBLE one, not just the first in the DOM.
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-brand-logo]"))) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 2 && r.height > 2) { headerBox = { x: r.left, y: r.top, w: r.width, h: r.height }; return; }
+      }
     };
     const resize = () => { VW = window.innerWidth; VH = window.innerHeight; canvas.width = VW * dpr; canvas.height = VH * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); L = model.layout(VW, VH); measureHeader(); };
     resize();
@@ -247,10 +255,16 @@ export function ConsoleIntro() {
       hide();
     };
     const skip = () => { if (!fading) startFade(); };
-    const startFade = () => { fading = true; if (wrap) { wrap.style.opacity = "0"; } fadeTimer = window.setTimeout(finish, 720); };
+    // startFade doubles as the "landed" signal: whether the candles finished
+    // assembling the logo naturally or the user skipped, this is the moment the
+    // real header logo may appear underneath the fading overlay.
+    const startFade = () => { fading = true; setIntroPhase("landed"); if (wrap) { wrap.style.opacity = "0"; } fadeTimer = window.setTimeout(finish, 720); };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" || e.key === "Enter" || e.key === " ") skip(); };
     wrap.addEventListener("click", skip);
     window.addEventListener("keydown", onKey);
+    // The splash is definitely playing: the header hides its brand logo until
+    // the candles assemble it (setIntroPhase("landed") in startFade).
+    setIntroPhase("playing");
 
     let dissolved = false;
     const loop = (now: number) => {
