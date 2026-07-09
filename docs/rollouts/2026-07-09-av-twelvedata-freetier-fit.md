@@ -82,6 +82,28 @@ if their specific fields aren't wanted.
 the PR. Diagnosis done read-only against the prod DB snapshot (api_health_log);
 no box state changed.
 
+## PR #1222 bot re-review fix: don't negative-cache transient per-symbol errors
+
+The prior negative-cache addition (above) treated every per-symbol Twelve Data
+error row identically — a permanent "no data for this symbol" row and a
+transient one (429 credit exhaustion, a 5xx upstream hiccup) both got written
+into the 30-minute negative cache. A transient row is not "this symbol has no
+data"; caching it the same way suppressed that symbol from retry for the full
+`TWELVEDATA_NEGATIVE_TTL_MS` window even though the condition clears on its
+own — the same permanent-vs-transient distinction the whole-request path
+(top-level `status:error`, HTTP 429/timeout) and the App A provider's
+`transportError` flag already make elsewhere in this file.
+
+`src/lib/data-providers.ts` (`TwelveDataEnrichmentProvider.enrich`): the
+per-symbol error branch now checks the row's `code` — 429 or ≥500 is treated
+as transient (`result[symbol] = {}`, no cache write, retried next scan);
+everything else (400/403/404/no-code) still negative-caches as before.
+
+Test (`test/data-providers.test.ts`): "TwelveData does NOT negative-cache a
+transient per-symbol error (429), only a permanent one (404)" — runs two
+scans across a simulated window reset and asserts a 429 row is re-queried
+on the next scan while a 404 row rotates out to the next symbol instead.
+
 ## Follow-ups
 
 - Wire the owner's Alpha Vantage keys into `ALPHAVANTAGE_API_KEYS` (Infisical) +
