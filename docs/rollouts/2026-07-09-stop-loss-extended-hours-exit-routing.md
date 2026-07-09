@@ -66,6 +66,46 @@ and Antigravity PR #1211 (extended-hours tooltips).
 - `npx vitest run` — **3183 passed** (307 files), including the 15 new routing tests.
 - `npm run build` — (in the same run; recorded green before PR).
 
+## Review fixes (PR #1228, second commit — 4 confirmed-real findings on the exit pricing/queueing)
+
+Code review confirmed four real defects in the new routing; all fixed in one follow-up commit on
+this branch, each with regression tests:
+
+1. **SELL exits now anchor to the BID (P1).** `marketableLimitExitPrice` priced a SELL off the
+   single composite `refPrice`, but the composite quote price is ask-biased (Alpaca sets
+   `price = ask ?? bid`), so on any spread wider than the buffer the "marketable" SELL limit sat
+   ABOVE the bid and rested unfilled. The helpers now take a `ProtectiveExitQuote` (`price`/`bid`/
+   `ask`): a SELL anchors to the real bid, a COVER to the real ask, composite price as fallback;
+   synthesized (price-derived) spread sides never anchor (same guard as the entry marketable-limit,
+   via `protectiveExitQuoteFromScan` / the monitor's `exitQuoteFor`).
+2. **Approval-held exits are repriced at placement (P1).** Under propose authority the stored
+   extended-hours limit was submitted verbatim at Approve time — a quote that moved through the
+   stale limit left the exit resting where the old market/queue-to-open exit would have gotten out.
+   `executeProposal` now re-resolves the routing (`repriceStoredProtectiveExit`) off the fresh
+   approval-scan quote + wall clock, degrading to market/regular_hours when the extended session no
+   longer applies, and writes a `protective_exit_repriced` audit receipt.
+3. **Fractional exits stay queued, never blocked (P1).** Both protective paths routed fractional
+   quantities to the extended-hours limit, which policy hard-blocks ("Fractional or dollar-based
+   orders must be regular-hours only.") — a breached fractional stop placed NO exit at all for the
+   whole extended session. Fractional quantities now keep the market/queue-to-open routing
+   (whole-share guard in `generateProactiveRiskProposals` and `resolveProtectiveExitRouting`).
+4. **Buffer validated (P2).** A stored zero/negative `tuning.marketableLimitBufferBps` inverted the
+   marketable price (SELL limit above the reference). `extendedHoursExitBufferBps` now falls back to
+   the 15-bps default for non-finite/non-positive values and caps at 500 bps; the policy route
+   validates the field on save (`app/api/policy/route.ts`).
+
+Additional files: `test/protective-exit-reprice.test.ts` (**new** — drives the real
+`executeProposal` approval path under fake timers for both the repriced-limit and degraded-to-market
+cases); `test/marketable-limit-buffer-api.test.ts` (**new** — route-level buffer bound); extended
+`test/protective-exit-routing.test.ts` (bid/ask anchoring, fractional guard, buffer clamp,
+`repriceStoredProtectiveExit`) and `test/synthetic-stops.test.ts` (monitor-level bid-anchored
+extended-hours limit + fractional queue-to-open). Verification for the fix commit:
+`npx tsc --noEmit` clean; `npx vitest run` on the four touched test files plus the adjacent
+policy-route/generator suites (`reconciliation-risk`, `strategy-hardening`,
+`drawdown-breaker-action-api`, `ira-washsale-api`, `model-rotation`, `policy-notification-events`)
+— all passed; `npx eslint` on touched files — 0 errors (pre-existing warnings only). Full
+lint/test/build runs in the `verify` CI gate.
+
 ## Follow-ups (blocked on other in-flight PRs)
 
 - **field-defs honest copy** (ATR needs `stopLossPct>0` + precedence over beta; beta ignored when

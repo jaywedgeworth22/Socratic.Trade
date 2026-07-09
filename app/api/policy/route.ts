@@ -258,8 +258,12 @@ async function validatePolicy(
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
     // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
     // tuning JSON are ignored by the runtime; nothing to validate for it here.
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse } = policy.tuning;
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse, marketableLimitBufferBps } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
+    // Zero/negative would INVERT the marketable exit/entry price (a SELL limit above the quote rests
+    // unfilled); >500 bps (5% through the quote) is a typo/units mistake. The exit path also clamps
+    // already-stored values (extendedHoursExitBufferBps); this keeps new saves honest at the source.
+    if (marketableLimitBufferBps !== undefined && (!Number.isFinite(marketableLimitBufferBps) || marketableLimitBufferBps <= 0 || marketableLimitBufferBps > 500)) return "tuning.marketableLimitBufferBps must be greater than 0 and at most 500 (bps).";
     if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
     if (sizingFloorPct !== undefined && (!Number.isFinite(sizingFloorPct) || sizingFloorPct < 0 || sizingFloorPct > 100)) return "tuning.sizingFloorPct must be between 0 and 100.";
     if (sizingCeilingPct !== undefined && (!Number.isFinite(sizingCeilingPct) || sizingCeilingPct < 1 || sizingCeilingPct > 100)) return "tuning.sizingCeilingPct must be between 1 and 100.";

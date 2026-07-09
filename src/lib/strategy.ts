@@ -71,7 +71,8 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
-import { extendedHoursExitBufferBps, marketableLimitExitPrice } from "./protective-exit-routing";
+import { extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
+import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
@@ -122,7 +123,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -724,8 +725,15 @@ export async function runStrategyOnce(
       );
     }
     // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
-    // session); the pure generator just receives the buffer (undefined ⇒ default market/queue-to-open).
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy));
+    // session); the pure generator just receives the buffer (undefined ⇒ default market/queue-to-open)
+    // plus real bid/ask anchors per symbol — a SELL limit must cross the BID (the composite scan price
+    // is ask-biased), a COVER the ASK. Synthesized spread sides never anchor (protectiveExitQuoteFromScan).
+    const exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {};
+    for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
+      const ref = protectiveExitQuoteFromScan(q);
+      if (ref && (ref.bid !== undefined || ref.ask !== undefined)) exitQuotesBySymbol[normalizeSymbol(sym)] = ref;
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol);
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -3502,7 +3510,8 @@ export async function executeProposal(
     throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
   }
 
-  const proposal = row.proposal;
+  // `let`: an approval-held protective exit is repriced against the fresh approval-time quote below.
+  let proposal = row.proposal;
   assertLiveApprovalConfirmation({
     executionMode,
     confirmation: options.liveConfirmation,
@@ -3548,6 +3557,35 @@ export async function executeProposal(
     const currentPrices = currentPricesFromScan(approvalScan);
     const account = { portfolio, positions };
     await notifyStaleLimitOrders({ userId, policy, orders });
+
+    // Approval-held protective exits: an extended-hours marketable-limit stored on the card was
+    // priced off the generation-time quote and goes stale while it waits for a human — a quote that
+    // moved through the stored limit would leave the once-marketable order resting unfilled where
+    // the queue-to-open market exit still gets out. Re-resolve the routing off the fresh quote and
+    // wall clock (degrading to market/regular_hours when the extended session no longer applies) and
+    // review/evaluate/place the repriced order. Everything else passes through untouched.
+    const storedProposal = proposal;
+    proposal = repriceStoredProtectiveExit(
+      proposal,
+      policy,
+      protectiveExitQuoteFromScan(
+        approvalScan.quotesBySymbol[proposal.symbol] ?? approvalScan.quotesBySymbol[normalizeSymbol(proposal.symbol)]
+      )
+    );
+    if (proposal !== storedProposal) {
+      audit(
+        "protective_exit_repriced",
+        {
+          proposalId,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          from: { type: storedProposal.type, limitPrice: storedProposal.limitPrice, marketHours: storedProposal.marketHours },
+          to: { type: proposal.type, limitPrice: proposal.limitPrice, marketHours: proposal.marketHours }
+        },
+        userId,
+        policy.connectedAccountId
+      );
+    }
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
@@ -4682,6 +4720,20 @@ function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
   );
 }
 
+/**
+ * Real (non-synthetic, positive) bid/ask off a scan quote for anchoring a protective-exit
+ * marketable limit, with the composite price as the fallback anchor. A synthesized (price-derived)
+ * spread side never anchors — same guard the entry marketable-limit applies, judged per side.
+ */
+function protectiveExitQuoteFromScan(quote: MarketQuoteSummary | undefined): ProtectiveExitQuote | undefined {
+  if (!quote) return undefined;
+  return {
+    price: quote.price > 0 ? quote.price : undefined,
+    bid: !quote.syntheticBid && quote.bid && quote.bid > 0 ? quote.bid : undefined,
+    ask: !quote.syntheticAsk && quote.ask && quote.ask > 0 ? quote.ask : undefined
+  };
+}
+
 function uniqueSymbols(symbols: string[]): string[] {
   return Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
 }
@@ -5163,7 +5215,10 @@ export function generateProactiveRiskProposals(
   // Marketable-limit buffer (bps) for an extended-hours protective exit, or undefined for the default
   // market/queue-to-open routing. Resolved by the async caller (it knows the session) so this stays
   // pure; see extendedHoursExitBufferBps. When set, the stop exit becomes a limit tagged extended_hours.
-  extHoursBufferBps?: number
+  extHoursBufferBps?: number,
+  // Real bid/ask anchors per symbol for the extended-hours marketable-limit (see the caller's
+  // protectiveExitQuoteFromScan filter). Missing entries fall back to currentPrice as the anchor.
+  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -5222,17 +5277,21 @@ export function generateProactiveRiskProposals(
 
     if (reason) {
       // Extended-hours routing (only when the caller resolved a live pre/post session with the toggle
-      // on): a marketable-limit off the current price that can actually fill after hours, else the
-      // default market order that queues to the regular open.
-      const exitLimitPrice = extHoursBufferBps != null
-        ? marketableLimitExitPrice(currentPrice, exitSide, extHoursBufferBps)
+      // on): a marketable-limit anchored to the real bid (SELL) / ask (COVER) — currentPrice as the
+      // fallback anchor — that can actually fill after hours, else the default market order that
+      // queues to the regular open. A FRACTIONAL quantity never takes the limit path: fractional
+      // orders are regular-hours-only at the broker (a policy hard gate), so routing one to
+      // extended_hours would block the protective exit instead of queuing it.
+      const exitQuantity = Math.abs(pos.quantity);
+      const exitLimitPrice = extHoursBufferBps != null && Number.isInteger(exitQuantity)
+        ? marketableLimitExitPrice({ ...exitQuotesBySymbol[sym], price: currentPrice }, exitSide, extHoursBufferBps)
         : undefined;
       const useExtLimit = exitLimitPrice != null;
       proactiveProposals.push({
         symbol: normalizeSymbol(pos.symbol),
         side: exitSide,
         type: useExtLimit ? "limit" : "market",
-        quantity: Math.abs(pos.quantity),
+        quantity: exitQuantity,
         limitPrice: useExtLimit ? exitLimitPrice : undefined,
         timeInForce: "gfd",
         marketHours: useExtLimit ? "extended_hours" : "regular_hours",
