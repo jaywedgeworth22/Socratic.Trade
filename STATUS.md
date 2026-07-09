@@ -20,6 +20,15 @@ and a recent resolved-veto table that labels missing `redTeamVerdict.model` hist
 test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`,
 and `npm run lint -- --quiet` — all green. PR #1175 is open.
 Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+## 2026-07-08 — Mobile chrome bar fixes: scope width, run-state chip, profile menu, avatar, STOP (MONET, branch `monet/mobile-chrome-fixes-3676f7`)
+Six owner phone-screenshot items: account scope flex-1 on phones; run-state chip unboxed +
+stacked (<sm) so it stops reading as a dropdown; profile button 44px on phones + shows the
+Google/GitHub avatar (imageUrl was in the snapshot, never rendered); theme toggle moved into the
+profile menu; profile menu is now a slide-DOWN dropdown anchored to the bar (old bottom Sheet sat
+under the mobile tab bar — Sign out unreachable); STOP button no longer flex-squeezed (shrink-0 +
+centered content). Verified live at 375×812 and 1280×800 incl. theme cycling from the menu.
+See `docs/rollouts/2026-07-08-mobile-chrome-fixes.md`.
+
 ## 2026-07-08 — Intro landing fixes: slow-load size pop + vanish gap (MONET, branch `monet/intro-landing-fixes-3676f7`)
 Owner-reported on prod: mobile wordmark assembled small then popped larger; desktop logo vanished
 ~1s before the page finished loading. Root cause: intro completes against the loading shell and

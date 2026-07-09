@@ -479,11 +479,16 @@
   }
 }
 
-/* The header run-state control: Start/Resume when paused, STOP when stopping. */
+/* The header run-state control: Start/Resume when paused, STOP when stopping.
+   justify-content + flex-shrink matter: in the crowded phone bar the button was
+   getting flex-squeezed and its start-aligned content read as "STOP shoved
+   right with a missing symbol on the left" (owner report). */
 .con-stop-btn,
 .con-start-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   gap: 6px;
   border-radius: var(--con-radius-sm);
   font-weight: 700;
@@ -508,6 +513,26 @@
 }
 .con-start-btn:hover {
   background: color-mix(in oklab, var(--con-pos) 18%, transparent);
+}
+
+/* Profile menu: slide-down entrance for the header dropdown (chrome.tsx UserMenu). */
+@keyframes con-menu-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.con-menu-drop {
+  animation: con-menu-drop 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .con-menu-drop {
+    animation: none;
+  }
 }
 
 /* ── Chips ── */

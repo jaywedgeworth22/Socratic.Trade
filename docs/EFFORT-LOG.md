@@ -756,14 +756,24 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
+  `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
+  screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
+  unboxed + stacked two-line small on mobile (looked like a second dropdown); (3) profile
+  button 44px tap target on mobile; (4) theme toggle moves INTO the profile menu (off the
+  bar); (5) profile menu becomes a slide-DOWN dropdown under the header (old bottom Sheet
+  was covered by the mobile tab bar -> sign-out unreachable); (6) profile button shows the
+  Google/GitHub avatar (snapshot.currentUser.imageUrl already wired, never rendered); plus
+  STOP button squeeze fix (shrink-0 + centered content). Fileset:
+  app/console/components/chrome.tsx, app/console/components/shell.tsx (ChromeBar),
+  app/console/console.css.
 - **Shared-dep proper-usage cleanup refresh (CODEX, S) — started 2026-07-08.**
   Branch `codex/refresh-shared-dep-usage`, replacing dirty Cursor PR #1105 without editing the
   Cursor branch. Use `CONGRESS_EVENT_TYPES` for event-type checks, type outbound payload from
   shared `SharePayload`, and drop unused `API_PATHS`/`MAX_REFS_BATCH` imports from
   `congress-trade-client.ts`.
 - **Intro landing fixes: viewport-true fallback box + eased retarget + fade gated on real
-  logo (MONET, intro-anim session, branch `monet/intro-landing-fixes-3676f7`) — IN PROGRESS
-  2026-07-08.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
+  logo (MONET) — COMPLETED 2026-07-08, merged to `main` as PR #1170.** Owner-reported on prod: mobile wordmark assembled a few sizes too small then
   popped larger; desktop logo vanished ~1s between overlay fade and full page load. Root
   cause: intro can finish against the loading shell and lands on a stale hard-coded fallback
   box; reveal then has no mounted logo. Fix in `intro-canvas.tsx` only: fallback box now
