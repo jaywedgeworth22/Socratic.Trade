@@ -816,6 +816,11 @@
   overflow-y: auto;
   border-radius: var(--con-radius);
 }
+/* Opt-in wider variant for dialogs whose content needs more horizontal room
+ * (e.g. a multi-column table) — desktop only, see mobile override below. */
+.con-sheet-wide {
+  width: min(920px, calc(100vw - 32px));
+}
 @media (max-width: 767px) {
   .con-sheet {
     top: auto;
@@ -830,6 +835,9 @@
     border-right: none;
     border-bottom: none;
     padding-bottom: env(safe-area-inset-bottom);
+  }
+  .con-sheet-wide {
+    width: 100%;
   }
 }
 .con-sheet-live {
@@ -1217,6 +1225,11 @@
 }
 .con-cmdk-trigger kbd {
   font-family: var(--con-font-mono);
-  font-size: 10px;
+  font-size: 12px;
+  /* Owner ask: nudge the ⌘/K apart by ~half a space. Applied as letter-spacing
+     (trailing space trimmed with a negative margin-right so the badge padding
+     stays even). */
+  letter-spacing: 0.14em;
+  margin-right: -0.14em;
   color: var(--con-faint);
 }

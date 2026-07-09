@@ -341,7 +341,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                     const isVisible = visible.includes(column.id);
                     const index = visible.indexOf(column.id);
                     return (
-                      <div title={column.headerTitle} key={column.id}>
+                      <Tooltip key={column.id} content={column.headerTitle}>
                         <div
                           className={cx(
                             "grid grid-cols-[1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)] hover:bg-[color:var(--con-surface-2)]",
@@ -382,7 +382,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                             <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">hidden</span>
                           )}
                         </div>
-                      </div>
+                      </Tooltip>
                     );
                   })}
                 </div>
@@ -404,7 +404,8 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                   aria-sort={active ? (activeSort.dir === "asc" ? "ascending" : "descending") : undefined}
                   className={cx(c.num && "num", i === 0 && STICKY_CELL)}
                 >
-                  <div title={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
+                  <Tooltip
+                    content={`${c.headerTitle}\nClick to sort by ${c.label.toLowerCase()}${active ? ` (currently ${activeSort.dir === "asc" ? "ascending" : "descending"})` : ""}.`}>
                     <button
                       type="button"
                       onClick={() => setSort({ col: c.id, dir: activeSort.col === c.id && activeSort.dir === "desc" ? "asc" : "desc" })}
@@ -417,7 +418,7 @@ export function ScanTable({ scan }: { scan: MarketScan }) {
                         {active && activeSort.dir === "asc" ? "▲" : "▼"}
                       </span>
                     </button>
-                  </div>
+                  </Tooltip>
                 </th>
               );
             })}

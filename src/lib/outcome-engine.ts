@@ -797,14 +797,18 @@ async function generatePostMortemLessons(
  * single well-defined "this run's downgrade" to hand it. It always re-reads the owner's persisted
  * (undowngraded) policy — same behavior as before the usage-budget downgrade existed.
  */
-async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
+export async function callLessonLlm(userId: string, userContent: string): Promise<string | undefined> {
   const policy = getPolicy(userId);
   const { url, key, model, provider, keySource, keyRef, transport } = resolveLlmEndpoint(
     policy,
     userId,
     "https://api.openai.com/v1/chat/completions"
   );
-  if (!key) return undefined;
+  // No-defaults / rotation-sentinel safety net: resolveLlmEndpoint maps an unconfigured OR "__rotate__"
+  // model to "" outside a strategy run (rotation is resolved only inside runStrategyOnce), so a blank
+  // model with a present key must be treated as unconfigured — skip cleanly rather than POST model:""
+  // (which 400s on every post-mortem lesson call). Same contract as strategy-tuning's local-rules gate.
+  if (!key || !model) return undefined;
 
   const body = buildLlmRequestBody(
     { provider, transport },

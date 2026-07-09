@@ -46,12 +46,17 @@ export function Sheet({
   onClose,
   title,
   tone,
+  wide,
   children
 }: {
   open: boolean;
   onClose: () => void;
   title?: ReactNode;
   tone?: "live";
+  /** Widens the desktop dialog (920px vs the default 560px) for content that
+   *  needs more horizontal room, e.g. a multi-column table. Mobile bottom
+   *  sheet stays full-width either way. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -96,12 +101,20 @@ export function Sheet({
       }
     };
 
+    let isFocusing = false;
     const onFocusIn = (e: FocusEvent) => {
+      if (isFocusing) return;
       const currentSheet = sheetRef.current;
-      if (!currentSheet) return;
+      if (!currentSheet || !currentSheet.isConnected) return;
       if (e.target instanceof Node && currentSheet.contains(e.target)) return;
-      const tabbables = getFocusableElements(currentSheet);
-      focusElement(tabbables[0] ?? currentSheet);
+      
+      isFocusing = true;
+      try {
+        const tabbables = getFocusableElements(currentSheet);
+        focusElement(tabbables[0] ?? currentSheet);
+      } finally {
+        isFocusing = false;
+      }
     };
 
     window.addEventListener("keydown", onKey);
@@ -122,7 +135,7 @@ export function Sheet({
       <div className="con-scrim" onClick={onClose} aria-hidden />
       <div
         ref={sheetRef}
-        className={cx("con-sheet", tone === "live" && "con-sheet-live")}
+        className={cx("con-sheet", wide && "con-sheet-wide", tone === "live" && "con-sheet-live")}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? headingId : undefined}

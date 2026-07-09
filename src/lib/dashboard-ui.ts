@@ -316,7 +316,12 @@ const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   proposal_withdrawn: "Proposal withdrawn",
   limit_order_stale: "Stale limit order",
   provider_degraded: "Data provider degraded",
-  budget_alert: "Budget alert"
+  budget_alert: "Budget alert",
+  learning_review: "Learning review",
+  deterministic_bear_veto: "Vetoed by Bear risk",
+  red_team_veto_overridden: "Red Team veto overridden",
+  prompt_injection_suspected: "Prompt injection suspected",
+  evidence_age_anomaly: "Evidence age anomaly"
 };
 
 export function notificationTypeLabel(type?: string | null): string {
@@ -356,7 +361,12 @@ export function formatNotificationDisplay(
   } else if (event.type === "block") {
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} Blocked`;
   } else if (event.type === "pending_approval") {
-    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval`;
+    // Single-adversary visibility (§5.2): when the run flagged this pending approval as
+    // "Red Team review unavailable" (payload metadata flag, read defensively via asRecord), the
+    // Red-Team-unavailable signal must survive into the feed — append the indicator instead of
+    // discarding it with the generic overwrite.
+    const adversaryUnavailable = payload.adversaryUnavailable === true;
+    title = `${actionLabel(side)} ${symbol ?? "Proposal"} Awaiting Approval${adversaryUnavailable ? " — Red Team Unavailable" : ""}`;
   } else if (event.type === "kill_switch") {
     title = "Kill Switch Triggered";
   } else if (event.type === "run_failed") {
@@ -364,6 +374,14 @@ export function formatNotificationDisplay(
   } else if (event.type === "proposal_withdrawn") {
     const expired = stringValue(payload.source) === "expiry";
     title = `${actionLabel(side)} ${symbol ?? "Proposal"} ${expired ? "Expired" : "Withdrawn"}`;
+  } else if (event.type === "deterministic_bear_veto") {
+    title = `${actionLabel(side)} ${symbol ?? "Trade"} Vetoed by Bear Risk`;
+  } else if (event.type === "red_team_veto_overridden") {
+    title = `Red Team Veto Overridden ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "prompt_injection_suspected") {
+    title = `Prompt Injection Suspected ${symbol ? `for ${symbol}` : ""}`;
+  } else if (event.type === "evidence_age_anomaly") {
+    title = `Evidence Age Anomaly ${symbol ? `for ${symbol}` : ""}`;
   }
 
   return {
@@ -376,6 +394,16 @@ export function formatNotificationDisplay(
 }
 
 function notificationDetail(event: NotificationEvent): string {
+  if (
+    event.type === "deterministic_bear_veto" ||
+    event.type === "red_team_veto_overridden" ||
+    event.type === "prompt_injection_suspected" ||
+    event.type === "evidence_age_anomaly"
+  ) {
+    const payload = asRecord(event.payload);
+    const reason = stringValue(payload.reason) || stringValue(payload.detail);
+    return reason ? `Audit logged: ${reason}` : "Advisory audit logged";
+  }
   const prefix = notificationStatusLabel(event.status);
   const reason = notificationReason(event.error);
   return reason ? `${prefix} - ${reason}` : prefix;

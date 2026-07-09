@@ -26,6 +26,8 @@ vi.mock("@/lib/strategy", async (importActual) => {
 });
 
 import { runStrategyOnce } from "@/lib/strategy";
+import { getPolicy, setPolicy } from "@/lib/db";
+import { DEV_USER_ID } from "@/lib/auth/identity";
 
 const LLM_ENV = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"];
 
@@ -38,9 +40,15 @@ afterEach(() => {
   vi.mocked(runStrategyOnce).mockReset();
 });
 
+// The route's pre-flight now runs TWO synchronous gates before the async race (owner directive
+// 2026-07-07, no model defaults): a resolvable KEY (LLM_REQUIRED_STRATEGY_MESSAGE 412) AND a
+// non-blank Green MODEL (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE 412). To exercise the async-race
+// behavior below (202/400/200), the request's user (DEV_USER_ID for an unauthenticated request)
+// must have a real Green model persisted, otherwise the second gate 412s first.
 function stubLlmKeyAvailable(): void {
   vi.stubEnv("LLM_OPERATOR_FALLBACK", "on");
   vi.stubEnv("OPENAI_API_KEY", "test-operator-key");
+  setPolicy({ ...getPolicy(DEV_USER_ID), llmModel: "gpt-5.4-mini" }, DEV_USER_ID);
 }
 
 function stubNoLlmKey(): void {

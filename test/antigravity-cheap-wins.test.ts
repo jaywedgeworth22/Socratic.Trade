@@ -4,14 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import { applyDeterministicSizing, enrichOpeningProposal } from "../src/lib/strategy";
-import { redTeamProvider } from "../src/lib/red-team";
 import type { MarketQuote, MarketScan, Portfolio, TradeProposal, TradingPolicy } from "../src/lib/types";
 
-// Covers the four functional "cheap wins" distilled from Antigravity's strategy critique:
+// Covers the functional "cheap wins" distilled from Antigravity's strategy critique:
 //   - ADV (market-impact) order-size cap in deterministic sizing
 //   - marketable-limit entry conversion in enrichOpeningProposal
-//   - the optional cross-provider Red Team provider selector
-// (The vol-panic brake is unit-tested in macro.test.ts; the ADV approval gate in policy.test.ts.)
+// (The vol-panic brake is unit-tested in macro.test.ts; the ADV approval gate in policy.test.ts.
+//  The former RED_TEAM_LLM_PROVIDER selector was DELETED 2026-07-07 — the single-adversary
+//  consolidation killed the env override; the reviewer's provider comes only from the user's
+//  explicit redTeamLlmModel.)
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-cheapwins-${randomUUID()}.db`)}`;
@@ -154,28 +155,5 @@ describe("marketable-limit entry conversion", () => {
     expect(out.dollarAmount).toBe(50);
     expect(out.bracketStopLoss).toBeUndefined();
     expect(out.rationale).toContain("Native Alpaca bracket skipped");
-  });
-});
-
-describe("redTeamProvider selector", () => {
-  const original = process.env.RED_TEAM_LLM_PROVIDER;
-  afterEach(() => {
-    if (original === undefined) delete process.env.RED_TEAM_LLM_PROVIDER;
-    else process.env.RED_TEAM_LLM_PROVIDER = original;
-  });
-
-  it("defaults to openai", () => {
-    delete process.env.RED_TEAM_LLM_PROVIDER;
-    expect(redTeamProvider()).toBe("openai");
-  });
-
-  it("selects anthropic when explicitly set (case-insensitive)", () => {
-    process.env.RED_TEAM_LLM_PROVIDER = "Anthropic";
-    expect(redTeamProvider()).toBe("anthropic");
-  });
-
-  it("ignores unrecognized values", () => {
-    process.env.RED_TEAM_LLM_PROVIDER = "gemini";
-    expect(redTeamProvider()).toBe("openai");
   });
 });

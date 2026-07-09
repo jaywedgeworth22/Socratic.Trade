@@ -18,10 +18,20 @@
 // Performance gating contract (owner request 2026-07-08): the API always
 // reports `closedTrades`, and includes `perf` whenever closedTrades >= 1 —
 // the UI decides how to present it (hidden/caveated below its own thresholds).
-// Red/reviewer perf is deliberately null: Red attribution is per-run (veto
-// value-add in getRedTeamScorecard), not per-closed-trade — do not fake it here.
+// Realized-P&L `perf` stays GREEN-only: Red attribution is per-run, not
+// per-closed-trade, so we never fake closed-trade P&L for a reviewer. RED rows
+// instead carry `reviewerPerf` — veto value-add fed from getRedTeamEfficacy
+// (share of matured vetoes whose counterfactual "had-it-run" outcome was a loss;
+// negative avg return = the veto added value). The UI applies the same
+// 20/50-resolved-veto gates as the Results page 'Red Team veto efficacy' card.
 
 export type ModelRole = "green" | "red";
+
+/** The "unattributed" reviewer bucket from getRedTeamEfficacy — matured vetoes with no
+ *  persisted reviewer model. It never matches a catalog model, so it's dropped from the
+ *  picker rollup. Mirrors RED_TEAM_UNATTRIBUTED_MODEL (app/console/lib/red-team-efficacy.ts)
+ *  and the "unattributed" bucket key in getRedTeamEfficacy (src/lib/performance.ts). */
+const REVIEWER_UNATTRIBUTED_MODEL = "unattributed";
 
 /** Subset of LlmUsageRow the rollup needs (llm_usage-shaped aggregate rows). */
 export interface UsageRowLike {
@@ -64,6 +74,20 @@ export interface ModelPerf {
   totalPnlUsd: number;
 }
 
+/** Reviewer (Red Team) veto value-add for one model — from getRedTeamEfficacy(userId).byModel.
+ *  NOT win-rate / realized P&L: it measures the counterfactual outcome of the risk-adding
+ *  proposals this reviewer vetoed. A veto resolves ~5 trading days after it's made. */
+export interface ReviewerPerf {
+  /** Matured blocking vetoes (keyed runId+symbol) attributed to this reviewer model. Sample size. */
+  maturedVetoes: number;
+  /** % of matured vetoes whose counterfactual return was NEGATIVE (the veto avoided a loser). HIGHER = better. */
+  vetoValueAddRate: number;
+  /** % of matured vetoes whose counterfactual return was POSITIVE (the veto missed a winner). */
+  survivorRiskHitRate: number;
+  /** Mean counterfactual return (%) of vetoed names; NEGATIVE = good (losses avoided). */
+  avgReturnPct: number;
+}
+
 export interface ModelRoleStats {
   model: string;
   role: ModelRole;
@@ -81,6 +105,9 @@ export interface ModelRoleStats {
   closedTrades: number;
   /** Realized performance — present whenever closedTrades >= 1 (green only); UI applies display thresholds. */
   perf: ModelPerf | null;
+  /** Reviewer veto value-add — present on RED rows with any matured vetoes for this model; always
+   *  null on GREEN rows. The UI hides it below 20 matured vetoes and caveats it below 50. */
+  reviewerPerf: ReviewerPerf | null;
 }
 
 /** Map an llm_usage context to a picker role; null = not a strategy-loop context. */
@@ -116,6 +143,15 @@ export interface AggregateModelStatsInput {
   closedLots: ClosedLotLike[];
   /** Optional extra model ids (e.g. the picker catalog) that must appear even with zero data anywhere. */
   models?: string[];
+  /** Per-model reviewer (Red Team) veto value-add — pass getRedTeamEfficacy(userId).byModel.
+   *  Applied to RED rows only; the "unattributed" bucket is filtered out (never a catalog model). */
+  reviewerPerfByModel?: Array<{
+    model: string;
+    maturedVetoes: number;
+    vetoValueAddRate: number;
+    survivorRiskHitRate: number;
+    avgReturnPct: number;
+  }>;
 }
 
 /**
@@ -175,6 +211,21 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
     else lotsByModel.set(lot.entryModel, [lot]);
   }
 
+  // Reviewer (Red Team) veto value-add per model — RED role only by construction. The
+  // "unattributed" bucket (vetoes with no persisted reviewer model) is dropped: it never
+  // matches a catalog model.
+  const reviewerByModel = new Map<string, ReviewerPerf>();
+  for (const row of input.reviewerPerfByModel ?? []) {
+    if (!row.model || row.model === REVIEWER_UNATTRIBUTED_MODEL) continue;
+    modelSet.add(row.model);
+    reviewerByModel.set(row.model, {
+      maturedVetoes: row.maturedVetoes,
+      vetoValueAddRate: row.vetoValueAddRate,
+      survivorRiskHitRate: row.survivorRiskHitRate,
+      avgReturnPct: row.avgReturnPct
+    });
+  }
+
   const out: ModelRoleStats[] = [];
   const models = Array.from(modelSet).sort();
   for (const model of models) {
@@ -204,7 +255,9 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
         benchmarkCostUsd: typeof bench?.benchmarkCostUsd === "number" ? bench.benchmarkCostUsd : null,
         benchmarkColdP50Ms: typeof bench?.benchmarkColdP50Ms === "number" ? bench.benchmarkColdP50Ms : null,
         closedTrades,
-        perf
+        perf,
+        // Mirror the green-perf guard: reviewer veto value-add is a RED-only measure.
+        reviewerPerf: role === "red" ? (reviewerByModel.get(model) ?? null) : null
       });
     }
   }

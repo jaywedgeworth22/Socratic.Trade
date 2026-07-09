@@ -14,17 +14,19 @@ import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import { savePolicy, setAutoResume, ConsoleApiError } from "../lib/api";
 import { activeConnectedAccount, deriveReality } from "../lib/derive";
 import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
+import { useAutoSave } from "../lib/useAutoSave";
 import { useConsoleData } from "../lib/useConsoleData";
 import { CONSOLE_FONT_OPTIONS, useConsoleFont } from "../lib/useConsoleFont";
 import { CONSOLE_TEXT_BOX_FONT_OPTIONS, useConsoleTextBoxFont } from "../lib/useConsoleTextBoxFont";
-import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { useToast } from "../ui/toast";
-import { Btn, Card, Chip, Field, RawNumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { Card, Chip, Field, RawNumInput, Select, TextInput, Toggle } from "../ui/primitives";
+import { SaveStatus } from "../ui/save-status";
 import { ApiKeysCard } from "./api-keys";
 import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
+import { LearningReviewCard } from "./learning-review";
 import { ModelsCard } from "./models";
 import { DataSharingCard } from "./sharing";
 
@@ -38,7 +40,8 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   proposal_withdrawn: "the strategist took an idea back",
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
-  budget_alert: "a usage budget threshold was crossed"
+  budget_alert: "a usage budget threshold was crossed",
+  learning_review: "the daily learning review posted its findings"
 };
 
 export default function SettingsPage() {
@@ -80,6 +83,9 @@ export default function SettingsPage() {
         {/* llmModel / redTeamLlmModel live on the account's policy — same
             save path (PUT /api/policy) as everything else account-scoped. */}
         <ModelsCard />
+        {/* learningReviewEnabled/Mode/Model are account-policy fields — same
+            PUT /api/policy save path; the review itself runs off the scheduler. */}
+        <LearningReviewCard />
         <AdvancedActionConfirmationCard />
       </section>
 
@@ -320,58 +326,40 @@ function AdminLinksCard() {
 
 function EventNotificationsCard() {
   const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draftEvents, setDraftEvents] = useState<NotificationEventType[] | null>(null);
-  const [draftWebhook, setDraftWebhook] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const dirty =
-    draftEvents !== null ||
-    (draftWebhook !== null && draftWebhook !== (snapshot?.policy.notificationSettings.webhookUrl ?? ""));
-  useUnsavedChanges(dirty);
+  const autoSave = useAutoSave();
+  // Sticky optimistic local state: seeded lazily from the snapshot, updated on
+  // change for instant feedback, reverted by useAutoSave's onError if the write
+  // fails. refresh() keeps the shared snapshot current for the rest of the app.
+  const [localEvents, setLocalEvents] = useState<NotificationEventType[] | null>(null);
+  const [localWebhook, setLocalWebhook] = useState<string | null>(null);
   if (!snapshot) return null;
 
   const current = snapshot.policy.notificationSettings;
-  const events = draftEvents ?? current.enabledEvents;
-  const webhook = draftWebhook ?? current.webhookUrl ?? "";
+  const events = localEvents ?? current.enabledEvents;
+  const webhook = localWebhook ?? current.webhookUrl ?? "";
 
-  const save = async () => {
-    setBusy(true);
-    try {
-      // Minimal patch: only the fields the user actually touched. The server
-      // deep-merges notificationSettings, so untouched fields stay as they are.
-      await savePolicy({
-        notificationSettings: {
-          ...(draftEvents !== null ? { enabledEvents: events } : {}),
-          ...(draftWebhook !== null && draftWebhook !== (current.webhookUrl ?? "") ? { webhookUrl: webhook } : {})
-        }
-      });
-      await refresh();
-      setDraftEvents(null);
-      setDraftWebhook(null);
-      toast.push("pos", "Event notifications saved");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  const toggleEvent = (type: NotificationEventType, on: boolean) => {
+    const prev = events;
+    const next = on ? events.filter((e) => e !== type) : [...events, type];
+    setLocalEvents(next);
+    autoSave.save(() => savePolicy({ notificationSettings: { enabledEvents: next } }).then(() => refresh()), {
+      onError: () => setLocalEvents(prev)
+    });
+  };
+
+  const commitWebhook = () => {
+    const next = webhook.trim();
+    if (next === (current.webhookUrl ?? "")) return; // unchanged → no write
+    const prev = webhook;
+    // Server validates (400 on a non-URL); revert the field on failure.
+    autoSave.save(() => savePolicy({ notificationSettings: { webhookUrl: next } }).then(() => refresh()), {
+      onError: () => setLocalWebhook(prev),
+      errorTitle: "Webhook not saved"
+    });
   };
 
   return (
-    <Card
-      title="Event notifications"
-      action={
-        dirty ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved event/webhook edits." onClick={() => { setDraftEvents(null); setDraftWebhook(null); }}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save the event list and webhook for your whole login." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
+    <Card title="Event notifications" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         Which events send notifications, and the webhook they go to. One list for your whole login — it applies across
         every account, not just the one you&apos;re viewing. Delivery channels (push/email/SMS) are configured once per
@@ -389,7 +377,8 @@ function EventNotificationsCard() {
               <input
                 type="checkbox"
                 checked={on}
-                onChange={() => setDraftEvents(on ? events.filter((e) => e !== type) : [...events, type])}
+                disabled={autoSave.saving}
+                onChange={() => toggleEvent(type, on)}
               />
               <span className="font-semibold">{type}</span>
               <span className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">{EVENT_HINT[type]}</span>
@@ -403,8 +392,9 @@ function EventNotificationsCard() {
             id="webhook"
             value={webhook}
             placeholder="https://…"
-            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON."
-            onChange={(e) => setDraftWebhook(e.target.value)}
+            title="Every enabled event is also POSTed to this URL. Chat webhooks (Discord/Slack) get rich embeds; anything else gets plain JSON. Saves when you click away."
+            onChange={(e) => setLocalWebhook(e.target.value)}
+            onBlur={commitWebhook}
           />
         </Field>
       </div>
@@ -420,22 +410,33 @@ const TAXATION_LABEL: Record<TaxationType, string> = {
   traditional_ira: "traditional IRA"
 };
 
+type TaxDraft = Partial<{
+  taxationType: TaxationType;
+  washSaleGuard: boolean;
+  iraWashSaleHandling: IraWashSaleHandling;
+  shortTermRatePct: number;
+  longTermRatePct: number;
+  subtractFromResults: boolean;
+}>;
+
 function TaxSettingsCard() {
   const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draft, setDraft] = useState<Partial<{
-    taxationType: TaxationType;
-    washSaleGuard: boolean;
-    iraWashSaleHandling: IraWashSaleHandling;
-    shortTermRatePct: number;
-    longTermRatePct: number;
-    subtractFromResults: boolean;
-  }> | null>(null);
-  const [busy, setBusy] = useState(false);
-  useUnsavedChanges(draft !== null);
+  const autoSave = useAutoSave();
+  // Sticky optimistic overlay: each field's own edits persist immediately; on a
+  // write failure useAutoSave's onError restores just that field.
+  const [draft, setDraft] = useState<TaxDraft>({});
   if (!snapshot) return null;
 
   const current = snapshot.policy.taxSettings;
+
+  // Persist one tax field. Selects/toggles call on change; number rates call on blur
+  // (their transient text lives in `draft` until then). `next` is the value already
+  // applied to `draft` optimistically; `prev` is what to restore if the write fails.
+  const commit = <K extends keyof TaxDraft>(key: K, next: TaxDraft[K], prev: TaxDraft[K]) => {
+    autoSave.save(() => savePolicy({ taxSettings: { [key]: next } }).then(() => refresh()), {
+      onError: () => setDraft((d) => ({ ...d, [key]: prev }))
+    });
+  };
   // The connected account's own taxationType (set when it was linked) WINS over
   // policy.taxSettings server-side (dashboard tax summary reads
   // activeAccount.taxationType ?? policy.taxSettings.taxationType), and no API
@@ -450,36 +451,8 @@ function TaxSettingsCard() {
   const shortTermRatePct: number = draft?.shortTermRatePct ?? current?.shortTermRatePct ?? 24;
   const longTermRatePct: number = draft?.longTermRatePct ?? current?.longTermRatePct ?? 15;
 
-  const save = async () => {
-    setBusy(true);
-    try {
-      await savePolicy({ taxSettings: draft ?? {} });
-      await refresh();
-      setDraft(null);
-      toast.push("pos", "Tax settings saved");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <Card
-      title="Tax treatment"
-      action={
-        draft ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved tax edits." onClick={() => setDraft(null)}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save tax treatment for this account." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
+    <Card title="Tax treatment" action={<SaveStatus status={autoSave.status} />}>
       <div className="grid gap-4 sm:grid-cols-2">
         {accountTaxationType ? (
           <Field
@@ -495,8 +468,14 @@ function TaxSettingsCard() {
             <Select
               id="taxtype"
               value={taxation}
+              disabled={autoSave.saving}
               title="How gains in this account are taxed. Drives the tax estimates and the wash-sale handling."
-              onChange={(e) => setDraft((d) => ({ ...(d ?? {}), taxationType: e.target.value as TaxationType }))}
+              onChange={(e) => {
+                const prev = draft.taxationType;
+                const next = e.target.value as TaxationType;
+                setDraft((d) => ({ ...d, taxationType: next }));
+                commit("taxationType", next, prev);
+              }}
             >
               <option value="taxable">taxable brokerage</option>
               <option value="roth_ira">Roth IRA</option>
@@ -510,8 +489,13 @@ function TaxSettingsCard() {
               id="st-rate"
               value={String(shortTermRatePct)}
               emptyValue={0}
-              title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice."
-              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), shortTermRatePct: parsed }))}
+              title="Your estimated tax rate on gains from positions held one year or less. Used only for the tax estimates — not advice. Saves when you click away."
+              onValueChange={(parsed) => setDraft((d) => ({ ...d, shortTermRatePct: parsed }))}
+              onBlur={() => {
+                if ((draft.shortTermRatePct ?? current?.shortTermRatePct ?? 24) !== (current?.shortTermRatePct ?? 24)) {
+                  commit("shortTermRatePct", shortTermRatePct, undefined);
+                }
+              }}
             />
           </Field>
           <Field label="Long-term rate %" htmlFor="lt-rate">
@@ -519,8 +503,13 @@ function TaxSettingsCard() {
               id="lt-rate"
               value={String(longTermRatePct)}
               emptyValue={0}
-              title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice."
-              onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), longTermRatePct: parsed }))}
+              title="Your estimated tax rate on gains from positions held more than one year. Used only for the tax estimates — not advice. Saves when you click away."
+              onValueChange={(parsed) => setDraft((d) => ({ ...d, longTermRatePct: parsed }))}
+              onBlur={() => {
+                if ((draft.longTermRatePct ?? current?.longTermRatePct ?? 15) !== (current?.longTermRatePct ?? 15)) {
+                  commit("longTermRatePct", longTermRatePct, undefined);
+                }
+              }}
             />
           </Field>
         </div>
@@ -547,10 +536,14 @@ function TaxSettingsCard() {
                 <Select
                   id="ira-wash-sale"
                   value={iraWashSaleHandling}
+                  disabled={autoSave.saving}
                   title="Controls cross-account IRA replacement buys after a taxable loss. Same-IRA wash sales are already ignored. Default: ignore/disregard and annotate."
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...(d ?? {}), iraWashSaleHandling: e.target.value as IraWashSaleHandling }))
-                  }
+                  onChange={(e) => {
+                    const prev = draft.iraWashSaleHandling;
+                    const next = e.target.value as IraWashSaleHandling;
+                    setDraft((d) => ({ ...d, iraWashSaleHandling: next }));
+                    commit("iraWashSaleHandling", next, prev);
+                  }}
                 >
                   <option value="disregard">Ignore / disregard and annotate (default)</option>
                   <option value="block">Block cross-account IRA replacement buys</option>
@@ -572,7 +565,12 @@ function TaxSettingsCard() {
             </div>
             <Toggle
               checked={washSaleGuard}
-              onChange={(next) => setDraft((d) => ({ ...(d ?? {}), washSaleGuard: next }))}
+              disabled={autoSave.saving}
+              onChange={(next) => {
+                const prev = draft.washSaleGuard;
+                setDraft((d) => ({ ...d, washSaleGuard: next }));
+                commit("washSaleGuard", next, prev);
+              }}
               label="Wash-sale guard"
             />
           </div>
@@ -587,7 +585,12 @@ function TaxSettingsCard() {
           </div>
           <Toggle
             checked={subtractFromResults}
-            onChange={(next) => setDraft((d) => ({ ...(d ?? {}), subtractFromResults: next }))}
+            disabled={autoSave.saving}
+            onChange={(next) => {
+              const prev = draft.subtractFromResults;
+              setDraft((d) => ({ ...d, subtractFromResults: next }));
+              commit("subtractFromResults", next, prev);
+            }}
             label="Subtract tax from results"
           />
         </div>
@@ -600,44 +603,25 @@ function TaxSettingsCard() {
 
 function ScanShapeCard() {
   const { snapshot, refresh } = useConsoleData();
-  const toast = useToast();
-  const [draft, setDraft] = useState<{ marketScanCandidateLimit?: number; marketScanOutlierReserve?: number } | null>(null);
-  const [busy, setBusy] = useState(false);
-  useUnsavedChanges(draft !== null);
+  const autoSave = useAutoSave();
+  const [draft, setDraft] = useState<{ marketScanCandidateLimit?: number; marketScanOutlierReserve?: number }>({});
   if (!snapshot) return null;
 
   const policy = snapshot.policy;
+  const candidateLimit = draft.marketScanCandidateLimit ?? policy.marketScanCandidateLimit;
+  const outlierReserve = draft.marketScanOutlierReserve ?? policy.marketScanOutlierReserve;
 
-  const save = async () => {
-    setBusy(true);
-    try {
-      await savePolicy(draft ?? {});
-      await refresh();
-      setDraft(null);
-      toast.push("pos", "Scan shape saved", "Applies to every account's runs.");
-    } catch (error) {
-      toast.push("neg", "Not saved", error instanceof ConsoleApiError ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  // Numeric fields: local text while typing, persist on blur. `key` is a top-level
+  // policy field (whole-replace), not a nested object.
+  const commitNumber = (key: "marketScanCandidateLimit" | "marketScanOutlierReserve", next: number | undefined, saved: number | undefined) => {
+    if (next === saved) return; // unchanged → no write
+    autoSave.save(() => savePolicy({ [key]: next }).then(() => refresh()), {
+      onError: () => setDraft((d) => ({ ...d, [key]: saved }))
+    });
   };
 
   return (
-    <Card
-      title="Market-scan shape"
-      action={
-        draft ? (
-          <div className="flex gap-2">
-            <Btn variant="ghost" size="sm" title="Throw away the unsaved scan-shape edits." onClick={() => setDraft(null)}>
-              Discard
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={busy} title="Save the scan shape — applies to every account's runs." onClick={() => void save()}>
-              {busy ? "Saving…" : "Save"}
-            </Btn>
-          </div>
-        ) : undefined
-      }
-    >
+    <Card title="Market-scan shape" action={<SaveStatus status={autoSave.status} />}>
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
         How wide every account&apos;s market scan looks. These two are user-level: they overlay all your accounts — the
         one deliberate exception to account scoping, labeled rather than hidden.
@@ -646,19 +630,21 @@ function ScanShapeCard() {
         <Field label="Enriched candidates" hint="Ranked names that get full enrichment per run." htmlFor="scan-limit">
           <RawNumInput
             id="scan-limit"
-            value={String(draft?.marketScanCandidateLimit ?? policy.marketScanCandidateLimit ?? "")}
+            value={String(candidateLimit ?? "")}
             emptyValue={0}
-            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs."
-            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanCandidateLimit: parsed }))}
+            title="How many top-ranked symbols get full enrichment (fundamentals, news, technicals) each run. More = wider view, slower and costlier runs. Saves when you click away."
+            onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanCandidateLimit: parsed }))}
+            onBlur={() => commitNumber("marketScanCandidateLimit", candidateLimit, policy.marketScanCandidateLimit)}
           />
         </Field>
         <Field label="Outlier reserve" hint="Below-cutoff slots reserved for notable web signals." htmlFor="scan-reserve">
           <RawNumInput
             id="scan-reserve"
-            value={String(draft?.marketScanOutlierReserve ?? policy.marketScanOutlierReserve ?? "")}
+            value={String(outlierReserve ?? "")}
             emptyValue={0}
-            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity)."
-            onValueChange={(parsed) => setDraft((d) => ({ ...(d ?? {}), marketScanOutlierReserve: parsed }))}
+            title="Of the candidate slots, how many are held for symbols that rank below the cutoff but carry a notable web signal (news spike, unusual activity). Saves when you click away."
+            onValueChange={(parsed) => setDraft((d) => ({ ...d, marketScanOutlierReserve: parsed }))}
+            onBlur={() => commitNumber("marketScanOutlierReserve", outlierReserve, policy.marketScanOutlierReserve)}
           />
         </Field>
       </div>

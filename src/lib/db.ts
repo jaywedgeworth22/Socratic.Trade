@@ -355,6 +355,49 @@ const MIGRATIONS: Migration[] = [
         "CREATE INDEX IF NOT EXISTS idx_llm_usage_account ON llm_usage (connected_account_id, created_at)"
       );
     }
+  },
+  {
+    // Single-adversary consolidation R15: the hidden RED_TEAM_LLM_PROVIDER/RED_TEAM_LLM_MODEL env
+    // override is being DELETED (owner directive 2026-07-07: Settings must tell the truth; no hidden
+    // routing). A deployment that was actually serving its Red Team via that override — with a blank
+    // per-account `redTeamLlmModel` — would silently flip to fail-closed (every opening routed to
+    // human review) the moment the env reads disappear. Seed the first-class setting ONCE from the
+    // env override that was serving, so a working safety setup keeps working and the owner can see —
+    // and change — the real model in Settings. Only rows with a BLANK redTeamLlmModel are touched
+    // (an explicit choice always wins), and nothing is seeded when the override was never active.
+    // This is a migration of an operator's own explicit env configuration, NOT a new default: with
+    // no env override set, blank stays blank and fails closed legibly.
+    version: 15,
+    name: "seed_red_team_model_from_env_override",
+    up: (database) => {
+      const envProvider = (process.env.RED_TEAM_LLM_PROVIDER ?? "").trim().toLowerCase();
+      if (envProvider !== "anthropic") return;
+      // The exact model the deleted override path was running (red-team.ts's debateViaAnthropic):
+      // RED_TEAM_LLM_MODEL when set, else its hardcoded claude-haiku default.
+      const servedModel = (process.env.RED_TEAM_LLM_MODEL ?? "").trim() || "claude-haiku-4-5-20251001";
+      const rows = database
+        .prepare("SELECT user_id, connected_account_id, policy FROM account_strategy_state")
+        .all() as Array<{ user_id: string; connected_account_id: string; policy: string }>;
+      const update = database.prepare(
+        "UPDATE account_strategy_state SET policy = ? WHERE user_id = ? AND connected_account_id = ?"
+      );
+      for (const row of rows) {
+        let policy: Record<string, unknown>;
+        try {
+          policy = JSON.parse(row.policy) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (!policy || typeof policy !== "object") continue;
+        const existing = typeof policy.redTeamLlmModel === "string" ? policy.redTeamLlmModel.trim() : "";
+        if (existing) continue; // explicit choice wins — never overwrite
+        policy.redTeamLlmModel = servedModel;
+        update.run(JSON.stringify(policy), row.user_id, row.connected_account_id);
+        console.log(
+          `[db] migration 15: seeded redTeamLlmModel="${servedModel}" for account ${row.connected_account_id} (user ${row.user_id}) from the retired RED_TEAM_LLM_PROVIDER env override — review it under Settings → LLM models.`
+        );
+      }
+    }
   }
 ];
 

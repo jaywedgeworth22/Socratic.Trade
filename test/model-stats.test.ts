@@ -199,6 +199,62 @@ describe("aggregateModelStats — performance gating", () => {
   });
 });
 
+describe("aggregateModelStats — reviewer veto value-add", () => {
+  // Shaped exactly like getRedTeamEfficacy(userId).byModel, including the "unattributed" bucket.
+  const reviewerRows = [
+    { model: "claude-sonnet-5", maturedVetoes: 42, vetoValueAddRate: 61.9, survivorRiskHitRate: 38.1, avgReturnPct: -1.87 },
+    { model: "unattributed", maturedVetoes: 99, vetoValueAddRate: 50, survivorRiskHitRate: 50, avgReturnPct: 0 }
+  ];
+
+  it("populates reviewerPerf on the matching RED row and leaves it null on the GREEN row", () => {
+    const stats = aggregateModelStats({
+      usageRows: [],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [],
+      reviewerPerfByModel: reviewerRows
+    });
+
+    const red = statFor(stats, "claude-sonnet-5", "red");
+    expect(red.reviewerPerf).toEqual({
+      maturedVetoes: 42,
+      vetoValueAddRate: 61.9,
+      survivorRiskHitRate: 38.1,
+      avgReturnPct: -1.87
+    });
+
+    // Realized-P&L perf and reviewerPerf never cross roles: the GREEN row stays null.
+    const green = statFor(stats, "claude-sonnet-5", "green");
+    expect(green.reviewerPerf).toBeNull();
+  });
+
+  it("excludes the 'unattributed' bucket entirely — it never becomes a model row", () => {
+    const stats = aggregateModelStats({
+      usageRows: [],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [],
+      reviewerPerfByModel: reviewerRows
+    });
+    expect(stats.some((s) => s.model === "unattributed")).toBe(false);
+  });
+
+  it("leaves reviewerPerf null on RED rows without matching veto data (and defaults to null with no input)", () => {
+    const stats = aggregateModelStats({
+      usageRows: [{ model: "grok-4.3", context: "strategy", calls: 1, costUsd: 0.01 }],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [],
+      reviewerPerfByModel: [{ model: "claude-sonnet-5", maturedVetoes: 30, vetoValueAddRate: 60, survivorRiskHitRate: 40, avgReturnPct: -2 }]
+    });
+    // grok-4.3 has usage but no reviewer data → its RED row is null.
+    expect(statFor(stats, "grok-4.3", "red").reviewerPerf).toBeNull();
+    // A model with reviewer data still has a null RED row default when reviewerPerfByModel is omitted.
+    const noReviewerInput = aggregateModelStats({ usageRows: [], latencyEvents: [], benchmarkSummaries: NO_BENCH, closedLots: [], models: ["claude-sonnet-5"] });
+    expect(statFor(noReviewerInput, "claude-sonnet-5", "red").reviewerPerf).toBeNull();
+  });
+});
+
 describe("normalizeBenchmarkSummaries", () => {
   it("prefers cold p50 (falls back to overall p50) and avg est cost (falls back cold→warm)", () => {
     const rows = normalizeBenchmarkSummaries([
