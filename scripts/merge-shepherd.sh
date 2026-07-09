@@ -45,11 +45,12 @@ row() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$TMP"; }   # bucket \t num \t no
 
 # Completed check conclusions that mean "done, and not passing" -- these get the
 # same rerun-once-then-escalate treatment as FAILURE, instead of being left in
-# WAITING forever (only genuinely in-flight states -- IN_PROGRESS/QUEUED/PENDING/
-# EXPECTED -- should ever land in WAITING).
+# WAITING forever (only genuinely in-flight states -- IN_PROGRESS/QUEUED/WAITING/
+# REQUESTED/PENDING/EXPECTED -- should ever land in WAITING). ERROR is the
+# terminal commit-status state (GitHub's StatusState enum) parallel to FAILURE.
 is_failure_conclusion() {
   case "$1" in
-    FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE) return 0 ;;
+    FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE|ERROR) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -73,7 +74,10 @@ for num in $nums; do
   nchecks=$(jq -r '[.statusCheckRollup[]?] | length' <<<"$d")   # any checks at all yet?
   # In-flight (not-yet-concluded) checks -- distinct from nchecks, which also counts
   # checks that already finished, possibly on a workflow other than "verify" itself.
-  running=$(jq -r '[.statusCheckRollup[]? | select((.status // "")=="IN_PROGRESS" or (.status // "")=="QUEUED" or (.status // "")=="PENDING" or (.state // "")=="PENDING" or (.state // "")=="EXPECTED")] | length' <<<"$d")
+  # Covers both check-run statuses (QUEUED/IN_PROGRESS/WAITING/REQUESTED/PENDING) and
+  # commit-status states (PENDING/EXPECTED), so a verify-absent-but-other-checks-still-
+  # in-flight PR isn't mistaken for "no CI at all" and re-synced mid-CI.
+  running=$(jq -r '[.statusCheckRollup[]? | select((.status // "")=="IN_PROGRESS" or (.status // "")=="QUEUED" or (.status // "")=="WAITING" or (.status // "")=="REQUESTED" or (.status // "")=="PENDING" or (.state // "")=="PENDING" or (.state // "")=="EXPECTED")] | length' <<<"$d")
   # Reran marker is a PR comment scoped to this head sha (not a PR-wide label), so a
   # flaky failure on a later head still gets its own one-time rerun.
   reran=$(jq -r --arg sha "$sha" '[.comments[]? | (.body // "") | select(contains("shepherd-reran:" + $sha))] | length > 0' <<<"$d")
@@ -86,7 +90,7 @@ for num in $nums; do
   if [ "$DRY" = "1" ]; then
     case "$verify" in
       SUCCESS) row WOULD-MERGE "$num" "$title" ;;
-      FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE)
+      FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE|ERROR)
                row FAILING "$num" "$title  (verify=$verify; reran=$reran)" ;;
       NONE)    if [ "$running" -gt 0 ]; then row WAITING "$num" "$title  (CI running; verify not posted yet)";
                else row WOULD-SYNC "$num" "$title  (no CI at all -- would re-sync to re-trigger it)"; fi ;;
@@ -121,9 +125,30 @@ for num in $nums; do
     # REST API conclusions are lowercase snake_case, mirroring is_failure_conclusion().
     runids=$(gh api "repos/$REPO/actions/runs?head_sha=$sha" \
                --jq '.workflow_runs[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="action_required" or .conclusion=="startup_failure" or .conclusion=="stale") | .id' 2>/dev/null)
-    for rid in $runids; do gh api -X POST "repos/$REPO/actions/runs/$rid/rerun-failed-jobs" >/dev/null 2>&1 || true; done
-    gh pr comment "$num" -R "$REPO" --body "<!-- shepherd-reran:$sha -->" >/dev/null 2>&1 || true
-    row RE-RAN "$num" "$title  (verify=$verify -- re-ran once for flake)"
+    rerun_ok=0
+    for rid in $runids; do
+      # A run cancelled/timed-out/etc before any job actually failed has no failed
+      # jobs -- /rerun-failed-jobs 4xxs on that ("nothing to rerun"). Use the
+      # all-jobs /rerun endpoint in that case instead.
+      failed_jobs=$(gh api "repos/$REPO/actions/runs/$rid/jobs" \
+                      --jq '[.jobs[]? | select(.conclusion=="failure")] | length' 2>/dev/null)
+      if [ "${failed_jobs:-0}" -gt 0 ]; then
+        endpoint="rerun-failed-jobs"
+      else
+        endpoint="rerun"
+      fi
+      if gh api -X POST "repos/$REPO/actions/runs/$rid/$endpoint" >/dev/null 2>&1; then
+        rerun_ok=1
+      fi
+    done
+    if [ "$rerun_ok" = "1" ]; then
+      # Only mark this head sha as retried when a rerun POST actually succeeded --
+      # otherwise a failed rerun attempt would falsely block the one-time retry.
+      gh pr comment "$num" -R "$REPO" --body "<!-- shepherd-reran:$sha -->" >/dev/null 2>&1 || true
+      row RE-RAN "$num" "$title  (verify=$verify -- re-ran once for flake)"
+    else
+      row FAILING "$num" "$title  (verify=$verify -- rerun attempt failed; needs a human)"
+    fi
 
   elif is_failure_conclusion "$verify"; then
     row FAILING "$num" "$title  (verify=$verify after a re-run -- needs a human)"
