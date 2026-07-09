@@ -816,6 +816,11 @@
   overflow-y: auto;
   border-radius: var(--con-radius);
 }
+/* Opt-in wider variant for dialogs whose content needs more horizontal room
+ * (e.g. a multi-column table) — desktop only, see mobile override below. */
+.con-sheet-wide {
+  width: min(920px, calc(100vw - 32px));
+}
 @media (max-width: 767px) {
   .con-sheet {
     top: auto;
@@ -830,6 +835,9 @@
     border-right: none;
     border-bottom: none;
     padding-bottom: env(safe-area-inset-bottom);
+  }
+  .con-sheet-wide {
+    width: 100%;
   }
 }
 .con-sheet-live {

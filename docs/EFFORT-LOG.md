@@ -218,6 +218,16 @@ As of 2026-07-08 (assignment-rule update).
   `evaluateTradeProposal` against a default policy with `shortSellingEnabled: true` (no explicit
   stop override) now approves a well-sized short. Gate green: tsc clean, lint 0 errors, 3168
   tests, build clean. See `docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
+- **Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`) —
+  COMPLETED 2026-07-09, merged to `main` via PR #1213 (auto-merge armed).** Owner-directed console-UI fix: the Model Stats drawer's
+  4-column table (Model / Cost / Latency / Realized performance) was cramped inside the shared
+  `Sheet` dialog's fixed 560px desktop width. Added an opt-in `wide?: boolean` prop on `Sheet`
+  (`app/console/ui/sheet.tsx`) driving a new `.con-sheet-wide` class (`app/console/console.css`,
+  `min(920px, calc(100vw - 32px))` on desktop; explicitly re-pinned to `width: 100%` inside the
+  existing mobile `@media (max-width: 767px)` block so the bottom-sheet is unaffected). Only
+  `ModelStatsButton` (`app/console/components/model-stats-drawer.tsx`) opts in — the other ~12
+  `Sheet` call-sites are untouched. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean.
+  See `docs/rollouts/2026-07-09-model-stats-drawer-wide.md`.
 - **Scoring-factor weight tooltips (MONET, S) — COMPLETED 2026-07-09, branch
   `monet/scoring-factor-tooltips`.** Owner-directed display-only pass: added a
   hover tooltip (existing `Tooltip` primitive, `app/console/ui/primitives.tsx`)

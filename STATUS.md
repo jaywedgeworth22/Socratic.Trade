@@ -26,6 +26,17 @@ elsewhere), and updated the `shortStopLossPct` field hint (`field-defs.ts`) to s
 logic is untouched). Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
 `docs/rollouts/2026-07-09-short-stop-default-and-surface.md`.
 
+## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
+Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
+opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized
+performance) that was cramped inside the shared `Sheet` dialog's fixed 560px desktop width. Added an
+opt-in `wide?: boolean` prop on `Sheet` (`app/console/ui/sheet.tsx`) that appends a new `con-sheet-wide`
+class (`app/console/console.css`, `width: min(920px, calc(100vw - 32px))` on desktop, `width: 100%`
+inside the existing mobile `@media (max-width: 767px)` block so the bottom-sheet stays unaffected).
+Only `ModelStatsButton`'s `<Sheet ... wide>` opts in — the other ~12 `Sheet` call-sites (broker connect,
+policy review, order cancel/replace, approvals, account-scope sheet, etc.) are untouched and keep the
+default 560px. Gate green: tsc clean, lint 0 errors, 3168 tests, build clean. See
+`docs/rollouts/2026-07-09-model-stats-drawer-wide.md`.
 ## 2026-07-09 — Reviewer veto value-add in the Model Stats drawer (MONET, branch `monet/reviewer-veto-valueadd-stats`)
 Owner-directed plumbing-only change: the Model Stats drawer's 4th column showed a hard-coded dash for
 the Reviewer (Red Team) role; it now surfaces the ALREADY-BUILT per-reviewer-model **veto value-add**
