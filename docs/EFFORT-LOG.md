@@ -758,9 +758,11 @@ As of 2026-07-08 (assignment-rule update).
 ## In Progress
 - **npm `allowScripts` approval in package.json (MONET, branch `monet/allow-scripts-approval`)
   — IN PROGRESS 2026-07-08, landing.** In-repo approval of the 7 install-script packages
-  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so npm 11
-  builds native deps deterministically without host `~/.npmrc` tweaks (fixes the 2026-07-06
-  `better-sqlite3` native-binding crash class). `package.json`-only; no dep/lockfile change.
+  (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so install
+  approvals live in-repo (no host `~/.npmrc` tweaks) and stay valid when npm's future default flips to
+  blocking unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still runs install
+  scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash came from host `~/.npmrc`
+  skipping scripts, not npm 11's default. `package.json`-only; no dep/lockfile change.
   Deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs in Congress.Trade)
   and a drifted lockfile regen. Verified: `npm ci` clean + `better_sqlite3.node` builds.
   Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.

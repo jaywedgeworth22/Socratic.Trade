@@ -8,13 +8,25 @@ via `npm approve-scripts` against the current lockfile versions.
 
 ## Why
 
-npm 11 gates package install scripts by default. Unapproved, `better-sqlite3`'s `node-gyp rebuild`
-is skipped, so the native binding is never built and the app crash-loops at runtime on a missing
-`better-sqlite3` native `.node` (the 2026-07-06 production incident). That was previously worked
-around by hand-editing the host `~/.npmrc`, which was itself fragile — a stray `allow-scripts` line
-there triggered `EALLOWSCRIPTS` and broke `npm ci` entirely. Declaring the approvals **in
-`package.json`** makes the fix in-repo and portable: every install path (CI, Coolify, a fresh clone)
-builds the native deps deterministically with no dependency on host `~/.npmrc` state.
+**Correction (per Codex review of PR #1166):** the `allowScripts` field / `npm approve-scripts` on
+npm 11 is a *transitional, advisory* feature — npm 11 still **runs** install scripts by default and
+only warns about unreviewed ones; the default does not flip to *blocking* unreviewed scripts until a
+future npm major. So npm 11's default gating is **not** what skipped `better-sqlite3`'s build, and this
+`package.json` block is not what "turns scripts back on" under stock npm 11.
+
+The 2026-07-06 production incident's actual cause was fragile **host `~/.npmrc` state**: the box's
+install config skipped install scripts (e.g. an `ignore-scripts` / `allow-scripts` setting), so
+`better-sqlite3`'s `node-gyp rebuild` never ran, the native binding was never built, and the app
+crash-looped on a missing `better-sqlite3` native `.node`. That was worked around by hand-editing the
+host `~/.npmrc`, which was itself fragile — a stray `allow-scripts` line there triggered `EALLOWSCRIPTS`
+and broke `npm ci` entirely.
+
+Declaring the approvals **in `package.json`** is still worthwhile for two reasons: (1) it removes the
+dependency on ad-hoc host `~/.npmrc` state, keeping the approvals in-repo and portable across every
+install path (CI, Coolify, a fresh clone); and (2) it **pre-approves** these packages so that when
+npm's default does flip to blocking unreviewed scripts, native builds keep working with no further
+change. It does **not**, on its own, guarantee determinism if the host still forces `ignore-scripts` or
+carries a malformed `allow-scripts` line — that host hygiene remains a separate requirement.
 
 ## Files
 

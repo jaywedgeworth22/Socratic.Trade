@@ -10,9 +10,12 @@ steps materially change.
 
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
-(`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so npm 11 builds
-native deps deterministically in CI / Coolify / fresh clones — no host `~/.npmrc` tweak — fixing the
-2026-07-06 `better-sqlite3` native-binding crash class. Extracted from a larger uncommitted change in
+(`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
+install approvals live in-repo (no fragile host `~/.npmrc` tweak) and stay valid when npm's future
+default flips to *blocking* unreviewed install scripts. NB (per Codex review of PR #1166): npm 11 still
+runs install scripts by default — the 2026-07-06 `better-sqlite3` native-binding crash was caused by
+host `~/.npmrc` skipping scripts, not npm 11's default gating; this block removes that host dependency
+rather than re-enabling npm-11 default behavior. Extracted from a larger uncommitted change in
 the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
 in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
 `better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
