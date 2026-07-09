@@ -102,8 +102,8 @@ export default function LoginPage() {
           </div>
         )}
 
-        <p className="text-xs text-muted">
-          Access is restricted. Contact the owner if you need an account.
+        <p className="text-sm text-muted">
+          Contact the owner if you need an account.
         </p>
       </div>
     </main>
