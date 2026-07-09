@@ -428,7 +428,10 @@ export const LLM_OUTPUT_TOKEN_CAPS = {
   // Small — a structured-output extraction of a handful of {kind,subject,value,symbol} candidates
   // from one chat message, not a proposal/critique. Kept well below the shared default so a
   // pathological reply can't run up cost; the extractor also has an offline regex fallback.
-  salienceExtraction: 400
+  salienceExtraction: 400,
+  // Once-per-day structured review of the learning store — dozens of per-item verdicts each with a
+  // reasoning string, so it gets the shared default rather than a tight cap.
+  learningReview: LLM_REQUEST_DEFAULTS.maxOutputTokens
 } as const;
 
 type RequestBounds = {

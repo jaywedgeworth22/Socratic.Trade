@@ -8,6 +8,17 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 — Daily LLM learning review (MONET, branch `monet/daily-learning-review`)
+New once-per-UTC-day job: a frontier-class model (default `claude-fable-5`) reviews the system's
+LEARNING DECISIONS — learned_context rows from the last 7 days + the pending risk-tier queue —
+against a system-history digest (execution-failure audits from 14 days + recent rollout-note
+headlines), catching lessons whose evidence was corrupted by an execution defect (the MU stale-exit
+deadlock produced exactly such thesis-blaming lessons). Default OFF; `annotate` mode audits +
+notifies only; `decide` (owner opt-in) applies verdicts via the existing learned-context mutation
+paths, every application audited; any LLM/parse failure = audit + skip, never mutate. New
+`src/lib/learning-review.ts`, 3 policy fields + validation, scheduler hook, Settings card,
+`learning_review` notification type, 12 tests. Gate: tsc clean, lint 0 errors, 2996 tests green.
+Details: `docs/rollouts/2026-07-08-daily-learning-review.md`.
 ## 2026-07-09 — single-adversary consolidation LANDING (MONET, Mac worktree `~/apps/trading-monet-sac`)
 Merged `origin/main` (47 commits ahead of the branch fork) into
 `monet/single-adversary-consolidation` and resolved the money-path conflicts per

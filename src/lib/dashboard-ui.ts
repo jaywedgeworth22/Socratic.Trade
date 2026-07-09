@@ -316,7 +316,8 @@ const NOTIFICATION_EVENT_TYPE_LABELS: Record<NotificationEventType, string> = {
   proposal_withdrawn: "Proposal withdrawn",
   limit_order_stale: "Stale limit order",
   provider_degraded: "Data provider degraded",
-  budget_alert: "Budget alert"
+  budget_alert: "Budget alert",
+  learning_review: "Learning review"
 };
 
 export function notificationTypeLabel(type?: string | null): string {

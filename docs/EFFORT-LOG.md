@@ -312,34 +312,27 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
-- **Single-adversary consolidation — FULL implementation (MONET; feature author = Cowork Claude
-  session, landing operator = MONET Mac session) — LANDING 2026-07-09 (merge resolved, gate green,
-  PR open + auto-merge armed; flips to Completed on merge).**
-  _2026-07-09 (MONET landing): merged `origin/main` (47 commits) into the branch; resolved 6
-  git-marked + 4 semantic (marker-free) conflicts per `/Users/jay/apps/monet-handoff-2026-07-09.md`
-  — deleted dead inline-Bear stopgaps (`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert
-  constants + the `inline-bear-parse`/`strategy-bear-alert-cooldown` tests), kept main's
-  Proposer/Reviewer naming + ModelStatsButton with the consolidation's no-defaults fail-closed
-  semantics, fixed the e2e money-path test + benchmark script to the single-reviewer API. Gate green
-  in `~/apps/trading-monet-sac`: tsc 0 / lint 0-err / **3121 tests** / build ok. See
-  `docs/rollouts/2026-07-09-single-adversary-landing.md`._
-  Branch `monet/single-adversary-consolidation` (worktree `.claude/worktrees/monet-single-adversary`
-  in the owner's repo), built ON draft PR #1035's Stage 1a (cherry-picked cleanly onto current
-  `origin/main` — the #1014 overlap warning was a false alarm; #1035 is SUPERSEDED, close it when
-  this lands). Scope delivered: `docs/single-adversary-consolidation.md` as amended by the owner's
-  2026-07-07 revision — in-flow Bear LLM deleted (deterministicBearFilter kept), `debateProposal`
-  rewritten as the ONE post-sizing reviewer (both jobs, three-way down-only verdict incl.
-  approve-at-half with placeability hold, R7 evidence context, per-account usage attribution),
-  universal coverage of risk-adding openings w/ net-direction exit exemption + 3-wide concurrency,
-  `RED_TEAM_LLM_PROVIDER`/`RED_TEAM_LLM_MODEL` env override killed (db migration v15 one-time
-  seed), NO model defaults anywhere (incl. `DEFAULT_POLICY.llmModel` removed; both models mandatory
-  Settings picks, keyed-providers-only, same-model allowed w/ non-blocking hint), R1–R20
-  reliability/visibility (extractJsonPayload everywhere, fetchLlmWithRetry, strict verdict shape,
-  `decision.adversaryUnavailable` + notification flag + amber card badge, `rejected_by_red_team`
-  rows). Verified on Linux x64: tsc 0 / eslint 0 errors / 2,888 tests pass; `npm run build` runs at
-  land (Cowork sandbox cannot exceed 45s/process). NEXT: Mac-side Claude helper runs
-  `scripts/land.sh` (PR ready, `--squash --auto`). See
-  `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`.
+- **Single-adversary consolidation — ✅ COMPLETED via PR #1191 (merged 2026-07-09, squash `f9a37611`;
+  feature author = Cowork Claude session, landing operator = MONET Mac session).**
+  _2026-07-09 (MONET landing): merged `origin/main` into the branch and resolved the conflicts per
+  `/Users/jay/apps/monet-handoff-2026-07-09.md` — deleted dead inline-Bear stopgaps
+  (`parseBearSurvivors`, orphaned `BEAR_UNAVAILABLE_*` alert constants + the
+  `inline-bear-parse`/`strategy-bear-alert-cooldown` tests), kept main's Proposer/Reviewer naming +
+  ModelStatsButton with the consolidation's no-defaults fail-closed semantics, fixed the e2e
+  money-path test + benchmark script to the single-reviewer API. Landing operator also integrated a
+  late `origin/main` (#1190, async run-once + Gemini maxItems schema): clean re-merge, one semantic
+  fix (the async-route + tuning fixtures had to satisfy the branch's new no-defaults Green-model
+  gate). 4 codex threads resolved: 1 FIXED (tuning blank-model → local-rules, commit `4d4812b0`); 3
+  documented-accepted/intentional (isRiskAddingOpening §3.5 flip-edge, chat MockLLM offline
+  fallthrough, approve-at-half hold label) with owner follow-ups filed. Gate green: tsc 0 / lint
+  0-err / full vitest / build ok. Migration v15 (main took v14). Post-merge: closed PR #1035
+  (superseded), deleted remote `claude/single-adversary-consolidation-wip`. See
+  `docs/rollouts/2026-07-09-single-adversary-landing.md` +
+  `docs/rollouts/2026-07-07-single-adversary-consolidation-impl.md`._
+- **Proposer/Reviewer Model naming + accurate Red-team role description (MONET, branch
+  `monet/model-picker-copy2`) — ✅ COMPLETED via PR #1109 (merged).** Copy-only on both model
+  pickers; the `reviewedByModel` Red attribution gap was carried into the single-adversary lane
+  (now a filed follow-up post-#1191).
 - **Run the as-of epoch Pinecone backfill (ops, MONET, session worktree
   `~/.claude/projects/Socratic.Trade/backfill-asof-epoch-09e06b`, branch
   `monet/backfill-asof-epoch-09e06b`) — OPS RUN DONE 2026-07-07, docs-only PR landing (this row
@@ -1250,7 +1243,7 @@ As of 2026-07-08 (assignment-rule update).
   lessons (e.g. MU-deadlock blame) get caught; modes annotate (default) / decide (owner opt-in);
   policy fields learningReviewEnabled/Mode/Model + scheduler hook + settings card + tests.
 
-- **Model-picker cost/latency/performance drawer (MONET, branch `monet/model-cost-drawer`) — IN PROGRESS 2026-07-08 (subagent).** Per-model stats drawer on both pickers: live cost/latency from llm_usage + llm_call_latency, benchmark fallback (docs/benchmarks 2026-07-08), realized performance gated by closed-trade sample count.
+- **Model-picker cost/latency/performance drawer (MONET, branch `monet/model-cost-drawer`) — ✅ COMPLETED via PR #1115 (merged 2026-07-09).** Per-model stats drawer on both pickers: live cost/latency from llm_usage + llm_call_latency, benchmark fallback (docs/benchmarks 2026-07-08), realized performance gated by closed-trade sample count.
   _2026-07-08 (MONET subagent): built + verified (tsc / lint 0 err / 2997 tests / route+pages dev-smoked); new `/api/llm-usage/model-stats`, pure `src/lib/model-stats.ts` (13 tests), shared `model-stats-drawer.tsx`, additive `ClosedLot.entryModel`; perf gated >=20/50 closed trades, Red perf deliberately dashed (per-run attribution). Landed as PR #1115, auto-merge armed (verify gate). Slack note posted._
 - **Model rotation mode (MONET, branch `monet/model-rotation`) — IN PROGRESS 2026-07-08 (subagent), built + gate green (tsc/lint/2997 tests), landing.** "__rotate__" sentinel for Proposer/Reviewer: per-account round-robin through credential-resolvable catalog models (mistral + grok-build excluded) so paper/test accounts accrue comparative live history; proposedByModel attribution automatic.
 - **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS 2026-07-08 (subagent).** Owner-designed meta-reviewer: once-daily Fable-class call reviews learned-context lessons/pending + learning mutations against a system-history digest (execution-failure audits + rollouts) applying the three tests; annotate (default) or decide (opt-in) modes, everything audited.
@@ -1314,8 +1307,7 @@ As of 2026-07-08 (assignment-rule update).
   registered via DesignSync register_assets. No repo files changed. NOTE: config.json's other
   account project `0a962679…` not writable from this login — sync there rides the next
   CLAUDE design-sync run.
-- **LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`) — IN PROGRESS
-  2026-07-08, committed, PR pending.** New operator script `scripts/benchmark-llm-models.ts`:
+- **LLM model benchmark script (MONET, branch `monet/llm-model-benchmark`) — ✅ COMPLETED via PR #1114 (merged 2026-07-09).** New operator script `scripts/benchmark-llm-models.ts`:
   every curated-catalog model in BOTH strategy roles (Green/Bull + Red/Bear) through the app's
   REAL request paths (resolveLlmEndpoint/buildLlmRequestBody/llmFetchCapturing, real strategy
   schemas + prompts, signal_snapshot-derived input pack), app DB strictly read-only, no broker

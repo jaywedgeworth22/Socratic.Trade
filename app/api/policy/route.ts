@@ -92,6 +92,11 @@ export async function PUT(request: Request) {
   // Owner directive 2026-07-07: an empty/cleared Red model is NOT silently deleted (that used to mean
   // "fall back to the Green model" — a fallback that no longer exists). A blank model is rejected by
   // validatePolicy so the user must pick one; there is no default for anything.
+  // The learning review model, by contrast, is an OPTIONAL advisory feature: blanking it clears the
+  // selection (→ undefined, feature no-ops) rather than being a rejected mandatory pick.
+  if (typeof body.learningReviewModel === "string" && body.learningReviewModel.trim().length === 0) {
+    delete policy.learningReviewModel;
+  }
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
@@ -141,6 +146,9 @@ async function validatePolicy(
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
+  if (policy.learningReviewEnabled !== undefined && typeof policy.learningReviewEnabled !== "boolean") return "learningReviewEnabled must be a boolean.";
+  if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
+  if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
   // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
   // (no defaults; only keyed providers are usable). Same-model-for-both is allowed — independence is
   // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
