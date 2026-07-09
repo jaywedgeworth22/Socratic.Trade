@@ -164,6 +164,8 @@ function directNotificationBody(input: { type: NotificationEventType; title: str
       return String(payload.summary ?? input.title);
     case "proposal_withdrawn":
       return String(payload.reason ?? input.title);
+    case "learning_review":
+      return String(payload.summary ?? input.title);
     case "budget_alert": {
       const provider = payload.provider ? String(payload.provider) : "provider";
       const operation = payload.operation ? String(payload.operation) : "usage check";

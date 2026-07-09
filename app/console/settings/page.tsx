@@ -25,6 +25,7 @@ import { BrokerAccountsCard } from "./brokers";
 import { AccountDeletionCard } from "./danger";
 import { DeliveryChannelsCard } from "./delivery";
 import { HelpGlossaryCard } from "./help";
+import { LearningReviewCard } from "./learning-review";
 import { ModelsCard } from "./models";
 import { DataSharingCard } from "./sharing";
 
@@ -38,7 +39,8 @@ const EVENT_HINT: Partial<Record<NotificationEventType, string>> = {
   proposal_withdrawn: "the strategist took an idea back",
   limit_order_stale: "a limit order has been working too long",
   provider_degraded: "a data provider is failing",
-  budget_alert: "a usage budget threshold was crossed"
+  budget_alert: "a usage budget threshold was crossed",
+  learning_review: "the daily learning review posted its findings"
 };
 
 export default function SettingsPage() {
@@ -80,6 +82,9 @@ export default function SettingsPage() {
         {/* llmModel / redTeamLlmModel live on the account's policy — same
             save path (PUT /api/policy) as everything else account-scoped. */}
         <ModelsCard />
+        {/* learningReviewEnabled/Mode/Model are account-policy fields — same
+            PUT /api/policy save path; the review itself runs off the scheduler. */}
+        <LearningReviewCard />
         <AdvancedActionConfirmationCard />
       </section>
 

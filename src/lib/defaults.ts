@@ -68,6 +68,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // are REQUIRED explicit picks in Settings → LLM models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
   llmReasoningEffort: "medium",
+  // Daily LLM learning review — default OFF; "annotate" never mutates anything (audits + a
+  // notification only). "decide" (apply verdicts) is a separate owner opt-in in Settings.
+  learningReviewEnabled: false,
+  learningReviewMode: "annotate",
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,

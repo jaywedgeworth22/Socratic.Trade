@@ -37,7 +37,8 @@ export const NOTIFICATION_EVENT_TYPES = [
   "proposal_withdrawn",
   "limit_order_stale",
   "provider_degraded",
-  "budget_alert"
+  "budget_alert",
+  "learning_review"
 ] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
 export type PriceAlertOp = "<" | ">";
@@ -768,6 +769,22 @@ export interface TradingPolicy {
    * never a gate. May also hold the "__rotate__" rotation sentinel (see `llmModel`).
    */
   redTeamLlmModel?: string;
+  /**
+   * Daily LLM learning review (default OFF): once per UTC day a frontier-class model audits the
+   * system's LEARNING DECISIONS — recent learned_context rows + the pending risk-tier queue —
+   * against a system-history digest (execution-failure audits, recent rollout notes), so lessons
+   * whose evidence was corrupted by an execution/infrastructure defect (e.g. losses from a stale
+   * exit deadlock blamed on the thesis) get caught instead of compounding.
+   */
+  learningReviewEnabled?: boolean;
+  /**
+   * "annotate" (default) = verdicts are recorded as audits + a notification only; nothing changes.
+   * "decide" (owner opt-in) = verdicts are additionally APPLIED via the existing learned-context
+   * mutation paths (delete/expire rows; approve/reject pending items) — every application audited.
+   */
+  learningReviewMode?: "annotate" | "decide";
+  /** Model for the daily learning review. Unset = claude-fable-5 (one frontier call per day). */
+  learningReviewModel?: string;
   /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
