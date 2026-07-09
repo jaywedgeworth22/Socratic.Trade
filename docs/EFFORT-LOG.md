@@ -202,6 +202,12 @@ As of 2026-07-04.
 
 ## 🚧 In Progress
 
+- **Daily LLM learning review (MONET, branch `monet/daily-learning-review`) — IN PROGRESS
+  2026-07-08, building.** Once-per-UTC-day Fable-class review of learned_context / pending learning
+  decisions with a system-history digest (execution-failure audits + rollout notes) so corrupted-evidence
+  lessons (e.g. MU-deadlock blame) get caught; modes annotate (default) / decide (owner opt-in);
+  policy fields learningReviewEnabled/Mode/Model + scheduler hook + settings card + tests.
+
 - **Proposer/Reviewer Model naming + Red description fix (MONET, branch `monet/model-picker-copy2`)
   — IN PROGRESS 2026-07-08, landing.** Copy-only on both pickers; Red attribution gap
   (`reviewedByModel`) queued for the single-adversary lane.

@@ -91,6 +91,9 @@ export async function PUT(request: Request) {
   if (typeof body.redTeamLlmModel === "string" && body.redTeamLlmModel.trim().length === 0) {
     delete policy.redTeamLlmModel;
   }
+  if (typeof body.learningReviewModel === "string" && body.learningReviewModel.trim().length === 0) {
+    delete policy.learningReviewModel;
+  }
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
@@ -127,6 +130,9 @@ async function validatePolicy(
   if (policy.sellToFundBuy !== undefined && !["off", "suggest", "propose", "automated"].includes(policy.sellToFundBuy)) return "sellToFundBuy must be off, suggest, propose, or automated.";
   if (policy.llmModel !== undefined && (typeof policy.llmModel !== "string" || policy.llmModel.trim().length === 0 || policy.llmModel.length > 64)) return "llmModel must be a non-empty model id.";
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
+  if (policy.learningReviewEnabled !== undefined && typeof policy.learningReviewEnabled !== "boolean") return "learningReviewEnabled must be a boolean.";
+  if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
+  if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
   }
