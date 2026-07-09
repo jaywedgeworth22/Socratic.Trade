@@ -17,6 +17,10 @@ filling the missing pieces.
 > rendering market-scan candidate evidence cards through the existing `SymbolButton`,
 > passing the current quote into the shared drawer. See
 > `docs/rollouts/2026-07-09-home-evidence-symbol-drawer.md`.
+> **2026-07-09 - Guardrails tooltip sweep (Codex).** No roadmap scope change.
+> Guardrails Universe and Autonomy controls now carry native titles for the
+> remaining bare checkbox/text/select/button controls. See
+> `docs/rollouts/2026-07-09-guardrails-tooltip-sweep.md`.
 > **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
 > scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
 > via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event
