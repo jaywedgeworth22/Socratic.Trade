@@ -4,20 +4,33 @@
  *  pickers (settings/models + strategy page). One small button per select opens
  *  a sheet listing every catalog model with cost per call and latency (live
  *  figures when this user has enough real traffic, otherwise the 2026-07-08
- *  benchmark, always labeled which is which) plus realized performance for the
- *  Proposer role. Performance is never shown unlabeled below its sample-size
- *  thresholds: under 20 closed trades it stays hidden behind an explicit
- *  "needs >= 20 closed trades (n=X)"; 20-49 shows numbers WITH a small-sample
- *  caveat; 50+ shows them plain. Reviewer performance is per-run (veto
- *  value-add), not per-trade, so that column stays a dash with a footnote
- *  rather than a faked number. */
+ *  benchmark, always labeled which is which) plus a performance column whose
+ *  meaning is role-specific. Neither performance measure is shown unlabeled
+ *  below its sample-size thresholds.
+ *  - Proposer (Green): realized performance = closed trades whose ENTRY this
+ *    model proposed. Hidden below 20 closed trades ("needs >= 20 closed trades
+ *    (n=X)"); 20-49 shows numbers WITH a small-sample caveat; 50+ plain.
+ *  - Reviewer (Red): veto value-add = the counterfactual "had-it-run" outcome
+ *    of the risk-adding proposals this model vetoed (share whose forward return
+ *    was a loss — a good veto avoids a loser — plus the average counterfactual
+ *    return, where NEGATIVE = value added). Fed by getRedTeamEfficacy(userId)
+ *    .byModel; gated on 20/50 MATURED vetoes with the same helpers as the
+ *    Results page 'Red Team veto efficacy' scorecard. Same measure, per model. */
 
 import { useCallback, useState } from "react";
 import { BarChart2 } from "lucide-react";
 // Pure curated-model DATA (no legacy UI components) — same import the strategy
 // page already uses, so the drawer lists exactly what the dropdowns offer.
 import { CURATED_LLM_MODEL_GROUPS } from "../../ui/llm-model-catalog";
-import { Chip, Dash, IconButton } from "../ui/primitives";
+// Reuse the SAME veto-value-add gates + tone the Results page 'Red Team veto efficacy'
+// scorecard uses, so the drawer and the scorecard never drift apart. Do NOT redefine these.
+import {
+  RED_TEAM_EFFICACY_MIN_RESOLVED,
+  redTeamReturnTone,
+  redTeamSampleGate,
+  redTeamSampleTier // encapsulates the 20/50 (MIN/SOLID) matured-veto thresholds
+} from "../lib/red-team-efficacy";
+import { Chip, Dash, IconButton, TONE_VAR } from "../ui/primitives";
 import { Sheet } from "../ui/sheet";
 
 type PickerRole = "proposer" | "red-team";
@@ -27,6 +40,16 @@ interface ModelPerf {
   winRate: number;
   avgPnlPct: number;
   totalPnlUsd: number;
+}
+
+// Mirrors src/lib/model-stats.ts ReviewerPerf verbatim (the drawer hand-duplicates the
+// route's response shapes). NOT win-rate: veto value-add is the counterfactual outcome of
+// the proposals this reviewer vetoed — negative avgReturnPct = the veto avoided losses.
+interface ReviewerPerf {
+  maturedVetoes: number;
+  vetoValueAddRate: number;
+  survivorRiskHitRate: number;
+  avgReturnPct: number;
 }
 
 interface ModelRoleStats {
@@ -40,6 +63,7 @@ interface ModelRoleStats {
   benchmarkColdP50Ms: number | null;
   closedTrades: number;
   perf: ModelPerf | null;
+  reviewerPerf: ReviewerPerf | null;
 }
 
 interface ModelStatsResponse {
@@ -111,8 +135,40 @@ function LatencyCell({ s }: { s: ModelRoleStats | undefined }) {
   return <Dash />;
 }
 
+/** Reviewer (Red Team) veto value-add — the RED-role 4th column. NOT win-rate: it reports the
+ *  counterfactual outcome of the proposals this model vetoed. HIGHER good-veto % is better, and
+ *  a NEGATIVE avg counterfactual return is GOOD (the veto avoided losses), so the avg is toned
+ *  via redTeamReturnTone (negative → the positive/"pos" tone). Gated on 20/50 matured vetoes
+ *  with the same helpers as the Results page 'Red Team veto efficacy' scorecard. */
+function ReviewerPerfCell({ s }: { s: ModelRoleStats | undefined }) {
+  const n = s?.reviewerPerf?.maturedVetoes ?? 0;
+  if (!s || !s.reviewerPerf || n < RED_TEAM_EFFICACY_MIN_RESOLVED) {
+    return <span className="whitespace-nowrap text-[color:var(--con-faint)]">— {redTeamSampleGate(n)}</span>;
+  }
+  const { vetoValueAddRate, avgReturnPct } = s.reviewerPerf;
+  const avgTone = redTeamReturnTone(avgReturnPct);
+  const tier = redTeamSampleTier(n);
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="con-num">
+        {vetoValueAddRate.toFixed(0)}% good vetoes · avg{" "}
+        <span style={avgTone === "muted" ? undefined : { color: TONE_VAR[avgTone] }}>{fmtSignedPct(avgReturnPct)}</span>
+      </span>
+      {tier === "caution" ? (
+        <Chip tone="warn" title={`Only ${n} matured vetoes — treat this as an early read, not an established edge.`}>
+          {redTeamSampleGate(n)}
+        </Chip>
+      ) : (
+        <Chip title={`${n} matured blocking vetoes attributed to this reviewer model; negative avg = losses avoided.`}>
+          {redTeamSampleGate(n)}
+        </Chip>
+      )}
+    </span>
+  );
+}
+
 function PerfCell({ s, role }: { s: ModelRoleStats | undefined; role: PickerRole }) {
-  if (role === "red-team") return <Dash />;
+  if (role === "red-team") return <ReviewerPerfCell s={s} />;
   const n = s?.closedTrades ?? 0;
   if (!s || n < PERF_MIN_TRADES || !s.perf) {
     return (
@@ -189,7 +245,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
                   <th className="text-left">Model</th>
                   <th className="text-left">Cost / call</th>
                   <th className="text-left">Latency (p50)</th>
-                  <th className="text-left">Realized performance</th>
+                  <th className="text-left">{role === "proposer" ? "Realized performance" : "Veto value-add"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,8 +265,11 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
               </>
             ) : (
               <>
-                Reviewer performance isn&apos;t scored per trade yet: Red attribution is per-run (veto value-add on the
-                proposals it kills), a different measure from closed-trade P&amp;L — see the Results page scorecards.
+                Veto value-add = of the risk-adding proposals this model vetoed, the share whose counterfactual
+                (had-it-run) outcome was a loss — a good veto avoids a loser — and the average counterfactual return
+                (negative = value added). A veto resolves ~5 trading days after it&apos;s made; hidden until 20 resolved
+                vetoes, small-sample caveat until 50. Same measure as the Results page &apos;Red Team veto efficacy&apos;
+                scorecard, per model.
               </>
             )}
           </p>

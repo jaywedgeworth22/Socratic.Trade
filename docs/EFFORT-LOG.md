@@ -332,6 +332,22 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
+  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
+  2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the
+  ALREADY-BUILT per-reviewer-model veto value-add in the drawer's 4th column, replacing the hard-coded
+  dash for the Reviewer role. No DB/schema/`strategy.ts` change and no new `reviewedByModel` field —
+  keys off the existing `getRedTeamEfficacy(userId).byModel`. Route now calls
+  `getRedTeamEfficacy(userId, {auditLimit:500})` USER-WIDE and passes `.byModel` into
+  `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf` shape + `reviewerPerf` field on
+  `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket filtered out. PerfCell renders
+  "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone` (NEGATIVE avg = GOOD, positive
+  tone; higher good-veto % = better) under the same 20/50 matured-veto gates as the Results 'Red Team veto
+  efficacy' card; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+  footnote + drawer header comment. Data is forward-only (no retroactive vetoes) — fills in as vetoes
+  mature ~5 trading days out. Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+  file; clean hunk-level merge). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+  `docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
 - **Connected-accounts UI: "Currently Loaded / Other Accounts" restructure + kill Test-Account
   mock-label spam (MONET, worktree `~/apps/trading-monet-acct-ui`, branch
   `monet/account-mgmt-ui`) — IN PROGRESS 2026-07-09.** Display-copy + JSX only; no execution/data
@@ -1230,6 +1246,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
+  — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
+  makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native
+  auto-merge cant self-heal + land.sh never returns. Fix: `docs/EFFORT-LOG.md merge=union` +
+  `scripts/merge-shepherd.sh` (re-syncs stuck armed PRs, re-runs flaky verify, merges green, digest
+  to a tracking issue) driven by a launchd job (Mac PAT). Only acts on auto-merge-armed PRs.
+  Rollout: `docs/rollouts/2026-07-09-merge-shepherd.md`.
 - **Intro size-jump + loading-text fix (MONET, intro-anim session, branch
   `monet/intro-size-jump-3676f7`) — IN PROGRESS 2026-07-09.** Owner (prod, both viewports):
   wordmark still has a sudden SIZE change ~1s after the candles assemble; also remove the
