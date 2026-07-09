@@ -437,6 +437,9 @@ type DecisionRowData = {
   href?: string;
   title?: string;
   confidence?: number;
+  /** ISO timestamp of the decision/proposal — rendered top-right as a relative
+   *  "15m ago" (like Journal entries); absent for rows with no known time. */
+  at?: string;
 };
 
 type EvidenceRow = {
@@ -488,8 +491,9 @@ function deriveActionRows(snapshot: DashboardSnapshot, latest: StrategyDecision 
   const latestRows =
     latest?.proposals
       ?.slice(0, 5)
-      .map((item) => decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons)) ??
-    [];
+      .map((item) =>
+        decisionFromProposal(`${latest.runId}-${item.proposal.symbol}-${item.status}`, item.proposal, item.status, item.reasons, latest.createdAt)
+      ) ?? [];
   if (latestRows.length > 0) return latestRows;
   return snapshot.pendingProposals.slice(0, 5).map((pending) => decisionFromPending(pending));
 }
@@ -508,11 +512,12 @@ function decisionFromSocratic(decision: SocraticDecisionCase): DecisionRowData {
     rationale: withBlockReasons(rationale, decision.status, reasons),
     href: `/console/decisions/${encodeURIComponent(decision.id)}`,
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
-    confidence: decision.confidenceScore
+    confidence: decision.confidenceScore,
+    at: decision.createdAt
   };
 }
 
-function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = []): DecisionRowData {
+function decisionFromProposal(id: string, proposal: TradeProposal, status: string, reasons: string[] = [], at?: string): DecisionRowData {
   return {
     id,
     symbol: proposal.symbol,
@@ -521,14 +526,15 @@ function decisionFromProposal(id: string, proposal: TradeProposal, status: strin
     status,
     rationale: withBlockReasons(proposal.rationale, status, reasons),
     title: reasons.length > 0 ? `Policy reasons:\n${reasons.join("\n")}` : undefined,
-    confidence: proposal.confidenceScore
+    confidence: proposal.confidenceScore,
+    at
   };
 }
 
 function decisionFromPending(pending: PendingProposal): DecisionRowData {
   const proposal = pending.proposal;
   return {
-    ...decisionFromProposal(pending.id, proposal, "pending"),
+    ...decisionFromProposal(pending.id, proposal, "pending", [], pending.createdAt),
     size: pending.estimatedNotional ? fmtMoney(pending.estimatedNotional) : proposal.dollarAmount ? fmtMoney(proposal.dollarAmount) : EM_DASH
   };
 }
@@ -712,6 +718,12 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
         <p>{row.rationale}</p>
       </div>
       <div className="text-right">
+        {/* relative decision time, top-right — same treatment as Journal entries */}
+        {row.at && (
+          <div className="text-[length:var(--con-fs-xs)] font-normal text-[color:var(--con-faint)]">
+            <Ago iso={row.at} />
+          </div>
+        )}
         <div className="con-num font-semibold">{row.size}</div>
         {typeof row.confidence === "number" && <div className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">conf {row.confidence}</div>}
         {row.href && (
