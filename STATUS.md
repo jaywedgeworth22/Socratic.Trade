@@ -20,6 +20,14 @@ and a recent resolved-veto table that labels missing `redTeamVerdict.model` hist
 test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts`, `npx tsc --noEmit`,
 and `npm run lint -- --quiet` — all green.
 Rollout: `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
+## 2026-07-08 — Intro landing fixes: slow-load size pop + vanish gap (MONET, branch `monet/intro-landing-fixes-3676f7`)
+Owner-reported on prod: mobile wordmark assembled small then popped larger; desktop logo vanished
+~1s before the page finished loading. Root cause: intro completes against the loading shell and
+lands on a stale fallback box; the fade didn't wait for a real logo. Fix (intro-canvas.tsx): the
+fallback box now mirrors the real logo per viewport, the landing box eases to the measured target,
+and the natural fade waits for a settled measured logo (45s backstop; skip instant) — the ticking
+wordmark doubles as branded loading chrome meanwhile. Verified live on cold-compile slow loads,
+mobile + desktop. See `docs/rollouts/2026-07-08-intro-landing-fixes.md`.
 
 ## 2026-07-09 — Alert triage: all ~75 Attention alerts root-caused + fixed; AV key pool; alert lifecycle (MONET, `monet/alert-triage-av-multikey`)
 Owner-directed. 9-agent triage (per alert family + adversarial verify) on the prod DB: 76 of 87
