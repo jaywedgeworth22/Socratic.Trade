@@ -332,6 +332,17 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Settings auto-save everywhere (MONET, branch `monet/settings-autosave-99138a`) — IN PROGRESS
+  2026-07-09, PR pending via land.sh.** Owner-directed: settings persist on change like Data-sharing,
+  except confirmation/review-gated ones. New `app/console/lib/useAutoSave.tsx` + `ui/save-status.tsx`
+  (serialized writes, optimistic+revert, error-toast, inline Saving/Saved). Converted: Event
+  notifications, Tax treatment, Market-scan shape, Delivery channels, LLM models (Strategist/Reviewer),
+  Strategy page (model selects, prompt-blur, 8 scoring-weights-blur). Excluded unchanged: guardrails
+  review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/deletion, learned-context
+  queue, kill switch, typed-confirmation switch. Verified live: every control type persists across
+  reload. Flagged to owner: strategy prompt/weights auto-save (soft call), guardrails kept review.
+  Rollout: `docs/rollouts/2026-07-09-settings-autosave.md`.
+
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
   2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the

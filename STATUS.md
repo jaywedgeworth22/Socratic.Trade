@@ -19,6 +19,17 @@ from the real temp dir (janitor parity; crashed runs self-heal next run). Verifi
 observed landing inside the per-run dir mid-run, dir gone after teardown, zero new loose tmp entries
 across the full suite. Gate green: lint 0 errors / tsc clean / 306 files 3171 tests / build. See
 `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
+## 2026-07-09 — Settings auto-save everywhere (MONET)
+Owner-directed: every settings change (incl. delivery channels) auto-saves like the Data-sharing
+section, except confirmation/review-gated ones. New shared `useAutoSave` hook + `<SaveStatus>`
+inline indicator (serialized writes, optimistic+revert, error-toast); converted Event
+notifications, Tax treatment, Market-scan shape (settings/page.tsx), Delivery channels, LLM models,
+and the Strategy page's model selects/prompt/scoring-weights. Excluded (unchanged): guardrails
+review-and-commit, autonomy autopilot, AI-review apply, brokers/API-keys/account-deletion, learned-
+context queue, kill switch, typed-confirmation master switch. Toggles/selects save on change;
+text/number on blur. Verified live: every control type persists across reload. Two soft calls
+flagged to owner (strategy prompt/weights now blur-save; guardrails kept review-and-commit). See
+docs/rollouts/2026-07-09-settings-autosave.md.
 ## 2026-07-08 — npm `allowScripts` approval (MONET, branch `monet/allow-scripts-approval`)
 Landing a `package.json`-only fix: an `allowScripts` block approving the 7 install-script packages
 (`@sentry/cli`, `better-sqlite3`, `fsevents`x2, `sharp`, `esbuild`, `unrs-resolver`) so native-dep
