@@ -8,6 +8,21 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Reviewer veto value-add in the Model Stats drawer (MONET, branch `monet/reviewer-veto-valueadd-stats`)
+Owner-directed plumbing-only change: the Model Stats drawer's 4th column showed a hard-coded dash for
+the Reviewer (Red Team) role; it now surfaces the ALREADY-BUILT per-reviewer-model **veto value-add**
+(the same measure `getRedTeamEfficacy` computes and the Results 'Red Team veto efficacy' scorecard
+renders). No DB/schema/`strategy.ts` change and no new `reviewedByModel` field — keys off the existing
+`proposal_rejected_by_red_team` audit. Route calls `getRedTeamEfficacy(userId, {auditLimit:500})`
+USER-WIDE and passes `.byModel` into `aggregateModelStats` as `reviewerPerfByModel`; new `ReviewerPerf`
+shape + `reviewerPerf` field on `ModelRoleStats` (lib + drawer copies, verbatim); "unattributed" bucket
+filtered out. `PerfCell` renders "X% good vetoes · avg ±Y%" with the avg toned via `redTeamReturnTone`
+(NEGATIVE avg = GOOD/positive tone; higher good-veto % = better) under the same 20/50 matured-veto gates
+as the scorecard; role-aware 4th header ("Realized performance" / "Veto value-add"); rewritten reviewer
+footnote + header comment. Data is forward-only (fills in as vetoes mature ~5 trading days out; no
+retroactive backfill). Concurrent with `monet/model-stats-drawer-wide` (different region of the same
+file). Gate green: tsc 0 / lint 0-err / 3171 tests / build ok. See
+`docs/rollouts/2026-07-09-reviewer-veto-valueadd-drawer.md`.
 ## 2026-07-09 — Intro size jump (real AR) + remove loading text (MONET, branch `monet/intro-size-jump-3676f7`)
 Owner (prod, both viewports): wordmark still had a sudden SIZE change ~1s after the candles
 assemble; also remove the "Socratic Trade / Loading the autonomy desk…" text during load. Root
