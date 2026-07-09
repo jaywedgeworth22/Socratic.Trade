@@ -204,6 +204,16 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
+  replace confusing loose/tight wording with lock/unlock-style affordances, and
+  turn absolute-vs-percent constraint pairs into polished mode switches where
+  they represent alternative ways to express one setting.
+  2026-07-09 CODEX: COMPLETED via PR #1184 (`8b468260`). Scope was the smallest
+  remaining tooltip-only slice: added missing native titles to bare Guardrails controls in
+  `app/console/guardrails/page.tsx`. Keepout honored: MONET-owned model-picker/catalog
+  files were not touched. Full local gate and GitHub `verify`/smoke were green before
+  auto-merge. Not yet production-deployed after `8b468260`; MONET confirmed it rides the
+  next natural release.
 - Universal ticker detail drawer parity - restore old-site discoverability by
   making ticker symbols open a shared right-side drilldown drawer consistently
   across scan, home, evidence cards, proposals, orders, activity, outcomes,
@@ -784,15 +794,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- Settings affordance and tooltip pass - add clearer option descriptions/tooltips,
-  replace confusing loose/tight wording with lock/unlock-style affordances, and
-  turn absolute-vs-percent constraint pairs into polished mode switches where
-  they represent alternative ways to express one setting.
-  2026-07-09 CODEX: claimed on branch `codex/settings-tooltip-sweep`
-  (`/Users/jay/.codex/worktrees/socratic-settings-tooltip-sweep`) for the smallest
-  remaining tooltip-only slice: add missing native titles to bare guardrails controls in
-  `app/console/guardrails/page.tsx`. Keepout: MONET-owned model-picker/catalog files.
-  Implementation and full local gate are green; PR #1184 is open with auto-merge armed.
 - **Mobile chrome bar fixes, 6 owner-reported items (MONET, intro-anim session, branch
   `monet/mobile-chrome-fixes-3676f7`) — IN PROGRESS 2026-07-08, landing via PR.** Owner (prod phone
   screenshots): (1) account dropdown wider on mobile; (2) Running/Autopilot indicator
