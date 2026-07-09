@@ -29,6 +29,7 @@ import {
 import { activeConnectedAccount, deriveReality, type RealityInfo } from "../lib/derive";
 import { EM_DASH } from "../lib/format";
 import { classify, getAtPath, type FieldDef } from "../lib/policy-diff";
+import { CONSOLE_PAGE_WIDTH } from "../lib/page-width";
 import { useConsoleData } from "../lib/useConsoleData";
 import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
@@ -234,7 +235,7 @@ export default function StrategyPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className={`${CONSOLE_PAGE_WIDTH} flex flex-col gap-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[length:var(--con-fs-lg)] font-bold">Strategy</h1>
         <Chip tone={reality.tone}>

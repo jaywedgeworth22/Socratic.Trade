@@ -51,6 +51,45 @@ function messageFrom(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+/** True when a non-ok response's body is an HTML error page rather than this API's normal
+ *  JSON/plain-text contract — e.g. Cloudflare's raw 524 "edge timeout" interstitial, or any other
+ *  proxy/edge error page. Checked on BOTH the header and the body's own leading bytes: an edge
+ *  proxy's error page can arrive with a missing or misleading content-type, so header-only
+ *  detection isn't enough — this is what let a raw Cloudflare 524 page reach `messageFrom` before
+ *  (a non-empty string payload was returned verbatim as the "message"). */
+function looksLikeHtml(contentType: string, payload: unknown): boolean {
+  if (contentType.includes("text/html")) return true;
+  if (typeof payload !== "string") return false;
+  const head = payload.trimStart().slice(0, 15).toLowerCase();
+  return head.startsWith("<!doctype") || head.startsWith("<html");
+}
+
+/** Clean, human message for a non-2xx response whose body is a raw HTML error page — this is
+ *  NEVER rendered verbatim to the user. Cloudflare's edge timeout (524) is called out by name
+ *  since a slow LLM-driven strategy run routinely triggers it in production (Coolify migration —
+ *  the origin keeps running past the ~100s edge budget); other 5xx-range edge statuses and any
+ *  other HTML error page get a generic "edge/proxy error" framing that still surfaces the code. */
+function edgeErrorMessage(status: number): string {
+  if (status === 524) {
+    return "The server took too long to respond at the edge (524). The operation may still be running — check the Activity feed.";
+  }
+  if (status >= 520 && status <= 530) {
+    return `The edge network returned an error (${status}) instead of reaching the app. The operation may still be running — check the Activity feed.`;
+  }
+  return `The server returned an unexpected error page (${status}) instead of a normal response. The operation may still be running — check the Activity feed.`;
+}
+
+/** Shared by every helper below so a raw HTML error page is never surfaced as an error message —
+ *  applying this at the ONE shared response-error builder (rather than per-caller) means every
+ *  dialog that goes through `request<T>` or `fetchDashboard` benefits automatically. */
+function buildResponseError(res: Response, payload: unknown, fallback: string): ConsoleApiError {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (looksLikeHtml(contentType, payload)) {
+    return new ConsoleApiError(edgeErrorMessage(res.status), res.status, payload);
+  }
+  return new ConsoleApiError(messageFrom(payload, fallback), res.status, payload);
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -64,7 +103,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   const payload = await parseBody(res);
   if (!res.ok) {
-    throw new ConsoleApiError(messageFrom(payload, `Request failed (${res.status}).`), res.status, payload);
+    throw buildResponseError(res, payload, `Request failed (${res.status}).`);
   }
   return payload as T;
 }
@@ -81,7 +120,7 @@ export async function fetchDashboard<T>(signal?: AbortSignal): Promise<T> {
   }
   if (!res.ok) {
     const payload = await parseBody(res);
-    throw new ConsoleApiError(messageFrom(payload, `Snapshot failed (${res.status}).`), res.status, payload);
+    throw buildResponseError(res, payload, `Snapshot failed (${res.status}).`);
   }
   return (await res.json()) as T;
 }
@@ -90,11 +129,16 @@ export async function fetchDashboard<T>(signal?: AbortSignal): Promise<T> {
 
 export interface RunOnceResult {
   runId: string;
-  status: "completed" | "failed";
+  /** "started": the route launched the run and returned before it finished (real runs can take
+   *  several minutes on LLM-heavy steps) — the run keeps executing server-side; track it via the
+   *  existing Activity/snapshot polling, not this response. */
+  status: "completed" | "failed" | "started";
   summary: string;
 }
 
-/** Manual run — the server forces manual runs to propose-only authority. */
+/** Manual run — the server forces manual runs to propose-only authority. Async: the route races
+ *  the run against a bounded window and may return `status: "started"` (202) instead of waiting
+ *  for the whole run to finish — see app/api/strategy/run/route.ts. */
 export function runOnce(): Promise<RunOnceResult> {
   return request<RunOnceResult>("/api/strategy/run", { method: "POST", body: JSON.stringify({ manual: true }) });
 }
@@ -165,6 +209,31 @@ export async function approveProposal(
     return await request<ApproveResult>(`/api/proposals/${encodeURIComponent(id)}/approve`, {
       method: "POST",
       body: JSON.stringify(liveConfirmation ? { liveConfirmation } : {})
+    });
+  } catch (error) {
+    if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {
+      const p = error.payload as { error?: string; reasons?: string[]; expectedText?: string; message?: string };
+      if (p.error === "LIVE_CONFIRMATION_REQUIRED" && typeof p.expectedText === "string") {
+        throw new LiveConfirmationRequiredError(Array.isArray(p.reasons) ? p.reasons : [], p.expectedText);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface BulkApproveResult extends ApproveResult {
+  proposalId: string;
+  symbol?: string;
+}
+
+export async function bulkApproveProposals(
+  proposalIds: string[],
+  liveConfirmation?: { typedText: string }
+): Promise<{ results: BulkApproveResult[] }> {
+  try {
+    return await request<{ results: BulkApproveResult[] }>("/api/proposals/bulk-approve", {
+      method: "POST",
+      body: JSON.stringify({ proposalIds, ...(liveConfirmation ? { liveConfirmation } : {}) })
     });
   } catch (error) {
     if (error instanceof ConsoleApiError && error.status === 409 && error.payload && typeof error.payload === "object") {

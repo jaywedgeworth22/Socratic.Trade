@@ -68,6 +68,12 @@ export default function ConsoleHomePage() {
   const frameworkRows = deriveFrameworkRows(snapshot);
   const hasFrameworkProposals = (snapshot.socratic?.frameworkProposals?.length ?? 0) > 0;
 
+  // Intentionally full-bleed (no CONSOLE_PAGE_WIDTH cap, see ./lib/page-width.ts):
+  // this is a two-column dashboard (main column + aside, aside floored at
+  // 320px via xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] below), not
+  // a single reading column like the other console pages. Capping it to
+  // CONSOLE_PAGE_WIDTH would starve the main column to satisfy the aside's
+  // floor. See docs/rollouts/2026-07-08-console-page-width-parity.md.
   return (
     <div className="flex flex-col gap-4">
       <section className="con-thesis-hero">
@@ -438,6 +444,8 @@ type EvidenceRow = {
   meta: string;
   metaTitle?: string;
   body: string;
+  symbol?: string;
+  quote?: MarketQuote;
   tone?: "pos" | "warn" | "neg" | "accent";
 };
 
@@ -603,6 +611,8 @@ function evidenceFromCandidate(candidate: MarketQuote): EvidenceRow {
   const sources = sourceListFromQuote(candidate) || evidenceSourceLabel(candidate.provider);
   return {
     title: candidate.symbol,
+    symbol: candidate.symbol,
+    quote: candidate,
     meta: `score ${Math.round(candidate.score)}${sources ? ` · ${sources}` : ""}`,
     metaTitle: sources ? `Data sources: ${sources}` : undefined,
     body:
@@ -714,11 +724,17 @@ function DecisionRow({ row }: { row: DecisionRowData }) {
   );
 }
 
-function EvidenceCard({ title, meta, metaTitle, body, tone = "accent" }: EvidenceRow) {
+function EvidenceCard({ title, meta, metaTitle, body, symbol, quote, tone = "accent" }: EvidenceRow) {
   return (
     <article className={`con-evidence-card con-evidence-${tone}`}>
       <div className="flex items-start justify-between gap-3">
-        <strong>{title}</strong>
+        {symbol ? (
+          <SymbolButton symbol={symbol} quote={quote} showLogo={false}>
+            {title}
+          </SymbolButton>
+        ) : (
+          <strong>{title}</strong>
+        )}
         <span title={metaTitle}>{meta}</span>
       </div>
       <p>{body}</p>

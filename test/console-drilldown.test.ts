@@ -5,6 +5,7 @@ import {
   buildSignalSummary,
   deriveForView,
   formatDollarsM,
+  hasEnrichedData,
   normalizedDebtToEquity,
   peDisplay,
   positionEconomics,
@@ -12,6 +13,7 @@ import {
   ratingDistribution,
   targetUpsidePct,
   toQuoteView,
+  toQuoteViewFromEnrichment,
   withProvenance,
   factorRows,
   type QuoteView
@@ -326,6 +328,45 @@ describe("console drilldown: provenance + misc formatting", () => {
     expect(formatDollarsM(0.5)).toBe("$500K");
   });
 
+});
+
+describe("console drilldown: on-demand enrichment (symbol outside the last scan)", () => {
+  it("builds a QuoteView from a live /api/quote fetch, marked not-full and score-less", () => {
+    const view = toQuoteViewFromEnrichment("LRCX", {
+      price: 78.2,
+      companyName: "Lam Research",
+      sector: "Technology",
+      peRatio: 24.1,
+      eps: 3.24,
+      sentiment: 65,
+      sources: { price: "webull-unofficial", peRatio: "yahoo-finance" }
+    });
+    expect(view.symbol).toBe("LRCX");
+    expect(view.full).toBe(false);
+    expect(view.price).toBe(78.2);
+    expect(view.companyName).toBe("Lam Research");
+    expect(view.peRatio).toBe(24.1);
+    // Never fabricated: scan-only fields stay absent.
+    expect(view.score).toBeUndefined();
+    expect(view.factorBreakdown).toBeUndefined();
+    expect(view.marketCap).toBeUndefined();
+  });
+
+  it("drops non-positive price-family values instead of rendering them", () => {
+    const view = toQuoteViewFromEnrichment("X", { price: 0, bid: -1 });
+    expect(view.price).toBeUndefined();
+    expect(view.bid).toBeUndefined();
+  });
+
+  it("hasEnrichedData is true when any real field came back", () => {
+    expect(hasEnrichedData(toQuoteViewFromEnrichment("LRCX", { peRatio: 24.1 }))).toBe(true);
+    expect(hasEnrichedData(toQuoteViewFromEnrichment("LRCX", { headlines: ["Lam Research ships new tool"] }))).toBe(true);
+  });
+
+  it("hasEnrichedData is false when every provider came back empty (sources is always a defined-but-empty object)", () => {
+    expect(hasEnrichedData(toQuoteViewFromEnrichment("ZZZZ", { sources: {} }))).toBe(false);
+    expect(hasEnrichedData(toQuoteViewFromEnrichment("ZZZZ", {}))).toBe(false);
+  });
 });
 
 describe("console drilldown: factor rows derive from the breakdown's own keys", () => {

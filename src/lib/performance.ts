@@ -930,7 +930,7 @@ export interface RedTeamEfficacy {
   survivorRiskHitRate: number;
   /** Mean counterfactual return (%) across matured vetoes; negative is good (vetoes avoided losses). */
   avgReturnPct: number;
-  /** Per red-team model breakdown (present only for models that stamped ≥1 matured veto). */
+  /** Per red-team model breakdown (full scanned history; missing model is bucketed as "unattributed"). */
   byModel: Array<{
     model: string;
     maturedVetoes: number;
@@ -1016,10 +1016,10 @@ export function getRedTeamEfficacy(
 
   const byModelMap = new Map<string, RedTeamVetoRecord[]>();
   for (const record of records) {
-    if (!record.model) continue;
-    const bucket = byModelMap.get(record.model);
+    const model = record.model?.trim() || "unattributed";
+    const bucket = byModelMap.get(model);
     if (bucket) bucket.push(record);
-    else byModelMap.set(record.model, [record]);
+    else byModelMap.set(model, [record]);
   }
 
   const resolvedDenominator = maturedVetoes + unresolvableVetoes;
