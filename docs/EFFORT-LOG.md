@@ -1149,11 +1149,22 @@ discrepancies that motivated these rows._
   evidence_age_anomaly events; zero app/ references to these kinds exist today. _(why now: #814/#816's
   whole design is 'detection IS the control' — advisory receipts are worthless if the owner-facing
   surfaces don't surface them; #807's alert center is the natural home and just merged.)_
-- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M)** — Surface the veto-efficacy
+- **Wire the getRedTeamEfficacy scorecard into the console (CODEX, M) — IN PROGRESS 2026-07-08.**
+  Branch/worktree: `codex/red-team-efficacy-console` /
+  `/Users/jay/.codex/worktrees/socratic-red-team-efficacy-console`. Surface the veto-efficacy
   metrics (API/db-level since the w1-learning-loops landing) on the console, including
   override-vs-non-override splits now that #814 protects the metric. _(why now: The w1 row
   explicitly deferred UI wiring to the console lane and it was never tracked as its own row; #814's
-  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_
+  FIX #1 (no counterfactual on override path) makes the metric trustworthy now.)_ 2026-07-09 CODEX:
+  scope corrected per MONET to the narrow Results/snapshot/test/docs fileset only. Local slice now
+  built in this worktree (`redTeamEfficacy` snapshot payload + Results card + focused regression +
+  rollout note); PR #1175 is open. 2026-07-09 review fix: reviewer `unattributed` rows now come
+  from full-history `getRedTeamEfficacy()` `byModel`, the card labels persisted counts as veto
+  decisions rather than all reviewed openings, and override share counts only actually applied
+  Socratic overrides while still disclosing override-path vetoes. Verified here with
+  `npx vitest run test/red-team-efficacy-ui.test.ts test/dashboard-fill-batching.test.ts
+  test/performance.test.ts`, `npx tsc --noEmit`, and `npm run lint -- --quiet`.
+  Keepout remains approval bulk-confirm, Monet model/alert lanes, AG tooltip/sheet PRs, and Claude memory/RAG.
 - **Headline first-seen timestamps to close the evidence-age receipt gap (CLAUDE, M)** — Persist
   first-seen times for news headlines so the #816 evidence-age anomaly receipts can cover them
   (currently explicitly deferred because headlines carry no timestamp). _(why now: #816's rollout

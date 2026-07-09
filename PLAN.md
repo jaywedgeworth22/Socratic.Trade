@@ -5,6 +5,12 @@ measurable, customizable, and easier to operate. The current codebase is treated
 as partially complete; implementation should preserve working controls while
 filling the missing pieces.
 
+> **2026-07-09 - Red Team efficacy Results wiring (Codex).** No roadmap scope change. The
+> active-account dashboard snapshot now carries `redTeamEfficacy` plus the override split from
+> persisted audit history, and Results renders the scorecard with honest 20/50 sample gating for
+> reviewer rows plus explicit `unattributed` history when no reviewer model was persisted. This is
+> read-side only and deliberately stays out of `src/lib/red-team.ts` / `src/lib/strategy.ts`.
+> See `docs/rollouts/2026-07-09-red-team-efficacy-console.md`.
 > **2026-07-09 - Shared-dep proper-usage cleanup refresh (Codex).** No roadmap
 > scope change. Dirty Cursor PR #1105 was refreshed onto current `origin/main`
 > via `codex/refresh-shared-dep-usage` without editing Cursor's branch: event

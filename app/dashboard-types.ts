@@ -4,7 +4,7 @@ import type { MacroData } from "@/lib/macro";
 import type { MacroDerivedMetrics } from "@/lib/macro-metrics";
 import type { MarketSignals } from "@/lib/market-signals";
 import type { MarketNewsItem } from "@/lib/market-signals/massive";
-import type { RegimeStat, ThesisStat } from "@/lib/performance";
+import type { RedTeamEfficacy, RegimeStat, ThesisStat } from "@/lib/performance";
 import type { TaxSummary } from "@/lib/tax";
 import type {
     BrokerageAccount,
@@ -106,6 +106,16 @@ export interface DashboardSnapshot {
     news?: MarketNewsItem[];
   };
   performance?: PerformanceSummary;
+  redTeamEfficacy?: RedTeamEfficacy & {
+    /** Opening Bear vetoes routed to the Socratic override path. */
+    overrideVetoes: number;
+    /** Opening Bear vetoes whose Socratic override actually applied. */
+    appliedOverrideVetoes: number;
+    /** Blocking vetoes + override-path vetoes; survived Red Team reviews are not persisted here. */
+    vetoDecisions: number;
+    /** appliedOverrideVetoes / vetoDecisions (%), 0 when no veto decisions exist. */
+    overrideSharePct: number;
+  };
   thesisScorecard?: ThesisStat[];
   regimeScorecard?: RegimeStat[];
   tax?: TaxSummary;

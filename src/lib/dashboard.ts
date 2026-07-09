@@ -8,6 +8,7 @@ import {
   getStrategyPrompt,
   latestAuditByKind,
   listAudit,
+  listAuditByKind,
   listNotificationEvents,
   sweepAutoAcknowledgeNotifications,
   listPendingProposals,
@@ -25,7 +26,7 @@ import { buildAuditFeed, buildSymbolMetaBySymbol, buildUnifiedFeed } from "./das
 import type { StrategyDecisionLike } from "./dashboard-feed";
 import { currentMarketSession } from "./market-hours";
 import { normalizeSymbol } from "./money";
-import { getPerformanceSummary, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
+import { getPerformanceSummary, getRedTeamEfficacy, getRegimeScorecard, getThesisScorecard, returnSinceProposalPct } from "./performance";
 import { computeSpyBenchmark } from "./benchmark";
 import { getTaxSummary } from "./tax";
 import { getBrokerGateway } from "./broker";
@@ -47,6 +48,7 @@ import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
+const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
 
 export interface AccountReadiness {
   ok: boolean;
@@ -381,6 +383,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   }
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
   const regimeScorecard = accountNumber ? getRegimeScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
+  const redTeamEfficacy = accountNumber ? getDashboardRedTeamEfficacy(userId, policy.connectedAccountId) : undefined;
   const tax = accountNumber
     ? getTaxSummary(accountNumber, scorecardSource, currentPrices, { ...policy.taxSettings, taxationType: activeAccount?.taxationType ?? policy.taxSettings?.taxationType }, new Date(), userId, prefetchedFills)
     : undefined;
@@ -567,6 +570,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     performance,
     thesisScorecard,
     regimeScorecard,
+    redTeamEfficacy,
     tax,
     profiles,
     activeProfile,
@@ -595,6 +599,43 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     },
     marketSession: currentMarketSession(),
     macroBoard
+  };
+}
+
+function getDashboardRedTeamEfficacy(userId: string, connectedAccountId?: string) {
+  const efficacy = getRedTeamEfficacy(userId, {
+    auditLimit: RED_TEAM_EFFICACY_AUDIT_LIMIT,
+    connectedAccountId,
+    limit: 12
+  });
+  const redTeamOverrideKeys = new Set<string>();
+  for (const event of listAuditByKind("red_team_veto_overridden", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    redTeamOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  }
+  const appliedOverrideKeys = new Set<string>();
+  for (const event of listAuditByKind("socratic_override_applied", RED_TEAM_EFFICACY_AUDIT_LIMIT, userId, connectedAccountId)) {
+    const payload = event.payload as { runId?: string; symbol?: string; side?: string; conflicts?: unknown } | undefined;
+    if (!payload?.runId || !payload.symbol) continue;
+    if (payload.side !== undefined && payload.side !== "buy" && payload.side !== "short") continue;
+    const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+    if (!conflicts.some((conflict) => String(conflict).startsWith("red_team_veto:"))) continue;
+    appliedOverrideKeys.add(`${payload.runId}:${normalizeSymbol(payload.symbol)}:${payload.side ?? ""}`);
+  }
+  let appliedOverrideVetoes = 0;
+  for (const key of redTeamOverrideKeys) {
+    if (appliedOverrideKeys.has(key)) appliedOverrideVetoes += 1;
+  }
+  const overrideVetoes = redTeamOverrideKeys.size;
+  const vetoDecisions = efficacy.totalVetoes + overrideVetoes;
+  return {
+    ...efficacy,
+    overrideVetoes,
+    appliedOverrideVetoes,
+    vetoDecisions,
+    overrideSharePct: vetoDecisions > 0 ? Number(((appliedOverrideVetoes / vetoDecisions) * 100).toFixed(1)) : 0
   };
 }
 
