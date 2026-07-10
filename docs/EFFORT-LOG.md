@@ -231,6 +231,25 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — COMPLETED
+  2026-07-10.** Owner-directed read-only audit of the production Activity feed (07-07..09):
+  36-agent workflow (5 domain investigators over the prod DB + repo, adversarial verification
+  per finding, ranked synthesis). Verdict: the worst feed incidents (MU 422 storm, UNH/T
+  remediation bug, em-dash push drops, Roth Gemini 400s) were already fixed+deployed; remaining
+  fix backlog = 3 quiet P1s (Roth proposer token-cap truncation; thesis-tag split-brain feeding
+  the learning loop false directives; per-user reflection dedupe with cross-account
+  contamination of the live Bull prompt) + P2s (notification-status recorder, placement-uncertain
+  misclassification, stale-exit replacement completion, synthetic-stop backoff, LLM failover
+  unwired, ~55-site account-attribution sweep) + a P3 batch. Full report:
+  `docs/reviews/2026-07-09-activity-feed-audit.md`. Fixes are separate claims.
+- **Broker minimum BUMP-TO-FLOOR (MONET) — COMPLETED 2026-07-10, merged as PR #1297
+  (`4ef60cd3`).** Owner ruling: sub-minimum orders bump TO the broker floor and place (audited,
+  re-reviewed, still policy-evaluated); "skip" is the opt-out. Opening bumps bounded by policy's
+  headroomed per-order cap AND remaining daily/hourly/order-count/buying-power budget (no
+  self-inflicted cap breaches or authority demotion); sells cap at the full position; dollar
+  exits convert to position-bounded quantity orders. Co-finished with the original bump lane
+  (competing #1280 closed in #1297's favor; their thread-fix batch + db-proposals sizing
+  persistence folded in). Rollout: `docs/rollouts/2026-07-09-broker-minimum-bump-to-floor.md`.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
   enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — ✅
@@ -467,6 +486,32 @@ As of 2026-07-08 (assignment-rule update).
 
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
 
+- **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
+  IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
+  SEC_FILING_RAG_MAX_PER_RUN 1→25 in Infisical prod (were shadowing the paid ingest pace);
+  code: budget pre-flight before EDGAR body fetches, run-level stop-early with cap-aware
+  `deferredForBudget`, `StoreResult.unconfigured`/`dedupComplete` disambiguation + crash-window
+  accession heal (adversarial-review finding). Kills the N-wasted-downloads + N-Sentry-warnings
+  per budget-capped run (SOCRATIC-TRADE-R). See the 2026-07-10 addendum in
+  docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md.
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
+  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
+  PROGRESS 2026-07-09; PR opened via land.sh, auto-merge armed (MONET's work, landed by CLAUDE
+  under the owner-directed usage-cap pickup: committed MONET's uncommitted fix, merged
+  `origin/main` incl. PR #1222's TwelveData negative-cache — different region, both kept — and
+  re-ran the full gate green).** Root cause of "AAPL fundamentals all dashes": every enrichment provider
+  slices its symbol list to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts)
+  while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL held
+  positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
+  owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
+  from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
+  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
+  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
+  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
+  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
+  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
+  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
 
 - **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
   `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
@@ -1523,14 +1568,6 @@ As of 2026-07-08 (assignment-rule update).
   test-file edits. PR via land.sh when gate green.
 - _Vitest temp-SQLite leak cleanup — duplicate interim row from the landing commit; superseded by
   the consolidated ✅ COMPLETED row above (PR #1268)._
-- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
-  PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
-  (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
-  fixes — e.g. post-mortems recorded with unknown account. Read-only audit ->
-  verified findings report; fixes claimed separately after owner review.
-  _2026-07-09 (CLAUDE usage-cap pickup): deliberately NOT picked up — the audit needs
-  production-DB reads and the Hetzner box migration was mid-flight. Still open; best first
-  task for a resumed MONET session now that the migration's cutover is verified._
 - **Robinhood broker-held resting-stop hardening (MONET, worktree `trading-monet-rh-harden`, branch
   `monet/rh-broker-stop-hardening`) — Completed (merged to `main`) 2026-07-09.** _(Correction: the
   branch name in the original IN PROGRESS entry was wrong — this landed from a dedicated worktree/
@@ -1783,6 +1820,25 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
+  — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
+  (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending
+  replacement completion (§1.7); synthetic-stop failure backoff + persistent-failure alert
+  (§1.8); LLM failover wiring + cadence stagger (§1.9 — fallback-model SEEDING is an owner
+  ruling, wiring is not). NOTE: P1s 1-3 + attribution sweep (§1.10) are CLAIMED owner-directed
+  by other lanes — check the board before touching.
+- **Activity-audit P3 batch (unassigned) — PLANNED 2026-07-10.** Feed storm coalescing;
+  stuck dust-fill terminal flip; storage-warning event type (+ direct-notify skip set);
+  KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
+  batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — LANDED 2026-07-09 as PR #1272 (auto-merge armed, merging on CI; MONET-authored, committed + landed by CLAUDE under the owner-directed usage-cap pickup — full gate green twice, coexistence with #1222's TwelveData change verified).** Fix as designed: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
+
+
+
+
 
 - **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch).** Thread `connectedAccountId` into ~42 `audit()` sites in `src/lib/strategy.ts` (scope map in the report: `runStrategyOnce` local at :311, `executeProposal`/`proposeTrades` via `policy`, `autoRevertOnCapBreach` param at :3425; incl. `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` signatures) and all 12 `synthetic-stops.ts` sites (`policy.connectedAccountId` is a parameter). NOTE: the `strategy_bull_truncated` emission site is EXCLUDED — handled in the P1 batch (`monet/activity-audit-p1-batch`); post-mortem.ts + `setUserSetting` no-audit flag also ride the P1 batch. Report §1.10: `docs/reviews/2026-07-09-activity-feed-audit.md`.
 - **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
