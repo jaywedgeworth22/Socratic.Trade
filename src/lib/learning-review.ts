@@ -23,7 +23,9 @@
 // FAIL-SAFE: any LLM/transport/parse failure → audit + skip; nothing is ever mutated on failure.
 // The once-per-day marker still advances on failure so a broken provider can't be hammered all day.
 
-import { createHash } from "node:crypto";
+// Bare "crypto" (not "node:crypto") — Next's webpack build errors on the node: scheme
+// prefix in this module's bundle context, same reason this file uses "fs"/"path" bare.
+import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import {
