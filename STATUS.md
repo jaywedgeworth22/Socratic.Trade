@@ -22,8 +22,13 @@ lone "Stop-loss" row + the advanced "Protective stops plumbing" group merged int
 overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-tested). Per-position
 LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
 design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
-`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. Next action: verify gate +
-PR; then live-verify the RH ratchet lane before flipping `robinhoodBrokerStops` on.
+`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. PR #1331 open; Codex has run
+4 review rounds so far, all fixed on the branch: coverage-unknown handling (`ordersListed`),
+partial-broker-stop preservation, OCO bracket-leg double-counting in `liveExitOrderCoverage`,
+keep-existing-stop-when-replacement-refused, and never seeding a broker trail looser than the
+synthetic monitor's own tracked high-water mark (`extremePriceBySymbol`). Next action: watch for
+further review rounds / merge; then live-verify the RH ratchet lane before flipping
+`robinhoodBrokerStops` on.
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
 Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
 every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's
