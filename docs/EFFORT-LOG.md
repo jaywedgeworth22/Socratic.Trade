@@ -231,6 +231,25 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — COMPLETED
+  2026-07-10.** Owner-directed read-only audit of the production Activity feed (07-07..09):
+  36-agent workflow (5 domain investigators over the prod DB + repo, adversarial verification
+  per finding, ranked synthesis). Verdict: the worst feed incidents (MU 422 storm, UNH/T
+  remediation bug, em-dash push drops, Roth Gemini 400s) were already fixed+deployed; remaining
+  fix backlog = 3 quiet P1s (Roth proposer token-cap truncation; thesis-tag split-brain feeding
+  the learning loop false directives; per-user reflection dedupe with cross-account
+  contamination of the live Bull prompt) + P2s (notification-status recorder, placement-uncertain
+  misclassification, stale-exit replacement completion, synthetic-stop backoff, LLM failover
+  unwired, ~55-site account-attribution sweep) + a P3 batch. Full report:
+  `docs/reviews/2026-07-09-activity-feed-audit.md`. Fixes are separate claims.
+- **Broker minimum BUMP-TO-FLOOR (MONET) — COMPLETED 2026-07-10, merged as PR #1297
+  (`4ef60cd3`).** Owner ruling: sub-minimum orders bump TO the broker floor and place (audited,
+  re-reviewed, still policy-evaluated); "skip" is the opt-out. Opening bumps bounded by policy's
+  headroomed per-order cap AND remaining daily/hourly/order-count/buying-power budget (no
+  self-inflicted cap breaches or authority demotion); sells cap at the full position; dollar
+  exits convert to position-bounded quantity orders. Co-finished with the original bump lane
+  (competing #1280 closed in #1297's favor; their thread-fix batch + db-proposals sizing
+  persistence folded in). Rollout: `docs/rollouts/2026-07-09-broker-minimum-bump-to-floor.md`.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
   enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — ✅
