@@ -277,6 +277,18 @@ export async function ingestFiling(
     return { skipped: false, chunks: result.indexed, error: result.error };
   }
 
+  // storeDocument can come back with indexed: 0 (or a truncated count with budgetSkipped > 0)
+  // and NO error — daily chunk budget (RAG_INGEST_MAX_TEXTS_PER_DAY) exhausted mid-run or
+  // vector keys unconfigured. Recording the accession then would mark the filing "ingested"
+  // forever with zero/partial retrievable chunks, inflate the ingested-count receipts, and
+  // suppress the corpus-coverage receipt while retrieval finds nothing. With the paid per-run
+  // cap at 25, budget exhaustion mid-run is an EXPECTED state during the backlog drain —
+  // leave the filing un-recorded so a later run retries it; content-hash dedup
+  // (VECTOR_STORECONTEXTS_DEDUP) makes the re-embed cheap.
+  if (result.indexed <= 0 || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
+    return { skipped: true, chunks: result.indexed };
+  }
+
   // Persist de-dup record only after successful embedding so a partial failure doesn't
   // permanently block re-ingest of the same filing.
   insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.indexed);
@@ -343,8 +355,10 @@ export async function refreshFilingBodies(
   if (symbols.length === 0) return result;
   if (!opts?.force && !isFilingIngestDue(now)) return result;
 
-  // Mark attempt so the next tick won't immediately retry
-  setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
+  // Mark attempt so the next tick won't immediately retry. Forced runs (admin backfill)
+  // deliberately do NOT touch the stamp — a targeted backfill must not push the scheduled
+  // corpus-wide demand-first ingest back by a full TTL window.
+  if (!opts?.force) setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
 
   const freeTier = isFreeTier();
   const cap =
