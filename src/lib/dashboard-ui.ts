@@ -201,9 +201,13 @@ export function receivedLabel(ts?: string): string {
 
 export function cellTitle(label: string, source?: string, asOf?: string): string {
   const parts = [label];
-  if (source) parts.push(`Source: ${friendlySource(source)}`);
-  const received = receivedLabel(asOf);
-  if (received) parts.push(received);
+  // Freshness rides provenance: no recorded source means no provider returned the
+  // field, so a "Received <time>" stamp would claim freshness for data we never got.
+  if (source) {
+    parts.push(`Source: ${friendlySource(source)}`);
+    const received = receivedLabel(asOf);
+    if (received) parts.push(received);
+  }
   return parts.join("\n");
 }
 
