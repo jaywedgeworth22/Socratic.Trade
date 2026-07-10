@@ -1578,6 +1578,10 @@ As of 2026-07-08 (assignment-rule update).
   by default; install command in the rollout note. Monitor-unreachable = exit 0, no spam. Contract
   against the parallel monitor-side PR (subscription-knob linkage phase 1). Rollout:
   `docs/rollouts/2026-07-10-provider-knob-sync.md`.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) — landing
+  2026-07-10.** Owner-directed after two pricing misreads in one day (tiingo annual, AV per-IP):
+  docs/market-data-provider-pricing.md = canonical vendor facts + traps + knob cheat-sheet.
+  Related (paused pending owner): API-Usage-Monitor subscription->knob linkage phase 1.
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
   with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref
