@@ -286,6 +286,29 @@ export function transitionProposalIfPending(
 }
 
 /**
+ * Persist an APPROVAL-TIME repriced order back onto a still-pending proposal row, so
+ * Recent/Activity and getProposal show the order the broker actually received (or will receive on
+ * re-approval) rather than the stale generation-time price the reprice replaced. Atomic CAS on
+ * status='proposed' (same shape as claimProposalForExecution): a card that expired or was rejected
+ * while the approval was in flight is never rewritten — the caller must treat `false` as
+ * "no longer pending" and stop. `estimatedNotional` refreshes alongside the JSON so a live typed
+ * confirmation re-check matches the repriced order, COALESCE-kept when the caller cannot estimate
+ * (e.g. a degrade to a market order with no fresh limit price).
+ */
+export function updatePendingProposalReprice(
+  id: string,
+  input: { proposal: TradeProposal; estimatedNotional?: number },
+  userId: string = "local"
+): boolean {
+  const info = getDb()
+    .prepare(
+      "UPDATE trade_proposals SET proposal = ?, estimated_notional = COALESCE(?, estimated_notional) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+    )
+    .run(JSON.stringify(input.proposal), input.estimatedNotional ?? null, id, userId);
+  return info.changes === 1;
+}
+
+/**
  * Crash-recovery support: "placing" rows older than the cutoff. A "placing" row is an
  * order-placement INTENT written just before the broker call; it normally flips to "placed"
  * (or "placing_failed") synchronously. One that lingers means a prior run died mid-placement,

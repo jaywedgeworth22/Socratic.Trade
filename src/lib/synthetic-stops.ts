@@ -18,7 +18,7 @@ import { getBrokerGateway } from "./broker";
 import { isLiveOrderState, isRejectedOrCanceledState } from "./broker-side";
 import { applyPaperExitCost } from "./execution-cost";
 import { cancelBrokerProtectiveStop, reconcileBrokerProtectiveStops } from "./broker-protective-stops";
-import { resolveProtectiveExitRouting } from "./protective-exit-routing";
+import { resolveProtectiveExitRouting, type ProtectiveExitQuote } from "./protective-exit-routing";
 import { deriveExecutionState } from "./execution-mode";
 import { normalizeSymbol } from "./money";
 import { evaluateTradeProposal } from "./policy";
@@ -319,7 +319,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const stops = listSyntheticStops(accountNumber, userId);
   if (stops.length === 0) return result;
 
-  let quotes: Record<string, { price?: number; symbol?: string }> = {};
+  let quotes: Record<string, { price?: number; bid?: number; ask?: number; syntheticBid?: boolean; syntheticAsk?: boolean; symbol?: string }> = {};
   try {
     quotes = await gateway.getEquityQuotes(accountNumber, stops.map((s) => normalizeSymbol(s.symbol)));
   } catch (err) {
@@ -334,6 +334,16 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const priceFor = (sym: string): number | undefined => {
     const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];
     return q && typeof q.price === "number" && q.price > 0 ? q.price : undefined;
+  };
+  // Quote ref for pricing an extended-hours marketable-limit exit: a SELL anchors to the real BID, a
+  // COVER to the real ASK (the composite `price` is ask-biased — Alpaca sets price = ask ?? bid, so a
+  // SELL priced off it would rest above the bid and never be marketable). A synthesized
+  // (price-derived) spread side never anchors (mirrors the entry marketable-limit guard); the DB
+  // lastPrice fallback above carries `price` only, so it degrades to the composite anchor.
+  const exitQuoteFor = (sym: string): ProtectiveExitQuote | undefined => {
+    const q = quotes[sym] ?? quotes[normalizeSymbol(sym)];
+    if (!q) return undefined;
+    return { price: q.price, bid: q.syntheticBid ? undefined : q.bid, ask: q.syntheticAsk ? undefined : q.ask };
   };
   for (const stop of stops) {
     const price = priceFor(stop.symbol);
@@ -381,9 +391,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     const exitSide = stop.side === "long" ? "sell" : "cover";
     // Route the protective exit: a plain market order that queues to the regular open by default, or a
     // marketable-limit tagged extended_hours when "App stops in extended hours" is on AND we are in the
-    // pre/post session (a market order with extended_hours=true is broker-rejected). `price` is the
-    // triggering quote, used as the limit basis (a sell crosses down, a cover crosses up).
-    const routing = resolveProtectiveExitRouting(policy, exitSide, price);
+    // pre/post session (a market order with extended_hours=true is broker-rejected). The limit anchors
+    // to the real bid (sell crosses down) / ask (cover crosses up) with the triggering quote as the
+    // fallback anchor; a fractional `qty` keeps the market/queue-to-open routing (fractional orders
+    // are regular-hours-only — an extended-hours fractional limit would be hard-blocked, not queued).
+    const routing = resolveProtectiveExitRouting(policy, exitSide, exitQuoteFor(stop.symbol), undefined, qty);
     const exitProposal: TradeProposal = {
       symbol: normalizeSymbol(stop.symbol),
       side: exitSide,
