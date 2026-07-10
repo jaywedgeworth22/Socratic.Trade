@@ -21,6 +21,7 @@ import {
   listBrokerProtectiveStops,
   upsertBrokerProtectiveStop
 } from "./db";
+import { isRejectedOrCanceledState } from "./broker-side";
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
 import type { BrokerGateway, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
@@ -84,8 +85,9 @@ export interface ReconcileResult {
    * coverage would undercount them. On a mismatch cancel/REPLACE tick that undercount is what let
    * the synthetic monitor register + fire against the pruned pre-replace coverage and then cancel
    * the fresh full-size replacement. The caller must treat these symbols as broker-covered for
-   * THIS tick's synthetic REGISTRATION only (never the fire path of already-registered rows);
-   * the next tick's fresh order fetch sees the real resting order.
+   * THIS tick — both synthetic REGISTRATION and the FIRE path of already-registered rows (a fire
+   * would sell shares the just-placed full-size stop covers, then cancel that stop after booking
+   * the fill); the next tick's fresh order fetch sees the real resting order.
    */
   placedStopSymbols: string[];
 }
@@ -247,6 +249,16 @@ export async function reconcileBrokerProtectiveStops(args: {
         marketHours: "regular_hours",
         refId
       });
+      if (isRejectedOrCanceledState(exec.state)) {
+        // A non-throwing placement can still be a synchronous rejection/cancellation (same trap as
+        // the synthetic exit path in synthetic-stops.ts). No stop is resting at the broker: don't
+        // record a row (a dead "resting" row would block re-placement here on every later tick —
+        // section 3 sees no qty/price mismatch on it, and `existing` above blocks section 4) and
+        // don't advertise the symbol via placedStopSymbols (that would suppress this tick's
+        // synthetic registration for protection that doesn't exist).
+        audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId);
+        continue;
+      }
       if (!exec.orderId) {
         // No broker order id means we couldn't later cancel it — don't record an untrackable stop.
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId);
