@@ -289,6 +289,11 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
   }
 }
 
+// NOTE: `rowid DESC` tiebreaker — `ts` is ms-resolution, so rows written in the same millisecond
+// otherwise return in arbitrary order and "the newest row" reads become nondeterministic (bit
+// test/data-providers.test.ts's newest-row assertion, 2026-07-10). It must be `rowid` (implicit
+// monotonic insertion order; `id TEXT PRIMARY KEY` does not alias it): `id` is a randomUUID, so
+// ordering by it is a per-run coin flip, not a tiebreak.
 export function getServiceHealthLog(
   service: string,
   limit = 100,
@@ -303,7 +308,7 @@ export function getServiceHealthLog(
           `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
            FROM api_health_log
            WHERE service = ? AND key_source IS ?
-           ORDER BY ts DESC
+           ORDER BY ts DESC, rowid DESC
            LIMIT ? OFFSET ?`
         )
         .all(service, keySource ?? null, limit, offset) as HealthLogRow[];
@@ -313,7 +318,7 @@ export function getServiceHealthLog(
         `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
          FROM api_health_log
          WHERE service = ?
-         ORDER BY ts DESC
+         ORDER BY ts DESC, rowid DESC
          LIMIT ? OFFSET ?`
       )
       .all(service, limit, offset) as HealthLogRow[];
