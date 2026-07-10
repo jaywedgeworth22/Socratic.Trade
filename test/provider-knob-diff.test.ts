@@ -1,17 +1,6 @@
 import { describe, it, expect } from "vitest";
-// @ts-expect-error - plain ESM helper, no type declarations
-import {
-  ALLOWED_KEY_RE,
-  isAllowedKey,
-  isSafeValue,
-  coerceValue,
-  desiredMapForStatus,
-  computeDesired,
-  parseEnvLines,
-  computeDiff,
-  computePlan,
-  formatPlanRecords,
-} from "../scripts/provider-knob-diff.mjs";
+// @ts-expect-error - plain ESM helper, no type declarations (single-line so the directive covers the specifier)
+import { ALLOWED_KEY_RE, isAllowedKey, isSafeValue, coerceValue, desiredMapForStatus, computeDesired, parseEnvLines, computeDiff, computePlan, formatPlanRecords } from "../scripts/provider-knob-diff.mjs";
 
 describe("provider-knob-diff: key allow-list guard", () => {
   it("accepts the prefixed knob families", () => {
@@ -233,7 +222,7 @@ describe("provider-knob-diff: computePlan + formatPlanRecords", () => {
       }
     }
     // unset prior value becomes the "(unset)" token
-    expect(lines.some((l) => l.startsWith("CHANGE\t") && l.includes("(unset)"))).toBe(true);
-    expect(lines.some((l) => l.startsWith("SUMMARY\t"))).toBe(true);
+    expect(lines.some((l: string) => l.startsWith("CHANGE\t") && l.includes("(unset)"))).toBe(true);
+    expect(lines.some((l: string) => l.startsWith("SUMMARY\t"))).toBe(true);
   });
 });
