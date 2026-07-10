@@ -1,5 +1,36 @@
 # 2026-07-09 — MONET usage-cap pickup (CLAUDE, owner-directed)
 
+## ROUND 2 addendum (same evening, ~21:45 CDT onward)
+
+MONET's cap reset, it ran a productive second session (took the first post-migration prod
+deploy `wgoq4vmt` verifying TwelveData+AV keys live, rebuilt bump-to-floor, Mistral capmap,
+round-2 on #1272, opened #1278–#1281), then **re-capped**. Owner directed a second pickup.
+
+Outcome — all nine open PRs armed/merging on CI:
+
+- **MONET's four new PRs**: #1279 (Mistral capmap — 2 real fixed incl. chunk-array parsing at
+  high reasoning, verified against Mistral docs; 1 resolved-with-note), #1280 (bump-to-floor —
+  1 real fixed: oversized below-minimum EXITS now block instead of full-exit-bumping; money-path
+  reviewed), #1281 (armed; its CONFLICTING state was the known GitHub phantom — merge-tree
+  clean), #1278 (learning-review — adopted MONET's uncommitted trigger feature
+  `learningReviewMinNewLessons`/`MaxWaitDays`, fixed all 7 threads, and the adversarial
+  re-review caught a REAL blocker pre-push: the max-age sweep was unreachable for learned rows
+  older than the 7-day pack window (empirically reproduced) — fixed by counting un-reviewed rows
+  via `assertedAt > lastReviewedAt` with no window cutoff, learned-row regression test added).
+- **Round-3 bot threads on the follow-ups**: #1266 (3 real fixed — spoofable `shepherd-reran`
+  marker now author-checked, cancelled-run rerun endpoint selection; 2 resolved-with-note on the
+  YAML-guard trust boundary, with the honest Environments-based fix flagged as follow-up),
+  #1267 (1 real P1 fixed — unconditional ok:true health log neutered the new breaker; now one
+  health row per batch), #1269 (3 real fixed incl. a P1 same-tick fire gate; 1 false positive).
+- **#1272** un-dirtied (clean main merge, MONET's content intact); **MONET's aapl lane**
+  (owner-ruled NO-CAP enrichment + RAG filings warm-up receipts + demand-first ingestion;
+  supersedes #1272 content, ordering documented in the PR) committed (dirty follow-ons adopted,
+  nothing discarded) and landed as **PR #1287** — full gate 3261/3261 after fixing one stale
+  blanket test assertion (`strategy-prompt-safety` tone check vs the deliberately neutral
+  warm-up receipt).
+- **Recon**: the 2-3 day activity audit produced zero artifacts — still not-started, MONET's on
+  return. The RAG receipts work rode #1287.
+
 ## Summary
 
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding. The owner directed CLAUDE to pick up
