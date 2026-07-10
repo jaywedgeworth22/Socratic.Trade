@@ -65,8 +65,11 @@ const FULL_POSITION_QTY_EPSILON = 1e-6;
 function isFullPositionExit(order: { quantity?: number; side?: OrderSide; positionQuantity?: number }): boolean {
   if (order.side !== "sell" && order.side !== "cover") return false;
   if (order.quantity == null || order.positionQuantity == null) return false;
-  if (!(order.positionQuantity > 0)) return false;
-  return Math.abs(order.quantity - order.positionQuantity) <= FULL_POSITION_QTY_EPSILON;
+  // Short positions are stored with NEGATIVE quantities — a full COVER must qualify for the
+  // exemption exactly like a full sell, so compare magnitudes.
+  const held = Math.abs(order.positionQuantity);
+  if (!(held > 0)) return false;
+  return Math.abs(order.quantity - held) <= FULL_POSITION_QTY_EPSILON;
 }
 
 /**
@@ -168,15 +171,19 @@ export function planBrokerMinimumBump(
   if (!(from > 0) || from >= minNotional) return undefined;
 
   if (order.side === "buy" || order.side === "short") {
-    const isDollar = order.dollarAmount != null && order.dollarAmount > 0;
-    // Compare the actual bump TARGET against the cap — quantity patches aim 0.5% above the
-    // floor, so a floor that fits but a cushioned target that doesn't must still decline.
-    const target = isDollar ? minNotional : minNotional * BUMP_QTY_CUSHION;
-    if (opts.openingCapNotional !== undefined && target > opts.openingCapNotional) return undefined;
-    if (isDollar) {
-      return { patch: { dollarAmount: minNotional, quantity: undefined }, fromNotional: from, toNotional: minNotional };
+    if (order.dollarAmount != null && order.dollarAmount > 0) {
+      // NEVER shrink: a mixed-form order whose dollarAmount already meets the floor was only
+      // "blocked" because of a stale sub-minimum quantity — keep the dollar size and just clear
+      // the stale field. Only a genuine raise is checked against the opening cap.
+      const dollarAmount = Math.max(order.dollarAmount, minNotional);
+      const raising = dollarAmount > order.dollarAmount;
+      if (raising && opts.openingCapNotional !== undefined && dollarAmount > opts.openingCapNotional) return undefined;
+      return { patch: { dollarAmount, quantity: undefined }, fromNotional: from, toNotional: dollarAmount };
     }
     if (order.quantity != null && order.quantity > 0) {
+      // Compare the actual bump TARGET against the cap — quantity patches aim 0.5% above the
+      // floor, so a floor that fits but a cushioned target that doesn't must still decline.
+      if (opts.openingCapNotional !== undefined && minNotional * BUMP_QTY_CUSHION > opts.openingCapNotional) return undefined;
       if (from < MIN_TRUSTED_REVIEW_NOTIONAL) return undefined;
       const quantity = round6((order.quantity * minNotional * BUMP_QTY_CUSHION) / from);
       return { patch: { quantity, dollarAmount: undefined }, fromNotional: from, toNotional: round2(minNotional * BUMP_QTY_CUSHION) };
