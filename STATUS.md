@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Activity-audit item 10: account-attribution sweep (CLAUDE, branch `claude/audit-item10-attribution`)
+Picked up the reserved item-10 row (split out of MONET's P1 batch per owner, unclaimed since
+2026-07-10). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites across
+`src/lib/strategy.ts` (41) and `src/lib/synthetic-stops.ts` (13) that had the account
+available but omitted it — the "Account: unknown" feed symptom the audit report flagged.
+Pure attribution: 4th-arg audit calls plus two new optional trailing function parameters
+(`reconcilePendingFills`, `flagStalePlacingIntents`) and one ctx field
+(`recordLlmOutcome`) — zero behavior change to trading logic. `strategy_bull_truncated` and
+post-mortem.ts were left untouched (already fixed by PR #1314's P1 batch). Verify: tsc
+clean, eslint 0 errors, 46 focused test files / 523 tests green under node@24. Built in a
+fresh detached worktree off `origin/main`, committed locally, NOT pushed — full gate
+(`npm test` full run, `npm run build`) and PR/land are a later, separate step. See
+`docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green

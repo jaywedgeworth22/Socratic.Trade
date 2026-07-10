@@ -272,7 +272,7 @@ function resolveScanScoringWeights(policy: TradingPolicy, source: FillSource, ru
     closedLotCount,
     benchmarkRelative,
     note: nudge.note
-  }, userId);
+  }, userId, policy.connectedAccountId);
   return nudge.weights;
 }
 
@@ -346,7 +346,7 @@ export async function runStrategyOnce(
     if (!manualRun && !isTradingDay()) {
       const reason = "Market is closed (holiday or weekend). Skipping strategy run.";
       console.log(`[Strategy] ${reason}`);
-      audit("run_skipped_market_closed", { runId, userId, reason }, userId);
+      audit("run_skipped_market_closed", { runId, userId, reason }, userId, connectedAccountId);
       result = { runId, status: "completed", summary: reason, proposals: [] };
       finishStrategyRun(runId, "completed", reason, userId);
       releaseStrategyLock(userId, connectedAccountId);
@@ -415,10 +415,10 @@ export async function runStrategyOnce(
     }
 
     const gateway = getBrokerGateway(policy, userId);
-    await reconcilePendingFills(gateway, policy.accountNumber, userId);
+    await reconcilePendingFills(gateway, policy.accountNumber, userId, connectedAccountId);
     // Broker-truth reconcile any order-placement intent left "placing" by a prior run that crashed
     // mid-call: match it against the broker by clientOrderId and recover or abandon it.
-    await flagStalePlacingIntents(gateway, policy.accountNumber, userId);
+    await flagStalePlacingIntents(gateway, policy.accountNumber, userId, connectedAccountId);
     const [accounts, portfolio, positions, orders] = await Promise.all([
       gateway.getAccounts(),
       gateway.getPortfolio(policy.accountNumber),
@@ -442,7 +442,7 @@ export async function runStrategyOnce(
       policy.tuning?.congressGoNoGoGating ?? false
     );
     if (congressMultiplier === 0 && congressVerdict) {
-      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId);
+      audit("congress_gate_applied", { runId, userId, pass: congressVerdict.pass, reasons: congressVerdict.reasons, stats: congressVerdict.stats }, userId, connectedAccountId);
     }
     const baseMarketScan = await scanMarket(allowedSymbols, positions, scanWeights, userId, dynamicIndexUniversesForPolicy(policy), {
       candidateLimit: policy.marketScanCandidateLimit,
@@ -505,7 +505,7 @@ export async function runStrategyOnce(
           // Advisory (default): receipt + prompt context, NO state change. The account boundary is the
           // only absolute; the agent decides whether to de-risk, and the deviation is logged/coachable.
           drawdownAdvisory = { reason: breaker.reason ?? "drawdown/daily-loss threshold breached", equity, highWaterMark: breaker.highWaterMark, drawdownPct };
-          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", action: "advisory" }, userId, connectedAccountId);
         } else {
           // Owner opted into hard enforcement: flip systemState. Persist to the SAME account the run
           // targeted (read via getPolicy(userId, targetAccountId)); omitting it would resolve the ACTIVE
@@ -513,7 +513,7 @@ export async function runStrategyOnce(
           const revertedTo = breakerAction === "close_only" ? "close_only" : "halted";
           policy.systemState = revertedTo;
           setPolicy(policy, userId, targetAccountId);
-          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId);
+          audit("policy_violation_drawdown", { runId, reason: breaker.reason, equity, highWaterMark: breaker.highWaterMark, startOfDayEquity: breaker.startOfDayEquity, from: "active", revertedTo, action: breakerAction }, userId, connectedAccountId);
           await sendNotification(
             {
               type: "kill_switch",
@@ -547,7 +547,8 @@ export async function runStrategyOnce(
         audit(
           "policy_violation_vol_panic",
           { runId, reason: volBrake.reason, from: "active", revertedTo: "close_only", vixAsOf: brakeMacro?.vixAsOf },
-          userId
+          userId,
+          connectedAccountId
         );
         await sendNotification(
           { type: "kill_switch", title: "Volatility brake halted new entries", payload: { runId, reason: volBrake.reason, vixAsOf: brakeMacro?.vixAsOf } },
@@ -666,7 +667,8 @@ export async function runStrategyOnce(
         audit(
           "strategy_run_suppressed_budget_reservation",
           { runId, userId, reason: reservation.reason ?? "reservation_unavailable" },
-          userId
+          userId,
+          connectedAccountId
         );
       }
     }
@@ -674,7 +676,8 @@ export async function runStrategyOnce(
       audit(
         "strategy_run_suppressed_budget",
         { runId, userId, reason: budget.reason, tokensToday: budget.tokensToday, costUsdToday: budget.costUsdToday, tokenLimit: budget.tokenLimit, costLimitUsd: budget.costLimitUsd },
-        userId
+        userId,
+        connectedAccountId
       );
     }
 
@@ -1114,7 +1117,7 @@ export async function runStrategyOnce(
         skipLlmDueToScoreThreshold = true;
         const reason = `No candidates met minimum score threshold (${minScore}). ${before} candidates all scored below ${minScore}.`;
         console.log(`[Strategy] ${reason}`);
-        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId);
+        audit("run_skipped_score_threshold", { runId, userId, threshold: minScore, candidateCount: before, reason }, userId, connectedAccountId);
         marketScan.topCandidates = [];
       } else {
         marketScan.topCandidates = surviving;
@@ -1140,7 +1143,8 @@ export async function runStrategyOnce(
         audit(
           "strategy_run_suppressed_budget",
           { runId, userId, reason: budgetNow.reason, tokensToday: budgetNow.tokensToday, costUsdToday: budgetNow.costUsdToday, tokenLimit: budgetNow.tokenLimit, costLimitUsd: budgetNow.costLimitUsd, phase: "pre_generation" },
-          userId
+          userId,
+          connectedAccountId
         );
       }
     }
@@ -1284,7 +1288,7 @@ export async function runStrategyOnce(
         const gate = shouldSkipNegativeExpectancy(p, policy, learningSource, userId, prefetchedFills);
         if (gate.skip) {
           console.log(`[NegEV] Skipped ${p.symbol} ${p.side}: ${gate.reason}`);
-          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId);
+          audit("proposal_skipped_negative_ev", { symbol: p.symbol, side: p.side, thesisTag: p.tradeThesisTag, reason: gate.reason }, userId, connectedAccountId);
         }
         return !gate.skip;
       })
@@ -1550,7 +1554,8 @@ export async function runStrategyOnce(
           audit(
             "strategy_rationale_collapse_gated",
             { runId, count: gatedOpenings.length, meanSimilarity: openingDiversity.meanPairwiseSimilarity, threshold: openingDiversity.threshold },
-            userId
+            userId,
+            connectedAccountId
           );
         }
       }
@@ -2177,7 +2182,7 @@ export async function runStrategyOnce(
         const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
         insertProposal({ userId, executionMode, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision: blockedDecision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision: blockedDecision, status: "blocked", review, overrideResolution });
-        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId);
+        audit("order_blocked_live_preflight", { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, reason: message }, userId, connectedAccountId);
         await sendNotification(
           { type: "block", title: `${normalizedProposal.symbol} live order blocked (pre-flight)`, payload: { runId, proposalId, decision: blockedDecision, review, proposal: normalizedProposal, reason: message } },
           { policy, userId }
@@ -2218,7 +2223,7 @@ export async function runStrategyOnce(
         // flag it loudly for reconciliation rather than aborting the whole run.
         updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "placing_failed", review, overrideResolution });
-        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+        audit("order_placement_uncertain", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, connectedAccountId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order placement uncertain — verify with broker`, payload: { runId, proposalId, refId, error: message } },
           { policy, userId }
@@ -2244,7 +2249,7 @@ export async function runStrategyOnce(
           review,
           overrideResolution
         });
-        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+        audit("order_rejected_by_broker", { runId, proposalId, refId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, connectedAccountId);
         await sendNotification(
           { type: "run_failed", title: `${normalizedProposal.symbol} order declined by broker (${execution.state})`, payload: { runId, proposalId, refId, orderId: execution.orderId, state: execution.state } },
           { policy, userId }
@@ -2772,7 +2777,7 @@ export async function applyCorrelationClusterGate(
     const corr = await avgReturnCorrelation(p.symbol, holdings, userId);
     if (corr != null && corr > cap) {
       console.log(`[Corr] Skipped ${p.symbol} ${p.side}: avg correlation ${corr.toFixed(2)} > cap ${cap}`);
-      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId);
+      audit("proposal_skipped_correlation", { symbol: p.symbol, side: p.side, avgCorrelation: Number(corr.toFixed(4)), cap }, userId, policy.connectedAccountId);
       continue;
     }
     kept.push(p);
@@ -2831,7 +2836,8 @@ export function applyEarningsBlackoutTag(
         audit(
           "proposal_tagged_earnings_blackout",
           { symbol: proposal.symbol, side: proposal.side, daysToEarnings, window: earningsWindow },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -2912,7 +2918,8 @@ export async function applyRiskReceipts(
         audit(
           "correlation_receipt",
           { symbol: proposal.symbol, maxPairwise: max, avgEwma: profile.avgEwma, consideredCount: profile.consideredCount, truncated: profile.truncated },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -2947,7 +2954,8 @@ export async function applyRiskReceipts(
             withCandidateImpactPctOfEquity: stress.withCandidateImpactPctOfEquity,
             candidateMarginalUsd: stress.candidateMarginalUsd
           },
-          userId
+          userId,
+          policy.connectedAccountId
         );
       }
     }
@@ -3073,7 +3081,8 @@ export function applyDeterministicSizing(
     audit(
       "sizing_vol_target_applied",
       { symbol: normalizeSymbol(proposal.symbol), side: proposal.side, realizedVolPct: realizedVol, targetPortfolioVolPct: targetVol, volScale },
-      userId
+      userId,
+      policy.connectedAccountId
     );
   }
 
@@ -3142,7 +3151,7 @@ export function applyDeterministicSizing(
         suggested: Number(suggestedPctOfCeiling.toFixed(4)),
         previousMultiplier: Number(boundedMultiplier.toFixed(4)),
         applied: Number(finalMultiplier.toFixed(4))
-      }, userId);
+      }, userId, policy.connectedAccountId);
     }
   }
 
@@ -3246,7 +3255,8 @@ export function applyDeterministicSizing(
               taperFactor,
               targetNotional
             },
-            userId
+            userId,
+            policy.connectedAccountId
           );
         } else {
           heatNote =
@@ -3504,7 +3514,7 @@ function autoRevertOnCapBreach(reasons: string[] | undefined, policy: TradingPol
   // cap on proposal N would keep queueing decide-style soft-blocked cards for N+1... even though
   // the account was just demoted to Ask-first.
   policy.strategyAuthority = "propose";
-  audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId);
+  audit("policy_violation_cap_exceeded", { reasons, from: "decide", revertedTo: "propose" }, userId, connectedAccountId);
   return true;
 }
 
@@ -3711,7 +3721,7 @@ export async function executeProposal(
       const reason = tradability[proposal.symbol]?.reason ?? "Symbol is not tradable.";
       const tradabilityDecision: PolicyDecision = { approved: false, reasons: [reason] };
       updateProposalStatus(proposalId, "blocked", undefined, undefined, undefined, userId, undefined, undefined, tradabilityDecision);
-      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId);
+      audit("proposal_approved", { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reason }, userId, policy.connectedAccountId);
       await sendNotification(
         {
           type: "block",
@@ -3954,7 +3964,7 @@ export async function executeProposal(
         action: "approval",
         result: "blocked",
         reasons: decision.reasons
-      }, userId);
+      }, userId, policy.connectedAccountId);
       await sendNotification(
         {
           type: "block",
@@ -3985,7 +3995,8 @@ export async function executeProposal(
       audit(
         "proposal_approved",
         { proposalId, symbol: proposal.symbol, side: proposal.side, action: "approval", result: "blocked", reasons: heldDecision.reasons, heldExit },
-        userId
+        userId,
+        policy.connectedAccountId
       );
       await sendNotification(
         {
@@ -4013,7 +4024,7 @@ export async function executeProposal(
       // Persist a REJECTED decision (not the earlier approved one) so the ledger reflects the block.
       const blockedDecision: PolicyDecision = { ...decision, approved: false, reasons: [...decision.reasons, message] };
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, message, blockedDecision);
-      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId);
+      audit("order_blocked_live_preflight", { proposalId, symbol: proposal.symbol, side: proposal.side, reason: message, path: "approval" }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "block", title: `${proposal.symbol} live order blocked (pre-flight)`, payload: { proposalId, proposal, review, reason: message, decision: blockedDecision } },
         { policy, userId }
@@ -4041,7 +4052,7 @@ export async function executeProposal(
     } catch (placeError) {
       const message = placeError instanceof Error ? placeError.message : String(placeError);
       updateProposalStatus(proposalId, "placing_failed", undefined, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId);
+      audit("order_placement_uncertain", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, error: message }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order placement uncertain — verify with broker`, payload: { proposalId, refId, error: message } },
         { policy, userId }
@@ -4055,7 +4066,7 @@ export async function executeProposal(
     if (isRejectedOrCanceledState(execution.state)) {
       const message = `Broker declined the order (state: ${execution.state}).`;
       updateProposalStatus(proposalId, "rejected_by_broker", execution.orderId, review, review.estimatedNotional, userId, undefined, message);
-      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId);
+      audit("order_rejected_by_broker", { proposalId, refId, symbol: proposal.symbol, side: proposal.side, orderId: execution.orderId, brokerState: execution.state }, userId, policy.connectedAccountId);
       await sendNotification(
         { type: "run_failed", title: `${proposal.symbol} order declined by broker (${execution.state})`, payload: { proposalId, refId, orderId: execution.orderId, state: execution.state } },
         { policy, userId }
@@ -4087,7 +4098,7 @@ export async function executeProposal(
       orderId: execution.orderId,
       brokerState: execution.state,
       fillStatus
-    }, userId);
+    }, userId, policy.connectedAccountId);
     await sendNotification(
       {
         type: "fill",
@@ -4743,7 +4754,7 @@ async function proposeTrades(input: {
               },
               {
                 softTimeoutMs: bullSoftTimeoutMs,
-                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs })
+                onOutcome: (o) => recordLlmOutcome(o, { runId: input.runId, userId: input.userId, step: "bull", provider: attempt.provider, model: attempt.model, softTimeoutMs: bullSoftTimeoutMs, connectedAccountId: input.policy.connectedAccountId })
               }
             );
 
@@ -4752,7 +4763,7 @@ async function proposeTrades(input: {
               if (!isLast && isRetryableLlmStatus(response.status)) {
                 lastError = new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
                 console.warn(`[Bull] ${attempt.model}/${attempt.provider} failed (HTTP ${response.status}); failing over to ${next.model}/${next.provider}.`);
-                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId);
+                audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, httpStatus: response.status, toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
                 continue;
               }
               throw new Error(humanizeLlmError(detail, { provider: attempt.provider, status: response.status }));
@@ -4798,7 +4809,7 @@ async function proposeTrades(input: {
             if (!isLast && isRetryableLlmError(err)) {
               lastError = err;
               console.warn(`[Bull] ${attempt.model}/${attempt.provider} errored (${(err as { message?: string })?.message ?? String(err)}); failing over to ${next.model}/${next.provider}.`);
-              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId);
+              audit("strategy_llm_failover", { runId: input.runId, step: "bull", fromModel: attempt.model, fromProvider: attempt.provider, reason: "transport_or_timeout", toModel: next.model, toProvider: next.provider }, input.userId, input.policy.connectedAccountId);
               continue;
             }
             throw err;
@@ -5114,12 +5125,13 @@ export function coerceProtectiveExitToMarket(proposal: TradeProposal): TradeProp
  */
 function recordLlmOutcome(
   outcome: LlmCallOutcome,
-  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number }
+  ctx: { runId?: string; userId: string; step: "bull" | "bear"; provider: string; model: string; softTimeoutMs: number; connectedAccountId?: string }
 ): void {
   audit(
     "llm_call_latency",
     { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, softTimeoutMs: ctx.softTimeoutMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error },
-    ctx.userId
+    ctx.userId,
+    ctx.connectedAccountId
   );
   // Only the LATE path reads the body: there the tick bailed at the soft timeout and never touched the
   // response, so we alone can drain it. A FAST response (success, or a non-ok like a 429 that fails
@@ -5140,10 +5152,11 @@ function recordLlmOutcome(
       audit(
         "llm_late_response",
         { runId: ctx.runId, step: ctx.step, provider: ctx.provider, model: ctx.model, durationMs: outcome.durationMs, late: outcome.late, ok: outcome.ok, status: outcome.status, error: outcome.error, textSnippet, usage },
-        ctx.userId
+        ctx.userId,
+        ctx.connectedAccountId
       );
     } catch (err) {
-      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId);
+      audit("llm_late_response_capture_error", { runId: ctx.runId, step: ctx.step, error: err instanceof Error ? err.message : String(err) }, ctx.userId, ctx.connectedAccountId);
     }
   })();
 }
@@ -5188,7 +5201,7 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
     .map(coerceProtectiveExitToMarket);
 }
 
-export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local"): Promise<void> {
+export async function reconcilePendingFills(gateway: BrokerGateway, accountNumber: string, userId: string = "local", connectedAccountId?: string): Promise<void> {
   const pending = listPendingBrokerReconciliationFills(accountNumber, userId);
   if (pending.length === 0) return;
 
@@ -5213,7 +5226,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           filledAt: matched.updatedAt ?? new Date().toISOString(),
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
       };
 
       if (matched.state === "filled") {
@@ -5227,7 +5240,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           filledAt: matched.updatedAt ?? new Date().toISOString(),
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
-        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId);
+        audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
@@ -5242,7 +5255,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
             status: matched.state,
             raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
           }, userId);
-          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId);
+          audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: matched.state }, userId, connectedAccountId);
         }
       }
     }
@@ -5259,7 +5272,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
  * follow-up), so we surface it loudly in the audit trail and mark it "placing_stale" so it isn't
  * re-flagged every run. An operator (or the future broker-truth sweep) then reconciles it.
  */
-async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string): Promise<void> {
+async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: string, userId: string, connectedAccountId?: string): Promise<void> {
   const STALE_PLACING_MS = 2 * 60_000;
   const cutoff = new Date(Date.now() - STALE_PLACING_MS).toISOString();
   let stale: ReturnType<typeof listStalePlacingProposals>;
@@ -5282,7 +5295,7 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
   } catch (e) {
     console.error("[placing-sweep] broker unreachable for recovery; will retry next run:", e);
     for (const row of stale) {
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId);
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, note: "Stale placing intent; broker unreachable for recovery — will retry." }, userId, connectedAccountId);
     }
     return;
   }
@@ -5306,10 +5319,10 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
           status: matched.state === "filled" ? "filled" : "pending_reconciliation"
         });
       }
-      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId);
+      audit("order_placement_recovered", { proposalId: row.id, refId: row.refId, orderId: matched.id, state: matched.state, symbol: p?.symbol, side: p?.side }, userId, connectedAccountId);
     } else {
       updateProposalStatus(row.id, "placing_failed", undefined, undefined, undefined, userId, undefined, "Order never confirmed — broker record not found during reconciliation.");
-      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId);
+      audit("order_placement_uncertain", { proposalId: row.id, refId: row.refId, symbol: p?.symbol, side: p?.side, createdAt: row.createdAt, note: "Stale 'placing' intent had no matching broker order — never executed; abandoned." }, userId, connectedAccountId);
     }
   }
 }
