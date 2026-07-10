@@ -8,6 +8,32 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
+Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
+`app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
+`Sheet` prompt: **Discard changes** (client-side `router.push` to the intended href), **Keep editing**
+(stay; also Esc/X/scrim), and **Review & save** (stay + open the screen's review panel). The third
+option shows only when the dirty screen registered a review opener — Guardrails does
+(`useUnsavedChanges(changeCount>0, () => setReviewOpen(true))`); the Framework page has an inline
+review so it shows two. `nav.tsx` passes the destination `href` at all three guard sites (+ `TabsSheet`
+prop-type). Dirtiness still lives in a ref'd Map, so keystrokes never re-render the shell. Gate green:
+tsc, lint 0-err, 3246 tests, build. Known follow-up: the command palette navigates without the guard
+(pre-existing gap). See `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. (The rest of the
+owner's settings-UX batch already landed: #1/#2/#4 via #1270, #5 via the credential-naming change.)
+## 2026-07-10 — db-health.ts `ts DESC` tie-sweep (CLAUDE, branch `claude/db-health-tie-sweep`)
+Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in
+`src/lib/db-health.ts` nondeterministic (ties resolve to ascending insertion order absent a
+tiebreaker, i.e. OLDEST-first) — most critically `getLaneHealth`'s consecutive-failure window
+(`last5`, line ~44) and the FIFO-cap DELETE subquery (line ~142); the pattern was already fixed
+at line 311 for `getServiceHealthLog` per a prior test-stability fix. Added `, rowid DESC` to all
+7 sites (matching the line-311 idiom): `getLaneHealth`'s `last5`/`lastSuccess`/`lastFailure`
+(lines 44/47/50), the FIFO-cap DELETE subquery (line 142), and `getServiceHealthSummaries`'s
+`lastSuccess`/`lastFailure`/`last5` (lines 221/229/256). New regression test in
+`test/api-circuit-breaker.test.ts` inserts same-timestamp rows with known insertion order and
+proves (a) it fails without the fix and (b) passes with it. Gate green: tsc clean, lint 0 errors,
+311 files / 3286 tests, build succeeds. Closes the task-chip suggestion spawned from the #1267
+lane (round-2 TwelveData health-row fix touched the same file/pattern). See
+`docs/rollouts/2026-07-10-db-health-tie-sweep.md`.
 ## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
 PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
 the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
@@ -51,9 +77,16 @@ else none, no silent medium→high upgrade); `mistral-small-2603` rejects `promp
 outright, so it and every other Mistral id now send a plain chat body with no reasoning params.
 Rotation-pool re-add deliberately deferred to a keyed re-benchmark (neither model has ever
 completed a benchmarked call). Gate green: lint 0 errors / tsc clean / 310 files 3246 tests /
-build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`. Remaining queue: reviewedByModel
-stamp (after bump-to-floor lands — strategy.ts collision), strategy.ts split (needs freeze
-window).
+build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
+**Close-out 2026-07-10:** MERGED as PR #1279 (`d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared
+with a fresh main-merge head) and DEPLOYED in the 06:20Z release (prod = `main@420c6747`).
+Handoff-queue state after verification: reviewedByModel stamp = ALREADY DONE (AG PR #1282
+`15c2560e` — verified against the queue item's intent; MONET claim withdrawn, board rows
+corrected); Mistral capmap = done (this PR); strategy.ts split = remains in the board's
+unassigned owner-decision bucket, start only after the open strategy.ts PRs (#1297, #1295)
+land and with an announced freeze window. Fleet env note: brew default node is now v26 —
+run `npm test`/`land.sh` in existing worktrees with `PATH=/opt/homebrew/opt/node@24/bin:$PATH`
+(`.nvmrc` pins 24; better-sqlite3 ABI mismatch otherwise).
 ## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
 Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
 policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled

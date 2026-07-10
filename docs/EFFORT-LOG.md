@@ -1392,6 +1392,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
+  PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
+  tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.
+  Rewrote `app/console/lib/useDirtyGuard.tsx` — an in-app `Sheet` prompt with **Discard changes**
+  (client-side `router.push`), **Keep editing** (stay), and **Review & save** (stay + open the
+  screen's review panel; shown only when the screen registers a review opener — Guardrails does,
+  Framework's inline review shows two). `nav.tsx` passes the `href` at all 3 guard sites (+ TabsSheet
+  prop-type); `policy-form.tsx` PolicySaveBar registers the review opener. Dirtiness still ref'd (no
+  shell re-render on keystroke). Gate green: tsc / lint 0-err / 3246 tests / build. Follow-up: cmdk
+  navigates without the guard (pre-existing gap). See
+  `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. Rest of the owner's settings-UX batch
+  already landed (#1/#2/#4 via #1270; #5 via credential-naming).
 - **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
   subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
   IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting
@@ -1412,15 +1424,21 @@ As of 2026-07-08 (assignment-rule update).
   for the single-eligible-model degenerate pool). Waiting on base PR #1279 to merge, then
   landing via `scripts/land.sh`. Rollout: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 - **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
-  `monet/mistral-capmap-fix`) — IN PROGRESS 2026-07-09.** Handoff-queue item 2 (post-#1191
-  unblocked queue). The old family-wide Mistral reasoning map 400'd every call (benchmark
-  2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only; small-2603
-  rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`: capability
-  narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in normalization
-  (high/xhigh/max -> high, else none — no silent medium->high upgrade); every other Mistral
-  id gets a plain chat body (no reasoning params). Rotation-pool re-add deliberately
-  deferred to a keyed re-benchmark (models have never completed a benchmarked call).
-  Tests updated (llm-request/llm-call). Gate running; PR via land.sh.
+  `monet/mistral-capmap-fix`) — ✅ DEPLOYED 2026-07-10: merged to `main` as PR #1279 (squash
+  `d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared with a fresh main-merge head, auto-merge
+  landed on green CI), shipped to production in the 06:20Z env-activation release
+  (prod = `main@420c6747`, health verified by the deploying lane).** Handoff-queue item 2
+  (post-#1191 unblocked queue). The old family-wide Mistral reasoning map 400'd every call
+  (benchmark 2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only;
+  small-2603 rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`:
+  capability narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in
+  normalization (high/xhigh/max -> high, else none — no silent medium->high upgrade); every
+  other Mistral id gets a plain chat body (no reasoning params). Carries 2 verified review
+  fixes (claude/fable subagent): chunked Mistral reasoning-text extraction in llm-call.ts +
+  strategy-page intersection guard against silent medium->high escalation on mixed-provider
+  pairing. Rotation-pool re-add deliberately deferred to a keyed re-benchmark (models have
+  never completed a benchmarked call — follow-up in the rollout note).
+  Rollout: `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
 - **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
   worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
   2026-07-09: PR opened, auto-merge armed.** Owner-directed,
@@ -1434,6 +1452,12 @@ As of 2026-07-08 (assignment-rule update).
   self-debate all first cycle); wrap-advance intact. tsc clean, touched suites 26/26. Rollout:
   `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — IN PROGRESS 2026-07-09.** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+  _2026-07-10 (MONET queue close-out): state correction — this MERGED to `main` as PR #1282
+  (`15c2560e`, 2026-07-09 21:04 CDT) and has been in production since the 2026-07-10 06:00Z
+  release. Verified complete against the monet-handoff queue item (types stamp + strategy.ts
+  review-site stamping + model-stats reviewer attribution incl. the documented legacy
+  "unattributed" fallback + tests) — the handoff-queue reviewedByModel item is CLOSED by this
+  PR; no MONET follow-up needed._
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
   PR #1268 (MONET-authored, landed by CLAUDE under the owner-directed usage-cap pickup).**
@@ -2155,3 +2179,5 @@ brackets; effort S/M/L.
 - 2026-07-08 - **UI wave 4: scope-selector dropdown + floating mobile Tabs sheet + badge spacing (CLAUDE, 3-agent team).** ScopeSelector rebuilt Sheet->real anchored dropdown (accounts + reality/run chips + "Configure accounts" -> settings#brokers; Esc/focus-return/aria; .con-menu-drop slide-down; desktop min-w 190px); mobile TabsSheet floats above the still-visible tab bar (live-measured bar height, all destinations visible on iPhone, real-time pin feedback, scrim stops at bar); tab-bar badge clearance +~5px. AUDIT of the 55-findings backlog vs current main (post #1103/#1110/#1173/#1178): 37 DONE, 2 PARTIAL (primitive parity mostly ported; monolith extraction has derive.ts, pages still large), 7 OPEN = 6 owner TBDs + useConsoleSnapshot() refactor (deferred). No conflicts with past decisions. Rollout: docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md. State: **In Progress (PR pending)**.
 
 - 2026-07-10 - **Infinite-loading fix, CLAUDE layer (complementary to AG #1285).** Deadlines on all 9 getDashboardSnapshot upstreams (timeout -> same degraded fallback as the existing catch + [dashboard] warn now visible in Coolify logs); ipv4first in instrumentation.ts register() (guaranteed on the Coolify container); 15s first-load watchdog in useConsoleData (self-contained; no refresh()/abort overlap with #1285). Root-cause split: #1285 = SSE abort-storm (primary), this = slow/hung upstream amplifier + observability. Gate green (tsc / 3261 tests / build / lint). Rollout: docs/rollouts/2026-07-10-dashboard-deadlines-load-watchdog.md. State: **In Progress (PR pending)**.
+
+- 2026-07-10 - **db-health.ts `ts DESC` tie-sweep (CLAUDE, small, branch `claude/db-health-tie-sweep`).** Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in `src/lib/db-health.ts` nondeterministic (ties resolve OLDEST-first absent a tiebreaker) — most critically `getLaneHealth`'s consecutive-failure window (line ~44) and the FIFO-cap DELETE subquery (line ~142). Added `, rowid DESC` to all 7 sites, matching the idiom already fixed at line 311 for `getServiceHealthLog`. New regression test in `test/api-circuit-breaker.test.ts` (inserts same-ts rows with known insertion order; verified it fails without the fix, passes with it). Closes the task-chip suggestion spawned from the #1267 lane (round-2 TwelveData health-row fix touched the same file/pattern). Gate green: tsc / lint (0 errors) / 311 files, 3286 tests / build. Rollout: docs/rollouts/2026-07-10-db-health-tie-sweep.md. State: **In Progress (PR pending)**.
