@@ -3973,7 +3973,7 @@ export async function executeProposal(
         },
         { policy, userId }
       );
-      autoRevertOnCapBreach(decision.reasons, policy, userId);
+      autoRevertOnCapBreach(decision.reasons, policy, userId, policy.connectedAccountId);
       return { status: "blocked", reasons: decision.reasons };
     }
 
