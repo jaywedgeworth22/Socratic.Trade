@@ -231,6 +231,22 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
+  `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
+  Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
+  "Proposer"/"Reviewer" colored (green `var(--con-pos)` / red `var(--con-neg)` via token-color
+  spans, never hex; "Model" stays default text color; same font-weight as before) in
+  `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. Helper copy simplified:
+  "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red" everywhere in those two
+  files' hints/intro copy/missing-model banner, plus the "Proposer (Green Team)"/"Reviewer (Red
+  Team)" role label in `app/console/components/model-stats-drawer.tsx` (the info-drawer button
+  embedded directly next to both pickers) → "Proposer (Green)"/"Reviewer (Red)". Deliberately did
+  NOT touch `approval-card.tsx`, `results/page.tsx`, `decisions/[id]/page.tsx`, or
+  `app/console/lib/red-team.ts` — different console pages/areas, out of the
+  settings/strategy-models scope; nor any server/lib identifiers, types, logs, or docs (only
+  display strings). Verified in both light and dark mode via live preview (`--con-pos`/
+  `--con-neg` computed colors matched exactly). Gate green: tsc clean, 315 files / 3351 tests,
+  build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — COMPLETED
   2026-07-10.** Owner-directed read-only audit of the production Activity feed (07-07..09):
   36-agent workflow (5 domain investigators over the prod DB + repo, adversarial verification

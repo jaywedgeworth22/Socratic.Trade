@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
+Owner-directed pure display-copy change. Field labels for the two model pickers now read
+"Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
+`var(--con-pos)` / red `var(--con-neg)` via token-color spans, "Model" stays default,
+same weight) in `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`.
+Helper copy simplified: "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red"
+throughout those two files, plus the drawer role label in
+`app/console/components/model-stats-drawer.tsx` ("Proposer (Green Team)" → "Proposer
+(Green)", same for Reviewer/Red). Other console pages (approval-card, results, decisions,
+red-team.ts lib) intentionally untouched — different UI areas, out of scope. Verified light
++ dark via live preview (computed colors match the tokens exactly). Gate green: tsc clean,
+3351 tests, build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
+
 ## 2026-07-10 — Unified provider request quota (MONET, branch `monet/unified-provider-quota`)
 Owner directive: throttling must be "based on not knowing how many tickers will be in the scan so
 it is flexible and all other data provider settings also need to be that way." Built ONE
