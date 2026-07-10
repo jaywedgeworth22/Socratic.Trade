@@ -113,3 +113,26 @@ box's `authorized_keys` at decommission time.
   (it still bills while it exists; no Hetzner API/MCP access in this session).
 - Revisit `concurrent_builds=1` — the 8 GB box may tolerate 2, but keep 1 until proven.
 - Update any stale notes still calling `91.98.44.8` "the box".
+
+## Same-evening follow-ups (2026-07-09 ~19:00–21:00 CDT)
+
+- **congress.trade fixed:** owner authorized the IP Access Rule (whitelist
+  `135.181.192.190`, Bot Fight Mode bypass, rule id `00ce7036ca114749a31cdcc0bc031503`);
+  congress-stream SSE and the health dependency went `ok:true` immediately.
+- **First 8 GB build proven:** AG took the deployer seat (CLAUDE's trigger was
+  permission-blocked; claim withdrawn on #agent-sync); the deploy built main HEAD from
+  scratch and shipped image `a8b0185b…` healthy — the exact build class the 4 GB box
+  OOM-failed on.
+- **DOMAIN RENAME (owner-directed): the Coolify dashboard/API moved from the apex to
+  `https://host.jays.services`.** Owner changed the instance FQDN + renamed the DNS
+  record; apex `jays.services` now CNAMEs to the Mac Cloudflare tunnel (does NOT reach
+  Coolify) and the `*.jays.services` wildcard A record was deleted. References updated:
+  AGENTS.md, STATUS.md, this note, effort logs, `/Users/jay/apps/AGENT-SYNC.md`, Claude
+  Desktop `coolify` MCP `COOLIFY_BASE_URL`, agent memory. Fleet broadcast posted on
+  #agent-sync.
+- **Coolify API token rotated:** the previously stored token returns `Unauthenticated`
+  everywhere (including loopback) since the owner's UI session — agents need a fresh
+  token via the secret-handoff protocol before Coolify API work.
+- **Still open:** GitHub App (`socratic-trade`) webhook URL on github.com still points
+  at the apex — update to `https://host.jays.services` (owner, in the GitHub App
+  settings; low impact while auto-deploy is OFF). Old-server deletion after soak.

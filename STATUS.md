@@ -17,11 +17,17 @@ throughout); built image `docker save/load`ed so cutover downtime was ~5 min; si
 records flipped (`jays.services` apex/`*`/`prod`, `socratictrade.com` apex/`*`/`admin`). Verified:
 health 200/db ok/scheduler ticking, litestream caught up, runners re-registered, dashboard live.
 Old box: all containers stopped `--restart=no` (rollback standby until owner deletes it).
-**Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
-the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
-congress-stream SSE 403s — the one migration regression, root-caused); (2) first
-ANNOUNCE-THEN-DEPLOY release on the new box ships main HEAD (`6363e1e7`) — deliberately not
-triggered as part of the migration. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
+**Same-evening resolutions:** the `congress.trade` IP Access Rule for the new IP was added
+(owner-authorized; congress-stream SSE `ok:true` again), and the first new-box deploy succeeded
+(AG deployer seat — first full cold nixpacks build on the 8 GB box proven).
+**Same-evening DOMAIN RENAME (owner-directed): the Coolify dashboard/API moved from the apex to
+`https://host.jays.services`** — the apex `jays.services` now CNAMEs to the Mac tunnel and no
+longer reaches Coolify; the `*.jays.services` wildcard A record was deleted. Every tool/script
+must call `https://host.jays.services/api/v1/...`. The stored Coolify API token also stopped
+authenticating at the same time (likely rotated in the UI) — agents need a fresh token via secret
+handoff; the GitHub App webhook URL (github.com side) still points at the apex and needs updating
+to `host.jays.services`. **Owner action still pending:** delete the old Hetzner server after
+soak. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
 
 ## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
 Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature

@@ -901,8 +901,14 @@ As of 2026-07-08 (assignment-rule update).
   reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
   cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
   old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
-  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
-  PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
+  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). **CLOSED OUT
+  same evening:** congress.trade IP Access Rule added (owner-authorized; SSE ok:true), first
+  8GB build proven (AG deployer seat, image a8b0185b healthy), docs PR #1247 merged. **DOMAIN
+  RENAME addendum (owner-directed, same evening): Coolify dashboard/API = host.jays.services
+  now; apex jays.services = Mac tunnel, wildcard *.jays.services DELETED; API token rotated —
+  fresh token via secret handoff needed; GitHub App webhook URL still apex (owner to update).**
+  Remaining: owner deletes the old Hetzner server after soak. (Historical remainder of this
+  row below —) OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
   (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
   session was permission-blocked from creating firewall rules on that zone); first
   announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
