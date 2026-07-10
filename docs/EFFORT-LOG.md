@@ -501,6 +501,44 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch
+  `claude/learning-review-defer`) — IN PROGRESS 2026-07-10, owner-directed; isolated throwaway
+  worktree off `origin/main` @ `c7a2fa95` (the originally-assigned worktree had unrelated dirty
+  per-team-reasoning follow-up work left in it — untouched).** The daily Learning Review LLM
+  (`src/lib/learning-review.ts`) can now emit a `"defer"` verdict (distinct from
+  keep/reject/expire/needs_more_data) when it genuinely cannot decide, WITH a required non-blank
+  reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as malformed, same as any
+  other invalid entry). For `learned_context_pending` rows this leaves the item exactly pending
+  (no approve/reject) and persists the note to a new `review_note` column
+  (`src/lib/db.ts`/`db-learning.ts`, guarded ALTER for existing DBs +
+  `setPendingLearnedContextReviewNote`), surfaced in the queue UI
+  (`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." small
+  muted line using the existing `--con-*` token pattern). For durable `learned_context` rows it's a
+  no-op (no queue to leave it in), matching `needs_more_data`. Verified (new test) that a deferred
+  item does NOT force a same-set re-review loop — it rides the EXISTING #1278/#1328
+  marker/fingerprint architecture unchanged (sticks until a human acts or another item's arrival
+  brings the reviewer back to the whole set); no separate re-review scheduler was added. +6 tests in
+  `test/learning-review.test.ts` (52/52 in the 3 learning-review-adjacent suites). Gate green: tsc
+  clean, 3389 tests / 315 files, build clean, lint 0 errors. Rollout:
+  `docs/rollouts/2026-07-10-learning-review-defer.md`. PR #1351 open, auto-merge armed (squash).
+- **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
+  `claude/per-team-reasoning`) — IN PROGRESS 2026-07-10, owner-directed (was QUEUED behind
+  settings-global-only on the live board; includes the 2026-07-10 scope add: usage link + Learning
+  Review "Model settings" links).** New account-scoped `TradingPolicy.redTeamReasoningEffort`
+  (mirrors `redTeamLlmModel` naming); legacy `llmReasoningEffort` = the PROPOSER's; reviewer falls
+  back until explicitly set via the single helper `resolveReviewerReasoningEffort`
+  (src/lib/llm-request.ts), wired at red-team.ts / strategy-tuning.ts / the AI-review panel.
+  `validatePolicy` rejects a gpt-5.5+high combo on EITHER team, naming the team. Framework UI:
+  per-seat reasoning selects (shown only when that model supports it), curated per-model advice from
+  NEW `src/lib/model-reasoning-recommendations.ts` (gpt-5.5 interactive-high rule surfaced BEFORE
+  save; High disabled in-select), reviewer "Same as proposer (…)" inherit option; rotating seats
+  hide the manual control — `resolveModelRotationForRun` now auto-sets each rotated model's curated
+  recommended effort (unknown → medium) on the run-scoped override, audited on
+  `model_rotation_pick`. Plus "LLM usage & cost" link (Models card → /console/usage) and "Model
+  settings" links on both approvals Learning Review blocks → new Settings `#learning-review` anchor.
+  Gate green (tsc / lint 0-err / 3383 tests / build) + live browser smoke of all four items. PR via
+  land.sh (number recorded on the live board once open). Rollout:
+  `docs/rollouts/2026-07-10-per-team-reasoning.md`.
 - **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
   PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
   to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
@@ -1525,6 +1563,42 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) — landing
+  2026-07-10.** Owner-directed after two pricing misreads in one day (tiingo annual, AV per-IP):
+  docs/market-data-provider-pricing.md = canonical vendor facts + traps + knob cheat-sheet.
+  Related (paused pending owner): API-Usage-Monitor subscription->knob linkage phase 1.
+- **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
+  branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
+  with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref
+  == 'refs/heads/main'` guard, but that guard is branch-editable — a `workflow_dispatch`
+  against a non-main branch loads THAT branch's copy of the YAML, so a branch could in theory
+  strip or invert the guard before it's evaluated. Honest fix is a GitHub **Environment** with
+  a `deployment_branch_policy` locked to `main`, enforced server-side by GitHub before the job
+  dispatches — not editable via any branch's workflow file. Created environment
+  `merge-shepherd` via the Environments API
+  (`deployment_branch_policy: {protected_branches:false, custom_branch_policies:true}` +
+  branch policy `main`, verified idempotent — repeat POSTs don't duplicate the policy) and
+  wired `environment: merge-shepherd` into the `shepherd` job in
+  `.github/workflows/merge-shepherd.yml`, keeping the existing `if:` guard as
+  defense-in-depth. Added `deployments: write` to the job's explicit permissions allow-list
+  (unlisted scopes default to `none`, and referencing an environment makes GitHub track a
+  deployment record per run). `SHEPHERD_TOKEN` does not currently exist as a repo secret (confirmed via
+  `gh secret list` — the workflow's `secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN` fallback
+  is presently just using `GITHUB_TOKEN`), so there is nothing to migrate; when/if the owner
+  adds it, it should go on as an **environment secret** scoped to `merge-shepherd` rather than
+  a repo secret (the API cannot read/copy secret values, only an interactive owner action can
+  set one). **Landing-round finding, NOT fixed here (PR #1353 review):** codex-connector
+  correctly points out the `environment:` reference is itself branch-editable — a branch can
+  delete that one line from its own workflow_dispatch copy just as easily as the `if:` guard,
+  and a job with no environment reference skips the deployment_branch_policy check entirely. A
+  genuine close needs the sensitive job moved into a reusable workflow pinned to `@main`
+  (`uses: ./.github/workflows/_merge-shepherd-impl.yml@main` — GitHub loads a pinned `uses:`
+  target from that ref regardless of the caller's ref), which is real CI architecture work
+  deserving its own session — filed as a follow-up rather than rushed here. Practical severity
+  today is bounded: no `SHEPHERD_TOKEN` secret exists yet to be environment-gated, and this
+  repo's ruleset already requires 0 approving reviews (only `verify` gates a merge), so a rogue
+  branch could already self-merge through the normal PR flow without this side-channel. See
+  `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
 - **Mistral benchmark data in the model-picker UI (MONET, session worktree
   `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
   2026-07-10, owner-directed, PR landing.** Research found the app already has two

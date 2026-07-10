@@ -155,6 +155,29 @@ describe("parseLearningReviewVerdicts", () => {
     expect(parseLearningReviewVerdicts('{"summary":"no reviews"}')).toBeNull();
     expect(parseLearningReviewVerdicts('["array-root"]')).toBeNull();
   });
+
+  it("accepts a 'defer' verdict carrying a non-empty reasoning note", () => {
+    const text = verdictJson([
+      { id: "unsure-1", table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "Conflicts with a recent rollout note; a human should judge which is current." }
+    ]);
+    const parsed = parseLearningReviewVerdicts(text);
+    expect(parsed?.reviews).toHaveLength(1);
+    expect(parsed?.reviews[0].verdict).toBe("defer");
+    expect(parsed?.reviews[0].reasoning).toContain("rollout note");
+  });
+
+  it("drops a 'defer' verdict with blank or missing reasoning (a note is required)", () => {
+    const text = JSON.stringify({
+      reviews: [
+        { id: "blank-note", table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "   " },
+        { id: "missing-note", table: "learned_context_pending", verdict: "defer", confidence: 40 },
+        { id: "has-note", table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "genuinely ambiguous evidence" }
+      ],
+      summary: "s"
+    });
+    const parsed = parseLearningReviewVerdicts(text);
+    expect(parsed?.reviews.map((r) => r.id)).toEqual(["has-note"]);
+  });
 });
 
 // ── Once-per-day dedup ──────────────────────────────────────────────────────────
@@ -732,6 +755,173 @@ describe("decide mode", () => {
     expect(applied).toHaveLength(0);
     expect(failures).toBe(0);
     expect(listLearnedContext(userId).some((r) => r.id === unshown.id)).toBe(true);
+  });
+});
+
+// ── "defer" verdict: leave-as-proposal when the reviewer is unsure (owner requirement, 2026-07-10) ──
+
+describe("defer verdict", () => {
+  it("decide mode: a deferred pending item stays exactly pending, with the reviewer's note persisted", async () => {
+    const userId = `lr-defer-pending-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    const pending = seedPendingRow(userId);
+
+    const summary = await runDailyLearningReview(userId, {
+      now: NOW,
+      llm: async () =>
+        verdictJson([
+          {
+            id: pending.id,
+            table: "learned_context_pending",
+            verdict: "defer",
+            confidence: 40,
+            reasoning: "Evidence conflicts with a recent rollout note; a human should judge which is current."
+          }
+        ])
+    });
+
+    expect(summary.ok).toBe(true);
+    const row = getPendingLearnedContext(pending.id, userId);
+    // Still pending — NOT approved, NOT rejected. This is the "leave it as a proposal" contract.
+    expect(row?.status).toBe("pending");
+    expect(row?.resolvedAt).toBeNull();
+    expect(row?.reviewNote).toContain("rollout note");
+    // Audited as an explicit "deferred" application, distinct from approve/reject.
+    const applied = listAuditByKind("learning_review_applied", 10, userId);
+    expect(applied).toHaveLength(1);
+    expect((applied[0].payload as { action: string; verdict: string }).action).toBe("deferred");
+    expect((applied[0].payload as { action: string; verdict: string }).verdict).toBe("defer");
+  });
+
+  it("a later 'needs_more_data' verdict clears a stale defer note from an earlier review (codex #1351 P2)", async () => {
+    const userId = `lr-defer-stale-note-${randomUUID().slice(0, 8)}`;
+    const pending = seedPendingRow(userId);
+
+    // Day 1: deferred, note attached. Each day builds its own fresh context pack (as
+    // runDailyLearningReview does) — reused-pack.pendingById would otherwise still be the
+    // pre-defer snapshot, which is not what a real second run sees.
+    const day1Pack = await buildLearningReviewContextPack(userId, NOW);
+    applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "Ambiguous on day 1." }],
+      day1Pack
+    );
+    expect(getPendingLearnedContext(pending.id, userId)?.reviewNote).toContain("day 1");
+
+    // Day 2: fresh pack (reflects day 1's persisted note), rides along, but this time the
+    // reviewer lands on needs_more_data (not defer) — the stale "Left for you because..."
+    // explanation from day 1 must not linger.
+    const day2Pack = await buildLearningReviewContextPack(userId, NOW);
+    const { applied } = applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "needs_more_data", confidence: 55, reasoning: "Still under-sampled." }],
+      day2Pack
+    );
+
+    const row = getPendingLearnedContext(pending.id, userId);
+    expect(row?.status).toBe("pending"); // needs_more_data never mutates status
+    expect(row?.reviewNote ?? "").toBe("");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].action).toBe("cleared_stale_note");
+  });
+
+  it("'needs_more_data' with no prior note is a true no-op (no spurious write/audit)", async () => {
+    const userId = `lr-needs-more-data-noop-${randomUUID().slice(0, 8)}`;
+    const pending = seedPendingRow(userId);
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+
+    const { applied } = applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "needs_more_data", confidence: 55, reasoning: "Under-sampled." }],
+      pack
+    );
+
+    expect(applied).toHaveLength(0);
+    expect(getPendingLearnedContext(pending.id, userId)?.reviewNote ?? null).toBeNull();
+  });
+
+  it("decide mode: 'defer' on a durable learned_context row is a no-op (no queue exists to leave it in)", async () => {
+    const userId = `lr-defer-durable-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    const learned = seedLearnedRow(userId);
+
+    const summary = await runDailyLearningReview(userId, {
+      now: NOW,
+      llm: async () =>
+        verdictJson([
+          { id: learned.id, table: "learned_context", verdict: "defer", confidence: 40, reasoning: "Can't confidently apply the three tests yet." }
+        ])
+    });
+
+    expect(summary.ok).toBe(true);
+    const row = listLearnedContext(userId).find((r) => r.id === learned.id);
+    expect(row).toBeTruthy();
+    expect(row?.expiresAt).toBeNull();
+    // Nothing applied for a durable-row defer (matches needs_more_data's existing no-op behavior).
+    expect(listAuditByKind("learning_review_applied", 10, userId)).toHaveLength(0);
+  });
+
+  it("annotate mode: a defer verdict is audited but the note is NOT persisted (annotate never mutates rows)", async () => {
+    const userId = `lr-defer-annotate-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    const pending = seedPendingRow(userId);
+
+    const summary = await runDailyLearningReview(userId, {
+      now: NOW,
+      llm: async () =>
+        verdictJson([
+          { id: pending.id, table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "Ambiguous; leaving for a human." }
+        ])
+    });
+
+    expect(summary.ok).toBe(true);
+    // The verdict + reasoning are auditable (learning_review_verdict), but annotate mode never
+    // calls applyLearningReviewVerdicts, so review_note stays unset on the row itself.
+    const verdictAudits = listAuditByKind("learning_review_verdict", 10, userId);
+    expect(verdictAudits).toHaveLength(1);
+    expect((verdictAudits[0].payload as { verdict: string; reasoning: string }).reasoning).toContain("Ambiguous");
+    expect(getPendingLearnedContext(pending.id, userId)?.reviewNote ?? null).toBeNull();
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+  });
+
+  it("a lone deferred item does not force a same-set re-review the next day (sticks until a human acts or something new arrives)", async () => {
+    const userId = `lr-defer-sticky-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    const pending = seedPendingRow(userId);
+    let calls = 0;
+    const deferLlm = async (spec: { userContent: string }) => {
+      calls += 1;
+      const items = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"] }> }).reviewItems;
+      return verdictJson(
+        items.map((it) => ({ id: it.id, table: it.table, verdict: "defer" as const, confidence: 40, reasoning: "Still can't decide this one." }))
+      );
+    };
+
+    // Day 1: real review — the pending item is deferred (left pending, note stored).
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm: deferLlm });
+    expect(day1.ok).toBe(true);
+    expect(calls).toBe(1);
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+
+    // Day 2: nothing new arrived — the deferred item is still the whole reviewable set, so the
+    // existing fingerprint "unchanged" skip fires and the LLM is NOT called again. It sticks
+    // exactly where the reviewer left it, without spending another call re-confirming "still unsure".
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm: deferLlm });
+    expect(day2.skipped).toBe(true);
+    expect(day2.reason).toBe("unchanged");
+    expect(calls).toBe(1);
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+
+    // Day 3: a genuinely new lesson appears alongside the still-deferred item — the set changed,
+    // so the reviewer runs again and reconsiders BOTH (a "sensible re-review policy": deferred
+    // items ride along the next time anything else triggers a review, rather than being permanently
+    // excluded or forcing their own retrigger).
+    const fresh = seedPendingRow(userId);
+    const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm: deferLlm });
+    expect(day3.reason).not.toBe("unchanged");
+    expect(calls).toBe(2);
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+    expect(getPendingLearnedContext(fresh.id, userId)?.status).toBe("pending");
   });
 });
 
