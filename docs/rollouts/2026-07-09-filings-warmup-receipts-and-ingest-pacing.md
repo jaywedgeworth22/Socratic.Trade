@@ -87,6 +87,32 @@ the daily-chunk budget raised). Receipt disappears per doc type after its first 
 - `npx vitest run test/data-providers.test.ts` — 91/91 (no-cap revision)
 - Full gate (lint, tsc, full vitest, build) run pre-land — see PR.
 
+## Landing addendum (2026-07-09, CLAUDE usage-cap pickup round 2)
+
+MONET's session hit the usage cap with be2d611f committed and three coherent follow-on
+refinements uncommitted. CLAUDE committed them as-is (bc963f84) and landed the branch:
+
+- `src/lib/market.ts` — enrichment order now puts EVERY held position first, including
+  holds ranked inside the top-N cut (which `heldExtra` deliberately excludes), then event
+  outliers, then the ranked tail: an explicit `FMP_MAX_SYMBOLS` throttle or scarce
+  per-scan budget starves the tail, never an owned name.
+- `src/lib/web-sources/sec-filings.ts` (`ingestFiling`) — when `storeDocument` returns
+  `indexed <= 0` or a `budgetSkipped`/`writeUnitBudgetSkipped` count with no error (daily
+  chunk budget exhausted mid-run — an EXPECTED state during the paid backlog drain), the
+  accession is NOT recorded, so a later run retries instead of marking the filing
+  "ingested" with zero/partial retrievable chunks. Both fields verified present on the
+  `storeDocument` result type (`src/lib/vector-db.ts`).
+- `src/lib/web-sources/sec-filings.ts` (`refreshFilingBodies`) — forced runs (admin
+  backfill) no longer write the attempt stamp, so a targeted backfill can't push the
+  scheduled corpus-wide ingest back a full TTL window.
+- `.env.example` — `SEC_FILING_RAG_MAX_PER_RUN` left unset so the tier default applies.
+
+Landing: merged `origin/main` clean (no conflicts; no-cap `maxSymbols()` content verified
+intact post-merge), full gate (`npm run lint`, `npx tsc --noEmit`, `npm test`,
+`npm run build`) — results recorded in the PR. PR #1272 was still OPEN at landing time;
+this branch contains its content (merged at 90c55579), so GitHub shows a reduced diff
+once either lands — noted in the PR body.
+
 ## Follow-ups / risks
 
 - The receipt goes silent per doc type after ONE ingest (both-conditions check is

@@ -23,6 +23,11 @@ backfill route now forces past the TTL stamp instead of silently no-oping. Prod 
 needed to unlock paid pace: `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
 See `docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` and the
 owner-ruling revision section in `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, usage-cap pickup round 2 of MONET's lane): committed MONET's
+uncommitted follow-on refinements (held-in-top-N enrichment priority, `ingestFiling`
+budget-skip un-record so budget-truncated filings retry instead of being marked ingested,
+forced admin backfills no longer push the scheduled-ingest TTL stamp), merged
+`origin/main` clean, full gate green, PR opened via `land.sh` with auto-merge armed.
 
 ## 2026-07-09 — Enrichment starvation fix landed (MONET, branch `monet/bold-lamport-20a8f9`)
 Fixed the prod-verified starvation (30/42 candidates enriched, 2026-07-09T19:41Z run): the

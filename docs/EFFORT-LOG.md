@@ -451,7 +451,10 @@ As of 2026-07-08 (assignment-rule update).
 
 - **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
   `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
-  PROGRESS 2026-07-09, owner-directed; supersedes PR #1272 (stuck on a phantom GitHub DIRTY
+  PROGRESS 2026-07-09, owner-directed; MONET-authored, CLAUDE-landed under the usage-cap
+  pickup round 2 (follow-on refinements committed: held-in-top-N enrichment priority,
+  budget-skip un-record in `ingestFiling`, forced-run TTL-stamp skip); PR opened via
+  land.sh with auto-merge armed. Supersedes PR #1272 (stuck on a phantom GitHub DIRTY
   mergeable-state; `git merge-tree` clean; its content is merged into this branch).** Owner
   rulings in-session: (1) NO hard enrichment-symbol cap — "no cap at all or multiple hundreds",
   >50 positions is a supported future; `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` set
