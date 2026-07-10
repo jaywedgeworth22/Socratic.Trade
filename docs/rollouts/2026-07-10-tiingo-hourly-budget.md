@@ -1,5 +1,13 @@
 # 2026-07-10 — Tiingo free-tier hourly request budget (MONET)
 
+> **SUPERSEDED (2026-07-10) by `docs/rollouts/2026-07-10-unified-provider-quota.md` (PR #1310).**
+> The owner directed that throttling be a single scan-size-agnostic mechanism across ALL providers
+> rather than a per-provider bespoke fix ("it needs to be based on not knowing how many tickers will
+> be in the scan so it is flexible and all other data provider settings also need to be that way").
+> The Tiingo hourly cap is now enforced by the unified `RequestQuota` (tiingo = 50/hour + 1000/day)
+> in `src/lib/provider-rate-limit.ts`. The ad-hoc, Tiingo-only design described below was NOT
+> implemented as its own code path; this note is kept for the root-cause analysis only.
+
 Owner shared their Tiingo API-usage dashboard: **Hourly Requests at −10 / 50**
 (over the cap), Daily 615/1000 (fine), Bandwidth ~0/2 GB (fine). So Tiingo's
 403s are the **hourly rate limit (50 requests/hour)** being exceeded — the same

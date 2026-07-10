@@ -1440,6 +1440,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
+  — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
+  a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
+  credKey, wanted)` returns how many requests fit under ALL windows now (per-credential, multi-window
+  MIN, sliding, never blocks), caller queries the admitted best-first symbols + defers the rest.
+  Scoped to hard-windowed-cap providers pacing can't solve — **twelvedata (8/min+800/day),
+  tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
+  (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
+  Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
   `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
   code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
