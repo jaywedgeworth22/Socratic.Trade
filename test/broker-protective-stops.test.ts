@@ -8,6 +8,7 @@ import {
   cancelBrokerProtectiveStop,
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
+import { listBrokerProtectiveStops } from "../src/lib/db";
 import type { BrokerGateway, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
@@ -106,7 +107,7 @@ describe("reconcileBrokerProtectiveStops", () => {
 
   it("no-ops entirely when disabled (paper mode / flag off / wrong broker)", async () => {
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5"), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
-    expect(r).toEqual({ placed: 0, cancelled: 0 });
+    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [] });
     expect(gw.placed).toHaveLength(0);
   });
 
@@ -151,6 +152,39 @@ describe("reconcileBrokerProtectiveStops", () => {
     });
     expect(retried.cancelled).toBe(1);
     expect(gw.cancelled).toEqual(["ord-1"]);
+  });
+
+  it("a pending_cancel row BLOCKS re-placement — the old still-live stop is never orphaned by an upsert overwrite", async () => {
+    // Place while enabled.
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-BLOCK"), accountNumber: "PS-BLOCK", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.placed).toHaveLength(1);
+    // Disable while the broker cancel FAILS → the row survives as pending_cancel, its order still
+    // resting live at the broker.
+    gw.failCancel = true;
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("PS-BLOCK", { robinhoodBrokerStops: false }), accountNumber: "PS-BLOCK",
+      gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    // Re-enable with the cancel STILL failing. Placement must be BLOCKED: placing would upsert a
+    // new broker_order_id over the pending_cancel row (UNIQUE user/account/symbol), leaving the old
+    // still-live full-size GTC stop resting at the broker with no tracking and no cancel retry.
+    gw.nextOrderId = "ord-2";
+    const reEnabled = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-BLOCK"), accountNumber: "PS-BLOCK", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(reEnabled.placed).toBe(0);
+    expect(gw.placed).toHaveLength(1); // no second placement while the first stop's fate is unresolved
+    let rows = listBrokerProtectiveStops("PS-BLOCK", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-1", status: "pending_cancel" }); // original id preserved
+    // Once the cancel finally lands, the retry pass clears the row and placement resumes next pass.
+    gw.failCancel = false;
+    const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-BLOCK"), accountNumber: "PS-BLOCK", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(recovered.cancelledOrderIds).toEqual(["ord-1"]);
+    expect(recovered.placed).toBe(1);
+    expect(gw.placed).toHaveLength(2);
+    rows = listBrokerProtectiveStops("PS-BLOCK", "local");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-2", status: "resting" });
   });
 
   it("cancelBrokerProtectiveStop removes a symbol's resting stop on demand", async () => {

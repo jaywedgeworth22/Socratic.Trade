@@ -8,9 +8,9 @@
  *  - Run once (wired; disabled with a reason when blocked)
  *  - data freshness strip */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { Check, ChevronDown, LogOut, Monitor, Moon, OctagonMinus, Play, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
 import type { ConnectedAccount } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -73,15 +73,37 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const reality = deriveReality(snapshot);
   const active = activeConnectedAccount(snapshot);
-  // Same isActive flag — hoist the loaded account first, list the rest under
-  // "Other Accounts". Mirrors the Broker connections settings card.
+  // Active account hoisted first, the rest after — same order the switch list
+  // reads top-to-bottom. Mirrors the Broker connections settings card.
   const others = snapshot.connectedAccounts.filter((a) => !a.isActive);
+  const ordered = active ? [active, ...others] : others;
 
   const label = active
     ? `${active.label || brokerName(active.broker)}${active.accountNumber ? ` ·· ${active.accountNumber.slice(-4)}` : ""}`
     : "No connected account";
+
+  const close = () => {
+    setOpen(false);
+    // Return focus to the trigger so keyboard users aren't dropped at page top.
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  // Escape closes and returns focus to the trigger (menu-button pattern).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const switchTo = async (id: string) => {
     setBusyId(id);
@@ -97,57 +119,80 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
     }
   };
 
-  // One row renderer, reused for the loaded account and each "Other" account.
-  const renderAccountRow = (account: ConnectedAccount) => {
+  // Compact switch row: name + reality/run-state chips on line one, broker ··last4
+  // on a faint second line. The whole row is the switch affordance; the loaded
+  // account is a non-interactive current-state marker (checkmark, accent tint).
+  const renderRow = (account: ConnectedAccount) => {
     const r = realityForAccount(account);
+    const policy = snapshot.connectedAccountPolicies?.[account.id];
+    const st = policy ? deriveStateInfo(policy) : null;
+    const isActive = account.isActive;
+    const last4 = account.accountNumber ? account.accountNumber.slice(-4) : null;
     return (
-      <div
+      <button
         key={account.id}
+        type="button"
+        role="menuitemradio"
+        aria-checked={isActive}
+        disabled={isActive || busyId !== null}
+        onClick={() => void switchTo(account.id)}
         className={cx(
-          "rounded-lg border p-3",
-          account.isActive ? "border-[color:var(--con-accent)]" : "border-[color:var(--con-line)]"
+          "con-scope-row flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left",
+          isActive ? "border-[color:var(--con-accent-border)]" : "border-[color:var(--con-line)]"
         )}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-semibold">{account.label || brokerName(account.broker)}</span>
-            {r.tone !== "live" && (
-              <Chip tone={r.tone}>
-                {r.word} · {r.phrase}
-              </Chip>
-            )}
-            {(() => {
-              const policy = snapshot.connectedAccountPolicies?.[account.id];
-              if (!policy) return null;
-              const st = deriveStateInfo(policy);
-              if (st.state === "halted") return null;
-              return <Chip tone={st.tone}>{st.label}</Chip>;
-            })()}
-          </div>
-          {!account.isActive && (
-            <Btn size="sm" variant="outline" disabled={busyId !== null} onClick={() => void switchTo(account.id)}>
-              {busyId === account.id ? "Loading…" : "Load"}
-            </Btn>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="truncate text-[length:var(--con-fs-sm)] font-semibold">
+              {account.label || brokerName(account.broker)}
+            </span>
+            {r.tone !== "live" && <Chip tone={r.tone}>{r.word}</Chip>}
+            {st && st.state !== "halted" && <Chip tone={st.tone}>{st.label}</Chip>}
+          </span>
+          <span className="mt-0.5 block truncate text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+            {brokerName(account.broker)}
+            {last4 ? ` · ·· ${last4}` : ""}
+            {r.tone !== "live" ? ` · ${r.phrase}` : ""}
+          </span>
+        </span>
+        <span
+          className={cx(
+            "flex shrink-0 items-center gap-1 self-center text-[length:var(--con-fs-xs)] font-semibold",
+            isActive ? "text-[color:var(--con-accent)]" : "text-[color:var(--con-muted)]"
           )}
-        </div>
-        <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-          {`${brokerName(account.broker)} · ${r.tone === "paper" ? "paper account, not real money" : "brokerage account"}`}
-          {account.accountNumber ? ` · ·· ${account.accountNumber.slice(-4)}` : ""}
-          {r.tone !== "live" ? ` — ${r.clarification}` : ""}
-        </p>
-      </div>
+        >
+          {isActive ? (
+            <>
+              <Check size={13} /> Loaded
+            </>
+          ) : busyId === account.id ? (
+            "Loading…"
+          ) : (
+            "Switch"
+          )}
+        </span>
+      </button>
     );
   };
 
   return (
-    <>
+    // relative wrapper: the dropdown anchors to the trigger's own left edge (the
+    // scope sits at the LEFT of the bar, so anchoring here can't overflow off the
+    // left the way a right-aligned menu would). flex sizing lives on the wrapper
+    // so the trigger fills it.
+    <div className="relative min-w-0 flex-1 sm:flex-none sm:min-w-[190px] sm:max-w-[300px]">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
-        className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)] sm:min-w-[112px] sm:flex-none sm:max-w-none"
+        onClick={() => (open ? close() : setOpen(true))}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        // items-start + a small chevron nudge aligns the chevron with the first
+        // (account-name) line rather than floating between the two label lines.
+        className="flex w-full items-start gap-2 overflow-hidden rounded-lg border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface-2)] px-3 py-1.5 text-left transition-colors hover:border-[color:var(--con-accent)]"
         title="Switch which account this console shows"
       >
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-[length:var(--con-fs-sm)] font-semibold leading-tight">{label}</span>
           {!compact && (
             <span className="hidden truncate text-[length:var(--con-fs-xs)] leading-tight text-[color:var(--con-faint)] sm:block">
@@ -155,50 +200,53 @@ export function ScopeSelector({ snapshot, compact }: { snapshot: DashboardSnapsh
             </span>
           )}
         </span>
-        <ChevronDown size={14} className="shrink-0 text-[color:var(--con-faint)]" />
+        <ChevronDown
+          size={14}
+          className={cx("mt-0.5 shrink-0 text-[color:var(--con-faint)] transition-transform", open && "rotate-180")}
+        />
       </button>
 
-      <Sheet open={open} onClose={() => setOpen(false)} title="Account scope">
-        <p className="mb-3 text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-          Exactly one account is loaded at a time. Loading one rescopes everything — balances, guardrails, approvals,
-          the run state, and decision history.
-        </p>
-        {snapshot.connectedAccounts.length === 0 ? (
-          <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold">No account connected</span>
-              <Chip tone="none">NO ACCOUNT · no account connected</Chip>
-            </div>
-            <p className="mt-1 text-[color:var(--con-muted)]">
-              Connect a broker account before the app can place orders.
+      {open && (
+        <>
+          {/* invisible click-away backdrop; the panel sits above it */}
+          <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
+          <div
+            role="menu"
+            aria-label="Account scope"
+            className="con-menu-drop absolute left-0 top-[calc(100%+4px)] z-50 flex max-h-[min(70vh,480px)] w-[min(92vw,360px)] flex-col gap-2 overflow-y-auto rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-3 shadow-xl"
+          >
+            <p className="text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">
+              One account is loaded at a time. Switching rescopes everything — balances, guardrails, approvals, run
+              state, and decision history.
             </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <section>
-              <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Currently Loaded Account</h3>
-              {active ? (
-                renderAccountRow(active)
-              ) : (
-                <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                  No account loaded — select one below.
+            {ordered.length === 0 ? (
+              <div className="rounded-lg border border-[color:var(--con-line)] p-3 text-[length:var(--con-fs-sm)]">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold">No account connected</span>
+                  <Chip tone="none">NO ACCOUNT</Chip>
+                </div>
+                <p className="mt-1 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
+                  Connect a broker account before the app can place orders.
                 </p>
-              )}
-            </section>
-            <section>
-              <h3 className="mb-2 text-[length:var(--con-fs-sm)] font-semibold">Other Accounts</h3>
-              {others.length > 0 ? (
-                <div className="flex flex-col gap-2">{others.map(renderAccountRow)}</div>
-              ) : (
-                <p className="text-[length:var(--con-fs-sm)] text-[color:var(--con-muted)]">
-                  No other accounts connected.
-                </p>
-              )}
-            </section>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">{ordered.map(renderRow)}</div>
+            )}
+            <div className="my-0.5 h-px bg-[color:var(--con-line)]" />
+            <Link
+              href="/console/settings#brokers"
+              role="menuitem"
+              onClick={close}
+              className="con-scope-row flex w-full items-center gap-2 rounded-lg border border-[color:var(--con-line)] px-3 py-2 text-[length:var(--con-fs-sm)] font-medium"
+              title="Add, remove, or reconnect broker accounts"
+            >
+              <SlidersHorizontal size={14} className="shrink-0 text-[color:var(--con-faint)]" />
+              Configure accounts
+            </Link>
           </div>
-        )}
-      </Sheet>
-    </>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -717,15 +765,23 @@ export function UserMenu({
   cycleTheme: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const user = snapshot.currentUser;
+
+  const close = () => {
+    setOpen(false);
+    // Return focus to the trigger so keyboard users land back on the button.
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // No session identity (single-user/local operation) → nothing to sign out of.
@@ -740,8 +796,9 @@ export function UserMenu({
     // instead of overflowing left off small screens.
     <div className="shrink-0">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         title={`Signed in as ${user.email ?? who}. Click for account, theme, and sign out.`}
         aria-label={`Signed in as ${user.email ?? who} — account menu`}
         aria-expanded={open}
@@ -754,7 +811,7 @@ export function UserMenu({
       {open && (
         <>
           {/* invisible click-away backdrop; the panel sits above it */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
+          <div className="fixed inset-0 z-40" onClick={close} aria-hidden />
           <div className="con-menu-drop absolute right-2 top-[calc(100%+2px)] z-50 w-[min(92vw,340px)] rounded-xl border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] p-4 shadow-xl">
             <div className="flex flex-col gap-3 text-[length:var(--con-fs-sm)]">
               <div className="flex items-center gap-3">
