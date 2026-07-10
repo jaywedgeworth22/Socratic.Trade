@@ -21,6 +21,7 @@ import {
   listBrokerProtectiveStops,
   upsertBrokerProtectiveStop
 } from "./db";
+import { isRejectedOrCanceledState } from "./broker-side";
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
 import type { BrokerGateway, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
@@ -77,6 +78,18 @@ export interface ReconcileResult {
    * stop suppresses synthetic registration and leaves the position with neither protection.
    */
   cancelledOrderIds: string[];
+  /**
+   * Normalized symbols this reconcile successfully PLACED a resting broker stop for (one per
+   * `placed` count) — the mirror image of `cancelledOrderIds` for the same pre-reconcile-fetch
+   * staleness: the caller's order list CANNOT contain these just-placed orders, so quantity-aware
+   * coverage would undercount them. On a mismatch cancel/REPLACE tick that undercount is what let
+   * the synthetic monitor register + fire against the pruned pre-replace coverage and then cancel
+   * the fresh full-size replacement. The caller must treat these symbols as broker-covered for
+   * THIS tick — both synthetic REGISTRATION and the FIRE path of already-registered rows (a fire
+   * would sell shares the just-placed full-size stop covers, then cancel that stop after booking
+   * the fill); the next tick's fresh order fetch sees the real resting order.
+   */
+  placedStopSymbols: string[];
 }
 
 /**
@@ -94,7 +107,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   running: boolean;
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [] };
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] };
 
   // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
   // (flag off) or no longer applicable (not live Robinhood, no stop-loss %), any stop it previously
@@ -236,6 +249,16 @@ export async function reconcileBrokerProtectiveStops(args: {
         marketHours: "regular_hours",
         refId
       });
+      if (isRejectedOrCanceledState(exec.state)) {
+        // A non-throwing placement can still be a synchronous rejection/cancellation (same trap as
+        // the synthetic exit path in synthetic-stops.ts). No stop is resting at the broker: don't
+        // record a row (a dead "resting" row would block re-placement here on every later tick —
+        // section 3 sees no qty/price mismatch on it, and `existing` above blocks section 4) and
+        // don't advertise the symbol via placedStopSymbols (that would suppress this tick's
+        // synthetic registration for protection that doesn't exist).
+        audit("broker_protective_stop_error", { symbol: sym, stopPrice, orderId: exec.orderId, error: `broker declined the protective stop (state: ${exec.state})` }, userId);
+        continue;
+      }
       if (!exec.orderId) {
         // No broker order id means we couldn't later cancel it — don't record an untrackable stop.
         audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: "broker returned no order id" }, userId);
@@ -252,6 +275,7 @@ export async function reconcileBrokerProtectiveStops(args: {
         status: "resting"
       });
       out.placed++;
+      out.placedStopSymbols.push(sym);
       audit("broker_protective_stop_placed", { symbol: sym, stopPrice, quantity: qty, brokerOrderId: exec.orderId }, userId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);

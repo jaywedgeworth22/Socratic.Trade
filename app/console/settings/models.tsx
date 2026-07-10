@@ -229,15 +229,21 @@ export function ModelsCard() {
   // auto-saves independently on change — including back to blank/unset, which sends null — so nothing
   // here blocks that write; the runtime fails closed on its own whenever either is unset (including
   // pre-existing accounts from before this rule) — the banner below makes that legible.
-  const missingModels = [!green ? "Strategist (green team)" : null, !red ? "Reviewer (red team)" : null].filter(
+  const missingModels = [!green ? "Strategist (Green)" : null, !red ? "Reviewer (Red)" : null].filter(
     (m): m is string => m !== null
   );
   // Independence HINT (never a gate): same model — or same provider — for both teams is ALLOWED,
   // but a same-family reviewer shares the proposer's blind spots, so nudge without blocking.
+  // Two "__rotate__" sentinels are NOT "the same model": each run serves concrete round-robin
+  // picks, so the SAME-model warning must never fire for them (check rotation FIRST — the raw
+  // string compare would match the two identical sentinels).
   const providerOf = (m: string) => MODEL_GROUPS.find((g) => g.options.some((o) => o.value === m))?.provider;
+  const bothRotate = green === ROTATE_MODEL_ID && red === ROTATE_MODEL_ID;
   const independenceHint =
     green && red
-      ? green === red
+      ? bothRotate
+        ? "Strategist and Reviewer BOTH rotate through the curated model pool: each run serves concrete, audited round-robin picks, the runtime skips same-model pairings whenever more than one model is eligible, and per-model history accrues on both sides."
+        : green === red
         ? "Strategist and Reviewer are the SAME model — it will be critiquing its own proposals. Allowed, but a different model (ideally a different provider) gives a genuinely independent second opinion."
         : providerOf(green) && providerOf(green) === providerOf(red)
         ? "Strategist and Reviewer are different models from the SAME provider — partial independence. Allowed; a different provider avoids shared family blind spots."
@@ -294,8 +300,8 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The Proposer (aka Green Team or Bull) writes the trade proposals;
-        the Reviewer (aka Red Team or Bear) fact-checks and critiques every risk-adding opening at its final size
+        Which models argue about your money. The Proposer (aka Green) writes the trade proposals;
+        the Reviewer (aka Red) fact-checks and critiques every risk-adding opening at its final size
         before it places. <strong>Both are required</strong> — there is no default model and no fallback: runs fail
         closed (route to your approval) until both are chosen. Coach is browser-local and also adjustable on the Coach
         page. Providers without a resolvable key are disabled — add one under API keys below.
@@ -308,8 +314,12 @@ export function ModelsCard() {
       )}
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Proposer — required"
-          hint="aka Green Team or Bull — writes the trade proposals each run. Required: there is no default model."
+          label={
+            <>
+              <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+            </>
+          }
+          hint="Green — writes the trade proposals each run. Required: there is no default model."
           htmlFor="models-green"
         >
           <div className="flex items-start gap-2">
@@ -330,8 +340,12 @@ export function ModelsCard() {
           </div>
         </Field>
         <Field
-          label="Reviewer — required"
-          hint="aka Red Team or Bear — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
+          label={
+            <>
+              <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+            </>
+          }
+          hint="Red — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
           htmlFor="models-red"
         >
           <div className="flex items-start gap-2">
