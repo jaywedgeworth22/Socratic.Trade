@@ -5,7 +5,8 @@ import {
   allowedProposalSides,
   enrichOpeningProposal,
   deterministicBearFilter,
-  generateProactiveRiskProposals
+  generateProactiveRiskProposals,
+  sanitizeProposals
 } from "../src/lib/strategy";
 import type {
   AccountCapabilities,
@@ -378,27 +379,59 @@ describe("generateProactiveRiskProposals per-position stop plans", () => {
   });
 });
 
+describe("sanitizeProposals — per-position stop plan coercion (Codex review, PR #1371)", () => {
+  it("downgrades a 'none' plan with no rationale to 'default' (an unauditable no-stop choice must never silently apply)", () => {
+    const [p] = sanitizeProposals([buy({ stopPlan: { style: "none" } })]);
+    expect(p.stopPlan).toEqual({ style: "default" });
+  });
+
+  it("downgrades a 'none' plan with a blank/whitespace-only rationale to 'default' too", () => {
+    const [p] = sanitizeProposals([buy({ stopPlan: { style: "none", rationale: "   " } })]);
+    expect(p.stopPlan).toEqual({ style: "default" });
+  });
+
+  it("keeps a 'none' plan WITH a real rationale", () => {
+    const [p] = sanitizeProposals([buy({ stopPlan: { style: "none", rationale: "high-conviction, riding through drawdown" } })]);
+    expect(p.stopPlan).toEqual({ style: "none", rationale: "high-conviction, riding through drawdown" });
+  });
+
+  it("preserves an EXPLICIT 'default' instead of collapsing it to no-plan-at-all (so a scale-in can reset a persisted override)", () => {
+    const [p] = sanitizeProposals([buy({ stopPlan: { style: "default" } })]);
+    expect(p.stopPlan).toEqual({ style: "default" });
+  });
+
+  it("drops stopPlan entirely when the LLM sends none at all (null) — distinct from an explicit 'default'", () => {
+    const [p] = sanitizeProposals([buy({ stopPlan: undefined })]);
+    expect(p.stopPlan).toBeUndefined();
+  });
+
+  it("drops stopPlan for a sell/cover proposal even if one is somehow attached", () => {
+    const [p] = sanitizeProposals([buy({ side: "sell", stopPlan: { style: "trailing" } })]);
+    expect(p.stopPlan).toBeUndefined();
+  });
+});
+
 describe("enrichOpeningProposal per-position stop plans", () => {
   const marketScan = scan({ TSLA: { price: 100 } });
 
-  it("a 'trailing' plan on the proposal discards any LLM-proposed bracket stop, but leaves take-profit untouched", () => {
+  it("a 'trailing' plan on the proposal discards any LLM-proposed bracket stop AND take-profit (a resting TP-only leg would itself look like broker-held coverage and suppress the real trailing stop)", () => {
     const p = enrichOpeningProposal(
       buy({ stopPlan: { style: "trailing" }, bracketStopLoss: 90 }),
       policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
       marketScan
     );
     expect(p.bracketStopLoss).toBeUndefined();
-    expect(p.bracketTakeProfit).toBe(120);
+    expect(p.bracketTakeProfit).toBeUndefined();
   });
 
-  it("a 'none' plan on the proposal discards any LLM-proposed bracket stop, but leaves take-profit untouched", () => {
+  it("a 'none' plan on the proposal discards any LLM-proposed bracket stop AND take-profit (no bracket legs at all — the position runs unprotected by design)", () => {
     const p = enrichOpeningProposal(
       buy({ stopPlan: { style: "none", rationale: "high-conviction thesis, no stop desired" }, bracketStopLoss: 90 }),
       policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
       marketScan
     );
     expect(p.bracketStopLoss).toBeUndefined();
-    expect(p.bracketTakeProfit).toBe(120);
+    expect(p.bracketTakeProfit).toBeUndefined();
   });
 
   it("a 'fixed' plan pins to STOP_PLAN_FALLBACK_STOP_PCT (8%) when the account has no stop-loss % configured", () => {
@@ -420,6 +453,22 @@ describe("enrichOpeningProposal per-position stop plans", () => {
     expect(p.bracketStopLoss).toBe(95); // 100 * (1 - 5/100)
   });
 
+  it("a 'fixed'/'atr' plan ALWAYS reprices the bracket stop, discarding even a valid LLM-proposed one (the pinned plan distance must never silently diverge from what every other enforcement layer prices for this symbol)", () => {
+    const fixed = enrichOpeningProposal(
+      buy({ stopPlan: { style: "fixed" }, bracketStopLoss: 90 }), // 90 IS a valid on-the-correct-side LLM stop
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8 } }),
+      marketScan
+    );
+    expect(fixed.bracketStopLoss).toBe(92); // repriced to the pinned 8%, not the LLM's 90
+    const atr = enrichOpeningProposal(
+      buy({ stopPlan: { style: "atr" }, bracketStopLoss: 90 }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 0 } }),
+      marketScan,
+      { TSLA: 5 }
+    );
+    expect(atr.bracketStopLoss).toBe(95); // repriced to the pinned ATR 5%, not the LLM's 90
+  });
+
   it("honors a PERSISTED plan (stopPlanBySymbol, e.g. a scale-in add) when the proposal itself carries no fresh stopPlan", () => {
     const p = enrichOpeningProposal(
       buy(),
@@ -429,7 +478,7 @@ describe("enrichOpeningProposal per-position stop plans", () => {
       { TSLA: "trailing" }
     );
     expect(p.bracketStopLoss).toBeUndefined();
-    expect(p.bracketTakeProfit).toBe(120);
+    expect(p.bracketTakeProfit).toBeUndefined();
   });
 
   it("the proposal's OWN fresh stopPlan takes precedence over a stale persisted one", () => {

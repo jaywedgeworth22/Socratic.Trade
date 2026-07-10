@@ -182,17 +182,32 @@ export function deriveProtection(
   if (!stopPlan || stopPlan.style === "default") return base;
   const planLabel = STOP_PLAN_LABEL[stopPlan.style] ?? stopPlan.style;
   if (stopPlan.style === "none") {
+    // Only a REAL, independently-verified resting broker stop order ("Broker stop") survives a
+    // "none" plan — every enforcement layer (synthetic monitor, broker-protective-stops.ts)
+    // deliberately suppresses ITS OWN stop for this symbol once "none" is set, so an "App stop..."
+    // label here would just be reflecting account-wide CONFIG that no longer actually applies to
+    // this position — showing it as protected would be misleading for a position the owner/LLM
+    // chose to run bare (Codex review, PR #1371).
+    const hasRealBrokerStop = base.label === "Broker stop";
     return {
-      label: base.label ?? "No stop (LLM choice)",
+      label: hasRealBrokerStop ? base.label : "No stop (LLM choice)",
       detail:
         `Per-position plan: NO stop-loss — a deliberate LLM/owner choice for this position` +
         (stopPlan.rationale ? ` ("${stopPlan.rationale}")` : "") +
         `. ${base.detail}`,
-      tone: base.label ? base.tone : "warn"
+      tone: hasRealBrokerStop ? base.tone : "warn"
     };
   }
   return {
     ...base,
+    // An explicit "fixed"/"atr"/"trailing" plan is REAL, active protection even when the account
+    // itself has no matching stop configured (it falls back to STOP_PLAN_FALLBACK_STOP_PCT — the
+    // universal-availability guarantee). If the base derivation found nothing to show (`label:
+    // null`, tone "muted" — the honest "no account-wide rule" case), that would otherwise render
+    // this position as unprotected ("—") despite the plan actively covering it (Codex review, PR
+    // #1371) — show the plan's own label instead.
+    label: base.label ?? `${planLabel} (LLM plan)`,
+    tone: base.label ? base.tone : "pos",
     detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}`
   };
 }

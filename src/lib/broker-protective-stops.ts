@@ -272,12 +272,25 @@ export async function reconcileBrokerProtectiveStops(args: {
   const kind = desiredBrokerStopKind(policy, executionMode);
   const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
   // Narrow the account-wide kind for one symbol per its own stop plan (never widen/invent beyond
-  // what the account already has enabled — see the stopPlanBySymbol param doc above).
+  // what the account already has enabled — see the stopPlanBySymbol param doc above). An "atr" plan
+  // deliberately never maps to the fixed lane here: this reconciler only knows the account's flat
+  // `stopLossPct`, not the pinned per-symbol ATR distance (that's computed and applied entirely
+  // within generateProactiveRiskProposals/enrichOpeningProposal in strategy.ts) — resting a
+  // broker-held stop at the flat % would silently contradict the ATR distance the plan actually
+  // pins. Narrowing to "never invent a mispriced broker stop" leaves the ATR plan's protection to
+  // the always-on, correctly-priced synthetic monitor instead (Codex review, PR #1371).
   const kindForSymbol = (sym: string): "fixed" | "trailing" | null => {
     const plan = stopPlanBySymbol[sym] ?? "default";
-    if (plan === "none") return null;
+    if (plan === "none" || plan === "atr") return null;
+    // `kind` picks TRAILING first when an account has both lanes enabled (desiredBrokerStopKind's
+    // own precedence) — so `kind === "trailing"` already correctly reflects trailing-lane
+    // availability regardless of whether fixed is ALSO enabled. But that same precedence means an
+    // account with BOTH lanes on reports `kind === "trailing"`, which would wrongly make a "fixed"
+    // plan's `kind === "fixed"` check fail even though the fixed lane is independently enabled and
+    // available — check that lane's own enablement directly instead of going through the
+    // precedence-resolved `kind` (Codex review, PR #1371).
     if (plan === "trailing") return kind === "trailing" ? "trailing" : null;
-    if (plan === "fixed" || plan === "atr") return kind === "fixed" ? "fixed" : null;
+    if (plan === "fixed") return brokerProtectiveStopsEnabled(policy, executionMode) ? "fixed" : null;
     return kind;
   };
 

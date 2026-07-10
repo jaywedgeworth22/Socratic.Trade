@@ -117,28 +117,120 @@ configuration, or it's not really a choice.
   `test/broker-protective-stops.test.ts`, `test/position-stop-plans-db.test.ts` (new),
   `test/console-live-data-derive.test.ts`, `test/stop-flow-model.test.ts`.
 
+## Review fixes round 1 (Codex on PR #1371, commits `90fb3ce`/`82c3503`, 8 findings)
+
+1. **`strategy.ts` ATR precompute for opening candidates skipped market/stop-entry proposals** —
+   the filter required `p.referencePrice ?? p.limitPrice > 0`, missing candidates whose price
+   isn't stamped yet. Fixed: added a market-scan quote fallback (`openingEntryEstimate`), matching
+   `enrichOpeningProposal`'s own anchor precedence.
+2. **`stopPlanBySymbol` (in-memory) wasn't pruned alongside the DB clear** — a symbol closed then
+   reopened within the SAME run could inherit its stale plan from before the DB clear at line 775
+   (the map is read by closure later in the same run, at `enrichOpeningProposal`'s call site).
+   Fixed: delete the same stale symbols from the in-memory map right after `clearStopPlans`.
+3. **`performance.ts`'s `recordFillFromProposal` persisted the plan even on `pending_reconciliation`
+   status** — a live broker order that later cancels/expires without ever opening the position
+   would leave a plan row governing a lot that never existed. Fixed: gated on `fill.status ===
+   "filled"`; added the missed commit-on-confirm path to `reconcilePendingFills` in `strategy.ts`
+   (`commitStopPlanIfOpening`, fed from the fill's own `raw.proposal` stamp) so a fill that starts
+   `pending_reconciliation` and later resolves to `filled` still commits its plan.
+4. **`broker-protective-stops.ts`: an "atr" plan on a fixed-lane-only account priced a broker-held
+   stop at the flat `stopLossPct`, silently contradicting the pinned ATR distance** (this
+   reconciler has no access to the per-symbol ATR %, which lives entirely in
+   `strategy.ts`). Fixed: `kindForSymbol` never maps "atr" to the fixed lane — narrower "never
+   invent a mispriced broker stop," leaving ATR-plan protection to the correctly-priced synthetic
+   monitor exclusively.
+5. **`synthetic-stops.ts`'s purge-on-plan-change only handled the "none" transition** — a prior
+   "trailing" plan later changed to "fixed"/"atr" left the old active trailing row un-purged.
+   Fixed: purge on "none" **or** "fixed" **or** "atr" (any plan that explicitly excludes the
+   trailing lane), not just "none".
+6. **`strategy.ts`'s `enrichOpeningProposal`: a "trailing"/"none" plan discarded the stop-loss
+   bracket leg but left the take-profit leg in place** — a resting take-profit-only order at the
+   broker itself counts as a live exit order under the coverage-aware placement checks in
+   `broker-protective-stops.ts`/`synthetic-stops.ts`, making them think the position is already
+   fully covered and skip registering the actual trailing stop; it also asked Alpaca for a
+   `order_class: "bracket"` order with only one leg present, which the gateway isn't built to send
+   correctly. Fixed: a "trailing"/"none" plan now discards BOTH bracket legs — protection is the
+   trailing lane (or nothing) alone; take-profit-taking still happens via the independent laddered
+   take-profit-trim system.
+7. **A "fixed"/"atr" plan preserved a "valid" LLM-proposed `bracketStopLoss` instead of always
+   repricing to the pinned distance** — every other enforcement layer for that symbol prices off
+   the SAME pinned distance, so honoring the LLM's own number let this one bracket leg silently
+   diverge from the plan. Fixed: "fixed"/"atr" plans always reprice, never keep the LLM's stop.
+8. **`app/console/lib/derive.ts`'s `deriveProtection`: a non-`"none"` plan spread the BASE
+   protection unchanged, so an account with no matching stop configured (`base.label: null`)
+   rendered "—" even though the plan's `STOP_PLAN_FALLBACK_STOP_PCT` fallback is real, active
+   protection.** Fixed: falls back to the plan's own label (and tone `"pos"`) when the base
+   derivation found nothing to show.
+
+## Review fixes round 2 (Codex on PR #1371, commit `82c3503`, 5 more findings)
+
+9. **`performance.ts`: a `"none"` plan with no (or blank) rationale still persisted and suppressed
+   every stop-enforcement layer** — the schema *asks* for a rationale on `"none"` but doesn't
+   *require* one at the LLM-output level, so an unexplained no-stop choice was non-auditable in
+   Approvals/Positions. Fixed in `sanitizeProposals`: a `"none"` style with no non-empty rationale
+   downgrades to `"default"` before it's ever recorded or displayed.
+10. **`strategy.ts`'s `sanitizeProposals` collapsed an EXPLICIT `stopPlan.style: "default"` to
+    `undefined`**, indistinguishable from "the LLM never touched this field" — which falls through
+    to the STALE persisted `stopPlanBySymbol` entry instead of clearing it, so a scale-in add could
+    never actually reset a position back to the account's own precedence once overridden. Fixed:
+    `sanitizeProposals` now preserves an explicit `"default"` (exported for direct unit testing);
+    `recordFillFromProposal` (`performance.ts`) and `commitStopPlanIfOpening`
+    (`reconcilePendingFills`, `strategy.ts`) both now call `clearStopPlans` when the fresh plan's
+    style is `"default"`, instead of silently no-op'ing.
+11. **`strategy.ts`'s `bracketWholeShareMinimum` didn't know about "trailing"/"none" plans that
+    strip BOTH bracket legs (fix #6 above)** — it could still bump a sub-share order up to a whole
+    share solely to support a bracket that would never actually be sent. Fixed: threaded
+    `stopPlanBySymbol` through `applyDeterministicSizing` into `bracketWholeShareMinimum`, which now
+    skips the whole-share bump entirely for "trailing"/"none" plans.
+12. **`broker-protective-stops.ts`'s `kindForSymbol`: a "fixed" plan on an account where BOTH lanes
+    are configured (trailing wins the account-wide precedence) was wrongly excluded from the fixed
+    lane**, even though that lane is independently, genuinely enabled — `kind === "fixed"` reads
+    the precedence-resolved value, not "is fixed available at all." Fixed: a "fixed" plan now
+    checks `brokerProtectiveStopsEnabled(policy, executionMode)` directly instead of comparing
+    against `kind`.
+13. **`app/console/lib/derive.ts`'s `deriveProtection`: a "none" plan on an account with an
+    app-managed stop CONFIGURED (but no actual resting broker order) kept the config-derived "App
+    stop..." label**, even though every enforcement layer suppresses its own stop for that symbol
+    once "none" is set — showing a positive/protected label for a position the owner/LLM chose to
+    run bare. Fixed: only a REAL, independently-verified `"Broker stop"` label survives a "none"
+    plan; any config-derived label is overridden to "No stop (LLM choice)"/warn.
+
+New/updated tests: `test/strategy-hardening.test.ts` (new `sanitizeProposals` describe block; the
+3 `enrichOpeningProposal` trailing/none tests updated for the both-legs-stripped behavior; a new
+fixed/atr-always-reprices test), `test/broker-protective-stops.test.ts` (new atr-never-broker-held
+test; the mislabeled "only trailing" fixed-plan test split into a genuinely-trailing-only case plus
+a new both-lanes-enabled case matching finding #12 exactly), `test/console-live-data-derive.test.ts`
+(2 new tests for findings #8 and #13), `test/position-stop-plans-db.test.ts` +
+`test/reconciliation-risk.test.ts` (new tests for the pending_reconciliation gate and the
+explicit-default-clears-an-override behavior, at both the `recordFillFromProposal` and
+`reconcilePendingFills` layers). Full gate (lint/tsc/3490 tests/build) green.
+
+Separately: the repo's automated `autofix` GitHub Action (Claude-driven, fires on Codex review
+events, would otherwise have auto-applied straightforward findings) failed on this PR's head commit
+with `DEEPSEEK_API_KEY` resolving empty — an Actions-secrets configuration issue, unrelated to this
+PR's diff, requiring owner action (not fixed here; all 13 findings above were instead fixed
+manually in this session).
+
 ## Verification
 
 ```bash
 npx tsc --noEmit      # clean
 npm run lint          # 0 errors, 376 pre-existing warnings (grandfathered)
-npx vitest run        # 317 files, 3475 tests, all passing
+npx vitest run        # 317 files, 3490 tests, all passing
 npm run build         # succeeds
 ```
 
 ## Follow-ups
 
 - This branch was stacked on `claude/stop-loss-preset-options-f1jygn` (PR #1331), which received
-  Codex review rounds 5-7 while this feature was being built; each round's fix was landed on the
-  base branch first (isolated worktree), then merged into this branch (3 merge commits: rounds
-  5, 6, 7 — see `git log` on this branch for the exact merge points). This branch's own diff has
-  **not yet** been through a Codex review pass — expect one after the PR opens.
-- No dedicated unit test for `sanitizeProposals`'s `stopPlan` coercion in isolation — the function
-  isn't exported and is exercised indirectly through the enforcement-layer tests above; exporting
-  it purely for a unit test was judged out of scope.
+  Codex review rounds 5-8 while this feature was being built; each round's fix was landed on the
+  base branch first (isolated worktree), then merged into this branch (4 merge commits: rounds
+  5, 6, 7, 8 — see `git log` on this branch for the exact merge points).
 - `evaluateTradeProposal`'s lack of a `stopPlan: "none"` gate is a deliberate design choice (see
   "Decisions made"), not an oversight — flagged here so a future reviewer doesn't assume it's
   missing validation.
 - Broker-held short trails remain a known follow-up (PR #1331's own follow-up list) — a short
   position's "trailing" plan is honored by the synthetic monitor only, same as the account-wide
   trailing setting.
+- The `autofix` GitHub Action needs its `DEEPSEEK_API_KEY` repo secret restored (owner action) —
+  see the note above.

@@ -305,15 +305,18 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     listBrokerProtectiveStops(accountNumber, userId).map((r) => [normalizeSymbol(r.symbol), r.brokerOrderId])
   );
 
-  // A "none" plan is a real, owner-accepted no-stop choice — purge any ACTIVE synthetic trailing
-  // registration for that symbol regardless of the account-wide trailing config, so a plan set
-  // AFTER a stop was already registered (e.g. a scale-in add that reconsiders protection) is
-  // actually honored, not just silently skipped by the registration guard below. A 'triggered' row
-  // is left alone — its protective exit may still be resting/executing at the broker.
+  // A "none", "fixed", or "atr" plan explicitly excludes the trailing lane for that symbol — purge
+  // any ACTIVE synthetic trailing registration regardless of the account-wide trailing config, so a
+  // plan set (or CHANGED, e.g. a scale-in add reconsidering protection from "trailing" to "fixed")
+  // AFTER a stop was already registered is actually honored, not just silently skipped by the
+  // registration guard below (which only ever prevents a FRESH registration, not an existing one —
+  // Codex review, PR #1371). A 'triggered' row is left alone — its protective exit may still be
+  // resting/executing at the broker.
   for (const stop of listSyntheticStops(accountNumber, userId)) {
-    if (stopPlanBySymbol[normalizeSymbol(stop.symbol)] === "none") {
+    const plan = stopPlanBySymbol[normalizeSymbol(stop.symbol)];
+    if (plan === "none" || plan === "fixed" || plan === "atr") {
       deleteSyntheticStop(stop.id, userId);
-      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, note: "per-position stop plan is 'none' — trailing protection removed" }, userId, policy.connectedAccountId);
+      audit("synthetic_stop_purged_by_plan", { symbol: stop.symbol, plan, note: `per-position stop plan is '${plan}' — trailing protection removed` }, userId, policy.connectedAccountId);
     }
   }
 

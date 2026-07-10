@@ -802,15 +802,30 @@ describe("reconcileBrokerProtectiveStops — per-position stop plans (never inve
     expect(listBrokerProtectiveStops("SP-3", "local")).toHaveLength(0);
   });
 
-  it("a 'fixed' plan on an account whose only enabled lane is trailing excludes that symbol entirely (never force-substitutes trailing)", async () => {
+  it("a 'fixed' plan on an account whose only TRULY enabled lane is trailing (no stop-loss % configured at all) excludes that symbol entirely (never force-substitutes trailing)", async () => {
+    const trailOnly = rhPolicy("SP-4", { riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 0, trailingStopPct: 5 } });
     const r = await reconcileBrokerProtectiveStops({
-      userId: "local", policy: rhTrailPolicy("SP-4"), accountNumber: "SP-4", gateway: gw,
+      userId: "local", policy: trailOnly, accountNumber: "SP-4", gateway: gw,
       positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
       stopPlanBySymbol: { AAPL: "fixed" }
     });
     expect(r.placed).toBe(0);
     expect(gw.placed).toHaveLength(0);
     expect(listBrokerProtectiveStops("SP-4", "local")).toHaveLength(0);
+  });
+
+  it("a 'fixed' plan uses the fixed lane even on an account where trailing WINS the account-wide precedence, as long as the fixed lane is independently enabled too (kind===\"trailing\" must not be read as \"fixed is unavailable\" — Codex review, PR #1371)", async () => {
+    // rhTrailPolicy has BOTH stopLossPct and trailingStopPct configured — desiredBrokerStopKind
+    // resolves the ACCOUNT-WIDE kind to "trailing" (trailing wins precedence), but the fixed lane
+    // (robinhoodBrokerStops + live + RH + stopLossPct>0) is independently, genuinely enabled.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-4B"), accountNumber: "SP-4B", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "fixed" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 92, type: "stop_market" }); // 100 * (1 - 8/100), the flat lane's own pricing
+    expect(listBrokerProtectiveStops("SP-4B", "local")).toHaveLength(1);
   });
 
   it("an 'atr' plan on an account whose only enabled lane is trailing also excludes that symbol (same narrowing as 'fixed')", async () => {
@@ -821,6 +836,17 @@ describe("reconcileBrokerProtectiveStops — per-position stop plans (never inve
     });
     expect(r.placed).toBe(0);
     expect(gw.placed).toHaveLength(0);
+  });
+
+  it("an 'atr' plan NEVER places a broker-held stop, even on an account whose own lane is fixed (this reconciler only knows the flat stopLossPct, not the pinned ATR distance — mispricing it would silently contradict the plan; the synthetic monitor prices it correctly instead)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-8"), accountNumber: "SP-8", gateway: gw, // fixed lane only
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "atr" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-8", "local")).toHaveLength(0);
   });
 
   it("a 'trailing' plan on an account where trailing is ALREADY the enabled lane is a pure no-op (matches the account's own kind)", async () => {

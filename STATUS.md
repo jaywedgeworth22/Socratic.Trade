@@ -22,9 +22,26 @@ ATR precompute extended to opening candidates (not just held positions) for univ
 UI extends (not duplicates) the existing stop-flow diagram with a 4th "Per-position override" lane;
 Positions table and approval cards surface an active plan honestly (a "none" plan is never blended
 into the generic "nothing configured" case). `stopPlan: "none"` is deliberately NOT hard-blocked in
-policy.ts, per product philosophy. Gates green (lint/tsc/3475 tests/build). Rollout:
-`docs/rollouts/2026-07-10-per-position-stop-plans.md`. Next action: open the PR (stacked on #1331),
-arm auto-merge, watch for Codex review.
+policy.ts, per product philosophy. **PR #1371 open, 2 Codex review rounds fixed (13 findings total)**
+— see the rollout doc's "Review fixes round 1-2" sections: opening-candidate ATR precompute quote
+fallback; in-memory `stopPlanBySymbol` pruning; stop-plan persistence gated on an actually-executed
+fill (not `pending_reconciliation`) plus a matching commit-on-confirm path in `reconcilePendingFills`;
+an "atr" plan never prices a broker-held stop off the flat % (mispriced vs. the pinned distance);
+purge-on-plan-change now covers "fixed"/"atr" transitions too, not just "none"; a "trailing"/"none"
+plan strips BOTH bracket legs (a take-profit-only leg was itself defeating the trailing-stop coverage
+check); "fixed"/"atr" plans always reprice the bracket stop, never keep a "valid" LLM one;
+`deriveProtection` shows the plan's own label when the account has no matching stop configured, and
+(separately) overrides a misleading config-derived "App stop..." label to the no-stop warning for a
+"none" plan; a "none" plan with no rationale downgrades to "default" (auditability); an EXPLICIT
+"default" now CLEARS a persisted override (previously impossible to ever reset once overridden);
+`bracketWholeShareMinimum` no longer bumps sub-share orders for plans that strip both bracket legs;
+a "fixed" plan on an account with BOTH lanes configured (trailing wins account-wide precedence) now
+correctly uses the independently-enabled fixed lane instead of being wrongly excluded. Gates green
+(lint/tsc/3490 tests/build). The repo's automated `autofix` GitHub Action failed on this PR's head
+commit with an empty `DEEPSEEK_API_KEY` secret (owner action needed, unrelated to this diff — all
+findings above were fixed manually instead). Rollout:
+`docs/rollouts/2026-07-10-per-position-stop-plans.md`. Next action: watch for further Codex review
+rounds / merge; PR #1331 (base) still needs its own merge first.
 
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native

@@ -1,4 +1,4 @@
-import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
+import { clearStopPlans, getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -270,17 +270,26 @@ export function recordFillFromProposal(input: {
 
   // Persist the LLM's chosen stop plan for this position, set ONLY on an OPENING (buy/short) fill —
   // an exit fill closing (or trimming) the position has nothing to set a forward-looking plan for.
-  // A "default" style (or no stopPlan at all) is deliberately NOT persisted: it's the no-op case
-  // (fall back to the account's own precedence), and skipping it keeps position_stop_plans free of
-  // rows that carry no actual override — a later scale-in with no new plan then still honors
-  // whatever explicit plan (if any) is already on record for the lot instead of silently reverting.
+  // No stopPlan at all is a true no-op (the LLM never touched this field this run — whatever's
+  // already on record, if anything, keeps governing). An EXPLICIT "default" is different: it CLEARS
+  // any existing override, since that's the only way a scale-in can ever deliberately reset a
+  // position back to the account's own precedence after an earlier "none"/"trailing"/"fixed"/"atr"
+  // choice (Codex review, PR #1371) — collapsing "default" to a no-op here would make an existing
+  // override permanent for the life of the position, impossible to ever undo.
   if (
     input.proposal.stopPlan &&
-    input.proposal.stopPlan.style !== "default" &&
-    (input.proposal.side === "buy" || input.proposal.side === "short")
+    (input.proposal.side === "buy" || input.proposal.side === "short") &&
+    // Only an ACTUALLY EXECUTED fill commits the plan — a live broker order still
+    // `pending_reconciliation` may yet cancel/expire without ever opening the position, and a plan
+    // recorded (or cleared) now would then govern a lot that never existed (Codex review, PR #1371).
+    fill.status === "filled"
   ) {
     try {
-      recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, price, input.userId);
+      if (input.proposal.stopPlan.style === "default") {
+        clearStopPlans(input.accountNumber, [symbol], input.userId ?? "local");
+      } else {
+        recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, price, input.userId);
+      }
     } catch {
       // plan bookkeeping must never break fill recording
     }

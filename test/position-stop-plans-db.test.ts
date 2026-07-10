@@ -118,4 +118,33 @@ describe("stop plan is committed ON FILL (an opening buy/short with a fresh stop
     });
     expect(getStopPlans("FILLACCT-SP5")).toEqual({});
   });
+
+  it("does NOT persist a plan while the live broker order is still 'pending_reconciliation' — a canceled/expired order must never leave a plan governing a lot that never opened (Codex review, PR #1371)", async () => {
+    const { getStopPlans } = await import("../src/lib/db");
+    const { recordFillFromProposal } = await import("../src/lib/performance");
+    recordFillFromProposal({
+      accountNumber: "FILLACCT-SP6", source: "live", status: "pending_reconciliation",
+      proposal: open({ style: "trailing" }),
+      execution: { orderId: "o6", refId: "r6", state: "new", raw: {} }
+    });
+    expect(getStopPlans("FILLACCT-SP6")).toEqual({});
+  });
+
+  it("an EXPLICIT 'default' plan on a scale-in fill CLEARS an existing persisted override (the only way to ever reset a position back to the account's own precedence — Codex review, PR #1371)", async () => {
+    const { getStopPlans } = await import("../src/lib/db");
+    const { recordFillFromProposal } = await import("../src/lib/performance");
+    recordFillFromProposal({
+      accountNumber: "FILLACCT-SP7", source: "live", status: "filled",
+      proposal: open({ style: "none", rationale: "initial thesis: ride it out" }),
+      execution: { orderId: "o7a", refId: "r7a", state: "filled", averagePrice: 100, filledQuantity: 4, raw: {} }
+    });
+    expect(getStopPlans("FILLACCT-SP7").NVDA).toMatchObject({ style: "none" });
+
+    recordFillFromProposal({
+      accountNumber: "FILLACCT-SP7", source: "live", status: "filled",
+      proposal: open({ style: "default" }), // a scale-in add that explicitly resets
+      execution: { orderId: "o7b", refId: "r7b", state: "filled", averagePrice: 105, filledQuantity: 2, raw: {} }
+    });
+    expect(getStopPlans("FILLACCT-SP7")).toEqual({});
+  });
 });

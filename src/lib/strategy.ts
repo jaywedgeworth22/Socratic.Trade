@@ -95,7 +95,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearStopPlans, clearTakeProfitTrimBands, getStopPlans, getTakeProfitTrimBands } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, getStopPlans, getTakeProfitTrimBands, recordStopPlan } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -772,7 +772,12 @@ export async function runStrategyOnce(
         console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
       }
       try {
-        clearStopPlans(policy.accountNumber, Object.keys(stopPlanBySymbol).filter((s) => !heldSymbols.has(s)), userId);
+        const staleStopPlanSymbols = Object.keys(stopPlanBySymbol).filter((s) => !heldSymbols.has(s));
+        clearStopPlans(policy.accountNumber, staleStopPlanSymbols, userId);
+        // Prune the in-memory snapshot too — enrichOpeningProposal (below, same run) reads this same
+        // map by closure, and a symbol closed then re-opened within this run must not inherit its old
+        // plan from before the DB clear (Codex review, PR #1371).
+        for (const s of staleStopPlanSymbols) delete stopPlanBySymbol[s];
       } catch (err) {
         console.warn("[strategy] stop plan cleanup failed:", err instanceof Error ? err.message : err);
       }
@@ -1284,16 +1289,22 @@ export async function runStrategyOnce(
     if (policy.atrStops === true || anyOpeningAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      // Anchor to the proposal's own referencePrice/limitPrice first, falling back to this run's
+      // market-scan quote — a market or stop-entry proposal often has neither price stamped yet, but
+      // the scan quote is the same anchor enrichOpeningProposal itself falls back to for these
+      // (Codex review, PR #1371).
+      const openingEntryEstimate = (p: TradeProposal): number =>
+        p.referencePrice ?? p.limitPrice ?? marketScan.quotesBySymbol[normalizeSymbol(p.symbol)]?.price ?? 0;
       const openingCandidates = llmProposals.filter(
         (p) =>
           (p.side === "buy" || p.side === "short") &&
           !(normalizeSymbol(p.symbol) in atrStopPctBySymbol) &&
-          ((p.referencePrice ?? p.limitPrice ?? 0) > 0)
+          openingEntryEstimate(p) > 0
       );
       await Promise.all(
         openingCandidates.map(async (p) => {
           const sym = normalizeSymbol(p.symbol);
-          const entryEstimate = p.referencePrice ?? p.limitPrice ?? 0;
+          const entryEstimate = openingEntryEstimate(p);
           try {
             const bars = await fetchDailyOHLC(sym, Date.now(), userId);
             if (!bars) return;
@@ -1354,7 +1365,7 @@ export async function runStrategyOnce(
         return !gate.skip;
       })
       .map((p) => {
-        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
+        const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills, stopPlanBySymbol);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
         return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol, stopPlanBySymbol);
       });
@@ -3049,7 +3060,11 @@ export function applyDeterministicSizing(
   // the heat budget isn't configured or volTargeting is off. This proposal's own incremental risk is
   // computed fresh below and added to bookHeat.totalRiskUsd for the remaining-budget taper.
   bookHeat?: PortfolioHeatResult,
-  prefetched?: PrefetchedFills
+  prefetched?: PrefetchedFills,
+  // Per-position stop plans, keyed by symbol — needed so the bracket-whole-share-minimum bump below
+  // knows a "trailing"/"none" plan will strip BOTH bracket legs at enrichOpeningProposal and never
+  // needs a whole-share bump to support a bracket that won't be sent (Codex review, PR #1371).
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
 ): TradeProposal {
   if (proposal.side === "sell" || proposal.side === "cover") {
     // Exits skip opening-sizing, but a size-less exit (the LLM emitted neither quantity nor
@@ -3327,7 +3342,7 @@ export function applyDeterministicSizing(
     }
   }
 
-  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan);
+  const bracketMinimum = bracketWholeShareMinimum(proposal, policy, marketScan, stopPlanBySymbol);
   let bracketMinNote = "";
   if (bracketMinimum != null && targetNotional > 0 && targetNotional < bracketMinimum) {
     const minNotional = Math.ceil(bracketMinimum);
@@ -3397,10 +3412,22 @@ export function applyDeterministicSizing(
   };
 }
 
-function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy, marketScan?: MarketScan): number | undefined {
+function bracketWholeShareMinimum(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  marketScan?: MarketScan,
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
+): number | undefined {
   if (proposal.side !== "buy" && proposal.side !== "short") return undefined;
   if (policy.brokerBracketsEnabled === false) return undefined;
   if (policy.activeBroker !== "alpaca" && policy.activeBroker !== "alpaca-mcp") return undefined;
+  // A "trailing"/"none" plan strips BOTH bracket legs entirely at enrichOpeningProposal (protection
+  // is the trailing lane instead of a fixed bracket stop; a resting take-profit-only leg would itself
+  // look like broker-held exit coverage and suppress the trailing stop — see enrichOpeningProposal's
+  // doc comment) — bumping the size here to support a bracket that will never be sent would needlessly
+  // oversize a sub-share entry (Codex review, PR #1371).
+  const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[normalizeSymbol(proposal.symbol)] ?? "default";
+  if (plan === "trailing" || plan === "none") return undefined;
   const stopPct = proposal.side === "short"
     ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
     : (policy.riskRules?.stopLossPct ?? 0);
@@ -5247,7 +5274,7 @@ function recordLlmOutcome(
   })();
 }
 
-function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
+export function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[] {
   return proposals
     .filter((proposal) => proposal.symbol && proposal.side && proposal.type)
     .slice(0, max)
@@ -5284,20 +5311,28 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
           : undefined,
       // Per-position stop TYPE the LLM may choose (schema-exposed) — only meaningful on an OPENING
       // side; a sell/cover proposal has nothing to set a forward-looking stop plan for. An
-      // unrecognized style, or "default" itself, is dropped entirely (equivalent to "no plan set" —
-      // the account's own precedence applies, unchanged from before this field existed).
-      stopPlan:
-        (proposal.side === "buy" || proposal.side === "short") &&
-        proposal.stopPlan &&
-        STOP_PLAN_STYLES.includes(proposal.stopPlan.style) &&
-        proposal.stopPlan.style !== "default"
-          ? {
-              style: proposal.stopPlan.style,
-              ...(typeof proposal.stopPlan.rationale === "string" && proposal.stopPlan.rationale.trim()
-                ? { rationale: proposal.stopPlan.rationale.slice(0, 2000) }
-                : {})
-            }
-          : undefined
+      // unrecognized style is dropped entirely (equivalent to "no plan set" — falls through to
+      // whatever's persisted for this symbol, unchanged from before this field existed). Unlike an
+      // unrecognized style, an explicit "default" IS preserved (not dropped) rather than collapsed to
+      // `undefined` — collapsing it would be indistinguishable from "the LLM never touched this
+      // field," which falls through to a STALE persisted override instead of the owner/LLM's actual,
+      // deliberate choice to reset a scale-in back to the account's own precedence (Codex review, PR
+      // #1371). Downstream, both `enrichOpeningProposal`'s and `recordFillFromProposal`'s precedence
+      // treat this same non-nullish "default" string exactly like the fallback default already did.
+      stopPlan: ((): TradeProposal["stopPlan"] => {
+        if (!(proposal.side === "buy" || proposal.side === "short")) return undefined;
+        if (!proposal.stopPlan || !STOP_PLAN_STYLES.includes(proposal.stopPlan.style)) return undefined;
+        const rationale =
+          typeof proposal.stopPlan.rationale === "string" && proposal.stopPlan.rationale.trim()
+            ? proposal.stopPlan.rationale.slice(0, 2000)
+            : undefined;
+        // "none" is a real, risk-increasing choice — the schema asks for a rationale, but the LLM
+        // isn't guaranteed to supply one. Without it, "none" is indistinguishable from an oversight,
+        // so downgrade to "default" rather than silently suppressing every stop-enforcement layer
+        // with no explanation ever recorded for it (Codex review, PR #1371).
+        const style = proposal.stopPlan.style === "none" && !rationale ? "default" : proposal.stopPlan.style;
+        return { style, ...(rationale ? { rationale } : {}) };
+      })()
     }))
     // Protective Risk-Exits execute as market orders so they cannot rest unfilled (see helper above).
     .map(coerceProtectiveExitToMarket);
@@ -5315,6 +5350,31 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
 
       const execQty = matched.filledQuantity ?? 0;
       const execPrice = matched.averagePrice ?? fill.price;
+      // The stop plan couldn't be committed at placement time — this order was still
+      // pending_reconciliation then, and a canceled/expired-with-nothing-executed order must never
+      // leave a plan row governing a lot that never opened (Codex review, PR #1371). Any executed
+      // quantity (full or partial fill) DID open the lot, so commit the plan now from the original
+      // proposal stamped into this fill's own raw payload.
+      const commitStopPlanIfOpening = (price: number) => {
+        const openingProposal = (fill.raw as { proposal?: TradeProposal } | undefined)?.proposal;
+        if (
+          openingProposal?.stopPlan &&
+          (openingProposal.side === "buy" || openingProposal.side === "short")
+        ) {
+          try {
+            // An explicit "default" CLEARS any existing override (the only way a scale-in can ever
+            // reset a position back to the account's own precedence) — mirrors
+            // recordFillFromProposal's same-named gate in performance.ts (Codex review, PR #1371).
+            if (openingProposal.stopPlan.style === "default") {
+              clearStopPlans(accountNumber, [fill.symbol], userId);
+            } else {
+              recordStopPlan(accountNumber, fill.symbol, openingProposal.stopPlan.style, openingProposal.stopPlan.rationale, price, userId);
+            }
+          } catch {
+            // plan bookkeeping must never break fill reconciliation
+          }
+        }
+      };
       // Book the executed portion of an order. Idempotent: reconcile UPDATES the
       // existing fill record (by fill.id), so a later poll overwriting with a larger
       // executed quantity never double counts; the realtime trade_updates stream funnels
@@ -5329,6 +5389,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: auditStatus, price: execPrice, quantity: execQty }, userId, connectedAccountId);
+        commitStopPlanIfOpening(execPrice);
       };
 
       if (matched.state === "filled") {
@@ -5343,6 +5404,7 @@ export async function reconcilePendingFills(gateway: BrokerGateway, accountNumbe
           raw: { ...((fill.raw as Record<string, unknown>) ?? {}), reconciliation: matched }
         }, userId);
         audit("fill_reconciled", { fillId: fill.id, symbol: fill.symbol, status: "filled", price, quantity: qty }, userId, connectedAccountId);
+        commitStopPlanIfOpening(price);
       } else if (matched.state === "partially_filled") {
         // A live order that has executed some-but-not-all shares: book the executed
         // portion now so it enters P&L/exposure instead of being silently dropped.
@@ -5490,27 +5552,44 @@ export function enrichOpeningProposal(
     // Honor a VALID LLM-proposed per-trade stop/take (must sit on the correct side of entry — below
     // for a long, above for a short); a nonsensical one is discarded so the per-symbol fallback fills
     // it in (a stop on the wrong side is worse than the default). A "trailing"/"none" plan discards
-    // any LLM-proposed stop PRICE too — this position's protection is a trail or nothing, not a
-    // fixed bracket stop leg; take-profit is unaffected (independent of the stop style).
+    // BOTH bracket legs, not just the stop: this position's protection is a trail (or nothing) run
+    // entirely by the synthetic/broker-held trailing lane, not a fixed bracket stop leg — and a
+    // resting take-profit-only leg left in place would itself count as a live exit order under the
+    // coverage-aware placement checks in broker-protective-stops.ts/synthetic-stops.ts, making those
+    // think the position is already fully covered and skip registering the real trailing stop
+    // (Codex review, PR #1371). It also avoids asking Alpaca for a "bracket"-class order with only
+    // one leg present, which the gateway isn't built to send correctly. The laddered take-profit-trim
+    // system (planTakeProfitTrims, above) still manages taking profits over time independently of
+    // this entry-time bracket leg.
     if (plan === "trailing" || plan === "none") {
       if (next.bracketStopLoss != null) next = { ...next, bracketStopLoss: undefined };
+      if (next.bracketTakeProfit != null) next = { ...next, bracketTakeProfit: undefined };
+    } else if (plan === "fixed" || plan === "atr") {
+      // An explicit "fixed"/"atr" plan pins an EXACT stop distance (stopPct, computed above) — every
+      // other enforcement layer for this symbol (generateProactiveRiskProposals, the synthetic
+      // monitor, broker-protective-stops.ts) prices off that SAME distance. Honoring a "valid"
+      // LLM-proposed stop here instead would let this one bracket leg silently diverge from the
+      // pinned plan (Codex review, PR #1371) — always reprice from the plan, never keep the LLM's.
+      next = { ...next, bracketStopLoss: undefined };
     } else {
       const llmStop = next.bracketStopLoss;
       const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
         (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
       if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
     }
-    const llmTake = next.bracketTakeProfit;
-    const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
-      (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
-    if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
+    if (plan !== "trailing" && plan !== "none") {
+      const llmTake = next.bracketTakeProfit;
+      const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
+        (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
+      if (next.bracketTakeProfit != null && !llmTakeValid) next = { ...next, bracketTakeProfit: undefined };
+    }
     // Long: stop below / take above entry. Short: stop above / take below (price up = loss).
     if (proposal.side === "buy") {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 - stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 + takePct / 100)) };
     } else {
       if (stopPct > 0 && next.bracketStopLoss == null) next = { ...next, bracketStopLoss: round2(entryPrice * (1 + stopPct / 100)) };
-      if (takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
+      if (plan !== "trailing" && plan !== "none" && takePct > 0 && next.bracketTakeProfit == null) next = { ...next, bracketTakeProfit: round2(entryPrice * (1 - takePct / 100)) };
     }
   } else if (bracketsEnabled && brokerSupportsBrackets && !canUseWholeShareBracket) {
     next = {

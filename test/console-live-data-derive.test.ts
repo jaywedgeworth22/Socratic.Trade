@@ -132,6 +132,26 @@ describe("deriveProtection — per-position stop plan annotation (never a silent
     expect(info.detail).toMatch(/high-conviction thesis, riding through drawdown/);
   });
 
+  it("a 'none' plan overrides a CONFIG-derived 'App stop...' label (the account has a stop % configured, but every enforcement layer suppresses it for this symbol once 'none' is set — only a REAL resting broker order should ever look protected)", () => {
+    const base = deriveProtection(longPos, noOrders, basePolicy); // stopLossPct: 8, no orders
+    expect(base.label).toMatch(/App stop/);
+    expect(base.tone).toBe("pos");
+    const info = deriveProtection(longPos, noOrders, basePolicy, { style: "none", avgCost: 100 });
+    expect(info.label).toBe("No stop (LLM choice)");
+    expect(info.tone).toBe("warn");
+  });
+
+  it("a 'fixed'/'atr'/'trailing' plan shows its OWN label when the account has no matching stop configured (the plan's fallback distance is real, active protection — never render '—')", () => {
+    const barePolicy = { riskRules: { stopLossPct: 0 }, shortSellingEnabled: false } as TradingPolicy;
+    const base = deriveProtection(longPos, noOrders, barePolicy);
+    expect(base.label).toBeNull(); // honestly "nothing configured" on its own
+    const withPlan = deriveProtection(longPos, noOrders, barePolicy, { style: "trailing", avgCost: 100 });
+    expect(withPlan.label).not.toBeNull();
+    expect(withPlan.label).toMatch(/Trailing/);
+    expect(withPlan.tone).toBe("pos");
+    expect(withPlan.detail).toMatch(/Per-position plan: Trailing/);
+  });
+
   it("a 'none' plan still reports an ACTUALLY-resting broker stop honestly (accuracy over the plan's intent)", () => {
     const brokerStopOrder: EquityOrder[] = [
       { id: "o1", symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 10, timeInForce: "gtc", createdAt: new Date().toISOString() }
