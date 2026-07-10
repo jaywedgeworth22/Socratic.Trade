@@ -31,7 +31,6 @@ import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
-import { normalizeMarketScanCandidateLimit, normalizeMarketScanOutlierReserve } from "./scan-settings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -267,10 +266,13 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// The scan force-includes names past the ranked top-N: up to `outlierReserve` event
-// outliers plus every held position outside both sets. Holdings are dynamic, so this
-// is an allowance, not an exact count; MAX_SYMBOLS_CAP bounds the worst case.
-const HELD_SYMBOL_ALLOWANCE = 12;
+// Per-provider symbol-budget cap. Callers pass exactly the set they want enriched (the
+// scan passes its full candidate set — ranked top-N + event outliers + held positions —
+// however the user's policy shaped it; the quote/chat routes pass one symbol), so the
+// budget exists only to bound quota cost, never to guess the scan's shape: a fixed
+// default of 30 used to starve the scan's force-included extras — systematically the
+// owner's held names (all-dash Fundamentals, prod 2026-07-09) — and an env-derived shape
+// still under-covered user-policy limits set in the settings UI.
 const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
@@ -353,21 +355,15 @@ export function alpacaSnapshotTtlMs(): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_ALPACA_SNAPSHOT_TTL_MS;
 }
 
-// Cover the REAL scan candidate set — top-`candidateLimit` ranked names PLUS the
-// force-included extras (event outliers + held positions) — so every row the dashboard
-// displays and every position the agent owns gets enriched. A fixed budget of 30 starved
-// the extras: the first-wins slice below dropped exactly the held names off the end of
-// every provider's list (all-dash Fundamentals for owned positions, prod 2026-07-09).
-// FMP_MAX_SYMBOLS remains an absolute operator override; otherwise the budget tracks the
-// same MARKET_SCAN_LIMIT / MARKET_SCAN_EVENT_RESERVE knobs the scan itself reads.
-// MAX_SYMBOLS_CAP bounds quota cost (Finnhub free tier is 60 calls/min; the shared pacer
-// in provider-rate-limit.ts spaces the extra calls).
+// FMP_MAX_SYMBOLS is an absolute operator override (free-tier quota lever); otherwise
+// enrich everything requested, up to MAX_SYMBOLS_CAP. Actual cost tracks the candidate
+// list the scan passes — which the scan's own candidate/outlier limits already bound —
+// and the shared pacer in provider-rate-limit.ts spaces the calls (Finnhub free tier is
+// 60 calls/min).
 function maxSymbols(): number {
   const explicit = Number(process.env.FMP_MAX_SYMBOLS);
   if (Number.isFinite(explicit) && explicit > 0) return Math.min(explicit, MAX_SYMBOLS_CAP);
-  const candidateLimit = normalizeMarketScanCandidateLimit(process.env.MARKET_SCAN_LIMIT);
-  const outlierReserve = normalizeMarketScanOutlierReserve(process.env.MARKET_SCAN_EVENT_RESERVE, candidateLimit);
-  return Math.min(candidateLimit + outlierReserve + HELD_SYMBOL_ALLOWANCE, MAX_SYMBOLS_CAP);
+  return MAX_SYMBOLS_CAP;
 }
 
 // Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8

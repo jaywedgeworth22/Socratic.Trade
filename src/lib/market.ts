@@ -297,10 +297,11 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const provider = getEnrichmentProvider(options?.userId);
     if (topCandidates.length > 0) {
       try {
-        // Providers slice the symbol list to a per-provider budget (first-wins). Held
-        // positions and event outliers go FIRST so a budget shortfall starves the tail
-        // of the ranked top-N, never the names the agent owns or force-included.
-        const enrichmentOrder = [...heldExtra, ...eventExtra, ...ranked.slice(0, candidateLimit)];
+        const enrichmentOrder = orderCandidatesForEnrichment(
+          topCandidates,
+          heldSymbols,
+          new Set(eventExtra.map((q) => q.symbol))
+        );
         const enrichment = await provider.enrich(enrichmentOrder.map((quote) => quote.symbol));
         topCandidates = topCandidates
           .map((quote) => {
@@ -451,6 +452,22 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     };
   }
 };
+
+/** Order the candidate set for provider enrichment. Providers slice their symbol list
+ *  to a per-provider budget (first-wins), so this order decides who starves on a budget
+ *  shortfall: ALL held candidates first (wherever they ranked — the agent must never
+ *  decide an exit blind), then event outliers, then the rest by rank. Held names can sit
+ *  inside the ranked top-N, not just in the force-included tail, so segment membership —
+ *  not candidate-assembly position — is what's sorted on (stable within segments). */
+export function orderCandidatesForEnrichment(
+  candidates: MarketQuote[],
+  heldSymbols: ReadonlySet<string>,
+  outlierSymbols: ReadonlySet<string>
+): MarketQuote[] {
+  const segment = (quote: MarketQuote): number =>
+    heldSymbols.has(quote.symbol) ? 0 : outlierSymbols.has(quote.symbol) ? 1 : 2;
+  return [...candidates].sort((a, b) => segment(a) - segment(b));
+}
 
 export function rankMarketQuotes(quotes: MarketQuote[], weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS): MarketQuote[] {
   return quotes

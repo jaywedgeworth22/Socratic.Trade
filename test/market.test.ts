@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, outlierInterestScore, rankMarketQuotes, scoreFactors } from "../src/lib/market";
+import { applyEnrichment, hasNotableWebSignal, mergeGroupedBarData, mergeQuoteData, orderCandidatesForEnrichment, outlierInterestScore, rankMarketQuotes, scoreFactors } from "../src/lib/market";
 import type { SymbolEnrichment } from "../src/lib/data-providers";
 import type { MarketQuote, MarketScan } from "../src/lib/types";
 
@@ -52,6 +52,32 @@ describe("rankMarketQuotes", () => {
     const highBeta = scoreFactors(quote({ symbol: "HB", intradayChangePct: 0, beta: 1.8 }));
     const lowBeta = scoreFactors(quote({ symbol: "LB", intradayChangePct: 0, beta: 0.6 }));
     expect(lowBeta.volatility).toBeGreaterThan(highBeta.volatility); // high beta scores as riskier (lower stability)
+  });
+});
+
+describe("orderCandidatesForEnrichment", () => {
+  it("puts ALL held candidates first — including ones ranked inside the top-N — then outliers, then rank order", () => {
+    // Candidate-assembly order: ranked top-N (with a held name mid-list), then the
+    // force-included event outlier and held extra. A budget slicing first-wins must
+    // never reach a held name after an unheld one.
+    const candidates = [
+      quote({ symbol: "RNK1" }),
+      quote({ symbol: "HELDTOP" }), // held, but inside the ranked top-N
+      quote({ symbol: "RNK2" }),
+      quote({ symbol: "EVT1" }),
+      quote({ symbol: "HELDX" })
+    ];
+    const ordered = orderCandidatesForEnrichment(candidates, new Set(["HELDTOP", "HELDX"]), new Set(["EVT1"]));
+    expect(ordered.map((c) => c.symbol)).toEqual(["HELDTOP", "HELDX", "EVT1", "RNK1", "RNK2"]);
+  });
+
+  it("is stable within segments and does not mutate the input", () => {
+    const candidates = [quote({ symbol: "A" }), quote({ symbol: "B" }), quote({ symbol: "C" })];
+    const ordered = orderCandidatesForEnrichment(candidates, new Set(), new Set());
+    expect(ordered.map((c) => c.symbol)).toEqual(["A", "B", "C"]);
+    const held = orderCandidatesForEnrichment(candidates, new Set(["C"]), new Set());
+    expect(held.map((c) => c.symbol)).toEqual(["C", "A", "B"]);
+    expect(candidates.map((c) => c.symbol)).toEqual(["A", "B", "C"]); // input untouched
   });
 });
 

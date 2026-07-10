@@ -127,3 +127,34 @@ MONET's session ended with this work uncommitted; CLAUDE committed and landed it
 - Full gate re-run post-merge (`npm run lint`, `npx tsc --noEmit`, `npm test`,
   `npm run build`) — results recorded in the landing PR; landed via `bash scripts/land.sh`
   with `gh pr merge --squash --auto`.
+
+## Round-2 addendum (MONET, 2026-07-10 session): codex findings fixed, PR unblocked
+
+Auto-merge on PR #1272 was BLOCKED (all checks green) on two unresolved
+`chatgpt-codex-connector` threads — both triaged REAL and fixed in one batch:
+
+1. **Held names inside the ranked top-N could still starve** (market.ts thread). The
+   priority order was `heldExtra → eventExtra → ranked top-N`, but `heldExtra` only
+   contains holdings *outside* the top-N/outlier sets — a holding that ranked inside a
+   large top-N (e.g. user policy candidate limit 100, budget cap 50) sat behind all the
+   extras and could lose the first-wins slice. New exported pure helper
+   `orderCandidatesForEnrichment(candidates, heldSymbols, outlierSymbols)` in
+   `src/lib/market.ts` stable-sorts the WHOLE candidate set into segments (all held →
+   all outliers → rest by rank); unit tests in `test/market.test.ts` cover the
+   held-inside-top-N case, stability, and input non-mutation.
+2. **User-policy scan shapes bypassed the env-derived budget** (data-providers.ts
+   thread). `policy.marketScanCandidateLimit`/`marketScanOutlierReserve` flow through
+   `scanMarket` OPTIONS, not env, so a settings-UI shape above the env-derived default
+   still got its tail sliced. Fixed by *removing* the shape-guessing entirely: every
+   caller (scan, quote route, chat orchestrator — enumerated, no others) passes exactly
+   the set it wants enriched, so `maxSymbols()` is now just
+   `min(FMP_MAX_SYMBOLS ?? MAX_SYMBOLS_CAP, MAX_SYMBOLS_CAP)`. Cost still tracks the
+   actual candidate list (the scan's own limits bound it) and the 50-cap + pacer remain
+   the quota guards. The `scan-settings` import and `HELD_SYMBOL_ALLOWANCE` from round 1
+   are gone again; new regression test: a 48-symbol user-policy shape (40 ranked + 6
+   outliers + 2 held, no env vars) is fully enriched.
+
+Also updated: `README.md` + appendix-B `FMP_MAX_SYMBOLS` wording, the regression-block
+comments in `test/data-providers.test.ts`. Both threads replied-to and resolved after
+the fix commit was pushed; auto-merge was already armed, so resolution + an up-to-date
+branch complete the landing.

@@ -551,7 +551,7 @@
 |-----------|--------|------|----------------|-------|
 | `FINNHUB_API_KEY` | Market Data (env) | secret | User or operator key | Fundamentals + analyst ratings enrichment |
 | `FMP_API_KEY` | Market Data (env) | secret | User or operator key | FMP fundamentals + analyst consensus |
-| `FMP_MAX_SYMBOLS` | Market Data (env) | integer | 1–50 | Absolute override of the per-provider enrichment budget (default derives from candidate limit + outlier reserve + held allowance, capped at 50) |
+| `FMP_MAX_SYMBOLS` | Market Data (env) | integer | 1–50 | Absolute override of the per-provider enrichment budget (default: the full requested candidate set, capped at 50) |
 | `FMP_PRICE_TARGETS_ENABLED` | Market Data (env) | boolean | on/off | Fetch analyst price targets (opt-in; extra call per symbol) |
 | `FRED_API_KEY` | Market Data (env) | secret | User or operator key | Macro data (rates, inflation, unemployment) |
 | `ALPHAVANTAGE_API_KEY` | Market Data (env) | secret | User or operator key | News sentiment, macro backfill |

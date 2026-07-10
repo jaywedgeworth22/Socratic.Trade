@@ -425,12 +425,18 @@ As of 2026-07-08 (assignment-rule update).
   positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
   owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
   from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
-  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
-  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
-  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
-  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
-  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
-  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
+  the LLM/FCF-veto on exactly the owned positions. Fix: providers enrich the full candidate set
+  they're passed — `maxSymbols()` is just the `MAX_SYMBOLS_CAP=50` quota bound with
+  `FMP_MAX_SYMBOLS` as absolute operator override (PR #1087 pacer spaces the calls); the
+  `enrich()` symbol list is ordered by `orderCandidatesForEnrichment` (ALL held → event outliers
+  → rest by rank, stable) so a budget shortfall starves the ranked tail, never holdings; tooltip
+  honesty (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider
+  returned); regression tests for the 42-symbol prod shape, a 48-symbol user-policy shape, the
+  override, and the cap. ROUND 2 (MONET, 2026-07-10): PR #1272 sat BLOCKED on two real
+  codex-connector findings — held names *inside* the ranked top-N could starve behind the extras,
+  and user-policy scan shapes (settings UI options, not env) bypassed the round-1 env-derived
+  budget. Both fixed (helper + budget simplification), threads resolved post-push; auto-merge
+  armed on #1272 completes the landing.
 
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS

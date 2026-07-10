@@ -1881,7 +1881,8 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
   // Prod 2026-07-09T19:41Z: scanMarket enriched top-30 ranked + 8 event outliers + 4 held
   // names (42 symbols), but every provider sliced its list to a fixed 30 — the force-included
   // extras (systematically the owner's HELD positions) got zero fields from every provider.
-  // The budget must cover candidateLimit + outlier reserve + a held-position allowance.
+  // Providers must enrich the full requested set; only MAX_SYMBOLS_CAP (and the explicit
+  // FMP_MAX_SYMBOLS operator override) may bound it.
   const ranked = Array.from({ length: 30 }, (_, i) => `RNK${i}`);
   const outliers = Array.from({ length: 8 }, (_, i) => `EVT${i}`);
   const held = ["AAPL", "GOOG", "V", "KO"];
@@ -1925,14 +1926,32 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
 
   it("still covers the force-included extras when MARKET_SCAN_LIMIT pins the scan size", async () => {
     // MARKET_SCAN_LIMIT used to be consumed as the enrichment budget itself, re-creating
-    // the starvation for any operator with it set; it is the candidate limit, so the
-    // budget must sit ABOVE it (reserve + held allowance on top).
+    // the starvation for any operator with it set; it is the candidate limit, and the
+    // budget must never collapse to it.
     process.env.MARKET_SCAN_LIMIT = "30";
     const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
     const fetched = stubSymbolRecordingFetch();
     const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
     await provider.enrich(candidates);
     for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+  });
+
+  it("covers user-policy scan shapes set in the settings UI (no env vars at all)", async () => {
+    // policy.marketScanCandidateLimit / marketScanOutlierReserve flow through scanMarket
+    // OPTIONS, not env — an env-derived budget under-covered them (codex round-2 on the
+    // fix PR). E.g. candidate limit raised to 40 with a 6-name reserve + 2 held = 48
+    // symbols, all of which must be enriched (only MAX_SYMBOLS_CAP bounds the budget).
+    const policyShape = [
+      ...["AAPL", "KO"],
+      ...Array.from({ length: 6 }, (_, i) => `PEVT${i}`),
+      ...Array.from({ length: 40 }, (_, i) => `PRNK${i}`)
+    ];
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(policyShape);
+    for (const symbol of policyShape) {
       expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
     }
   });
