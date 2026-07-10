@@ -8,6 +8,13 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 - Infinite-loading fix, CLAUDE layer (PR pending)
+socratictrade.com infinite logo: primary cause = SSE market-data abort-storm (AG PR #1285, land first);
+CLAUDE layer on `claude/console-load-hang` = deadlines on all 9 dashboard upstreams (degraded-not-hung,
+logged), ipv4first in instrumentation register(), 15s first-load watchdog (isolated from refresh()).
+Gate green: tsc, 3261/3261 tests, build, lint. Prod logs via Coolify API: app stdout silent (only
+litestream) - timeout warns now make hangs visible. Detail: docs/rollouts/2026-07-10-dashboard-deadlines-load-watchdog.md
+
 ## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
 Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
 is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
