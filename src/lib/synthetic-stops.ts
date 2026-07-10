@@ -234,11 +234,13 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   let registrationOrders = brokerOrders;
   // Full-size placements suppress BOTH synthetic registration and fire this tick (the fresh order
   // can't appear in the stale pre-reconcile list). Partial placements (a floored fractional
-  // remainder, or shares partially covered by another exit order) suppress ONLY the fire path:
-  // registration must proceed so the uncovered remainder isn't left stop-less if the app dies
-  // before the next tick's real quantity-aware coverage takes over.
+  // remainder, or shares partially covered by another exit order) suppress registration (a row
+  // already exists) but must NOT blanket-skip the fire path — the fresh partial quantity is added
+  // as KNOWN coverage on top of the stale order list's own coverage, so the fire path can still sell
+  // the uncovered remainder this same tick instead of leaving it naked until the next tick's fresh
+  // order fetch (Codex review, PR #1331).
   const justPlacedBrokerStopSymbols = new Set<string>();
-  const justPlacedPartialBrokerStopSymbols = new Set<string>();
+  const justPlacedPartialBrokerStopQty = new Map<string, number>();
   // The app's own already-tracked high-water mark per symbol (ACTIVE rows only — a purged/triggered
   // row's extreme isn't live protection). Passed into reconcile so a broker-held trail is never
   // seeded looser than the trail already protecting the position after a rally-then-pullback.
@@ -252,7 +254,10 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
     }
     for (const sym of reconciled.placedStopSymbols) justPlacedBrokerStopSymbols.add(normalizeSymbol(sym));
-    for (const sym of reconciled.partiallyPlacedStopSymbols) justPlacedPartialBrokerStopSymbols.add(normalizeSymbol(sym));
+    for (const sym of reconciled.partiallyPlacedStopSymbols) {
+      const s = normalizeSymbol(sym);
+      justPlacedPartialBrokerStopQty.set(s, reconciled.partiallyPlacedStopQuantities[sym] ?? reconciled.partiallyPlacedStopQuantities[s] ?? 0);
+    }
   } catch (err) {
     audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
   }
@@ -389,12 +394,17 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     // tick — the same pre-reconcile-list staleness the registration skip above guards against, but
     // for a row that was ALREADY active (e.g. registered on a tick where section-4 placement threw,
     // or armed before robinhoodBrokerStops was enabled). The coverage check below cannot see the
-    // just-placed full-size stop, so firing here would sell shares that stop already covers and
+    // just-placed FULL-size stop, so firing here would sell shares that stop already covers and
     // then cancelBrokerProtectiveStop (after the fill booking) would cancel the fresh stop —
     // duplicate exit, then no protection. Skipping costs one tick of trail responsiveness with
     // full-size broker-held protection resting; the next tick's fresh order fetch restores real
-    // quantity-aware coverage.
-    if (justPlacedBrokerStopSymbols.has(normalizeSymbol(stop.symbol)) || justPlacedPartialBrokerStopSymbols.has(normalizeSymbol(stop.symbol))) {
+    // quantity-aware coverage. A PARTIAL placement this tick (e.g. a whole-share-only native trail
+    // flooring away a fractional remainder) does NOT get this blanket skip — its known quantity is
+    // folded into the coverage calculation below instead, so the fire path can still protect the
+    // uncovered remainder THIS tick rather than leaving it completely naked until the next tick's
+    // fresh order fetch (Codex review, PR #1331).
+    const stopSym = normalizeSymbol(stop.symbol);
+    if (justPlacedBrokerStopSymbols.has(stopSym)) {
       audit("synthetic_stop_skipped_resting_exit", {
         symbol: stop.symbol,
         positionQty,
@@ -406,22 +416,25 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     // selling them again is a duplicate exit. Fully covered (or any live exit order with unknowable
     // quantity — assume full coverage, failing toward no-duplicate-sell): skip firing entirely and
     // leave the stop armed — if that order fills the position closes and the stop purges; if it dies
-    // the stop can fire on a later tick. Partially covered (e.g. a 10-of-100-share GTC trim): fire
-    // for ONLY the uncovered remainder, so the rest of the position isn't left unprotected.
-    const coverage = liveExitOrderCoverage(brokerOrders, normalizeSymbol(stop.symbol), stop.side);
-    if (coverage.unknownQty || coverage.coveredQty >= positionQty - QTY_EPSILON) {
+    // the stop can fire on a later tick. Partially covered (e.g. a 10-of-100-share GTC trim, OR a
+    // broker-held stop this SAME reconcile just placed for only part of the position): fire for ONLY
+    // the uncovered remainder, so the rest of the position isn't left unprotected.
+    const coverage = liveExitOrderCoverage(brokerOrders, stopSym, stop.side);
+    const justPlacedPartialQty = justPlacedPartialBrokerStopQty.get(stopSym) ?? 0;
+    const effectiveCoveredQty = coverage.coveredQty + justPlacedPartialQty;
+    if (coverage.unknownQty || effectiveCoveredQty >= positionQty - QTY_EPSILON) {
       audit("synthetic_stop_skipped_resting_exit", {
         symbol: stop.symbol,
         positionQty,
-        coveredQty: coverage.coveredQty,
+        coveredQty: effectiveCoveredQty,
         unknownOrderQuantity: coverage.unknownQty,
         note: coverage.unknownQty
           ? "a live exit order with unknowable quantity rests for this symbol — treated as fully covering, not stacking another protective exit"
-          : "live exit orders already cover the full position — not stacking another protective exit"
+          : "live exit orders (incl. a broker-held stop just placed this tick) already cover the full position — not stacking another protective exit"
       }, userId, policy.connectedAccountId);
       continue;
     }
-    const qty = Math.min(positionQty, Math.max(positionQty - coverage.coveredQty, 0));
+    const qty = Math.min(positionQty, Math.max(positionQty - effectiveCoveredQty, 0));
     const exitSide = stop.side === "long" ? "sell" : "cover";
     // Route the protective exit: a plain market order that queues to the regular open by default, or a
     // marketable-limit tagged extended_hours when "App stops in extended hours" is on AND we are in the

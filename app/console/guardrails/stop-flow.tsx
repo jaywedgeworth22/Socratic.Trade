@@ -126,6 +126,9 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
           "Orders resting at the broker's matching engine — they keep protecting even if this app is down. Availability depends on the broker: Alpaca holds OCO brackets (priced from the same ATR/beta-adjusted distance as the chart above) and native trailing stops; Robinhood holds single resting stops (opt-in)." +
           (rhStopsOn && !brokerTrailOn
             ? " Honest exception: Robinhood's resting fixed stop is priced from the flat base % only — it does NOT pick up ATR/beta-adjusted widening/tightening from the distance lane above."
+            : "") +
+          (policy.shortSellingEnabled === true
+            ? " Broker-held trailing is LONG positions only — a short position's trail is always the app monitor, even on Alpaca (broker-held short trails are a planned follow-up, not yet built)."
             : "")
       },
       {
