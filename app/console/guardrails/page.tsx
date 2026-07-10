@@ -1,8 +1,10 @@
 "use client";
 
-/** Guardrails — the deterministic cage, essentials first (max order, daily
- *  caps, stop-loss, daily-loss breaker, autonomy, extended hours), then the
- *  advanced rulebook grouped the way the domain groups it. Editing uses a
+/** Guardrails — the deterministic cage: essentials first (max order, daily
+ *  caps, daily-loss breaker, autonomy, extended hours), then EVERY protective
+ *  stop rule together under the stop-flow diagram (distance fallback chain,
+ *  trailing overlay, broker-held → app-monitor enforcement), then the advanced
+ *  rulebook grouped the way the domain groups it. Editing uses a
  *  review-and-commit model with asymmetric friction: tightening is one click,
  *  loosening brokerage-account authority requires typing CONFIRM. Autonomy has its own
  *  ritual: Autopilot costs a typed word, going back to Ask-first is one tap. */
@@ -37,12 +39,13 @@ import {
   INDICES,
   ORDER_TYPES,
   PANIC_BRAKE,
+  PROTECTIVE_STOPS,
   SOCRATIC_OVERRIDE,
   SHORTS,
-  STOPS_PLUMBING,
   TAX_RULES,
   UNIVERSE_FLOOR
 } from "./field-defs";
+import { StopFlowDiagram } from "./stop-flow";
 
 function parseSymbols(text: string): string[] {
   return text
@@ -249,6 +252,20 @@ export default function GuardrailsPage() {
         </div>
       </Card>
 
+      <Card title="Protective stops">
+        <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+          Every rule that exits a losing (or protects a winning) position, in one place. The diagram shows how they
+          compose for this account right now: each lane falls back left → right, trailing runs alongside, and the app
+          monitor backstops whatever the broker can&apos;t hold.
+        </p>
+        <StopFlowDiagram policy={policy} />
+        <div className="mt-3 divide-y divide-[color:var(--con-line)]">
+          {PROTECTIVE_STOPS.map((def) => (
+            <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
+          ))}
+        </div>
+      </Card>
+
       <Card title="Advanced rulebook" padded={false}>
         <div className="px-4 pb-2">
           <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
@@ -285,11 +302,6 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Entry quality gates">
             {ENTRY_QUALITY.map((def) => (
-              <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
-            ))}
-          </AdvancedGroup>
-          <AdvancedGroup title="Protective stops plumbing">
-            {STOPS_PLUMBING.map((def) => (
               <PolicyFieldRow key={def.path} def={def} policy={policy} draft={draft} />
             ))}
           </AdvancedGroup>

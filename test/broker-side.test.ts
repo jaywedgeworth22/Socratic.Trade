@@ -131,6 +131,10 @@ describe("Robinhood toMcpOrder — fail closed on short/cover", () => {
     expect(toMcpOrder(order("buy")).side).toBe("buy");
     expect(toMcpOrder(order("sell")).side).toBe("sell");
   });
+
+  it("throws on trailPercent — the RH MCP has no verified native trailing param; the reconciler ratchets instead", () => {
+    expect(() => toMcpOrder({ ...order("sell"), trailPercent: 5 })).toThrow(/trailing/i);
+  });
 });
 
 // The Alpaca SDK is mocked so we can capture exactly what side reaches createOrder. With no active

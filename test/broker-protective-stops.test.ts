@@ -5,17 +5,19 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
   brokerProtectiveStopsEnabled,
+  brokerTrailingStopsEnabled,
   cancelBrokerProtectiveStop,
+  desiredBrokerStopKind,
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
 import { getDb, listBrokerProtectiveStops } from "../src/lib/db";
-import type { BrokerGateway, EquityPosition, TradingPolicy } from "../src/lib/types";
+import type { BrokerGateway, EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
   process.env.DATABASE_URL = `file:${join(tmpdir(), `agentic-protstops-${randomUUID()}.db`)}`;
 });
 
-interface PlacedOrder { symbol: string; side: string; type: string; quantity?: number; stopPrice?: number; timeInForce: string }
+interface PlacedOrder { symbol: string; side: string; type: string; quantity?: number; stopPrice?: number; trailPercent?: number; timeInForce: string }
 
 function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: string[]; nextOrderId: string; placeState: string; failCancel: boolean } {
   const g = {
@@ -25,7 +27,7 @@ function fakeGateway(): BrokerGateway & { placed: PlacedOrder[]; cancelled: stri
     placeState: "submitted", // set to "rejected" to simulate a non-throwing synchronous broker decline
     failCancel: false, // flip to simulate a broker cancel that fails (drives the pending_cancel retry)
     async placeEquityOrder(order: any) {
-      g.placed.push({ symbol: order.symbol, side: order.side, type: order.type, quantity: order.quantity, stopPrice: order.stopPrice, timeInForce: order.timeInForce });
+      g.placed.push({ symbol: order.symbol, side: order.side, type: order.type, quantity: order.quantity, stopPrice: order.stopPrice, trailPercent: order.trailPercent, timeInForce: order.timeInForce });
       return { orderId: g.nextOrderId, refId: order.refId, state: g.placeState, raw: {} };
     },
     async cancelEquityOrder(_accountNumber: string, orderId: string) {
@@ -222,5 +224,170 @@ describe("reconcileBrokerProtectiveStops", () => {
     gw.nextOrderId = "ord-2";
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-6"), accountNumber: "PS-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
     expect(r.placed).toBe(1);
+  });
+});
+
+// ── Broker-held TRAILING stops ────────────────────────────────────────────────
+
+function alpacaTrailPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPolicy {
+  return {
+    ...DEFAULT_POLICY,
+    accountNumber: account,
+    activeBroker: "alpaca",
+    riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 },
+    ...over
+  };
+}
+
+function rhTrailPolicy(account: string, over: Partial<TradingPolicy> = {}): TradingPolicy {
+  return rhPolicy(account, {
+    riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8, trailingStopPct: 5 },
+    ...over
+  });
+}
+
+/** A position whose current mark can differ from entry (marketValue = qty × mark). */
+const markedPos = (symbol: string, quantity: number, averageCost: number, mark: number): EquityPosition => ({
+  symbol, quantity, averageCost, marketValue: quantity * mark
+});
+
+const liveSellOrder = (symbol: string, quantity: number): EquityOrder => ({
+  id: `cov-${symbol}`, symbol, side: "sell", type: "stop_market", state: "new",
+  quantity, timeInForce: "gtc", createdAt: new Date().toISOString(), placedAgent: "alpaca"
+});
+
+describe("brokerTrailingStopsEnabled / desiredBrokerStopKind", () => {
+  it("requires a trailing %, honors the off-switch, and knows each broker's lane", () => {
+    // Alpaca: native trailing in both environments.
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A"), "broker/paper")).toBe(true);
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A"), "broker/live")).toBe(true);
+    // No trailing % configured → inert (the DEFAULT_POLICY case).
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 0 } }), "broker/paper")).toBe(false);
+    // The owner's off-switch.
+    expect(brokerTrailingStopsEnabled(alpacaTrailPolicy("A", { brokerTrailingStops: false }), "broker/paper")).toBe(false);
+    // Robinhood: live only, and only under the robinhoodBrokerStops opt-in.
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A"), "broker/live")).toBe(true);
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A"), "broker/paper")).toBe(false);
+    expect(brokerTrailingStopsEnabled(rhTrailPolicy("A", { robinhoodBrokerStops: false }), "broker/live")).toBe(false);
+  });
+
+  it("trailing takes precedence over the RH fixed lane; neither → null", () => {
+    expect(desiredBrokerStopKind(rhTrailPolicy("A"), "broker/live")).toBe("trailing");
+    expect(desiredBrokerStopKind(rhPolicy("A"), "broker/live")).toBe("fixed");
+    expect(desiredBrokerStopKind(rhPolicy("A", { robinhoodBrokerStops: false }), "broker/live")).toBe(null);
+    expect(desiredBrokerStopKind(DEFAULT_POLICY, "broker/paper")).toBe(null);
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — trailing lane", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("places a NATIVE trailing stop on Alpaca (trailPercent, no stopPrice) and records a trailing row", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-1"), accountNumber: "TR-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, trailPercent: 5, timeInForce: "gtc" });
+    expect(gw.placed[0].stopPrice).toBeUndefined(); // the broker computes/moves the trigger itself
+    const rows = listBrokerProtectiveStops("TR-1", "local");
+    expect(rows[0]).toMatchObject({ kind: "trailing", trailPercent: 5, quantity: 10 });
+  });
+
+  it("floors Alpaca native trailing stops to whole shares and skips sub-share positions", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-2"), accountNumber: "TR-2", gateway: gw,
+      positions: [longPos("MSFT", 10.6, 100), longPos("NVDA", 0.4, 500)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "MSFT", quantity: 10 }); // 10.6 → 10; the synthetic monitor covers the 0.6
+    expect(r.placedStopSymbols).toEqual(["MSFT"]); // NVDA (0.4 sh) is left entirely to the synthetic monitor
+  });
+
+  it("does NOT reprice a native Alpaca trailing stop as the mark moves (the broker trails it)", async () => {
+    const args = (mark: number) => ({
+      userId: "local", policy: alpacaTrailPolicy("TR-3"), accountNumber: "TR-3", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, mark)], executionMode: "broker/paper" as const, running: true
+    });
+    await reconcileBrokerProtectiveStops(args(100));
+    const r = await reconcileBrokerProtectiveStops(args(140)); // big rally — still no cancel-replace
+    expect(r.cancelled).toBe(0);
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(1);
+  });
+
+  it("places a RATCHETED stop-market on live Robinhood at trail% below max(mark, entry)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("TR-4"), accountNumber: "TR-4", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/live", running: true
+    });
+    expect(r.placed).toBe(1);
+    // 5% below the 120 mark (the observable high-water), NOT 8% below the 100 entry.
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", side: "sell", type: "stop_market", quantity: 10, stopPrice: 114, timeInForce: "gtc" });
+    expect(gw.placed[0].trailPercent).toBeUndefined(); // RH MCP has no verified native trailing param
+    expect(listBrokerProtectiveStops("TR-4", "local")[0]).toMatchObject({ kind: "trailing", trailPercent: 5, stopPrice: 114 });
+  });
+
+  it("ratchets the Robinhood trailing stop UP as the mark rises, and never back down", async () => {
+    const args = (mark: number) => ({
+      userId: "local", policy: rhTrailPolicy("TR-5"), accountNumber: "TR-5", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, mark)], executionMode: "broker/live" as const, running: true
+    });
+    await reconcileBrokerProtectiveStops(args(100)); // initial: trigger 95
+    expect(listBrokerProtectiveStops("TR-5", "local")[0].stopPrice).toBe(95);
+    // Mark rises to 120 → cancel-replace at 114.
+    gw.nextOrderId = "ord-2";
+    const up = await reconcileBrokerProtectiveStops(args(120));
+    expect(up.cancelled).toBe(1);
+    expect(up.placed).toBe(1);
+    expect(listBrokerProtectiveStops("TR-5", "local")[0]).toMatchObject({ brokerOrderId: "ord-2", stopPrice: 114 });
+    // Mark falls back to 105 → the 114 trigger HOLDS (ratchet, not a re-anchor).
+    const down = await reconcileBrokerProtectiveStops(args(105));
+    expect(down.cancelled).toBe(0);
+    expect(down.placed).toBe(0);
+    expect(listBrokerProtectiveStops("TR-5", "local")[0].stopPrice).toBe(114);
+  });
+
+  it("replaces a FIXED row with a TRAILING one when the trailing lane turns on (kind mismatch)", async () => {
+    // Fixed stop first (trailing % not yet configured).
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("TR-6"), accountNumber: "TR-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(listBrokerProtectiveStops("TR-6", "local")[0]).toMatchObject({ kind: "fixed", stopPrice: 92 });
+    // Owner sets a trailing % → same tick: cancel the fixed stop, place the trailing one.
+    gw.nextOrderId = "ord-2";
+    const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhTrailPolicy("TR-6"), accountNumber: "TR-6", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
+    expect(r.cancelled).toBe(1);
+    expect(r.placed).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("TR-6", "local")[0]).toMatchObject({ kind: "trailing", brokerOrderId: "ord-2", stopPrice: 95 });
+  });
+
+  it("skips placement when another live exit order already covers the position (bracket leg / manual sell)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-7"), accountNumber: "TR-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+      brokerOrders: [liveSellOrder("AAPL", 10)]
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    // A PARTIAL cover does not suppress the broker stop (protection over dedup — broker may reject, synthetic still covers).
+    const partial = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-7"), accountNumber: "TR-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
+      brokerOrders: [liveSellOrder("AAPL", 3)]
+    });
+    expect(partial.placed).toBe(1);
+  });
+
+  it("tears trailing stops down when the owner opts out (brokerTrailingStops: false, no trailing %→fixed either)", async () => {
+    await reconcileBrokerProtectiveStops({ userId: "local", policy: alpacaTrailPolicy("TR-8"), accountNumber: "TR-8", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
+    expect(gw.placed).toHaveLength(1);
+    const off = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-8", { brokerTrailingStops: false }), accountNumber: "TR-8",
+      gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true
+    });
+    expect(off.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("TR-8", "local")).toHaveLength(0);
   });
 });

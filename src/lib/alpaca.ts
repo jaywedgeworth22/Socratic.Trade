@@ -466,6 +466,42 @@ class AlpacaBrokerGateway implements BrokerGateway {
 
   async placeEquityOrder(input: EquityOrderInput & { refId: string }): Promise<ExecutedOrder> {
     const isBracket = !!(input.bracketTakeProfit || input.bracketStopLoss);
+    const isTrailing = input.trailPercent != null && input.trailPercent > 0;
+
+    // Native trailing stop: Alpaca's `trailing_stop` order type with `trail_percent` — the broker
+    // trails the high-water mark itself. Mutually exclusive with brackets (both would claim the
+    // same shares), quantity-based only, and Alpaca rejects limit/stop price params on it, so any
+    // caller-supplied stopPrice (a ratchet anchor meant for brokers without native trailing) is
+    // deliberately dropped.
+    if (isTrailing) {
+      if (isBracket) {
+        throw new Error("Alpaca trailing stop cannot carry bracket legs — place one or the other.");
+      }
+      if (!input.quantity || !(input.quantity > 0)) {
+        throw new Error("Alpaca trailing stop requires a positive share quantity (no notional trailing stops).");
+      }
+      try {
+        const raw = await this.trackHealth(() => this.alpaca.createOrder({
+          symbol: toAlpacaSymbol(input.symbol),
+          side: toBrokerSide(input.side),
+          type: "trailing_stop",
+          trail_percent: String(input.trailPercent),
+          qty: input.quantity,
+          time_in_force: input.timeInForce === "gfd" ? "day" : "gtc",
+          client_order_id: input.refId
+        }));
+        return {
+          orderId: raw.id,
+          refId: input.refId,
+          state: raw.status,
+          filledQuantity: optionalNumber(raw.filled_qty),
+          averagePrice: optionalNumber(raw.filled_avg_price),
+          raw
+        };
+      } catch (error: unknown) {
+        throw new Error(`Alpaca trailing stop order failed: ${formatAlpacaOrderError(error)}`);
+      }
+    }
 
     // Alpaca does not support notional (dollar) bracket orders — only qty-based.
     // If a bracketed dollar order reaches this gateway, it must carry a real entry

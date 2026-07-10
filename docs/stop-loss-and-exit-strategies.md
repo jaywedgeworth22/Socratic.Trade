@@ -18,10 +18,11 @@ policy field / env flag, default, sync/async, broker scope, and status.
 | Take-profit notional | `riskRules.takeProfitNotional` | off | Per-position | Shipped |
 | Trailing stop | `riskRules.trailingStopPct` | 0 (off) | Per-position | Shipped |
 | Short stop-loss | `riskRules.shortStopLossPct` | required for shorts | Per-position | Shipped |
-| **Beta-scaled stops** | `betaScaledStops` | off | Per-position | Shipped |
-| **ATR-based stops** | `atrStops` + `riskRules.atrStop{Period,Multiple}` | off | Per-position | **Shipped (new)** |
+| **Beta-scaled stops** | `betaScaledStops` | **on** (since 2026-07-07) | Per-position | Shipped |
+| **ATR-based stops** | `atrStops` + `riskRules.atrStop{Period,Multiple}` | **on** (since 2026-07-07) | Per-position | Shipped |
 | Alpaca OCO brackets | `brokerBracketsEnabled` | on (Alpaca) | Order | Shipped |
 | Robinhood broker stops | `robinhoodBrokerStops` | off (opt-in) | Order | Shipped |
+| **Broker-held trailing stops** | `brokerTrailingStops` | on (inert until `trailingStopPct`>0) | Order | **Shipped (new 2026-07-10)** |
 | Synthetic trailing monitor | (auto when `trailingStopPct`>0) | — | Order | Shipped |
 | Marketable-limit entries | `marketableLimitEntries` | off | Order | Shipped |
 | Max drawdown breaker | `riskRules.maxDrawdownPct` | off | Account | Shipped |
@@ -53,9 +54,12 @@ Trims a long up ≥ `takeProfitPct` (default **20%**) — a target, not a stop, 
 is **never** widened by beta/ATR. `types.ts:204`.
 
 ### Trailing stop — `riskRules.trailingStopPct`
-A high-water-mark trail: the synthetic monitor exits when price falls
-`trailingStopPct` below the running peak (long) / rises above the trough (short).
-Default **0 (off)**; async. Logic in `src/lib/synthetic-stops.ts:48`.
+A high-water-mark trail: exits when price falls `trailingStopPct` below the
+running peak (long) / rises above the trough (short). Default **0 (off)**; async
+(the synthetic monitor, `src/lib/synthetic-stops.ts`). Since 2026-07-10 a
+configured trail also becomes **broker-held** where the broker supports it — see
+"Broker-held trailing stops" in §B. Runs IN ADDITION to the fixed/ATR stop: both
+are armed, whichever triggers first exits.
 
 ### Short stop-loss — `riskRules.shortStopLossPct`
 **Mandatory** on any short proposal (`policy.ts:112` rejects a short without it).
@@ -107,6 +111,30 @@ open RH **live** long, cancels on close / synthetic-exit. `broker-protective-sto
 `broker/live` + `activeBroker==="robinhood"` + `stopLossPct>0`. Opt-in because the
 exact RH MCP stop semantics should be live-verified first; the synthetic monitor
 stays the always-on fallback.
+
+### Broker-held trailing stops — `brokerTrailingStops` (default on; inert until `trailingStopPct`>0) **[new 2026-07-10]**
+When a trailing % is configured, the protective-stop reconciler
+(`broker-protective-stops.ts`) maintains a broker-held trailing stop per open
+long instead of the fixed broker stop (shares can only back ONE resting sell):
+
+- **Alpaca (paper + live):** a TRUE native `trailing_stop` order
+  (`EquityOrderInput.trailPercent` → `trail_percent`) — the broker trails the
+  high-water mark itself, even while the app is down. Whole shares only
+  (fractional remainders stay on the synthetic monitor); refuses
+  trailing+bracket combos.
+- **Robinhood (live, additionally gated on `robinhoodBrokerStops`):** the RH MCP
+  has **no verified native trailing parameter**, so the reconciler places a
+  resting GTC stop-market at the trail distance below the high-water mark and
+  **ratchets it upward** (cancel-replace, churn-guarded ≥$0.02 & ≥0.1%, never
+  down) each scheduler tick. Between ticks the broker holds a real stop;
+  the trail catches up on the app's cadence. `toMcpOrder` throws on
+  `trailPercent` (fail closed) — translate there if RH adds a native peg.
+
+Placement is coverage-aware: a position already fully covered by another live
+exit-side order (an Alpaca bracket stop leg, a manual GTC sell) is skipped.
+Rows live in `broker_protective_stops` with `kind='trailing'` + `trail_percent`.
+Longs only (Alpaca short trails = follow-up). Off-switch: `brokerTrailingStops:
+false` keeps trailing purely app-managed.
 
 ### Synthetic trailing-stop monitor (all brokers)
 `runSyntheticStopMonitor` (`synthetic-stops.ts:86`) ticks each cycle: tracks a
@@ -195,4 +223,4 @@ would destroy the disallowed basis); losses *inside* an IRA create no lock.
 = volatility-aware via the name's market beta; *ATR* = volatility-aware via the name's
 realized daily range (adapts per-name, no beta needed). Take-profit always stays flat.
 
-_Last verified: 2026-06-25._
+_Last verified: 2026-07-10 (broker-held trailing stops + defaults correction: ATR/beta ON since 2026-07-07)._

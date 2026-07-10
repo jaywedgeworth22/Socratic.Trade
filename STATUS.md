@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
+Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
+Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no
+bracket combos; MCP lane bypassed) and, on live Robinhood, a resting GTC stop-market the
+protective-stop reconciler RATCHETS upward each tick (RH MCP has no verified native trailing
+param — `toMcpOrder` fails closed on trailPercent; lane gated on the `robinhoodBrokerStops`
+opt-in, still default OFF pending live verification). New `brokerTrailingStops` flag (default ON,
+inert until a trail % is set); `broker_protective_stops` grew `kind`/`trail_percent`
+(migration 16); placement now coverage-aware vs live exit orders (bracket legs). UI: Essentials'
+lone "Stop-loss" row + the advanced "Protective stops plumbing" group merged into ONE
+"Protective stops" card under a dynamic stop-flow diagram (ATR → beta → flat fallback, trailing
+overlay, broker-held → app-monitor enforcement; pure `stopFlowModel` unit-tested). Per-position
+LLM-chosen stop plans (fixed/ATR/trailing/none at proposal time) deliberately deferred —
+design sketch in `docs/EFFORT-LOG.md` Planned. Rollout:
+`docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`. Next action: verify gate +
+PR; then live-verify the RH ratchet lane before flipping `robinhoodBrokerStops` on.
+
 ## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
 Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call
 (benchmark 2026-07-08, 0/12) because the shaper claimed a family-wide reasoning capability.
