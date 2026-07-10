@@ -8,6 +8,14 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
+Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with
+'Configure accounts' item, wider desktop trigger, chevron aligned+rotating; mobile Tabs sheet now floats
+above the still-visible tab bar (live-measured height, all destinations fit on iPhone, real-time pin
+feedback); tab-bar badge clearance fixed. 55-findings backlog audited vs main post-MONET-sweeps:
+37 DONE / 2 PARTIAL / 7 OPEN (6 = owner TBDs, 1 deferred refactor). Detail:
+docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md
+
 ## 2026-07-09 — Settings-UX fixes landed (MONET-authored, CLAUDE usage-cap pickup; branch `monet/settings-ux-fixes`)
 Three-part settings-UX change MONET left uncommitted when its seat hit the usage cap, committed
 as-is and landed by a CLAUDE pickup session: (1) real bug fix in `app/console/lib/policy-diff.ts
