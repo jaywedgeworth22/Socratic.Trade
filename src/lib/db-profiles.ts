@@ -30,7 +30,15 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   "learningReviewMode",
   "learningReviewModel",
   "learningReviewMinNewLessons",
-  "learningReviewMaxWaitDays"
+  "learningReviewMaxWaitDays",
+  // Typed confirmation for high-impact live actions is an OWNER preference, not a
+  // per-account guardrail: the owner either wants the phrase ceremony or they don't,
+  // regardless of which account the action targets (Settings IA restructure,
+  // 2026-07-10). Was account-scoped before; promotion supersedes any divergent
+  // per-account values — reads strip it from account rows, and with no user-level
+  // value stored yet it falls back to the DEFAULT_POLICY value (true = required),
+  // the safe direction. No legacy seed on purpose (sole-user, no compat tax).
+  "requireTypedConfirmation"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];

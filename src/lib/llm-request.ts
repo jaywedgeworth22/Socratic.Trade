@@ -39,8 +39,8 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
  * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
  * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
  * no imports beyond types) so both the rotation module and `resolveOpenAiModel`'s safety net below
- * can share it without an import cycle. Keep the literal in sync with the UI copies in
- * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID) and app/console/settings/models.tsx.
+ * can share it without an import cycle. Keep the literal in sync with the UI copy in
+ * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID).
  */
 export const LLM_MODEL_ROTATION_SENTINEL = "__rotate__";
 
@@ -199,25 +199,25 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
 }
 
 /**
- * UI-ONLY synthetic reasoning capability for the "__rotate__" seat sentinel, so the settings UI can
- * keep the effort control VISIBLE (and its stored value editable) when a seat rotates instead of
- * hiding the control and falsely claiming "these models do not expose a reasoning control".
+ * UI-ONLY synthetic reasoning capability for the "__rotate__" seat sentinel. Since the per-team
+ * split (2026-07-10) a rotating seat HIDES its manual effort control — rotation auto-sets each
+ * served model's curated recommended effort (src/lib/model-reasoning-recommendations.ts) — so this
+ * capability now only feeds the Models card's summary line (its "Rotating Models" label) and the
+ * reasoning-control helpers' rotation awareness, not an editable control.
  *
  * Deliberately NOT returned by `reasoningCapabilityForModel`: every server call path derives its
  * wire shape from that function (and from `normalizeReasoningEffortForModel`), and both must keep
  * failing closed on a raw sentinel — the strategy run substitutes the concrete rotation pick before
- * any request is shaped (src/lib/model-rotation.ts), and each served model then re-clamps the stored
- * effort to its own supported range (`interactiveStrategyReasoningEffort`). Offering the full
- * generic ladder here is honest precisely BECAUSE of that per-run clamp.
+ * any request is shaped (src/lib/model-rotation.ts), and each served model then re-clamps the
+ * effort to its own supported range (`interactiveStrategyReasoningEffort`).
  */
 export const ROTATION_UI_REASONING_CAPABILITY: LlmReasoningCapability = {
   provider: "rotation",
   label: "Rotating Models",
   settingLabel: "Reasoning / Thinking Effort",
   description:
-    "This seat rotates through the curated models each run. Your chosen effort applies to every served model, " +
-    "clamped per run to that model's supported range (DeepSeek and Mistral Medium treat anything below High as " +
-    "thinking off; models without a reasoning control ignore it).",
+    "This seat rotates through the curated models each run. Reasoning is auto-set per rotated model " +
+    "at its curated recommended level (models without a curated recommendation run Medium).",
   options: options(ALL_LLM_REASONING_EFFORTS)
 };
 
@@ -267,6 +267,20 @@ export function normalizeReasoningEffortForModel(
     return "none";
   }
   return normalizeReasoningEffortForOptions(capability.options, effort);
+}
+
+/**
+ * Resolve the Red Team reviewer's reasoning effort from a policy: the reviewer-specific
+ * `redTeamReasoningEffort` when explicitly set, otherwise the proposer's legacy
+ * `llmReasoningEffort` (per-team split 2026-07-10: the legacy field is the PROPOSER's; the
+ * reviewer inherits it until the owner explicitly sets its own). Every reviewer/red-team call
+ * site MUST resolve through this helper so the fallback lives in exactly one place — never read
+ * `policy.redTeamReasoningEffort` directly at a call site.
+ */
+export function resolveReviewerReasoningEffort(
+  policy?: { llmReasoningEffort?: LlmReasoningEffort; redTeamReasoningEffort?: LlmReasoningEffort } | null
+): LlmReasoningEffort | undefined {
+  return policy?.redTeamReasoningEffort ?? policy?.llmReasoningEffort;
 }
 
 export function isDisallowedInteractiveStrategyReasoningConfig(model: string | undefined, effort: LlmReasoningEffort | undefined): boolean {

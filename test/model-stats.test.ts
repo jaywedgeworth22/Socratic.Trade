@@ -305,4 +305,16 @@ describe("normalizeBenchmarkSummaries", () => {
     ]);
     expect(rows).toEqual([]);
   });
+
+  it("safely concatenates a stale all-error summary with a later real re-benchmark for the SAME (model, role) — no duplicate, no overwrite ambiguity", () => {
+    // Mirrors app/api/llm-usage/model-stats/route.ts: it concatenates the 2026-07-08 full sweep
+    // (Mistral rows all-error) with the 2026-07-10 Mistral re-benchmark (real numbers) before
+    // normalizing. The stale entry carries no numbers so it's dropped regardless of position —
+    // only the real entry survives.
+    const rows = normalizeBenchmarkSummaries([
+      { model: "mistral-medium-3-5", role: "green" }, // stale: 2026-07-08, 0/3 http errors
+      { model: "mistral-medium-3-5", role: "green", p50LatencyMs: 1261, avgEstCostUsd: 0.0117 } // real: 2026-07-10
+    ]);
+    expect(rows).toEqual([{ model: "mistral-medium-3-5", role: "green", benchmarkCostUsd: 0.0117, benchmarkColdP50Ms: 1261 }]);
+  });
 });

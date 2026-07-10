@@ -21,7 +21,8 @@ import {
   interactiveStrategyReasoningEffort,
   LLM_OUTPUT_TOKEN_CAPS,
   LLM_REQUEST_DEFAULTS,
-  fetchLlmWithRetry
+  fetchLlmWithRetry,
+  resolveReviewerReasoningEffort
 } from "./llm-request";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { buildLlmRequestBody, llmAuthHeaders, extractLlmText, extractJsonPayload } from "./llm-call";
@@ -182,7 +183,7 @@ export async function debateProposal(
   // NO MODEL DEFAULTS: an unchosen Red model resolves to "" — fail closed, never guess a model.
   if (!model) {
     return unavailable(
-      "Red Team reviewer model is not chosen — select it under Settings → LLM models.",
+      "Red Team reviewer model is not chosen — select it under Framework → Models.",
       "not_configured"
     );
   }
@@ -234,9 +235,13 @@ export async function debateProposal(
       // Anthropic — all decided inside buildLlmRequestBody from provider/transport.
       schema: { name: "red_team_verdict", schema: RED_TEAM_VERDICT_SCHEMA, description: "The Red Team's three-way verdict on the finalized trade." },
       maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.adversaryReview,
-      // Same interactive-reasoning clamp as the Green proposal step, so a stored gpt-5.5/high
-      // config can't send high reasoning on the review call and hit the run-lock timeout.
-      reasoningEffort: interactiveStrategyReasoningEffort(model, policy.llmReasoningEffort),
+      // The reviewer's OWN per-team effort (redTeamReasoningEffort, falling back to the
+      // proposer's legacy llmReasoningEffort until explicitly set — resolveReviewerReasoningEffort
+      // owns that fallback). Same interactive-reasoning clamp as the Green proposal step, so a
+      // stored gpt-5.5/high config can't send high reasoning on the review call and hit the
+      // run-lock timeout. Under rotation the run-scoped policy already carries the rotated
+      // model's recommended effort (src/lib/model-rotation.ts).
+      reasoningEffort: interactiveStrategyReasoningEffort(model, resolveReviewerReasoningEffort(policy)),
       // Per-role sampling: non-zero adversary temperature so a re-run can surface a different
       // objection rather than always the identical (or absent) one. Ignored by reasoning models.
       temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
