@@ -8,6 +8,46 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
+Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
+`/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
+pattern), describing the app's real opt-in Twilio SMS notification channel with the specific
+language Twilio's compliance review looks for (opt-in consent, message frequency varies, rates may
+apply, STOP/HELP, no sale of phone numbers). Registered in `sitemap.ts`/`robots.ts`. Caught the
+actual thing that would have broken verification: `middleware.ts` redirects every unauthenticated
+path to `/login` by default — added both new paths to `PUBLIC_PREFIXES` so they're reachable
+without signing in. Verified live via `next dev` (Browser preview): both pages render full content
+unauthenticated. node@24: tsc clean, eslint 0-err, full suite 315/3395, build clean (both pages
+static). See `docs/rollouts/2026-07-10-privacy-terms-pages.md`. Follow-up: owner should have
+counsel review if the product scales past sole-operator use.
+
+## 2026-07-10 — Pricing doc: cover ALL external data sources, not just the core seven (CLAUDE subagent, branch `claude/pricing-doc-all-sources`)
+Owner: "consider all the other data sources we have too, not just those few — marketstack, and
+any others." Extended `docs/market-data-provider-pricing.md` (kept its existing table/traps/dials
+structure intact, added new sections) to cover every external data source the app touches, all
+verified live in code first: marketstack + tradier + intrinio + FRED + Fintech Studios/PowerIntell
++ logo.dev (new "Secondary / fallback sources" table, all confirmed live/wired-in, none dead) plus
+6 new numbered traps (marketstack's free tier is HTTPS-included, NOT HTTP-only as commonly
+misremembered; Tradier sandbox tokens are 15-min-delayed with zero index/Greeks data — only a
+production token from a real, even $0/mo, brokerage account is real-time; Intrinio's gate is a
+14-day trial, not a tier; Fintech Studios' published consumer pricing may not apply to the
+`studio.fintechstudios.com/api/v1` endpoint this app actually calls; FRED never publishes a
+numeric rate limit and its docs 403 naive fetchers). Added a "Keyless & broker-bundled sources"
+section (yahoo, nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+robinhood-quotes/fundamentals, stooq, plus a congress.trade internal-app callout) and a
+"Usage-billed (not subscription) providers" pointer to API-Usage-Monitor for LLM/RAG spend
+(no price tables duplicated here). Mid-task owner scope addition: a "Cheap alternatives —
+evaluated, not integrated" section researching alphastocks.app (owner-named — turned out to be a
+consumer scoring/screener app with no API surface, not a candidate) plus EODHD, marketdata.app,
+Finazon, Finage, StockData.org, Databento, financialdatasets.ai, and Alpaca's Algo Trader Plus
+($99/mo SIP+OPRA upgrade — the one genuine near-term candidate since it's additive to Alpaca
+infra we already hold, not a new vendor); confirmed IEX Cloud is defunct (Aug 2024) so it stops
+getting re-suggested. Also flagged a real gap in "Where the dials live": none of the six new
+keyed providers have a `provider-rate-limit.ts` `HARD_DEFAULTS` entry (only finnhub/
+alpha-vantage/yahoo-finance/twelvedata do) — nothing paces them today besides generic 429 retry.
+Docs-only change; gates green (see rollout note). See
+`docs/rollouts/2026-07-10-pricing-doc-all-sources.md`.
+
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
