@@ -140,6 +140,24 @@ function Provenance({ item }: { item: PendingLearnedItem }) {
   );
 }
 
+// ── Learning Review "left for you" note (defer verdict) ─────────────────────
+
+/** Shown only when the daily Learning Review LLM reviewed this item and could not confidently
+ *  decide it — it left the item pending and explained why. Distinct from Provenance's
+ *  classifierReason: that's why INGEST queued it here; this is why the REVIEWER, having looked,
+ *  still left it for a human. */
+function ReviewerNote({ item }: { item: PendingLearnedItem }) {
+  if (!item.reviewNote) return null;
+  return (
+    <Tooltip content="The daily Learning Review model looked at this item and could not confidently decide, so it left the item here for you and explained why.">
+      <p className="text-[length:var(--con-fs-xs)] leading-snug text-[color:var(--con-faint)]">
+        Left for you because{" "}
+        <span className="text-[color:var(--con-muted)]">{item.reviewNote}</span>
+      </p>
+    </Tooltip>
+  );
+}
+
 // ── What approval actually does (honest, tier-specific) ─────────────────────
 
 function ApprovalEffect({ item, withPreview }: { item: PendingLearnedItem; withPreview: boolean }) {
@@ -220,6 +238,7 @@ function LearnedItemCard({
         </Tooltip>
         <ApprovalEffect item={item} withPreview={false} />
         <Provenance item={item} />
+        <ReviewerNote item={item} />
       </div>
       <footer className="flex items-center gap-2 border-t border-[color:var(--con-line)] px-4 py-3">
         <Btn

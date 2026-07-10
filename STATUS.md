@@ -61,6 +61,20 @@ One left OPEN as a maintainer question (not guessed): "preserve live edits for m
 core merge-semantics tradeoff (mirror-wins vs live-leads for shared rows) whose two suggested fixes
 break opposite use cases — asked the maintainer via a PR comment. Rollout note updated with round-2
 detail.
+## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
+Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
+verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
+requires a non-blank reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as
+malformed). For `learned_context_pending` rows this leaves the item exactly pending and persists the
+note to a new `review_note` column (`src/lib/db.ts`/`db-learning.ts`,
+`setPendingLearnedContextReviewNote`), surfaced in the queue UI
+(`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." line). For
+durable `learned_context` rows it's a no-op (no queue to leave it in), matching `needs_more_data`.
+Verified (new test) that a deferred item doesn't force a same-set re-review loop — it falls out of
+the existing #1278/#1328 marker/fingerprint architecture unchanged (sticks until a human acts or
+another item's arrival brings the reviewer back to the whole set). +6 tests in
+`test/learning-review.test.ts`. Gate green: tsc clean, 3389 tests / 315 files, build clean, lint 0
+errors. See `docs/rollouts/2026-07-10-learning-review-defer.md`.
 ## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
 #1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
 YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that

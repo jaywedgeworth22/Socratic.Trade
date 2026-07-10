@@ -2170,6 +2170,13 @@ export interface LearnedContextPendingRow {
   createdAt: string;
   status: LearnedContextPendingStatus;
   resolvedAt: string | null;
+  /** Set only when the daily Learning Review LLM (src/lib/learning-review.ts) reviewed this item
+   *  and returned a "defer" verdict — it could not confidently decide, so it left the item exactly
+   *  as-is (still pending) and explained why here. Optional so every pre-existing row/fixture that
+   *  never went through review (or was decided keep/reject) simply omits it. Null once approved or
+   *  rejected? No — deliberately left in place even after resolution, so a human who acted on a
+   *  previously-deferred item can still see why the reviewer punted it to them. */
+  reviewNote?: string | null;
 }
 
 /**
