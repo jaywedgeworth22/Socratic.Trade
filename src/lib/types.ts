@@ -808,8 +808,20 @@ export interface TradingPolicy {
    * reason on the Green Team llm step. Empty/unset = single primary endpoint, byte-identical to before.
    */
   llmFallbackModels?: string[];
-  /** Provider-specific reasoning/thinking effort for models that support it. Ignored by models without that knob. */
+  /**
+   * The Green Team / proposer's provider-specific reasoning/thinking effort, for models that
+   * support it (ignored by models without that knob). Per-team split 2026-07-10: this legacy
+   * field is the PROPOSER's; the reviewer has its own `redTeamReasoningEffort` below.
+   */
   llmReasoningEffort?: LlmReasoningEffort;
+  /**
+   * The Red Team reviewer's reasoning/thinking effort (named to mirror `redTeamLlmModel`).
+   * UNSET falls back to the proposer's `llmReasoningEffort` — resolve it ONLY via
+   * `resolveReviewerReasoningEffort` (src/lib/llm-request.ts) so the fallback stays in one place.
+   * Deliberately NO default (unlike `llmReasoningEffort`'s "medium"): a stored value here means
+   * the owner EXPLICITLY split the teams; absent means "inherit the proposer's".
+   */
+  redTeamReasoningEffort?: LlmReasoningEffort;
   /** Intended holding horizon for new positions (default "swing" — days to weeks). */
   holdingHorizon?: HoldingHorizon;
   maxOrderNotional?: number;
