@@ -296,12 +296,16 @@ describe("prompt-safety fencing + receipts (advisory only)", () => {
     expect(ageItems.some((i) => i.kind === "learned_fact")).toBe(true);
 
     // Decision case carries BOTH kind-'safety' receipts (injection + age), advisory tone 'warning'.
+    // Other kind-'safety' receipts may ride along with different tones by design — e.g. the
+    // "Filings library still warming up" receipt is deliberately NEUTRAL (2026-07-09 copy-honesty
+    // change) — so assert the tone on the two receipts this test is about, not on every item.
     const cases = listSocraticDecisionCases("local", { runId: result.runId });
     expect(cases.length).toBeGreaterThanOrEqual(1);
     const safetyItems = cases[0]!.evidence.filter((item) => item.kind === "safety");
-    expect(safetyItems.some((item) => item.title.includes("prompt-injection") && item.title.includes("reflection_summary"))).toBe(true);
-    expect(safetyItems.some((item) => item.title.includes("Same-day evidence"))).toBe(true);
-    for (const item of safetyItems) expect(item.tone).toBe("warning");
+    const injectionItem = safetyItems.find((item) => item.title.includes("prompt-injection") && item.title.includes("reflection_summary"));
+    const ageItem = safetyItems.find((item) => item.title.includes("Same-day evidence"));
+    expect(injectionItem?.tone).toBe("warning");
+    expect(ageItem?.tone).toBe("warning");
   }, 30_000);
 });
 
