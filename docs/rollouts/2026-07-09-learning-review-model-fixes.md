@@ -232,3 +232,57 @@ verdicts incomplete+not-applied, #6 no re-review of just-approved items; `test/l
 
 **Verification.** node@24. tsc clean; the 3 new learning-review tests + the #4 route test pass in
 isolation; full suite deferred to CI (local box thrashing at load ~185, multi-agent). Build: see commit.
+
+---
+
+## 2026-07-10 addendum 3 — resolve deferred finding #3 (legacy-seed default-blob edge) (MONET)
+
+**Context.** addendum 2 deferred Codex P2 finding **#3** as a follow-up: `seedLegacyLearningReviewFields`
+(`src/lib/db-profiles.ts`) bailed the moment *any* `learningReview*` key was present in
+`user_settings.policy`. But `user_settings.policy` has historically also held a FULL policy blob (a
+profile activation via `writePolicyBlobPreservingUserFields`, a no-account `setPolicy`, or a pre-tier
+DB) that stamps the DEFAULT `learningReviewEnabled:false` there while the user's real ENABLED review
+lived account-scoped (#1116). The bail therefore masked an enabled review after the cutover — fail-**closed**
+(reads OFF, no LLM spend, one-click recoverable), but wrong. The naive fix ("recover the account value
+whenever `user_settings` shows false") is dangerous: a deliberate post-cutover disable ALSO writes
+`learningReviewEnabled:false` (via `pickUserFields`), data-indistinguishable *by value* from the stale
+default — recovering it would re-enable a review the owner turned off (fail-**open**, spends budget).
+
+**Fix (two guards, both required).**
+1. **Full-blob vs tiered disambiguation.** A modern TIERED write (`pickUserFields` → `setUserSetting`)
+   contains ONLY user-level keys; a legacy FULL blob also carries account-level keys. A review key in a
+   tiered blob is the user's authoritative value (leave it); the same key in a full blob is a stale
+   default (seed over it). Detected structurally:
+   `isTieredWrite = Object.keys(stored).every(k => USER_LEVEL_POLICY_FIELDS.has(k))`.
+2. **One-time marker** (`learning_review:legacySeedDone:<userId>` in the global `settings` store via
+   `setInternalSetting`, mirroring the runner's own `learning_review:*` markers). Set **unconditionally on
+   the first read**, so the seed evaluates only the PRE-deploy DB state — where a present review key can
+   only be a stale full-blob default (learningReview* was never a user-level field pre-cutover, so it
+   could not reach a tiered blob). This is the load-bearing guard: after the user starts making
+   post-cutover changes, a deliberate tiered disable can be folded back into a full blob (the next profile
+   activation runs `writePolicyBlobPreservingUserFields`), making its false indistinguishable from a stale
+   default — but the marker was already set on the first read (which necessarily preceded any deliberate
+   change), so the seed never re-fires and never clobbers that intent. The seeded value is still persisted
+   onto the SAME `stored` object, so a legacy full blob stays intact for `readLegacyStrategyModelFields`.
+
+The rewrite keeps the PR #7 view/execution-decouple invariant (no active-account pointer;
+`test/pr7-merge-gate.test.ts` still green).
+
+**Files.** `src/lib/db-profiles.ts` (seed rewrite + `learningReviewLegacySeedKey` + internal-settings
+imports), `test/learning-review.test.ts` (+2 tests), `STATUS.md`, `docs/EFFORT-LOG.md`, this note.
+
+**Verification.** node@24 (Mac default is node26 — better-sqlite3 ABI trap). `npx tsc --noEmit` clean;
+`npx vitest run test/learning-review.test.ts` 32/32 (the two new: full-blob-default recovered; tiered
+deliberate-disable NOT clobbered); `pr7-merge-gate` + `per-account-policy-isolation` +
+`account-scoped-models-migration` + `learning-review-policy-route` all green (53 tests across the 5
+policy-scope suites). Pre-fix falsification: with the src fix stashed, the full-blob test fails
+(`expected false to be true`) while the tiered-guard test passes (old code also bailed) — confirming the
+full-blob test pins the finding and the tiered test guards against the naive fix. `npm run build` clean.
+`eslint` on touched files: 0 errors (3 pre-existing `_legacy*`-unused warnings in `mergePolicy`, unrelated).
+
+**Delivery.** Built on a branch forked from #1278's tip (`monet/learning-review-model-fixes-99138a`
+@ 150257ae) because the target code only lived on that then-unmerged PR. #1278 squash-merged to `main`
+mid-work (`6f1aaf87`, 2026-07-10 08:26Z), so the branch was rebased onto `main` (single commit; #1278's
+now-redundant commits dropped) and delivered as the standalone follow-up **PR #1326** against `main` — per
+addendum 2's "Follow-up PR" designation. Finding **#2** (unshown-item orphaning) remains the only open
+deferred item from #1278.
