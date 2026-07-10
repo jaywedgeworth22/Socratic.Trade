@@ -465,6 +465,15 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
+  IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
+  SEC_FILING_RAG_MAX_PER_RUN 1→25 in Infisical prod (were shadowing the paid ingest pace);
+  code: budget pre-flight before EDGAR body fetches, run-level stop-early with cap-aware
+  `deferredForBudget`, `StoreResult.unconfigured`/`dedupComplete` disambiguation + crash-window
+  accession heal (adversarial-review finding). Kills the N-wasted-downloads + N-Sentry-warnings
+  per budget-capped run (SOCRATIC-TRADE-R). See the 2026-07-10 addendum in
+  docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md.
+
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
   enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
   PROGRESS 2026-07-09; PR opened via land.sh, auto-merge armed (MONET's work, landed by CLAUDE
