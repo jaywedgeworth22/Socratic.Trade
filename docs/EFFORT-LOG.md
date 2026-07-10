@@ -1456,6 +1456,31 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch
+  `claude/union-merge-live-rows`) — IN PROGRESS 2026-07-10, ready-to-land; owner-directed
+  fix for the reported "live-board union-merge clobber" (a pickup claim row added 17:35 on
+  2026-07-09 was gone from `/Users/jay/apps/TRADING-EFFORT-LOG.md` by 18:22).** Investigated
+  exhaustively (launchd plists, `~/.claude-merge-shepherd/*`, all `scripts/merge-shepherd.sh`
+  copies across worktrees, every `/Users/jay/apps/*.sh`, shell history, `FLEET-INFRA-EFFORT-LOG.md`)
+  and found no code that actually writes to the live board programmatically — `merge-shepherd.sh`
+  only calls the GitHub API and never touches the Mac filesystem outside its own log dir; the
+  only real union-merge is `docs/EFFORT-LOG.md merge=union` in `.gitattributes`, which only
+  ever adds git-tracked-mirror lines, never deletes. Most plausible cause: a manual "take the
+  mirror wholesale" board-conflict resolution (an already-documented pattern, see
+  `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`) applied to the live board, silently
+  dropping a not-yet-mirrored row. Fix: new `scripts/effort-log-union-merge.py` — row-level
+  merge (mirror is the base; every live-only row, keyed by SHA1 of its normalized first line
+  like `sync-effort-issues.py`'s `effort-key`, is appended into its matching bucket section)
+  with a hard pre- and post-write invariant (every live-only key must survive into the output,
+  or the tool aborts with no write). Tested exclusively against scratch copies (never touched
+  the real board): dry-run against the real 1724-line live board / 2293-line mirror correctly
+  found 13 genuine not-yet-mirrored rows; sentinel add+recover test; idempotency test (mirror
+  merged against itself -> byte-identical); subset test; new-bucket-trailer test; sabotaged-logic
+  invariant-abort test (confirmed no file written on violation). `npx tsc --noEmit` clean
+  (no TS touched). Rollout: `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`.
+  Follow-up (out of scope here): wire into the host-side `~/.claude-merge-shepherd/run.sh`
+  30-min driver once a session can touch that always-running Mac cron.
+
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,

@@ -8,6 +8,26 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch `claude/union-merge-live-rows`)
+Fix for the reported "live-board union-merge clobber": a claim row added to
+`/Users/jay/apps/TRADING-EFFORT-LOG.md` at 17:35 on 2026-07-09 was gone by 18:22. Investigation
+found NO existing scheduled job actually writes to the live board — `scripts/merge-shepherd.sh`
+(launchd, 30 min) only calls the GitHub API; the only real union-merge is `docs/EFFORT-LOG.md
+merge=union` in `.gitattributes`, which only ever adds lines to the git-tracked mirror. Most
+plausible cause: a manual "take the mirror wholesale" board-conflict resolution (already
+documented in `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`) applied to the live board.
+Added `scripts/effort-log-union-merge.py`: row-level merge (mirror is the base; every live-only
+row — identified by SHA1 of its normalized first line, same scheme as
+`scripts/sync-effort-issues.py`'s `effort-key` — is appended into its matching bucket section)
+with a hard pre/post-write invariant that aborts the write (no partial output) if any live-only
+row would be lost. Verified exclusively against scratch copies — the real live board and mirror
+were only ever read (checksum-verified unchanged): real-data dry-run (13 genuine not-yet-mirrored
+rows correctly identified), sentinel add+recover, idempotency, subset, new-bucket-trailer, and a
+sabotaged-logic invariant-abort test. `npx tsc --noEmit` clean. Ready to land (PR not yet opened —
+serialized Land phase handles it). Rollout:
+`docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`. Follow-up: wire the tool into the
+host-side `~/.claude-merge-shepherd/run.sh` 30-min driver (Mac-only infra, out of scope here).
+
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
