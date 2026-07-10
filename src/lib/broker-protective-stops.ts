@@ -166,12 +166,20 @@ export interface ReconcileResult {
   /**
    * Symbols this reconcile placed a broker stop for covering only PART of the position (a
    * fractional remainder the native trailing lane floored away, or shares partially covered by
-   * another live exit order). The caller must skip the synthetic FIRE path for these this tick
-   * (the fresh order isn't in its stale coverage list — firing would double-sell the covered
-   * shares) but must still REGISTER synthetic protection, so the uncovered remainder is never
-   * left without a stop if the app dies before the next tick.
+   * another live exit order). The caller's stale (pre-reconcile) order/coverage list can't see this
+   * fresh order, so it must add `partiallyPlacedStopQuantities[symbol]` as KNOWN additional coverage
+   * — never simply skip the synthetic fire path outright, or the uncovered remainder (e.g. the
+   * fractional share a whole-share-only native trail floored away) is left completely unprotected
+   * for the rest of this tick if a fresh quote already breaches the trail (Codex review, PR #1331).
    */
   partiallyPlacedStopSymbols: string[];
+  /**
+   * The exact quantity `reconcileBrokerProtectiveStops` just placed a resting stop for, keyed by
+   * symbol, for every entry in `partiallyPlacedStopSymbols` — lets the caller treat that quantity as
+   * known coverage THIS tick (on top of whatever `liveExitOrderCoverage` sees from the stale order
+   * list) instead of blindly skipping the fire path for the whole position.
+   */
+  partiallyPlacedStopQuantities: Record<string, number>;
 }
 
 /**
@@ -234,7 +242,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   extremePriceBySymbol?: Record<string, number>;
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {} } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [] };
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {} };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
 
@@ -668,7 +676,10 @@ export async function reconcileBrokerProtectiveStops(args: {
       });
       out.placed++;
       if (qty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
-      else out.partiallyPlacedStopSymbols.push(sym);
+      else {
+        out.partiallyPlacedStopSymbols.push(sym);
+        out.partiallyPlacedStopQuantities[sym] = qty;
+      }
       audit("broker_protective_stop_placed", { symbol: sym, kind, stopPrice, trailPercent: kind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);

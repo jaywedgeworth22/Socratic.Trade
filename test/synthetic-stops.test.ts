@@ -699,6 +699,26 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(broker.placed[0].quantity).toBe(85);
   });
 
+  it("a PARTIAL native-trail placement folds its known quantity into coverage instead of blanket-skipping the fire path (the fractional remainder still gets sold)", async () => {
+    // Alpaca native trailing floors to whole shares — a 10.5-share long gets a 10-share resting
+    // trail, leaving a genuine 0.5-share uncovered remainder. Before the fix, ANY partial broker
+    // placement this tick blanket-skipped the fire path entirely, leaving that 0.5 share naked for
+    // the rest of the tick (and exposed indefinitely if the app stopped before the next one).
+    broker.positions = [{ symbol: "AAPL", quantity: 10.5, averageCost: 100, marketValue: 1050 }];
+    broker.quotes = { AAPL: { price: 90 } }; // extreme 100, 5% trail → trigger 95; 90 breaches
+    connectTestAccount("SYN-PARTIAL-NATIVE");
+    const alpacaPolicy = { ...policyFor("SYN-PARTIAL-NATIVE"), activeBroker: "alpaca" as const };
+    const result = await runSyntheticStopMonitor("local", alpacaPolicy, true);
+    expect(result.exited).toBe(1);
+    // Two placements this tick: the broker-held native trail (floored to 10 whole shares, from
+    // reconcile) and the synthetic monitor's own market sell for the uncovered 0.5-share remainder.
+    expect(broker.placed).toHaveLength(2);
+    const trail = broker.placed.find((o) => o.trailPercent != null);
+    const marketSell = broker.placed.find((o) => o.trailPercent == null);
+    expect(trail).toMatchObject({ symbol: "AAPL", quantity: 10 });
+    expect(marketSell).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 0.5 });
+  });
+
   it("full-size resting exit (whatever its price) blocks the fire with an audit receipt — those shares are broker-held", async () => {
     connectTestAccount("SYN-FULLCOVER");
     upsertSyntheticStop({

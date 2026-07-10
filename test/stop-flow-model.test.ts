@@ -52,4 +52,13 @@ describe("stopFlowModel — the guardrails stop diagram tells the truth about th
     const optOut = policy({ activeBroker: "alpaca", brokerTrailingStops: false, riskRules: trail });
     expect(node(optOut, "enforcement", "broker").value).not.toMatch(/trailing/);
   });
+
+  it("qualifies broker-held trailing as long-only when short selling is enabled (Alpaca shorts stay on the app monitor)", () => {
+    const trail = { ...DEFAULT_POLICY.riskRules, trailingStopPct: 5 };
+    const shortEnabled = policy({ activeBroker: "alpaca", riskRules: trail, shortSellingEnabled: true });
+    expect(node(shortEnabled, "enforcement", "broker").detail).toMatch(/long positions only/i);
+    // No caveat needed when shorting isn't enabled — nothing to qualify.
+    const longOnly = policy({ activeBroker: "alpaca", riskRules: trail, shortSellingEnabled: false });
+    expect(node(longOnly, "enforcement", "broker").detail).not.toMatch(/long positions only/i);
+  });
 });

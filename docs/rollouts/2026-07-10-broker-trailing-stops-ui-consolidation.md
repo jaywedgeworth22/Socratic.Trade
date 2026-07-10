@@ -275,6 +275,45 @@ filled-row cleanup, oversized-on-unknown-coverage cancel, not-oversized-stays-un
 quantity-shrink-cancels-despite-arm-refusal). Full gate (lint/tsc/test/build) re-run green in the
 isolated worktree.
 
+## Review fixes round 6 (Codex on `3a2fb65`, four findings)
+
+1. **P2 — round 5's OCO created-together time window still admitted a false-positive pair:**
+   Codex correctly pushed back (twice) on the `BRACKET_SIBLING_WINDOW_MS` heuristic — an owner can
+   coincidentally submit an independent same-size stop and limit within the 5s window, and both can
+   still fill; timestamp proximity alone is not proof of a real bracket relationship. Fixed properly
+   this time: added `EquityOrder.orderClass` (mapped from Alpaca's own `order_class` field —
+   "simple"/"bracket"/"oco"/"oto" — which the broker preserves on split child legs after the entry
+   fills, not just the parent), and `liveExitOrderCoverage` now requires BOTH legs to report a
+   bracket-family `orderClass` before pairing — the broker's own verified sibling identity, not a
+   time-based guess. Dropped the time-window heuristic entirely. An order with no `orderClass`
+   (Robinhood, which has no bracket concept, or a manually-placed "simple" Alpaca order) never
+   pairs — the residual risk is the bounded, previously-accepted "half-bracket looks fully covered"
+   gap, never a false-positive pair that could stack two real exits on the same shares.
+2. **P2 — a PARTIAL native-trail placement blanket-skipped the synthetic fire path for the WHOLE
+   position:** when a whole-share-only native trailing stop floors away a fractional remainder (a
+   fractional Alpaca long), `reconcileBrokerProtectiveStops` correctly places a partial broker stop
+   THIS tick — but `runSyntheticStopMonitor`'s fire-path guard treated ANY partial placement the same
+   as a full one and skipped firing entirely, leaving the fractional remainder completely
+   unprotected if a fresh quote already breaches the trail this same tick (and exposed indefinitely
+   if the app stops before the next tick). Fixed: `ReconcileResult` grew
+   `partiallyPlacedStopQuantities` (the exact quantity just placed, keyed by symbol); the synthetic
+   monitor now folds that quantity into `liveExitOrderCoverage`'s result as KNOWN additional coverage
+   instead of skipping outright, so the fire path still protects the genuinely uncovered remainder.
+3. **P2 (documentation) — the stop-flow diagram's "Broker-held" node implied Alpaca trailing covers
+   shorts too:** the reconciler deliberately builds `liveLongs` from `p.quantity > 0` and leaves
+   Alpaca shorts on the synthetic monitor only (a documented, accepted follow-up) — but the diagram's
+   text didn't say so, so a short-enabled account could believe its short trailing stops survive app
+   downtime when they don't. Fixed: the "Broker-held" node's detail now appends an explicit
+   long-only caveat whenever `policy.shortSellingEnabled === true`.
+
+New tests: `test/broker-side.test.ts` (orderClass-gated pairing: no-orderClass, same-timing-but-no-
+orderClass, mismatched orderClass, and an `"oco"`-class pairing case); `test/broker-protective-stops.test.ts`
+(exact-equality assertion updated for the new `partiallyPlacedStopQuantities` field);
+`test/synthetic-stops.test.ts` (a fractional Alpaca long gets its native trail floored to whole
+shares, and the 0.5-share remainder still fires this same tick instead of the whole fire path being
+skipped); `test/stop-flow-model.test.ts` (short-enabled long-only caveat present/absent). Full gate
+(lint/tsc/test/build) re-run green in the isolated worktree.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing

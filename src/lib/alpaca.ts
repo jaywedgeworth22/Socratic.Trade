@@ -683,6 +683,7 @@ export function mapAlpacaOrder(o: Record<string, unknown>): EquityOrder {
     createdAt: String(o.created_at),
     updatedAt: o.updated_at ? String(o.updated_at) : undefined,
     clientOrderId: o.client_order_id ? String(o.client_order_id) : undefined,
+    orderClass: o.order_class ? String(o.order_class) : undefined,
     placedAgent: "alpaca"
   };
 }

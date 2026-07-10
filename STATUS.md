@@ -32,7 +32,12 @@ independent equal-qty manual orders as one bracket), stale `resting` rows are ch
 tracked order's actual broker state (mirrors section 1's fill/terminal recovery), an oversized
 existing stop is now cancelled even when other-order coverage is unknown (position-shrink is
 knowable from `positions` alone), and a pure quantity-shrink mismatch on a trailing stop now
-cancels unconditionally instead of being swallowed by the arm-refusal guard. Next action: watch for
+cancels unconditionally instead of being swallowed by the arm-refusal guard; round 6 (Codex pushed
+back twice on round 5's OCO time-window heuristic): pairing now requires a NEW `EquityOrder.orderClass`
+field (mapped from Alpaca's own `order_class`) on BOTH legs — a real bracket/OCO sibling check, not a
+timing guess — and a partial native-trail placement no longer blanket-skips the synthetic fire path
+(its known quantity now folds into coverage so the uncovered fractional remainder still fires), plus
+an honest short-position caveat added to the stop-flow diagram's broker-held node. Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)

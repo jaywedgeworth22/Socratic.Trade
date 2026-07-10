@@ -688,6 +688,20 @@ export interface EquityOrder {
    * recover an order whose placement response was lost (broker-truth-first reconciliation).
    */
   clientOrderId?: string;
+  /**
+   * Broker-reported order-class family (Alpaca `order_class`: "simple" | "bracket" | "oco" | "oto"),
+   * carried through unchanged on both the parent AND the split child legs once a bracket's entry
+   * fills. The ONLY authoritative signal that two resting exit orders are true bracket/OCO siblings
+   * (as opposed to two independently-placed orders that merely happen to match in quantity, or in
+   * quantity and rough timing) — `liveExitOrderCoverage` requires this before pairing two legs into
+   * one unit of coverage (Codex review, PR #1331: a quantity-only, or quantity+time-window, match
+   * can still conflate an owner's separately-placed same-size stop and limit, which can BOTH fill
+   * and over-sell the position). Absent for brokers without a bracket concept (Robinhood) or for a
+   * manually-placed simple order — absence never pairs, which only risks the bounded,
+   * previously-accepted "half-bracket looks fully covered" gap, never a false-positive pair that
+   * could stack two real exits on the same shares.
+   */
+  orderClass?: string;
 }
 
 export interface BrokerQuote {
