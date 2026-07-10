@@ -8,6 +8,61 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
+Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
+every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's
+native `is_auto_deploy_enabled=true` on `socratic-trade-prod` (DB-only setting; API is CF-blocked, done
+via the box); (2) GitHub's push webhooks were being 403'd by the `jays.services` Cloudflare zone's
+IP-allowlist — whitelisted GitHub's documented **webhook** ranges (the stable 6, not the variable
+runner IPs; expanded to 40 `/24` + IPv6), bot protection stays on for everything else. **Proven
+end-to-end**: webhook-triggered deploy `e9e9138b` (`is_webhook=t`) reached `finished`; prod = `main`
+HEAD, healthy. **Fleet: announce-then-deploy is retired — do NOT post deploy claims or manually deploy.**
+Rollback: `is_auto_deploy_enabled=false`. Separately diagnosed + handed to AG a pre-existing deploy
+incident (transient github.com git-clone window + a zombie deploy holding the `concurrent_builds=1`
+queue; now resolved). Docs: `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md
+updated.
+## 2026-07-10 — PR #1229 residual (a): dead `pending_cancel` rows now self-heal (CLAUDE, branch `claude/broker-stop-residuals`)
+Closes the accepted-residual follow-up tracked in `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`
+("Follow-ups / still-open blockers"). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`)
+section 1 (pending_cancel retry) previously just logged and kept retrying forever when
+`gateway.cancelEquityOrder` kept throwing — even if the broker order was already done resting
+(e.g. a prior cancel actually landed and this was just a stale "not found", or the stop had
+simply filled). A permanently-stuck `pending_cancel` row silently blocks section 4 from ever
+re-placing a broker-held stop for that symbol (still protected by the always-on synthetic
+fallback, but broker-held protection is gone for the rest of the session). Fix: added an optional
+`orders?: EquityOrder[]` param — the caller's freshly fetched `gateway.getEquityOrders()` list —
+and on a cancel failure, section 1 now checks whether the row's `brokerOrderId` appears in that
+list already done resting (`isRejectedOrCanceledState` OR `filled`); if so, the row is deleted —
+for a rejected/canceled/expired recovery, section 4 re-places in the SAME call (the position never
+moved); for a `filled` recovery it does NOT re-place same-call (see landing-round review fix
+below). Absent-from-list or still-live stays ambiguous and keeps retrying — never assume terminal
+without positive evidence (mirrors the existing "never orphan a possibly-still-live stop" bias in
+this file). Wired the synthetic-stop monitor (`src/lib/synthetic-stops.ts`) to pass its
+already-fetched `brokerOrders` through. Issue (b) (`!exec.orderId` defensive branch, referenced by
+the same recon) was checked and found ALREADY FIXED by PR #1269's round-3 review —
+`isRejectedOrCanceledState(exec.state)` already precedes the `!exec.orderId` guard at section 4's
+placement call; no code change needed there, confirmed by reading PR #1269's resolved
+review-comment thread. +3 regression tests in `test/broker-protective-stops.test.ts` (recovers via
+a terminal-state order-list match; recovers via `filled`; stays conservative — never deletes on
+absent-from-list or still-live). node@24: `npx tsc --noEmit` clean, focused suite
+(broker-protective-stops + synthetic-stops + broker-side + broker-held-orders) 68/68 green, `npx
+eslint` on touched files 0 errors (2 pre-existing grandfathered warnings, unrelated). See
+`docs/rollouts/2026-07-10-broker-stop-residual-a-fix.md`.
+
+**Landing-round fix (same day, PR #1352 review):** the codex-connector bot flagged a real P1 race
+in the `filled` recovery path above — `positions` is fetched by the caller (synthetic-stops.ts)
+BEFORE `orders`, so on the tick a fill is first observed via `orders`, the `positions` array handed
+to `reconcileBrokerProtectiveStops` can still be the STALE pre-fill snapshot. Letting section 4
+re-place same-call (as originally landed) risked sizing a fresh sell stop off shares that were
+already sold by the fill. Fix: `reconcileBrokerProtectiveStops` now tracks
+`filledRecoverySymbols` — populated only by a `filled`-state section-1 recovery (rejected/
+canceled/expired recoveries are unaffected, since those never moved the position) — and section 4
+skips placement for those symbols this call, deferring to the next call's fresh position read (the
+always-on synthetic monitor still protects the position in the meantime). Updated the existing
+"also recovers when... FILLED" test to assert deferral (`recovered.placed === 0`, row gone) plus a
+follow-up call showing placement resumes normally once positions are fresh. Landed via
+`scripts/land.sh` — see verification section below for the full gate run.
+
 ## 2026-07-10 — Activity-audit item 10: account-attribution sweep (CLAUDE, branch `claude/audit-item10-attribution`)
 Picked up the reserved item-10 row (split out of MONET's P1 batch per owner, unclaimed since
 2026-07-10). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites across
