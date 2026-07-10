@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
+Owner-directed recommendation rethink, implemented from a judged synthesis (3 judges converged
+on the same 4 chips). Display-only: GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
+gemini-3.1-pro-preview (owner ruling restored — the #1082/#1083 intent) + claude-sonnet-5.
+Removed: deepseek-v4-pro Red (benchmark-contradicted; its 17/3 bear record is silent-veto
+inflation via the `parsed.proposals ?? []` Bear parse), gpt-5.4-mini Green+Red (observed
+reasoning burnout / unverifiable all-veto; incumbent-circular records — stays in rotation, can
+earn flags back), gemini-3.5-flash Red (crowding; keeps Green, sanctioned interim Red fallback).
+Both synced catalog copies updated; conventions block rewritten with the new evidence policy +
+the two evidence traps; stale "balanced default" label fixed and the dead `DEFAULT_LLM_MODEL`
+export deleted (zero imports, verified). PR #1083 closed as superseded (owner-directed).
+Follow-up flagged: harden the Bear parse to treat unknown envelopes as parse failure. See
+`docs/rollouts/2026-07-09-model-recs-rethink.md`. **Update 2026-07-10:** PR #1295 went dirty as
+`main` advanced 16 commits; re-synced with a clean `git merge origin/main` (zero conflicts — main
+never touched `app/ui/llm-model-catalog.ts`; its `models.tsx` label-coloring edits sit in a
+disjoint region from this branch's flags/`MODEL_GROUPS`), gates green, pushed, auto-merge
+re-armed. See the rollout note's "Update 2026-07-10" section.
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green

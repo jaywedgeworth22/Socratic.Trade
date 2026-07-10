@@ -1456,6 +1456,23 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
+  branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
+  advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
+  `app/ui/llm-model-catalog.ts`, and its `models.tsx` edits (PR #1333 label coloring) sit in a
+  disjoint region from this branch's `MODEL_GROUPS`/flags), gates green (tsc clean, focused
+  catalog/rotation/label tests 47/47), pushed, auto-merge re-armed.** Owner-directed, implemented
+  from a judged synthesis (3 independent judges converged).
+  Display-only flag changes in both synced catalog copies (`app/ui/llm-model-catalog.ts` +
+  `app/console/settings/models.tsx`): GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
+  gemini-3.1-pro-preview (owner ruling restored) + claude-sonnet-5; removed deepseek-v4-pro Red
+  (benchmark-contradicted — 0% Red schema validity, silent-veto-inflated 17/3 record),
+  gpt-5.4-mini Green+Red (reasoning burnout / unverifiable all-veto; incumbent-circular records),
+  gemini-3.5-flash Red (crowded out; keeps Green, sanctioned interim Red fallback). Conventions
+  comment rewritten with the new evidence policy + the two evidence traps; stale "balanced
+  default" label fixed (dead `DEFAULT_LLM_MODEL` export deleted — zero imports verified); PR
+  #1083 closed as superseded per owner instruction. No behavior changes. Rollout:
+  `docs/rollouts/2026-07-09-model-recs-rethink.md`.
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
