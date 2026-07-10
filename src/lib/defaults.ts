@@ -80,6 +80,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   learningReviewEnabled: false,
   learningReviewMode: "decide",
   learningReviewModel: "claude-fable-5",
+  // Trigger: run when >= 5 new lessons pile up, OR the oldest un-reviewed one is >= 7 days old.
+  learningReviewMinNewLessons: 5,
+  learningReviewMaxWaitDays: 7,
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,

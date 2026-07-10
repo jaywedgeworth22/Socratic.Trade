@@ -28,7 +28,9 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   // loaded when the scheduler ticks. (Was account-scoped in #1116; corrected.)
   "learningReviewEnabled",
   "learningReviewMode",
-  "learningReviewModel"
+  "learningReviewModel",
+  "learningReviewMinNewLessons",
+  "learningReviewMaxWaitDays"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];

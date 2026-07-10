@@ -61,6 +61,10 @@ import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from 
 
 const LAST_RUN_KEY_PREFIX = "learning_review:lastRunDate";
 const LAST_FINGERPRINT_KEY_PREFIX = "learning_review:lastFingerprint";
+const LAST_REVIEWED_AT_KEY_PREFIX = "learning_review:lastReviewedAt";
+
+const DEFAULT_MIN_NEW_LESSONS = 5;
+const DEFAULT_MAX_WAIT_DAYS = 7;
 const LEARNED_WINDOW_DAYS = 7;
 const HISTORY_WINDOW_DAYS = 14;
 const MAX_REVIEW_ITEMS = 80;
@@ -90,6 +94,63 @@ function lastRunKey(userId: string): string {
 
 function lastFingerprintKey(userId: string): string {
   return `${LAST_FINGERPRINT_KEY_PREFIX}:${userId}`;
+}
+
+function lastReviewedAtKey(userId: string): string {
+  return `${LAST_REVIEWED_AT_KEY_PREFIX}:${userId}`;
+}
+
+/** ms of the last SUCCESSFUL review (0 if never). Used to count "new since last review". */
+function getLastReviewedAt(userId: string): number {
+  const raw = getInternalSetting<string>(lastReviewedAtKey(userId));
+  const n = raw ? Number(raw) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+export interface LearningReviewTrigger {
+  shouldRun: boolean;
+  /** How many reviewable lessons are new since the last review. */
+  newCount: number;
+  /** Age in days of the oldest un-reviewed lesson (0 when none). */
+  oldestUnreviewedAgeDays: number;
+  reason: "threshold" | "max-age" | "below-threshold" | "no-new-items";
+}
+
+/** Positive-integer policy knob with a fallback — a corrupt stored value (NaN/string/zero)
+ *  falls back to the default instead of silently disabling the trigger via NaN comparisons. */
+function positiveIntOr(value: unknown, fallback: number): number {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+/**
+ * Should the review fire now? Cheap (two DB reads, no LLM, no rollout-note disk read). Runs when
+ * EITHER at least `learningReviewMinNewLessons` NEW reviewable lessons (learned facts + pending)
+ * have appeared since the last successful review, OR the oldest un-reviewed lesson has waited
+ * `learningReviewMaxWaitDays` — so a slow trickle still gets swept eventually and nothing corrupted
+ * lingers. Only lessons ASSERTED/CREATED after the last review count as "new/un-reviewed".
+ */
+export function evaluateLearningReviewTrigger(userId: string, now: number, policy: TradingPolicy): LearningReviewTrigger {
+  const threshold = positiveIntOr(policy.learningReviewMinNewLessons, DEFAULT_MIN_NEW_LESSONS);
+  const maxWaitDays = positiveIntOr(policy.learningReviewMaxWaitDays, DEFAULT_MAX_WAIT_DAYS);
+  const lastReviewedAt = getLastReviewedAt(userId);
+
+  const learnedSince = new Date(now - LEARNED_WINDOW_DAYS * 86_400_000).toISOString();
+  const learnedAts = listLearnedContext(userId)
+    .filter((row) => row.assertedAt >= learnedSince)
+    .map((row) => Date.parse(row.assertedAt));
+  const pendingAts = listPendingLearnedContext(userId, "pending").map((row) => Date.parse(row.createdAt));
+  // "Un-reviewed" = appeared/changed after the last review.
+  const unreviewedAts = [...learnedAts, ...pendingAts].filter((t) => Number.isFinite(t) && t > lastReviewedAt);
+
+  const newCount = unreviewedAts.length;
+  if (newCount === 0) {
+    return { shouldRun: false, newCount: 0, oldestUnreviewedAgeDays: 0, reason: "no-new-items" };
+  }
+  const oldestAgeDays = (now - Math.min(...unreviewedAts)) / 86_400_000;
+  if (newCount >= threshold) return { shouldRun: true, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "threshold" };
+  if (oldestAgeDays >= maxWaitDays) return { shouldRun: true, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "max-age" };
+  return { shouldRun: false, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "below-threshold" };
 }
 
 /** Stable fingerprint of what a review would actually examine, so an unchanged set never
@@ -617,13 +678,15 @@ export async function runDailyLearningReview(
     userId
   );
   advanceMarker();
-  // Remember exactly what was reviewed so an identical set tomorrow skips without a call.
-  // Stored ONLY on success — a failed/parse-failed run leaves the prior fingerprint so the
-  // same items get another attempt on the next day rather than being skipped as "unchanged".
+  // Remember exactly what was reviewed (fingerprint) and WHEN (lastReviewedAt) — both ONLY on
+  // success. The fingerprint skips an identical set; lastReviewedAt resets the "new since last
+  // review" count that gates the next run. A failed/parse-failed run leaves both untouched so the
+  // same lessons are re-attempted rather than skipped or counted as already-reviewed.
   try {
     setInternalSetting(lastFingerprintKey(userId), fingerprint);
+    setInternalSetting(lastReviewedAtKey(userId), String(now));
   } catch (error) {
-    console.error("[learning-review] failed to persist review fingerprint:", error);
+    console.error("[learning-review] failed to persist review markers:", error);
   }
 
   try {
@@ -656,7 +719,13 @@ export async function runDailyLearningReviewIfDue(
   try {
     const policy = getPolicy(userId);
     if (policy.learningReviewEnabled !== true) return null;
+    // At most one attempt per UTC day (this also backs off a failed provider — a failed run
+    // advances the day marker so it isn't retried on every tick).
     if (!isLearningReviewDue(userId, now)) return null;
+    // Threshold OR max-age: don't spend a call until enough new lessons pile up, but never let
+    // the oldest un-reviewed lesson linger past the max wait. Cheap — no LLM, no pack build.
+    const trigger = evaluateLearningReviewTrigger(userId, now, policy);
+    if (!trigger.shouldRun) return null;
     return await runDailyLearningReview(userId, { now, policyOverride: policy });
   } catch (error) {
     console.error("[learning-review] daily run error:", error);

@@ -30,6 +30,7 @@ import {
 import {
   applyLearningReviewVerdicts,
   buildLearningReviewContextPack,
+  evaluateLearningReviewTrigger,
   isLearningReviewDue,
   parseLearningReviewVerdicts,
   runDailyLearningReview,
@@ -90,6 +91,15 @@ function enableReview(userId: string, mode: "annotate" | "decide") {
 
 function verdictJson(reviews: LearningReviewVerdict[], summary = "Daily review summary."): string {
   return JSON.stringify({ reviews, summary });
+}
+
+/** Injectable llm that answers "keep" for EVERY item it was shown (full coverage). */
+function keepAllLlm(onCall?: () => void) {
+  return async (spec: { userContent: string }) => {
+    onCall?.();
+    const items = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"] }> }).reviewItems;
+    return verdictJson(items.map((it) => ({ id: it.id, table: it.table, verdict: "keep" as const, confidence: 90, reasoning: "sound" })));
+  };
 }
 
 // ── Verdict parsing ─────────────────────────────────────────────────────────────
@@ -175,6 +185,56 @@ describe("once-per-day dedup", () => {
     expect(summary.skipped).toBe(true);
     expect(summary.reason).toBe("no-items");
     expect(isLearningReviewDue(userId, NOW)).toBe(false);
+  });
+});
+
+// ── Run trigger: min-new-lessons threshold OR max-wait sweep ────────────────────
+
+describe("review trigger (learningReviewMinNewLessons / learningReviewMaxWaitDays)", () => {
+  it("stays quiet below the threshold, fires at it, and goes quiet again after a successful review", async () => {
+    const userId = `lr-trigger-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    const policy = getPolicy(userId);
+
+    // One fresh lesson: below the default threshold of 5 and younger than the 7-day max wait.
+    seedLearnedRow(userId);
+    expect(evaluateLearningReviewTrigger(userId, NOW, policy)).toMatchObject({ shouldRun: false, newCount: 1, reason: "below-threshold" });
+    // The scheduler entry point respects the trigger: no run, marker untouched.
+    expect(await runDailyLearningReviewIfDue(userId, NOW)).toBeNull();
+    expect(isLearningReviewDue(userId, NOW)).toBe(true);
+
+    // Four more lessons hit the threshold.
+    for (let i = 0; i < 4; i += 1) seedLearnedRow(userId);
+    expect(evaluateLearningReviewTrigger(userId, NOW, policy)).toMatchObject({ shouldRun: true, newCount: 5, reason: "threshold" });
+
+    // A successful review stores lastReviewedAt, so the same five lessons no longer count as new.
+    const run = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(run.ok).toBe(true);
+    expect(evaluateLearningReviewTrigger(userId, NOW + 3_600_000, policy)).toMatchObject({ shouldRun: false, reason: "no-new-items" });
+  });
+
+  it("sweeps a slow trickle once the oldest un-reviewed lesson passes the max wait", () => {
+    const userId = `lr-maxage-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    // A single pending item (below the count threshold) that has waited 8 days.
+    seedPendingRow(userId, { createdAt: new Date(NOW - 8 * 86_400_000).toISOString() });
+    const trigger = evaluateLearningReviewTrigger(userId, NOW, getPolicy(userId));
+    expect(trigger).toMatchObject({ shouldRun: true, newCount: 1, reason: "max-age" });
+    expect(trigger.oldestUnreviewedAgeDays).toBeGreaterThanOrEqual(8);
+  });
+
+  it("falls back to the default thresholds when stored knob values are corrupt", () => {
+    const userId = `lr-corrupt-${randomUUID().slice(0, 8)}`;
+    seedLearnedRow(userId);
+    const corrupt = {
+      ...getPolicy(userId),
+      learningReviewMinNewLessons: Number.NaN,
+      learningReviewMaxWaitDays: "banana" as unknown as number
+    };
+    // NaN knobs must not silently disable the trigger — defaults (5 / 7d) apply.
+    expect(evaluateLearningReviewTrigger(userId, NOW, corrupt).reason).toBe("below-threshold");
+    for (let i = 0; i < 4; i += 1) seedLearnedRow(userId);
+    expect(evaluateLearningReviewTrigger(userId, NOW, corrupt)).toMatchObject({ shouldRun: true, reason: "threshold" });
   });
 });
 
