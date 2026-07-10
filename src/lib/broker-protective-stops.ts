@@ -220,8 +220,20 @@ export async function reconcileBrokerProtectiveStops(args: {
    * (Codex review, PR #1331).
    */
   ordersListed?: boolean;
+  /**
+   * The synthetic monitor's own already-tracked high-water mark per symbol (its
+   * `synthetic_trailing_stops.extreme_price`), fetched by the caller BEFORE this reconcile. The
+   * ratchet lane's trigger and the native lane's already-breached guard both anchor to
+   * `max(mark, entry)` when this is absent — but if price rallied and pulled back, the app's own
+   * trail already tracked the TRUE (higher, tighter) extreme, and reconstructing only from the
+   * CURRENT mark silently arms a broker-held trail LOOSER than the one already protecting the
+   * position (Codex review, PR #1331: avg 100, synthetic extreme 130, mark 120, 5% trail — the
+   * app trigger is 123.50, but recomputing from max(120,100) would arm a broker stop around 114).
+   * Optional; a symbol with no row yet (freshly registering) falls back to `max(mark, entry)`.
+   */
+  extremePriceBySymbol?: Record<string, number>;
 }): Promise<ReconcileResult> {
-  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true } = args;
+  const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {} } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
@@ -307,11 +319,32 @@ export async function reconcileBrokerProtectiveStops(args: {
   };
 
   // Trailing trigger for the ratcheted (non-native) lane: trailingStopPct below the high-water
-  // mark, where the observable extreme is max(current mark, entry) — the same initial-extreme rule
-  // the synthetic monitor uses when registering a trail. Only ever ratchets UP (see section 3).
-  const trailingTriggerPrice = (pos: EquityPosition): number => {
+  // mark. The observable extreme is max(current mark, entry, the synthetic monitor's OWN
+  // already-tracked extreme for this symbol) — falling back to max(mark, entry) only when no
+  // synthetic row exists yet. Using the real tracked extreme (not reconstructing from the current
+  // mark alone) means enabling broker-held trailing can never arm a LOOSER trigger than the trail
+  // already protecting the position after a rally-then-pullback. Only ever ratchets UP (section 3).
+  const trailingTriggerPrice = (pos: EquityPosition, sym: string): number => {
     const mark = pos.marketValue / pos.quantity;
-    return round2(Math.max(mark, pos.averageCost) * (1 - trailPct / 100));
+    const trackedExtreme = extremePriceBySymbol[sym] ?? 0;
+    return round2(Math.max(mark, pos.averageCost, trackedExtreme) * (1 - trailPct / 100));
+  };
+
+  // Whether a broker-held TRAILING stop at `stopPrice` may be armed for this symbol right now
+  // without being LOOSER than the app-defined trail already protecting the position (Codex review,
+  // PR #1331, three rounds):
+  //  - Native lane (Alpaca): the broker seeds its trail from the CURRENT mark, not from history —
+  //    so it may only be placed when the mark is at/above BOTH entry and the app's own tracked
+  //    high-water mark (a pullback from either would make the native trail's starting point, and
+  //    therefore its trigger, looser than the app's).
+  //  - Ratcheted lane: the trigger is an explicit price computed from the SAME tracked extreme, so
+  //    it only fails when actually already breached (trigger at/above the mark).
+  // Shared by section 3 (must not cancel an existing stop into a replacement that would be refused
+  // here — that would strand the position with neither) and section 4 (the actual placement gate).
+  const canArmTrailingNow = (pos: EquityPosition, sym: string, stopPrice: number): boolean => {
+    const mark = pos.marketValue / pos.quantity;
+    const trackedExtreme = extremePriceBySymbol[sym] ?? 0;
+    return nativeTrailing ? mark >= Math.max(pos.averageCost, trackedExtreme) : stopPrice < mark;
   };
 
   // Long positions only: Robinhood is long-only, and the trailing lane deliberately starts with
@@ -424,7 +457,7 @@ export async function reconcileBrokerProtectiveStops(args: {
       }
       // Where section 4 would place this stop's trigger today (informational for native trailing —
       // the broker moves that trigger itself).
-      const newStopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
+      const newStopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
 
       let mismatchNote: string | undefined;
       if (existingStop.kind !== kind) {
@@ -437,6 +470,18 @@ export async function reconcileBrokerProtectiveStops(args: {
         mismatchNote = `trail % ${existingStop.trailPercent ?? 0} -> ${trailPct}`;
       } else if (!nativeTrailing && newStopPrice - existingStop.stopPrice >= Math.max(0.02, existingStop.stopPrice * 0.001)) {
         mismatchNote = `trail ratchet ${existingStop.stopPrice} -> ${newStopPrice}`;
+      }
+
+      // A trailing mismatch must not be cancelled unless section 4 would actually be able to
+      // replace it THIS pass — otherwise the cancel succeeds, the replacement guard then refuses
+      // (mark below entry/tracked extreme, or already breached), and the position is left with NO
+      // broker-held stop until conditions recover (Codex review, PR #1331). Keep the
+      // slightly-mismatched stop resting instead; it's still real protection.
+      if (mismatchNote && kind === "trailing" && !canArmTrailingNow(pos, sym, newStopPrice)) {
+        audit("broker_protective_stop_skipped", {
+          symbol: sym, kind, note: `mismatch (${mismatchNote}) detected but the replacement would be refused this tick — keeping the existing stop rather than cancelling into no protection`
+        }, userId);
+        mismatchNote = undefined;
       }
 
       if (mismatchNote && !liveReplaceBlocked) {
@@ -501,33 +546,23 @@ export async function reconcileBrokerProtectiveStops(args: {
       }, userId);
       continue;
     }
-    const stopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
+    const stopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos, sym);
     if (!(stopPrice > 0)) continue;
     // Never arm a broker trail that would be LOOSER than the app-defined one (Codex review, PR
-    // #1331, two rounds). The app's trail is seeded from max(mark, entry):
-    //  - Native lane (Alpaca): the broker starts its trail from the CURRENT market, so any mark
-    //    below entry produces a lower trigger than the entry-seeded one (avg 100 / mark 96 / 5%:
-    //    app trigger 95, native trigger ~91.2) — and an already-breached trail (mark ≤ trigger)
-    //    would defer the exit by a whole fresh trail distance. Place native trails only when the
-    //    mark is at/above entry (the two seeds then agree); below it, skip WITHOUT advertising the
-    //    symbol so the synthetic monitor keeps (or takes) the entry-seeded trail this same tick.
-    //  - Ratcheted lane (Robinhood / alpaca-mcp): the explicit trigger IS entry-seeded, so only a
-    //    genuine breach (trigger at/above the mark — the stop would fire instantly or be rejected)
-    //    skips; the synthetic monitor fires the app-defined exit instead.
-    if (kind === "trailing") {
+    // #1331, three rounds — see canArmTrailingNow's doc comment for the native-vs-ratcheted logic).
+    if (kind === "trailing" && !canArmTrailingNow(pos, sym, stopPrice)) {
       const mark = pos.marketValue / pos.quantity;
-      if (nativeTrailing ? mark < pos.averageCost : stopPrice >= mark) {
-        audit("broker_protective_stop_skipped", {
-          symbol: sym,
-          kind,
-          stopPrice,
-          mark,
-          note: nativeTrailing
-            ? "mark below entry — a native broker trail would seed from the depressed market and be looser than the app's entry-seeded trail; the synthetic monitor keeps covering until the mark recovers to entry"
-            : "trail already breached at placement — leaving the exit to the synthetic monitor instead of arming a fresh, lower broker trail"
-        }, userId);
-        continue;
-      }
+      audit("broker_protective_stop_skipped", {
+        symbol: sym,
+        kind,
+        stopPrice,
+        mark,
+        trackedExtreme: extremePriceBySymbol[sym],
+        note: nativeTrailing
+          ? "mark below entry or the app's tracked high-water mark — a native broker trail would seed from the depressed market and be looser than the app's own trail; the synthetic monitor keeps covering until the mark recovers"
+          : "trail already breached at placement — leaving the exit to the synthetic monitor instead of arming a fresh, lower broker trail"
+      }, userId);
+      continue;
     }
     const refId = `protstop-${userId}-${accountNumber}-${sym}-${Date.now()}`;
     try {

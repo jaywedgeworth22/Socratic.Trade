@@ -181,6 +181,53 @@ New tests: `test/broker-protective-stops.test.ts` (ordersListed skip on placemen
 recovery on the next successful fetch, default-true regression); `test/synthetic-stops.test.ts`
 (partial fire preserves the broker-held stop). Full gate re-run green after these fixes.
 
+## Review fixes round 4 (Codex on `40ebbc2`, four findings)
+
+1. **P2 — OCO bracket legs double-counted as coverage:** `liveExitOrderCoverage` summed the
+   quantities of ALL live exit orders for a symbol, but an Alpaca OCO bracket's stop-loss and
+   take-profit legs are mutually exclusive exits for the SAME shares (filling one auto-cancels the
+   other) — summing both counted a fully-bracketed position's protection as double its real size.
+   Harmless when a position's bracket covers 100% of it (the "≥ position size" skip fires either
+   way), but a genuinely half-bracketed position (e.g. two independent 50-share scale-in brackets
+   vs. one 50-share bracket on a 100-share position) had its uncovered half silently hidden from
+   every caller that sizes a NEW broker-held stop off this number. Fixed: `liveExitOrderCoverage`
+   now pairs a stop-type leg with an unused limit-type leg at a matching remaining quantity (the
+   OCO bracket signature) and counts the pair once; unpaired legs (a lone resting stop, a manual
+   take-profit-only sell) still count independently. Moved the whole computation from a flat sum to
+   stop/limit/other buckets with pairing logic in `src/lib/broker-side.ts`.
+2. **P2 — a mismatched trailing stop was cancelled even when the replacement would be refused:**
+   section 3's cancel-then-replace logic didn't check whether section 4's already-breached /
+   looser-than-app-trail guard would actually let the replacement land — a trail%/quantity change
+   while price sat below entry (or the tracked high) cancelled the old (still-protective) stop and
+   then correctly refused to replace it, leaving the position with NO broker-held stop until
+   conditions recovered. Fixed: extracted the placement-eligibility check into a shared
+   `canArmTrailingNow` helper; section 3 now skips the cancel (keeps the existing stop) whenever
+   section 4 would refuse the replacement.
+3. **P1 — a broker-held trail could be seeded looser than the app's own already-armed trail:** the
+   ratchet/native-placement logic recomputed the trailing anchor from `max(currentMark, entry)`
+   only — but if price had rallied above entry and then pulled back, the SYNTHETIC monitor's own
+   `extreme_price` (the true high-water mark) could be well above the current mark, meaning the
+   app's real trigger was already tighter (higher) than anything reconstructed from just the
+   current tick's data. Example: avg 100, synthetic-tracked extreme 130, mark 120, 5% trail — the
+   app's real trigger is 123.50, but recomputing from `max(120,100)` would arm a broker trail
+   around 114, weakening protection the moment broker-held trailing turns on. Fixed: new
+   `extremePriceBySymbol` param (the synthetic monitor's own ACTIVE-row extremes, fetched by the
+   caller before reconcile runs) feeds `trailingTriggerPrice` and the native-lane placement guard
+   (now `mark >= max(entry, trackedExtreme)` instead of just `mark >= entry`), so a broker-held
+   trail is never armed looser than the trail already protecting the position.
+4. **P2 — the stop-flow diagram implied ATR/beta distance applies to Robinhood's fixed broker
+   stop:** `reconcileBrokerProtectiveStops`'s fixed-kind price calc uses the flat `stopLossPct`
+   only, never the ATR/beta-adjusted effective distance shown in the diagram's distance lane —
+   properly closing that gap requires threading per-symbol effective-stop-distance data into
+   `broker-protective-stops.ts` (this file has no market-scan/beta access today), which is the same
+   plumbing the planned per-position stop-plan feature will add. For now, fixed with an honest
+   annotation: the enforcement lane's "Broker-held" node explicitly calls out the exception when
+   Robinhood's fixed lane is active. Proper fix deferred to the stop-plan follow-up.
+
+New tests: `test/broker-side.test.ts` (7 new `liveExitOrderCoverage` OCO-pairing cases);
+`test/broker-protective-stops.test.ts` (tracked-extreme seeding, native-lane refusal below tracked
+extreme, keep-existing-stop-when-replacement-refused). Full gate re-run green.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing

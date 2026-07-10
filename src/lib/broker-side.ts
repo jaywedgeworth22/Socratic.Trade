@@ -77,8 +77,16 @@ export function isLiveExitOrder(order: EquityOrder, positionSide: "long" | "shor
 /**
  * Quantity-aware protection coverage from live exit orders. `coveredQty` sums the REMAINING open
  * quantity (quantity - filledQuantity, per the stale-limit-orders convention) across live exit
- * orders for the symbol/side. `unknownQty` is true when any live exit order's remaining quantity is
- * unknowable (e.g. a notional/dollarAmount order reports no share quantity) — callers must then
+ * orders for the symbol/side — but an Alpaca OCO bracket's stop-loss and take-profit legs are
+ * mutually exclusive exits for the SAME shares (filling one auto-cancels the other), so a
+ * stop-type leg and a limit-type leg at the SAME remaining quantity are paired and counted ONCE,
+ * not summed — otherwise a fully-bracketed position's two legs (e.g. two live 50-share legs on a
+ * 100-share position covering only 50 real shares, if the bracket was only ever half the position)
+ * look like double the real coverage, silently hiding an uncovered remainder from every caller that
+ * sizes a NEW protective order off this number (Codex review, PR #1331). Unpaired legs (e.g. a
+ * lone resting stop, or a manual take-profit-only limit sell) still count on their own — pairing is
+ * opportunistic, never assumed. `unknownQty` is true when any live exit order's remaining quantity
+ * is unknowable (e.g. a notional/dollarAmount order reports no share quantity) — callers must then
  * treat the position as fully covered, failing toward no-duplicate-sell: those shares are
  * broker-held, and a second sell of them would be rejected anyway. A FULL-size resting exit at any
  * price correctly blocks firing for the same reason — the stale-limit-order notifier is the surface
@@ -89,15 +97,33 @@ export function liveExitOrderCoverage(
   symbol: string,
   positionSide: "long" | "short"
 ): { coveredQty: number; unknownQty: boolean } {
-  let coveredQty = 0;
   let unknownQty = false;
+  const stopLegQtys: number[] = [];
+  const limitLegQtys: number[] = [];
+  let otherQty = 0;
   for (const order of orders) {
     if (normalizeSymbol(order.symbol) !== symbol || !isLiveExitOrder(order, positionSide)) continue;
     if (typeof order.quantity !== "number" || !Number.isFinite(order.quantity) || order.quantity <= 0) {
       unknownQty = true;
       continue;
     }
-    coveredQty += Math.max(order.quantity - (order.filledQuantity ?? 0), 0);
+    const remaining = Math.max(order.quantity - (order.filledQuantity ?? 0), 0);
+    if (order.type === "stop_market" || order.type === "stop_limit") stopLegQtys.push(remaining);
+    else if (order.type === "limit") limitLegQtys.push(remaining);
+    else otherQty += remaining;
+  }
+  // Pair each stop-type leg with an unused limit-type leg at a matching quantity — the OCO bracket
+  // signature (Alpaca creates both legs with the entry's own quantity). Counts once per matched
+  // pair; a stop leg with no matching limit leg (no bracket, just a resting stop) counts on its own.
+  let coveredQty = otherQty;
+  const usedLimitIdx = new Set<number>();
+  for (const stopQty of stopLegQtys) {
+    const pairIdx = limitLegQtys.findIndex((q, i) => !usedLimitIdx.has(i) && Math.abs(q - stopQty) < 0.000001);
+    if (pairIdx >= 0) usedLimitIdx.add(pairIdx);
+    coveredQty += stopQty;
+  }
+  for (let i = 0; i < limitLegQtys.length; i++) {
+    if (!usedLimitIdx.has(i)) coveredQty += limitLegQtys[i];
   }
   return { coveredQty, unknownQty };
 }

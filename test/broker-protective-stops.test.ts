@@ -592,4 +592,75 @@ describe("reconcileBrokerProtectiveStops — trailing lane", () => {
       expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", quantity: 10 });
     });
   });
+
+  describe("extremePriceBySymbol — never arm a broker trail looser than the app's own already-tracked high-water mark", () => {
+    it("uses the synthetic monitor's tracked extreme (not just current mark) to seed the ratcheted trigger", async () => {
+      // avg 100, synthetic-tracked extreme 130, mark 125 (pulled back from the peak but still above
+      // the real trigger — not yet breached), trail 5%: the app's real trigger is 130*0.95=123.50.
+      // Recomputing from max(mark=125, entry=100) alone would produce 118.75 — looser.
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: rhTrailPolicy("TR-16"), accountNumber: "TR-16", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 125)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(1);
+      expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 123.5 });
+    });
+
+    it("refuses a NATIVE trail while the mark sits below the tracked extreme, even if mark is above entry", async () => {
+      // avg 100, tracked extreme 130, mark 120 (above entry, but a pullback from the real high). A
+      // native Alpaca trail seeded from the current 120 mark would trail from 120, not 130 — looser
+      // than the app's own trail. Must be refused; the synthetic monitor keeps covering.
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-17"), accountNumber: "TR-17", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/paper", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(0);
+      expect(gw.placed).toHaveLength(0);
+    });
+
+    it("places a native trail once the mark recovers to at/above the tracked extreme", async () => {
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: alpacaTrailPolicy("TR-17b"), accountNumber: "TR-17b", gateway: gw,
+        positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.placed).toBe(1);
+    });
+
+    it("does NOT cancel an existing mismatched trail if the replacement would be refused (mark below the tracked extreme) — keeps the old stop rather than stranding the position", async () => {
+      // Seed a resting trailing stop at the CORRECT (tracked-extreme-based) trigger 123.5 for a 10%
+      // trail config that's about to change to 5% (forcing a "trail %" mismatch)... simpler: seed a
+      // resting stop with a stale trail% so section 3 detects a mismatch, while the mark has pulled
+      // back below the tracked extreme so a replacement would be refused.
+      const gw2 = fakeGateway();
+      const policy = rhTrailPolicy("TR-18");
+      // Establish the resting stop while mark == tracked extreme (recovers, places fine).
+      await reconcileBrokerProtectiveStops({
+        userId: "local", policy, accountNumber: "TR-18", gateway: gw2,
+        positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(gw2.placed).toHaveLength(1);
+      expect(gw2.placed[0].stopPrice).toBeCloseTo(123.5);
+      // Now the trail % changes (10% instead of 5%) — a genuine mismatch — but the mark has since
+      // pulled back to 115, below the tracked extreme of 130. A replacement seeded from 130 at 10%
+      // would be FINE (130*0.9=117, still below tracked extreme check just cares about mark vs
+      // extreme for NATIVE; this is the ratcheted RH lane, whose guard is "already breached", i.e.
+      // stopPrice >= mark). New trigger at 10% off 130 = 117, mark = 115 -> 117 >= 115: breached,
+      // so the replacement WOULD be refused. The old (123.5) stop must be kept, not cancelled.
+      const changedPolicy = rhTrailPolicy("TR-18", { riskRules: { ...DEFAULT_POLICY.riskRules, stopLossPct: 8, trailingStopPct: 10 } });
+      const r = await reconcileBrokerProtectiveStops({
+        userId: "local", policy: changedPolicy, accountNumber: "TR-18", gateway: gw2,
+        positions: [markedPos("AAPL", 10, 100, 115)], executionMode: "broker/live", running: true,
+        extremePriceBySymbol: { AAPL: 130 }
+      });
+      expect(r.cancelled).toBe(0);
+      expect(gw2.cancelled).toEqual([]);
+      const stops = listBrokerProtectiveStops("TR-18", "local");
+      expect(stops).toHaveLength(1);
+      expect(stops[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 }); // unchanged — old stop kept
+    });
+  });
 });

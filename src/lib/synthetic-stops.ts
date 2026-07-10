@@ -220,8 +220,14 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // before the next tick's real quantity-aware coverage takes over.
   const justPlacedBrokerStopSymbols = new Set<string>();
   const justPlacedPartialBrokerStopSymbols = new Set<string>();
+  // The app's own already-tracked high-water mark per symbol (ACTIVE rows only — a purged/triggered
+  // row's extreme isn't live protection). Passed into reconcile so a broker-held trail is never
+  // seeded looser than the trail already protecting the position after a rally-then-pullback.
+  const extremePriceBySymbol = Object.fromEntries(
+    listSyntheticStops(accountNumber, userId).map((s) => [normalizeSymbol(s.symbol), s.extremePrice])
+  );
   try {
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed });
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders, ordersListed: brokerOrdersListed, extremePriceBySymbol });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
