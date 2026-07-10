@@ -8,6 +8,26 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Mistral keyed re-benchmark (MONET, branch `monet/mistral-rebench-docs`, owner-directed)
+The re-benchmark deferred from #1279: **12/12 live calls succeeded, zero 400s** (was 0/12 pre-fix) —
+the capability-map fix is empirically proven against Mistral's API. `mistral-small-2603` green:
+p50 3.6s, ~$0.0015/call, 100% schema-valid proposals with full bracket coverage (cheaper/faster than
+gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the new default): fast+valid
+but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
+verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
+schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
+(re-add small-2603; hold medium-3-5) is an owner call, detailed in
+`docs/rollouts/2026-07-10-mistral-rebench.md`.
+**Probe addendum (same night, owner question "why no proposals"):** reasoning-off medium-3-5
+deterministically answers `{"proposals":[]}` (param-stripped probe identical — model judgment, not
+request shape). High-tier probes surfaced + FIXED two more shaper bugs in `llm-request.ts`:
+medium-3-5 rejects `prompt_mode:"reasoning"` too (validation-order masked it on 2026-07-08), and its
+reasoning tier rejects greedy sampling (`temperature:0` without `top_p:1`) → thinking-enabled Mistral
+calls now send reasoning_effort only, no temperature. With both fixes it DOES propose: 2 schema-valid
+bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
+works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
+`--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
 ## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
 Owner-directed recommendation rethink, implemented from a judged synthesis (3 judges converged
 on the same 4 chips). Display-only: GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
