@@ -54,7 +54,13 @@ describe("llm-request — model resolution", () => {
     expect(reasoningCapabilityForModel("grok-4.3")?.options.map((o) => o.value)).toEqual(["none", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-2.5-flash")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high"]);
     expect(reasoningCapabilityForModel("gemini-3.1-pro-preview")?.options.map((o) => o.value)).toEqual(["minimal", "low", "medium", "high"]);
-    expect(reasoningCapabilityForModel("mistral-small-2603")?.options.map((o) => o.value)).toEqual(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    // Mistral (benchmark 2026-07-08 provider 400s): ONLY medium-3-5 has a reasoning
+    // capability, and only high|none. small-2603 rejects the reasoning prompt mode outright,
+    // and no other family id is evidence-backed — they all get a plain chat body instead.
+    expect(reasoningCapabilityForModel("mistral-medium-3-5")?.options.map((o) => o.value)).toEqual(["none", "high"]);
+    expect(reasoningCapabilityForModel("mistral-small-2603")).toBeUndefined();
+    expect(reasoningCapabilityForModel("mistral-large-2512")).toBeUndefined();
+    expect(reasoningCapabilityForModel("magistral-medium-2506")).toBeUndefined();
     expect(reasoningCapabilityForModel("deepseek-v4-pro")?.options.map((o) => o.value)).toEqual(["none", "high", "max"]);
   });
 
@@ -72,6 +78,14 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "low")).toBe("none");
     expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "high")).toBe("high");
     expect(normalizeReasoningEffortForModel("deepseek-v4-pro", "xhigh")).toBe("max");
+    // Mistral Medium 3.5 follows the same opt-in rule (provider allows only high|none): the
+    // default/medium request resolves to "none", never a silent upgrade to the expensive
+    // "high" tier the rank-distance normalization would otherwise pick.
+    expect(normalizeReasoningEffortForModel("mistral-medium-3-5", undefined)).toBe("none");
+    expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "medium")).toBe("none");
+    expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "high")).toBe("high");
+    expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "xhigh")).toBe("high");
+    expect(normalizeReasoningEffortForModel("mistral-small-2603", "high")).toBeUndefined();
   });
 
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
@@ -149,14 +163,40 @@ describe("llm-request — withLlmRequestBounds", () => {
     // hidden reasoning tokens against the same max_completion_tokens cap as the visible JSON.
     expect(xai.max_completion_tokens).toBe(1500 + 8000);
 
-    const mistral = withLlmRequestBounds({ model: "mistral-large-2512" }, "chat-completions", {
+    // mistral-medium-3-5 at an explicit high: reasoning_effort high + prompt_mode riding
+    // along (both passed provider validation in the 2026-07-08 benchmark; only the old
+    // "medium" effort value 400'd).
+    const mistralHigh = withLlmRequestBounds({ model: "mistral-medium-3-5" }, "chat-completions", {
       maxOutputTokens: 1500,
-      model: "mistral-large-2512",
-      reasoningEffort: "xhigh"
+      model: "mistral-medium-3-5",
+      reasoningEffort: "xhigh" // normalizes to "high" — the provider's only reasoning tier
     });
-    expect(mistral.reasoning_effort).toBe("xhigh");
-    expect(mistral.prompt_mode).toBe("reasoning");
-    expect(mistral.max_completion_tokens).toBe(1500 + 12000);
+    expect(mistralHigh.reasoning_effort).toBe("high");
+    expect(mistralHigh.prompt_mode).toBe("reasoning");
+    expect(mistralHigh.max_completion_tokens).toBe(1500 + 8000);
+
+    // mistral-medium-3-5 at the default (medium => none): reasoning_effort "none" (a value the
+    // provider explicitly supports), NO prompt_mode.
+    const mistralOff = withLlmRequestBounds({ model: "mistral-medium-3-5" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "mistral-medium-3-5",
+      reasoningEffort: "medium"
+    });
+    expect(mistralOff.reasoning_effort).toBe("none");
+    expect("prompt_mode" in mistralOff).toBe(false);
+    expect(mistralOff.max_completion_tokens).toBe(1500);
+
+    // mistral-small-2603 rejects reasoning params entirely ("Reasoning prompt mode is not
+    // enabled for this model") — it must get a plain temperature body with no reasoning keys.
+    const mistralSmall = withLlmRequestBounds({ model: "mistral-small-2603" }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: "mistral-small-2603",
+      reasoningEffort: "high"
+    });
+    expect("reasoning_effort" in mistralSmall).toBe(false);
+    expect("prompt_mode" in mistralSmall).toBe(false);
+    expect(mistralSmall.temperature).toBe(0);
+    expect(mistralSmall.max_completion_tokens).toBe(1500);
 
     const deepseek = withLlmRequestBounds({ model: "deepseek-v4-pro" }, "chat-completions", {
       maxOutputTokens: 1500,
@@ -206,7 +246,7 @@ describe("llm-request — withLlmRequestBounds", () => {
       openai: "gpt-5.4-mini",
       xai: "grok-4.3",
       gemini: "gemini-2.5-flash",
-      mistral: "mistral-large-2512",
+      mistral: "mistral-medium-3-5",
       deepseek: "deepseek-v4-pro",
       anthropic: "claude-opus-4-8"
     };

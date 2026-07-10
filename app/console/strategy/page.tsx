@@ -166,6 +166,10 @@ function reasoningPatchFor(models: string[], effort: LlmReasoningEffort | undefi
   return value ? { llmReasoningEffort: value } : {};
 }
 
+/** high/xhigh/max are the EXPENSIVE, slow-latency reasoning tier every opt-in provider branch in
+ *  `normalizeReasoningEffortForModel` (Mistral, DeepSeek) guards behind an explicit user request. */
+const HIGH_TIER_REASONING_EFFORTS: ReadonlySet<LlmReasoningEffort> = new Set(["high", "xhigh", "max"]);
+
 function normalizeReasoningValueForControl(
   models: string[],
   control: ReturnType<typeof reasoningControlForModels>,
@@ -177,7 +181,21 @@ function normalizeReasoningValueForControl(
     const model = models.find((candidate) => reasoningCapabilityForModel(candidate)?.provider === provider);
     return normalizeReasoningEffortForModel(model, effort) ?? normalizeReasoningEffortForOptions(control.options, effort);
   }
-  return normalizeReasoningEffortForOptions(control.options, effort);
+  // Mixed-provider pairing (e.g. Mistral Medium 3.5's {none, high} alongside an OpenAI-reasoning
+  // model's {low, medium, high}): the intersected shared option set can collapse to HIGH-TIER
+  // ONLY. The generic rank-distance fallback below has no notion of any provider's opt-in floor,
+  // so unguarded it would map a non-explicit request (e.g. the app's "medium" default, or the
+  // request left unspecified) onto "high" -- silently enabling the slow/expensive tier on a mere
+  // model-selection change, defeating the exact opt-in guarantee every single-provider branch of
+  // `normalizeReasoningEffortForModel` exists to give. Only let a high-tier value through here
+  // when the caller's OWN requested effort was already explicitly high-tier; otherwise leave the
+  // value unset (the previously-saved effort is re-normalized independently, per model, at call
+  // time by `interactiveStrategyReasoningEffort`, so no request ever silently escalates).
+  const sharedValue = normalizeReasoningEffortForOptions(control.options, effort);
+  if (HIGH_TIER_REASONING_EFFORTS.has(sharedValue) && !HIGH_TIER_REASONING_EFFORTS.has(effort ?? "medium")) {
+    return undefined;
+  }
+  return sharedValue;
 }
 
 function ModelSelect({

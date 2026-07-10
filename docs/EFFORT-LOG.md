@@ -1388,6 +1388,16 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-capmap-fix`) — IN PROGRESS 2026-07-09.** Handoff-queue item 2 (post-#1191
+  unblocked queue). The old family-wide Mistral reasoning map 400'd every call (benchmark
+  2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only; small-2603
+  rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`: capability
+  narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in normalization
+  (high/xhigh/max -> high, else none — no silent medium->high upgrade); every other Mistral
+  id gets a plain chat body (no reasoning params). Rotation-pool re-add deliberately
+  deferred to a keyed re-benchmark (models have never completed a benchmarked call).
+  Tests updated (llm-request/llm-call). Gate running; PR via land.sh.
 - **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
   worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
   2026-07-09: PR opened, auto-merge armed.** Owner-directed,

@@ -38,8 +38,11 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * The rotation pool: the curated model catalog (keep in sync with
  * app/ui/llm-model-catalog.ts CURATED_LLM_MODEL_GROUPS — src/lib must not import from app/)
  * MINUS deliberate exclusions:
- *   - mistral-small-2603 / mistral-medium-3-5 — broken capability map (benchmark 2026-07-08,
- *     0/12 calls succeeded); re-add when the capability map is fixed.
+ *   - mistral-small-2603 / mistral-medium-3-5 — the capability map that 400'd every call
+ *     (benchmark 2026-07-08, 0/12) was fixed 2026-07-09 (medium-3-5: reasoning_effort
+ *     high|none only; small-2603: plain body, no reasoning params), but neither model has
+ *     ever completed a benchmarked call — re-add only after a keyed re-benchmark
+ *     (scripts/benchmark-llm-models.ts) shows schema-valid completions.
  *   - grok-build-0.1 — coding specialist, soft-timeouts as a Green strategist.
  * Order interleaves providers so consecutive runs hit different providers even before the
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
