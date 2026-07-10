@@ -41,13 +41,13 @@ export function getLaneHealth(
     const userClause = scopeUser ? " AND user_id IS ?" : "";
     const withUser = (params: unknown[]): unknown[] => (scopeUser ? [...params, userId] : params);
     const last5 = db
-      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC LIMIT 5`)
+      .prepare(`SELECT ok FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} ORDER BY ts DESC, rowid DESC LIMIT 5`)
       .all(...withUser([service, keySource])) as Array<{ ok: number }>;
     const lastSuccess = db
-      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC LIMIT 1`)
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 1 ORDER BY ts DESC, rowid DESC LIMIT 1`)
       .get(...withUser([service, keySource])) as { ts: string } | undefined;
     const lastFailure = db
-      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 0 ORDER BY ts DESC LIMIT 1`)
+      .prepare(`SELECT ts FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ok = 0 ORDER BY ts DESC, rowid DESC LIMIT 1`)
       .get(...withUser([service, keySource])) as { ts: string } | undefined;
     const callsLastHour = (
       db.prepare(`SELECT COUNT(*) as cnt FROM api_health_log WHERE service = ? AND key_source IS ?${userClause} AND ts >= ?`).get(...withUser([service, keySource]), hourAgo) as { cnt: number }
@@ -139,7 +139,7 @@ export function logApiHealth(opts: {
            AND id NOT IN (
              SELECT id FROM api_health_log
              WHERE service = ? AND key_source IS ?
-             ORDER BY ts DESC
+             ORDER BY ts DESC, rowid DESC
              LIMIT 500
            )`
       ).run(opts.service, keySource, opts.service, keySource);
@@ -218,7 +218,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ts, latency_ms FROM api_health_log
            WHERE service = ? AND key_source IS ? AND ok = 1
-           ORDER BY ts DESC LIMIT 1`
+           ORDER BY ts DESC, rowid DESC LIMIT 1`
         )
         .get(service, ks) as { ts: string; latency_ms: number | null } | undefined;
 
@@ -226,7 +226,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ts, error_text FROM api_health_log
            WHERE service = ? AND key_source IS ? AND ok = 0
-           ORDER BY ts DESC LIMIT 1`
+           ORDER BY ts DESC, rowid DESC LIMIT 1`
         )
         .get(service, ks) as { ts: string; error_text: string | null } | undefined;
 
@@ -253,7 +253,7 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
         .prepare(
           `SELECT ok FROM api_health_log
            WHERE service = ? AND key_source IS ?
-           ORDER BY ts DESC LIMIT 5`
+           ORDER BY ts DESC, rowid DESC LIMIT 5`
         )
         .all(service, ks) as Array<{ ok: number }>;
 

@@ -105,6 +105,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   proposalRevalidateCadenceHours: 0,
   staleLimitOrderMinutes: 15,
   autoRemediateStaleExits: true, // cancel-replace a stale EXIT limit with a market order so a stop can't strand the position (MU deadlock); owner-tunable, defers to human typed-confirm on live
+  brokerMinimumHandling: "bump", // sub-minimum orders are raised TO the broker floor and placed (owner ruling 2026-07-09: bump, not skip); "skip" restores pre-flight blocking
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,
