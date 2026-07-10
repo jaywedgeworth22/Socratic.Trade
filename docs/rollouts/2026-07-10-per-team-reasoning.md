@@ -129,9 +129,36 @@ though the policy is unset — display-only quirk of the native select; the summ
 
 ## Follow-ups
 
-- The Reviewer picker's "Blank = same as proposer" hint (pre-existing copy) contradicts the
-  server's fail-closed behavior (`resolveRoleModel("red")` returns "" — an unset Red model routes
-  openings to human review, it does NOT inherit the Green model). Left as-is here to keep this PR
-  scoped; worth an owner-visible copy fix.
+- ~~The Reviewer picker's "Blank = same as proposer" hint (pre-existing copy) contradicts the
+  server's fail-closed behavior...~~ **DONE 2026-07-10, PR TBD, branch `claude/models-card-truth`**
+  (this PR — #1346 — had already squash-merged to `main` as `c7a2fa95` by the time this follow-up
+  started, via the known auto-merge-race pattern, so the fix landed as a standalone PR rather than
+  a push onto this branch). Two things fixed, copy/display only — no resolution behavior changed:
+  1. **Proposer `ModelSelect` had no blank option** (`allowBlank` unset for `role="proposer"`):
+     when `policy.llmModel` is `""`, a native `<select value="">` with no matching `<option
+     value="">` falls back to visually showing its first rendered option ("Rotate all models
+     (testing)"), making an unconfigured Proposer look like rotation is on. Fixed in
+     `app/console/strategy/page.tsx`'s `ModelSelect` with a new `blankDisabled` prop — the Proposer
+     now renders an unselectable placeholder option ("Not set — choose a model") when blank, so the
+     select's own visual state matches the honest "Not Set" the summary line already showed.
+  2. **Reviewer hint/blank-label said "Blank = same as proposer" / "Same As Proposer", but the
+     server never inherits the Reviewer MODEL** — `resolveRoleModel(policy, "red")` in
+     `src/lib/llm-provider.ts` returns `policy.redTeamLlmModel?.trim() || ""` with no fallback to
+     `llmModel` (owner directive 2026-07-07), and `debateProposal` (`src/lib/red-team.ts`) fails
+     CLOSED to human review (`not_configured`) when that's `""`. Fixed the copy (hint + blank
+     label) to state the real consequence, and audited every use of the page's
+     `effectiveRedTeamModel = redTeamModel || proposerModel` derivation (reasoning-control display,
+     summary line, per-model advice, the reviewer "no reasoning knob" message) — all now read the
+     Reviewer's own `redTeamModel` directly (blank stays blank) instead of silently substituting
+     the Proposer's model. A blank Reviewer now shows NO reasoning control at all (there is no
+     model to have one) plus a new explicit "No Reviewer model set... every risk-adding opening
+     routes to human review" message, and the bottom summary line honestly reads "Reviewer: Not
+     Set" instead of borrowing the Proposer's provider label. Reasoning-EFFORT inheritance
+     (`resolveReviewerReasoningEffort`, item 1 above) is unaffected — that fallback is real and
+     still only rendered once a Reviewer model is actually configured.
+  - **Owner decision surfaced, not resolved here:** should a blank Reviewer instead inherit the
+    Proposer's model (matching what the old copy implied) rather than failing closed to human
+    review? This PR only makes the UI tell the truth about current behavior; switching the actual
+    behavior is a separate, owner-directed change. See PR TBD's description.
 - Curated recommended efforts are all "medium" except the opt-in-thinking providers ("none") —
   re-derive as rotation history accrues, same as the catalog's rec chips.

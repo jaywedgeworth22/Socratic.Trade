@@ -8,7 +8,31 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
-## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
+## 2026-07-10 — Framework Models card truth fixes (CLAUDE, branch `claude/models-card-truth`, follow-up to #1346)
+Fixes the two Follow-ups logged when the per-team-reasoning PR (below) landed. (1) **Proposer
+`ModelSelect` had no blank option** — an unconfigured Proposer's native `<select value="">` (no
+matching `<option value="">`) visually fell back to its first rendered option, "Rotate all models
+(testing)", even though nothing was chosen. Fixed with a new `blankDisabled` prop on `ModelSelect`
+(`app/console/strategy/page.tsx`): the Proposer now shows an unselectable placeholder ("Not set —
+choose a model") when blank, matching the honest "Not Set" the summary line already showed.
+(2) **Reviewer hint/blank-label said "Blank = same as proposer" / "Same As Proposer" — the server
+does NOT inherit the Reviewer model.** `resolveRoleModel(policy, "red")` (`src/lib/llm-provider.ts`)
+returns `policy.redTeamLlmModel?.trim() || ""` with no fallback to `llmModel` (owner directive
+2026-07-07), and `debateProposal` (`src/lib/red-team.ts`) fails CLOSED to human review
+(`not_configured`) when blank. Fixed the copy, and killed the page's
+`effectiveRedTeamModel = redTeamModel || proposerModel` derivation — every display use (reasoning
+control, summary line, per-model advice, the "no reasoning knob" message) now reads the Reviewer's
+own `redTeamModel` directly; a blank Reviewer shows no reasoning control plus a new explicit
+"routes to human review" message. Reasoning-EFFORT inheritance (a real, separate mechanism via
+`resolveReviewerReasoningEffort`) is unaffected. Display/copy only — no resolution behavior
+changed; the owner question of whether blank SHOULD inherit the Proposer model is surfaced in the
+PR description, not resolved here. **Note:** PR #1346 (below) had already squash-merged to `main`
+as `c7a2fa95` and its branch's remote ref auto-deleted by the time this follow-up started (known
+auto-merge-race pattern), so this landed as a fresh standalone branch/PR off `origin/main` rather
+than a push onto `claude/per-team-reasoning`. Gate green: tsc clean, 3383 tests / 315 files, build
+clean, lint 0 errors. See `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
+
+## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`) — MERGED as PR #1346 (`c7a2fa95`)
 Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
 `TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
 is now formally the PROPOSER's, and the reviewer resolves through the single fallback helper
