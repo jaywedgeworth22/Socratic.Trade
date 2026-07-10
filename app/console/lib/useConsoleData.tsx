@@ -35,7 +35,16 @@ const FIRST_LOAD_WATCHDOG_MESSAGE = "The dashboard is taking too long to respond
 // This timer fires ONCE per attempt (not once per event), so it cannot reintroduce that storm — it
 // only kills an attempt that has been stuck well past what any real (even fully degraded) response
 // should take.
-const FETCH_DEADLINE_MS = 20_000;
+//
+// This ceiling MUST sit above the server's own worst-case self-bounded response. getDashboardSnapshot
+// races each upstream against its own deadline, but the broker chain is SEQUENTIAL — gateway.getAccounts
+// (6s) → portfolio/positions/orders (8s) → getEquityQuotes (6s) = 20s — and computeSpyBenchmark (4s) runs
+// after it, so a slow-but-not-hung account with held symbols can legitimately take ~24s to return a fully
+// degraded snapshot. A client ceiling at/below that would abort right as the server is about to respond,
+// retry, and keep the console stuck on the watchdog/retry path even though the server deadlines are
+// working as designed. 35s leaves headroom over that 24s server bound (plus sync DB work) while still
+// killing a genuine network hang, which never resolves at all.
+const FETCH_DEADLINE_MS = 35_000;
 // Sentinel abort reason so a deadline-triggered abort can be told apart from an explicit refresh()
 // superseding this attempt (which aborts with no reason / the default AbortError).
 const DEADLINE_REASON = Symbol("dashboard-fetch-deadline");

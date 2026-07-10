@@ -20,6 +20,11 @@ broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequen
 cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
 log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
 files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+**Codex-autofix (2026-07-10):** raised the client `FETCH_DEADLINE_MS` 20s -> 35s so it sits *above*
+the server's ~24s worst-case self-bounded response (sequential broker chain 6+8+6=20s + SPY
+benchmark 4s). At 20s the client aborted a slow-but-working degraded fetch right as the server was
+about to respond and retried in a loop; 35s only kills a genuine network hang. See the Codex-autofix
+section in `docs/rollouts/2026-07-10-loading-permafix.md`. Gate re-run green.
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —

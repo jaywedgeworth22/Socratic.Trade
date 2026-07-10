@@ -127,6 +127,25 @@ it was, and finishing this task in a fresh, dedicated worktree
 files belonging to the other effort were read, moved, or modified beyond the unavoidable `git
 status`/`git diff` used to confirm the byte-identical baseline.
 
+## Codex-autofix follow-up (2026-07-10) — raise client fetch deadline above the server bound
+
+Codex PR review (P1, `useConsoleData.tsx:38`) flagged that the client's hard per-attempt ceiling
+(`FETCH_DEADLINE_MS = 20_000`) sat **at** the server's own worst-case self-bounded response, not
+above it. `getDashboardSnapshot`'s broker chain is sequential — `gateway.getAccounts` (6s) →
+`portfolio/positions/orders` (8s) → `getEquityQuotes` (6s) = 20s — and `computeSpyBenchmark` (4s)
+runs after the `Promise.all` that awaits that chain, so a slow-but-not-hung account with held
+symbols can legitimately take ~24s to return a fully degraded snapshot. At a 20s client ceiling the
+browser aborted right as the server was about to respond, `runLoop` retried on the `"deadline"`
+result, and the console could stay stuck on the watchdog/retry path even though every server
+deadline was working as designed.
+
+Fix: raised `FETCH_DEADLINE_MS` to `35_000`, above the ~24s server bound (plus the synchronous DB
+work between the broker chain and the benchmark) with headroom, while still comfortably killing a
+genuine network hang (which never resolves at all). Comment updated to document the relationship to
+the server's sequential broker-chain + benchmark budget so a future edit to either side keeps them
+in sync. No test references the constant; pure numeric/comment change. Gate re-run green: `tsc`
+clean, 3396 tests / 315 files, build clean.
+
 ## Follow-ups
 - After this PR merges, comment on AG's PR #1285 that it's superseded by this change (crediting
   the diagnosis) and close it without merging.
