@@ -10,6 +10,18 @@ steps materially change.
 
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
+MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
+flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
+armed after round-2 fixes + conflict resolution; 38 codex-review findings across both rounds
+triaged with adversarial verification — every real one fixed with regression tests, money-path
+diffs independently reviewed pre-push; late fixes ride follow-ups #1265 merged, #1266/#1267/#1269
+armed). Un-landed lanes recovered: vitest tmpdir-leak #1268 MERGED, settings-UX #1270 MERGED,
+enrichment-starvation #1272 armed. Deferred: 2-3 day activity audit (needs prod DB, migration was
+in flight — MONET's to resume), broker-min bump-to-floor (unstarted), PR #1083 close (owner call —
+dup of merged #1082). No deploys (migration deploy-hold honored); next announce-then-deploy ships
+all of this plus activates the TwelveData fix + 6 AV keys. Full detail:
+`docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
 
 ## 2026-07-09 — Settings-UX fixes landed (MONET-authored, CLAUDE usage-cap pickup; branch `monet/settings-ux-fixes`)
 Three-part settings-UX change MONET left uncommitted when its seat hit the usage cap, committed
