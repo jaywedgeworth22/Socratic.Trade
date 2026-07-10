@@ -465,6 +465,27 @@ describe("extractLlmText", () => {
     expect(extractLlmText({ output_text: "hello" })).toBe("hello");
   });
 
+  it("Mistral high-reasoning chat-completions content is a chunk array, not a string", () => {
+    const payload = {
+      choices: [
+        {
+          message: {
+            content: [
+              { type: "thinking", thinking: [{ type: "text", text: "reasoning trace, not the answer" }] },
+              { type: "text", text: "{\"ok\":true}" }
+            ]
+          }
+        }
+      ]
+    };
+    expect(extractLlmText(payload)).toBe("{\"ok\":true}");
+  });
+
+  it("Mistral chunk array with multiple text chunks concatenates them", () => {
+    const payload = { choices: [{ message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] } }] };
+    expect(extractLlmText(payload)).toBe("ab");
+  });
+
   it("Anthropic tool_use input is re-serialized to JSON", () => {
     const payload = { content: [{ type: "tool_use", name: "trade_proposals", input: { ok: true, n: 3 } }] };
     expect(JSON.parse(extractLlmText(payload)!)).toEqual({ ok: true, n: 3 });
