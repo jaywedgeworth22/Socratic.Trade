@@ -148,7 +148,7 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
                 data-active={active}
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
-                onClick={(e) => guardNav(e)}
+                onClick={(e) => guardNav(e, d.href)}
               >
                 <Icon size={16} />
                 <span className="flex-1">{d.label}</span>
@@ -189,7 +189,7 @@ function TabsSheet({
   open: boolean;
   onClose: () => void;
   pathname: string;
-  guardNav: (event?: { preventDefault: () => void }) => boolean;
+  guardNav: (event: { preventDefault: () => void } | undefined, href: string) => boolean;
   tabs: MobileTabsState;
   decisionCount: number;
   pendingCount: number;
@@ -311,7 +311,7 @@ function TabsSheet({
                         aria-current={active ? "page" : undefined}
                         title={d.desc}
                         onClick={(e) => {
-                          if (guardNav(e)) onClose();
+                          if (guardNav(e, d.href)) onClose();
                         }}
                       >
                         <Icon size={16} />
@@ -382,7 +382,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 aria-current={active ? "page" : undefined}
                 title={d.desc}
                 style={active ? { fontWeight: 800 } : undefined}
-                onClick={(e) => guardNav(e)}
+                onClick={(e) => guardNav(e, d.href)}
               >
                 <span
                   className="relative flex h-7 w-10 items-center justify-center rounded-full transition-colors"
