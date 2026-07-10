@@ -1392,6 +1392,25 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
+  subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
+  IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting
+  Rotate for both seats hid the Reasoning/Thinking Effort control and printed the false "these
+  models do not expose a reasoning control" line; (b) two rotate sentinels tripped the
+  "SAME model critiquing its own proposals" independence warning. Fix: UI-only synthetic
+  `ROTATION_UI_REASONING_CAPABILITY` (full generic ladder; `reasoningCapabilityForModel` still
+  returns undefined for the raw sentinel so server paths keep failing closed), page helpers
+  extracted to `app/console/strategy/reasoning-control.ts` (sentinel-aware + unit-tested),
+  honest rotation summary/hints, "Per-model default (no high-tier escalation)" blank option for
+  high-tier-only shared pairings (fixes the c2f0d754 disappear-on-default control without
+  re-widening the evidence-backed Mistral capability map), AI-review upfront local-rules
+  disclosure when both seats rotate, sentinel-aware independence hint, approval-card/red-team
+  sentinel leak fixes. Gate: tsc clean / lint 0-err on touched files / full suite 311 files
+  3262 tests green. Sequencing RESOLVED 2026-07-10: the rotate-fix lane's same-model-pairing
+  skip merged to `main` via #1294 and this branch merged `origin/main`; the independence-hint
+  copy is true of this tree (and was tightened to "whenever more than one model is eligible"
+  for the single-eligible-model degenerate pool). Waiting on base PR #1279 to merge, then
+  landing via `scripts/land.sh`. Rollout: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 - **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-capmap-fix`) — IN PROGRESS 2026-07-09.** Handoff-queue item 2 (post-#1191
   unblocked queue). The old family-wide Mistral reasoning map 400'd every call (benchmark

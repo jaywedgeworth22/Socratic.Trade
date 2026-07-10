@@ -20,6 +20,27 @@ addressed by #1287, so #1272 was closed as superseded (05:30Z); the round-2 cap-
 dead by the ruling — do not resurrect. Boards flipped (effort row → Completed via #1287); deploy
 rode main@597b991c (deployer session owns health-verify + the Deployed flip). See
 `docs/rollouts/2026-07-09-enrichment-starvation-fix.md` (Disposition section).
+## 2026-07-10 — Rotation-UX fixes (CLAUDE subagent, branch `claude/rotate-ux-fixes`, stacked on #1279)
+Owner reports fixed: (a) with a seat (or both) set to "Rotate all models", the Reasoning/Thinking
+Effort control vanished and the summary falsely claimed the selection "does not expose" a reasoning
+control — now the sentinel maps to a UI-only synthetic capability (`ROTATION_UI_REASONING_CAPABILITY`,
+full generic ladder) with honest copy that the chosen effort applies per served model, clamped per
+run to each model's supported range (call-time semantics untouched; the raw sentinel still fails
+closed everywhere server-side); (b) two rotate sentinels no longer trip the "SAME model critiquing
+its own proposals" independence warning — sentinel-aware positive copy instead. Also: the
+c2f0d754 high-tier-only-pair guard no longer hides the whole control (explicit "Per-model default
+(no high-tier escalation)" blank option + per-model "takes no reasoning parameters" note restores
+visibility and an explicit High opt-in without re-widening the evidence-backed Mistral capability
+map); AI review panel now discloses upfront that a blank strategist under all-rotate runs on local
+rules (no LLM); approval-card provenance/badges and `redTeamFailureModel` never leak the raw
+"__rotate__" sentinel. Page helpers extracted to `app/console/strategy/reasoning-control.ts`
+(unit-tested). Gate: tsc clean, lint 0 errors on touched files, full suite 311 files / 3262 tests.
+**Sequencing resolved 2026-07-10:** the parallel lane's same-model-pairing skip merged to `main`
+via #1294 (`advanceRotationPointers` skips red one slot when its pick would equal green's, pool
+>= 2) and this branch merged `origin/main`, so the independence-hint copy is true of this tree;
+the copy was additionally tightened to "whenever more than one model is eligible" to stay
+strictly true for a single-eligible-model pool. Detail:
+`docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 
 ## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
 Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call

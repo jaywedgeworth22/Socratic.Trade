@@ -4,6 +4,7 @@
  *  chip wording matches the "(provider error)"-style suffixes already stamped into proposal
  *  rationales by the policy-aware routing path. Pure module: safe for console AND mobile. */
 
+import { isModelRotationSentinel } from "@/lib/llm-request";
 import { describeRedTeamFailureKind } from "@/lib/red-team-routing";
 import type { TradeProposal } from "@/lib/types";
 
@@ -29,10 +30,13 @@ export function redTeamFailureMeta(failureKind: RedTeamVerdict["failureKind"]): 
 
 /** The model to attribute a FAILED review to, without fabricating one: the verdict's own
  *  persisted model first; when the failure was "not configured" there IS no model — return
- *  null rather than blaming a configured/default model that never ran. */
+ *  null rather than blaming a configured/default model that never ran. A configured
+ *  "__rotate__" sentinel is likewise never a model that ran (it is a rotation marker the run
+ *  resolves to a concrete pick), so it must never be displayed as the failed reviewer. */
 export function redTeamFailureModel(verdict: RedTeamVerdict, configuredRedTeamModel?: string | null): string | null {
   const persisted = verdict.model?.trim();
   if (persisted) return persisted;
   if (verdict.failureKind === "not_configured") return null;
+  if (isModelRotationSentinel(configuredRedTeamModel)) return null;
   return configuredRedTeamModel?.trim() || null;
 }
