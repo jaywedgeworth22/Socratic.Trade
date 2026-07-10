@@ -561,6 +561,12 @@ LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's committed
 `origin/main` clean, full gate re-run green in this worktree, post-`npm test` check confirmed no
 lingering `agentic-vitest-*` dir in the real tmpdir, PR opened via `land.sh` with auto-merge armed.
 
+## 2026-07-10 — Canonical market-data pricing doc (CLAUDE, branch `claude/provider-pricing-doc`)
+New `docs/market-data-provider-pricing.md`: verified vendor pricing/tier facts for all 7 market-data
+providers, the 6 traps already hit once (tiingo news 403s, tiingo hidden $300/yr annual — owner
+correction, AV per-IP cap, FMP annual-billing display, Massive scope, Finnhub cliff), current
+paid/free/considering state, and the Infisical knob cheat-sheet. Update it on every plan change.
+
 ## 2026-07-09 — PRODUCTION MOVED to the 8 GB Hetzner box `135.181.192.190` (CLAUDE, branch `claude/hetzner-server-migration-d59cd1`)
 Owner-directed server migration off the 4 GB `91.98.44.8` box (which OOM-failed its final build
 while we waited on it). Full Coolify-instance migration: pg_dump + `/data/coolify` (preserves the
