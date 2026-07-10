@@ -231,6 +231,22 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
+  `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
+  Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
+  "Proposer"/"Reviewer" colored (green `var(--con-pos)` / red `var(--con-neg)` via token-color
+  spans, never hex; "Model" stays default text color; same font-weight as before) in
+  `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. Helper copy simplified:
+  "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red" everywhere in those two
+  files' hints/intro copy/missing-model banner, plus the "Proposer (Green Team)"/"Reviewer (Red
+  Team)" role label in `app/console/components/model-stats-drawer.tsx` (the info-drawer button
+  embedded directly next to both pickers) → "Proposer (Green)"/"Reviewer (Red)". Deliberately did
+  NOT touch `approval-card.tsx`, `results/page.tsx`, `decisions/[id]/page.tsx`, or
+  `app/console/lib/red-team.ts` — different console pages/areas, out of the
+  settings/strategy-models scope; nor any server/lib identifiers, types, logs, or docs (only
+  display strings). Verified in both light and dark mode via live preview (`--con-pos`/
+  `--con-neg` computed colors matched exactly). Gate green: tsc clean, 315 files / 3351 tests,
+  build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — COMPLETED
   2026-07-10.** Owner-directed read-only audit of the production Activity feed (07-07..09):
   36-agent workflow (5 domain investigators over the prod DB + repo, adversarial verification
@@ -501,6 +517,7 @@ As of 2026-07-08 (assignment-rule update).
   learning-review 32/32, policy-scope 53/53 (pr7-merge-gate green), build clean, eslint 0-err. Built off
   #1278 tip 150257ae (target code only exists on the unmerged PR). #2 (unshown-item orphaning) remains the
   only open #1278 deferred item. See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
+- **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1314 (owner-assigned).** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team (2 Sonnet + 1 Fable implementers in isolated worktrees; adversarial verify wave caught the chat get_reflection legacy-key regression pre-land): (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rode here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row — re-fetch main post-#1314 before the 42-site pass). Full gate green under node@24; rollout `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`. POST-DEPLOY watch: one Roth run producing >0 proposals.
 
 - **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
   IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
@@ -1456,6 +1473,30 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
+  — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
+  a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
+  credKey, wanted)` returns how many requests fit under ALL windows now (per-credential, multi-window
+  MIN, sliding, never blocks), caller queries the admitted best-first symbols + defers the rest.
+  Scoped to hard-windowed-cap providers pacing can't solve — **twelvedata (8/min+800/day),
+  tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
+  (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
+  Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
+  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
+  advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
+  the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
+  budget; add `truncated` + `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT
+  truncated (else just below the oldest DROPPED un-reviewed item), while still storing the fingerprint so
+  annotate mode doesn't re-run the LLM daily. Marker only ever becomes MORE conservative than the old
+  unconditional `now` → no regression to 8da047aa's max-age reachability (its regression test still
+  passes). +4 tests (pack-truncation flags; 200-item backlog drains across exactly 3 daily runs in BOTH
+  annotate+decide, every item shown, none silently reviewed). node@24: tsc clean, full suite 3338/3338,
+  learning-review 34/34, eslint 0-err, build clean. Closes the LAST open #1278 deferred item (#3
+  legacy-seed is a separate in-progress peer lane). See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
 - **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
   PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
   tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.

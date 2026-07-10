@@ -229,7 +229,7 @@ export function ModelsCard() {
   // auto-saves independently on change — including back to blank/unset, which sends null — so nothing
   // here blocks that write; the runtime fails closed on its own whenever either is unset (including
   // pre-existing accounts from before this rule) — the banner below makes that legible.
-  const missingModels = [!green ? "Strategist (green team)" : null, !red ? "Reviewer (red team)" : null].filter(
+  const missingModels = [!green ? "Strategist (Green)" : null, !red ? "Reviewer (Red)" : null].filter(
     (m): m is string => m !== null
   );
   // Independence HINT (never a gate): same model — or same provider — for both teams is ALLOWED,
@@ -300,8 +300,8 @@ export function ModelsCard() {
       }
     >
       <p className="mb-3 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-        Which models argue about your money. The Proposer (aka Green Team or Bull) writes the trade proposals;
-        the Reviewer (aka Red Team or Bear) fact-checks and critiques every risk-adding opening at its final size
+        Which models argue about your money. The Proposer (aka Green) writes the trade proposals;
+        the Reviewer (aka Red) fact-checks and critiques every risk-adding opening at its final size
         before it places. <strong>Both are required</strong> — there is no default model and no fallback: runs fail
         closed (route to your approval) until both are chosen. Coach is browser-local and also adjustable on the Coach
         page. Providers without a resolvable key are disabled — add one under API keys below.
@@ -314,8 +314,12 @@ export function ModelsCard() {
       )}
       <div className="grid gap-4 lg:grid-cols-3">
         <Field
-          label="Proposer — required"
-          hint="aka Green Team or Bull — writes the trade proposals each run. Required: there is no default model."
+          label={
+            <>
+              <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+            </>
+          }
+          hint="Green — writes the trade proposals each run. Required: there is no default model."
           htmlFor="models-green"
         >
           <div className="flex items-start gap-2">
@@ -336,8 +340,12 @@ export function ModelsCard() {
           </div>
         </Field>
         <Field
-          label="Reviewer — required"
-          hint="aka Red Team or Bear — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
+          label={
+            <>
+              <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+            </>
+          }
+          hint="Red — fact-checks and critiques every risk-adding opening at its final size (approve / approve-at-half / reject). Required: it never falls back to the strategist. Reliability matters more than smarts here — a model that returns malformed JSON even 1% of the time silently routes that trade to you instead of reviewing it; Anthropic (forced tool call) and OpenAI (strict structured outputs) are the most schema-reliable choices."
           htmlFor="models-red"
         >
           <div className="flex items-start gap-2">
