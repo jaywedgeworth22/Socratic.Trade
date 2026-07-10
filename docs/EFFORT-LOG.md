@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
   `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
   Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
@@ -500,6 +501,44 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (CLAUDE, branch `claude/audit-item10-attribution`) — IN PROGRESS 2026-07-10, built and locally committed, not yet pushed/landed.** Picked up the RESERVED row (split out of MONET's P1 batch per owner). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites that had it available but omitted it: 41 in `src/lib/strategy.ts` (`runStrategyOnce`'s local const; `policy.connectedAccountId` in every function that already takes a full `policy` param — `resolveScanScoringWeights`, `applyCorrelationClusterGate`, `applyEarningsBlackoutTag`, `applyRiskReceipts`, `applyDeterministicSizing`, `executeProposal`; `autoRevertOnCapBreach`'s own audit call now uses the param it already had; `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` gained an optional trailing `connectedAccountId` param, wired at their `runStrategyOnce` call sites) + all 13 `audit()` sites in `src/lib/synthetic-stops.ts` (one more than the report's "12" — `broker_protective_stop_reconcile_error` fixed too for consistency, same function scope). `strategy_bull_truncated` + post-mortem.ts/`setUserSetting` left untouched — already fixed by the P1 batch. Zero behavior changes to trading logic (4th-arg audit attribution + two new optional trailing params only). Verify: `npx tsc --noEmit` clean, eslint 0 errors (9 pre-existing grandfathered warnings), 46 focused test files / 523 tests green under node@24 (all `strategy-*`/`synthetic-stops`/sizing/gate/veto/wash-sale/reconciliation/scheduler suites touching these two files). Full gate (`npm test` full run + `npm run build`) deferred to the Land phase. Rollout: `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+
+- **Framework Models card truth fixes — Proposer blank-select display + Reviewer "inherits
+  proposer" false copy (CLAUDE, branch `claude/models-card-truth`) — IN PROGRESS 2026-07-10,
+  follow-up to the per-team-reasoning effort below.** Two pre-existing `app/console/strategy/page.tsx`
+  issues logged as follow-ups when PR #1346 landed: (1) the Proposer `ModelSelect` had no blank
+  option, so an unconfigured Proposer's native `<select>` visually fell back to showing "Rotate all
+  models (testing)" even though nothing was chosen — fixed with a new `blankDisabled` placeholder
+  option ("Not set — choose a model"). (2) The Reviewer hint/blank-label said "Blank = same as
+  proposer" / "Same As Proposer", but `resolveRoleModel(policy, "red")`
+  (`src/lib/llm-provider.ts`) never falls back to the Proposer model — a blank Reviewer fails CLOSED
+  to human review (`debateProposal`'s `not_configured`, `src/lib/red-team.ts`, owner directive
+  2026-07-07). Fixed the copy to state the real consequence and audited every display use of the
+  page's `effectiveRedTeamModel = redTeamModel || proposerModel` (killed that derivation; reasoning
+  control, summary line, and per-model advice now read the Reviewer's own `redTeamModel` directly).
+  Reasoning-EFFORT inheritance (a real, separate mechanism) is unchanged. Display/copy only — no
+  resolution behavior changed; owner question on whether blank SHOULD inherit is surfaced in the
+  PR description, not resolved here. Gate green (tsc clean / 3383 tests / build clean / lint 0-err).
+  Landed via `scripts/land.sh` as standalone PR #1349 off `origin/main`, auto-merge armed (PR #1346's branch was already
+  auto-merged and its remote branch auto-deleted by the time this started — known auto-merge-race
+  pattern). Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
+- **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
+- **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
+  `monet/learning-review-legacy-seed-99138a`) — IN PROGRESS 2026-07-10; PR #1326 open, full land.sh gate
+  green, auto-merge armed. #1278 squash-merged to `main` mid-work (`6f1aaf87`), so rebased onto `main`
+  (single commit) — standalone follow-up, not stacked.** `seedLegacyLearningReviewFields`
+  (`src/lib/db-profiles.ts`) bailed whenever any `learningReview*` key was present in
+  `user_settings.policy`; a legacy FULL blob stamps the DEFAULT `learningReviewEnabled:false` there
+  while the real enabled review lives account-scoped (#1116), so a pre-cutover enabled review silently
+  read as disabled. Fix = (1) full-blob-vs-tiered disambiguation (`isTieredWrite = every stored key is
+  user-level`) so a tiered `pickUserFields` write's review key is authoritative but a full blob's is a
+  stale default to seed over, and (2) a one-time `learning_review:legacySeedDone:<userId>` marker set
+  unconditionally on first read so the seed only ever evaluates pre-deploy state and can never re-fire to
+  clobber a later deliberate disable (the fail-OPEN danger the naive fix risked). +2 tests
+  (full-blob recovered; tiered-disable NOT clobbered), pre-fix falsified. node@24: tsc clean,
+  learning-review 32/32, policy-scope 53/53 (pr7-merge-gate green), build clean, eslint 0-err. Built off
+  #1278 tip 150257ae (target code only exists on the unmerged PR). #2 (unshown-item orphaning) remains the
+  only open #1278 deferred item. See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1314 (owner-assigned).** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team (2 Sonnet + 1 Fable implementers in isolated worktrees; adversarial verify wave caught the chat get_reflection legacy-key regression pre-land): (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rode here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row — re-fetch main post-#1314 before the 42-site pass). Full gate green under node@24; rollout `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`. POST-DEPLOY watch: one Roth run producing >0 proposals.
 
 - **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
@@ -665,6 +704,26 @@ As of 2026-07-08 (assignment-rule update).
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
+  `claude/per-team-reasoning`) — ✅ COMPLETED 2026-07-10: PR #1346 merged to `main` (squash
+  `c7a2fa95`, verify green; land.sh gate tsc / lint 0-err / 3383 tests / build + live browser smoke
+  of all four items). Owner-directed; includes the 2026-07-10 scope add (usage link + Learning
+  Review "Model settings" links).** New account-scoped `TradingPolicy.redTeamReasoningEffort`
+  (mirrors `redTeamLlmModel` naming); legacy `llmReasoningEffort` = the PROPOSER's; reviewer falls
+  back until explicitly set via the single helper `resolveReviewerReasoningEffort`
+  (src/lib/llm-request.ts), wired at red-team.ts / strategy-tuning.ts / the AI-review panel.
+  `validatePolicy` rejects a gpt-5.5+high combo on EITHER team, naming the team. Framework UI:
+  per-seat reasoning selects (shown only when that model supports it), curated per-model advice from
+  NEW `src/lib/model-reasoning-recommendations.ts` (gpt-5.5 interactive-high rule surfaced BEFORE
+  save; High disabled in-select), reviewer "Same as proposer (…)" inherit option; rotating seats
+  hide the manual control — `resolveModelRotationForRun` auto-sets each rotated model's curated
+  recommended effort (unknown → medium) on the run-scoped override, audited on
+  `model_rotation_pick`. Plus "LLM usage & cost" link (Models card → /console/usage) and "Model
+  settings" links on both approvals Learning Review blocks → new Settings `#learning-review` anchor.
+  Follow-up chip spawned (pre-existing, NOT introduced): unset-proposer select visually shows
+  "Rotate all models"; reviewer "Blank = same as proposer" hint contradicts server fail-closed —
+  fixed 2026-07-10 via `claude/models-card-truth`, see the In Progress entry above.
+  Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md`.
 - **Plain-English Anthropic usage-limit error (CLAUDE, cloud lane, 2026-07-06).** Owner reported a
   screenshot where a Roth IRA thesis card's "⚠ RED TEAM FAILED (provider error)" note showed a raw
   Anthropic JSON error blob (`{"type":"error","error":{"type":"invalid_request_error","message":"You
@@ -1476,6 +1535,44 @@ As of 2026-07-08 (assignment-rule update).
   (broker-protective-stops + synthetic-stops + broker-side + broker-held-orders) 68/68, eslint 0
   errors. Full `npm test`/`npm run build` + `land.sh` deferred to the landing session. See
   `docs/rollouts/2026-07-10-broker-stop-residual-a-fix.md`.
+- **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
+  PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
+  The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
+  capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
+  100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
+  EMPTY proposals; Red verdicts both models correctly shaped + sharp; benchmark's 0% red
+  schema-valid is a validator artifact (green proposals-check applied to red — fixed).
+  Keys resolved at runtime from Infisical prod (automation identity), never written to disk.
+  Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
+  `docs/rollouts/2026-07-10-mistral-rebench.md`.
+  _Probe addendum (owner question "why no proposals"): reasoning-off empty list = model
+  judgment (param-stripped probe identical). High-tier probes found + FIXED two more
+  shaper bugs (medium-3-5 rejects prompt_mode too — validation-order masked; reasoning
+  tier rejects greedy sampling → no temperature when thinking). With fixes it proposes
+  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout). Script
+  gained `--effort <tier|omit>`._
+  _Rotation-pool decision (owner, same session): keep BOTH mistral models in
+  `MODEL_ROTATION_POOL` for now, pull out later if warranted — overrides the earlier
+  hold-medium-3-5-out recommendation. Pool now excludes only `grok-build-0.1`. Tests +
+  comment updated in `src/lib/model-rotation.ts` / `test/model-rotation.test.ts`._
+- **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
+  branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
+  advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
+  `app/ui/llm-model-catalog.ts`, and its `models.tsx` edits (PR #1333 label coloring) sit in a
+  disjoint region from this branch's `MODEL_GROUPS`/flags), gates green (tsc clean, focused
+  catalog/rotation/label tests 47/47), pushed, auto-merge re-armed.** Owner-directed, implemented
+  from a judged synthesis (3 independent judges converged).
+  Display-only flag changes in both synced catalog copies (`app/ui/llm-model-catalog.ts` +
+  `app/console/settings/models.tsx`): GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
+  gemini-3.1-pro-preview (owner ruling restored) + claude-sonnet-5; removed deepseek-v4-pro Red
+  (benchmark-contradicted — 0% Red schema validity, silent-veto-inflated 17/3 record),
+  gpt-5.4-mini Green+Red (reasoning burnout / unverifiable all-veto; incumbent-circular records),
+  gemini-3.5-flash Red (crowded out; keeps Green, sanctioned interim Red fallback). Conventions
+  comment rewritten with the new evidence policy + the two evidence traps; stale "balanced
+  default" label fixed (dead `DEFAULT_LLM_MODEL` export deleted — zero imports verified); PR
+  #1083 closed as superseded per owner instruction. No behavior changes. Rollout:
+  `docs/rollouts/2026-07-09-model-recs-rethink.md`.
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
@@ -1591,31 +1688,21 @@ As of 2026-07-08 (assignment-rule update).
   (`8fd8b3ab`, Sheet focus-loop guard) — clean, complementary; both sides verified present. Gate
   green pre-land. Rollout: `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
 - **Hetzner server migration: prod box 91.98.44.8 (4GB fsn1) -> 135.181.192.190 (8GB hel1)
-  (CLAUDE, worktree `.claude/worktrees/hetzner-server-migration-d59cd1`) — IN PROGRESS
-  2026-07-09 ~17:50 CDT.** Owner-directed in-conversation. Full Coolify-instance migration
-  (pg_dump coolify DB + /data/coolify incl. source/.env + ssh keys — preserves the GitHub App
-  source), rsync of the prod SQLite volume (restore-marker intact so no R2 re-restore /
-  single-litestream-writer preserved), redeploy socratic-trade-prod + github-runner service on
-  the new box, then flip the 6 Cloudflare A records (jays.services apex/*/prod +
-  socratictrade.com apex/*/admin) to the new IP. Old box kept STOPPED as rollback. #agent-sync
-  claim posted ~17:49 CDT with deploy-hold request; cutover after the in-flight c4d1bfa deploy
-  reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
-  cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
-  old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
-  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). **CLOSED OUT
-  same evening:** congress.trade IP Access Rule added (owner-authorized; SSE ok:true), first
-  8GB build proven (AG deployer seat, image a8b0185b healthy), docs PR #1247 merged. **DOMAIN
-  RENAME addendum (owner-directed, same evening): Coolify dashboard/API = host.jays.services
-  now; apex jays.services = Mac tunnel, wildcard *.jays.services DELETED; API token rotated —
-  fresh token via secret handoff needed; GitHub App webhook URL still apex (owner to update).**
-  Remaining: owner deletes the old Hetzner server after soak. (Historical remainder of this
-  row below —) OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
-  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
-  PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
-  (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
-  session was permission-blocked from creating firewall rules on that zone); first
-  announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
-  migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
+  (CLAUDE) — COMPLETE + FULLY DECOMMISSIONED 2026-07-10.** [Row rewritten in place 2026-07-10:
+  prior text carried duplicated fragments from a board-sync merge plus superseded "Remaining"
+  items.] Owner-directed 2026-07-09. Full Coolify-instance migration (pg_dump + /data/coolify
+  + instance ssh keys — GitHub App source preserved), prod SQLite volume tar-copied (no R2
+  re-restore; single-scheduler/single-litestream-writer held throughout), built image
+  save/load'ed (~5 min cutover downtime), 6 CF A records flipped. Verified same evening:
+  health 200, scheduler ticking, litestream caught up, runners re-registered; congress.trade
+  IP Access Rule for the new IP added (owner-authorized); first 8GB cold build proven (AG
+  deploy). Same-evening owner DOMAIN RENAME: Coolify dashboard/API = host.jays.services (apex
+  jays.services = Mac tunnel; wildcard deleted); fresh API token handed off at
+  ~/.secrets/global-api-keys and verified. CLOSE-OUT 2026-07-10: owner fixed the GitHub App
+  webhook URL and DELETED the old 91.98.44.8 server; CLAUDE removed the temp migration_key
+  and the old-IP congress.trade whitelist rule. Rollback path is now the litestream R2
+  replica (no standby box). Docs PRs #1247 + #1284 merged. Rollout:
+  docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
   every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
@@ -1900,7 +1987,7 @@ As of 2026-07-08 (assignment-rule update).
 
 
 
-- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch).** Thread `connectedAccountId` into ~42 `audit()` sites in `src/lib/strategy.ts` (scope map in the report: `runStrategyOnce` local at :311, `executeProposal`/`proposeTrades` via `policy`, `autoRevertOnCapBreach` param at :3425; incl. `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` signatures) and all 12 `synthetic-stops.ts` sites (`policy.connectedAccountId` is a parameter). NOTE: the `strategy_bull_truncated` emission site is EXCLUDED — handled in the P1 batch (`monet/activity-audit-p1-batch`); post-mortem.ts + `setUserSetting` no-audit flag also ride the P1 batch. Report §1.10: `docs/reviews/2026-07-09-activity-feed-audit.md`.
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch). MOVED 2026-07-10 to 🚧 In Progress (same title, this file) — see that row for the current record.** _(Corrected in place per protocol, not deleted; annotation by CLAUDE.)_
 - **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
 - **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — PLANNED 2026-07-10, unclaimed.** Return `NotifyChannelResult[]` from `sendDirectNotification`, derive sent/failed/skipped honestly, update reason mapping (`src/lib/notifications.ts:59-131`, `dashboard-ui.ts:335`); keep the operator-fallback email lane intact. Report §1.5.
 - **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.

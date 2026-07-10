@@ -136,3 +136,18 @@ box's `authorized_keys` at decommission time.
 - **Still open:** GitHub App (`socratic-trade`) webhook URL on github.com still points
   at the apex — update to `https://host.jays.services` (owner, in the GitHub App
   settings; low impact while auto-deploy is OFF). Old-server deletion after soak.
+
+## Decommission close-out (2026-07-10)
+
+- Owner updated the GitHub App webhook URL to `host.jays.services` and **deleted the old
+  `91.98.44.8` server** in the Hetzner console (SSH confirmed unreachable).
+- CLAUDE removed the temp `migration_key` keypair from the new box and deleted the
+  obsolete old-IP whitelist rule on the `congress.trade` zone (owner-directed).
+- **No standby box remains** — the DB rollback path is the litestream R2 replica
+  (`trading-live-backups/trading-live/app.db`), restored by `coolify-prod-start.sh`'s
+  marker-guarded boot on a fresh volume.
+- Post-migration connections check (prod DB `api_health_log` evidence): all dependencies
+  healthy except (a) alpha-vantage — pool works but AV enforces its 25/day cap PER IP, so
+  the 6-key rotation yields 25/day total from one box (flagged to MONET's lane on
+  #agent-sync; design decision theirs); (b) tiingo — free-tier hourly 429 burst at the
+  08:00Z scan, self-heals. Neither is migration-related.
