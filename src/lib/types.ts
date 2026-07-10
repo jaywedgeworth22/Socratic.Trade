@@ -852,6 +852,15 @@ export interface TradingPolicy {
    * when requireTypedConfirmation is on; entries are never auto-forced to market. Owner-tunable.
    */
   autoRemediateStaleExits?: boolean;
+  /**
+   * What to do with a fractional/dollar-based order that lands below the active broker's minimum
+   * order size (e.g. Robinhood's $1 floor — typically a pct-of-NAV-clamped trim on a small
+   * account). "bump" (default; owner ruling 2026-07-09): raise the order TO the floor and place
+   * it, audited as order_bumped_broker_minimum; sells are capped at the full held position and
+   * the bumped order still passes normal policy evaluation. "skip": block it pre-flight instead
+   * (the pre-ruling behavior), audited as order_skipped_broker_minimum with a cooldown-gated alert.
+   */
+  brokerMinimumHandling?: "bump" | "skip";
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
