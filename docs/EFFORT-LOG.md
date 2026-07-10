@@ -520,7 +520,7 @@ As of 2026-07-08 (assignment-rule update).
   brings the reviewer back to the whole set); no separate re-review scheduler was added. +6 tests in
   `test/learning-review.test.ts` (52/52 in the 3 learning-review-adjacent suites). Gate green: tsc
   clean, 3389 tests / 315 files, build clean, lint 0 errors. Rollout:
-  `docs/rollouts/2026-07-10-learning-review-defer.md`. PR via land.sh (number recorded once open).
+  `docs/rollouts/2026-07-10-learning-review-defer.md`. PR #1351 open, auto-merge armed (squash).
 - **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
   `claude/per-team-reasoning`) — IN PROGRESS 2026-07-10, owner-directed (was QUEUED behind
   settings-global-only on the live board; includes the 2026-07-10 scope add: usage link + Learning
