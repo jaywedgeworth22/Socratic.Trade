@@ -16,7 +16,12 @@
 // POINTER STATE: independent per-seat round-robin counters persisted via internal settings, keyed
 // `model_rotation:<userId>:<accountId>:<seat>`. To vary green/red COMBINATIONS rather than locking
 // phase (both counters advancing by 1 per run = a fixed pairing), the red counter advances one
-// EXTRA step whenever the green counter wraps a full cycle. The pointer advance + pick audit are
+// EXTRA step whenever the green counter wraps a full cycle. Additionally, when BOTH seats rotate,
+// a run never serves the SAME model to both: if red's slot would equal green's pick, red skips one
+// slot forward (pool >= 2 only — a 1-model pool degenerates to same-model by necessity). Without
+// the skip, both counters start at 0, so proposer and reviewer served identical models for the
+// entire first cycle (pairings only de-phased after the first green wrap). The pointer advance +
+// pick audit are
 // COMMITTED LATE: `resolveModelRotationForRun` computes the picks early (so the budget preview can
 // price the concrete models) but returns a `commit()` the caller only invokes once the run is
 // actually committed to serving the LLM — after account validation and the usage-budget skip gate.
@@ -33,8 +38,11 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * The rotation pool: the curated model catalog (keep in sync with
  * app/ui/llm-model-catalog.ts CURATED_LLM_MODEL_GROUPS — src/lib must not import from app/)
  * MINUS deliberate exclusions:
- *   - mistral-small-2603 / mistral-medium-3-5 — broken capability map (benchmark 2026-07-08,
- *     0/12 calls succeeded); re-add when the capability map is fixed.
+ *   - mistral-small-2603 / mistral-medium-3-5 — the capability map that 400'd every call
+ *     (benchmark 2026-07-08, 0/12) was fixed 2026-07-09 (medium-3-5: reasoning_effort
+ *     high|none only; small-2603: plain body, no reasoning params), but neither model has
+ *     ever completed a benchmarked call — re-add only after a keyed re-benchmark
+ *     (scripts/benchmark-llm-models.ts) shows schema-valid completions.
  *   - grok-build-0.1 — coding specialist, soft-timeouts as a Green strategist.
  * Order interleaves providers so consecutive runs hit different providers even before the
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
@@ -77,6 +85,12 @@ export interface RotationAdvance {
  * `pool[counter % pool.length]` and advances its counter by 1; when the GREEN counter wraps
  * (finishes a full cycle), the RED counter advances one extra step so the green/red pairing
  * shifts phase instead of repeating the same combinations forever.
+ *
+ * SAME-MODEL SKIP: when BOTH seats rotate and the pool has >= 2 models, red never serves the
+ * model green picked this run — if red's slot lands on it, red consumes the NEXT slot instead
+ * (and its counter continues from there). Both counters start at 0, so without this skip the
+ * two seats served the SAME model every run for the whole first cycle. The green-wrap extra
+ * advance stacks on top unchanged.
  */
 export function advanceRotationPointers(input: {
   pool: readonly string[];
@@ -99,7 +113,13 @@ export function advanceRotationPointers(input: {
     out.green = { model: input.pool[pointer]!, pointer, nextPointer: pointer + 1, wrapped: greenWrapped };
   }
   if (input.rotateRed) {
-    const pointer = normalize(input.redCounter);
+    let pointer = normalize(input.redCounter);
+    // Same-model skip: when both seats rotate, never serve green's pick to red too — skip to the
+    // next slot (possible only with >= 2 models). `pointer` stays the slot actually CONSUMED, so
+    // the `model === pool[pointer % n]` audit invariant holds and the counter continues past it.
+    if (out.green && n >= 2 && input.pool[pointer] === out.green.model) {
+      pointer = (pointer + 1) % n;
+    }
     out.red = {
       model: input.pool[pointer]!,
       pointer,

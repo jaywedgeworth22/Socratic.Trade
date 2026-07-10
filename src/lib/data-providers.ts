@@ -266,11 +266,6 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// Cover the default scan candidate set so every row the dashboard displays is
-// enriched — otherwise symbols that climb in rank after enrichment would render
-// blank. The 6h cache means only the first run is heavy.
-const DEFAULT_MAX_SYMBOLS = 30;
-const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 const originalSet = cache.set.bind(cache);
@@ -352,10 +347,19 @@ export function alpacaSnapshotTtlMs(): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_ALPACA_SNAPSHOT_TTL_MS;
 }
 
+// Providers enrich EVERY symbol they're asked for — the scan's candidate list (top-N ranked
+// + event outliers + all held positions) IS the budget. A fixed provider-side cap starved
+// whatever the scan appended past it (all-dash Fundamentals for the owner's own positions,
+// prod 2026-07-09), and any hard ceiling recreates that bug the day the account outgrows it
+// (owner ruling 2026-07-09: no hard cap — >50 positions is a supported future).
+// FMP_MAX_SYMBOLS stays as an EXPLICIT operator throttle for quota thrift — unclamped,
+// because a silently-clamped override is a cage, not a setting. Quota realities live where
+// they belong: the per-provider pacers in provider-rate-limit.ts, TwelveData's credit
+// window, Alpha Vantage's daily key pool, and the 6h fundamentals cache above.
 function maxSymbols(): number {
-  const value = Number(process.env.FMP_MAX_SYMBOLS ?? process.env.MARKET_SCAN_LIMIT ?? DEFAULT_MAX_SYMBOLS);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_MAX_SYMBOLS;
-  return Math.min(value, MAX_SYMBOLS_CAP);
+  const explicit = Number(process.env.FMP_MAX_SYMBOLS);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  return Number.POSITIVE_INFINITY;
 }
 
 // Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8
@@ -1228,10 +1232,12 @@ export function finnhubDropRecommendationEnabled(): boolean {
   return flagEnabled(process.env.FINNHUB_DROP_RECOMMENDATION);
 }
 
+// Default 20 is deliberate (unofficial scraping endpoint; burst-sensitive), but the env
+// override is unclamped — an operator raising it is making an explicit decision.
 function webullUnofficialMaxSymbols(): number {
   const value = Number(process.env.WEBULL_UNOFFICIAL_MAX_SYMBOLS ?? DEFAULT_WEBULL_UNOFFICIAL_MAX);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_WEBULL_UNOFFICIAL_MAX;
-  return Math.min(value, MAX_SYMBOLS_CAP);
+  return Math.floor(value);
 }
 
 function webullUnofficialTimeoutMs(): number {
@@ -3301,7 +3307,6 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
           continue;
         }
-        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;
@@ -3322,6 +3327,11 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + twelveDataNegativeTtlMs());
           result[symbol] = {};
         };
+        // Tracked across the batch so an ALL-transient batch (mis-sized credit budget, upstream
+        // outage) can be flagged below — the ok:true logged above only reflects the outer HTTP
+        // 200/JSON-parse success, not whether any embedded per-symbol data was actually usable.
+        let anyUsableSymbolData = false;
+        let anyEmbeddedTransientError = false;
         for (const symbol of batch) {
           const q = quoteMap[symbol];
           if (!q) {
@@ -3338,6 +3348,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
             const code = Number(q.code);
             if (code === 429 || code >= 500) {
               result[symbol] = {}; // transient — retry next scan, no cache write
+              anyEmbeddedTransientError = true;
             } else {
               negativeCache(symbol);
             }
@@ -3378,9 +3389,29 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           if (Object.keys(data).length > 0) {
             writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
             result[symbol] = data;
+            anyUsableSymbolData = true;
           } else {
             negativeCache(symbol); // returned a row but no usable fields — rotate it out briefly
           }
+        }
+
+        // Log exactly ONE health row for this batch, deferred until after per-symbol validation. If the
+        // whole batch surfaced embedded transient errors (429/5xx inside the HTTP 200 body) and produced
+        // NO usable symbol data, log only the failure — logging ok:true here (reflecting only the outer
+        // HTTP/JSON success) AND ok:false below for the same batch would pair them up, and getLaneHealth's
+        // circuit breaker trips only when the LAST 5 rows are all failures: alternating success/failure
+        // rows for repeated all-transient batches would never reach that state, defeating the point of
+        // this health signal. A partial batch (at least one usable symbol) still logs ok:true.
+        if (!anyUsableSymbolData && anyEmbeddedTransientError) {
+          logApiHealth({
+            service: this.name,
+            ok: false,
+            errorText: "TwelveData batch: no usable symbol data, embedded transient error(s) (429/5xx) in HTTP 200 body",
+            keySource: this.keySource,
+            userId: this.userId
+          });
+        } else {
+          logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         }
       } catch (err) {
         if (isTransientError(err)) {

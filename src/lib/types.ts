@@ -863,6 +863,15 @@ export interface TradingPolicy {
    * when requireTypedConfirmation is on; entries are never auto-forced to market. Owner-tunable.
    */
   autoRemediateStaleExits?: boolean;
+  /**
+   * What to do with a fractional/dollar-based order that lands below the active broker's minimum
+   * order size (e.g. Robinhood's $1 floor — typically a pct-of-NAV-clamped trim on a small
+   * account). "bump" (default; owner ruling 2026-07-09): raise the order TO the floor and place
+   * it, audited as order_bumped_broker_minimum; sells are capped at the full held position and
+   * the bumped order still passes normal policy evaluation. "skip": block it pre-flight instead
+   * (the pre-ruling behavior), audited as order_skipped_broker_minimum with a cooldown-gated alert.
+   */
+  brokerMinimumHandling?: "bump" | "skip";
   permittedOrderTypes: OrderType[];
   permitExtendedHours: boolean;
   runCadenceMinutes: number;
@@ -1026,6 +1035,11 @@ export interface TradeProposal {
    * fall back to the snapshot policy's configured model.
    */
   proposedByModel?: string;
+  /**
+   * The model that reviewed this proposal (Red Team). Persisted with the proposal JSON so Red
+   * attribution joins outcome analytics symmetrically. Optional: legacy proposals predate it.
+   */
+  reviewedByModel?: string;
   /**
    * Decision-time market price captured when the proposal was generated. Serves as the entry anchor
    * for the deterministic entry-drift guard (policy.maxEntryDriftPct) at approval time. Persisted with

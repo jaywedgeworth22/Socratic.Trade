@@ -118,10 +118,11 @@ PM2 `next dev` servers (ports 4001/4100-4104 — stopped and deleted from pm2), 
 preview app (`socratic-trade-preview` — deleted). **Do not start, recreate, or route to
 any of these.** Coolify's PR-preview feature was considered and deliberately NOT enabled
 (it auto-builds every PR; build bursts OOM-wedged and disk-filled the 4 GB box on
-2026-07-07/08) — revisit only on owner instruction. For that future option the plumbing
-is pre-armed (owner-directed 2026-07-08): a `*.jays.services` wildcard A record points at
-the box, preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
-names fail CF Universal SSL), the Preview URL Template is a UI-only Coolify field, and
+2026-07-07/08) — revisit only on owner instruction. For that future option, notes that
+still apply: preview hostnames must be ONE level (`pr{{pr_id}}.jays.services` — two-level
+names fail CF Universal SSL; the `*.jays.services` wildcard A record was deleted by the
+owner 2026-07-09, so per-preview records would need re-creating), the Preview URL Template
+is a UI-only Coolify field, and
 `socratic-trade-prod` carries a preview-scoped `DB_BOOTSTRAP=fresh` so a PR preview can
 never restore the production DB and trade. To check
 your work: `npm run dev` locally in your own worktree + the verify CI gate.
@@ -131,9 +132,13 @@ dead after the preview retirement; the pre-push hook they used to install is now
 by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
 Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
-dashboard `https://jays.services` — direct DNS, no Mac dependency; migrated 2026-07-09
-from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the owner deletes
-it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`). The box hosts
+dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
+2026-07-09 from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the
+owner deletes it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
+**The dashboard moved off the apex the same evening (owner-directed): `jays.services`
+(apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
+script calling `https://jays.services/api/v1/...` must use
+`https://host.jays.services/api/v1/...` instead.** The box hosts
 `socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
 `github-runner` service (two GitHub Actions deploy runners).
 **Build caveats:** the box's `concurrent_builds` is

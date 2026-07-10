@@ -2,7 +2,9 @@ import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
 export type OpenAiTransport = "responses" | "chat-completions";
-export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+/** "rotation" is a UI-ONLY pseudo-provider for the "__rotate__" seat sentinel (see
+ *  ROTATION_UI_REASONING_CAPABILITY) — no wire-shaping branch may ever match it. */
+export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "rotation";
 
 export interface LlmReasoningOption {
   value: LlmReasoningEffort;
@@ -120,8 +122,16 @@ function geminiAllowsThinkingOff(model: string | undefined): boolean {
   return /^gemini-2\.5-(?:flash|flash-lite)(?:$|[-.:_])/.test(lowerModel(model));
 }
 
-function isMistralModel(model: string | undefined): boolean {
-  return /^(mistral|ministral|magistral|codestral|devstral|pixtral|open-mistral|open-mixtral)(?:$|[-.:_])/.test(lowerModel(model));
+// Mistral reasoning capability is deliberately narrow (benchmark 2026-07-08: 0/12 calls
+// succeeded under the old family-wide map). Provider-enforced facts from Mistral's own 400s:
+// mistral-medium-3-5 accepts reasoning_effort ∈ {high, none} ONLY ("reasoning_effort medium
+// is not supported for this model, supported values: [high, none]"), and mistral-small-2603
+// rejects the reasoning prompt mode outright ("Reasoning prompt mode is not enabled for this
+// model"). Every other Mistral-family id (small, large, magistral, codestral, …) gets NO
+// reasoning capability — a plain chat-completions body is the only shape known valid across
+// the family, and the catalog only offers small-2603/medium-3-5 anyway.
+function isMistralReasoningEffortModel(model: string | undefined): boolean {
+  return /^mistral-medium-3-5(?:$|[-.:_])/.test(lowerModel(model));
 }
 
 function isDeepSeekV4Model(model: string | undefined): boolean {
@@ -167,13 +177,13 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
       options: options(geminiAllowsThinkingOff(model) ? ["none", "minimal", "low", "medium", "high"] : ["minimal", "low", "medium", "high"])
     };
   }
-  if (isMistralModel(model)) {
+  if (isMistralReasoningEffortModel(model)) {
     return {
       provider: "mistral",
       label: "Mistral Reasoning",
       settingLabel: "Reasoning Effort",
-      description: "Mistral chat completions expose provider-specific reasoning effort levels.",
-      options: options(["none", "minimal", "low", "medium", "high", "xhigh"])
+      description: "Mistral Medium 3.5 accepts only high or none reasoning effort.",
+      options: options(["none", "high"])
     };
   }
   if (isDeepSeekV4Model(model)) {
@@ -187,6 +197,29 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
   }
   return undefined;
 }
+
+/**
+ * UI-ONLY synthetic reasoning capability for the "__rotate__" seat sentinel, so the settings UI can
+ * keep the effort control VISIBLE (and its stored value editable) when a seat rotates instead of
+ * hiding the control and falsely claiming "these models do not expose a reasoning control".
+ *
+ * Deliberately NOT returned by `reasoningCapabilityForModel`: every server call path derives its
+ * wire shape from that function (and from `normalizeReasoningEffortForModel`), and both must keep
+ * failing closed on a raw sentinel — the strategy run substitutes the concrete rotation pick before
+ * any request is shaped (src/lib/model-rotation.ts), and each served model then re-clamps the stored
+ * effort to its own supported range (`interactiveStrategyReasoningEffort`). Offering the full
+ * generic ladder here is honest precisely BECAUSE of that per-run clamp.
+ */
+export const ROTATION_UI_REASONING_CAPABILITY: LlmReasoningCapability = {
+  provider: "rotation",
+  label: "Rotating Models",
+  settingLabel: "Reasoning / Thinking Effort",
+  description:
+    "This seat rotates through the curated models each run. Your chosen effort applies to every served model, " +
+    "clamped per run to that model's supported range (DeepSeek and Mistral Medium treat anything below High as " +
+    "thinking off; models without a reasoning control ignore it).",
+  options: options(ALL_LLM_REASONING_EFFORTS)
+};
 
 export function normalizeReasoningEffortForOptions(
   optionsForModel: readonly Pick<LlmReasoningOption, "value">[],
@@ -221,6 +254,16 @@ export function normalizeReasoningEffortForModel(
     // the effort sent — the user can never select a value different from what actually runs.
     if (effort === "max" || effort === "xhigh") return "max";
     if (effort === "high") return "high";
+    return "none";
+  }
+  if (capability.provider === "mistral") {
+    // Mistral Medium 3.5 accepts exactly two efforts (provider 400: "supported values:
+    // [high, none]"). Same opt-in rule as DeepSeek above: only an explicit high/xhigh/max
+    // enables the slow high-reasoning tier; everything else — including the app's "medium"
+    // default — resolves to "none" rather than silently upgrading to high. (The generic
+    // rank-distance normalization below would map "medium" to "high".) The settings UI
+    // resolves through this same function, so the effort shown equals the effort sent.
+    if (effort === "high" || effort === "xhigh" || effort === "max") return "high";
     return "none";
   }
   return normalizeReasoningEffortForOptions(capability.options, effort);
@@ -525,6 +568,10 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
           : { thinking: { type: "enabled" }, reasoning_effort: normalizedEffort };
       return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
     }
+    // Mistral only reaches here as mistral-medium-3-5 with effort "none" | "high" (the only
+    // Mistral id with a reasoning capability). prompt_mode:"reasoning" rides along only on the
+    // reasoning tier — medium-3-5 accepted it in the 2026-07-08 benchmark validation, while
+    // small-2603 400s on it (which is exactly why small has no capability entry).
     const providerReasoning =
       capability.provider === "mistral" && normalizedEffort !== "none"
         ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
