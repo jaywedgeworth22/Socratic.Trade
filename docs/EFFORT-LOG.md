@@ -332,6 +332,21 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
+  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
+  PROGRESS 2026-07-09.** Root cause of "AAPL fundamentals all dashes": every enrichment provider
+  slices its symbol list to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts)
+  while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL held
+  positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
+  owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
+  from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
+  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
+  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
+  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
+  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
+  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
+  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
+
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
   2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the

@@ -1704,3 +1704,80 @@ describe("short-interest second source (Massive) — cross-check + disagreement 
     expect(res.NONE).toEqual({});
   });
 });
+
+describe("enrichment symbol budget covers the full scan candidate set (starvation regression)", () => {
+  // Prod 2026-07-09T19:41Z: scanMarket enriched top-30 ranked + 8 event outliers + 4 held
+  // names (42 symbols), but every provider sliced its list to a fixed 30 — the force-included
+  // extras (systematically the owner's HELD positions) got zero fields from every provider.
+  // The budget must cover candidateLimit + outlier reserve + a held-position allowance.
+  const ranked = Array.from({ length: 30 }, (_, i) => `RNK${i}`);
+  const outliers = Array.from({ length: 8 }, (_, i) => `EVT${i}`);
+  const held = ["AAPL", "GOOG", "V", "KO"];
+  // Held + outliers first, mirroring scanMarket's enrichment priority order.
+  const candidates = [...held, ...outliers, ...ranked];
+
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+
+  function stubSymbolRecordingFetch(): Set<string> {
+    const fetched = new Set<string>();
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const symbol = new URL(String(url)).searchParams.get("symbol");
+      if (symbol) fetched.add(symbol);
+      return new Response(JSON.stringify({}));
+    });
+    return fetched;
+  }
+
+  it("enriches every candidate: candidateLimit + outlier reserve + held extras (the 42-symbol prod shape)", async () => {
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const result = await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+    expect(Object.keys(result).length).toBe(candidates.length);
+  });
+
+  it("still covers the force-included extras when MARKET_SCAN_LIMIT pins the scan size", async () => {
+    // MARKET_SCAN_LIMIT used to be consumed as the enrichment budget itself, re-creating
+    // the starvation for any operator with it set; it is the candidate limit, so the
+    // budget must sit ABOVE it (reserve + held allowance on top).
+    process.env.MARKET_SCAN_LIMIT = "30";
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+  });
+
+  it("keeps FMP_MAX_SYMBOLS as an absolute operator override and MAX_SYMBOLS_CAP as the cost bound", async () => {
+    process.env.FMP_MAX_SYMBOLS = "10";
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    let fetched = stubSymbolRecordingFetch();
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(candidates);
+    expect(fetched.size).toBe(10);
+
+    delete process.env.FMP_MAX_SYMBOLS;
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    // 60 distinct symbols — more than the 50-symbol cap: quota safety must still win.
+    const sixty = Array.from({ length: 60 }, (_, i) => `CAP${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(sixty);
+    expect(fetched.size).toBe(50);
+  });
+});
