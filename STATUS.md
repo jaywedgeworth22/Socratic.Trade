@@ -21,6 +21,167 @@ the two evidence traps; stale "balanced default" label fixed and the dead `DEFAU
 export deleted (zero imports, verified). PR #1083 closed as superseded (owner-directed).
 Follow-up flagged: harden the Bear parse to treat unknown envelopes as parse failure. See
 `docs/rollouts/2026-07-09-model-recs-rethink.md`.
+## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
+Owner-directed pure display-copy change. Field labels for the two model pickers now read
+"Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
+`var(--con-pos)` / red `var(--con-neg)` via token-color spans, "Model" stays default,
+same weight) in `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`.
+Helper copy simplified: "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red"
+throughout those two files, plus the drawer role label in
+`app/console/components/model-stats-drawer.tsx` ("Proposer (Green Team)" → "Proposer
+(Green)", same for Reviewer/Red). Other console pages (approval-card, results, decisions,
+red-team.ts lib) intentionally untouched — different UI areas, out of scope. Verified light
++ dark via live preview (computed colors match the tokens exactly). Gate green: tsc clean,
+3351 tests, build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
+
+## 2026-07-10 — Unified provider request quota (MONET, branch `monet/unified-provider-quota`)
+Owner directive: throttling must be "based on not knowing how many tickers will be in the scan so
+it is flexible and all other data provider settings also need to be that way." Built ONE
+`RequestQuota` primitive in `src/lib/provider-rate-limit.ts` — a provider declares real free-tier
+windows (per-min/hour/day) and `admitProviderRequests(provider, credKey, wanted)` returns how many
+of `wanted` outbound requests fit under ALL windows right now (per-credential, multi-window MIN,
+sliding, instantaneous/never-stalls); callers query the admitted best-first symbols and defer the
+rest best-effort. Scoped the QUOTA to providers with a hard windowed cap pacing can't solve —
+**twelvedata (8/min+800/day batch credits)** and **tiingo (50/hour+1000/day)** — fixing the tiingo
+403 (owner dashboard hourly −10/50: an unpaced 30-symbol scan fires ~90 req vs the 50/hr cap).
+finnhub/yahoo/alpha-vantage stay on the pre-existing PACER (per-symbol calls; spacing covers every
+symbol and is already scan-size-agnostic). Env-overridable
+`PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY` (≤0 removes a window). Tests: 40 in
+`provider-rate-limit.test.ts` (RequestQuota + resolveProviderQuota) + 2 new Tiingo + migrated
+Twelve Data. **Node trap:** this worktree's `better-sqlite3` had been rebuilt for node26 (homebrew's
+new default); rebuilt it for node@24 and run all gates under `/opt/homebrew/opt/node@24/bin`. Next:
+commit + `land.sh` under node@24; verify AV/TwelveData/Tiingo green on the next pre-market scan
+(~08:00Z). Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`.
+## 2026-07-10 — Learning-review >80-item backlog drain: PR #1278 deferred finding #2 (MONET)
+Fixed the daily learning-review silently marking a >`MAX_REVIEW_ITEMS` (80) backlog "reviewed" without
+auditing it. `buildLearningReviewContextPack` sliced the newest 80 and a complete review advanced
+`lastReviewedAt` to `now`, so overflow items stopped counting toward the trigger's newCount AND max-age.
+Fix (`src/lib/learning-review.ts`): sweep OLDEST un-reviewed first within the budget; add
+`truncated`/`reviewedThroughMs` to the pack; advance the marker to `now` only when NOT truncated (else just
+below the oldest dropped un-reviewed item), still storing the fingerprint so annotate mode doesn't re-run
+the LLM daily. Marker is only ever MORE conservative than the old `now` → no 8da047aa max-age regression.
++4 tests (200-item backlog drains across exactly 3 daily runs in both annotate+decide, none silently
+reviewed). node@24: tsc clean, full suite 3338/3338, lr 34/34, eslint 0-err, build clean. Built off merged
+`main` 6f1aaf87; branch `monet/learning-review-backlog-drain`, landing via land.sh. Closes the LAST open
+#1278 deferred item. See docs/rollouts/2026-07-10-learning-review-backlog-drain.md.
+
+## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
+Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
+The owner-directed 3-day activity-feed audit is complete: 36-agent workflow over the prod DB,
+every finding adversarially verified. Full ranked report: `docs/reviews/2026-07-09-activity-feed-audit.md`
+(3 quiet P1s — Roth proposer token-cap truncation, thesis-tag split-brain, cross-account reflection
+contamination — plus P2/P3 backlog; the historical feed storms were verified already-fixed).
+Bump-to-floor (owner ruling) merged as PR #1297 `4ef60cd3`, co-finished with the original bump lane
+after the #1280 collision resolved in #1297's favor. Fix backlog items are separate claims.
+
+## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
+Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
+`app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
+`Sheet` prompt: **Discard changes** (client-side `router.push` to the intended href), **Keep editing**
+(stay; also Esc/X/scrim), and **Review & save** (stay + open the screen's review panel). The third
+option shows only when the dirty screen registered a review opener — Guardrails does
+(`useUnsavedChanges(changeCount>0, () => setReviewOpen(true))`); the Framework page has an inline
+review so it shows two. `nav.tsx` passes the destination `href` at all three guard sites (+ `TabsSheet`
+prop-type). Dirtiness still lives in a ref'd Map, so keystrokes never re-render the shell. Gate green:
+tsc, lint 0-err, 3246 tests, build. Known follow-up: the command palette navigates without the guard
+(pre-existing gap). See `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. (The rest of the
+owner's settings-UX batch already landed: #1/#2/#4 via #1270, #5 via the credential-naming change.)
+## 2026-07-10 — db-health.ts `ts DESC` tie-sweep (CLAUDE, branch `claude/db-health-tie-sweep`)
+Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in
+`src/lib/db-health.ts` nondeterministic (ties resolve to ascending insertion order absent a
+tiebreaker, i.e. OLDEST-first) — most critically `getLaneHealth`'s consecutive-failure window
+(`last5`, line ~44) and the FIFO-cap DELETE subquery (line ~142); the pattern was already fixed
+at line 311 for `getServiceHealthLog` per a prior test-stability fix. Added `, rowid DESC` to all
+7 sites (matching the line-311 idiom): `getLaneHealth`'s `last5`/`lastSuccess`/`lastFailure`
+(lines 44/47/50), the FIFO-cap DELETE subquery (line 142), and `getServiceHealthSummaries`'s
+`lastSuccess`/`lastFailure`/`last5` (lines 221/229/256). New regression test in
+`test/api-circuit-breaker.test.ts` inserts same-timestamp rows with known insertion order and
+proves (a) it fails without the fix and (b) passes with it. Gate green: tsc clean, lint 0 errors,
+311 files / 3286 tests, build succeeds. Closes the task-chip suggestion spawned from the #1267
+lane (round-2 TwelveData health-row fix touched the same file/pattern). See
+`docs/rollouts/2026-07-10-db-health-tie-sweep.md`.
+## 2026-07-10 — Activity-audit P1 batch (MONET, branch `monet/activity-audit-p1-batch`, owner-assigned)
+The three P1s from the activity-feed audit, built by a cost-tiered agent team (2 Sonnet + 1 Fable
+implementers in isolated worktrees; adversarial verify with Fable on the money-path-subtle fix):
+(1) `strategyProposal` token cap 1500→4000 + honest `strategy_bull_truncated` audit (actual wire
+cap via new `resolveLlmWireOutputCap`, finish_reason, account attribution) — kills the Roth
+zero-proposal truncations; (2) thesis-tag split-brain — `insertProposal` defaults the columns from
+the proposal JSON, COALESCE read fallbacks, self-guarding 543-row backfill — ends the false
+"attribution is unusable" learning-loop directives; (3) reflection keys scoped per account with
+legacy-row retirement on first scoped write — the LIVE account no longer reads test/paper
+reflections, dedupe actually holds (~21 wasted LLM calls/day stop), hourly phantom `policy_change`
+cards stop; chat `get_reflection` follows the active account (verifier catch — would have gone
+silently null). The strategy.ts/synthetic-stops attribution sweep (item 10) is RESERVED for a
+second owner-directed session. Verify: lint 0 err / tsc clean / focused 113+35 / full gate via
+land.sh. Rollout: `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`.
+
+## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
+PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
+the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes
+(settings-UI options, not env) bypassed the env-derived budget. Round-2 fixes were pushed and the
+threads resolved — but #1287 ("no-cap enrichment", owner ruling 2026-07-09) had meanwhile landed
+on main carrying this branch's content (merged at 90c55579) revised to the ruling: no hard cap
+(`maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS`, unclamped), held-in-top-N hoisted in the
+enrichment order, tooltip honesty, full regression suite. Both codex findings are structurally
+addressed by #1287, so #1272 was closed as superseded (05:30Z); the round-2 cap-50 approach is
+dead by the ruling — do not resurrect. Boards flipped (effort row → Completed via #1287); deploy
+rode main@597b991c (deployer session owns health-verify + the Deployed flip). See
+`docs/rollouts/2026-07-09-enrichment-starvation-fix.md` (Disposition section).
+## 2026-07-10 — Rotation-UX fixes (CLAUDE subagent, branch `claude/rotate-ux-fixes`, stacked on #1279)
+Owner reports fixed: (a) with a seat (or both) set to "Rotate all models", the Reasoning/Thinking
+Effort control vanished and the summary falsely claimed the selection "does not expose" a reasoning
+control — now the sentinel maps to a UI-only synthetic capability (`ROTATION_UI_REASONING_CAPABILITY`,
+full generic ladder) with honest copy that the chosen effort applies per served model, clamped per
+run to each model's supported range (call-time semantics untouched; the raw sentinel still fails
+closed everywhere server-side); (b) two rotate sentinels no longer trip the "SAME model critiquing
+its own proposals" independence warning — sentinel-aware positive copy instead. Also: the
+c2f0d754 high-tier-only-pair guard no longer hides the whole control (explicit "Per-model default
+(no high-tier escalation)" blank option + per-model "takes no reasoning parameters" note restores
+visibility and an explicit High opt-in without re-widening the evidence-backed Mistral capability
+map); AI review panel now discloses upfront that a blank strategist under all-rotate runs on local
+rules (no LLM); approval-card provenance/badges and `redTeamFailureModel` never leak the raw
+"__rotate__" sentinel. Page helpers extracted to `app/console/strategy/reasoning-control.ts`
+(unit-tested). Gate: tsc clean, lint 0 errors on touched files, full suite 311 files / 3262 tests.
+**Sequencing resolved 2026-07-10:** the parallel lane's same-model-pairing skip merged to `main`
+via #1294 (`advanceRotationPointers` skips red one slot when its pick would equal green's, pool
+>= 2) and this branch merged `origin/main`, so the independence-hint copy is true of this tree;
+the copy was additionally tightened to "whenever more than one model is eligible" to stay
+strictly true for a single-eligible-model pool. Detail:
+`docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
+
+## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
+Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call
+(benchmark 2026-07-08, 0/12) because the shaper claimed a family-wide reasoning capability.
+Per Mistral's own 400s: `mistral-medium-3-5` accepts `reasoning_effort` high|none ONLY (now the
+sole Mistral capability entry, with DeepSeek-style opt-in normalization — high/xhigh/max → high,
+else none, no silent medium→high upgrade); `mistral-small-2603` rejects `prompt_mode:"reasoning"`
+outright, so it and every other Mistral id now send a plain chat body with no reasoning params.
+Rotation-pool re-add deliberately deferred to a keyed re-benchmark (neither model has ever
+completed a benchmarked call). Gate green: lint 0 errors / tsc clean / 310 files 3246 tests /
+build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
+**Close-out 2026-07-10:** MERGED as PR #1279 (`d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared
+with a fresh main-merge head) and DEPLOYED in the 06:20Z release (prod = `main@420c6747`).
+Handoff-queue state after verification: reviewedByModel stamp = ALREADY DONE (AG PR #1282
+`15c2560e` — verified against the queue item's intent; MONET claim withdrawn, board rows
+corrected); Mistral capmap = done (this PR); strategy.ts split = remains in the board's
+unassigned owner-decision bucket, start only after the open strategy.ts PRs (#1297, #1295)
+land and with an announced freeze window. Fleet env note: brew default node is now v26 —
+run `npm test`/`land.sh` in existing worktrees with `PATH=/opt/homebrew/opt/node@24/bin:$PATH`
+(`.nvmrc` pins 24; better-sqlite3 ABI mismatch otherwise).
+## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
+Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
+policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled
+runs worked; `runStrategyOnce` resolves rotation at run top) — the route now gates a rotating Green on
+`eligibleRotationPool(userId)` being non-empty, with a new actionable 412 message
+(`LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE`) when no key resolves for any catalog model; red sentinel
+never 412s (routes per-opening to human, like blank red). (2) `classifyRunFailure` (chrome.tsx) titled
+EVERY 412 "No LLM key is configured" — model-CHOICE messages now get "Choose your team models" →
+`/console/settings#models-green`; key messages keep the key title. (3) `advanceRotationPointers`
+same-model skip: dual rotation started both counters at 0 → proposer and reviewer served the SAME model
+all first cycle; red now skips one slot when its pick would equal green's (pool >= 2), wrap-advance
+intact. tsc clean; touched suites 26/26 (Node 24); reviewed, landing via `land.sh` (full gate:
+lint/tsc/test/build) — PR opened, auto-merge armed. See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 ## 2026-07-10 - Infinite-loading fix, CLAUDE layer (PR pending)
 socratictrade.com infinite logo: primary cause = SSE market-data abort-storm (AG PR #1285, land first);
 CLAUDE layer on `claude/console-load-hang` = deadlines on all 9 dashboard upstreams (degraded-not-hung,

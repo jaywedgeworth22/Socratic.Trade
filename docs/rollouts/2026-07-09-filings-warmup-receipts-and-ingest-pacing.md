@@ -130,3 +130,28 @@ once either lands — noted in the PR body.
   sit in the alphabetical tail. Acceptable: scans force-include holdings.
 - Free-tier operators who POST the admin backfill with a big explicit `limit` accept a
   slow request (21s/embed-batch) — that's the documented operator-decision semantics.
+
+## Addendum (MONET, 2026-07-10): budget 5000 + stop-early — the "lower it back down" safety
+
+Owner directives after the first full-pace run (attempted 25 / ingested 5 / skipped 20 —
+the 20 skips each cost a multi-MB EDGAR body fetch + chunking and emitted the 20-event
+Sentry warning burst SOCRATIC-TRADE-R):
+
+1. `RAG_INGEST_MAX_TEXTS_PER_DAY` raised 1000 → 5000 in Infisical prod (PATCH via the
+   in-box automation identity; activates on the next deploy). Also fixed en route:
+   Infisical carried `SEC_FILING_RAG_MAX_PER_RUN=1`, shadowing the paid per-run default —
+   updated to 25. Fleet note: docker-exec env does NOT show infisical-injected vars;
+   read `/proc/<next-pid>/environ`.
+2. Stop-early (`src/lib/web-sources/sec-filings.ts`, `src/lib/vector-db.ts`): new exported
+   `hasIngestTextBudget()` pre-flights the daily text budget in `ingestFiling` BEFORE the
+   EDGAR body fetch; `refreshFilingBodies` stops at the first capacity-exhausted filing and
+   reports the cap-aware un-attempted tail in a new `deferredForBudget` result/audit field.
+   Adversarial review (1 finding high, 1 low, both fixed): the store's `skipped: true` is
+   ambiguous — `StoreResult` now carries distinct `unconfigured` (keys missing → capacity
+   stop) and `dedupComplete` (all chunks already indexed → NOT capacity; ingestFiling now
+   HEALS the crash-window state by recording the accession, so a dedup-complete filing can
+   never pin the head of the demand-first queue) flags; `deferredForBudget` counts only
+   filings within the run's cap, excluding the breaker.
+3. Tests: 4 new in test/sec-filings.test.ts (stop-at-exhaustion with zero body fetches,
+   mid-run deferral, dedup-complete heal + continue, unconfigured stop). 33/33 green under
+   node 24 (note: better-sqlite3 ABI — homebrew default node is 26; rebuild for 24).

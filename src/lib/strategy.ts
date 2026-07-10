@@ -35,7 +35,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { resolveModelRotationForRun } from "./model-rotation";
@@ -81,7 +81,7 @@ import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
-import { describeBrokerMinimumOrderBlock, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
+import { describeBrokerMinimumOrderBlock, planBrokerMinimumBump, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
@@ -92,9 +92,9 @@ import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
-import { generateReflectionSummary } from "./post-mortem";
+import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { getInternalSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
@@ -1738,18 +1738,87 @@ export async function runStrategyOnce(
         continue;
       }
 
-      const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+      let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
 
-      // Broker-minimum pre-flight guard: skip an order the broker has already told us (or that basic
-      // sizing math tells us) is a GUARANTEED reject for landing below its minimum dollar/fractional
-      // order size (e.g. Robinhood's $1 floor) — rather than placing it, getting rejected, and
-      // alerting on it every single run forever. The outward alert is cooldown-gated (this condition
-      // is NAV-bound and persistent, not transient) but the audit/proposal receipt is not, so the
-      // run history and Activity feed stay accurate every time.
-      // positionQuantity lets the guard exempt a whole-position dust exit (Robinhood allows
-      // selling an entire fractional position even below its $1 minimum).
+      // Hoisted above the broker-minimum guard: the bump planner bounds opening bumps by the
+      // remaining daily/hourly budget. Values are unchanged for the post-guard consumers (the
+      // skip path `continue`s without placing anything).
+      const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+      const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+
+      // Broker-minimum pre-flight guard. Default handling is BUMP (owner ruling 2026-07-09: an
+      // order that lands under the broker's minimum dollar/fractional size — e.g. Robinhood's $1
+      // floor, typically a pct-of-NAV-clamped trim on a small account — is raised TO the floor and
+      // placed, honestly audited, rather than skipped). brokerMinimumHandling = "skip" restores the
+      // old behavior: block it before the broker's guaranteed reject, with a cooldown-gated alert.
+      // Bumps the planner can't make safe/executable (unknown floor, unknown held position on
+      // exits, opening bumps past the policy cap or remaining daily/hourly budget) fall back to
+      // that skip path. positionQuantity lets the guard exempt a whole-position dust exit
+      // (Robinhood allows selling an entire fractional position even below its $1 minimum) and
+      // caps sell-bumps at the full position; dollar-based exits convert to position-bounded
+      // quantity orders. The bumped order is re-reviewed by the broker and then continues into
+      // evaluateTradeProposal like any other — a bump never bypasses policy evaluation.
       const heldForMinimumGuard = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      let attemptedBumpToNotional: number | undefined;
+      if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+        // Max placeable OPENING notional = the policy engine's own per-order cap (incl. its 5%
+        // headroom — evaluateTradeProposal enforces the headroomed value, and deterministic
+        // sizing already declines its floor-raise against the same number) further bounded by
+        // the remaining daily/hourly budget. Anything the planner bumps past this would be
+        // policy-rejected every run — and a cap breach can demote authority via
+        // autoRevertOnCapBreach, which the app must never self-inflict with its own up-sizing.
+        const effectiveMaxDailyNotional = Math.min(
+          policy.maxDailyNotional ?? Infinity,
+          policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * workingPortfolio.totalMarketValue : Infinity
+        );
+        const openingCapNotional = Math.min(
+          applyOpeningOrderHeadroom(openingPolicyNotionalCap(normalizedProposal, policy, workingPortfolio)),
+          effectiveMaxDailyNotional - dailyNow.notional,
+          (policy.maxHourlyNotional ?? Infinity) - hourlyNow.notional,
+          // Mirror policy.ts's buying-power gate (binds when finite && > 0): a bump past available
+          // buying power would be policy-rejected every run instead of falling back to skip.
+          Number.isFinite(workingPortfolio.buyingPower) && workingPortfolio.buyingPower > 0 ? workingPortfolio.buyingPower : Infinity
+        );
+        // Daily ORDER-COUNT budget (not just notional): when the opening-order count is already
+        // spent, no bump can make this order placeable — planning one would only manufacture the
+        // policy rejection (and authority demotion) this block exists to avoid.
+        const openingCountSpent =
+          (normalizedProposal.side === "buy" || normalizedProposal.side === "short") &&
+          policy.maxDailyOrders != null &&
+          dailyNow.openingOrderCount >= policy.maxDailyOrders;
+        const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+          review,
+          policy.activeBroker,
+          { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+          { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+        );
+        if (bumpPlan) {
+          const originalSizing = { quantity: normalizedProposal.quantity, dollarAmount: normalizedProposal.dollarAmount };
+          const originalReview = review;
+          Object.assign(normalizedProposal, bumpPlan.patch);
+          review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+          const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+          if (!stillBlocked) {
+            // Receipt honesty: the rationale narrates the pre-bump size, so annotate the
+            // up-sizing the same way other size-changing steps do.
+            normalizedProposal.rationale = `${normalizedProposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+            audit(
+              "order_bumped_broker_minimum",
+              { runId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
+              userId,
+              connectedAccountId
+            );
+          } else {
+            // Failed bump: restore the original sizing + review so the skip receipt shows what
+            // the strategy actually proposed, and record that a bump was attempted.
+            Object.assign(normalizedProposal, originalSizing);
+            review = originalReview;
+            attemptedBumpToNotional = bumpPlan.toNotional;
+          }
+          brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
+        }
+      }
       if (brokerMinimumBlockReason) {
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
@@ -1757,7 +1826,7 @@ export async function runStrategyOnce(
         recordSocraticDecision({ proposalId, proposal: normalizedProposal, decision, status: "blocked", review });
         audit(
           "order_skipped_broker_minimum",
-          { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason },
+          { runId, proposalId, symbol: normalizedProposal.symbol, side: normalizedProposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {}) },
           userId,
           connectedAccountId
         );
@@ -1775,8 +1844,6 @@ export async function runStrategyOnce(
         continue;
       }
 
-      const dailyNow = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-      const hourlyNow = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
       const isLiveExecution = executionMode === "broker/live";
       let decision = evaluateTradeProposal(normalizedProposal, {
         policy,
@@ -3218,6 +3285,11 @@ export function applyDeterministicSizing(
     ? advisedNotional
     : Math.max(0, fallbackBase) * finalMultiplier;
   if (
+    // Honor brokerMinimumHandling here too: under "skip" the owner asked for sub-minimum orders
+    // to be SKIPPED (cooldown-gated), not silently raised — an unconditional raise here would
+    // make skip mode unreachable for autonomous openings because the pre-flight guard downstream
+    // would never see a sub-minimum order.
+    (policy.brokerMinimumHandling ?? "bump") === "bump" &&
     brokerMinDollar > 0 &&
     targetNotional < brokerMinDollar &&
     (targetNotional > 0 || rawSourceNotional > 0) &&
@@ -3651,20 +3723,81 @@ export async function executeProposal(
       return { status: "blocked", reasons: [reason] };
     }
 
-    const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+    let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
 
     // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
     // proposal creation and a human clicking Approve, so re-check here too rather than let a
-    // known-doomed order reach the broker from this path.
-    // Same whole-position dust-exit exemption as the autonomous loop (see the guard).
+    // known-doomed order reach the broker from this path. Same bump-first handling (owner ruling:
+    // bump, not skip) and whole-position dust-exit exemption as the autonomous loop (see the guard);
+    // the bumped order is re-reviewed and still goes through evaluateTradeProposal below.
     const heldForMinimumGuard = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+    let brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+    // Hoisted above the guard: the bump planner bounds opening bumps by the remaining
+    // daily/hourly budget (values unchanged for the post-guard consumers — the skip path
+    // returns without placing anything).
+    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
+    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
+    let attemptedBumpToNotional: number | undefined;
+    // Typed live confirmations and bumps: the owner's confirmation (validated earlier in this
+    // function) was minted against the STORED pre-bump notional. A bump can raise the placed
+    // notional to the broker floor (+0.5% cushion, so ≤ ~$1.01 on Robinhood) — a bounded,
+    // owner-ruled default (brokerMinimumHandling "bump", 2026-07-09), so we deliberately do NOT
+    // force a re-confirmation ceremony for that sub-dollar delta; the order_bumped_broker_minimum
+    // audit records both sizes and the rationale annotates the up-sizing.
+    if (brokerMinimumBlockReason && (policy.brokerMinimumHandling ?? "bump") === "bump") {
+      // Same composed cap as the run loop: policy's headroomed per-order cap ∧ remaining
+      // daily/hourly budget ∧ available buying power — a bump past any of these would be
+      // policy-rejected (and a cap breach can demote authority via autoRevertOnCapBreach).
+      const effectiveMaxDailyNotional = Math.min(
+        policy.maxDailyNotional ?? Infinity,
+        policy.maxDailyPctOfNav ? (policy.maxDailyPctOfNav / 100) * account.portfolio.totalMarketValue : Infinity
+      );
+      const openingCapNotional = Math.min(
+        applyOpeningOrderHeadroom(openingPolicyNotionalCap(proposal, policy, account.portfolio)),
+        effectiveMaxDailyNotional - daily.notional,
+        (policy.maxHourlyNotional ?? Infinity) - hourly.notional,
+        // Mirror policy.ts's buying-power gate (binds when finite && > 0).
+        Number.isFinite(account.portfolio.buyingPower) && account.portfolio.buyingPower > 0 ? account.portfolio.buyingPower : Infinity
+      );
+      // Daily ORDER-COUNT budget (not just notional) — see the run-loop site.
+      const openingCountSpent =
+        (proposal.side === "buy" || proposal.side === "short") &&
+        policy.maxDailyOrders != null &&
+        daily.openingOrderCount >= policy.maxDailyOrders;
+      const bumpPlan = openingCountSpent ? undefined : planBrokerMinimumBump(
+        review,
+        policy.activeBroker,
+        { ...proposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+        { openingCapNotional: Number.isFinite(openingCapNotional) ? openingCapNotional : undefined }
+      );
+      if (bumpPlan) {
+        const originalSizing = { quantity: proposal.quantity, dollarAmount: proposal.dollarAmount };
+        const originalReview = review;
+        Object.assign(proposal, bumpPlan.patch);
+        review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+        const stillBlocked = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
+        if (!stillBlocked) {
+          proposal.rationale = `${proposal.rationale} [Sized up from $${bumpPlan.fromNotional.toFixed(2)} to meet the broker's minimum order size (brokerMinimumHandling: bump).]`;
+          audit(
+            "order_bumped_broker_minimum",
+            { proposalId, symbol: proposal.symbol, side: proposal.side, fromNotional: bumpPlan.fromNotional, toNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
+            userId,
+            policy.connectedAccountId
+          );
+        } else {
+          Object.assign(proposal, originalSizing);
+          review = originalReview;
+          attemptedBumpToNotional = bumpPlan.toNotional;
+        }
+        brokerMinimumBlockReason = stillBlocked ? brokerMinimumBlockReason : undefined;
+      }
+    }
     if (brokerMinimumBlockReason) {
       const blockedDecision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, blockedDecision);
       audit(
         "order_skipped_broker_minimum",
-        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval" },
+        { proposalId, symbol: proposal.symbol, side: proposal.side, estimatedNotional: review.estimatedNotional, reason: brokerMinimumBlockReason, action: "approval", ...(attemptedBumpToNotional !== undefined ? { attemptedBumpToNotional } : {}) },
         userId,
         policy.connectedAccountId
       );
@@ -3681,8 +3814,6 @@ export async function executeProposal(
       return { status: "blocked", reasons: [brokerMinimumBlockReason] };
     }
 
-    const daily = dailyExecutionStats(policy.accountNumber, new Date(), userId);
-    const hourly = notionalInLastMinutes(policy.accountNumber, 60, new Date(), userId);
     const isLiveExecution = executionState.environment === "live";
     const decision = evaluateTradeProposal(proposal, {
       policy,
@@ -3897,7 +4028,10 @@ export async function executeProposal(
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
+    // `proposal` persists execution-time sizing (broker-minimum bump / approval-time reprice) into
+    // the row before placement, so crash-recovery books any fill at the size actually sent and
+    // Recent/Activity show the executed order rather than the stale original ask.
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
@@ -4105,7 +4239,9 @@ async function proposeTrades(input: {
       : undefined;
 
   const currentPrices = currentPricesFromScan(input.marketScan);
-  const reflection = getUserSetting(input.userId, "reflection_summary", "");
+  // Account-scoped (with legacy shared-row fallback): keyed by the same broker accountNumber
+  // the post-mortem writer uses, so a live account never reads a sibling account's reflection.
+  const reflection = getReflectionSummary(input.userId, input.policy.accountNumber);
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
@@ -4542,7 +4678,29 @@ async function proposeTrades(input: {
     keySource: llmKeySource
   };
   recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
-  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean };
+  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean; wireOutputCap?: number; finishReason?: string };
+  // Raw provider finish/stop-reason string for the strategy_bull_truncated audit below — same
+  // transports `detectLlmTruncation` (llm-call.ts) inspects, but that helper only returns a bool;
+  // this surfaces the actual reason value so the audit says WHY the model stopped, not just that it did.
+  const extractBullFinishReason = (payload: unknown): string | undefined => {
+    if (!payload || typeof payload !== "object") return undefined;
+    const p = payload as {
+      stop_reason?: unknown;
+      choices?: Array<{ finish_reason?: unknown }>;
+      incomplete_details?: { reason?: unknown } | null;
+      status?: unknown;
+      output?: Array<{ status?: unknown } | null>;
+    };
+    if (typeof p.stop_reason === "string") return p.stop_reason;
+    const chatReason = p.choices?.[0]?.finish_reason;
+    if (typeof chatReason === "string") return chatReason;
+    if (typeof p.incomplete_details?.reason === "string") return p.incomplete_details.reason;
+    if (typeof p.status === "string") return p.status;
+    // Responses-API shape with only per-item statuses (no top-level status/incomplete_details):
+    // detectLlmTruncation treats any output item with status "incomplete" as truncation.
+    if (Array.isArray(p.output) && p.output.some((o) => o?.status === "incomplete")) return "incomplete";
+    return undefined;
+  };
   try {
     bullResult = await withLlmGeneration(
       {
@@ -4610,6 +4768,14 @@ async function proposeTrades(input: {
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
+            // The wire cap actually sent for THIS attempt (base cap + provider reasoning headroom —
+            // e.g. Gemini/xAI/Mistral/DeepSeek add up to +16000), not the pre-headroom constant.
+            const wireOutputCap = resolveLlmWireOutputCap(attempt.transport, {
+              maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+              model: attempt.model,
+              reasoningEffort: interactiveStrategyReasoningEffort(attempt.model, input.policy.llmReasoningEffort)
+            });
+            const finishReason = extractBullFinishReason(payload);
 
             if (!text) {
               throw new Error("Empty response returned from LLM API.");
@@ -4619,13 +4785,13 @@ async function proposeTrades(input: {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
               const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated };
+              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
               console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
-              return { text, proposals: [] as TradeProposal[], truncated };
+              return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
             // Transient transport error / timeout → fail over to the next model when one remains.
@@ -4658,16 +4824,27 @@ async function proposeTrades(input: {
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
-  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.)
+  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.) The
+  // reason string and audit payload report the ACTUAL wire cap (post reasoning-headroom), not the
+  // pre-headroom LLM_OUTPUT_TOKEN_CAPS constant, which can understate what was really sent.
   const bullTruncationReason = bullResult.truncated
-    ? `Green Team response hit the ${LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
+    ? `Green Team response hit the ${bullResult.wireOutputCap ?? LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated${bullResult.finishReason ? `, finish_reason=${bullResult.finishReason}` : ""}); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
     : undefined;
   if (bullTruncationReason) {
     console.warn(`[Bull] ${bullTruncationReason}`);
     audit(
       "strategy_bull_truncated",
-      { runId: input.runId, cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, parsedProposals: rawBullProposals.length, provider, model },
-      input.userId
+      {
+        runId: input.runId,
+        cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+        wireOutputCap: bullResult.wireOutputCap,
+        finishReason: bullResult.finishReason,
+        parsedProposals: rawBullProposals.length,
+        provider,
+        model
+      },
+      input.userId,
+      input.policy.connectedAccountId
     );
   }
   // Record the served provider/model (may differ from the primary after failover) plus a clear reason

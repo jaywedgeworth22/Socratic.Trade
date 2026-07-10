@@ -231,6 +231,63 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
+  `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
+  Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
+  "Proposer"/"Reviewer" colored (green `var(--con-pos)` / red `var(--con-neg)` via token-color
+  spans, never hex; "Model" stays default text color; same font-weight as before) in
+  `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`. Helper copy simplified:
+  "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red" everywhere in those two
+  files' hints/intro copy/missing-model banner, plus the "Proposer (Green Team)"/"Reviewer (Red
+  Team)" role label in `app/console/components/model-stats-drawer.tsx` (the info-drawer button
+  embedded directly next to both pickers) → "Proposer (Green)"/"Reviewer (Red)". Deliberately did
+  NOT touch `approval-card.tsx`, `results/page.tsx`, `decisions/[id]/page.tsx`, or
+  `app/console/lib/red-team.ts` — different console pages/areas, out of the
+  settings/strategy-models scope; nor any server/lib identifiers, types, logs, or docs (only
+  display strings). Verified in both light and dark mode via live preview (`--con-pos`/
+  `--con-neg` computed colors matched exactly). Gate green: tsc clean, 315 files / 3351 tests,
+  build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
+- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — COMPLETED
+  2026-07-10.** Owner-directed read-only audit of the production Activity feed (07-07..09):
+  36-agent workflow (5 domain investigators over the prod DB + repo, adversarial verification
+  per finding, ranked synthesis). Verdict: the worst feed incidents (MU 422 storm, UNH/T
+  remediation bug, em-dash push drops, Roth Gemini 400s) were already fixed+deployed; remaining
+  fix backlog = 3 quiet P1s (Roth proposer token-cap truncation; thesis-tag split-brain feeding
+  the learning loop false directives; per-user reflection dedupe with cross-account
+  contamination of the live Bull prompt) + P2s (notification-status recorder, placement-uncertain
+  misclassification, stale-exit replacement completion, synthetic-stop backoff, LLM failover
+  unwired, ~55-site account-attribution sweep) + a P3 batch. Full report:
+  `docs/reviews/2026-07-09-activity-feed-audit.md`. Fixes are separate claims.
+- **Broker minimum BUMP-TO-FLOOR (MONET) — COMPLETED 2026-07-10, merged as PR #1297
+  (`4ef60cd3`).** Owner ruling: sub-minimum orders bump TO the broker floor and place (audited,
+  re-reviewed, still policy-evaluated); "skip" is the opt-out. Opening bumps bounded by policy's
+  headroomed per-order cap AND remaining daily/hourly/order-count/buying-power budget (no
+  self-inflicted cap breaches or authority demotion); sells cap at the full position; dollar
+  exits convert to position-bounded quantity orders. Co-finished with the original bump lane
+  (competing #1280 closed in #1297's favor; their thread-fix batch + db-proposals sizing
+  persistence folded in). Rollout: `docs/rollouts/2026-07-09-broker-minimum-bump-to-floor.md`.
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
+  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — ✅
+  COMPLETED 2026-07-10 via PR #1287; PR #1272 closed superseded.** Root cause of "AAPL
+  fundamentals all dashes": every enrichment provider sliced its symbol list to `maxSymbols()` =
+  30 while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL
+  held positions — the force-included extras past index 30 (systematically the owner's held
+  names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) got zero fields from every
+  provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for the
+  LLM/FCF-veto on exactly the owned positions. Final fix (owner ruling 2026-07-09, landed in
+  #1287 which merged this branch's content at 90c55579 and revised it): NO hard enrichment cap —
+  `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` (explicit, unclamped operator throttle);
+  enrichment order hoists ALL held names (incl. inside the ranked top-N) then event outliers;
+  tooltip honesty (`withProvenance`/`cellTitle` never stamp "Received <time>" on fields no
+  provider returned); regression tests for the 42-symbol prod shape, MARKET_SCAN_LIMIT,
+  unclamped override, and no-cap full-list coverage. ROUND 2 (MONET, 2026-07-10): the two
+  codex-connector findings that blocked #1272 (held-inside-top-N starvation; user-policy scan
+  shapes bypassing an env-derived budget) were fixed on the branch and are both structurally
+  addressed on main by #1287's ordering + no-cap; #1272 closed superseded 2026-07-10T05:30Z.
+  Deploy: rode the main@597b991c ANNOUNCE-THEN-DEPLOY (claimed 05:35Z; deployer owns
+  health-verify + the Deployed flip). Rollout:
+  `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
 - **MONET usage-cap pickup (CLAUDE, owner-directed, worktree
   `.claude/worktrees/monet-usage-cap-work-0038cf`) — ✅ COMPLETED 2026-07-09 evening.** MONET hit
   its usage cap ~17:05 CDT mid-merge-shepherding; the owner directed CLAUDE to pick up everything
@@ -442,6 +499,17 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
+
+- **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — ✅ COMPLETED 2026-07-10, MERGED as PR #1314 (owner-assigned).** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team (2 Sonnet + 1 Fable implementers in isolated worktrees; adversarial verify wave caught the chat get_reflection legacy-key regression pre-land): (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rode here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row — re-fetch main post-#1314 before the 42-site pass). Full gate green under node@24; rollout `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`. POST-DEPLOY watch: one Roth run producing >0 proposals.
+
+- **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
+  IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
+  SEC_FILING_RAG_MAX_PER_RUN 1→25 in Infisical prod (were shadowing the paid ingest pace);
+  code: budget pre-flight before EDGAR body fetches, run-level stop-early with cap-aware
+  `deferredForBudget`, `StoreResult.unconfigured`/`dedupComplete` disambiguation + crash-window
+  accession heal (adversarial-review finding). Kills the N-wasted-downloads + N-Sentry-warnings
+  per budget-capped run (SOCRATIC-TRADE-R). See the 2026-07-10 addendum in
+  docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
   enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
@@ -1401,7 +1469,96 @@ As of 2026-07-08 (assignment-rule update).
   default" label fixed (dead `DEFAULT_LLM_MODEL` export deleted — zero imports verified); PR
   #1083 closed as superseded per owner instruction. No behavior changes. Rollout:
   `docs/rollouts/2026-07-09-model-recs-rethink.md`.
+- **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
+  — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
+  a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
+  credKey, wanted)` returns how many requests fit under ALL windows now (per-credential, multi-window
+  MIN, sliding, never blocks), caller queries the admitted best-first symbols + defers the rest.
+  Scoped to hard-windowed-cap providers pacing can't solve — **twelvedata (8/min+800/day),
+  tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
+  (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
+  Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
+  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
+  advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
+  the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
+  budget; add `truncated` + `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT
+  truncated (else just below the oldest DROPPED un-reviewed item), while still storing the fingerprint so
+  annotate mode doesn't re-run the LLM daily. Marker only ever becomes MORE conservative than the old
+  unconditional `now` → no regression to 8da047aa's max-age reachability (its regression test still
+  passes). +4 tests (pack-truncation flags; 200-item backlog drains across exactly 3 daily runs in BOTH
+  annotate+decide, every item shown, none silently reviewed). node@24: tsc clean, full suite 3338/3338,
+  learning-review 34/34, eslint 0-err, build clean. Closes the LAST open #1278 deferred item (#3
+  legacy-seed is a separate in-progress peer lane). See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
+- **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
+  PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
+  tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.
+  Rewrote `app/console/lib/useDirtyGuard.tsx` — an in-app `Sheet` prompt with **Discard changes**
+  (client-side `router.push`), **Keep editing** (stay), and **Review & save** (stay + open the
+  screen's review panel; shown only when the screen registers a review opener — Guardrails does,
+  Framework's inline review shows two). `nav.tsx` passes the `href` at all 3 guard sites (+ TabsSheet
+  prop-type); `policy-form.tsx` PolicySaveBar registers the review opener. Dirtiness still ref'd (no
+  shell re-render on keystroke). Gate green: tsc / lint 0-err / 3246 tests / build. Follow-up: cmdk
+  navigates without the guard (pre-existing gap). See
+  `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. Rest of the owner's settings-UX batch
+  already landed (#1/#2/#4 via #1270; #5 via credential-naming).
+- **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
+  subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
+  IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting
+  Rotate for both seats hid the Reasoning/Thinking Effort control and printed the false "these
+  models do not expose a reasoning control" line; (b) two rotate sentinels tripped the
+  "SAME model critiquing its own proposals" independence warning. Fix: UI-only synthetic
+  `ROTATION_UI_REASONING_CAPABILITY` (full generic ladder; `reasoningCapabilityForModel` still
+  returns undefined for the raw sentinel so server paths keep failing closed), page helpers
+  extracted to `app/console/strategy/reasoning-control.ts` (sentinel-aware + unit-tested),
+  honest rotation summary/hints, "Per-model default (no high-tier escalation)" blank option for
+  high-tier-only shared pairings (fixes the c2f0d754 disappear-on-default control without
+  re-widening the evidence-backed Mistral capability map), AI-review upfront local-rules
+  disclosure when both seats rotate, sentinel-aware independence hint, approval-card/red-team
+  sentinel leak fixes. Gate: tsc clean / lint 0-err on touched files / full suite 311 files
+  3262 tests green. Sequencing RESOLVED 2026-07-10: the rotate-fix lane's same-model-pairing
+  skip merged to `main` via #1294 and this branch merged `origin/main`; the independence-hint
+  copy is true of this tree (and was tightened to "whenever more than one model is eligible"
+  for the single-eligible-model degenerate pool). Waiting on base PR #1279 to merge, then
+  landing via `scripts/land.sh`. Rollout: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
+- **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-capmap-fix`) — ✅ DEPLOYED 2026-07-10: merged to `main` as PR #1279 (squash
+  `d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared with a fresh main-merge head, auto-merge
+  landed on green CI), shipped to production in the 06:20Z env-activation release
+  (prod = `main@420c6747`, health verified by the deploying lane).** Handoff-queue item 2
+  (post-#1191 unblocked queue). The old family-wide Mistral reasoning map 400'd every call
+  (benchmark 2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only;
+  small-2603 rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`:
+  capability narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in
+  normalization (high/xhigh/max -> high, else none — no silent medium->high upgrade); every
+  other Mistral id gets a plain chat body (no reasoning params). Carries 2 verified review
+  fixes (claude/fable subagent): chunked Mistral reasoning-text extraction in llm-call.ts +
+  strategy-page intersection guard against silent medium->high escalation on mixed-provider
+  pairing. Rotation-pool re-add deliberately deferred to a keyed re-benchmark (models have
+  never completed a benchmarked call — follow-up in the rollout note).
+  Rollout: `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
+- **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
+  worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
+  2026-07-09: PR opened, auto-merge armed.** Owner-directed,
+  three fixes: (1) `POST /api/strategy/run` precheck 412'd every manual run under rotation (the
+  persisted sentinel resolves as unset in `resolveOpenAiModel`; scheduled runs were fine) — now
+  gates a rotating Green on `eligibleRotationPool` non-empty, new actionable
+  `LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE` 412 when empty; red sentinel never 412s. (2)
+  `classifyRunFailure` titled every 412 "No LLM key is configured" — model-CHOICE 412s now titled
+  "Choose your team models" → `settings#models-green`. (3) `advanceRotationPointers` same-model
+  skip so dual rotation never serves the same model to both seats (both counters started at 0 =
+  self-debate all first cycle); wrap-advance intact. tsc clean, touched suites 26/26. Rollout:
+  `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — IN PROGRESS 2026-07-09.** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+  _2026-07-10 (MONET queue close-out): state correction — this MERGED to `main` as PR #1282
+  (`15c2560e`, 2026-07-09 21:04 CDT) and has been in production since the 2026-07-10 06:00Z
+  release. Verified complete against the monet-handoff queue item (types stamp + strategy.ts
+  review-site stamping + model-stats reviewer attribution incl. the documented legacy
+  "unattributed" fallback + tests) — the handoff-queue reviewedByModel item is CLOSED by this
+  PR; no MONET follow-up needed._
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
   PR #1268 (MONET-authored, landed by CLAUDE under the owner-directed usage-cap pickup).**
@@ -1464,14 +1621,6 @@ As of 2026-07-08 (assignment-rule update).
   test-file edits. PR via land.sh when gate green.
 - _Vitest temp-SQLite leak cleanup — duplicate interim row from the landing commit; superseded by
   the consolidated ✅ COMPLETED row above (PR #1268)._
-- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
-  PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
-  (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
-  fixes — e.g. post-mortems recorded with unknown account. Read-only audit ->
-  verified findings report; fixes claimed separately after owner review.
-  _2026-07-09 (CLAUDE usage-cap pickup): deliberately NOT picked up — the audit needs
-  production-DB reads and the Hetzner box migration was mid-flight. Still open; best first
-  task for a resumed MONET session now that the migration's cutover is verified._
 - **Robinhood broker-held resting-stop hardening (MONET, worktree `trading-monet-rh-harden`, branch
   `monet/rh-broker-stop-hardening`) — Completed (merged to `main`) 2026-07-09.** _(Correction: the
   branch name in the original IN PROGRESS entry was wrong — this landed from a dedicated worktree/
@@ -1724,6 +1873,17 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
+  — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
+  (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending
+  replacement completion (§1.7); synthetic-stop failure backoff + persistent-failure alert
+  (§1.8); LLM failover wiring + cadence stagger (§1.9 — fallback-model SEEDING is an owner
+  ruling, wiring is not). NOTE: P1s 1-3 + attribution sweep (§1.10) are CLAIMED owner-directed
+  by other lanes — check the board before touching.
+- **Activity-audit P3 batch (unassigned) — PLANNED 2026-07-10.** Feed storm coalescing;
+  stuck dust-fill terminal flip; storage-warning event type (+ direct-notify skip set);
+  KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
+  batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
@@ -1733,6 +1893,18 @@ As of 2026-07-08 (assignment-rule update).
 
 
 
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch).** Thread `connectedAccountId` into ~42 `audit()` sites in `src/lib/strategy.ts` (scope map in the report: `runStrategyOnce` local at :311, `executeProposal`/`proposeTrades` via `policy`, `autoRevertOnCapBreach` param at :3425; incl. `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` signatures) and all 12 `synthetic-stops.ts` sites (`policy.connectedAccountId` is a parameter). NOTE: the `strategy_bull_truncated` emission site is EXCLUDED — handled in the P1 batch (`monet/activity-audit-p1-batch`); post-mortem.ts + `setUserSetting` no-audit flag also ride the P1 batch. Report §1.10: `docs/reviews/2026-07-09-activity-feed-audit.md`.
+- **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
+- **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — PLANNED 2026-07-10, unclaimed.** Return `NotifyChannelResult[]` from `sendDirectNotification`, derive sent/failed/skipped honestly, update reason mapping (`src/lib/notifications.ts:59-131`, `dashboard-ui.ts:335`); keep the operator-fallback email lane intact. Report §1.5.
+- **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.
+- **Activity-audit P2.7: stale-exit "cancel still pending" abort leaves exits canceled-but-never-replaced — PLANNED 2026-07-10, unclaimed.** Persist `replacement_pending_cancel` + complete on later ticks; measure staleness from bracket-leg ACTIVATION not createdAt (`src/lib/order-replacement.ts`). UNH 07-09 instance on paper; same path runs live. Report §1.7.
+- **Activity-audit P2.8: synthetic-stop failure dedup/backoff + persistent "protective exit failing" alert — PLANNED 2026-07-10, unclaimed.** Per-(stopId, fingerprint) emission cooldown + summary row; keep 60s retry; do NOT cap `fire_generation`. Report §1.8.
+- **Activity-audit P2.9: LLM failover unwired + same-minute account bursts — PLANNED 2026-07-10, unclaimed (seeding variant = owner ruling, see decisions row).** Cadence jitter/stagger + 429-specific backoff on the Bull path; expose `llmFallbackModels` in the model-picker UI with suggested defaults. Report §1.9.
+- **Activity-audit P3 batch (8 small items) — PLANNED 2026-07-10, unclaimed.** Feed-storm coalescing in `buildUnifiedFeed`; AAPL trim cap-vs-floor deadlock (verify #1297's dollar-sell conversion actually closes it); `policy_change` attribution; `broker-protective-stops.ts` attribution (8+1 latent sites); one-time flip of 10 stuck `'undefined'` fill_events to `unreconcilable`; storage-warning mislabel (`db-health.ts:559-576` + `types.ts`); KNOWN_GLOBAL footer set in `dashboard-feed.ts` ("System-wide", NOT OPS bucket); `evidence_age_anomaly` first-sight-per-(fact,assertedAt) dedupe. Report §1 P3.
+- **Activity-audit owner decisions (4) — PLANNED 2026-07-10, needs owner rulings.** (1) test-local's armed autonomy: 16 gpt-5.5/high runs/day contending with LIVE for the shared key + counting against the monthly LLM ceiling — halt, downgrade, or explicit opt-in for scheduling `broker==='test'`? (2) RAG 10-K corpus pacing: set `VECTOR_EMBED_BATCH_DELAY_MS<=5000` + `SEC_FILING_RAG_MAX_PER_RUN=10-20` in Infisical, and/or the one-time supervised 10-K backfill? (3) `llmFallbackModels` seeding: UI-expose vs silent seed (silent changes which model trades live). (4) `learned_context` per-account isolation: recommended leave user-level. Report §3.
+
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09; ✅ COMPLETED 2026-07-10 via PR #1287 (#1272 closed superseded).** Reservation/diagnosis row; see the ✅ Completed row (same title) for the full record. _(Three merge-duplicated annotations of this row — MOVED / IN PROGRESS / LANDED-as-#1272 — were consolidated here 2026-07-10 by MONET; nothing substantive removed, they described the same effort at successive stages.)_
 - **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ (unassigned) — PLANNED 2026-07-05, awaiting seat responses.** _(2026-07-08: stripped FLEET tag — no agent is actively working on this.)_ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
 
 - **Pre-proposal broker health/availability gate (unassigned) — PLANNED 2026-07-08.** The proposal pipeline currently runs LLM generation before checking whether the broker can actually execute trades. `deriveExecutionState()` only checks "is an account connected?" — it doesn't check broker health, minimum notional, recent `order_placement_uncertain` rate, or account suspension. The scheduler calls `deriveExecutionState()` at line 396 and only throws for "no account," then proceeds to generate proposals for accounts that return errors at execution time. The fix: add a pre-proposal gate (before the LLM call) that checks broker connectivity, recent error rate, account status, and per-account minimum notional; skip proposal generation for unhealthy accounts. Touches `src/lib/execution-mode.ts` (extend `deriveExecutionState` with health signals), `src/lib/strategy.ts` (gate before LLM call at ~line 360), and `src/lib/scheduler.ts` (per-account skip logic at line 396). Related to the Robinhood `order_placement_uncertain` errors identified 2026-07-08 (Agentic AAPL near-zero notional rejects).
@@ -2130,3 +2302,5 @@ brackets; effort S/M/L.
 - 2026-07-08 - **UI wave 4: scope-selector dropdown + floating mobile Tabs sheet + badge spacing (CLAUDE, 3-agent team).** ScopeSelector rebuilt Sheet->real anchored dropdown (accounts + reality/run chips + "Configure accounts" -> settings#brokers; Esc/focus-return/aria; .con-menu-drop slide-down; desktop min-w 190px); mobile TabsSheet floats above the still-visible tab bar (live-measured bar height, all destinations visible on iPhone, real-time pin feedback, scrim stops at bar); tab-bar badge clearance +~5px. AUDIT of the 55-findings backlog vs current main (post #1103/#1110/#1173/#1178): 37 DONE, 2 PARTIAL (primitive parity mostly ported; monolith extraction has derive.ts, pages still large), 7 OPEN = 6 owner TBDs + useConsoleSnapshot() refactor (deferred). No conflicts with past decisions. Rollout: docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md. State: **In Progress (PR pending)**.
 
 - 2026-07-10 - **Infinite-loading fix, CLAUDE layer (complementary to AG #1285).** Deadlines on all 9 getDashboardSnapshot upstreams (timeout -> same degraded fallback as the existing catch + [dashboard] warn now visible in Coolify logs); ipv4first in instrumentation.ts register() (guaranteed on the Coolify container); 15s first-load watchdog in useConsoleData (self-contained; no refresh()/abort overlap with #1285). Root-cause split: #1285 = SSE abort-storm (primary), this = slow/hung upstream amplifier + observability. Gate green (tsc / 3261 tests / build / lint). Rollout: docs/rollouts/2026-07-10-dashboard-deadlines-load-watchdog.md. State: **In Progress (PR pending)**.
+
+- 2026-07-10 - **db-health.ts `ts DESC` tie-sweep (CLAUDE, small, branch `claude/db-health-tie-sweep`).** Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in `src/lib/db-health.ts` nondeterministic (ties resolve OLDEST-first absent a tiebreaker) — most critically `getLaneHealth`'s consecutive-failure window (line ~44) and the FIFO-cap DELETE subquery (line ~142). Added `, rowid DESC` to all 7 sites, matching the idiom already fixed at line 311 for `getServiceHealthLog`. New regression test in `test/api-circuit-breaker.test.ts` (inserts same-ts rows with known insertion order; verified it fails without the fix, passes with it). Closes the task-chip suggestion spawned from the #1267 lane (round-2 TwelveData health-row fix touched the same file/pattern). Gate green: tsc / lint (0 errors) / 311 files, 3286 tests / build. Rollout: docs/rollouts/2026-07-10-db-health-tie-sweep.md. State: **In Progress (PR pending)**.

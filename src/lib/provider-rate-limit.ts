@@ -200,6 +200,153 @@ export function resetProviderRateLimiterState(provider?: string): void {
   defaultLimiter.reset(provider);
 }
 
+// ── Request QUOTA (rate-limit budget) ───────────────────────────────────────────────
+// A control ORTHOGONAL to the pacer above. The pacer spaces dispatch in TIME (burst/IP safety);
+// this caps the NUMBER of requests admitted per rolling window, from each provider's REAL published
+// rate limits. It is deliberately scan-size-agnostic: a caller says "I want to make N requests" and
+// gets back how many fit RIGHT NOW under every one of the provider's windows — the caller queries
+// that many symbols and defers the rest best-effort. It never blocks/queues/sleeps (no scan stall),
+// and it is keyed per CREDENTIAL so a per-user key with its own upstream quota is never gated by the
+// operator key. Providers with no configured limits are unlimited (admit returns everything asked),
+// so paid/broker/generous providers keep working unchanged and adding a new provider never
+// accidentally throttles it.
+
+export interface RateWindow {
+  /** Max requests allowed within `windowMs`. */
+  maxRequests: number;
+  /** Rolling window length in ms. */
+  windowMs: number;
+}
+
+const MINUTE = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+// The QUOTA is the right control ONLY for providers with a hard windowed cap that PACING can't solve:
+//  - twelvedata sends ONE batch /quote call costing 1 credit PER SYMBOL, so you can't space it under
+//    8 credits/min — you must cap the batch size (budget).
+//  - tiingo's binding cap is 50 requests/HOUR; spacing 90 requests over an hour would stall every scan
+//    for the whole hour, so you budget the top-N symbols instead.
+// Providers whose cap is per-MINUTE and whose calls are per-symbol (finnhub 60/min, yahoo, alpha-vantage
+// ~5/min + its 25/day key-pool exhaustion) are handled by the PACER above (minIntervalMs spacing) — it
+// covers EVERY symbol over time and is itself scan-size-agnostic, so they are deliberately NOT quota'd
+// here (a quota would needlessly drop coverage). Providers absent here are unlimited. A symbol may cost
+// >1 request (tiingo up to 3) — callers pass the request count, not the symbol count.
+const RATE_QUOTAS: Record<string, RateWindow[]> = {
+  twelvedata: [{ maxRequests: 8, windowMs: MINUTE }, { maxRequests: 800, windowMs: DAY }], // 1 credit/symbol
+  tiingo: [{ maxRequests: 50, windowMs: HOUR }, { maxRequests: 1000, windowMs: DAY }]      // up to 3 req/symbol
+};
+
+/** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
+ *  overrides (or adds) the corresponding window; a value <= 0 removes that window. Returns the merged
+ *  window list, or `undefined` for an unlimited provider. */
+// Back-compat: providers whose per-minute knob had a different name before the unified quota. The
+// new PROVIDER_QUOTA_<NAME>_PER_MIN wins; the legacy name is honored only when the new one is unset,
+// so an operator who set the old var to match a paid/retuned plan doesn't silently fall back to the
+// built-in budget. (twelvedata's old limiter read TWELVEDATA_CREDITS_PER_MIN.)
+const LEGACY_PER_MIN_ENV: Record<string, string> = {
+  twelvedata: "TWELVEDATA_CREDITS_PER_MIN"
+};
+
+export function resolveProviderQuota(provider: string): RateWindow[] | undefined {
+  const key = envKeyFor(provider);
+  const base = RATE_QUOTAS[provider] ? RATE_QUOTAS[provider].map((w) => ({ ...w })) : [];
+  const legacyPerMinEnv = LEGACY_PER_MIN_ENV[provider];
+  const perMin =
+    finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ??
+    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined);
+  const overrides: Array<[number, number]> = [
+    [perMin ?? NaN, MINUTE],
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
+    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
+  ];
+  for (const [max, windowMs] of overrides) {
+    if (Number.isNaN(max)) continue;
+    const existing = base.find((w) => w.windowMs === windowMs);
+    if (max <= 0) {
+      if (existing) base.splice(base.indexOf(existing), 1); // remove this window
+    } else if (existing) {
+      existing.maxRequests = max;
+    } else {
+      base.push({ maxRequests: max, windowMs });
+    }
+  }
+  return base.length > 0 ? base : undefined;
+}
+
+/**
+ * Sliding-window request quota, per (provider, credential). `admit(provider, credKey, wanted)` returns
+ * how many of `wanted` intended requests are allowed right now under ALL of the provider's windows,
+ * and RECORDS that many. Instantaneous (never blocks) — the caller defers whatever isn't admitted.
+ * Production uses the module singleton; tests inject a clock so window math is exercised without real
+ * time.
+ */
+export class RequestQuota {
+  private readonly hits = new Map<string, number[]>(); // "provider|cred" -> ascending request timestamps
+
+  constructor(private readonly clock: ProviderLimiterClock = realClock) {}
+
+  admit(provider: string, credKey: string, wanted: number): number {
+    if (wanted <= 0) return 0;
+    const windows = resolveProviderQuota(provider);
+    if (!windows || windows.length === 0) return wanted; // unlimited
+
+    const key = `${provider}|${credKey}`;
+    const now = this.clock.now();
+    const maxWindow = windows.reduce((m, w) => Math.max(m, w.windowMs), 0);
+    // Prune anything older than the widest window — those hits can't affect any constraint.
+    const ts = (this.hits.get(key) ?? []).filter((t) => now - t < maxWindow);
+
+    let allowed = wanted;
+    for (const w of windows) {
+      const inWindow = ts.reduce((n, t) => (now - t < w.windowMs ? n + 1 : n), 0);
+      allowed = Math.min(allowed, Math.max(0, w.maxRequests - inWindow));
+    }
+    for (let i = 0; i < allowed; i++) ts.push(now);
+    this.hits.set(key, ts);
+    return allowed;
+  }
+
+  /** Return up to `n` of the most-recent reservations on (provider, credKey) to the budget — for
+   *  requests that were admitted but never actually dispatched (partial whole-symbol remainder, a
+   *  circuit-breaker skip, etc.), so the local counter doesn't suppress later coverage. Best-effort:
+   *  clamps to what's recorded; a no-op for unlimited providers (nothing was recorded). */
+  refund(provider: string, credKey: string, n: number): void {
+    if (n <= 0) return;
+    const key = `${provider}|${credKey}`;
+    const ts = this.hits.get(key);
+    if (!ts || ts.length === 0) return;
+    ts.splice(Math.max(0, ts.length - n)); // drop the n newest (highest timestamps sit at the end)
+  }
+
+  reset(provider?: string): void {
+    if (!provider) { this.hits.clear(); return; }
+    for (const k of [...this.hits.keys()]) if (k.startsWith(`${provider}|`)) this.hits.delete(k);
+  }
+}
+
+const defaultQuota = new RequestQuota();
+
+/** How many of `wanted` requests to `provider` on credential `credKey` fit the provider's rate
+ *  budget right now (recording them). Unlimited providers return `wanted`. NOTE: unlike the pacer,
+ *  this does NOT honor PROVIDER_RATE_LIMIT_DISABLED — the quota adds no wall-clock delay (it's a pure
+ *  counter), so the speed escape hatch that switch exists for doesn't apply; disabling it would let a
+ *  test/scan blow real free-tier caps. Full-chain tests use fresh per-test keys → isolated lanes. */
+export function admitProviderRequests(provider: string, credKey: string, wanted: number): number {
+  return defaultQuota.admit(provider, credKey, wanted);
+}
+
+/** Return up to `n` admitted-but-undispatched requests on (provider, credKey) to the budget —
+ *  e.g. the partial remainder below one whole symbol, or calls a tripped circuit breaker skipped. */
+export function refundProviderRequests(provider: string, credKey: string, n: number): void {
+  defaultQuota.refund(provider, credKey, n);
+}
+
+/** Test-only: clear the default quota's window state. */
+export function resetProviderQuotaState(provider?: string): void {
+  defaultQuota.reset(provider);
+}
+
 // ── Secret scrubbing ──────────────────────────────────────────────────────────────
 // Provider error/warning text ends up stored verbatim in api_health_log and surfaced
 // through connections-health / the ops snapshot. Some providers (Alpha Vantage in

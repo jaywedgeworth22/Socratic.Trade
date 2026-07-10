@@ -58,12 +58,19 @@ export interface IngestResult {
   skipped: boolean;
   chunks: number;
   error?: string;
+  /** The embed layer has no capacity left (daily text budget exhausted or vector store
+   *  unconfigured) — every later filing in this run would meet the same fate, so bulk
+   *  loops should stop instead of fetching/chunking documents that cannot embed. */
+  budgetExhausted?: boolean;
 }
 
 export interface RefreshFilingBodiesResult {
   attempted: number;
   ingested: number;
   skipped: number;
+  /** Filings within this run's cap left un-attempted because the embed budget ran out
+   *  mid-run; they are NOT recorded as ingested and retry at the next tick. */
+  deferredForBudget: number;
   errors: string[];
 }
 
@@ -244,6 +251,16 @@ export async function ingestFiling(
     return { skipped: true, chunks: 0 };
   }
 
+  // Budget pre-flight BEFORE the EDGAR fetch: a filing body is 2–10 MB and chunking it is
+  // pure waste when the daily embed budget is already spent — storeDocument would only
+  // budget-skip it (and emit a budget warning per filing; prod 2026-07-10 saw a 20-event
+  // burst from exactly this). Deferring here costs nothing: the accession stays
+  // un-recorded and retries at the next tick.
+  const { hasIngestTextBudget } = await import("../vector-db");
+  if (!hasIngestTextBudget(userId)) {
+    return { skipped: true, chunks: 0, budgetExhausted: true };
+  }
+
   let html: string;
   try {
     html = await fetchFilingHtml(filingRef.url);
@@ -278,15 +295,38 @@ export async function ingestFiling(
   }
 
   // storeDocument can come back with indexed: 0 (or a truncated count with budgetSkipped > 0)
-  // and NO error — daily chunk budget (RAG_INGEST_MAX_TEXTS_PER_DAY) exhausted mid-run or
+  // and NO error — daily chunk budget (RAG_INGEST_MAX_TEXTS_PER_DAY) crossed mid-document or
   // vector keys unconfigured. Recording the accession then would mark the filing "ingested"
   // forever with zero/partial retrievable chunks, inflate the ingested-count receipts, and
-  // suppress the corpus-coverage receipt while retrieval finds nothing. With the paid per-run
-  // cap at 25, budget exhaustion mid-run is an EXPECTED state during the backlog drain —
-  // leave the filing un-recorded so a later run retries it; content-hash dedup
-  // (VECTOR_STORECONTEXTS_DEDUP) makes the re-embed cheap.
-  if (result.indexed <= 0 || (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0) {
-    return { skipped: true, chunks: result.indexed };
+  // suppress the corpus-coverage receipt while retrieval finds nothing. Budget exhaustion
+  // mid-run is an EXPECTED state during the backlog drain — leave the filing un-recorded so
+  // a later run retries it (content-hash dedup makes the re-embed cheap), and flag
+  // budgetExhausted so the bulk loop stops instead of grinding through doomed filings.
+  // Every chunk was already in the index (content-hash dedup) — the crash-window state where a
+  // prior run embedded everything but died before recording the accession. The content is fully
+  // stored, so RECORD it now: without this, the filing re-fetches every run, and (worse) sits at
+  // the head of the deterministic demand-first queue forever. Review 2026-07-10: this state must
+  // never be confused with budget exhaustion, or it halts the whole backlog behind it.
+  if (result.dedupComplete) {
+    insertIngestedAccession(filingRef.accession, filingRef.docType, ticker, result.attempted);
+    audit("sec_filing_ingest", {
+      ticker,
+      accession: filingRef.accession,
+      docType: filingRef.docType,
+      filedAt: filingRef.filedAt,
+      chunks: result.attempted,
+      dedupHealed: true
+    });
+    return { skipped: true, chunks: 0 };
+  }
+
+  // budgetExhausted only on genuine capacity signals — the explicit budget counters or the
+  // store's keys-unconfigured skip. A single pathological document that chunks to nothing
+  // must not stop the whole run.
+  const outOfCapacity =
+    (result.budgetSkipped ?? 0) > 0 || (result.writeUnitBudgetSkipped ?? 0) > 0 || result.unconfigured === true;
+  if (result.indexed <= 0 || outOfCapacity) {
+    return { skipped: true, chunks: result.indexed, ...(outOfCapacity ? { budgetExhausted: true } : {}) };
   }
 
   // Persist de-dup record only after successful embedding so a partial failure doesn't
@@ -350,7 +390,7 @@ export async function refreshFilingBodies(
   maxPerRun?: number,
   opts?: { force?: boolean }
 ): Promise<RefreshFilingBodiesResult> {
-  const result: RefreshFilingBodiesResult = { attempted: 0, ingested: 0, skipped: 0, errors: [] };
+  const result: RefreshFilingBodiesResult = { attempted: 0, ingested: 0, skipped: 0, deferredForBudget: 0, errors: [] };
 
   if (symbols.length === 0) return result;
   if (!opts?.force && !isFilingIngestDue(now)) return result;
@@ -404,11 +444,23 @@ export async function refreshFilingBodies(
   });
 
   // Process pending filings sequentially (EDGAR + Voyage both require polite pacing).
+  let processed = 0;
   for (const { ticker, ref } of pending) {
     if (result.attempted >= cap) break;
     result.attempted++;
+    processed++;
     try {
       const ingestResult = await ingestFiling(ticker, ref);
+      if (ingestResult.budgetExhausted) {
+        // The embed layer is out of capacity for the day (or unconfigured) — every later
+        // filing meets the same fate, so stop instead of fetching/chunking doomed documents.
+        // Everything not embedded stays un-recorded and retries at the next tick. The count
+        // is cap-aware: only filings this run WOULD have attempted, excluding the breaker
+        // (which is already counted in attempted/skipped).
+        result.skipped++;
+        result.deferredForBudget = Math.max(0, Math.min(pending.length, cap) - processed);
+        break;
+      }
       if (ingestResult.skipped) {
         result.skipped++;
       } else if (ingestResult.error) {
