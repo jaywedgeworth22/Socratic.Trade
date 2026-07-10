@@ -289,6 +289,9 @@ export function getServiceHealthSummaries(): ServiceHealthSummary[] {
   }
 }
 
+// NOTE: `id DESC` tiebreaker — `ts` is ms-resolution, so rows written in the same millisecond
+// (fast machines, back-to-back writes) otherwise return in arbitrary order and "the newest row"
+// reads become nondeterministic (bit test/data-providers.test.ts's newest-row assertion, 2026-07-10).
 export function getServiceHealthLog(
   service: string,
   limit = 100,
@@ -303,7 +306,7 @@ export function getServiceHealthLog(
           `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
            FROM api_health_log
            WHERE service = ? AND key_source IS ?
-           ORDER BY ts DESC
+           ORDER BY ts DESC, id DESC
            LIMIT ? OFFSET ?`
         )
         .all(service, keySource ?? null, limit, offset) as HealthLogRow[];
@@ -313,7 +316,7 @@ export function getServiceHealthLog(
         `SELECT id, service, ts, ok, latency_ms, error_text, key_source, user_id
          FROM api_health_log
          WHERE service = ?
-         ORDER BY ts DESC
+         ORDER BY ts DESC, id DESC
          LIMIT ? OFFSET ?`
       )
       .all(service, limit, offset) as HealthLogRow[];
