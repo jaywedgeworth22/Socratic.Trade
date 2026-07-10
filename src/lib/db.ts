@@ -810,6 +810,22 @@ function migrate(database: Database.Database): void {
       PRIMARY KEY (user_id, account_number, symbol)
     );
 
+    -- Per-position stop plan: the LLM's chosen stop-loss TYPE (StopPlanStyle) for an open position,
+    -- set at opening-fill time and read by every stop-enforcement layer for the position's life.
+    -- Monotonic per (user, account, symbol) like take_profit_trims above; keyed to the lot's cost
+    -- basis so a close+rebuy starts fresh instead of inheriting a stale plan. Cleared when the
+    -- position closes. One row per open position that has an explicit (non-"default") plan.
+    CREATE TABLE IF NOT EXISTS position_stop_plans (
+      user_id TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      style TEXT NOT NULL,
+      rationale TEXT,
+      avg_cost REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, account_number, symbol)
+    );
+
     -- Multi-user settings
     CREATE TABLE IF NOT EXISTS user_settings (
       id TEXT PRIMARY KEY,

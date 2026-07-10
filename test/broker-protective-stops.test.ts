@@ -759,3 +759,87 @@ describe("reconcileBrokerProtectiveStops — round-5 mismatch/staleness fixes (C
     // synthetic monitor covers the gap until the mark recovers or the next tick re-evaluates
   });
 });
+
+describe("reconcileBrokerProtectiveStops — per-position stop plans (never invent, only narrow)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("a 'none' plan never places a broker-held stop for that symbol, even with a lane enabled account-wide", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-1"), accountNumber: "SP-1", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "none" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-1", "local")).toHaveLength(0);
+  });
+
+  it("a 'none' plan set AFTER a stop was already placed tears it down (never silently contradicts the owner/LLM choice)", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-2"), accountNumber: "SP-2", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(gw.placed).toHaveLength(1);
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-2"), accountNumber: "SP-2", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "none" }
+    });
+    expect(r.cancelled).toBe(1);
+    expect(gw.cancelled).toEqual(["ord-1"]);
+    expect(listBrokerProtectiveStops("SP-2", "local")).toHaveLength(0);
+  });
+
+  it("a 'trailing' plan on an account whose only enabled lane is the RH fixed stop excludes that symbol entirely (never force-substitutes fixed)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-3"), accountNumber: "SP-3", gateway: gw, // fixed lane only — no trailing % configured
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "trailing" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-3", "local")).toHaveLength(0);
+  });
+
+  it("a 'fixed' plan on an account whose only enabled lane is trailing excludes that symbol entirely (never force-substitutes trailing)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-4"), accountNumber: "SP-4", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "fixed" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(listBrokerProtectiveStops("SP-4", "local")).toHaveLength(0);
+  });
+
+  it("an 'atr' plan on an account whose only enabled lane is trailing also excludes that symbol (same narrowing as 'fixed')", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-5"), accountNumber: "SP-5", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "atr" }
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+  });
+
+  it("a 'trailing' plan on an account where trailing is ALREADY the enabled lane is a pure no-op (matches the account's own kind)", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhTrailPolicy("SP-6"), accountNumber: "SP-6", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { AAPL: "trailing" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 95 });
+  });
+
+  it("a plan on a DIFFERENT symbol does not affect this one, and 'default'/absent keeps the account's own precedence", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("SP-7"), accountNumber: "SP-7", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true,
+      stopPlanBySymbol: { TSLA: "none" }
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", stopPrice: 92 });
+  });
+});

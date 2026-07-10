@@ -1,4 +1,4 @@
-import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
+import { getMaturedSkippedCounterfactualByRunSymbol, getPolicy, getSkippedCounterfactualCoverage, insertFillEvent, insertPortfolioSnapshot, listAudit, listAuditByKind, listFillEvents, listMaturedSkippedCounterfactuals, listPortfolioSnapshots, listSkippedCounterfactualsByStatus, recordStopPlan, recordTakeProfitTrimBand, type SkippedCounterfactualCoverage } from "./db";
 import { applyExecutionCost, estimateExecutionCostBps, executionCostConfig } from "./execution-cost";
 import { normalizeSymbol } from "./money";
 import type {
@@ -265,6 +265,24 @@ export function recordFillFromProposal(input: {
       recordTakeProfitTrimBand(input.accountNumber, symbol, input.proposal.takeProfitBand, input.proposal.takeProfitBasis ?? 0, input.userId);
     } catch {
       // ratchet bookkeeping must never break fill recording
+    }
+  }
+
+  // Persist the LLM's chosen stop plan for this position, set ONLY on an OPENING (buy/short) fill —
+  // an exit fill closing (or trimming) the position has nothing to set a forward-looking plan for.
+  // A "default" style (or no stopPlan at all) is deliberately NOT persisted: it's the no-op case
+  // (fall back to the account's own precedence), and skipping it keeps position_stop_plans free of
+  // rows that carry no actual override — a later scale-in with no new plan then still honors
+  // whatever explicit plan (if any) is already on record for the lot instead of silently reverting.
+  if (
+    input.proposal.stopPlan &&
+    input.proposal.stopPlan.style !== "default" &&
+    (input.proposal.side === "buy" || input.proposal.side === "short")
+  ) {
+    try {
+      recordStopPlan(input.accountNumber, symbol, input.proposal.stopPlan.style, input.proposal.stopPlan.rationale, price, input.userId);
+    } catch {
+      // plan bookkeeping must never break fill recording
     }
   }
 

@@ -95,7 +95,7 @@ import type { BrokerGateway } from "./types";
 import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
 import { getInternalSetting, setInternalSetting } from "./db";
-import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
+import { clearStopPlans, clearTakeProfitTrimBands, getStopPlans, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
 import { withLlmGeneration, recordDecisionObservation } from "./observability";
@@ -124,7 +124,8 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal, StopPlanStyle } from "./types";
+import { STOP_PLAN_FALLBACK_STOP_PCT, STOP_PLAN_STYLES } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -705,11 +706,31 @@ export async function runStrategyOnce(
     for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
       if (typeof q.beta === "number" && Number.isFinite(q.beta)) betaBySymbol[normalizeSymbol(sym)] = q.beta;
     }
-    // ATR-based stops (opt-in, default off): precompute a per-symbol stop DISTANCE (% of entry) from each
-    // open position's recent daily range so the sync proactive generator can use it (mirrors betaBySymbol).
-    // Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the fixed/beta stop.
+    // Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time): read the account's plans
+    // once here so both the proactive-risk generator and the opening-proposal enricher below see a
+    // consistent snapshot for this run. A plan overrides this account's own stop precedence for that
+    // one symbol only — "default" (the common case, no row or an explicit default) falls through to the
+    // account-wide fixed/ATR/beta chain unchanged.
+    const stopPlanBySymbol: Record<string, StopPlanStyle> = {};
+    if (policy.accountNumber) {
+      try {
+        const plans = getStopPlans(policy.accountNumber, userId);
+        for (const [sym, plan] of Object.entries(plans)) {
+          if (plan.style !== "default") stopPlanBySymbol[normalizeSymbol(sym)] = plan.style;
+        }
+      } catch (err) {
+        console.warn("[strategy] stop plan lookup failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    // ATR-based stops: precompute a per-symbol stop DISTANCE (% of entry) from each open position's
+    // recent daily range so the sync proactive generator can use it (mirrors betaBySymbol). Runs when
+    // the account has ATR stops on globally, OR when any held position carries an explicit per-position
+    // "atr" stop plan (universal availability — an "atr" plan must work even with atrStops off account-
+    // wide). Best-effort + bounded: a fetch error or insufficient bars simply leaves that name on the
+    // fixed/beta stop (or the per-position fallback flat %, resolved downstream).
     const atrStopPctBySymbol: Record<string, number> = {};
-    if (policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) {
+    const anyHeldAtrPlan = workingPositions.some((p) => stopPlanBySymbol[normalizeSymbol(p.symbol)] === "atr");
+    if ((policy.atrStops === true && (policy.riskRules.stopLossPct ?? 0) > 0) || anyHeldAtrPlan) {
       const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
       const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
       await Promise.all(
@@ -737,7 +758,7 @@ export async function runStrategyOnce(
       const ref = protectiveExitQuoteFromScan(q);
       if (ref && (ref.bid !== undefined || ref.ask !== undefined)) exitQuotesBySymbol[normalizeSymbol(sym)] = ref;
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol);
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol, stopPlanBySymbol);
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -749,6 +770,11 @@ export async function runStrategyOnce(
         proactiveProposals.push(...tpPlan.proposals);
       } catch (err) {
         console.warn("[strategy] take-profit trim planning failed:", err instanceof Error ? err.message : err);
+      }
+      try {
+        clearStopPlans(policy.accountNumber, Object.keys(stopPlanBySymbol).filter((s) => !heldSymbols.has(s)), userId);
+      } catch (err) {
+        console.warn("[strategy] stop plan cleanup failed:", err instanceof Error ? err.message : err);
       }
     }
 
@@ -1245,6 +1271,41 @@ export async function runStrategyOnce(
       );
     }
 
+    // Extend the ATR stop-DISTANCE precompute to OPENING candidates too (not just held positions),
+    // so an "atr" per-position stop plan is genuinely available at time-of-purchase, not only once a
+    // position already exists (universal-availability requirement). Gated the same way as the held-
+    // position precompute above: account-wide atrStops on, OR any opening candidate explicitly asked
+    // for an "atr" plan. Uses the decision-time referencePrice (falling back to the proposed limit
+    // price) as the entry anchor since the position doesn't exist yet. Best-effort + bounded, same as
+    // the held-position variant above.
+    const anyOpeningAtrPlan = llmProposals.some(
+      (p) => (p.side === "buy" || p.side === "short") && p.stopPlan?.style === "atr"
+    );
+    if (policy.atrStops === true || anyOpeningAtrPlan) {
+      const period = Math.round(policy.riskRules.atrStopPeriod ?? 14);
+      const multiple = policy.riskRules.atrStopMultiple ?? 2.0;
+      const openingCandidates = llmProposals.filter(
+        (p) =>
+          (p.side === "buy" || p.side === "short") &&
+          !(normalizeSymbol(p.symbol) in atrStopPctBySymbol) &&
+          ((p.referencePrice ?? p.limitPrice ?? 0) > 0)
+      );
+      await Promise.all(
+        openingCandidates.map(async (p) => {
+          const sym = normalizeSymbol(p.symbol);
+          const entryEstimate = p.referencePrice ?? p.limitPrice ?? 0;
+          try {
+            const bars = await fetchDailyOHLC(sym, Date.now(), userId);
+            if (!bars) return;
+            const pct = atrStopPct(atr(bars, period), entryEstimate, multiple);
+            if (typeof pct === "number") atrStopPctBySymbol[sym] = pct;
+          } catch {
+            // best-effort — falls back to the fixed/beta stop for this candidate
+          }
+        })
+      );
+    }
+
     // Portfolio-heat budget (opt-in, default off): compute the CURRENT book's heat ONCE per run (not
     // per-proposal) from existing positions, reusing the SAME stop-basis precedence as
     // generateProactiveRiskProposals' effectiveStopPct (ATR > beta-scaled > flat) so heat reflects the
@@ -1295,7 +1356,7 @@ export async function runStrategyOnce(
       .map((p) => {
         const sized = applyDeterministicSizing(p, policy, workingPortfolio, learningSource, userId, workingPositions, marketScan, calibrationForSizing, realizedVolPctBySymbol, bookHeat, prefetchedFills);
         const overrideSized = applySocraticOverrideSizing(sized, policy, workingPortfolio);
-        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol);
+        return enrichOpeningProposal(overrideSized, policy, marketScan, atrStopPctBySymbol, stopPlanBySymbol);
       });
 
     const debatedProposals: TradeProposal[] = [];
@@ -4575,6 +4636,29 @@ async function proposeTrades(input: {
     ]
   };
 
+  // Per-position stop-loss TYPE (distinct from bracketStopLoss, a per-trade stop PRICE). Only
+  // meaningful on an OPENING (buy/short) proposal — set for a sell/cover, it is dropped by
+  // sanitizeProposals. Persisted for the position's life once the opening order fills, so this
+  // choice (including "none") governs every stop-enforcement layer until the position closes, not
+  // just the entry order.
+  const stopPlanSchema = {
+    anyOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["style", "rationale"],
+        properties: {
+          style: {
+            enum: ["default", "fixed", "atr", "trailing", "none"],
+            description: "'default' = this account's own stop precedence (recommended unless you have a specific reason to override). 'fixed' = pin this position to the account's flat base stop %, skipping ATR/beta adjustment. 'atr' = pin to the name's own realized-volatility stop distance (falls back to the flat % if bars are unavailable). 'trailing' = protect this position with a high-water-mark trail instead of a fixed stop. 'none' = carry NO stop-loss on this position — a real, risk-increasing choice; use only with a strong justification in `rationale`."
+          },
+          rationale: { type: ["string", "null"], description: "Why this style (required, in plain language, when style is 'none' — optional otherwise)." }
+        }
+      },
+      { type: "null" }
+    ]
+  };
+
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -4601,7 +4685,8 @@ async function proposeTrades(input: {
             "confidenceScore",
             "autonomyOverride",
             "bracketStopLoss",
-            "bracketTakeProfit"
+            "bracketTakeProfit",
+            "stopPlan"
           ],
           properties: {
             symbol: { type: "string" },
@@ -4620,7 +4705,8 @@ async function proposeTrades(input: {
             confidenceScore: { type: "number", minimum: 1, maximum: 100, description: "Conviction score from 1 to 100" },
             autonomyOverride: autonomyOverrideSchema,
             bracketStopLoss: { type: ["number", "null"], description: "Per-trade protective stop PRICE (absolute price, not a percent) for this position. For a buy set it BELOW the entry, for a short ABOVE it. Derive it from the setup's own structure — a support/resistance level, a multiple of ATR, or the price that invalidates the thesis — sized to conviction, not a fixed one-size percentage. Leave null to fall back to the account's default per-symbol stop." },
-            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." }
+            bracketTakeProfit: { type: ["number", "null"], description: "Optional per-trade take-profit PRICE (absolute). For a buy ABOVE the entry, for a short BELOW it. Leave null to use the account default." },
+            stopPlan: stopPlanSchema
           }
         }
       }
@@ -5195,6 +5281,22 @@ function sanitizeProposals(proposals: TradeProposal[], max = 3): TradeProposal[]
                 ? { cashDeploymentPct: Math.max(0, Math.min(100, proposal.autonomyOverride.cashDeploymentPct)) }
                 : {})
             }
+          : undefined,
+      // Per-position stop TYPE the LLM may choose (schema-exposed) — only meaningful on an OPENING
+      // side; a sell/cover proposal has nothing to set a forward-looking stop plan for. An
+      // unrecognized style, or "default" itself, is dropped entirely (equivalent to "no plan set" —
+      // the account's own precedence applies, unchanged from before this field existed).
+      stopPlan:
+        (proposal.side === "buy" || proposal.side === "short") &&
+        proposal.stopPlan &&
+        STOP_PLAN_STYLES.includes(proposal.stopPlan.style) &&
+        proposal.stopPlan.style !== "default"
+          ? {
+              style: proposal.stopPlan.style,
+              ...(typeof proposal.stopPlan.rationale === "string" && proposal.stopPlan.rationale.trim()
+                ? { rationale: proposal.stopPlan.rationale.slice(0, 2000) }
+                : {})
+            }
           : undefined
     }))
     // Protective Risk-Exits execute as market orders so they cannot rest unfilled (see helper above).
@@ -5336,7 +5438,17 @@ async function flagStalePlacingIntents(gateway: BrokerGateway, accountNumber: st
  * and for brokers without native brackets (the synthetic scheduler-tick monitor remains the fallback
  * there). Pre-existing bracket fields on the proposal are never overwritten.
  */
-export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPolicy, marketScan: MarketScan, atrStopPctBySymbol: Record<string, number> = {}): TradeProposal {
+export function enrichOpeningProposal(
+  proposal: TradeProposal,
+  policy: TradingPolicy,
+  marketScan: MarketScan,
+  atrStopPctBySymbol: Record<string, number> = {},
+  // Persisted per-position stop plans (position_stop_plans), keyed by symbol — the EXISTING plan on
+  // record for a scale-in add to an already-open position. The proposal's OWN `stopPlan` (freshly
+  // chosen by the LLM this run, if any) always takes precedence over a stale persisted one — a new
+  // opening decision reconsidering the position's protection wins over whatever was on file.
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
+): TradeProposal {
   if (proposal.side !== "buy" && proposal.side !== "short") return proposal;
   const sym = normalizeSymbol(proposal.symbol);
   const marketPrice = marketScan.quotesBySymbol[sym]?.price;
@@ -5345,6 +5457,7 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
   const entryPrice = proposal.limitPrice ?? proposal.stopPrice ?? refPrice;
   const round2 = (n: number) => Math.round(n * 100) / 100;
   let next: TradeProposal = { ...proposal, referencePrice: refPrice };
+  const plan: StopPlanStyle = proposal.stopPlan?.style ?? stopPlanBySymbol[sym] ?? "default";
 
   const bracketsEnabled = policy.brokerBracketsEnabled !== false; // default ON
   const brokerSupportsBrackets = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
@@ -5355,23 +5468,38 @@ export function enrichOpeningProposal(proposal: TradeProposal, policy: TradingPo
       ? (policy.riskRules?.shortStopLossPct ?? policy.riskRules?.stopLossPct ?? 0)
       : (policy.riskRules?.stopLossPct ?? 0);
     // Per-symbol FALLBACK stop distance (used only when the LLM did not propose a valid per-trade
-    // stop): ATR-scaled when available, else beta-scaled, else the flat policy stop — mirroring
-    // generateProactiveRiskProposals' effectiveStopPct precedence (ATR > beta > flat) so a name gets
-    // the SAME intelligent stop on the opening bracket as on its proactive exit, never a flat 8% here
-    // and an ATR stop there.
+    // stop): an explicit plan PINS to that one rule (fixed/atr — using the fallback % when the
+    // account has none configured, same as generateProactiveRiskProposals; "trailing"/"none" skip
+    // the stop leg entirely, below); absent a plan, ATR-scaled when available, else beta-scaled,
+    // else the flat policy stop — mirroring generateProactiveRiskProposals' effectiveStopPct
+    // precedence (ATR > beta > flat) so a name gets the SAME intelligent stop on the opening
+    // bracket as on its proactive exit, never a flat 8% here and an ATR stop there.
     const beta = marketScan.quotesBySymbol[sym]?.beta;
-    const atrPct = policy.atrStops === true ? atrStopPctBySymbol[sym] : undefined;
-    const stopPct = (typeof atrPct === "number" && atrPct > 0)
-      ? atrPct
-      : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true);
+    const stopPct = plan === "fixed"
+      ? (flatStopPct > 0 ? flatStopPct : STOP_PLAN_FALLBACK_STOP_PCT)
+      : plan === "atr"
+        ? (typeof atrStopPctBySymbol[sym] === "number" && atrStopPctBySymbol[sym] > 0
+          ? atrStopPctBySymbol[sym]
+          : (flatStopPct > 0 ? flatStopPct : STOP_PLAN_FALLBACK_STOP_PCT))
+        : plan === "trailing" || plan === "none"
+          ? 0
+          : (typeof (policy.atrStops === true ? atrStopPctBySymbol[sym] : undefined) === "number" && (atrStopPctBySymbol[sym] ?? 0) > 0
+            ? atrStopPctBySymbol[sym]
+            : betaScaledStopPct(flatStopPct, beta, policy.betaScaledStops === true));
     const takePct = policy.riskRules?.takeProfitPct ?? 0;
     // Honor a VALID LLM-proposed per-trade stop/take (must sit on the correct side of entry — below
     // for a long, above for a short); a nonsensical one is discarded so the per-symbol fallback fills
-    // it in (a stop on the wrong side is worse than the default).
-    const llmStop = next.bracketStopLoss;
-    const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
-      (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
-    if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
+    // it in (a stop on the wrong side is worse than the default). A "trailing"/"none" plan discards
+    // any LLM-proposed stop PRICE too — this position's protection is a trail or nothing, not a
+    // fixed bracket stop leg; take-profit is unaffected (independent of the stop style).
+    if (plan === "trailing" || plan === "none") {
+      if (next.bracketStopLoss != null) next = { ...next, bracketStopLoss: undefined };
+    } else {
+      const llmStop = next.bracketStopLoss;
+      const llmStopValid = typeof llmStop === "number" && Number.isFinite(llmStop) && llmStop > 0 &&
+        (proposal.side === "buy" ? llmStop < entryPrice : llmStop > entryPrice);
+      if (next.bracketStopLoss != null && !llmStopValid) next = { ...next, bracketStopLoss: undefined };
+    }
     const llmTake = next.bracketTakeProfit;
     const llmTakeValid = typeof llmTake === "number" && Number.isFinite(llmTake) && llmTake > 0 &&
       (proposal.side === "buy" ? llmTake > entryPrice : llmTake < entryPrice);
@@ -5455,7 +5583,14 @@ export function generateProactiveRiskProposals(
   extHoursBufferBps?: number,
   // Real bid/ask anchors per symbol for the extended-hours marketable-limit (see the caller's
   // protectiveExitQuoteFromScan filter). Missing entries fall back to currentPrice as the anchor.
-  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {}
+  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {},
+  // The LLM's per-position stop-loss TYPE choice, persisted at fill time (position_stop_plans) and
+  // keyed by symbol. A "fixed"/"atr" plan PINS this position to that one distance rule regardless of
+  // the account's own atrStops/betaScaledStops toggles; "trailing" hands this position's protection
+  // to the trailing-stop lane instead (skipped here — see runSyntheticStopMonitor); "none" is a
+  // genuine, owner-accepted no-stop choice. Absent/"default" → the account's own precedence,
+  // unchanged from before this parameter existed.
+  stopPlanBySymbol: Record<string, StopPlanStyle> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -5464,13 +5599,27 @@ export function generateProactiveRiskProposals(
   const atrStops = policy.atrStops === true;
 
   // Take-profit trims are handled by planTakeProfitTrims (a stateful, laddered band ratchet); this
-  // generator emits only stateless FULL-position stop-loss / short-stop exits.
-  if (stopLossPct <= 0 && shortStopLossPct <= 0) return proactiveProposals;
+  // generator emits only stateless FULL-position stop-loss / short-stop exits. An account with BOTH
+  // base %'s off still needs to run the loop when any position carries an explicit fixed/atr plan —
+  // only skip entirely when nothing anywhere could possibly want a stop.
+  const anyExplicitDistancePlan = Object.values(stopPlanBySymbol).some((s) => s === "fixed" || s === "atr");
+  if (stopLossPct <= 0 && shortStopLossPct <= 0 && !anyExplicitDistancePlan) return proactiveProposals;
 
-  // Resolve the effective stop DISTANCE for a base stop %: ATR-based when enabled and available
-  // (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes precedence
-  // over beta-scaling when both are on — it's the more direct, per-name volatility measure.
+  // Resolve the effective stop DISTANCE for a base stop %: an explicit per-position plan wins
+  // outright (fixed/atr pin to that one rule, using the fallback % when the account has none
+  // configured; trailing/none return 0 — this function's fixed/ATR exit does not apply to them).
+  // Absent a plan (or "default"), the existing precedence applies: ATR-based when enabled and
+  // available (it sets the distance of the configured stop), else beta-scaled, else flat. ATR takes
+  // precedence over beta-scaling when both are on — it's the more direct, per-name volatility measure.
   const effectiveStopPct = (sym: string, baseStopPct: number, beta: number | undefined): number => {
+    const plan = stopPlanBySymbol[sym];
+    if (plan === "none" || plan === "trailing") return 0;
+    if (plan === "fixed") return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    if (plan === "atr") {
+      const atrPct = atrStopPctBySymbol[sym];
+      if (typeof atrPct === "number" && Number.isFinite(atrPct) && atrPct > 0) return atrPct;
+      return baseStopPct > 0 ? baseStopPct : STOP_PLAN_FALLBACK_STOP_PCT;
+    }
     if (baseStopPct <= 0) return baseStopPct;
     if (atrStops) {
       const atrPct = atrStopPctBySymbol[sym];

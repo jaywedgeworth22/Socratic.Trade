@@ -10,6 +10,7 @@ import {
   listBrokerProtectiveStops,
   listFillEvents,
   listSyntheticStops,
+  recordStopPlan,
   revertSyntheticStopClaim,
   upsertBrokerProtectiveStop,
   upsertConnectedAccount,
@@ -738,5 +739,71 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     const receipts = auditPayloads("synthetic_stop_skipped_resting_exit", "UNKQ");
     expect(receipts).toHaveLength(1);
     expect(receipts[0].unknownOrderQuantity).toBe(true);
+  });
+
+  describe("per-position stop plans (universal availability + never-hidden 'none')", () => {
+    it("a 'trailing' plan registers a trail using STOP_PLAN_FALLBACK_STOP_PCT even when the account has NO trailing % configured at all", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // extreme 100 (mark == avgCost at registration), 8% fallback trail → trigger 92; 90 breaches
+      connectTestAccount("SYN-PLAN-TRAIL");
+      recordStopPlan("SYN-PLAN-TRAIL", "AAPL", "trailing", undefined, 100, "local");
+      const noTrailPolicy = { ...policyFor("SYN-PLAN-TRAIL"), riskRules: { ...policyFor("SYN-PLAN-TRAIL").riskRules, trailingStopPct: 0 } };
+      const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0].side).toBe("sell");
+      expect(broker.placed[0].quantity).toBe(10);
+    });
+
+    it("a 'trailing' plan does NOT register when the account-wide trail is 0 and the plan is absent (unaffected symbols keep prior behavior)", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } };
+      connectTestAccount("SYN-PLAN-NONE-DEFAULT");
+      const noTrailPolicy = {
+        ...policyFor("SYN-PLAN-NONE-DEFAULT"),
+        riskRules: { ...policyFor("SYN-PLAN-NONE-DEFAULT").riskRules, trailingStopPct: 0 }
+      };
+      const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+      expect(listSyntheticStops("SYN-PLAN-NONE-DEFAULT", "local")).toHaveLength(0);
+    });
+
+    it("a 'none' plan never registers a synthetic trail, even with a healthy account-wide trailing % configured", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // would breach a 5% account-wide trail if registered
+      connectTestAccount("SYN-PLAN-NONE");
+      recordStopPlan("SYN-PLAN-NONE", "AAPL", "none", "high-conviction, no stop desired", 100, "local");
+      const result = await runSyntheticStopMonitor("local", policyFor("SYN-PLAN-NONE"), true);
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+      expect(listSyntheticStops("SYN-PLAN-NONE", "local")).toHaveLength(0);
+    });
+
+    it("a 'none' plan set AFTER a trail was already registered purges the existing row (never silently keeps protecting against the owner's choice)", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 100 } }; // flat — no breach, just exercising registration/purge
+      connectTestAccount("SYN-PLAN-NONE-LATER");
+      await runSyntheticStopMonitor("local", policyFor("SYN-PLAN-NONE-LATER"), true);
+      expect(listSyntheticStops("SYN-PLAN-NONE-LATER", "local")).toHaveLength(1);
+      recordStopPlan("SYN-PLAN-NONE-LATER", "AAPL", "none", "reconsidered — no stop wanted", 100, "local");
+      await runSyntheticStopMonitor("local", policyFor("SYN-PLAN-NONE-LATER"), true);
+      expect(listSyntheticStops("SYN-PLAN-NONE-LATER", "local")).toHaveLength(0);
+      const receipts = auditPayloads("synthetic_stop_purged_by_plan", "AAPL");
+      expect(receipts).toHaveLength(1);
+    });
+
+    it("a 'fixed'/'atr' plan does not touch this trailing lane at all (registration behaves as 'default')", async () => {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } };
+      connectTestAccount("SYN-PLAN-FIXED");
+      recordStopPlan("SYN-PLAN-FIXED", "AAPL", "fixed", undefined, 100, "local");
+      const noTrailPolicy = { ...policyFor("SYN-PLAN-FIXED"), riskRules: { ...policyFor("SYN-PLAN-FIXED").riskRules, trailingStopPct: 0 } };
+      const result = await runSyntheticStopMonitor("local", noTrailPolicy, true);
+      // No account-wide trail and "fixed" doesn't grant one here — this lane stays inert for this symbol.
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+      expect(listSyntheticStops("SYN-PLAN-FIXED", "local")).toHaveLength(0);
+    });
   });
 });

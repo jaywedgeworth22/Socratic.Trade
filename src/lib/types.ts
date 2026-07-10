@@ -27,6 +27,37 @@ export type LlmReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" 
 export type HoldingHorizon = "intraday" | "swing" | "position" | "longterm";
 export type FillSource = "live" | "paper";
 export type ExecutionMode = "broker/paper" | "broker/live";
+/**
+ * The LLM's chosen per-position stop-loss TYPE (distinct from `TradeProposal.bracketStopLoss`,
+ * which is a per-trade stop PRICE). "default" (or the field absent) defers entirely to the
+ * account's own precedence (ATR → beta-scaled → flat, plus trailing if configured) — no behavior
+ * change from before this field existed. "fixed"/"atr" PIN this position to that one distance rule
+ * (skipping the account's other rules for this symbol only) rather than letting the account's
+ * ATR/beta toggles decide; "atr" falls back to the flat base % when bars are unavailable for the
+ * symbol, same honesty as the account-wide ATR fallback. "trailing" makes this position's ONLY
+ * per-position stop a trail (skipping the fixed/ATR proactive exit), using the account's configured
+ * trailingStopPct, or — if the account hasn't set one — this position's own effective stop distance
+ * as the trail %. "none" is a genuine, owner-preference no-stop choice (real trading, owner's risk —
+ * never hard-blocked) and is never silent: it requires a rationale and is surfaced loudly wherever
+ * this position's protection is shown.
+ */
+export type StopPlanStyle = "default" | "fixed" | "atr" | "trailing" | "none";
+export const STOP_PLAN_STYLES: readonly StopPlanStyle[] = ["default", "fixed", "atr", "trailing", "none"];
+export interface StopPlan {
+  style: StopPlanStyle;
+  /** Required when style is "none" — the LLM's justification for carrying no stop, shown wherever
+   *  this position's protection is displayed. Optional for every other style. */
+  rationale?: string;
+}
+/**
+ * Shared fallback stop-loss distance (%) for a per-position "fixed"/"atr" plan (or the trail % for
+ * a "trailing" plan) when the account's own configured distance is 0/unset — so a per-position plan
+ * is genuinely usable even on an account that otherwise runs with no stop-loss configured at all
+ * (universal-availability requirement). Shared across strategy.ts, synthetic-stops.ts, and
+ * broker-protective-stops.ts so the same position never sees a different fallback depending on
+ * which enforcement layer is evaluating it.
+ */
+export const STOP_PLAN_FALLBACK_STOP_PCT = 8;
 export const NOTIFICATION_EVENT_TYPES = [
   "fill",
   "block",
@@ -1088,6 +1119,16 @@ export interface TradeProposal {
    * When absent the stop-loss leg is a plain stop-market.
    */
   bracketStopLimit?: number;
+  /**
+   * The LLM's chosen stop-loss TYPE for this position (see `StopPlanStyle`) — set only on an
+   * OPENING (buy/short) proposal. Persisted per position at fill time (`position_stop_plans`,
+   * mirroring the `takeProfitBand`/`take_profit_trims` pattern below) and read back by every
+   * stop-enforcement layer (`generateProactiveRiskProposals`, `enrichOpeningProposal`,
+   * `runSyntheticStopMonitor`, `reconcileBrokerProtectiveStops`) for the life of the position, so
+   * the choice made at entry — including "none" — survives across runs instead of being
+   * re-decided (or silently dropped) on every cycle. Absent = "default" (no change in behavior).
+   */
+  stopPlan?: StopPlan;
   /**
    * Take-profit trim bookkeeping (set only on proactive take-profit trim proposals by
    * planTakeProfitTrims). `takeProfitBand` = the take-profit band this trim corresponds to; its position

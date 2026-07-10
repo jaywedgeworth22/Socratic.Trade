@@ -16,8 +16,10 @@ import type {
   PriceAlert,
   PriceAlertOp,
   PriceAlertStatus,
+  StopPlanStyle,
   WatchlistItem
 } from "./types";
+import { STOP_PLAN_STYLES } from "./types";
 
 // ── Field-Level Encryption ──────────────────────────────────────────────────
 
@@ -1416,5 +1418,61 @@ export function clearTakeProfitTrimBands(accountNumber: string, symbols: string[
   const placeholders = symbols.map(() => "?").join(",");
   getDb()
     .prepare(`DELETE FROM take_profit_trims WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
+    .run(userId, accountNumber, ...symbols);
+}
+
+// ── Per-position stop plan ──────────────────────────────────────────────────
+// The LLM's chosen stop-loss TYPE for an open position, set at opening-fill time and read by every
+// stop-enforcement layer for the position's life. Modeled directly on the take-profit trim ratchet
+// above. See position_stop_plans (db.ts migrate()).
+
+export interface PositionStopPlan {
+  style: StopPlanStyle;
+  rationale?: string;
+  /** Position cost basis when the plan was recorded — resets on a close+rebuy (different lot). */
+  avgCost: number;
+}
+
+/** Map of symbol → its recorded per-position stop plan (empty when none set — every position then
+ *  falls back to the account's default stop precedence, unchanged from before this feature). */
+export function getStopPlans(accountNumber: string, userId: string = "local"): Record<string, PositionStopPlan> {
+  const rows = getDb()
+    .prepare("SELECT symbol, style, rationale, avg_cost FROM position_stop_plans WHERE user_id = ? AND account_number = ?")
+    .all(userId, accountNumber) as Array<{ symbol: string; style: string; rationale: string | null; avg_cost: number }>;
+  const out: Record<string, PositionStopPlan> = {};
+  for (const r of rows) {
+    const style = (STOP_PLAN_STYLES as readonly string[]).includes(r.style) ? (r.style as StopPlanStyle) : "default";
+    out[r.symbol] = { style, rationale: r.rationale ?? undefined, avgCost: Number(r.avg_cost) || 0 };
+  }
+  return out;
+}
+
+/** Record (upsert) the stop plan for a position lot. Invalid/unrecognized styles fall back to "default". */
+export function recordStopPlan(
+  accountNumber: string,
+  symbol: string,
+  style: string,
+  rationale: string | undefined,
+  avgCost: number,
+  userId: string = "local",
+  now: string = new Date().toISOString()
+): void {
+  const safeStyle = (STOP_PLAN_STYLES as readonly string[]).includes(style) ? style : "default";
+  getDb()
+    .prepare(
+      `INSERT INTO position_stop_plans (user_id, account_number, symbol, style, rationale, avg_cost, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, account_number, symbol)
+       DO UPDATE SET style = excluded.style, rationale = excluded.rationale, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at`
+    )
+    .run(userId, accountNumber, symbol, safeStyle, rationale ?? null, Number.isFinite(avgCost) ? avgCost : 0, now);
+}
+
+/** Clear stop plans for the given symbols (e.g. positions that have closed). No-op on empty input. */
+export function clearStopPlans(accountNumber: string, symbols: string[], userId: string = "local"): void {
+  if (symbols.length === 0) return;
+  const placeholders = symbols.map(() => "?").join(",");
+  getDb()
+    .prepare(`DELETE FROM position_stop_plans WHERE user_id = ? AND account_number = ? AND symbol IN (${placeholders})`)
     .run(userId, accountNumber, ...symbols);
 }

@@ -331,3 +331,115 @@ describe("generateProactiveRiskProposals ATR stops", () => {
     expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
   });
 });
+
+describe("generateProactiveRiskProposals per-position stop plans", () => {
+  const positions: EquityPosition[] = [{ symbol: "TSLA", quantity: 10, averageCost: 100, marketValue: 850, sector: "Auto" }];
+  const prices = { TSLA: 85 }; // down 15%
+  const stopRules: TradingPolicy["riskRules"] = { stopLossPct: 10 };
+  const noStopRules: TradingPolicy["riskRules"] = { stopLossPct: 0 };
+
+  it("a 'none' plan suppresses the exit even though the flat % would have breached", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules }), {}, {}, undefined, {}, { TSLA: "none" });
+    expect(out.some((p) => p.symbol === "TSLA")).toBe(false);
+  });
+
+  it("a 'trailing' plan suppresses this generator's fixed/ATR exit (trailing is handled elsewhere)", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules }), {}, {}, undefined, {}, { TSLA: "trailing" });
+    expect(out.some((p) => p.symbol === "TSLA")).toBe(false);
+  });
+
+  it("a 'fixed' plan pins to STOP_PLAN_FALLBACK_STOP_PCT (8%) when the account has NO stop-loss % configured at all", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: noStopRules }), {}, {}, undefined, {}, { TSLA: "fixed" });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+
+  it("an 'atr' plan uses the supplied per-symbol ATR pct even with no account-wide stop-loss configured", () => {
+    // A wide 20% ATR distance is NOT breached by a -15% move.
+    const wide = generateProactiveRiskProposals(positions, prices, policy({ riskRules: noStopRules }), {}, { TSLA: 20 }, undefined, {}, { TSLA: "atr" });
+    expect(wide.some((p) => p.symbol === "TSLA")).toBe(false);
+    // A tight 5% ATR distance IS breached.
+    const tight = generateProactiveRiskProposals(positions, prices, policy({ riskRules: noStopRules }), {}, { TSLA: 5 }, undefined, {}, { TSLA: "atr" });
+    expect(tight.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+
+  it("an 'atr' plan falls back to STOP_PLAN_FALLBACK_STOP_PCT when no ATR pct was supplied for the symbol", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: noStopRules }), {}, {}, undefined, {}, { TSLA: "atr" });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+
+  it("universal availability: a plan-only account (no account-wide stop configured, no atrStops toggle) still protects the position", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: noStopRules, atrStops: false, betaScaledStops: false }), {}, {}, undefined, {}, { TSLA: "fixed" });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+
+  it("a plan for a DIFFERENT symbol does not affect this one — 'default' (absent) keeps the account's own precedence", () => {
+    const out = generateProactiveRiskProposals(positions, prices, policy({ riskRules: stopRules }), {}, {}, undefined, {}, { AAPL: "none" });
+    expect(out.some((p) => p.symbol === "TSLA" && p.side === "sell")).toBe(true);
+  });
+});
+
+describe("enrichOpeningProposal per-position stop plans", () => {
+  const marketScan = scan({ TSLA: { price: 100 } });
+
+  it("a 'trailing' plan on the proposal discards any LLM-proposed bracket stop, but leaves take-profit untouched", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "trailing" }, bracketStopLoss: 90 }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan
+    );
+    expect(p.bracketStopLoss).toBeUndefined();
+    expect(p.bracketTakeProfit).toBe(120);
+  });
+
+  it("a 'none' plan on the proposal discards any LLM-proposed bracket stop, but leaves take-profit untouched", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "none", rationale: "high-conviction thesis, no stop desired" }, bracketStopLoss: 90 }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan
+    );
+    expect(p.bracketStopLoss).toBeUndefined();
+    expect(p.bracketTakeProfit).toBe(120);
+  });
+
+  it("a 'fixed' plan pins to STOP_PLAN_FALLBACK_STOP_PCT (8%) when the account has no stop-loss % configured", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "fixed" } }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 0 } }),
+      marketScan
+    );
+    expect(p.bracketStopLoss).toBe(92); // 100 * (1 - 8/100)
+  });
+
+  it("an 'atr' plan uses the supplied per-symbol ATR pct for the opening bracket", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "atr" } }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 0 } }),
+      marketScan,
+      { TSLA: 5 }
+    );
+    expect(p.bracketStopLoss).toBe(95); // 100 * (1 - 5/100)
+  });
+
+  it("honors a PERSISTED plan (stopPlanBySymbol, e.g. a scale-in add) when the proposal itself carries no fresh stopPlan", () => {
+    const p = enrichOpeningProposal(
+      buy(),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan,
+      {},
+      { TSLA: "trailing" }
+    );
+    expect(p.bracketStopLoss).toBeUndefined();
+    expect(p.bracketTakeProfit).toBe(120);
+  });
+
+  it("the proposal's OWN fresh stopPlan takes precedence over a stale persisted one", () => {
+    const p = enrichOpeningProposal(
+      buy({ stopPlan: { style: "fixed" } }),
+      policy({ activeBroker: "alpaca", riskRules: { stopLossPct: 8, takeProfitPct: 20 } }),
+      marketScan,
+      {},
+      { TSLA: "none" }
+    );
+    expect(p.bracketStopLoss).toBe(92);
+  });
+});
