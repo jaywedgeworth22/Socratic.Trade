@@ -19,8 +19,8 @@ EVERY 412 "No LLM key is configured" — model-CHOICE messages now get "Choose y
 `/console/settings#models-green`; key messages keep the key title. (3) `advanceRotationPointers`
 same-model skip: dual rotation started both counters at 0 → proposer and reviewer served the SAME model
 all first cycle; red now skips one slot when its pick would equal green's (pool >= 2), wrap-advance
-intact. tsc clean; touched suites 26/26 (Node 24); committed locally, NOT pushed — review gates the
-landing (`land.sh` full gate then auto-merge). See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
+intact. tsc clean; touched suites 26/26 (Node 24); reviewed, landing via `land.sh` (full gate:
+lint/tsc/test/build) — PR opened, auto-merge armed. See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 
 ## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
 Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR

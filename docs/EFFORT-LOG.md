@@ -1390,7 +1390,7 @@ As of 2026-07-08 (assignment-rule update).
 ## In Progress
 - **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
   worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
-  2026-07-09: committed locally, NOT pushed (owner review gates the landing).** Owner-directed,
+  2026-07-09: PR opened, auto-merge armed.** Owner-directed,
   three fixes: (1) `POST /api/strategy/run` precheck 412'd every manual run under rotation (the
   persisted sentinel resolves as unset in `resolveOpenAiModel`; scheduled runs were fine) — now
   gates a rotating Green on `eligibleRotationPool` non-empty, new actionable

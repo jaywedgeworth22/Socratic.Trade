@@ -85,7 +85,7 @@ self-debate (same model as both proposer and reviewer) for a full first cycle.
 
 ## Follow-ups
 
-- Landing pends review (committed locally, NOT pushed — review gates this); full
-  `land.sh` gate (lint/tsc/test/build) runs at landing.
+- Reviewed; landing via `land.sh` (full gate: lint/tsc/test/build), PR opened
+  with auto-merge armed.
 - Optional later: a red-only rotation could still land on a FIXED green model
   (the skip only applies when both seats rotate) — left as-is per minimal scope.
