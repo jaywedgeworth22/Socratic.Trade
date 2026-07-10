@@ -591,14 +591,18 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
       return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
     }
     // Mistral only reaches here as mistral-medium-3-5 with effort "none" | "high" (the only
-    // Mistral id with a reasoning capability). prompt_mode:"reasoning" rides along only on the
-    // reasoning tier — medium-3-5 accepted it in the 2026-07-08 benchmark validation, while
-    // small-2603 400s on it (which is exactly why small has no capability entry).
-    const providerReasoning =
-      capability.provider === "mistral" && normalizedEffort !== "none"
-        ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
-        : { reasoning_effort: normalizedEffort };
-    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, ...providerReasoning };
+    // Mistral id with a reasoning capability), and it gets reasoning_effort ONLY — never
+    // prompt_mode. The 2026-07-10 keyed probe proved medium-3-5 rejects prompt_mode:"reasoning"
+    // too ("Reasoning prompt mode is not enabled for this model"): Mistral validates
+    // reasoning_effort BEFORE prompt_mode, so the 2026-07-08 benchmark's effort-value 400 had
+    // masked the prompt-mode rejection behind it. Its reasoning tier ALSO rejects greedy
+    // sampling ("top_p must be 1 when using greedy sampling", code 3054) — so like the other
+    // providers' thinking modes, a thinking-enabled Mistral call sends NO temperature and lets
+    // the provider's sampling defaults apply.
+    if (capability.provider === "mistral" && normalizedEffort !== "none") {
+      return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: normalizedEffort };
+    }
+    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
   }
   // resolveLlmWireOutputCap (== bounds.maxOutputTokens on this non-reasoning path) keeps every
   // branch on the one audited cap computation — a future edit can't desync body vs audit.
