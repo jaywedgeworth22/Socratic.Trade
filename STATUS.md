@@ -8,6 +8,39 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
+Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
+is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
+(1) **No hard enrichment cap** — `maxSymbols()` is now Infinity unless `FMP_MAX_SYMBOLS` is set
+(unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP=50` removed — an
+account with >50 positions must never see held names starved. Webull/Robinhood-options env
+overrides unclamped too (defaults unchanged). (2) **Filings receipts + ingestion**: the
+"Requested filings doc type never ingested" warning on every stock is now a neutral "Filings
+library still warming up" receipt with ingested counts; SEC ingestion is demand-first
+(watchlist + last-scan candidates incl. holdings before the alphabetical universe), paid-tier
+per-run default 25 (was 1), TTL env-tunable (`SEC_FILING_INGEST_TTL_HOURS`), and the admin
+backfill route now forces past the TTL stamp instead of silently no-oping. Prod env still
+needed to unlock paid pace: `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+See `docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` and the
+owner-ruling revision section in `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, usage-cap pickup round 2 of MONET's lane): committed MONET's
+uncommitted follow-on refinements (held-in-top-N enrichment priority, `ingestFiling`
+budget-skip un-record so budget-truncated filings retry instead of being marked ingested,
+forced admin backfills no longer push the scheduled-ingest TTL stamp), merged
+`origin/main` clean, full gate green, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-09 — Enrichment starvation fix landed (MONET, branch `monet/bold-lamport-20a8f9`)
+Fixed the prod-verified starvation (30/42 candidates enriched, 2026-07-09T19:41Z run): the
+per-provider enrichment budget is now derived from the real scan shape (candidateLimit +
+outlierReserve + `HELD_SYMBOL_ALLOWANCE=12`, capped at 50) instead of a fixed 30, the
+`enrich()` symbol list is ordered held → event outliers → ranked top-N so a budget shortfall
+can never starve owned/force-included names, and `withProvenance`/`cellTitle` no longer stamp
+"Received <time>" on fields no provider returned. `FMP_MAX_SYMBOLS` stays the absolute
+operator override. See `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's uncommitted work):
+merged `origin/main` clean (incl. PR #1222 TwelveData negative-cache — different region,
+both kept), focused tests 132/132 then full gate green, PR opened via `land.sh` with
+auto-merge armed.
 ## 2026-07-09 — Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`)
 Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 
@@ -66,6 +99,17 @@ throughout); built image `docker save/load`ed so cutover downtime was ~5 min; si
 records flipped (`jays.services` apex/`*`/`prod`, `socratictrade.com` apex/`*`/`admin`). Verified:
 health 200/db ok/scheduler ticking, litestream caught up, runners re-registered, dashboard live.
 Old box: all containers stopped `--restart=no` (rollback standby until owner deletes it).
+**Same-evening resolutions:** the `congress.trade` IP Access Rule for the new IP was added
+(owner-authorized; congress-stream SSE `ok:true` again), and the first new-box deploy succeeded
+(AG deployer seat — first full cold nixpacks build on the 8 GB box proven).
+**Same-evening DOMAIN RENAME (owner-directed): the Coolify dashboard/API moved from the apex to
+`https://host.jays.services`** — the apex `jays.services` now CNAMEs to the Mac tunnel and no
+longer reaches Coolify; the `*.jays.services` wildcard A record was deleted. Every tool/script
+must call `https://host.jays.services/api/v1/...`. The stored Coolify API token also stopped
+authenticating at the same time (likely rotated in the UI) — agents need a fresh token via secret
+handoff; the GitHub App webhook URL (github.com side) still points at the apex and needs updating
+to `host.jays.services`. **Owner action still pending:** delete the old Hetzner server after
+soak. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
 **Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
 the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
 congress-stream SSE 403s — the one migration regression, root-caused); (2) first
