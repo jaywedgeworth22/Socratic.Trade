@@ -38,11 +38,14 @@ export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
  * The rotation pool: the curated model catalog (keep in sync with
  * app/ui/llm-model-catalog.ts CURATED_LLM_MODEL_GROUPS — src/lib must not import from app/)
  * MINUS deliberate exclusions:
- *   - mistral-small-2603 / mistral-medium-3-5 — the capability map that 400'd every call
- *     (benchmark 2026-07-08, 0/12) was fixed 2026-07-09 (medium-3-5: reasoning_effort
- *     high|none only; small-2603: plain body, no reasoning params), but neither model has
- *     ever completed a benchmarked call — re-add only after a keyed re-benchmark
- *     (scripts/benchmark-llm-models.ts) shows schema-valid completions.
+ *   - mistral-small-2603 / mistral-medium-3-5 — RE-ADDED 2026-07-10 (owner directive: keep
+ *     both in for now, pull out later if warranted). The capability map that 400'd every call
+ *     (benchmark 2026-07-08, 0/12) was fixed 2026-07-09, and the 2026-07-10 keyed re-benchmark
+ *     confirmed both complete real calls: small-2603 proposes cleanly (100% schema-valid,
+ *     bracket-covered, cheap/fast); medium-3-5 at the pool's default effort (reasoning off)
+ *     answers with an empty proposal list every round (model judgment, not a request-shape
+ *     bug — see docs/rollouts/2026-07-10-mistral-rebench.md) but its reasoning tier does
+ *     propose when explicitly requested at higher cost/latency.
  *   - grok-build-0.1 — coding specialist, soft-timeouts as a Green strategist.
  * Order interleaves providers so consecutive runs hit different providers even before the
  * credential filter, and so green/red (offset by the wrap-advance) pair across providers.
@@ -52,6 +55,7 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "claude-haiku-4-5",
   "gemini-3.5-flash",
   "deepseek-v4-flash",
+  "mistral-small-2603",
   "gpt-5.4-nano",
   "claude-sonnet-5",
   "gemini-3.1-flash-lite",
@@ -60,6 +64,7 @@ export const MODEL_ROTATION_POOL: readonly string[] = [
   "claude-opus-4-8",
   "gemini-3.1-pro-preview",
   "deepseek-v4-pro",
+  "mistral-medium-3-5",
   "gpt-5.5",
   "claude-fable-5"
 ];

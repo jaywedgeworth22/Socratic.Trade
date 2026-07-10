@@ -114,16 +114,21 @@ describe("advanceRotationPointers (pure round-robin)", () => {
 });
 
 describe("MODEL_ROTATION_POOL (curated catalog minus exclusions)", () => {
-  it("excludes the broken/unsuitable models and nothing else from the curated catalog", async () => {
+  it("excludes only the unsuitable models and nothing else from the curated catalog", async () => {
     const { MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
     const { CURATED_LLM_MODEL_IDS } = await import("../app/ui/llm-model-catalog");
-    const excluded = ["mistral-small-2603", "mistral-medium-3-5", "grok-build-0.1"];
+    // mistral-small-2603 / mistral-medium-3-5 were re-added 2026-07-10 (owner directive, after
+    // the keyed re-benchmark proved both complete real calls) — only grok-build-0.1 (coding
+    // specialist, soft-timeouts as a Green strategist) stays excluded.
+    const excluded = ["grok-build-0.1"];
     for (const model of excluded) expect(MODEL_ROTATION_POOL).not.toContain(model);
     // Keep-in-sync check: the pool is exactly the curated catalog minus the exclusions.
     expect(new Set(MODEL_ROTATION_POOL)).toEqual(new Set(CURATED_LLM_MODEL_IDS.filter((id) => !excluded.includes(id))));
     expect(MODEL_ROTATION_POOL).toContain("gpt-5.4-mini");
     expect(MODEL_ROTATION_POOL).toContain("claude-fable-5");
     expect(MODEL_ROTATION_POOL).toContain("grok-4.3");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-small-2603");
+    expect(MODEL_ROTATION_POOL).toContain("mistral-medium-3-5");
   });
 });
 

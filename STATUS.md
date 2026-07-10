@@ -48,6 +48,7 @@ gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the 
 but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
 verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
 schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
 Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
 (re-add small-2603; hold medium-3-5) is an owner call, detailed in
 `docs/rollouts/2026-07-10-mistral-rebench.md`.
@@ -58,6 +59,11 @@ medium-3-5 rejects `prompt_mode:"reasoning"` too (validation-order masked it on 
 reasoning tier rejects greedy sampling (`temperature:0` without `top_p:1`) → thinking-enabled Mistral
 calls now send reasoning_effort only, no temperature. With both fixes it DOES propose: 2 schema-valid
 bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
+works, but ~50x small-2603's cost. Benchmark script gained `--effort <tier|omit>`. High-tier
+results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+**Rotation-pool decision (owner, same session): keep BOTH models in `MODEL_ROTATION_POOL` for now,
+pull out later if warranted** — overrides the hold-medium-3-5-out recommendation above.
+`MODEL_ROTATION_POOL` now excludes only `grok-build-0.1`.
 works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
 `--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
 ## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
