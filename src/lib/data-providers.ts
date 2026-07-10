@@ -3328,9 +3328,19 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
             negativeCache(symbol); // Twelve Data didn't return this symbol at all
             continue;
           }
-          // Skip error responses
+          // Skip error responses. A per-symbol code of 429 (rate limit) or 5xx (upstream hiccup) is
+          // TRANSIENT, not "this symbol has no data" — same convention as the whole-request error path
+          // above (continues without caching) and the App A provider's transportError flag. Negative-
+          // caching it would suppress a high-priority symbol for the full negative TTL over a condition
+          // that clears on its own. Permanent rows (400/403 plan-restricted/404 not-found, or an error
+          // with no code) still rotate out via the negative cache so they don't starve the credit budget.
           if (q.code || q.status === "error" || q.message) {
-            negativeCache(symbol);
+            const code = Number(q.code);
+            if (code === 429 || code >= 500) {
+              result[symbol] = {}; // transient — retry next scan, no cache write
+            } else {
+              negativeCache(symbol);
+            }
             continue;
           }
 

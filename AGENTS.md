@@ -130,13 +130,18 @@ The old preview-provisioning scripts (`setup-agent-previews.sh`, `sync-preview-l
 dead after the preview retirement; the pre-push hook they used to install is now installed
 by `scripts/land.sh`). The "Preview freshness policy" section below is historical.
 
-Hosting is now Coolify on the Hetzner box (`91.98.44.8`, dashboard `https://jays.services`
-— direct DNS, no Mac dependency). Exactly ONE application exists there:
-`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below).
+Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
+dashboard `https://jays.services` — direct DNS, no Mac dependency; migrated 2026-07-09
+from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the owner deletes
+it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`). The box hosts
+`socratic-trade-prod` (= `socratictrade.com`, see the production stanza below) plus the
+`github-runner` service (two GitHub Actions deploy runners).
 **Build caveats:** the box's `concurrent_builds` is
-pinned to **1** (two parallel `next build`s OOM-wedged the 4 GB box on 2026-07-07, console
-reboot required), and Docker cleanup thresholds matter — a build burst filled the disk on
-2026-07-08 and 500'd the Coolify control plane (see the prod-migration rollout note).
+pinned to **1** (two parallel `next build`s OOM-wedged the old 4 GB box on 2026-07-07,
+console reboot required; unproven on the 8 GB box — loosen only deliberately), and Docker
+cleanup thresholds matter — a build burst filled the old box's disk on 2026-07-08 and
+500'd the Coolify control plane (cleanup now threshold=60%/hourly; see the prod-migration
+rollout note).
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
@@ -334,6 +339,13 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
   not interchangeable — check `eps` to decide which one applies.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
+  Those DBs are auto-cleaned: `vitest.config.ts` points the test runtime's
+  TMPDIR/TMP/TEMP at one per-run `agentic-vitest-*` dir and `test/global-setup.ts`
+  removes it on teardown (plus sweeps `agentic-*` leftovers >6h old from the real
+  temp dir — crashed runs, pre-fix leaks). The suite used to leak every temp DB
+  forever (178k files / ~130GB on one machine). Keep new temp-file tests on the
+  `tmpdir()` / `process.env.TMPDIR` pattern so they stay inside the per-run dir;
+  never hardcode `/tmp`.
 
 ## Git author identity (GitHub email privacy)
 
