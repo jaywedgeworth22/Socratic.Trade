@@ -456,7 +456,7 @@ async function tick(): Promise<void> {
         // pending_reconciliation until the next strategy run. Applies to broker/paper and broker/live;
         // Test/local has no broker order lifecycle.
         if (brokerGateway) {
-          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId)
+          void reconcilePendingFills(brokerGateway, policy.accountNumber, userId, policy.connectedAccountId)
             .catch((err) => console.error("[scheduler] pending-fill reconcile error:", err));
         }
 
