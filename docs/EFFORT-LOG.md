@@ -231,6 +231,23 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **MONET usage-cap pickup (CLAUDE, owner-directed, worktree
+  `.claude/worktrees/monet-usage-cap-work-0038cf`) — ✅ COMPLETED 2026-07-09 evening.** MONET hit
+  its usage cap ~17:05 CDT mid-merge-shepherding; the owner directed CLAUDE to pick up everything
+  in flight. Outcome: (a) all 6 blocked MONET PRs landed — #1229/#1222/#1221/#1215/#1193 MERGED,
+  #1228 armed post conflict-resolution (26 codex threads triaged with per-thread adversarial
+  verification: 20 REAL → fixed with regression tests, 6 resolved-with-note; money-path diffs
+  (#1229/#1228) independently diff-reviewed pre-push; round-2 bot findings — 12 more, all real —
+  fixed the same way, riding in-PR or via follow-ups #1265 (merged) /#1266/#1267/#1269 (armed));
+  (b) un-landed lanes recovered and landed: vitest tmpdir-leak → PR #1268 MERGED, settings-UX
+  fixes (incl. the real `policy-diff` looser/tighter classification bug) → PR #1270 MERGED,
+  enrichment-starvation → PR #1272 armed; (c) verified already-merged pre-cap, no action:
+  #1224 timestamps, #1227 cmd-K badge, #1209 intro fixes (incl. LoadingBrand follow-up),
+  #1217 reviewer veto value-add; (d) deferred: 2-3 day activity audit (needs prod DB; Hetzner
+  migration was in flight — MONET's to resume), broker-min bump-to-floor (claimed pre-cap, zero
+  commits — unclaimed again), PR #1083 (recommend close as duplicate of merged #1082 — owner
+  call). NO deploys (honored the migration deploy-hold). Rollout:
+  `docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
 - **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
   `monet/short-stop-default-and-surface`) — NOT YET MERGED: PR #1221 open, auto-merge armed
   2026-07-09 (code complete; this row stays out of the "merged to `main`" sense of Completed
@@ -889,9 +906,21 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
+  branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
+  PR #1268 (MONET-authored, landed by CLAUDE under the owner-directed usage-cap pickup).**
+  The suite leaked every temp DB it created (`agentic-*.db/-wal/-shm` plus `chat-*`/
+  `trading-test-*`/`llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB
+  on the fleet Mac before the 2026-07-09 manual cleanup. Fix: vitest `globalSetup` +
+  config-level TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
+  `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup sweeps stale
+  `agentic-*` leftovers >6h old. Zero test-file edits. Landing gate green (lint 0-err / tsc /
+  3210 tests / build); verified post-run that no `agentic-vitest-*` dir lingers in the real
+  tmpdir. Rollout: `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`. _(A second copy of this
+  row further down was the landing commit's interim status — superseded by this one.)_
 - **Settings-UX fixes: universe-floor diff classification + Sheet focus stability + exposure-cap
-  hints (MONET-authored, landed by CLAUDE pickup; branch `monet/settings-ux-fixes`) — PR opened via
-  land.sh 2026-07-09, auto-merge armed.** MONET's work, left uncommitted in its worktree when the
+  hints (MONET-authored, landed by CLAUDE pickup; branch `monet/settings-ux-fixes`) — ✅ COMPLETED
+  2026-07-09: PR #1270 squash-merged to `main`.** MONET's work, left uncommitted in its worktree when the
   Monet seat hit its usage cap; committed AS-IS and landed by a CLAUDE session under the
   owner-directed usage-cap pickup. (1) REAL bug fix in `policy-diff.ts classify()`: the looserWhen
   ternary had identical branches, so lowering a `universeFloor.*` value (widens the universe) was
@@ -919,24 +948,16 @@ As of 2026-07-08 (assignment-rule update).
   session was permission-blocked from creating firewall rules on that zone); first
   announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
   migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
-- **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
-  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09, PR open via land.sh,
-  auto-merge armed.** MONET's work, landed by CLAUDE under the owner-directed usage-cap pickup
-  (2026-07-09): merged `origin/main` clean, full gate green (lint 0-err / tsc / 308 files 3210
-  tests / build), verified post-run that no `agentic-vitest-*` dir lingers in the real tmpdir.
-  The suite leaks every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/
-  `trading-test-*`/`llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on
-  the fleet Mac before the 2026-07-09 manual cleanup; the disk janitor now reaps them there,
-  but CI and janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
-  TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
-  `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
-  stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
-  test-file edits. Rollout: `docs/rollouts/2026-07-09-vitest-tmpdb-cleanup.md`.
+- _Vitest temp-SQLite leak cleanup — duplicate interim row from the landing commit; superseded by
+  the consolidated ✅ COMPLETED row above (PR #1268)._
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
   PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
   (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
   fixes — e.g. post-mortems recorded with unknown account. Read-only audit ->
   verified findings report; fixes claimed separately after owner review.
+  _2026-07-09 (CLAUDE usage-cap pickup): deliberately NOT picked up — the audit needs
+  production-DB reads and the Hetzner box migration was mid-flight. Still open; best first
+  task for a resumed MONET session now that the migration's cutover is verified._
 - **Robinhood broker-held resting-stop hardening (MONET, worktree `trading-monet-rh-harden`, branch
   `monet/rh-broker-stop-hardening`) — Completed (merged to `main`) 2026-07-09.** _(Correction: the
   branch name in the original IN PROGRESS entry was wrong — this landed from a dedicated worktree/
@@ -954,15 +975,24 @@ As of 2026-07-08 (assignment-rule update).
   contract) remains open by design. Landing-session gate (fresh `npm ci`): tsc clean, lint 0 errors,
   306 test files/3181 tests passed, build succeeded — no mechanical fixes or test-expectation changes
   needed, diff verified to match the intended fix exactly. `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
+  _2026-07-09 (CLAUDE usage-cap pickup) CORRECTION + close-out: the "merged" claim above was
+  premature — this work was PR #1229, still OPEN and blocked on 5 unresolved codex threads when
+  the usage cap hit. All 5 were adversarially verified REAL and fixed in-PR (stale teardown-tick
+  coverage now pruned via `cancelledOrderIds`; the quantity/side-blind symbol guard removed in
+  favor of `liveExitOrderCoverage`; `pending_cancel` blocks re-placement; `LIVE_ORDER_STATES`
+  widened w/ drift-guard test), each with regression tests, diff-reviewed pre-push (reviewer ran
+  the full suite 3209/3209). #1229 then MERGED 2026-07-09 23:23Z. A round-2 bot finding (same-tick
+  cancel/REPLACE race) arrived post-merge; its fix (reconcile returns `placedStopSymbols`,
+  registration skips those symbols for that tick only) rides follow-up PR #1269 (armed, merging on CI)._
 - **Autonomous-actions relative timestamps (MONET, intro-anim session, branch
-  `monet/autonomous-actions-timing-3676f7`) — IN PROGRESS 2026-07-09.** Owner: the Home
-  "Autonomous actions" rows should show relative timing top-right (15m ago / 1d ago) like
-  Journal entries. Reuses the `Ago` primitive (hover = exact time); `DecisionRowData.at`
-  wired from SocraticDecisionCase.createdAt / run createdAt / PendingProposal.createdAt.
-  Fileset: app/console/page.tsx only.
+  `monet/autonomous-actions-timing-3676f7`) — ✅ COMPLETED 2026-07-09: merged to `main` pre-cap as
+  PR #1224 (squash `e6447e26`, 20:28Z).** Owner: the Home "Autonomous actions" rows show relative
+  timing top-right via the `Ago` primitive, wired from all three row sources. _(CLAUDE usage-cap
+  pickup verified the local worktree branch is byte-identical to main — nothing left to land;
+  the stale local branch just was never cleaned up after the squash-merge.)_
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
-  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
-  2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the
+  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — ✅ COMPLETED
+  2026-07-09: merged to `main` as PR #1217 (verified by CLAUDE usage-cap pickup).** Plumbing-only: surfaces the
   ALREADY-BUILT per-reviewer-model veto value-add in the drawer's 4th column, replacing the hard-coded
   dash for the Reviewer role. No DB/schema/`strategy.ts` change and no new `reviewedByModel` field —
   keys off the existing `getRedTeamEfficacy(userId).byModel`. Route now calls
@@ -1172,7 +1202,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
 
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — LANDED 2026-07-09 as PR #1272 (auto-merge armed, merging on CI; MONET-authored, committed + landed by CLAUDE under the owner-directed usage-cap pickup — full gate green twice, coexistence with #1222's TwelveData change verified).** Fix as designed: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 
 
 
