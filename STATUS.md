@@ -10,6 +10,13 @@ steps materially change.
 
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
+Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with
+'Configure accounts' item, wider desktop trigger, chevron aligned+rotating; mobile Tabs sheet now floats
+above the still-visible tab bar (live-measured height, all destinations fit on iPhone, real-time pin
+feedback); tab-bar badge clearance fixed. 55-findings backlog audited vs main post-MONET-sweeps:
+37 DONE / 2 PARTIAL / 7 OPEN (6 = owner TBDs, 1 deferred refactor). Detail:
+docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md
 ## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
 flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
