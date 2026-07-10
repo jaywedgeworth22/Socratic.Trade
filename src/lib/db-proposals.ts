@@ -238,11 +238,15 @@ export function claimProposalForExecution(
   id: string,
   toStatus: string,
   userId: string = "local",
-  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string; executionMode?: ExecutionMode } = {}
+  opts: { review?: ReviewedOrder; estimatedNotional?: number; refId?: string; executionMode?: ExecutionMode; proposal?: TradeProposal } = {}
 ): boolean {
+  // `proposal` lets the approval path persist EXECUTION-TIME sizing (a broker-minimum bump, an
+  // approval-time protective-exit reprice) into the row before placement. Crash-recovery
+  // (flagStalePlacingIntents) books fills from this stored JSON, so it must reflect the order
+  // actually sent to the broker, not the original ask — and Recent/Activity hydrate from it too.
   const info = getDb()
     .prepare(
-      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode) WHERE id = ? AND user_id = ? AND status = 'proposed'"
+      "UPDATE trade_proposals SET status = ?, review = COALESCE(?, review), estimated_notional = COALESCE(?, estimated_notional), ref_id = COALESCE(?, ref_id), execution_mode = COALESCE(?, execution_mode), proposal = COALESCE(?, proposal) WHERE id = ? AND user_id = ? AND status = 'proposed'"
     )
     .run(
       toStatus,
@@ -250,6 +254,7 @@ export function claimProposalForExecution(
       opts.estimatedNotional ?? null,
       opts.refId ?? null,
       opts.executionMode ?? null,
+      opts.proposal ? JSON.stringify(opts.proposal) : null,
       id,
       userId
     );
