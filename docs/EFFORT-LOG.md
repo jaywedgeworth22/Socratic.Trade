@@ -1563,10 +1563,28 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) — landing
-  2026-07-10.** Owner-directed after two pricing misreads in one day (tiingo annual, AV per-IP):
-  docs/market-data-provider-pricing.md = canonical vendor facts + traps + knob cheat-sheet.
-  Related (paused pending owner): API-Usage-Monitor subscription->knob linkage phase 1.
+- **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
+  CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
+  merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data
+  provider pricing + tier-trap reference"). Correcting in place per protocol rather than
+  moving/deleting the row.** Owner-directed after two pricing misreads in one day (tiingo
+  annual, AV per-IP): docs/market-data-provider-pricing.md = canonical vendor facts + traps +
+  knob cheat-sheet. Related (paused pending owner): API-Usage-Monitor subscription->knob
+  linkage phase 1.
+- **Pricing doc extension: cover ALL external data sources (CLAUDE subagent, branch
+  claude/pricing-doc-all-sources) — IN PROGRESS 2026-07-10 (sonnet subagent), gates running,
+  PR next.** Owner: "consider all the other data sources we have too, not just those few —
+  marketstack, and any others." Extends docs/market-data-provider-pricing.md (structure kept,
+  new sections added): marketstack/tradier/intrinio/FRED/Fintech-Studios/logo.dev verified live
+  in code + priced live from vendor pages; a "Keyless & broker-bundled sources" section (yahoo,
+  nasdaq screener, webull-unofficial, SEC XBRL/EDGAR, alpaca-news/snapshot,
+  robinhood-quotes/fundamentals, stooq, congress.trade-is-internal callout); a "Usage-billed"
+  pointer to API-Usage-Monitor for LLM/RAG spend; a mid-task owner-added "Cheap alternatives —
+  evaluated, not integrated" section (alphastocks.app + EODHD/marketdata.app/Finazon/Finage/
+  StockData.org/Databento/financialdatasets.ai/Alpaca Algo Trader Plus, IEX Cloud confirmed
+  defunct); and a flagged gap — none of the 6 new keyed providers have a
+  provider-rate-limit.ts HARD_DEFAULTS entry. Docs-only. See
+  docs/rollouts/2026-07-10-pricing-doc-all-sources.md.
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
   with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref

@@ -11,6 +11,17 @@ Verified 2026-07-10 against live vendor pages (headless-rendered where noted),
 plus owner corrections. Trading-app integration facts verified against this repo
 and prod `api_health_log` evidence the same day.
 
+**Scope, extended 2026-07-10:** the table directly below covers the seven core
+quote/fundamentals/history vendors. Everything past the "Upgrade cheat-sheet"
+table covers every OTHER external data source the app touches: secondary keyed
+fallbacks with real paid tiers (marketstack, tradier, intrinio, logo.dev, fintech
+studios, FRED), keyless/broker-bundled sources (yahoo, the nasdaq screener,
+webull, SEC, alpaca, robinhood, stooq), the owner's own sibling app
+(congress.trade), usage-billed LLM/RAG spend (pointer to API-Usage-Monitor, not
+priced here), and budget alternatives that were researched but are NOT
+integrated. Same rule applies to all of it: cite the source and date, correct
+in place when a fact changes.
+
 ## Quick comparison — cheapest useful tier
 
 | Provider | Free tier reality | Cheapest paid | Annual option | What paid unlocks (for us) |
@@ -75,6 +86,19 @@ Resolution logic: `src/lib/provider-rate-limit.ts`. Subscription→knob automati
 (API-Usage-Monitor as source of truth) is designed and reserved on the boards —
 paused pending owner unblock as of 2026-07-10.
 
+**Known gap, verified 2026-07-10:** `provider-rate-limit.ts`'s `HARD_DEFAULTS` map
+has entries for exactly four providers — `finnhub`, `alpha-vantage`,
+`yahoo-finance`, `twelvedata`. **marketstack, tradier, intrinio, fred,
+fintechstudios, and logodev have NO hard-coded pacing/concurrency default.**
+Nothing throttles these six today besides the generic `fetchWithRetry` 429
+backoff. `resolveProviderLimiterConfig` still lets an operator set one ad hoc
+via the generic `PROVIDER_RATE_LIMIT_<NAME>_{PER_MIN,MIN_INTERVAL_MS,CONCURRENCY}`
+env vars (it falls through to env even with no hard default) — but that's an
+unused escape hatch, not a documented knob. Don't describe a pacing behavior for
+these six that isn't there; if one starts 429ing in prod, wiring a
+`HARD_DEFAULTS` entry (or at minimum setting the env override) is the fix, not
+something already handled.
+
 ### Upgrade cheat-sheet
 
 | You bought | Set in Infisical |
@@ -84,3 +108,158 @@ paused pending owner unblock as of 2026-07-10.
 | Twelve Data Grow | `PROVIDER_QUOTA_TWELVEDATA_PER_MIN=377`, remove/raise `_PER_DAY` |
 | Massive → free downgrade (don't) | `MASSIVE_REST_MAX_CALLS_PER_MINUTE=5` |
 | Alpaca SIP feed | `ALPACA_DATA_FEED=sip` |
+| marketstack / tradier / intrinio / fred / fintechstudios / logodev upgrade | No knob exists yet — set `PROVIDER_RATE_LIMIT_<NAME>_PER_MIN` by hand if 429s show up (see gap note above) |
+
+## Secondary / fallback sources — keyed, integrated, lower stakes
+
+These are wired into the app the same way as the core seven (keyed, cascade
+position matters, `shared-operator-infra` cred tier — see
+`src/lib/db-api-keys.ts`), but each plays a smaller/fallback role, so they get a
+lighter table. Verified 2026-07-10 against live vendor pages (direct `curl`/fetch
+of raw HTML, not just AI-summarized) plus this repo's own source.
+
+| Provider | Role in this app | Free tier reality | Cheapest paid | Annual option | What paid unlocks (for us) |
+|---|---|---|---|---|---|
+| **Marketstack** (`MARKETSTACK_API_KEY`) | 3rd (last) keyed daily-OHLC history fallback, after Massive and Tradier — `src/lib/history.ts:22,64-65,98-99,232-237` | 100 req/mo, EOD only, 1yr history, HTTPS included (see trap #7 below) | **Basic $9.99/mo** | **$8.99/mo billed yearly** (~10% off) | 10,000 req/mo, IEX intraday data, 10yr history. Professional ($49.99/mo, $43.99/mo annual) adds sub-15-min real-time + commodities; Business ($149.99/mo, $127.99/mo annual) adds financial statements/ratios + 15yr+ history |
+| **Tradier** (`TRADIER_API_KEY`, `TRADIER_BASE_URL`) | 2nd keyed daily-OHLC history source — code comment at `history.ts:200` calls it "brokerage-grade, generous rate limits. Best primary source" | No separate market-data pricing exists — data access is bundled with ANY brokerage account signup, including the **$0/mo Lite** trading plan | n/a — nothing to buy for data alone | n/a | Real-time equities/options/indices/hourly-Greeks — but ONLY on a **production** token from a real (even $0/mo) brokerage account. A **sandbox** token gets 15-min-delayed equities/options, no indices, no Greeks at all |
+| **Intrinio** (`INTRINIO_API_KEY`) | Fundamentals/sector/industry enrichment — `src/lib/data-providers.ts:732,766,2917-3038`, `costTier: "paid"` | **14-day free trial only** — code comment at `data-providers.ts:2920` ("14-day trial covers prices/realtime, companies, and data_point endpoints"), then paid | **Individual $150/mo** (self-serve) | Startup tier is quarterly-phased, not annual: $333/mo → $666/mo → $999/mo over 12 months (self-serve) | EquitiesEdge/OptionsEdge real-time FMV pricing, US Fundamentals (15yr+ SEC-sourced statements, bundled at every tier, not an add-on), tick-level data. Individual has no redistribution/display rights — Startup adds those |
+| **Logo.dev** (`LOGO_DEV_TOKEN`, `LOGO_DEV_SECRET_KEY`) | Ticker/company logo images — `src/lib/ticker-logos.ts:37-70`, `app/api/logos/ticker/route.ts` | **500,000 req/mo free** (Community), commercial use requires a visible link-back; free-tier cap is a **hard stop** — requests fail once exceeded | **Startup $280/yr** (~$23.33/mo effective; no separate monthly price was found on the live page — may be a JS-toggle we didn't render) | Annual-only pricing as fetched | 1,000,000 req/mo, no attribution requirement. Pro ($1,260/yr) adds the Brand API + self-hosting/caching + priority support; unlike free, paid tiers are **soft-enforced** (service keeps running over cap; Logo.dev reaches out about upgrading rather than cutting access) |
+| **Fintech Studios / PowerIntell** (`FINTECH_STUDIOS_API_KEY`, alias `powerintell`) | Enrichment cascade provider — `src/lib/data-providers.ts:768,2810-2828`, `costTier: "paid"`, base `studio.fintechstudios.com/api/v1` | Free plan exists ($0/mo) on the marketing site | **Ambiguous — see trap #10 below.** Self-serve Pro tiers ($20/mo–$120/mo, 2.5K–15K credits, ~20% off annual) are published, but for the consumer **PowerIntell** app, not confirmed as the same product as the `studio.fintechstudios.com/api/v1` endpoint this app actually calls | Pro tier has an annual ~20% discount | Unclear for our integration — the endpoint we call looks institutional; Enterprise (the tier that would plausibly cover bulk API/data-feed access) is contact-sales-only, no published price |
+| **FRED** (`FRED_API_KEY`) | Macro/econ series (rates, CPI, unemployment) driving the Macro tab + market-regime signal — `src/lib/macro.ts`, `src/lib/macro-history.ts` | **Completely free** — sign up at fred.stlouisfed.org for a key, no plan tiers exist at all | n/a — no paid tier exists | n/a | n/a. Fed's own docs state a 429 rate-limit exists but do **not** publish the exact number (see traps #11-12) — the commonly-cited "120 req/min" is third-party, not FRED's own documentation |
+
+Sources: marketstack.com/pricing + marketstack.com/faq (fetched 2026-07-10, raw
+HTML), tradier.com/individuals/pricing + docs.tradier.com/docs/market-data +
+docs.tradier.com/docs/rate-limiting (fetched 2026-07-10 — rate-limiting page
+gives exact per-minute numbers: standard/market-data endpoints 120/min
+production vs 60/min sandbox, trading endpoints 60/min both), intrinio.com/pricing
+(fetched 2026-07-10), logo.dev/pricing + logo.dev/docs/platform/rate-limits
+(fetched 2026-07-10), fintechstudios.com/pricing (fetched 2026-07-10),
+fred.stlouisfed.org/docs/api/api_key.html + /fred/errors.html +
+/terms_of_use.html (fetched 2026-07-10 via curl --http1.1 — WebFetch 403'd this
+host outright regardless of protocol; note this if a future agent's fetch tool
+also fails here, it's the host, not the tool).
+
+### Traps for the newly-added secondary providers
+
+7. **Marketstack's free tier is NOT HTTP-only — that belief is out of date.**
+   marketstack.com/faq states plainly: *"All data transmitted to and from the API
+   is secured with 256-bit HTTPS encryption, which is available on both free and
+   paid plans."* This app's own `fetchMarketstack` already calls
+   `https://api.marketstack.com/v1/eod` (`history.ts:236`). If this repo or an
+   older note ever claimed marketstack free-tier is HTTP-only, that's stale —
+   don't re-assert it without re-checking.
+8. **Tradier's sandbox token silently degrades data quality, not just rate
+   limits.** Sandbox = 15-min-delayed equities/options, **zero** index data,
+   **zero** Greeks. Only a production token — which requires an actual
+   brokerage account (even the $0/mo Lite plan qualifies) — gets real-time data.
+   If `TRADIER_API_KEY` in this app is ever a sandbox token, every
+   Tradier-sourced history bar in the cascade is 15-min-delayed, not live.
+9. **Intrinio's gate is time-boxed, not tier-boxed.** The 14-day trial
+   (`data-providers.ts:2920`) means a previously-working key can start failing
+   with nothing about the key itself having changed. A sudden Intrinio cascade
+   drop should be checked against the trial start date before assuming an
+   outage.
+10. **Fintech Studios pricing is genuinely ambiguous for our integration** — the
+    published self-serve numbers ($20–$120/mo) are for the consumer PowerIntell
+    app; this app's `FintechStudiosEnrichmentProvider` hits
+    `studio.fintechstudios.com/api/v1`, which reads as a separate,
+    institutional-looking surface with no published price (Enterprise/contact-sales
+    territory). Don't assume the Pro consumer tier buys access to the endpoint
+    this app actually calls without confirming with the vendor directly.
+11. **FRED's own docs never publish a numeric rate limit** — only that exceeding
+    it returns `429 Too Many Requests` and that FRED wants distinct API keys per
+    application ("Developers should request a distinct API key for each
+    application they build"). The "~120 req/min" figure that circulates
+    (including in third-party summaries) is not sourced to FRED's own docs;
+    treat it as a working assumption, not a documented ceiling.
+12. **`fred.stlouisfed.org` blocks naive fetchers.** Every FRED docs URL
+    returned HTTP 403 to a standard WebFetch and to plain `curl` — it only
+    succeeded once forced to `--http1.1`. If FRED facts ever need re-verifying,
+    expect this friction again; it's the host, not a broken link.
+
+## Keyless & broker-bundled sources
+
+No API key at all, or riding an existing broker credential rather than a
+separate paid data subscription. Verified 2026-07-10 against this repo.
+
+| Source | Role in this app | Cost reality |
+|---|---|---|
+| **Yahoo Finance** (`yahoo-finance`) | Final keyless tier in the enrichment cascade (`data-providers.ts:1732,791`) + free fallback in the history cascade (`history.ts` `fetchYahoo`) | Free, unofficial, no SLA. Paced (`minIntervalMs: 400, concurrency: 2` in `provider-rate-limit.ts:42`) because the prod egress IP gets HTTP 429 on unpaced bursts |
+| **NASDAQ Delayed Screener** (`nasdaq-delayed-screener`) | PRIMARY market-scan universe source (~8,000 rows) — `src/lib/market.ts:88-90`, hits `api.nasdaq.com/api/screener/stocks` | Free, public, unauthenticated — "no user API key is consumed, so this single shared cache is safe to serve to all users" (code comment). No rate-limit knob wired in `provider-rate-limit.ts` |
+| **Webull unofficial** (`webull-unofficial`) | Opt-in quote bridge shelling out to `scripts/webull_unofficial_quote.py` (community `tedchou12/webull` package, no login) — `data-providers.ts:1140-1146` | Free but unofficial/ToS-gray-area. Default **OFF** (`WEBULL_UNOFFICIAL_ENABLED`); capped at 20 symbols / 8s timeout by default (`WEBULL_UNOFFICIAL_MAX_SYMBOLS`, `WEBULL_UNOFFICIAL_TIMEOUT_MS`) |
+| **SEC XBRL** (`sec-xbrl`) | Fills `debtToEquity` from audited 10-K/10-Q filings via the public companyfacts API — `data-providers.ts:3464-3473` | Free, keyless, public `data.sec.gov`. Default **OFF** (`SEC_XBRL_ENRICHMENT_ENABLED`); 300ms polite inter-symbol delay + 8s wall-clock scan budget, per SEC fair-access guidance |
+| **SEC EDGAR** (`sec-edgar`) | Insider-sentiment sourcing (`market.ts:348-349`) + RAG filings corpus ingestion (`vector-db.ts:1381`) | Free, keyless besides a required `SEC_EDGAR_USER_AGENT` string — a UA SEC requires, not a secret (`db-api-keys.ts` comment: "one per app") |
+| **Alpaca news + snapshot** (`alpaca-news`, `alpaca-snapshot`) | Headlines/sentiment (`data-providers.ts:1444-1503`) + real-time price/bid/ask/volume/vwap (`:1592+`) | Rides the SAME broker API key/secret already used for order execution — not a separate subscription (`resolveAlpacaMarketData`: own key → operator's paper key for background/shared passes). Defaults to the free **IEX** feed; **SIP** (full consolidated tape) needs the paid Algo Trader Plus subscription below — configurable via `ALPACA_DATA_FEED=iex\|sip\|otc`, and SIP without the subscription returns HTTP 403 |
+| **Robinhood quotes + fundamentals** (`robinhood-quotes`, `robinhood-fundamentals`) | Position quote fallback (`robinhood.ts:239,350`, `provider: "robinhood"`) + delayed fundamentals — pe_ratio, 52wk hi/lo, avg volume, sector/industry (`data-providers.ts:1379-1420`) | Rides the user's own Robinhood MCP/OAuth broker connection — not a separate data subscription. Per-user; fails closed with no user in scope (never borrows the operator's `'local'` token for a shared/background pass) |
+| **Stooq** (`stooq`) | Last-resort free daily-OHLC CSV fallback, tried only after Yahoo fails (`history.ts:296-304`) | Free, keyless, no documented SLA |
+
+**congress.trade (App A)** — not a vendor. `CONGRESS_TRADE_TOKEN` +
+`CONGRESS_SHARE_ENABLED` (outbound) / `CONGRESS_TRADE_READS_ENABLED` (inbound)
+gate a bidirectional data-sharing arrangement with the owner's OWN sibling app
+(`src/lib/congress-share.ts`, header comment at lines 1-16). Both apps consume
+FMP under a shared quota, so this app forwards company-reference + daily-close +
+S&P-500 data it already has to App A's import endpoint, and (separately,
+inbound) can read App A's FMP-sourced closes to save its own history-cascade
+calls. Internal, not commercial — no pricing entry, just an access-flag note.
+
+## Usage-billed (not subscription) providers
+
+A separate class from everything above: providers billed per-token/per-call
+rather than a flat monthly plan, so a static price table doesn't apply. This
+covers the LLM providers behind the agentic loop and model picker (OpenAI,
+Anthropic, DeepSeek, Gemini, Mistral, xAI — `API_KEY_ENV_MAP` in
+`src/lib/db-api-keys.ts`) and the RAG stack (Pinecone, Voyage — same file,
+`shared-operator-infra` tier). Live spend, per-model rates, and usage tracking
+for all of these already live in the **API-Usage-Monitor** app (see
+`docs/slack-coordination.md`'s topic-tag table) — that app, not this doc, is the
+source of truth for what we're actually spending on LLM/RAG usage. Don't
+duplicate per-token pricing tables here; if a rate looks stale in
+API-Usage-Monitor, fix it there.
+
+## Cheap alternatives — evaluated, not integrated
+
+Owner-directed survey (2026-07-10) of budget market-data providers NOT wired
+into this app, to check whether any beats what we already pay for: Tiingo Power
+($30/mo or $300/yr, quotes+news), FMP (~$22/mo-annual, fundamentals), Massive
+Stocks Starter ($29/mo, history+breadth). None of these are integrated — this
+is research, not a roadmap item. Verified 2026-07-10 against live vendor pricing
+pages; cited per-row.
+
+| Provider | Cheapest useful tier | Annual option | Covers | Verdict vs. our incumbent |
+|---|---|---|---|---|
+| **alphastocks.app** (owner-named) | $3.33/mo ($40/yr) | yes | A consumer stock-**scoring/screener** web app (Buffett/Graham/Piotroski/Lynch/Greenblatt composite scores over ~1,500 US equities, sourced from SEC EDGAR + Alpaca) — no developer API surface at all | **Not a candidate.** Nothing to integrate against; several features still marked "coming soon"; reads as a thin, new retail product, not infrastructure |
+| **EODHD** (eodhd.com) | $19.99/mo (EOD, All World); $59.99/mo (Fundamentals) | $199/yr; $599.90/yr | EOD history (30+ yrs), fundamentals, corporate calendar, ALL-IN-ONE bundle at $99.99/mo ($999.90/yr) | Fundamentals tier costs MORE than FMP for comparable coverage; EOD tier is close to Massive on price but EOD-only (no intraday/breadth at that tier) |
+| **marketdata.app** | $12/mo (billed annually; $30/mo month-to-month) | yes — annual IS the cheap price | Stock + options quotes, 5yr history | Cheaper than Massive nominally, but real-time is explicitly licensed "non-professional subscribers only" — a real commercial-use risk for an app placing live orders, not just a pricing footnote |
+| **Finazon** (finazon.io) | $19/mo (`sip_non_pro` US equities dataset) | not published | US equities — but only 3-5% of intraday volume (3 minor venues), 100% coverage only after-close via EOD synthesis | Same non-pro/pro licensing gate as marketdata.app, PLUS thin intraday coverage. Pro-tier licensing runs $2,000-2,500/mo + exchange fees if commercial use requires it |
+| **Finage** (finage.co.uk) | $599/mo (Delayed Global Stocks) — confirmed live on the pricing page | unclear | Real-time/historical global stocks, unlimited API calls | Confirmed price floor is not competitive. Third-party summaries reference a much cheaper ~$8.99/mo tier, but it did **not** render on the live pricing page fetched (possibly a JS-gated toggle) — flagging as unconfirmed rather than asserting it exists |
+| **StockData.org** | $24-29/mo (Basic, ~17% off annual) | yes | Quotes, intraday, news (2,500 req/day, 10 symbols/request, 1yr history at Basic) | Price-comparable to Tiingo Power, but much thinner limits — a real capability downgrade, not a clean swap |
+| **Databento** (databento.com) | $179/mo flat (Standard, live data) + $/GB usage-priced historical | annual contracts only at the $1,500-4,000/mo Plus/Unlimited tiers | Institutional tick-level data (Level 2/3, packet captures, redistribution rights) | Wrong shape and wrong price point entirely — built for firms consuming raw tick data at scale, not a watchlist/screener app |
+| **financialdatasets.ai** | $200/mo (Build, 100K req/mo) or $20 one-time pay-as-you-go (1,000 light requests) | none found | Financial statements/fundamentals, explicitly LLM/AI-agent-oriented | ~9x FMP's price for comparable fundamentals coverage. The pay-as-you-go credits could suit occasional bursts, but not as a standing subscription |
+| **Alpaca Algo Trader Plus** | **$99/mo** | not found | Full SIP (consolidated-tape) real-time equities + real-time OPRA options, unlimited API rate + WebSocket symbols, vs. the free IEX-only/200-calls-min/15-min-delayed Basic plan | **Not a Tiingo/FMP/Massive replacement — a different layer.** This is an add-on to Alpaca infra we already hold for order execution, not a new vendor relationship. The one item here that's a genuinely well-scoped next spend if execution-grade real-time pricing becomes a real gap |
+| **IEX Cloud** | — | — | — | **Defunct.** Shut down permanently (announced retirement May 2024, fully discontinued August 31, 2024). Don't re-suggest it |
+
+Sources: alphastocks.app + alphastocks.app/pricing, eodhd.com/pricing,
+marketdata.app/pricing, finazon.io/pricing + finazon.io/dataset/sip_non_pro,
+finage.co.uk/pricing (live-fetched; cheaper-tier figures from third-party AI
+search summaries only, unconfirmed on the live page), stockdata.org/pricing,
+databento.com/pricing + databento.com/docs/faqs/usage-pricing-and-data-credits,
+financialdatasets.ai/pricing, alpaca.markets/data +
+docs.alpaca.markets/us/docs/market-data-faq, IEX Cloud shutdown per Databento's
+and Alpha Vantage's public migration-guide posts (all fetched 2026-07-10).
+
+**Switch calculus:** price alone doesn't clear the bar. Every new provider needs
+a real `SymbolEnrichment` wiring pass — the interface, the
+`EnrichmentSourcedField` union, `takeScalar(...)` calls in
+`CascadingEnrichmentProvider.enrich`, the `EMPTY_SOURCED` marker map, the
+matching `MarketQuote`/`MarketQuoteSummary` fields in `types.ts`, and the merge
+in `src/lib/market.ts` (the per-field enrichment checklist in this repo's
+`AGENTS.md`) — plus a cred-tier entry, cascade-position decision, and (per the
+gap above) probably a new rate-limit knob. That's real engineering time and a
+new long-term maintenance surface, not a config change. None of the alternatives
+surveyed above clear that bar today: several carry the same non-professional
+real-time licensing gate current incumbents don't have to worry about, one
+(EODHD fundamentals) is outright more expensive than FMP, and the only
+unambiguous win (Alpaca Algo Trader Plus) isn't a swap at all — it's additive
+spend on infrastructure already integrated. A future alternative needs to beat
+an incumbent by a real margin — meaningfully cheaper AND at-least-as-capable, or
+capable of something the cascade can't currently do at any price — not $5/mo.
