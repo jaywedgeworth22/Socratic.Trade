@@ -10,6 +10,18 @@ steps materially change.
 
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
+Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
+`app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
+`Sheet` prompt: **Discard changes** (client-side `router.push` to the intended href), **Keep editing**
+(stay; also Esc/X/scrim), and **Review & save** (stay + open the screen's review panel). The third
+option shows only when the dirty screen registered a review opener — Guardrails does
+(`useUnsavedChanges(changeCount>0, () => setReviewOpen(true))`); the Framework page has an inline
+review so it shows two. `nav.tsx` passes the destination `href` at all three guard sites (+ `TabsSheet`
+prop-type). Dirtiness still lives in a ref'd Map, so keystrokes never re-render the shell. Gate green:
+tsc, lint 0-err, 3246 tests, build. Known follow-up: the command palette navigates without the guard
+(pre-existing gap). See `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. (The rest of the
+owner's settings-UX batch already landed: #1/#2/#4 via #1270, #5 via the credential-naming change.)
 ## 2026-07-10 — db-health.ts `ts DESC` tie-sweep (CLAUDE, branch `claude/db-health-tie-sweep`)
 Same-millisecond writes to `api_health_log` made 7 remaining `ORDER BY ts DESC` reads in
 `src/lib/db-health.ts` nondeterministic (ties resolve to ascending insertion order absent a
