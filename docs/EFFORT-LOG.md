@@ -1560,6 +1560,12 @@ As of 2026-07-08 (assignment-rule update).
   recheck that aborts (exit 4, no write) on a detected change. Verified all three against scratch
   fixtures (atomic write, duplicate-row regression + fix, simulated race via monkeypatched
   `os.stat`) plus a clean real-data dry-run re-run against the 227-item `docs/EFFORT-LOG.md`.
+  **Landing-round fix (round 2, codex-autofix):** 2 more P2s fixed — (1) rows under a
+  keyword-bearing `###` subsection under an unclassified `##` parent were invisible to the parser
+  (`HEADING_RE` only matched `## `) -> now matches 2+ hashes and a deeper heading classifies by its
+  own keyword or inherits the enclosing `## ` bucket; (2) `PLAN.md` was stale -> added a fleet-infra
+  host-side-tooling / no-roadmap-change note. One P2 left OPEN as a maintainer question ("preserve
+  live edits for mirrored rows" — a mirror-wins-vs-live-leads merge-semantics tradeoff, not guessed).
 
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open

@@ -180,3 +180,52 @@ three were fixed rather than resolved-with-a-note:
 
 Landed via `bash scripts/land.sh` (node@24): `npx tsc --noEmit` clean (no TS touched), `npm test`
 315 files / 3383 tests, `npm run build` clean. PR #1354, squash-auto-merge armed.
+
+## Landing-round review fix (round 2, PR #1354 — codex-autofix)
+
+Three further codex-connector P2 comments landed on the PR. Two were fixed in this round; one
+was left open as a maintainer question (a genuine merge-semantics tradeoff, not a clear bug).
+
+1. **Rows under keyword-bearing `###` subsections were invisible (silent-drop hole).** The parser's
+   `HEADING_RE` only matched level-2 (`## `) headings, so a live-only row under a nested
+   `### Action - clear recommendation (Planned)` whose *parent* `## 2026-07-06 ...` heading is
+   unclassified never entered a bucket — it was absent from `live.items`, so both the recovery pass
+   and the pre/post invariant treated it as non-existent and `--apply` could rewrite the live board
+   without it. Fixed: `HEADING_RE` now matches 2+ hashes and captures the hash run; `parse_board`
+   tracks a `section_bucket` (the last `## ` bucket) alongside `current_bucket`. A `## ` heading
+   resets the bucket context outright (unclassified -> None, unchanged); a deeper `###`/`####`
+   heading classifies by its **own** keyword when it has one (so `### ... (Planned)` becomes
+   `planned` even under an unclassified parent) and otherwise **inherits** the enclosing `## `
+   section's bucket (so `### 2026-07-04 backlog ...` under `## Planned / Reserved` still counts as
+   planned — no regression). **Verified** on scratch fixtures: (a) the exact codex scenario — a
+   live-only row under `### Action ... (Planned)` beneath an unclassified `## 2026-07-06 ...` parent
+   is now recovered into `planned`, while a `### Resolved by PR #1018 (no further action)` row (no
+   keyword, unclassified parent) correctly stays ignored; (b) a no-keyword `### 2026-07-04 ...`
+   subsection under `## Planned / Reserved` still inherits `planned`; (c) idempotency on the real
+   `docs/EFFORT-LOG.md` (live == mirror) still reports 0 recovered and does not crash (now parses
+   266 items vs the earlier 227 because previously-absorbed subsection bullets are now visible
+   distinct items — a stricter, safer invariant surface).
+
+2. **`PLAN.md` not updated for the new host-side tool.** The AGENTS.md Pre-Commit/Handoff Protocol
+   requires `PLAN.md` reflect scope/approach changes before every commit; the original change added
+   a new host-side reconciliation tool (plus a merge-shepherd wiring follow-up) without touching
+   `PLAN.md`. Fixed: added a **"Fleet-infra tooling (host-side, no product-roadmap change)"** section
+   to `PLAN.md` recording the tool, an explicit no-roadmap/no-acceptance-check-change note, and the
+   merge-shepherd wiring follow-up.
+
+3. **(Open, maintainer question — NOT auto-fixed) "Preserve live edits for mirrored rows."** Codex
+   notes that when a row exists on BOTH boards under the same normalized first line but the live
+   side carries a fresher edit (a state move Planned->In Progress, or an appended one-line status)
+   that hasn't been mirrored yet, the count-based recovery treats the mirror occurrence as covering
+   the live one, so the output keeps the stale mirror text and `--apply` overwrites the fresher live
+   version. This is a real tension, but the two suggested fixes pull opposite ways relative to the
+   tool's documented purpose: "preserve the live version" would break the intended
+   "live fell behind the mirror -> fast-forward it while keeping live-only rows" use case, while
+   "refuse when same-key content differs" would abort on nearly every run whenever the mirror lags
+   live (the common case). Because choosing between mirror-wins and live-leads for shared rows is a
+   core merge-semantics decision, this was left open with a PR comment asking the maintainer rather
+   than guessed at.
+
+Verification (round 2): `python3 -m py_compile scripts/effort-log-union-merge.py` clean; scratch-fixture
+functional tests above; `npx tsc --noEmit` clean (no TS touched); `npm test` + `npm run build` per the
+verify trio before push.

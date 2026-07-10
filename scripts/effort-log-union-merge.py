@@ -87,7 +87,16 @@ import tempfile
 from dataclasses import dataclass, field
 
 BULLET_RE = re.compile(r"^[-*]\s+(.*)$")
-HEADING_RE = re.compile(r"^##\s+(.*)$")
+# Matches level-2 AND deeper (###, ####, ...) ATX headings. Capturing the hash
+# run lets parse_board distinguish a top-level section (`## `) from a nested
+# subsection (`### `): a `##` heading resets the bucket context outright, while
+# a deeper heading classifies by its OWN keyword if it has one (e.g.
+# "### Action - clear recommendation (Planned)") and otherwise INHERITS the
+# enclosing `##` section's bucket. Only matching `##` (the previous behavior)
+# made rows under a keyword-bearing `###` whose parent `##` was unclassified
+# invisible to both the recovery pass and the invariant — a silent-drop hole,
+# exactly the class of loss this tool exists to prevent.
+HEADING_RE = re.compile(r"^(#{2,})\s+(.*)$")
 PLACEHOLDER_RE = re.compile(
     r"^\(?\s*(none|n/?a\b.*|seeded empty.*|add rows here.*|record the.*|see rollout notes.*)\s*\)?\.?$",
     re.IGNORECASE,
@@ -165,6 +174,12 @@ def parse_board(text: str) -> ParsedBoard:
     bucket_insert_at: dict[str, int] = {}
 
     current_bucket: str | None = None
+    # Bucket of the most recent level-2 (`## `) heading. Deeper subsections that
+    # carry no bucket keyword of their own inherit this, so a row under
+    # `### 2026-07-04 backlog ...` still counts as (say) planned when its parent
+    # is `## Planned / Reserved`, while a keyword-bearing `### ... (Planned)`
+    # under an UNCLASSIFIED `##` parent still gets protected.
+    section_bucket: str | None = None
     current_item: Item | None = None
     current_item_start: int | None = None
 
@@ -188,7 +203,18 @@ def parse_board(text: str) -> ParsedBoard:
         heading_match = HEADING_RE.match(raw_line)
         if heading_match:
             flush_item(idx)
-            current_bucket = classify_heading(heading_match.group(1))
+            level = len(heading_match.group(1))
+            classified = classify_heading(heading_match.group(2))
+            if level == 2:
+                # Top-level section heading: resets the bucket context outright
+                # (unclassified `##` -> None, as before).
+                section_bucket = classified
+                current_bucket = classified
+            else:
+                # Nested subsection: use its own keyword bucket if it has one,
+                # otherwise inherit the enclosing `##` section's bucket rather
+                # than falling to None and silently dropping its rows.
+                current_bucket = classified if classified is not None else section_bucket
             continue
 
         if current_bucket is None:

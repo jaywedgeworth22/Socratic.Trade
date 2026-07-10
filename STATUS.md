@@ -46,6 +46,21 @@ regression), and a simulated race (monkeypatched `os.stat` to tamper with the li
 confirmed exit 4, output file untouched). Re-ran the real-data dry-run against `docs/EFFORT-LOG.md`
 with no regressions (227 items, no false positives/negatives). Landed via `scripts/land.sh`, PR
 #1354, squash-auto-merge armed.
+
+**Landing-round fix (round 2, PR #1354 review — codex-autofix):** three more codex-connector P2s.
+Two fixed: (1) rows under a keyword-bearing `###` subsection (e.g. `### Action - clear
+recommendation (Planned)`) whose parent `## 2026-07-06 ...` heading is unclassified were invisible
+to the parser — `HEADING_RE` only matched `## `, so such a live-only row was dropped from
+`live.items` and neither recovered nor caught by the invariant. Fixed: `HEADING_RE` now matches 2+
+hashes; `parse_board` tracks `section_bucket` (last `## `) so a deeper `###`/`####` heading
+classifies by its own keyword when it has one and otherwise inherits the enclosing `## ` bucket —
+no regression on already-classified subsections, verified against scratch fixtures + real-board
+idempotency. (2) `PLAN.md` was stale for the new host-side tool — added a
+"Fleet-infra tooling (host-side, no product-roadmap change)" section per the handoff protocol.
+One left OPEN as a maintainer question (not guessed): "preserve live edits for mirrored rows" is a
+core merge-semantics tradeoff (mirror-wins vs live-leads for shared rows) whose two suggested fixes
+break opposite use cases — asked the maintainer via a PR comment. Rollout note updated with round-2
+detail.
 ## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
 #1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
 YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
