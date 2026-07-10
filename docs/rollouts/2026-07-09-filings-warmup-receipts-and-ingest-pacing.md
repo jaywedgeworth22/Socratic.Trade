@@ -107,6 +107,13 @@ refinements uncommitted. CLAUDE committed them as-is (bc963f84) and landed the b
   scheduled corpus-wide ingest back a full TTL window.
 - `.env.example` — `SEC_FILING_RAG_MAX_PER_RUN` left unset so the tier default applies.
 
+Full-gate catch at landing: `test/strategy-prompt-safety.test.ts` asserted every
+kind-'safety' decision-case item wears tone 'warning' — stale against the deliberate
+neutral warm-up receipt (which fires there because the test corpus is empty). Fixed to
+assert warning tone on the two receipts that test is about (injection + evidence-age);
+MONET's commit had updated `test/rag-doc-type-coverage.test.ts` for the tone change but
+missed this file.
+
 Landing: merged `origin/main` clean (no conflicts; no-cap `maxSymbols()` content verified
 intact post-merge), full gate (`npm run lint`, `npx tsc --noEmit`, `npm test`,
 `npm run build`) — results recorded in the PR. PR #1272 was still OPEN at landing time;
