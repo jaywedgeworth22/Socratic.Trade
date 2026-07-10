@@ -313,6 +313,9 @@ export function detectLlmTruncation(payload: unknown): boolean {
  * `JSON.parse` (when a schema was used) or read directly (free text):
  * - OpenAI responses API: `output_text`, else the first text block in `output[]`.
  * - OpenAI/compatible chat-completions: `choices[0].message.content`.
+ * - Mistral chat-completions at high reasoning effort: `choices[0].message.content` is a LIST of
+ *   chunks (`{type:"thinking", thinking:[...]}` + `{type:"text", text}`) rather than a plain
+ *   string — only the `"text"` chunk(s) are the answer.
  * - Anthropic Messages: a `tool_use` block's `input` (re-serialized to JSON) if present, else the
  *   concatenated `text` blocks.
  */
@@ -329,6 +332,19 @@ export function extractLlmText(payload: unknown): string | undefined {
 
   const chatText = root.choices?.[0]?.message?.content;
   if (typeof chatText === "string" && chatText.length > 0) return chatText;
+
+  // Mistral high-reasoning-effort chat-completions responses: `message.content` is a list of
+  // chunks instead of a string (https://docs.mistral.ai/studio-api/conversations/reasoning).
+  // Concatenate only the final-answer "text" chunk(s); skip "thinking" chunks (the reasoning
+  // trace), mirroring how the Anthropic content-block case below skips non-text blocks.
+  if (Array.isArray(chatText)) {
+    const chunks = chatText as Array<{ type?: unknown; text?: unknown }>;
+    const textJoined = chunks
+      .filter((chunk) => chunk?.type === "text" && typeof chunk.text === "string")
+      .map((chunk) => chunk.text as string)
+      .join("");
+    if (textJoined.length > 0) return textJoined;
+  }
 
   // Anthropic Messages content blocks.
   if (Array.isArray(root.content)) {

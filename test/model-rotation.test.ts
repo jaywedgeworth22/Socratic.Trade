@@ -4,10 +4,10 @@
  * so comparative live history accrues across models (proposals stamp `proposedByModel`).
  *
  * Covers: pure round-robin pointer logic (wrap advances the red pointer one extra step so
- * green/red combinations vary), the curated-pool exclusions, the credential-missing skip
- * (rotation never picks a model whose provider key doesn't resolve), pointer persistence via
- * internal settings + pick auditing, the resolveOpenAiModel safety net, and that the sentinel
- * passes /api/policy validation.
+ * green/red combinations vary; the same-model skip keeps the two seats on DIFFERENT models within
+ * a run), the curated-pool exclusions, the credential-missing skip (rotation never picks a model
+ * whose provider key doesn't resolve), pointer persistence via internal settings + pick auditing,
+ * the resolveOpenAiModel safety net, and that the sentinel passes /api/policy validation.
  */
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -44,29 +44,58 @@ describe("advanceRotationPointers (pure round-robin)", () => {
 
   it("advances the red pointer ONE EXTRA step when the green pointer wraps (combinations shift phase)", async () => {
     const { advanceRotationPointers } = await import("../src/lib/model-rotation");
-    // Green consuming the LAST slot of the cycle = wrap.
-    const wrapped = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 2 });
+    // Green consuming the LAST slot of the cycle = wrap. Red on a DIFFERENT slot (no same-model
+    // skip in play) isolates the wrap-extra behavior.
+    const wrapped = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 0 });
     expect(wrapped.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
-    expect(wrapped.red!.nextPointer).toBe(wrapped.red!.pointer + 2); // extra step
+    expect(wrapped.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2 }); // extra step
     // Mid-cycle: no extra step.
-    const mid = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    const mid = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 1 });
     expect(mid.green!.wrapped).toBe(false);
-    expect(mid.red!.nextPointer).toBe(mid.red!.pointer + 1);
+    expect(mid.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
   });
 
-  it("phase-shifts the green/red pairing across full cycles instead of locking it", async () => {
+  it("skips red one slot when both seats rotate onto the SAME model (both counters at 0 → adjacent picks)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    // Both counters start at 0 on a fresh account: without the skip, green AND red served m0 —
+    // the same model debating itself — every run of the entire first cycle.
+    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    expect(out.green).toMatchObject({ model: "m0", pointer: 0, nextPointer: 1 });
+    // Red consumed the NEXT slot; its counter continues past the consumed slot.
+    expect(out.red).toMatchObject({ model: "m1", pointer: 1, nextPointer: 2 });
+  });
+
+  it("stacks the same-model skip with the green-wrap extra advance (skip wraps to slot 0, wrap adds +1)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    // Green consumes the last slot (m2, wraps); red's slot 2 would ALSO be m2 → skip wraps red to
+    // slot 0 (m0), and the green-wrap extra advance still applies on top: nextPointer = 0 + 1 + 1.
+    const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: 2, redCounter: 2 });
+    expect(out.green).toMatchObject({ model: "m2", wrapped: true, nextPointer: 3 });
+    expect(out.red).toMatchObject({ model: "m0", pointer: 0, nextPointer: 2, wrapped: false });
+  });
+
+  it("cannot skip on a single-model pool (degenerate case: both seats serve the only model)", async () => {
+    const { advanceRotationPointers } = await import("../src/lib/model-rotation");
+    const out = advanceRotationPointers({ pool: ["only"], rotateGreen: true, rotateRed: true, greenCounter: 0, redCounter: 0 });
+    expect(out.green!.model).toBe("only");
+    expect(out.red!.model).toBe("only");
+  });
+
+  it("phase-shifts the green/red pairing across full cycles and NEVER pairs a model with itself", async () => {
     const { advanceRotationPointers } = await import("../src/lib/model-rotation");
     const pairs = new Set<string>();
     let green = 0;
     let red = 0;
     for (let i = 0; i < pool.length * pool.length; i++) {
       const out = advanceRotationPointers({ pool, rotateGreen: true, rotateRed: true, greenCounter: green, redCounter: red });
+      expect(out.red!.model).not.toBe(out.green!.model); // same-model skip: never the same model in one run
       pairs.add(`${out.green!.model}+${out.red!.model}`);
       green = out.green!.nextPointer;
       red = out.red!.nextPointer;
     }
-    // Fixed phase would yield exactly |pool| distinct pairs; the wrap-advance must beat that.
-    expect(pairs.size).toBe(pool.length * pool.length);
+    // Fixed phase would yield exactly |pool| distinct pairs; the wrap-advance must reach every
+    // DISTINCT-model ordered pair — |pool| * (|pool| - 1), since same-model pairs are skipped.
+    expect(pairs.size).toBe(pool.length * (pool.length - 1));
   });
 
   it("red-only rotation advances by exactly one per run (no green wrap possible)", async () => {
@@ -172,6 +201,9 @@ describe("resolveModelRotationForRun", () => {
     });
     expect(out.llmModel).toMatch(/^gpt-/);
     expect(out.redTeamLlmModel).toMatch(/^gpt-/);
+    // Same-model skip end-to-end: both pointers start at 0, but the run never serves the same
+    // model to both seats (red consumes the adjacent slot).
+    expect(out.redTeamLlmModel).not.toBe(out.llmModel);
     out.commit(); // pick audits + pointer advance are only written on commit (Finding 3: commit-late)
     const audits = getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
