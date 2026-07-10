@@ -501,6 +501,16 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
+  PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
+  to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
+  `socratic-trade-prod` (DB-only setting, done via box SSH — API is CF-blocked); (2) whitelisted
+  GitHub's stable **webhook** IP ranges (40 `/24` + IPv6) on the `jays.services` CF IP-allowlist that
+  was 403'ing them (bot protection stays on elsewhere). End-to-end proven: `e9e9138b` webhook deploy
+  (`is_webhook=t`) FINISHED; prod = `main` HEAD, healthy. **ANNOUNCE-THEN-DEPLOY RETIRED** — fleet must
+  stop manual deploy claims/triggers. Rollback: `is_auto_deploy_enabled=false`. Diagnosed + handed AG a
+  pre-existing deploy incident (transient git-clone window + zombie deploy holding the build queue; now
+  resolved). See `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md updated.
 - **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (CLAUDE, branch `claude/audit-item10-attribution`) — IN PROGRESS 2026-07-10, built and locally committed, not yet pushed/landed.** Picked up the RESERVED row (split out of MONET's P1 batch per owner). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites that had it available but omitted it: 41 in `src/lib/strategy.ts` (`runStrategyOnce`'s local const; `policy.connectedAccountId` in every function that already takes a full `policy` param — `resolveScanScoringWeights`, `applyCorrelationClusterGate`, `applyEarningsBlackoutTag`, `applyRiskReceipts`, `applyDeterministicSizing`, `executeProposal`; `autoRevertOnCapBreach`'s own audit call now uses the param it already had; `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` gained an optional trailing `connectedAccountId` param, wired at their `runStrategyOnce` call sites) + all 13 `audit()` sites in `src/lib/synthetic-stops.ts` (one more than the report's "12" — `broker_protective_stop_reconcile_error` fixed too for consistency, same function scope). `strategy_bull_truncated` + post-mortem.ts/`setUserSetting` left untouched — already fixed by the P1 batch. Zero behavior changes to trading logic (4th-arg audit attribution + two new optional trailing params only). Verify: `npx tsc --noEmit` clean, eslint 0 errors (9 pre-existing grandfathered warnings), 46 focused test files / 523 tests green under node@24 (all `strategy-*`/`synthetic-stops`/sizing/gate/veto/wash-sale/reconciliation/scheduler suites touching these two files). Full gate (`npm test` full run + `npm run build`) deferred to the Land phase. Rollout: `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
 
 - **Framework Models card truth fixes — Proposer blank-select display + Reviewer "inherits
@@ -1515,6 +1525,33 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
+  (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
+  open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
+  follow-up from `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md` ("Follow-ups / still-open
+  blockers"): a `pending_cancel` row whose `gateway.cancelEquityOrder` retry kept throwing (e.g.
+  stale "not found" after an earlier cancel actually landed, or the stop simply filled) retried
+  forever and permanently blocked section-4 re-placement for that symbol (still protected by the
+  always-on synthetic fallback, but broker-held protection stayed off for the rest of the
+  session). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) now takes an
+  optional `orders?: EquityOrder[]` (the caller's freshly fetched `getEquityOrders()` list); on a
+  cancel failure it checks whether the row's `brokerOrderId` shows up there already done resting
+  (`isRejectedOrCanceledState` OR `filled`) and deletes the row if so; a rejected/canceled/expired
+  recovery re-places same-call (position never moved), a `filled` recovery defers re-placement to
+  the next call (see landing-round fix below — the position DID move, and the caller's `positions`
+  snapshot predates `orders`). Absent-from-list or still-live stays ambiguous and keeps retrying.
+  Wired `src/lib/synthetic-stops.ts` to pass its already-fetched `brokerOrders`. Also verified the
+  recon's companion issue (b), the `!exec.orderId` defensive branch, is ALREADY FIXED by PR
+  #1269's round-3 review (`isRejectedOrCanceledState` already precedes it) — no change needed
+  there. **Landing-round fix (PR #1352 review):** codex-connector flagged a real P1 — same-call
+  re-placement after a `filled` recovery could size a fresh stop off the caller's stale
+  pre-fill `positions` snapshot (fetched before `orders`), resting a sell stop for shares already
+  sold. Fixed with a `filledRecoverySymbols` set scoped to `filled`-specifically recoveries;
+  section 4 now skips those symbols for the current call only, resuming next call once a fresh
+  position read is in hand. +3 tests in `test/broker-protective-stops.test.ts` (recovers via a
+  terminal-state order-list match; recovers via `filled` — updated to assert same-call deferral
+  plus next-call resumption; stays conservative on absent/still-live). node@24: `land.sh` gate
+  green (tsc clean, 3386 tests, build clean).
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
   PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
