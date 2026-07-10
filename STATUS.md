@@ -26,6 +26,19 @@ Twelve Data. **Node trap:** this worktree's `better-sqlite3` had been rebuilt fo
 new default); rebuilt it for node@24 and run all gates under `/opt/homebrew/opt/node@24/bin`. Next:
 commit + `land.sh` under node@24; verify AV/TwelveData/Tiingo green on the next pre-market scan
 (~08:00Z). Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`.
+## 2026-07-10 — Learning-review >80-item backlog drain: PR #1278 deferred finding #2 (MONET)
+Fixed the daily learning-review silently marking a >`MAX_REVIEW_ITEMS` (80) backlog "reviewed" without
+auditing it. `buildLearningReviewContextPack` sliced the newest 80 and a complete review advanced
+`lastReviewedAt` to `now`, so overflow items stopped counting toward the trigger's newCount AND max-age.
+Fix (`src/lib/learning-review.ts`): sweep OLDEST un-reviewed first within the budget; add
+`truncated`/`reviewedThroughMs` to the pack; advance the marker to `now` only when NOT truncated (else just
+below the oldest dropped un-reviewed item), still storing the fingerprint so annotate mode doesn't re-run
+the LLM daily. Marker is only ever MORE conservative than the old `now` → no 8da047aa max-age regression.
++4 tests (200-item backlog drains across exactly 3 daily runs in both annotate+decide, none silently
+reviewed). node@24: tsc clean, full suite 3338/3338, lr 34/34, eslint 0-err, build clean. Built off merged
+`main` 6f1aaf87; branch `monet/learning-review-backlog-drain`, landing via land.sh. Closes the LAST open
+#1278 deferred item. See docs/rollouts/2026-07-10-learning-review-backlog-drain.md.
+
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
 ## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)

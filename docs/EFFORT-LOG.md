@@ -1449,6 +1449,21 @@ As of 2026-07-08 (assignment-rule update).
   tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
+  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
+  advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
+  the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
+  budget; add `truncated` + `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT
+  truncated (else just below the oldest DROPPED un-reviewed item), while still storing the fingerprint so
+  annotate mode doesn't re-run the LLM daily. Marker only ever becomes MORE conservative than the old
+  unconditional `now` → no regression to 8da047aa's max-age reachability (its regression test still
+  passes). +4 tests (pack-truncation flags; 200-item backlog drains across exactly 3 daily runs in BOTH
+  annotate+decide, every item shown, none silently reviewed). node@24: tsc clean, full suite 3338/3338,
+  learning-review 34/34, eslint 0-err, build clean. Closes the LAST open #1278 deferred item (#3
+  legacy-seed is a separate in-progress peer lane). See
+  `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
 - **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
   PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
   tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.
