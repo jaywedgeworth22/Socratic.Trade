@@ -25,6 +25,16 @@ ROUND 2 2026-07-10 (MONET): PR #1272 sat BLOCKED on two real codex-connector fin
 names *inside* the ranked top-N could still starve behind the extras, and user-policy scan
 shapes (settings UI, not env) bypassed the env-derived budget. Both fixed (see rollout
 addendum); threads resolved after the fix push — auto-merge was already armed.
+## 2026-07-09 — Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`)
+Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+
+## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
+Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with
+'Configure accounts' item, wider desktop trigger, chevron aligned+rotating; mobile Tabs sheet now floats
+above the still-visible tab bar (live-measured height, all destinations fit on iPhone, real-time pin
+feedback); tab-bar badge clearance fixed. 55-findings backlog audited vs main post-MONET-sweeps:
+37 DONE / 2 PARTIAL / 7 OPEN (6 = owner TBDs, 1 deferred refactor). Detail:
+docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md
 ## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
 flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
