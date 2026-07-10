@@ -35,6 +35,15 @@ const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
 
+/** The learning-review subset of USER_LEVEL_POLICY_FIELDS (used by the one-time legacy seed below). */
+const LEARNING_REVIEW_POLICY_FIELDS: Array<keyof TradingPolicy> = [
+  "learningReviewEnabled",
+  "learningReviewMode",
+  "learningReviewModel",
+  "learningReviewMinNewLessons",
+  "learningReviewMaxWaitDays"
+];
+
 /** Extract only the user-level fields from a TradingPolicy. */
 function pickUserFields(policy: TradingPolicy): Partial<TradingPolicy> {
   const result: Partial<TradingPolicy> = {};
@@ -70,10 +79,52 @@ function stripUserFields(policy: Partial<TradingPolicy>): Partial<TradingPolicy>
   return result;
 }
 
+/**
+ * One-time lazy seed (#1278 follow-up): the learning-review config shipped account-scoped
+ * (#1116) and is user-level now. Reads strip learningReview* from account rows and pre-#1278
+ * tiered saves never wrote those keys to user_settings.policy, so a review enabled before this
+ * deploy would silently read as disabled. When user_settings.policy carries NONE of the review
+ * keys, copy them from the first account_strategy_state row that has any (active account first)
+ * and persist them — the reverse-direction companion of migrateLegacyStrategyModelFieldsToAccounts.
+ * Returns the seeded fields, or null when there was nothing to seed.
+ */
+function seedLegacyLearningReviewFields(userId: string, stored: Partial<TradingPolicy>): Partial<TradingPolicy> | null {
+  if (LEARNING_REVIEW_POLICY_FIELDS.some((key) => key in stored)) return null;
+  const accounts = listConnectedAccounts(userId);
+  if (accounts.length === 0) return null;
+  const activeId = getActiveConnectedAccount(userId)?.id;
+  const ordered = [...accounts].sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId));
+  for (const account of ordered) {
+    const state = getAccountStrategyStateRow(userId, account.id);
+    if (!state) continue;
+    let accountPolicy: Partial<TradingPolicy>;
+    try {
+      accountPolicy = JSON.parse(state.policy) as Partial<TradingPolicy>;
+    } catch {
+      continue;
+    }
+    const found: Partial<TradingPolicy> = {};
+    for (const key of LEARNING_REVIEW_POLICY_FIELDS) {
+      if (key in accountPolicy) {
+        (found as Record<string, unknown>)[key as string] = accountPolicy[key];
+      }
+    }
+    if (Object.keys(found).length > 0) {
+      setUserSetting(userId, "policy", { ...stored, ...found });
+      return found;
+    }
+  }
+  return null;
+}
+
 /** Read user-level policy fields from user_settings and return them as a partial policy. */
 function readUserPolicyFields(userId: string): Partial<TradingPolicy> {
-  const stored = getUserSetting<Partial<TradingPolicy>>(userId, "policy", {});
-  if (!stored || typeof stored !== "object") return {};
+  const raw = getUserSetting<Partial<TradingPolicy>>(userId, "policy", {});
+  let stored: Partial<TradingPolicy> = raw && typeof raw === "object" ? raw : {};
+  // Legacy learning-review settings (account-scoped in #1116) seed into user_settings on
+  // first read after the user-level cutover, so an already-enabled review survives the deploy.
+  const seeded = seedLegacyLearningReviewFields(userId, stored);
+  if (seeded) stored = { ...stored, ...seeded };
   // Only pluck the known user-level fields from whatever is stored (backward-compat:
   // existing DBs have the full policy in user_settings — we only care about user fields now).
   const result: Partial<TradingPolicy> = {};
@@ -340,6 +391,18 @@ function setSettingDirect(userId: string, key: string, value: unknown, updatedAt
     .run(`${userId}_${key}`, userId, key, JSON.stringify(value), updatedAt);
 }
 
+/**
+ * Write a full policy blob to user_settings.policy while PRESERVING the currently stored
+ * user-level fields (notification prefs, market-scan breadth, learning-review config).
+ * Profile create/update/activate write the whole profile policy here, and profile rows carry
+ * stripped-to-default values for the user-level keys (setPolicy syncs profiles through
+ * pickAccountFields + mergePolicy) — without this overlay, activating or editing the active
+ * profile would silently reset the user's review/notification/scan settings to defaults.
+ */
+function writePolicyBlobPreservingUserFields(userId: string, policy: TradingPolicy, updatedAt: string): void {
+  setSettingDirect(userId, "policy", mergePolicy({ ...policy, ...readUserPolicyFields(userId) }), updatedAt);
+}
+
 function syncActiveProfile(patch: { policy?: TradingPolicy; prompt?: string; scoringWeights?: ScoringWeights }, userId: string = "local"): void {
   const active = getActiveStrategyProfile(userId);
   if (!active) return;
@@ -392,7 +455,13 @@ export function getPolicy(userId: string = "local", connectedAccountId?: string)
     policy.activeBroker = account.broker;
     policy.accountNumber = account.accountNumber;
   } else {
-    policy = getBasePolicy(userId);
+    // No active account: the user-level overlay still applies. The base can be an active
+    // library profile whose row carries stripped-to-default values for the user-level keys
+    // (setPolicy syncs profiles via pickAccountFields + mergePolicy), so without the overlay
+    // an enabled learning review / notification prefs would silently read as defaults the
+    // moment the user has no active connected account (the scheduler reads getPolicy(userId)).
+    // Idempotent for legacy full-blob users — the plucked keys come from the same blob.
+    policy = mergePolicy({ ...getBasePolicy(userId), ...readUserPolicyFields(userId) });
   }
 
   return policy;
@@ -505,7 +574,7 @@ export function createStrategyProfile(input: { name: string; policy?: Partial<Tr
   });
   create();
   if (input.active) {
-    setSettingDirect(userId, "policy", policy, now);
+    writePolicyBlobPreservingUserFields(userId, policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
     copyPolicyConfigToActiveAccount(userId, policy, prompt, policy.scoringWeights, id);
   }
@@ -531,7 +600,7 @@ export function updateStrategyProfile(id: string, patch: { name?: string; policy
     .prepare("UPDATE strategy_profiles SET name = ?, policy = ?, prompt = ?, scoring_weights = ?, updated_at = ? WHERE id = ? AND user_id = ?")
     .run(patch.name ?? existing.name, JSON.stringify(policy), prompt, JSON.stringify(scoringWeights), now, id, userId);
   if (existing.active) {
-    setSettingDirect(userId, "policy", policy, now);
+    writePolicyBlobPreservingUserFields(userId, policy, now);
     setSettingDirect(userId, "strategyPrompt", prompt, now);
     copyPolicyConfigToActiveAccount(userId, policy, prompt, scoringWeights, id);
   }
@@ -547,7 +616,7 @@ export function activateStrategyProfile(id: string, userId: string = "local"): S
   const activate = database.transaction(() => {
     database.prepare("UPDATE strategy_profiles SET active = 0, updated_at = ? WHERE user_id = ?").run(now, userId);
     database.prepare("UPDATE strategy_profiles SET active = 1, updated_at = ? WHERE id = ? AND user_id = ?").run(now, id, userId);
-    setSettingDirect(userId, "policy", mergePolicy({ ...profile.policy, activeProfileId: id }), now);
+    writePolicyBlobPreservingUserFields(userId, mergePolicy({ ...profile.policy, activeProfileId: id }), now);
     setSettingDirect(userId, "strategyPrompt", profile.prompt, now);
   });
   activate();

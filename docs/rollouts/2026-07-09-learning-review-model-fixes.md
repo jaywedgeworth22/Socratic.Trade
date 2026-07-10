@@ -87,3 +87,66 @@ Existing per-account `learningReview*` values (a day-old, off-by-default feature
 usage) become user-level: on next read they're stripped from the account row and, absent a
 user-level value, fall to the new defaults (off / decide / claude-fable-5). Anyone who enabled it
 per-account re-confirms once at the user level. No data loss; `learned_context` is untouched.
+
+---
+
+## Follow-up (same day): review-round fixes + adopted trigger feature
+
+Seven verdict-REAL findings from the PR #1278 review round, fixed in one commit (each with a
+regression test that fails pre-fix), plus MONET's uncommitted trigger feature found in the
+worktree, adopted and finished in its own commit.
+
+### Adopted (MONET WIP, finished)
+
+- **Lesson-count/max-wait trigger**: the daily review now fires only when >=
+  `learningReviewMinNewLessons` (default 5) NEW lessons accumulated since the last successful
+  review, OR the oldest un-reviewed lesson waited `learningReviewMaxWaitDays` (default 7) — still
+  capped at one run per UTC day. `lastReviewedAt` marker stored only on fully-successful runs.
+  Finishing touches: corrupt-knob NaN hardening, `/api/policy` bounds validation, trigger tests.
+
+### Fixed (review findings)
+
+1. **No-account overlay** (`db-profiles.ts` getPolicy else branch): user-level fields
+   (learningReview*, notificationSettings, marketScan*) now overlay the base policy when the user
+   has no active connected account — an enabled review no longer silently reads as disabled on the
+   scheduler path. (peekPolicy left as-is: it never applied the user overlay in any branch and its
+   read-only contract conflicts with the lazy seed.)
+2. **Profile ops preserve user fields** (`writePolicyBlobPreservingUserFields`): profile
+   create/update/activate used to overwrite `user_settings.policy` with the full profile blob,
+   resetting user-level fields to profile defaults. Now the stored user-level values are overlaid
+   before the write (also repairs the pre-existing notification/market-scan clobber).
+3. **Blank model save 400s** (`app/api/policy/route.ts`): the delete-on-blank special case for
+   `learningReviewModel` is removed — with the explicit claude-fable-5 default it had become a
+   silent revert-to-default. A blank now falls through to validatePolicy's non-empty rule
+   (mirrors the Red-model precedent); the runner's `no-model` skip stays as a corrupt-data backstop.
+4. **Fingerprint keys on config** (`reviewFingerprint(pack, mode, model)`): flipping
+   annotate->decide or switching the reviewer model now forces a fresh review instead of hitting
+   the "unchanged" skip.
+5. **Legacy seed** (`seedLegacyLearningReviewFields`): one-time lazy copy of account-scoped
+   (#1116-era) learningReview* values into `user_settings.policy` on first read when absent —
+   supersedes this note's earlier "re-confirms once" migration note; the cutover is lossless now.
+6. **Coverage gating**: the unchanged-set fingerprint (and `lastReviewedAt`) is stored only when
+   EVERY shown item received a valid verdict — a partial response is re-attempted the next day
+   (daily marker still advances, so at most one extra LLM call/day).
+7. **Apply-failure gating**: `applyLearningReviewVerdicts` now returns
+   `{ applied, failures }`; any thrown per-item application (audited as
+   `learning_review_apply_error`) blocks the fingerprint store so the set is retried.
+
+### Files
+
+`src/lib/db-profiles.ts`, `src/lib/learning-review.ts`, `src/lib/defaults.ts`, `src/lib/types.ts`,
+`app/api/policy/route.ts`, `test/learning-review.test.ts`,
+`test/learning-review-policy-route.test.ts` (new), this note.
+
+### Verification
+
+- `npx tsc --noEmit` clean.
+- Focused suites: `learning-review` 26/26, `learning-review-policy-route` 3/3,
+  `per-account-policy-isolation` + `account-scoped-models-migration` green (43 tests total).
+- Pre-fix falsification run: with the src fixes stashed, 8 of the new tests fail (all seven
+  finding repros + the return-shape change) — confirming each test pins its bug.
+
+### Follow-ups
+
+- Settings UI knobs for the two trigger fields (API + defaults only today).
+- peekPolicy still omits the user-level overlay everywhere (pre-existing, diagnostics-only).

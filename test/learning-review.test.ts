@@ -18,6 +18,10 @@ beforeAll(() => {
 });
 
 import {
+  activateStrategyProfile,
+  createStrategyProfile,
+  deleteConnectedAccount,
+  getDb,
   getPendingLearnedContext,
   getPolicy,
   insertLearnedContext,
@@ -25,8 +29,11 @@ import {
   listAuditByKind,
   listLearnedContext,
   listLearnedContextForDecision,
-  setPolicy
+  setPolicy,
+  updateStrategyProfile,
+  upsertConnectedAccount
 } from "../src/lib/db";
+import { DEFAULT_POLICY } from "../src/lib/defaults";
 import {
   applyLearningReviewVerdicts,
   buildLearningReviewContextPack,
@@ -309,6 +316,73 @@ describe("skip unchanged sets", () => {
     expect(day2.reason).toBe("llm-failed");
     expect(calls).toBe(2);
   });
+
+  it("a mode or model change forces a fresh review of the same set instead of skipping 'unchanged'", async () => {
+    const userId = `lr-config-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    seedLearnedRow(userId);
+    let calls = 0;
+    const llm = keepAllLlm(() => {
+      calls += 1;
+    });
+
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm });
+    expect(day1.ok).toBe(true);
+    expect(calls).toBe(1);
+
+    // Same set, annotate -> decide: verdicts must now be APPLIED, so the run must not skip.
+    enableReview(userId, "decide");
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm });
+    expect(day2.reason).not.toBe("unchanged");
+    expect(day2.mode).toBe("decide");
+    expect(calls).toBe(2);
+
+    // Same set, different reviewer model: the newly chosen model must actually run.
+    setPolicy({ ...getPolicy(userId), learningReviewModel: "gpt-5.5" }, userId);
+    const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm });
+    expect(day3.reason).not.toBe("unchanged");
+    expect(calls).toBe(3);
+  });
+
+  it("does not cache the fingerprint when some shown items received no verdict (partial coverage)", async () => {
+    const userId = `lr-partial-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    const covered = seedLearnedRow(userId);
+    seedLearnedRow(userId, { symbol: "NVDA" }); // never receives a verdict
+    let calls = 0;
+    const llm = async () => {
+      calls += 1;
+      return verdictJson([{ id: covered.id, table: "learned_context", verdict: "keep", confidence: 90, reasoning: "sound" }]);
+    };
+
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm });
+    expect(day1.ok).toBe(true); // parse succeeded and the daily marker advanced...
+    // ...but the uncovered item still needs a verdict: day 2 must re-attempt, not skip.
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm });
+    expect(day2.reason).not.toBe("unchanged");
+    expect(calls).toBe(2);
+  });
+
+  it("does not cache the fingerprint when a decide-mode application failed (failures are surfaced)", async () => {
+    const userId = `lr-applyfail-${randomUUID().slice(0, 8)}`;
+    const pending = seedPendingRow(userId);
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+    // Poison the in-memory pending row so applyApprovedPending's insert throws mid-apply.
+    pack.pendingById.set(pending.id, { ...pending, subject: undefined as unknown as string });
+
+    const { applied, failures } = applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "keep", confidence: 90, reasoning: "sound" }],
+      pack
+    );
+
+    // The failure is surfaced to the caller (the runner gates the fingerprint store on it) and audited.
+    expect(failures).toBe(1);
+    expect(applied).toHaveLength(0);
+    expect(listAuditByKind("learning_review_apply_error", 10, userId)).toHaveLength(1);
+    // The row is untouched and will be re-attempted on the next run.
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+  });
 });
 
 // ── User-level scoping: config overlays every account (the review runs once per user) ──
@@ -327,6 +401,82 @@ describe("user-level scoping", () => {
     expect(underA2.learningReviewEnabled).toBe(true);
     expect(underA2.learningReviewMode).toBe("annotate");
     expect(underA2.learningReviewModel).toBe("gpt-5.5");
+  });
+});
+
+// ── User-level config must survive account removal, profile ops, and the #1116→#1278 cutover ──
+
+describe("user-level persistence (PR #1278 review fixes)", () => {
+  function seedAccount(userId: string, id: string, isActive = true) {
+    upsertConnectedAccount({ id, userId, broker: "alpaca", environment: "paper", accountNumber: `PA-${id}`, label: id, isActive });
+  }
+
+  it("keeps the review config visible when the user has no active connected account (scheduler path)", () => {
+    const userId = `lr-noacct-${randomUUID().slice(0, 8)}`;
+    const acct = `acct-${randomUUID().slice(0, 8)}`;
+    // An active library profile: its row carries stripped-to-default learningReview values
+    // (setPolicy syncs it via pickAccountFields + mergePolicy), so it is the hazardous base.
+    createStrategyProfile({ name: "Base", active: true }, userId);
+    seedAccount(userId, acct);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "gpt-5.5" }, userId);
+    expect(getPolicy(userId).learningReviewEnabled).toBe(true);
+
+    // Remove the only account: getPolicy(userId) falls back to the profile base — the user-level
+    // overlay must still apply or the scheduler would read the enabled review as disabled.
+    deleteConnectedAccount(acct, userId);
+    const policy = getPolicy(userId);
+    expect(policy.learningReviewEnabled).toBe(true);
+    expect(policy.learningReviewModel).toBe("gpt-5.5");
+  });
+
+  it("activating or editing a profile does not clobber the user-level review config", () => {
+    const userId = `lr-profile-${randomUUID().slice(0, 8)}`;
+    const acct = `acct-${randomUUID().slice(0, 8)}`;
+    seedAccount(userId, acct);
+    createStrategyProfile({ name: "P1", active: true }, userId);
+    const p2 = createStrategyProfile({ name: "P2", active: false }, userId);
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" }, userId);
+
+    // Activating another profile writes the full profile policy to user_settings.policy —
+    // the stored user-level fields must be preserved through that write.
+    activateStrategyProfile(p2.id, userId);
+    const afterActivate = getPolicy(userId);
+    expect(afterActivate.learningReviewEnabled).toBe(true);
+    expect(afterActivate.learningReviewMode).toBe("annotate");
+    expect(afterActivate.learningReviewModel).toBe("gpt-5.5");
+
+    // Same for editing the ACTIVE profile.
+    updateStrategyProfile(p2.id, { policy: { maxOrderNotional: 1234 } }, userId);
+    const afterUpdate = getPolicy(userId);
+    expect(afterUpdate.learningReviewEnabled).toBe(true);
+    expect(afterUpdate.learningReviewModel).toBe("gpt-5.5");
+    expect(afterUpdate.maxOrderNotional).toBe(1234);
+  });
+
+  it("seeds pre-cutover account-level learningReview settings into user_settings on first read", () => {
+    const userId = `lr-legacy-${randomUUID().slice(0, 8)}`;
+    const acct = `acct-${randomUUID().slice(0, 8)}`;
+    seedAccount(userId, acct);
+    // Simulate a pre-#1278 deploy: the enabled review lives ONLY in the account row's policy
+    // blob (the #1116 account-scoped layout); user_settings.policy never carried the keys.
+    const legacyPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    getDb()
+      .prepare(
+        `INSERT INTO account_strategy_state
+           (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'halted', NULL, ?)`
+      )
+      .run(userId, acct, JSON.stringify(legacyPolicy), "legacy prompt", JSON.stringify(legacyPolicy.scoringWeights), new Date().toISOString());
+
+    // First read after the cutover: reads strip learningReview* from the account row, so the
+    // lazy seed must copy the legacy values into user_settings — an already-enabled review
+    // survives the deploy instead of silently disabling.
+    const policy = getPolicy(userId);
+    expect(policy.learningReviewEnabled).toBe(true);
+    expect(policy.learningReviewMode).toBe("annotate");
+    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    // Idempotent: the seed persisted, later reads agree.
+    expect(getPolicy(userId).learningReviewEnabled).toBe(true);
   });
 });
 
@@ -416,7 +566,7 @@ describe("decide mode", () => {
     expect(pack.items.some((i) => i.id === shown.id)).toBe(true);
     expect(pack.items.some((i) => i.id === unshown.id)).toBe(false);
 
-    const applied = applyLearningReviewVerdicts(
+    const { applied, failures } = applyLearningReviewVerdicts(
       userId,
       [
         { id: unshown.id, table: "learned_context", verdict: "reject", confidence: 99, reasoning: "hallucinated target" },
@@ -425,6 +575,7 @@ describe("decide mode", () => {
       pack
     );
     expect(applied).toHaveLength(0);
+    expect(failures).toBe(0);
     expect(listLearnedContext(userId).some((r) => r.id === unshown.id)).toBe(true);
   });
 });

@@ -13,12 +13,12 @@
 // this lesson's evidence was generated?".
 //
 // MODES (policy.learningReviewMode):
-//   - "annotate" (default): write an audit per item ("learning_review_verdict") + a run summary
-//     audit ("learning_review_summary") + a notification. NOTHING is mutated.
-//   - "decide" (owner opt-in): additionally APPLY verdicts through the existing learned-context
-//     mutation paths — delete/expire learned_context rows; approve/reject pending items via the
-//     same applyApprovedPending/setPendingLearnedContextStatus the human approve route uses. Every
-//     application is audited ("learning_review_applied").
+//   - "decide" (default): write the audits below AND apply verdicts through the existing
+//     learned-context mutation paths — delete/expire learned_context rows; approve/reject pending
+//     items via the same applyApprovedPending/setPendingLearnedContextStatus the human approve
+//     route uses. Every application is audited ("learning_review_applied").
+//   - "annotate" (explicit opt-out): write an audit per item ("learning_review_verdict") + a run
+//     summary audit ("learning_review_summary") + a notification. NOTHING is mutated.
 //
 // FAIL-SAFE: any LLM/transport/parse failure → audit + skip; nothing is ever mutated on failure.
 // The once-per-day marker still advances on failure so a broken provider can't be hammered all day.
@@ -155,17 +155,19 @@ export function evaluateLearningReviewTrigger(userId: string, now: number, polic
 
 /** Stable fingerprint of what a review would actually examine, so an unchanged set never
  *  spends an LLM call re-confirming verdicts we already have. Keyed on the review ITEMS
- *  (id + content + confidence + assertedAt — so a new, changed, or re-asserted fact re-runs)
- *  and the rollout-note set (a landed fix can flip a "still true?" verdict). DELIBERATELY
+ *  (id + content + confidence + assertedAt — so a new, changed, or re-asserted fact re-runs),
+ *  the rollout-note set (a landed fix can flip a "still true?" verdict), AND the review
+ *  CONFIG (mode + model) — flipping annotate→decide or choosing a different reviewer must
+ *  force a fresh review of the existing set, not hit the "unchanged" skip. DELIBERATELY
  *  excludes the failure-event log: it's noisy (routine 429s/timeouts) and would force a
  *  re-review most days, defeating the point — a genuinely corrupting failure surfaces as a
  *  new fact/mutation, which is already in the items. */
-function reviewFingerprint(pack: LearningReviewContextPack): string {
+function reviewFingerprint(pack: LearningReviewContextPack, mode: "annotate" | "decide", model: string): string {
   const items = pack.items
     .map((it) => `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.at}`)
     .sort();
   const notes = pack.systemHistory.rolloutNotes.map((n) => n.firstLine).sort();
-  return createHash("sha256").update(JSON.stringify({ items, notes })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ items, notes, mode, model })).digest("hex");
 }
 
 function utcDate(now: number): string {
@@ -436,16 +438,19 @@ export interface AppliedVerdict {
  *   learned_context_pending:  keep → approve (applyApprovedPending + status 'approved', mirroring the
  *                             human approve route); reject/expire → status 'rejected';
  *                             needs_more_data → left pending.
- * Every application is audited ("learning_review_applied"). Returns what was actually applied.
+ * Every application is audited ("learning_review_applied"). Returns what was actually applied plus
+ * how many per-item applications THREW (audited as "learning_review_apply_error" and swallowed here) —
+ * callers use the failure count to avoid caching the run as complete when a mutation must be retried.
  */
 export function applyLearningReviewVerdicts(
   userId: string,
   verdicts: LearningReviewVerdict[],
   pack: Pick<LearningReviewContextPack, "items" | "pendingById">,
   nowIso: string = new Date().toISOString()
-): AppliedVerdict[] {
+): { applied: AppliedVerdict[]; failures: number } {
   const reviewedIds = new Set(pack.items.map((item) => `${item.table}:${item.id}`));
   const applied: AppliedVerdict[] = [];
+  let failures = 0;
 
   for (const verdict of verdicts) {
     if (!reviewedIds.has(`${verdict.table}:${verdict.id}`)) continue; // never touch unshown rows
@@ -470,6 +475,7 @@ export function applyLearningReviewVerdicts(
         }
       }
     } catch (error) {
+      failures += 1;
       audit(
         "learning_review_apply_error",
         { id: verdict.id, table: verdict.table, verdict: verdict.verdict, error: error instanceof Error ? error.message : String(error) },
@@ -486,7 +492,7 @@ export function applyLearningReviewVerdicts(
       );
     }
   }
-  return applied;
+  return { applied, failures };
 }
 
 // ── Runner ──────────────────────────────────────────────────────────────────────
@@ -562,9 +568,9 @@ export async function runDailyLearningReview(
   }
 
   // Don't waste a call re-reviewing an unchanged set: if the exact items + landed-fix history
-  // match the last SUCCESSFUL review, the LLM has nothing new to add. Advance the marker (we
-  // checked today) but make no call. `force` (admin/manual) always re-runs.
-  const fingerprint = reviewFingerprint(pack);
+  // + review config (mode/model) match the last SUCCESSFUL review, the LLM has nothing new to
+  // add. Advance the marker (we checked today) but make no call. `force` always re-runs.
+  const fingerprint = reviewFingerprint(pack, mode, model);
   if (!options.force && getInternalSetting<string>(lastFingerprintKey(userId)) === fingerprint) {
     advanceMarker();
     audit("learning_review_summary", { mode, model, itemsReviewed: pack.items.length, verdicts: 0, applied: 0, reason: "unchanged" }, userId);
@@ -669,24 +675,44 @@ export async function runDailyLearningReview(
   }
 
   // Decide (owner opt-in): apply verdicts via the existing mutation paths.
-  const applied = mode === "decide" ? applyLearningReviewVerdicts(userId, result.reviews, pack) : [];
+  const { applied, failures } =
+    mode === "decide" ? applyLearningReviewVerdicts(userId, result.reviews, pack) : { applied: [] as AppliedVerdict[], failures: 0 };
+
+  // Coverage: parse success does not imply every shown item got a verdict (malformed entries are
+  // dropped; the model may omit items). Track it so an incomplete review is re-attempted.
+  const covered = new Set(result.reviews.map((r) => `${r.table}:${r.id}`));
+  const complete = pack.items.every((it) => covered.has(`${it.table}:${it.id}`));
 
   const flagged = result.reviews.filter((r) => r.verdict !== "keep").length;
   audit(
     "learning_review_summary",
-    { mode, model, itemsReviewed: pack.items.length, verdicts: result.reviews.length, flagged, applied: applied.length, summary: result.summary },
+    {
+      mode,
+      model,
+      itemsReviewed: pack.items.length,
+      verdicts: result.reviews.length,
+      flagged,
+      applied: applied.length,
+      coverageComplete: complete,
+      applyFailures: failures,
+      summary: result.summary
+    },
     userId
   );
   advanceMarker();
-  // Remember exactly what was reviewed (fingerprint) and WHEN (lastReviewedAt) — both ONLY on
-  // success. The fingerprint skips an identical set; lastReviewedAt resets the "new since last
-  // review" count that gates the next run. A failed/parse-failed run leaves both untouched so the
-  // same lessons are re-attempted rather than skipped or counted as already-reviewed.
-  try {
-    setInternalSetting(lastFingerprintKey(userId), fingerprint);
-    setInternalSetting(lastReviewedAtKey(userId), String(now));
-  } catch (error) {
-    console.error("[learning-review] failed to persist review markers:", error);
+  // Remember exactly what was reviewed (fingerprint) and WHEN (lastReviewedAt) — both ONLY when
+  // the run was fully successful: every shown item received a verdict AND no decide-mode
+  // application threw. The fingerprint skips an identical set; lastReviewedAt resets the "new
+  // since last review" count that gates the next run. A failed/parse-failed/partial run leaves
+  // both untouched so the same lessons are re-attempted (the daily marker above still advances,
+  // so this costs at most one extra LLM call per day) rather than skipped or counted as reviewed.
+  if (complete && failures === 0) {
+    try {
+      setInternalSetting(lastFingerprintKey(userId), fingerprint);
+      setInternalSetting(lastReviewedAtKey(userId), String(now));
+    } catch (error) {
+      console.error("[learning-review] failed to persist review markers:", error);
+    }
   }
 
   try {

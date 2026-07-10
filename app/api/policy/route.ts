@@ -90,14 +90,13 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
-  // Owner directive 2026-07-07: an empty/cleared Red model is NOT silently deleted (that used to mean
-  // "fall back to the Green model" — a fallback that no longer exists). A blank model is rejected by
-  // validatePolicy so the user must pick one; there is no default for anything.
-  // The learning review model, by contrast, is an OPTIONAL advisory feature: blanking it clears the
-  // selection (→ undefined, feature no-ops) rather than being a rejected mandatory pick.
-  if (typeof body.learningReviewModel === "string" && body.learningReviewModel.trim().length === 0) {
-    delete policy.learningReviewModel;
-  }
+  // Owner directive 2026-07-07: an empty/cleared model is NOT silently deleted or substituted — a
+  // blank model id is rejected by validatePolicy so the user must pick one explicitly. This covers
+  // the learning-review model too (#1278): a blank used to be quietly deleted here ("cleared →
+  // feature no-ops"), but mergePolicy now refills the explicit claude-fable-5 default, which would
+  // turn a clear into a silent revert-to-default. Rejecting mirrors the Green/Red model rules; the
+  // runner's "no-model" skip remains only as a backstop for corrupt stored data that bypassed this
+  // route.
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
