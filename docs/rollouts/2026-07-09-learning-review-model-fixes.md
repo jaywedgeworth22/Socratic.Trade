@@ -150,3 +150,35 @@ worktree, adopted and finished in its own commit.
 
 - Settings UI knobs for the two trigger fields (API + defaults only today).
 - peekPolicy still omits the user-level overlay everywhere (pre-existing, diagnostics-only).
+
+---
+
+## 2026-07-10 addendum — merge-forward + PR #7 guard fix to un-stick #1278 (MONET)
+
+**Summary.** PR #1278 was stuck: GitHub showed `mergeStateStatus: DIRTY` (a stale phantom from a
+main push-burst — `git merge-tree HEAD origin/main` was actually clean, main's overlapping edits
+were `brokerMinimumHandling`/`reviewedByModel`, disjoint from the learning-review hunks) AND its
+`verify` gate would have failed on a real test regression the earlier review round introduced.
+
+**The real blocker.** Commit `2b4e94a4` added `const activeId = getActiveConnectedAccount(userId)?.id`
+inside `seedLegacyLearningReviewFields` (db-profiles.ts) to sort the active account first when
+seeding legacy learning-review config. Benign in intent, but it trips the blunt PR #7 structural
+guard (`test/pr7-merge-gate.test.ts`), which forbids ANY `const activeId =` / active-view-pointer
+reference in the seed path (the view/execution decouple invariant). Fixed by dropping the
+active-first ordering entirely and iterating accounts as listed — learning-review config is
+user-level intent that merely shipped account-scoped (#1116), so any account carrying it is an
+equally valid seed source (first-with-keys wins). This honors the guard's intent rather than
+evading it with a variable rename.
+
+**Files.** `src/lib/db-profiles.ts` (seed ordering), plus the `origin/main` merge-forward.
+
+**Verification.** node@24 (Mac default is node26 — better-sqlite3 ABI trap). `npx tsc --noEmit`
+clean; `pr7-merge-gate` + `learning-review` 30/30; full `npm test` 3326/3326 after the fix
+(was 1 failed / 3325 before); `npm run build` clean; `eslint src/lib/db-profiles.ts` 0 errors.
+
+**Status of the feature.** Backend threshold trigger (≥N new lessons OR oldest un-reviewed ≥M days),
+no-hidden-model-default, decide-default, user-level scoping, per-call cost recording
+(`recordLlmUsage context "learning-review"`) — all DONE and in this PR. Still open (owner's later
+asks, NOT in #1278): the two trigger fields' Settings UI knobs, a "Global Settings" section rename,
+a per-call cost DISPLAY (usage page groups by model, not yet by context), and the open
+"more than one model reviews the lessons?" question.

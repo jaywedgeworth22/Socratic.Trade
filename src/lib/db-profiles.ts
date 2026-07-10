@@ -92,9 +92,11 @@ function seedLegacyLearningReviewFields(userId: string, stored: Partial<TradingP
   if (LEARNING_REVIEW_POLICY_FIELDS.some((key) => key in stored)) return null;
   const accounts = listConnectedAccounts(userId);
   if (accounts.length === 0) return null;
-  const activeId = getActiveConnectedAccount(userId)?.id;
-  const ordered = [...accounts].sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId));
-  for (const account of ordered) {
+  // Iterate accounts as listed — the legacy seed must NOT depend on the active-account (view)
+  // pointer (PR #7 view/execution decouple guard, test/pr7-merge-gate.test.ts). Learning-review
+  // config is user-level intent that happened to ship account-scoped (#1116), so any account
+  // that carries it is an equally valid source; first-with-keys wins.
+  for (const account of accounts) {
     const state = getAccountStrategyStateRow(userId, account.id);
     if (!state) continue;
     let accountPolicy: Partial<TradingPolicy>;
