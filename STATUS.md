@@ -22,6 +22,46 @@ the existing #1278/#1328 marker/fingerprint architecture unchanged (sticks until
 another item's arrival brings the reviewer back to the whole set). +6 tests in
 `test/learning-review.test.ts`. Gate green: tsc clean, 3389 tests / 315 files, build clean, lint 0
 errors. See `docs/rollouts/2026-07-10-learning-review-defer.md`.
+## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
+#1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
+YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
+branch's copy of the file before evaluating the `if:`. Created a GitHub **Environment**
+named `merge-shepherd` via the Environments API with `deployment_branch_policy` locked to
+`main` (`custom_branch_policies: true`, branch policy `main` only) — this is enforced
+server-side by GitHub before the job dispatches, not something a branch's workflow file can
+override. Wired `environment: merge-shepherd` into `.github/workflows/merge-shepherd.yml`'s
+`shepherd` job (kept the existing `if:` guard as defense-in-depth, not a replacement), and
+added `deployments: write` to the job's permissions allow-list since referencing an
+environment makes GitHub track a deployment record per run and this workflow already scopes
+`GITHUB_TOKEN` down to an explicit list. `SHEPHERD_TOKEN` does not currently exist as a repo secret — nothing to migrate; if/when
+added it should be an **environment secret** on `merge-shepherd`, which needs an owner
+action (the API can create/gate the environment but cannot read or copy secret values). No
+app code touched — workflow + docs only. See
+`docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+
+**Landing-round finding, deliberately NOT fixed in this PR (PR #1353 review):** codex-connector
+correctly flagged that the `environment: merge-shepherd` reference is itself still part of the
+branch's own copy of the workflow YAML — a branch can delete that one line from its own copy just
+as easily as it could delete the `if:` guard, and GitHub only evaluates an environment's
+`deployment_branch_policy` for a job that actually references that environment; a job with no
+environment reference at all skips the check entirely. So this PR narrows the bypass (from "delete
+one `if:` line" to "delete one `environment:` line") without structurally closing it. A genuine
+close requires moving the sensitive job into a **reusable workflow pinned to `@main`**
+(`uses: ./.github/workflows/_merge-shepherd-impl.yml@main`): GitHub loads a `uses:`-referenced
+workflow from the pinned ref regardless of which ref dispatched the caller, so a branch cannot
+edit away the `environment:` declaration living inside the pinned file. That's a real CI
+architecture change (new file, `workflow_call` trigger wiring, verifying environment protection
+still applies inside a reusable workflow) that deserves its own dedicated, carefully-tested
+session rather than a rushed addition here — filed as a follow-up (see below).
+
+Practical severity today is bounded: `SHEPHERD_TOKEN` doesn't exist as a repo/environment secret,
+so there's no environment-gated secret currently exposed by this gap — the fallback
+`GITHUB_TOKEN` is already scoped to an explicit low(er)-privilege allow-list regardless of whether
+the environment check runs. Separately, this repo's branch-protection ruleset requires 0 approving
+reviews (only the `verify` CI check gates a merge), so a rogue/buggy agent branch could already
+self-merge through the normal PR flow without needing this side-channel at all — this workflow's
+gap is real but not the weakest link in the current threat model. Landed with the finding
+acknowledged and cross-referenced rather than silently resolved.
 ## 2026-07-10 — Mistral benchmark data surfaced in the model-picker UI (MONET, branch `monet/mistral-benchmark-ui`)
 Owner-directed: users had no way to see the 2026-07-10 Mistral re-benchmark numbers when picking a
 model — they only lived in a docs note. Filled two ALREADY-BUILT UI surfaces instead of inventing a
