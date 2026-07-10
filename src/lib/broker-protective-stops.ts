@@ -317,6 +317,15 @@ export async function reconcileBrokerProtectiveStops(args: {
       raw: { brokerHeldProtectiveStop: true, kind: row.kind }
     });
   };
+  // A terminal order can still carry a positive filledQuantity even when its OVERALL state is
+  // "canceled"/"expired"/"rejected", not literally "filled" — a stop that partially executes and
+  // then dies (e.g. a canceled remainder) DID move some shares. Book on EITHER signal: the literal
+  // "filled" state (kept for a mapper/mock that reports a full fill without ever populating
+  // filledQuantity) OR a positive filledQuantity regardless of state — either alone missing the
+  // other must still book, or an unbooked fill vanishes from P&L/learning/activity (Codex review,
+  // PR #1331).
+  const hadExecutedFill = (order: EquityOrder): boolean =>
+    String(order.state ?? "").trim().toLowerCase() === "filled" || (order.filledQuantity ?? 0) > 0;
 
   // Symbols whose pending_cancel row section 1 just recovered THIS call specifically because the
   // order was found FILLED (not merely rejected/canceled/expired). A fill actually reduces the
@@ -345,11 +354,27 @@ export async function reconcileBrokerProtectiveStops(args: {
         out.cancelled++;
         out.cancelledOrderIds.push(row.brokerOrderId);
       } catch (err) {
-        audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId);
-        // Keep it as pending_cancel so a later tick retries the cancel rather than orphaning the
-        // resting broker stop (listBrokerProtectiveStops returns pending_cancel rows, so the next
-        // disabled reconcile re-attempts it).
-        upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+        // The cancel failed — but that doesn't necessarily mean the order is still resting
+        // broker-side. Mirror section 1's recovery: if the caller's freshly fetched order list shows
+        // this order already done resting (most commonly FILLED — the stop did its job before our
+        // own cancel attempt reached the broker), the row is stale bookkeeping, not a stuck cancel.
+        // Without this check, a filled broker-held stop while the feature stays disabled would retry
+        // its cancel FOREVER (kind stays null every tick) and its fill would never reach
+        // fill_events/P&L/learning at all (Codex review, PR #1331).
+        const found = orders.find((o) => o.id === row.brokerOrderId);
+        if (found && isDoneRestingState(found.state)) {
+          deleteBrokerProtectiveStop(row.id, userId);
+          if (hadExecutedFill(found)) {
+            bookBrokerHeldStopFill(row, found);
+          }
+          audit("broker_protective_stop_cancel_recovered", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err), context: "disabled_teardown" }, userId);
+        } else {
+          audit("broker_protective_stop_cancel_error", { symbol: row.symbol, brokerOrderId: row.brokerOrderId, error: errMsg(err), context: "disabled_teardown" }, userId);
+          // Keep it as pending_cancel so a later tick retries the cancel rather than orphaning the
+          // resting broker stop (listBrokerProtectiveStops returns pending_cancel rows, so the next
+          // disabled reconcile re-attempts it).
+          upsertBrokerProtectiveStop({ ...row, status: "pending_cancel" });
+        }
       }
     }
     return out;
@@ -466,7 +491,11 @@ export async function reconcileBrokerProtectiveStops(args: {
         const found = orders.find((o) => o.id === row.brokerOrderId);
         if (found && isDoneRestingState(found.state)) {
           deleteBrokerProtectiveStop(row.id, userId);
-          if (String(found.state ?? "").trim().toLowerCase() === "filled") {
+          // A partial fill DID move shares even when the order's overall terminal state is
+          // canceled/expired/rejected (not literally "filled") — book it, and defer section 4's
+          // replacement sizing to the next call the same way a full fill does (Codex review, PR
+          // #1331).
+          if (hadExecutedFill(found)) {
             const s = normalizeSymbol(row.symbol);
             filledRecoverySymbols.add(s);
             out.filledRecoverySymbols.push(s);
@@ -526,6 +555,27 @@ export async function reconcileBrokerProtectiveStops(args: {
   //    churn guard, so a flat tape doesn't cancel-replace every tick). A falling mark never lowers
   //    the trigger: that is the ratchet.
   const existingStops = listBrokerProtectiveStops(accountNumber, userId);
+  // Backfill a missing tracked extreme from the resting stop's OWN recorded terms, for any symbol
+  // the synthetic monitor never independently tracked. This is the common case for a NATIVE trailing
+  // stop that covers the WHOLE position: full broker coverage suppresses synthetic registration
+  // entirely (by design — the position is already protected), so `extremePriceBySymbol[sym]` is
+  // simply absent, not genuinely zero. Without this, a later mismatch (trail % or quantity change)
+  // would seed a REPLACEMENT trail from today's current mark — potentially far looser than the
+  // broker's own already-ratcheted-up trigger if price rallied and pulled back since the original
+  // placement (e.g. entry 100, rallied to 130, pulled back to 126, trail 5% — canArmTrailingNow with
+  // trackedExtreme=0 wrongly allows a reseed at 126 instead of keeping the 123.50 the broker's real
+  // peak implies). `stopPrice` records the trigger the trail STARTED (or last ratcheted) from, which
+  // only ever moves UP — inverting `stopPrice = startPeak * (1 - trailPercent/100)` yields a
+  // mathematically sound LOWER BOUND on the broker's true current high-water mark (Codex review, PR
+  // #1331). A synthetic row's OWN tracked extreme, when present, is trusted as-is (it's independently
+  // observed, not derived).
+  for (const stop of existingStops) {
+    if (stop.kind !== "trailing" || !(stop.trailPercent && stop.trailPercent > 0)) continue;
+    const sym = normalizeSymbol(stop.symbol);
+    if (extremePriceBySymbol[sym]) continue;
+    const impliedExtreme = stop.stopPrice / (1 - stop.trailPercent / 100);
+    if (Number.isFinite(impliedExtreme) && impliedExtreme > 0) extremePriceBySymbol[sym] = impliedExtreme;
+  }
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
     const symKind = kindForSymbol(sym);
@@ -564,7 +614,9 @@ export async function reconcileBrokerProtectiveStops(args: {
       const trackedOrder = orders.find((o) => o.id === existingStop.brokerOrderId);
       if (trackedOrder && isDoneRestingState(trackedOrder.state)) {
         deleteBrokerProtectiveStop(existingStop.id, userId);
-        if (String(trackedOrder.state ?? "").trim().toLowerCase() === "filled") {
+        // A partial fill DID move shares even when the tracked order's overall terminal state is
+        // canceled/expired/rejected, not literally "filled" (Codex review, PR #1331).
+        if (hadExecutedFill(trackedOrder)) {
           filledRecoverySymbols.add(sym);
           out.filledRecoverySymbols.push(sym);
           bookBrokerHeldStopFill(existingStop, trackedOrder);

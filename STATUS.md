@@ -84,7 +84,14 @@ a missing one would falsely read "dead") with `brokerHeldOrderIdBySymbol`, keyed
 verifying it (the re-arm pass runs BEFORE the tick's own reconcile call, so the map must be seeded from
 DB state at declaration, not only refreshed after reconcile), and a filled broker-held stop recognized
 during stale-row cleanup now books a `fill_events` row (`bookBrokerHeldStopFill`) before its row is
-deleted, instead of the exit silently vanishing from P&L/learning/activity.
+deleted, instead of the exit silently vanishing from P&L/learning/activity; round 9: the DISABLED-
+teardown path (`kind === null`) now recovers a FILLED stop the same way section 1 does instead of
+retrying its cancel forever with the fill unbooked; a NEW `hadExecutedFill` predicate books a fill at
+all three recovery sites on either the literal "filled" state OR a positive `filledQuantity`
+regardless of state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a
+native trail's mismatch-driven replacement (trail %/quantity change) now backfills a missing tracked
+high-water mark from the existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet
+math) before deciding whether a reseed would be looser than the broker's own already-moved-up peak.
 Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.

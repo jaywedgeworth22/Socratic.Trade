@@ -393,6 +393,47 @@ New test coverage for round 8: the existing round-7 regression test in
 succeeds on tick 2 despite the unrelated native trail staying live). Full gate (lint/tsc/test/build)
 re-run green in the isolated worktree; 3434 tests / 316 files pass.
 
+## Review fixes round 9 (Codex on `dd0306b`, three findings)
+
+1. **P2 — a broker-held stop recognized as FILLED during DISABLED-teardown (`kind === null`) was
+   never recovered:** that teardown path (the whole feature turned off while a stop was still
+   resting) only tried the cancel and, on failure, unconditionally marked the row `pending_cancel` —
+   it never checked the caller's `orders` evidence the way section 1's normal recovery does. A stop
+   that had already FILLED before the cancel reached the broker would retry forever (the teardown
+   path runs every tick while disabled) and its fill would never reach `fill_events`. Fixed: the
+   teardown catch block now mirrors section 1 — checks `orders` for a terminal state and, if found,
+   deletes the row and books the fill via `bookBrokerHeldStopFill` instead of retrying indefinitely.
+2. **P2 — a PARTIAL fill that then terminated as canceled/expired/rejected (not literally `filled`)
+   was never booked, at any of the three recovery sites:** all three (the new disabled-teardown
+   recovery above, section 1's pending-cancel recovery, section 3's stale-resting-row cleanup) only
+   called `bookBrokerHeldStopFill` when the tracked order's overall state string was exactly
+   `"filled"` — a stop that partially executed (some real shares traded) and then had its remainder
+   canceled reported a non-"filled" terminal state despite a positive `filledQuantity`, so those
+   shares' exit silently vanished from P&L/learning/activity, and the symbol was never added to
+   `filledRecoverySymbols` either (risking section 4 sizing a replacement off the stale pre-partial-
+   fill position). Fixed: a new `hadExecutedFill` predicate books on EITHER the literal `"filled"`
+   state OR a positive `filledQuantity` regardless of state, used at all three recovery sites.
+3. **P2 — a native trail's mismatch-driven REPLACEMENT (trail % or quantity changed) could reseed
+   LOOSER than the broker's own already-ratcheted-up high-water mark:** `canArmTrailingNow`'s guard
+   reads `extremePriceBySymbol[sym] ?? 0` — but a native trail that covers the WHOLE position
+   suppresses synthetic registration entirely (by design, since the position is already protected),
+   so this map has no entry for that symbol at all; `0` was read as "no tracked peak," not "unknown."
+   Concretely: entry 100, rally to 130 (native trail seeds at 123.50 = 130 × 0.95), pull back to 126,
+   then the trail % changes — with `trackedExtreme` read as 0, `canArmTrailingNow` saw `126 >=
+   max(100, 0)` and wrongly approved a reseed at `126 × 0.94 = 118.44`, LOOSER than the 123.50 already
+   resting. Fixed: before section 3 runs, backfill any symbol MISSING a tracked extreme by inverting
+   the existing stop's own recorded terms — `stopPrice = trueStartPeak × (1 − trailPercent/100)`, so
+   `impliedExtreme = stopPrice / (1 − trailPercent/100)` — a mathematically sound LOWER BOUND on the
+   broker's true current peak (Alpaca's native trail only ever ratchets UP). A synthetic row's own
+   independently-tracked extreme, when present, is trusted as-is and never overridden.
+
+New tests (all in `test/broker-protective-stops.test.ts`, new "round-9" describe block): disabled-
+teardown fill recovery; partial-then-canceled fill booking (asserts both the `fill_events` row and
+`filledRecoverySymbols`); the exact rally/pullback/trail-%-change scenario from finding 3 (asserts
+the replacement is refused and the tighter existing stop survives); a companion test confirming the
+backfill doesn't overshoot — a genuinely-at-or-above-peak mark still permits the replacement. Full
+gate (lint/tsc/test/build) green in the isolated worktree; 3438 tests / 316 files pass.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing
