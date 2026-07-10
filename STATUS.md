@@ -21,6 +21,27 @@ clean, eslint 0 errors, 46 focused test files / 523 tests green under node@24. B
 fresh detached worktree off `origin/main`, committed locally, NOT pushed — full gate
 (`npm test` full run, `npm run build`) and PR/land are a later, separate step. See
 `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
+**MERGED to `main` as PR #1346 (squash `c7a2fa95`, verify green).** Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
+`TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
+is now formally the PROPOSER's, and the reviewer resolves through the single fallback helper
+`resolveReviewerReasoningEffort` (src/lib/llm-request.ts) — wired at red-team.ts (debateProposal),
+strategy-tuning.ts (`policyForTuningReviewer` carries the reviewer effort when it inherits the Red
+model), and the AI-review panel default. `validatePolicy` now checks each team's (model, effort) combo
+with ITS OWN effort — a violating gpt-5.5+high on EITHER team rejects with a message naming the team.
+No default for the new field on purpose (absent = inherit proposer's). (2) **Framework UI:** each
+picker gets its OWN reasoning select (shown only when that model supports it), curated per-model
+advice underneath (new `src/lib/model-reasoning-recommendations.ts`; gpt-5.5's interactive-high rule
+surfaces BEFORE save and the High option is disabled in the select), reviewer select has a
+"Same as proposer (…)" inherit option; a rotating seat hides the manual control and shows the
+auto-set line — implemented server-side in `resolveModelRotationForRun` (each rotated seat carries
+its served model's curated recommended effort, unknown → medium, audited on `model_rotation_pick`).
+(3) "LLM usage & cost" link in the Models card header → /console/usage. (4) "Model settings" links on
+both Learning Review blocks (approvals learned-context) → new `#learning-review` anchor in Settings.
+Gate green: tsc clean, lint 0 errors, 3383 tests / 315 files, build clean; live browser smoke of all
+four items (per-seat saves, inherit-clear, rotation note, links, anchor) verified against the dev DB.
+See `docs/rollouts/2026-07-10-per-team-reasoning.md`.
+
 ## 2026-07-10 — Settings IA restructure: global-only Settings (CLAUDE, branch `claude/settings-global-only`)
 Owner-directed. `/console/settings` is now GLOBAL-ONLY; account-scoped config lives on Framework
 (`/console/strategy`). Models card deleted from Settings entirely (`app/console/settings/models.tsx`
@@ -61,6 +82,7 @@ gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the 
 but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
 verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
 schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
 Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
 (re-add small-2603; hold medium-3-5) is an owner call, detailed in
 `docs/rollouts/2026-07-10-mistral-rebench.md`.
@@ -71,6 +93,11 @@ medium-3-5 rejects `prompt_mode:"reasoning"` too (validation-order masked it on 
 reasoning tier rejects greedy sampling (`temperature:0` without `top_p:1`) → thinking-enabled Mistral
 calls now send reasoning_effort only, no temperature. With both fixes it DOES propose: 2 schema-valid
 bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
+works, but ~50x small-2603's cost. Benchmark script gained `--effort <tier|omit>`. High-tier
+results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+**Rotation-pool decision (owner, same session): keep BOTH models in `MODEL_ROTATION_POOL` for now,
+pull out later if warranted** — overrides the hold-medium-3-5-out recommendation above.
+`MODEL_ROTATION_POOL` now excludes only `grok-build-0.1`.
 works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
 `--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
 ## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)

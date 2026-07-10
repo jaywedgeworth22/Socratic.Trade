@@ -685,6 +685,25 @@ As of 2026-07-08 (assignment-rule update).
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
+  `claude/per-team-reasoning`) — ✅ COMPLETED 2026-07-10: PR #1346 merged to `main` (squash
+  `c7a2fa95`, verify green; land.sh gate tsc / lint 0-err / 3383 tests / build + live browser smoke
+  of all four items). Owner-directed; includes the 2026-07-10 scope add (usage link + Learning
+  Review "Model settings" links).** New account-scoped `TradingPolicy.redTeamReasoningEffort`
+  (mirrors `redTeamLlmModel` naming); legacy `llmReasoningEffort` = the PROPOSER's; reviewer falls
+  back until explicitly set via the single helper `resolveReviewerReasoningEffort`
+  (src/lib/llm-request.ts), wired at red-team.ts / strategy-tuning.ts / the AI-review panel.
+  `validatePolicy` rejects a gpt-5.5+high combo on EITHER team, naming the team. Framework UI:
+  per-seat reasoning selects (shown only when that model supports it), curated per-model advice from
+  NEW `src/lib/model-reasoning-recommendations.ts` (gpt-5.5 interactive-high rule surfaced BEFORE
+  save; High disabled in-select), reviewer "Same as proposer (…)" inherit option; rotating seats
+  hide the manual control — `resolveModelRotationForRun` auto-sets each rotated model's curated
+  recommended effort (unknown → medium) on the run-scoped override, audited on
+  `model_rotation_pick`. Plus "LLM usage & cost" link (Models card → /console/usage) and "Model
+  settings" links on both approvals Learning Review blocks → new Settings `#learning-review` anchor.
+  Follow-up chip spawned (pre-existing, NOT introduced): unset-proposer select visually shows
+  "Rotate all models"; reviewer "Blank = same as proposer" hint contradicts server fail-closed.
+  Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md`.
 - **Plain-English Anthropic usage-limit error (CLAUDE, cloud lane, 2026-07-06).** Owner reported a
   screenshot where a Roth IRA thesis card's "⚠ RED TEAM FAILED (provider error)" note showed a raw
   Anthropic JSON error blob (`{"type":"error","error":{"type":"invalid_request_error","message":"You
@@ -1477,22 +1496,26 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
-  `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
+  `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
+  PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
   The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
   capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
   100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
-  EMPTY proposals; high-reasoning tier untested (script lacks an effort flag — follow-up).
-  Red verdicts both models correctly shaped + sharp; benchmark's 0% red schema-valid is a
-  validator artifact (green proposals-check applied to red — follow-up filed). Keys resolved
-  at runtime from Infisical prod (automation identity), never written to disk. Results:
-  `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Pool NOT changed — re-add
-  recommendation = owner call (`docs/rollouts/2026-07-10-mistral-rebench.md`).
+  EMPTY proposals; Red verdicts both models correctly shaped + sharp; benchmark's 0% red
+  schema-valid is a validator artifact (green proposals-check applied to red — fixed).
+  Keys resolved at runtime from Infisical prod (automation identity), never written to disk.
+  Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
+  `docs/rollouts/2026-07-10-mistral-rebench.md`.
   _Probe addendum (owner question "why no proposals"): reasoning-off empty list = model
   judgment (param-stripped probe identical). High-tier probes found + FIXED two more
   shaper bugs (medium-3-5 rejects prompt_mode too — validation-order masked; reasoning
   tier rejects greedy sampling → no temperature when thinking). With fixes it proposes
-  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout) — hold from
-  pool. Script gained `--effort <tier|omit>`._
+  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout). Script
+  gained `--effort <tier|omit>`._
+  _Rotation-pool decision (owner, same session): keep BOTH mistral models in
+  `MODEL_ROTATION_POOL` for now, pull out later if warranted — overrides the earlier
+  hold-medium-3-5-out recommendation. Pool now excludes only `grok-build-0.1`. Tests +
+  comment updated in `src/lib/model-rotation.ts` / `test/model-rotation.test.ts`._
 - **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
   branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
   advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
