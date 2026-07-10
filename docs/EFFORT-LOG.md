@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — ✅ COMPLETED 2026-07-09: PR #1282 merged to `main` (auto-merge squashed).** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **MONET usage-cap pickup (CLAUDE, owner-directed, worktree
   `.claude/worktrees/monet-usage-cap-work-0038cf`) — ✅ COMPLETED 2026-07-09 evening.** MONET hit
   its usage cap ~17:05 CDT mid-merge-shepherding; the owner directed CLAUDE to pick up everything
@@ -906,7 +907,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — IN PROGRESS 2026-07-09.** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
   PR #1268 (MONET-authored, landed by CLAUDE under the owner-directed usage-cap pickup).**
