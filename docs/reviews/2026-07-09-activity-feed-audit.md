@@ -4,6 +4,19 @@
 
 # Production Activity-Feed Audit — socratictrade.com (2026-07-07 → 07-09)
 
+> **Landing-status addendum (2026-07-10, added when this report merged):** this is a
+> point-in-time audit; several of its action items completed before it landed. Already done:
+> the congress.trade CF whitelist for the new box IP (same evening as the migration — the
+> §1.4 storm's config half); **bump-to-floor merged as PR #1297** (the §1 P3 "AAPL trim
+> deadlock" item — including the dollar-sell→quantity conversion this report asked for); the
+> "merged-not-deployed" PRs listed in §2 shipped in the 06:00Z/06:20Z 07-10 releases
+> (prod = main@420c6747 at landing). Claimed owner-directed at landing: the three P1s +
+> post-mortem attribution (one lane) and the §1.10 attribution sweep (a second lane).
+> Corrections: the filings-TTL knob is `SEC_FILING_INGEST_TTL_HOURS` (not
+> `FILING_INGEST_TTL_MS`), and the §1 P3 storage-warning fix must also add
+> `storage_warning` to the direct-notify skip set so `sendNotification()` doesn't
+> double-write the in-app row.
+
 **TLDR:** The feed's worst recent incidents — the MU 422 stop storm (800 rows), the held-bracket-leg remediation that destroyed UNH/T exits, the em-dash push-drop bug, and the Roth Gemini 400 streak — are all root-caused, fixed, and verified live in the deployed image (#1087, #1167, #1190). No money-path defect placed a wrong order in the window. What remains is an honesty/observability problem, plus three P1s that degrade the system quietly: the Roth IRA's proposer truncated to **zero proposals on 6 of 10 completed runs** on 07-09; the learning loop reads thesis-tag columns that are **0/714 populated** and feeds the LLM false "attribution is unusable" directives; and the reflection dedupe key ping-pongs across accounts, wasting ~21 LLM calls/day and injecting test/paper-account reflections into the **live** account's prompt. Two noisy loops are active right now (congress-share retry storm — currently unbounded because the new box's IP isn't whitelisted — and pervasive NULL-account audit rows producing hourly "Account: unknown" cards), and the feed claims every notification was "Not sent" while 378 actually delivered.
 
 ---
@@ -99,7 +112,7 @@
 ## 3. Owner decisions
 
 1. **test-local's armed autonomy** — the `broker='test'` account runs full hourly gpt-5.5/high runs (16/day, all three days; 53 calls / $4.57; re-armed on every deploy via `auto_resume_on_boot`), contends for the shared OpenAI key (same-minute 429s degraded the LIVE account on 07-07), and its spend counts against the monthly LLM ceiling whose breach halts LLM work for live accounts. **Recommendation:** halt it (or, if it's a deliberate model canary from the benchmark work, downgrade to a cheap model and accept the ceiling exposure knowingly). Code option: explicit opt-in for scheduling `broker==='test'` accounts — opt-in, not a hard block.
-2. **RAG 10-K corpus (spend/pace ruling)** — 187/187 runs flag `emptyDocTypes:['10-k']`; the entire ingest corpus is **1 filing all-time** (one MSFT 10-Q) because prod env leaves `VECTOR_EMBED_BATCH_DELAY_MS` at the 21000 default → free-tier cap of 1 filing/week against 515 symbols. Your Voyage key is already paid-tier per the 07-08 health check. **Recommendation:** set `VECTOR_EMBED_BATCH_DELAY_MS≤5000` + `SEC_FILING_RAG_MAX_PER_RUN=10-20` in Infisical (already a known un-actioned ops item), AND shorten `FILING_INGEST_TTL_MS` or run the one-time supervised 10-K backfill — the env change alone still yields only ~10-20 filings/week.
+2. **RAG 10-K corpus (spend/pace ruling)** — 187/187 runs flag `emptyDocTypes:['10-k']`; the entire ingest corpus is **1 filing all-time** (one MSFT 10-Q) because prod env leaves `VECTOR_EMBED_BATCH_DELAY_MS` at the 21000 default → free-tier cap of 1 filing/week against 515 symbols. Your Voyage key is already paid-tier per the 07-08 health check. **Recommendation:** set `VECTOR_EMBED_BATCH_DELAY_MS≤5000` + `SEC_FILING_RAG_MAX_PER_RUN=10-20` in Infisical (already a known un-actioned ops item), AND shorten `SEC_FILING_INGEST_TTL_HOURS` or run the one-time supervised 10-K backfill — the env change alone still yields only ~10-20 filings/week.
 3. **Seeding `llmFallbackModels` defaults** — default-OFF is documented as deliberate (`types.ts:794-799`) and seeding changes which model trades a live account. **Recommendation:** expose it in the model-picker UI with suggested defaults rather than silent seeding; ship cadence jitter regardless (no ruling needed).
 4. **Account-attributing `learned_context` facts** — the store is user-level knowledge, but post-mortem-derived facts originate from one account's trades. **Recommendation:** leave user-level; revisit only if you want per-account learning isolation.
 

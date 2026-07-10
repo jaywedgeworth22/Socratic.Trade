@@ -1539,14 +1539,6 @@ As of 2026-07-08 (assignment-rule update).
   test-file edits. PR via land.sh when gate green.
 - _Vitest temp-SQLite leak cleanup — duplicate interim row from the landing commit; superseded by
   the consolidated ✅ COMPLETED row above (PR #1268)._
-- **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
-  PROGRESS 2026-07-09.** Owner-directed: review ALL activity from the past 2-3 days
-  (prod DB post-mortems/runs/alerts, rollouts, merges, channel) for issues needing
-  fixes — e.g. post-mortems recorded with unknown account. Read-only audit ->
-  verified findings report; fixes claimed separately after owner review.
-  _2026-07-09 (CLAUDE usage-cap pickup): deliberately NOT picked up — the audit needs
-  production-DB reads and the Hetzner box migration was mid-flight. Still open; best first
-  task for a resumed MONET session now that the migration's cutover is verified._
 - **Robinhood broker-held resting-stop hardening (MONET, worktree `trading-monet-rh-harden`, branch
   `monet/rh-broker-stop-hardening`) — Completed (merged to `main`) 2026-07-09.** _(Correction: the
   branch name in the original IN PROGRESS entry was wrong — this landed from a dedicated worktree/
@@ -1799,6 +1791,17 @@ As of 2026-07-08 (assignment-rule update).
   seeded dev DB). Rollout: `docs/rollouts/2026-07-08-model-attribution-ui-labels.md`.
 
 ## Planned / Reserved Before Implementation
+- **Activity-audit P2 backlog (unassigned; from docs/reviews/2026-07-09-activity-feed-audit.md)
+  — PLANNED 2026-07-10.** Separable items, each S/M: notification-status recorder honesty
+  (§1.5); order_placement_uncertain reclassification (§1.6); stale-exit cancel-pending
+  replacement completion (§1.7); synthetic-stop failure backoff + persistent-failure alert
+  (§1.8); LLM failover wiring + cadence stagger (§1.9 — fallback-model SEEDING is an owner
+  ruling, wiring is not). NOTE: P1s 1-3 + attribution sweep (§1.10) are CLAIMED owner-directed
+  by other lanes — check the board before touching.
+- **Activity-audit P3 batch (unassigned) — PLANNED 2026-07-10.** Feed storm coalescing;
+  stuck dust-fill terminal flip; storage-warning event type (+ direct-notify skip set);
+  KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
+  batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09; ✅ COMPLETED 2026-07-10 via PR #1287 (#1272 closed superseded).** Reservation/diagnosis row; see the ✅ Completed row (same title) for the full record. _(Three merge-duplicated annotations of this row — MOVED / IN PROGRESS / LANDED-as-#1272 — were consolidated here 2026-07-10 by MONET; nothing substantive removed, they described the same effort at successive stages.)_
 - **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ (unassigned) — PLANNED 2026-07-05, awaiting seat responses.** _(2026-07-08: stripped FLEET tag — no agent is actively working on this.)_ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
