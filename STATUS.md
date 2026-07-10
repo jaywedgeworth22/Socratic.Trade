@@ -8,6 +8,27 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
+Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
+`TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
+is now formally the PROPOSER's, and the reviewer resolves through the single fallback helper
+`resolveReviewerReasoningEffort` (src/lib/llm-request.ts) — wired at red-team.ts (debateProposal),
+strategy-tuning.ts (`policyForTuningReviewer` carries the reviewer effort when it inherits the Red
+model), and the AI-review panel default. `validatePolicy` now checks each team's (model, effort) combo
+with ITS OWN effort — a violating gpt-5.5+high on EITHER team rejects with a message naming the team.
+No default for the new field on purpose (absent = inherit proposer's). (2) **Framework UI:** each
+picker gets its OWN reasoning select (shown only when that model supports it), curated per-model
+advice underneath (new `src/lib/model-reasoning-recommendations.ts`; gpt-5.5's interactive-high rule
+surfaces BEFORE save and the High option is disabled in the select), reviewer select has a
+"Same as proposer (…)" inherit option; a rotating seat hides the manual control and shows the
+auto-set line — implemented server-side in `resolveModelRotationForRun` (each rotated seat carries
+its served model's curated recommended effort, unknown → medium, audited on `model_rotation_pick`).
+(3) "LLM usage & cost" link in the Models card header → /console/usage. (4) "Model settings" links on
+both Learning Review blocks (approvals learned-context) → new `#learning-review` anchor in Settings.
+Gate green: tsc clean, lint 0 errors, 3383 tests / 315 files, build clean; live browser smoke of all
+four items (per-seat saves, inherit-clear, rotation note, links, anchor) verified against the dev DB.
+See `docs/rollouts/2026-07-10-per-team-reasoning.md`.
+
 ## 2026-07-10 — Settings IA restructure: global-only Settings (CLAUDE, branch `claude/settings-global-only`)
 Owner-directed. `/console/settings` is now GLOBAL-ONLY; account-scoped config lives on Framework
 (`/console/strategy`). Models card deleted from Settings entirely (`app/console/settings/models.tsx`
