@@ -158,7 +158,10 @@ it's a fix, then triggers a Coolify deploy of `socratic-trade-prod` and owns hea
 updates. `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
-in-container CLI, one-time litestream 0.5.14 restore from the R2 replica
+in-container CLI, one-time restore via the pinned litestream (version pinned in
+`scripts/coolify-prod-start.sh`; 0.5.14 was rolled back to 0.5.12 on 2026-07-10 after its
+socket churn exhausted kernel tcp_mem and wedged all deploys — see
+`docs/rollouts/2026-07-10-deploy-blocker-tcpmem-litestream.md`) from the R2 replica
 (marker-guarded), then `litestream replicate -exec` (backup continuity lives in the
 container now; the Mac `litestream` pm2 app is stopped). SQLite lives on the persistent
 volume at `/app/data`. Rollback: restore the `socratictrade.com` CNAME to the tunnel
