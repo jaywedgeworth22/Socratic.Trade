@@ -1339,6 +1339,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Settings-UX fixes: universe-floor diff classification + Sheet focus stability + exposure-cap
+  hints (MONET-authored, landed by CLAUDE pickup; branch `monet/settings-ux-fixes`) — PR opened via
+  land.sh 2026-07-09, auto-merge armed.** MONET's work, left uncommitted in its worktree when the
+  Monet seat hit its usage cap; committed AS-IS and landed by a CLAUDE session under the
+  owner-directed usage-cap pickup. (1) REAL bug fix in `policy-diff.ts classify()`: the looserWhen
+  ternary had identical branches, so lowering a `universeFloor.*` value (widens the universe) was
+  mislabeled "Locks Down"/tighter — "down" branch now inverts; regression test added. (2) `Sheet`
+  keeps `onClose` in a ref so the focus effect depends only on `open` — inline-arrow onClose was
+  re-running the effect per keystroke and yanking the caret out of TypedConfirm inputs. (3) hint
+  tooltips on maxGrossExposurePct / maxNetExposurePct. Merged `origin/main` incl. AG #1231
+  (`8fd8b3ab`, Sheet focus-loop guard) — clean, complementary; both sides verified present. Gate
+  green pre-land. Rollout: `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
 - **Hetzner server migration: prod box 91.98.44.8 (4GB fsn1) -> 135.181.192.190 (8GB hel1)
   (CLAUDE, worktree `.claude/worktrees/hetzner-server-migration-d59cd1`) — IN PROGRESS
   2026-07-09 ~17:50 CDT.** Owner-directed in-conversation. Full Coolify-instance migration
