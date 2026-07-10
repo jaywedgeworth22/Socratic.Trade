@@ -178,6 +178,47 @@ describe("once-per-day dedup", () => {
   });
 });
 
+// ── Defaults + no hidden model fallback (owner 2026-07-09) ───────────────────────
+
+describe("defaults and model requirement", () => {
+  it("defaults to decide mode and the claude-fable-5 model when nothing was explicitly set", () => {
+    const userId = `lr-default-${randomUUID().slice(0, 8)}`;
+    const policy = getPolicy(userId);
+    // "decide" is the default; only an explicit "annotate" opts out.
+    expect(policy.learningReviewMode ?? "decide").not.toBe("annotate");
+    // The model default is a real, explicit value — never blank-means-Fable.
+    expect(policy.learningReviewModel).toBe("claude-fable-5");
+  });
+
+  it("skips with reason 'no-model' rather than silently substituting a model when blank", async () => {
+    const userId = `lr-nomodel-${randomUUID().slice(0, 8)}`;
+    setPolicy({ ...getPolicy(userId), learningReviewEnabled: true, learningReviewModel: "" }, userId);
+    seedLearnedRow(userId);
+    const summary = await runDailyLearningReview(userId, { now: NOW, llm: async () => "should-not-be-called" });
+    expect(summary.skipped).toBe(true);
+    expect(summary.reason).toBe("no-model");
+  });
+});
+
+// ── User-level scoping: config overlays every account (the review runs once per user) ──
+
+describe("user-level scoping", () => {
+  it("learningReview settings set under one account are visible under another (user-level, not per-account)", () => {
+    const userId = `lr-scope-${randomUUID().slice(0, 8)}`;
+    // Set the review config while account A1 is the scope.
+    setPolicy(
+      { ...getPolicy(userId, "A1"), learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" },
+      userId,
+      "A1"
+    );
+    // Read it back under a different account scope — user-level fields overlay every account.
+    const underA2 = getPolicy(userId, "A2");
+    expect(underA2.learningReviewEnabled).toBe(true);
+    expect(underA2.learningReviewMode).toBe("annotate");
+    expect(underA2.learningReviewModel).toBe("gpt-5.5");
+  });
+});
+
 // ── Mode gating ─────────────────────────────────────────────────────────────────
 
 describe("annotate mode", () => {

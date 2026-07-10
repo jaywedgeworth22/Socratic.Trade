@@ -51,8 +51,10 @@ import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from "./types";
 
-/** Default reviewer model: one frontier-class call per day on decisions that compound. */
-export const LEARNING_REVIEW_MODEL_DEFAULT = "claude-fable-5";
+// The reviewer model's default lives in DEFAULT_POLICY.learningReviewModel (a real,
+// explicit "claude-fable-5" value shown in the UI) — NOT a hidden fallback here. This
+// module never silently substitutes a model; if policy.learningReviewModel is blank it
+// skips with reason "no-model".
 
 const LAST_RUN_KEY_PREFIX = "learning_review:lastRunDate";
 const LEARNED_WINDOW_DAYS = 7;
@@ -438,7 +440,8 @@ export async function runDailyLearningReview(
   const now = options.now ?? Date.now();
   const empty = { itemsReviewed: 0, verdicts: 0, applied: 0 };
   const policy = options.policyOverride ?? getPolicy(userId);
-  const mode: "annotate" | "decide" = policy.learningReviewMode === "decide" ? "decide" : "annotate";
+  // "decide" is the default (apply verdicts); only an explicit "annotate" opts out.
+  const mode: "annotate" | "decide" = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
 
   if (!options.force && !isLearningReviewDue(userId, now)) {
     return { ok: false, skipped: true, reason: "not-due", mode, ...empty };
@@ -450,7 +453,14 @@ export async function runDailyLearningReview(
     return { ok: false, skipped: true, reason: "over-budget", mode, ...empty };
   }
 
-  const model = policy.learningReviewModel?.trim() || LEARNING_REVIEW_MODEL_DEFAULT;
+  // No hidden model fallback (owner: the app never silently substitutes a model). The policy
+  // default is a real "claude-fable-5" value, so this is normally always set; if it's somehow
+  // blank, skip with a clear reason rather than quietly picking a model the user didn't choose.
+  const model = policy.learningReviewModel?.trim();
+  if (!model) {
+    audit("learning_review_summary", { mode, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-model" }, userId);
+    return { ok: false, skipped: true, reason: "no-model", mode, ...empty };
+  }
   const advanceMarker = () => {
     try {
       setInternalSetting(lastRunKey(userId), utcDate(now));

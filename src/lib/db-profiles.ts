@@ -20,7 +20,15 @@ import type {
 const USER_LEVEL_POLICY_FIELDS = new Set<keyof TradingPolicy>([
   "notificationSettings",
   "marketScanCandidateLimit",
-  "marketScanOutlierReserve"
+  "marketScanOutlierReserve",
+  // The daily learning review runs ONCE per user per day over user-level learned
+  // context (runDailyLearningReviewIfDue keys on userId, not account), so its
+  // config is user-level too — enabling/configuring it applies to your whole
+  // login, and the job reads the same setting regardless of which account is
+  // loaded when the scheduler ticks. (Was account-scoped in #1116; corrected.)
+  "learningReviewEnabled",
+  "learningReviewMode",
+  "learningReviewModel"
 ]);
 
 const LEGACY_STRATEGY_MODEL_FIELDS: Array<keyof TradingPolicy> = ["llmModel", "redTeamLlmModel", "llmReasoningEffort"];
