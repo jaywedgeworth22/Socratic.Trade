@@ -501,6 +501,26 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch
+  `claude/learning-review-defer`) — IN PROGRESS 2026-07-10, owner-directed; isolated throwaway
+  worktree off `origin/main` @ `c7a2fa95` (the originally-assigned worktree had unrelated dirty
+  per-team-reasoning follow-up work left in it — untouched).** The daily Learning Review LLM
+  (`src/lib/learning-review.ts`) can now emit a `"defer"` verdict (distinct from
+  keep/reject/expire/needs_more_data) when it genuinely cannot decide, WITH a required non-blank
+  reasoning note (`parseLearningReviewVerdicts` drops blank-note defers as malformed, same as any
+  other invalid entry). For `learned_context_pending` rows this leaves the item exactly pending
+  (no approve/reject) and persists the note to a new `review_note` column
+  (`src/lib/db.ts`/`db-learning.ts`, guarded ALTER for existing DBs +
+  `setPendingLearnedContextReviewNote`), surfaced in the queue UI
+  (`app/console/approvals/learned-context.tsx`, new `ReviewerNote` "Left for you because..." small
+  muted line using the existing `--con-*` token pattern). For durable `learned_context` rows it's a
+  no-op (no queue to leave it in), matching `needs_more_data`. Verified (new test) that a deferred
+  item does NOT force a same-set re-review loop — it rides the EXISTING #1278/#1328
+  marker/fingerprint architecture unchanged (sticks until a human acts or another item's arrival
+  brings the reviewer back to the whole set); no separate re-review scheduler was added. +6 tests in
+  `test/learning-review.test.ts` (52/52 in the 3 learning-review-adjacent suites). Gate green: tsc
+  clean, 3389 tests / 315 files, build clean, lint 0 errors. Rollout:
+  `docs/rollouts/2026-07-10-learning-review-defer.md`. PR via land.sh (number recorded once open).
 - **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
   `claude/per-team-reasoning`) — IN PROGRESS 2026-07-10, owner-directed (was QUEUED behind
   settings-global-only on the live board; includes the 2026-07-10 scope add: usage link + Learning
