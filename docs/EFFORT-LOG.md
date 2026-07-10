@@ -1412,15 +1412,21 @@ As of 2026-07-08 (assignment-rule update).
   for the single-eligible-model degenerate pool). Waiting on base PR #1279 to merge, then
   landing via `scripts/land.sh`. Rollout: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 - **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
-  `monet/mistral-capmap-fix`) — IN PROGRESS 2026-07-09.** Handoff-queue item 2 (post-#1191
-  unblocked queue). The old family-wide Mistral reasoning map 400'd every call (benchmark
-  2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only; small-2603
-  rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`: capability
-  narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in normalization
-  (high/xhigh/max -> high, else none — no silent medium->high upgrade); every other Mistral
-  id gets a plain chat body (no reasoning params). Rotation-pool re-add deliberately
-  deferred to a keyed re-benchmark (models have never completed a benchmarked call).
-  Tests updated (llm-request/llm-call). Gate running; PR via land.sh.
+  `monet/mistral-capmap-fix`) — ✅ DEPLOYED 2026-07-10: merged to `main` as PR #1279 (squash
+  `d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared with a fresh main-merge head, auto-merge
+  landed on green CI), shipped to production in the 06:20Z env-activation release
+  (prod = `main@420c6747`, health verified by the deploying lane).** Handoff-queue item 2
+  (post-#1191 unblocked queue). The old family-wide Mistral reasoning map 400'd every call
+  (benchmark 2026-07-08, 0/12): medium-3-5 enforces `reasoning_effort` high|none only;
+  small-2603 rejects `prompt_mode:"reasoning"` outright. Fix in `src/lib/llm-request.ts`:
+  capability narrowed to medium-3-5 with options none|high + DeepSeek-style opt-in
+  normalization (high/xhigh/max -> high, else none — no silent medium->high upgrade); every
+  other Mistral id gets a plain chat body (no reasoning params). Carries 2 verified review
+  fixes (claude/fable subagent): chunked Mistral reasoning-text extraction in llm-call.ts +
+  strategy-page intersection guard against silent medium->high escalation on mixed-provider
+  pairing. Rotation-pool re-add deliberately deferred to a keyed re-benchmark (models have
+  never completed a benchmarked call — follow-up in the rollout note).
+  Rollout: `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
 - **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
   worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
   2026-07-09: PR opened, auto-merge armed.** Owner-directed,
@@ -1434,6 +1440,12 @@ As of 2026-07-08 (assignment-rule update).
   self-debate all first cycle); wrap-advance intact. tsc clean, touched suites 26/26. Rollout:
   `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — IN PROGRESS 2026-07-09.** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+  _2026-07-10 (MONET queue close-out): state correction — this MERGED to `main` as PR #1282
+  (`15c2560e`, 2026-07-09 21:04 CDT) and has been in production since the 2026-07-10 06:00Z
+  release. Verified complete against the monet-handoff queue item (types stamp + strategy.ts
+  review-site stamping + model-stats reviewer attribution incl. the documented legacy
+  "unattributed" fallback + tests) — the handoff-queue reviewedByModel item is CLOSED by this
+  PR; no MONET follow-up needed._
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
   PR #1268 (MONET-authored, landed by CLAUDE under the owner-directed usage-cap pickup).**

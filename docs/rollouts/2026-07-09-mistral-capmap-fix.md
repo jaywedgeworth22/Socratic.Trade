@@ -84,3 +84,30 @@ Mistral model as Proposer/Reviewer today gets a guaranteed 400 on every run.
 - Remaining handoff-queue items: `reviewedByModel` per-proposal stamp (start after the
   intro-anim session's bump-to-floor lands — both touch `strategy.ts`), and the
   `strategy.ts` split (needs an announced freeze window; repo too active tonight).
+
+## Close-out (2026-07-10, MONET — outcome + handoff-queue verification)
+
+- **Merged** as PR #1279 (squash `d6b7dee3`, 05:41Z) after clearing GitHub's fake-CONFLICTING
+  wedge (known multi-agent push-burst failure): mergeability stuck DIRTY while a local
+  `git merge --no-commit` vs main was clean and Actions never dispatched — a fresh main-merge
+  head SHA (`ab805b2a`) recomputed mergeability and dispatched CI; auto-merge landed it green.
+- **Deployed** in the 06:20Z env-activation release; production = `main@420c6747`, health
+  verified by the deploying lane.
+- The PR additionally carries two verified review fixes (claude/fable subagent, adopted by
+  this lane): chunked Mistral reasoning-text extraction in `llm-call.ts` (the reasoning-tier
+  response shape this fix makes reachable), and a strategy-page intersection guard so pairing
+  medium-3-5 with another reasoning model can't silently persist a high-tier effort the user
+  never chose.
+- **Handoff-queue verification (no code change, recorded per protocol):** the
+  `reviewedByModel` per-proposal stamp — queue item 1 — was found ALREADY DONE, landed by AG
+  as PR #1282 (`15c2560e`) after the handoff file and the usage-cap close-out were written:
+  types stamp + `strategy.ts` review-site stamping + model-stats reviewer attribution (with
+  the documented legacy "unattributed" fallback) + tests. Verified against the queue item's
+  intent; my announced claim was withdrawn and the board rows corrected. Queue state:
+  item 1 done (#1282), item 2 done (this PR), item 3 (`strategy.ts` split) remains in the
+  board's unassigned owner-decision bucket — it needs an announced freeze window and should
+  start only after the open `strategy.ts` PRs (#1297, #1295) land.
+- Fleet note (environment, hit during this landing): Homebrew's default `node` on the shared
+  Mac moved to v26.5.0 on 2026-07-09 evening; `better-sqlite3` builds in existing worktrees
+  are Node 24 (`.nvmrc`), so `npm test`/`land.sh` fail with NODE_MODULE_VERSION 137-vs-147
+  errors unless run with `PATH=/opt/homebrew/opt/node@24/bin:$PATH`.
