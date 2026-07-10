@@ -9,7 +9,7 @@ steps materially change.
 > current per the `AGENTS.md` handoff protocol.
 
 ## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
-Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
+**MERGED to `main` as PR #1346 (squash `c7a2fa95`, verify green).** Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
 `TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
 is now formally the PROPOSER's, and the reviewer resolves through the single fallback helper
 `resolveReviewerReasoningEffort` (src/lib/llm-request.ts) — wired at red-team.ts (debateProposal),
