@@ -23,10 +23,29 @@ with a hard pre/post-write invariant that aborts the write (no partial output) i
 row would be lost. Verified exclusively against scratch copies — the real live board and mirror
 were only ever read (checksum-verified unchanged): real-data dry-run (13 genuine not-yet-mirrored
 rows correctly identified), sentinel add+recover, idempotency, subset, new-bucket-trailer, and a
-sabotaged-logic invariant-abort test. `npx tsc --noEmit` clean. Ready to land (PR not yet opened —
-serialized Land phase handles it). Rollout:
+sabotaged-logic invariant-abort test. `npx tsc --noEmit` clean. Rollout:
 `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`. Follow-up: wire the tool into the
 host-side `~/.claude-merge-shepherd/run.sh` 30-min driver (Mac-only infra, out of scope here).
+
+**Landing-round fix (same day, PR #1354 review):** the codex-connector bot flagged three real P2s
+in `scripts/effort-log-union-merge.py`, all fixed: (1) the `--apply` write used `open(path, "w")`,
+which truncates the live board before the new bytes land — now writes to a same-directory temp
+file, fsyncs it, and `os.replace()`s it into place, so a crash/disk-full mid-write can never leave
+a partial file. (2) Two distinct live-board rows that happen to normalize to the identical first
+line collapsed to one entry (`items.setdefault` = first-occurrence-wins), so a genuine second
+row could be silently dropped exactly like the original clobber bug — reproduced this against the
+PRE-fix script on a scratch fixture (it reported "no live-only rows found" and lost the second
+row entirely); fixed by tracking every occurrence per key and comparing COUNTS, not membership.
+(3) No guard against a concurrent edit to the live board landing between the initial read and the
+final write — added an exclusive `fcntl.flock` held for the whole read-merge-write critical
+section (serializes concurrent runs of this script against each other) plus a non-cooperative-safe
+mtime/size fingerprint recheck immediately before the write that aborts (exit 4, writes nothing)
+if the file changed since it was read. Verified all three against scratch fixtures: atomic write
+(no stray temp files after apply), duplicate-row recovery (proven against the actual pre-fix
+regression), and a simulated race (monkeypatched `os.stat` to tamper with the live file mid-run —
+confirmed exit 4, output file untouched). Re-ran the real-data dry-run against `docs/EFFORT-LOG.md`
+with no regressions (227 items, no false positives/negatives). Landed via `scripts/land.sh`, PR
+#1354, squash-auto-merge armed.
 
 ## 2026-07-10 — Activity-audit item 10: account-attribution sweep (CLAUDE, branch `claude/audit-item10-attribution`)
 Picked up the reserved item-10 row (split out of MONET's P1 batch per owner, unclaimed since

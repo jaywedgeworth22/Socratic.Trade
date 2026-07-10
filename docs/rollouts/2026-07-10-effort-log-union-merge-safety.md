@@ -120,3 +120,63 @@ All testing was done against **copies in a scratch directory**; the real live bo
   around the "2-3 day activity audit" / duplicate `## Completed` and `## In Progress`
   section headings) — this tool faithfully preserves them rather than correcting them
   (out of scope; a markdown-lint pass on the board is a separate, optional effort).
+
+## Landing-round review fix (same day, PR #1354)
+
+`required_conversation_resolution` on `main`'s branch protection blocked the merge on three
+unresolved codex-connector P2 comments on `scripts/effort-log-union-merge.py`. All three were
+legitimate for a tool whose entire purpose is preventing exactly this class of data loss, so all
+three were fixed rather than resolved-with-a-note:
+
+1. **Non-atomic write.** `--apply` used `open(out_path, "w")`, which truncates the target file
+   before any new bytes are written — a crash or disk-full mid-write could leave the live board
+   empty or partial, with the post-write invariant never getting a chance to run. Fixed with a
+   `write_atomic()` helper: write to a same-directory temp file, `flush()` + `os.fsync()` it, then
+   `os.replace()` it over the target — atomic on the same filesystem, so the result is always
+   either the old complete file or the new complete file.
+
+2. **Duplicate live-board rows silently over-collapsed.** `ParsedBoard.items` was
+   `dict[str, Item]` built via `items.setdefault(key, item)` — first occurrence wins. Two
+   genuinely distinct rows that happen to normalize to the same first line (plausible: two agents
+   independently phrasing a claim row identically) would collapse to one, and if that one key was
+   already mirrored, `recover_missing_items` would treat the key as fully accounted for and drop
+   the second row — the exact failure mode this tool exists to prevent, just re-introduced one
+   level down. **Reproduced against the actual pre-fix script** on a scratch fixture (a mirror
+   with 1 copy of a row, a live board with 2 copies of the same normalized first line but
+   different bodies): the pre-fix script reported "no live-only rows found" and silently dropped
+   the second copy. Fixed: `ParsedBoard.items` is now `dict[str, list[Item]]` (every occurrence,
+   in document order); `recover_missing_items` and `verify_invariant` compare occurrence COUNTS
+   per key instead of mere presence — if live has 2 and mirror has 1, exactly 1 is recovered
+   (paired by document order, the best available heuristic without deeper content matching).
+
+3. **No guard against a concurrent edit landing between read and write.** The live board was read
+   once at the start and written at the end with no lock or recheck in between; the pre-write
+   invariant check used the STALE in-memory snapshot, so it would report success while silently
+   clobbering a row someone else wrote in the interim. Fixed two ways: (a) an exclusive
+   `fcntl.flock` held on the live file's fd for the entire read-merge-write critical section
+   (released on close, including via `finally`), which serializes concurrent invocations of this
+   *same script* against each other; (b) since flock is advisory and can't stop a non-cooperating
+   writer (e.g. a manual editor save), a belt-and-suspenders mtime/size fingerprint of the live
+   file is captured at read time and rechecked immediately before the write — if it changed, the
+   run aborts (exit 4) and writes nothing, rather than trust a merge computed from a now-stale
+   snapshot.
+
+### Verification (scratch fixtures, real live board/mirror never touched)
+
+- Atomic write: `--apply` to a scratch `--out`; confirmed no stray `.effort-log-union-merge-*.tmp`
+  files left behind afterward and the output content is correct.
+- Duplicate-row recovery: built a mirror with 1 copy of a row and a live board with 2 (identical
+  normalized first line, different bodies) — confirmed the FIXED script recovers exactly the
+  second copy, and separately re-ran the **pre-fix** script (`git show HEAD~1:...`) against the
+  same fixture to confirm it actually reproduces the loss ("no live-only rows found") — proving
+  this is a real regression fix, not a hypothetical.
+- Concurrent-edit guard: monkeypatched `os.stat` in-process to tamper with the live file (append a
+  line, changing its mtime/size) at the moment the script's pre-write recheck calls `os.stat` on
+  it — confirmed exit code 4, a clear `CONCURRENT EDIT DETECTED` message, and the `--out` target
+  left completely untouched (byte-identical to before the run).
+- Re-ran the real-data dry-run against the actual `docs/EFFORT-LOG.md` (used as both `--live` and
+  `--mirror` to sanity-check the new count-based comparison introduces no false positives/negatives
+  on the real 227-item document): "no live-only rows found" as expected, no crash.
+
+Landed via `bash scripts/land.sh` (node@24): `npx tsc --noEmit` clean (no TS touched), `npm test`
+315 files / 3383 tests, `npm run build` clean. PR #1354, squash-auto-merge armed.

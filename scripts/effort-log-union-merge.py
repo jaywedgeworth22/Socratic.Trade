@@ -78,9 +78,12 @@ write at a scratch copy instead of the real live board.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 
 BULLET_RE = re.compile(r"^[-*]\s+(.*)$")
@@ -140,7 +143,15 @@ class Item:
 @dataclass
 class ParsedBoard:
     lines: list[str]  # original file, split on "\n", no line terminators
-    items: dict[str, Item]  # key -> Item (first occurrence wins if duplicated)
+    # key -> ALL occurrences in document order (not just the first). Two
+    # distinct rows can legitimately normalize to the same key (e.g. two
+    # agents independently wording a claim row identically) — collapsing to
+    # "first occurrence wins" would make a genuine second row invisible to
+    # both the recovery pass and the invariant check, silently dropping it
+    # exactly like the original union-merge-clobber bug this tool exists to
+    # prevent. See recover_missing_items / verify_invariant for how the list
+    # is used: occurrences are compared by COUNT, not mere presence.
+    items: dict[str, list[Item]]
     # For each bucket, the line index (into `lines`) one-past-the-end of the
     # LAST section in the document classified into that bucket, i.e. where a
     # new item should be inserted to land at the end of that bucket's most
@@ -150,7 +161,7 @@ class ParsedBoard:
 
 def parse_board(text: str) -> ParsedBoard:
     lines = text.split("\n")
-    items: dict[str, Item] = {}
+    items: dict[str, list[Item]] = {}
     bucket_insert_at: dict[str, int] = {}
 
     current_bucket: str | None = None
@@ -167,9 +178,9 @@ def parse_board(text: str) -> ParsedBoard:
         while block and block[-1].strip() == "":
             block.pop()
         current_item.raw_lines = block
-        # First occurrence of a given key wins (defends against accidental
-        # duplicate rows already in a file; doesn't try to be clever here).
-        items.setdefault(current_item.key, current_item)
+        # Every occurrence is recorded, in document order — see the ParsedBoard
+        # docstring for why duplicates must not collapse to "first wins".
+        items.setdefault(current_item.key, []).append(current_item)
         current_item = None
         current_item_start = None
 
@@ -210,17 +221,28 @@ def parse_board(text: str) -> ParsedBoard:
 
 def recover_missing_items(mirror: ParsedBoard, live: ParsedBoard) -> tuple[list[str], list[tuple[str, str]]]:
     """Return (output_lines, recovered) where `recovered` is a list of
-    (bucket, first_line) for every live-only item that got appended."""
-    missing_keys = [k for k in live.items if k not in mirror.items]
+    (bucket, first_line) for every live-only item occurrence that got appended.
 
-    if not missing_keys:
+    Missing-ness is computed by COUNT per key, not mere presence: if a key
+    has 2 occurrences on the live board and only 1 already in the mirror,
+    exactly 1 is missing (the mirror-side occurrences are assumed, in
+    document order, to correspond to the earliest live-side occurrences —
+    the best available pairing without deeper content matching). Plain set
+    membership would treat the key as "present" once ANY occurrence is
+    mirrored and silently drop a genuine second row."""
+    missing: list[Item] = []
+    for key, live_occurrences in live.items.items():
+        already_mirrored = len(mirror.items.get(key, []))
+        if len(live_occurrences) > already_mirrored:
+            missing.extend(live_occurrences[already_mirrored:])
+
+    if not missing:
         return list(mirror.lines), []
 
     # Group missing items by bucket, preserving their original relative
     # order from the live board.
     by_bucket: dict[str, list[Item]] = {}
-    for key in missing_keys:
-        item = live.items[key]
+    for item in missing:
         by_bucket.setdefault(item.bucket, []).append(item)
 
     # Insert from the bottom of the document upward so earlier insertions
@@ -265,11 +287,52 @@ def recover_missing_items(mirror: ParsedBoard, live: ParsedBoard) -> tuple[list[
     return out_lines, recovered
 
 
-def verify_invariant(live: ParsedBoard, output_text: str) -> list[str]:
-    """Return the list of live-only-item keys still missing from
-    `output_text` (empty list == invariant holds)."""
+def verify_invariant(live: ParsedBoard, output_text: str) -> list[tuple[str, int, int]]:
+    """Return (key, live_count, output_count) for every key whose occurrence
+    COUNT in `output_text` is less than the live board's — empty list ==
+    invariant holds. Comparing counts (not just "key present at all") is
+    what catches a duplicate live row being over-collapsed to a single
+    recovered copy."""
     output_items = parse_board(output_text).items
-    return [key for key in live.items if key not in output_items]
+    problems: list[tuple[str, int, int]] = []
+    for key, live_occurrences in live.items.items():
+        output_count = len(output_items.get(key, []))
+        if output_count < len(live_occurrences):
+            problems.append((key, len(live_occurrences), output_count))
+    return problems
+
+
+def write_atomic(path: str, text: str) -> None:
+    """Write `text` to `path` without ever leaving a truncated/partial file on disk. Writes to a
+    sibling temp file in the SAME directory (so the final rename stays on one filesystem), fsyncs
+    it, then atomically replaces the target via os.replace. A crash, disk-full, or interruption
+    mid-write leaves either the old complete file or the new complete file — never a half-written
+    one, which a plain open(path, "w") would risk (it truncates the target before any new bytes
+    are written)."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".effort-log-union-merge-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def describe_invariant_problems(problems: list[tuple[str, int, int]], live: ParsedBoard) -> str:
+    lines = []
+    for key, live_count, output_count in problems:
+        missing_count = live_count - output_count
+        first_line = live.items[key][0].first_line
+        lines.append(f"  key={key} missing={missing_count} (live has {live_count}, output has "
+                      f"{output_count})  first_line={first_line!r}")
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -285,59 +348,86 @@ def main() -> int:
     apply = args.apply
     out_path = args.out or args.live
 
-    with open(args.live, "r", encoding="utf-8") as f:
-        live_text = f.read()
-    with open(args.mirror, "r", encoding="utf-8") as f:
-        mirror_text = f.read()
+    # Hold an exclusive advisory lock on the live board for the ENTIRE read-merge-write critical
+    # section (released when live_fd closes, including on early return). This serializes
+    # concurrent invocations of this script against each other (the realistic "concurrent edit"
+    # actor per the fleet-coordination investigation this tool followed up on -- no other code
+    # currently writes the live board programmatically). flock is advisory, so it can't stop a
+    # text editor's raw save; the fingerprint recheck right before the write (below) is the
+    # second, non-cooperative-safe line of defense for that case.
+    live_fd = os.open(args.live, os.O_RDONLY)
+    try:
+        fcntl.flock(live_fd, fcntl.LOCK_EX)
+        with os.fdopen(os.dup(live_fd), "r", encoding="utf-8") as f:
+            live_text = f.read()
+        live_stat = os.fstat(live_fd)
+        live_fingerprint = (live_stat.st_mtime_ns, live_stat.st_size)
 
-    live = parse_board(live_text)
-    mirror = parse_board(mirror_text)
+        with open(args.mirror, "r", encoding="utf-8") as f:
+            mirror_text = f.read()
 
-    out_lines, recovered = recover_missing_items(mirror, live)
-    output_text = "\n".join(out_lines)
-    if not output_text.endswith("\n"):
-        output_text += "\n"
+        live = parse_board(live_text)
+        mirror = parse_board(mirror_text)
 
-    still_missing = verify_invariant(live, output_text)
+        out_lines, recovered = recover_missing_items(mirror, live)
+        output_text = "\n".join(out_lines)
+        if not output_text.endswith("\n"):
+            output_text += "\n"
 
-    print(f"[union-merge] live items: {len(live.items)}  mirror items: {len(mirror.items)}")
-    if recovered:
-        print(f"[union-merge] {len(recovered)} live-only row(s) would be recovered into the output:")
-        for bucket, first_line in recovered:
-            preview = first_line if len(first_line) <= 100 else first_line[:97] + "..."
-            print(f"  [{bucket}] {preview}")
-    else:
-        print("[union-merge] no live-only rows found -- mirror already a superset; output == mirror content.")
+        still_missing = verify_invariant(live, output_text)
 
-    if still_missing:
-        print(f"[union-merge] INVARIANT VIOLATION: {len(still_missing)} live-only key(s) still missing from "
-              "computed output -- refusing to write.", file=sys.stderr)
-        for key in still_missing:
-            print(f"  missing key: {key}  first_line={live.items[key].first_line!r}", file=sys.stderr)
-        return 2
+        live_item_count = sum(len(v) for v in live.items.values())
+        mirror_item_count = sum(len(v) for v in mirror.items.values())
+        print(f"[union-merge] live items: {live_item_count}  mirror items: {mirror_item_count}")
+        if recovered:
+            print(f"[union-merge] {len(recovered)} live-only row(s) would be recovered into the output:")
+            for bucket, first_line in recovered:
+                preview = first_line if len(first_line) <= 100 else first_line[:97] + "..."
+                print(f"  [{bucket}] {preview}")
+        else:
+            print("[union-merge] no live-only rows found -- mirror already a superset; output == mirror content.")
 
-    if not apply:
-        print(f"[union-merge] dry-run: would write {len(output_text.splitlines())} lines to {out_path} "
-              "(pass --apply to write).")
+        if still_missing:
+            print(f"[union-merge] INVARIANT VIOLATION: {len(still_missing)} live-only key(s) still missing from "
+                  "computed output -- refusing to write.", file=sys.stderr)
+            print(describe_invariant_problems(still_missing, live), file=sys.stderr)
+            return 2
+
+        if not apply:
+            print(f"[union-merge] dry-run: would write {len(output_text.splitlines())} lines to {out_path} "
+                  "(pass --apply to write).")
+            return 0
+
+        # Belt-and-suspenders: re-check the live board's mtime/size haven't changed since we read
+        # it, even though we're still holding the flock above. The lock only binds OTHER callers
+        # of this script; a manual editor save or any tool that doesn't flock would go undetected
+        # by the lock alone but IS caught here, because the merge above was computed from a
+        # snapshot that would now be stale.
+        current_stat = os.stat(args.live)
+        if (current_stat.st_mtime_ns, current_stat.st_size) != live_fingerprint:
+            print(f"[union-merge] CONCURRENT EDIT DETECTED: {args.live} changed on disk since this "
+                  "run read it -- refusing to write a merge computed against a stale snapshot. "
+                  "Re-run.", file=sys.stderr)
+            return 4
+
+        write_atomic(out_path, output_text)
+
+        # Re-verify against what actually landed on disk, not just the in-memory string, as a
+        # final defense against any write-path surprise.
+        with open(out_path, "r", encoding="utf-8") as f:
+            written_text = f.read()
+        post_write_missing = verify_invariant(live, written_text)
+        if post_write_missing:
+            print(f"[union-merge] POST-WRITE INVARIANT VIOLATION on {out_path} -- {len(post_write_missing)} "
+                  "live-only key(s) missing after write. This should be impossible; investigate immediately.",
+                  file=sys.stderr)
+            return 3
+
+        print(f"[union-merge] wrote {out_path} ({len(output_text.splitlines())} lines); "
+              f"invariant verified post-write ({len(recovered)} row(s) recovered).")
         return 0
-
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(output_text)
-
-    # Re-verify against what actually landed on disk, not just the in-memory
-    # string, as a final defense against any write-path surprise.
-    with open(out_path, "r", encoding="utf-8") as f:
-        written_text = f.read()
-    post_write_missing = verify_invariant(live, written_text)
-    if post_write_missing:
-        print(f"[union-merge] POST-WRITE INVARIANT VIOLATION on {out_path} -- {len(post_write_missing)} "
-              "live-only key(s) missing after write. This should be impossible; investigate immediately.",
-              file=sys.stderr)
-        return 3
-
-    print(f"[union-merge] wrote {out_path} ({len(output_text.splitlines())} lines); "
-          f"invariant verified post-write ({len(recovered)} row(s) recovered).")
-    return 0
+    finally:
+        os.close(live_fd)  # releases the flock
 
 
 if __name__ == "__main__":

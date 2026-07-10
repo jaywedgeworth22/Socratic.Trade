@@ -1516,9 +1516,10 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Effort-log union-merge safety net (fleet-infra) (CLAUDE, branch
-  `claude/union-merge-live-rows`) — IN PROGRESS 2026-07-10, ready-to-land; owner-directed
-  fix for the reported "live-board union-merge clobber" (a pickup claim row added 17:35 on
-  2026-07-09 was gone from `/Users/jay/apps/TRADING-EFFORT-LOG.md` by 18:22).** Investigated
+  `claude/union-merge-live-rows`) — IN PROGRESS 2026-07-10, gates green, PR #1354 open with
+  squash-auto-merge armed (round-3 pickup landing); owner-directed fix for the reported
+  "live-board union-merge clobber" (a pickup claim row added 17:35 on 2026-07-09 was gone from
+  `/Users/jay/apps/TRADING-EFFORT-LOG.md` by 18:22).** Investigated
   exhaustively (launchd plists, `~/.claude-merge-shepherd/*`, all `scripts/merge-shepherd.sh`
   copies across worktrees, every `/Users/jay/apps/*.sh`, shell history, `FLEET-INFRA-EFFORT-LOG.md`)
   and found no code that actually writes to the live board programmatically — `merge-shepherd.sh`
@@ -1538,7 +1539,17 @@ As of 2026-07-08 (assignment-rule update).
   invariant-abort test (confirmed no file written on violation). `npx tsc --noEmit` clean
   (no TS touched). Rollout: `docs/rollouts/2026-07-10-effort-log-union-merge-safety.md`.
   Follow-up (out of scope here): wire into the host-side `~/.claude-merge-shepherd/run.sh`
-  30-min driver once a session can touch that always-running Mac cron.
+  30-min driver once a session can touch that always-running Mac cron. **Landing-round fix
+  (PR #1354 review):** codex-connector flagged 3 real P2s, all fixed — (1) non-atomic `--apply`
+  write (`open(path,"w")` truncates before writing) -> temp-file-then-`os.replace()`; (2) two
+  live-board rows with an identical normalized first line collapsed to one via
+  `dict.setdefault` (reproduced the actual data loss against the pre-fix script on a scratch
+  fixture) -> `ParsedBoard.items` now tracks every occurrence per key and the invariant compares
+  COUNTS; (3) no guard against the live board changing between read and write -> exclusive
+  `fcntl.flock` held for the whole critical section plus a pre-write mtime/size fingerprint
+  recheck that aborts (exit 4, no write) on a detected change. Verified all three against scratch
+  fixtures (atomic write, duplicate-row regression + fix, simulated race via monkeypatched
+  `os.stat`) plus a clean real-data dry-run re-run against the 227-item `docs/EFFORT-LOG.md`.
 
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
