@@ -178,14 +178,33 @@ class ParsedBoard:
     # new item should be inserted to land at the end of that bucket's most
     # recent occurrence. None if the bucket never appears.
     bucket_insert_at: dict[str, int]
+    # Same as `bucket_insert_at`, but restricted to CANONICAL bucket sections —
+    # those established by a directly-classified level-<=2 (`## `) heading, or
+    # inherited from such a level-2 ancestor. Recovered top-level rows must land
+    # in the canonical `## Planned / Reserved`-style section, NOT in a nested
+    # keyword-bearing subsection (e.g. `### Action ... (Planned)` sitting under
+    # an unclassified `## ...` parent) that merely happens to classify into the
+    # same bucket -- otherwise a global Planned row is recovered under an
+    # unrelated UI-backlog subsection, corrupting the board's state
+    # organization while the count invariant still passes. recover_missing_items
+    # prefers this map and falls back to `bucket_insert_at` only for buckets
+    # that exist SOLELY as nested subsections (no canonical section at all).
+    canonical_bucket_insert_at: dict[str, int]
 
 
 def parse_board(text: str) -> ParsedBoard:
     lines = text.split("\n")
     items: dict[str, list[Item]] = {}
     bucket_insert_at: dict[str, int] = {}
+    canonical_bucket_insert_at: dict[str, int] = {}
 
     current_bucket: str | None = None
+    # Whether `current_bucket` was established by a CANONICAL section: a heading
+    # directly classified at level <= 2, or one that inherited its bucket from
+    # such a level-2 ancestor. Nested keyword-bearing subsections (level >= 3
+    # under an unclassified parent) are NOT canonical -- see the
+    # canonical_bucket_insert_at docstring on ParsedBoard.
+    current_bucket_canonical = False
     # Effective bucket of each currently-open heading level. A subsection that
     # carries no bucket keyword of its own inherits the NEAREST CLASSIFIED
     # ANCESTOR at any shallower level -- not merely the last level-2 heading.
@@ -195,6 +214,13 @@ def parse_board(text: str) -> ParsedBoard:
     # drop its rows (the exact silent-drop class this tool exists to prevent).
     # A new heading at level L invalidates every strictly-deeper open level.
     heading_bucket_by_level: dict[int, str | None] = {}
+    # Parallel to heading_bucket_by_level: whether each open level's bucket
+    # context is canonical (see current_bucket_canonical above). Follows the
+    # SAME inheritance chain as the bucket, so an unclassified `###` under a
+    # canonical `## Planned` counts as canonical, while an unclassified `####`
+    # under a nested `### ... (Planned)` (itself under an unclassified `##`)
+    # does not.
+    heading_canonical_by_level: dict[int, bool] = {}
     current_item: Item | None = None
     current_item_start: int | None = None
 
@@ -224,21 +250,30 @@ def parse_board(text: str) -> ParsedBoard:
             # no longer applies once we've dedented back to `level`).
             for open_level in [lvl for lvl in heading_bucket_by_level if lvl >= level]:
                 del heading_bucket_by_level[open_level]
+                heading_canonical_by_level.pop(open_level, None)
             if classified is not None:
-                # Keyword-bearing heading classifies itself outright.
+                # Keyword-bearing heading classifies itself outright. It is a
+                # CANONICAL bucket section only if it sits at the top level
+                # (`## `); a keyword-bearing `###`/deeper is a nested subsection.
                 effective = classified
+                effective_canonical = level <= 2
             else:
                 # Unclassified heading inherits the nearest classified ancestor
-                # (deepest remaining shallower level with a non-None bucket). A
-                # top-level `##` has no shallower ancestor, so it resets to None
-                # -- preserving the prior "unclassified `##` resets outright".
+                # (deepest remaining shallower level with a non-None bucket) --
+                # including that ancestor's canonical-ness. A top-level `##` has
+                # no shallower ancestor, so it resets to None -- preserving the
+                # prior "unclassified `##` resets outright".
                 effective: str | None = None
+                effective_canonical = False
                 for lvl in sorted(heading_bucket_by_level, reverse=True):
                     if heading_bucket_by_level[lvl] is not None:
                         effective = heading_bucket_by_level[lvl]
+                        effective_canonical = heading_canonical_by_level.get(lvl, False)
                         break
             heading_bucket_by_level[level] = effective
+            heading_canonical_by_level[level] = effective_canonical
             current_bucket = effective
+            current_bucket_canonical = effective_canonical
             continue
 
         if current_bucket is None:
@@ -249,6 +284,11 @@ def parse_board(text: str) -> ParsedBoard:
         # — updated on every line so it always lands just before the next
         # heading (or EOF) once the loop finishes this section.
         bucket_insert_at[current_bucket] = idx + 1
+        # Track the canonical insertion point separately so a later nested
+        # keyword-bearing subsection can't hijack where recovered top-level
+        # rows land (the line-251 corruption this guards against).
+        if current_bucket_canonical:
+            canonical_bucket_insert_at[current_bucket] = idx + 1
 
         bullet_match = BULLET_RE.match(raw_line)
         if bullet_match:
@@ -266,7 +306,12 @@ def parse_board(text: str) -> ParsedBoard:
 
     flush_item(len(lines))
 
-    return ParsedBoard(lines=lines, items=items, bucket_insert_at=bucket_insert_at)
+    return ParsedBoard(
+        lines=lines,
+        items=items,
+        bucket_insert_at=bucket_insert_at,
+        canonical_bucket_insert_at=canonical_bucket_insert_at,
+    )
 
 
 def recover_missing_items(mirror: ParsedBoard, live: ParsedBoard) -> tuple[list[str], list[tuple[str, str]]]:
@@ -304,7 +349,16 @@ def recover_missing_items(mirror: ParsedBoard, live: ParsedBoard) -> tuple[list[
     trailer_sections: list[Item] = []  # buckets with no existing section in mirror
 
     for bucket, bucket_items in by_bucket.items():
-        insert_at = mirror.bucket_insert_at.get(bucket)
+        # Prefer the canonical (`## `-level) section for this bucket so a
+        # recovered top-level row lands in the global bucket section rather
+        # than a nested keyword-bearing subsection that merely classifies the
+        # same way. Fall back to any insertion point only when the bucket
+        # exists SOLELY as a nested subsection (no canonical section at all) --
+        # that preserves the nested-recovery behavior for genuinely
+        # subsection-only buckets.
+        insert_at = mirror.canonical_bucket_insert_at.get(bucket)
+        if insert_at is None:
+            insert_at = mirror.bucket_insert_at.get(bucket)
         block: list[str] = []
         for item in bucket_items:
             block.append("")

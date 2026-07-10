@@ -277,3 +277,41 @@ functional tests for the nested-inheritance and bare-imperative-row cases (all p
 (`--live` = copy of `docs/EFFORT-LOG.md`, `--mirror` = same) reports 268/268 items, 0 recovered, exit 0;
 `npx tsc --noEmit` clean, `npm test` 3395 passed (315 files), `npm run build` clean (no TS/product code
 touched — Python-only change).
+
+## Codex review round 4 (2026-07-10) — recovered rows landing in the wrong (nested) subsection
+
+One new, non-outdated Codex thread (`scripts/effort-log-union-merge.py:251`, "Keep bucket insertion
+points on canonical sections"). This is a **placement corruption**, distinct from the two open
+maintainer-decision threads (both at line 287): the row IS recovered and the count invariant passes,
+but it lands under the wrong subsection.
+
+**Bug.** `bucket_insert_at[current_bucket]` was updated on every non-heading line inside *any*
+classified section, including nested keyword-bearing subsections. So when the mirror has a canonical
+`## Planned / Reserved` section followed later by a nested `### Action - clear recommendation
+(Planned)` (a UI-backlog subsection under an unclassified `## ...` parent that happens to classify
+`planned`), the later subsection overwrote `bucket_insert_at["planned"]`. A recovered *global*
+Planned row from the live board was then inserted under that unrelated UI-backlog subsection instead
+of the canonical Planned section — the board's state organization is corrupted while the count-based
+invariant still passes.
+
+**Fix.** Track a **canonical** insertion point separately (`ParsedBoard.canonical_bucket_insert_at`),
+updated only while inside a section whose bucket was established by a directly-classified level-`<=2`
+(`## `) heading — or inherited from such a level-2 ancestor. A parallel `heading_canonical_by_level`
+map carries canonical-ness down the same inheritance chain as the bucket itself (so an unclassified
+`###` under a canonical `## Planned` stays canonical, while a keyword-bearing `### ... (Planned)`
+under an unclassified `##` is NOT canonical). `recover_missing_items` now prefers
+`canonical_bucket_insert_at[bucket]` and falls back to `bucket_insert_at[bucket]` only for buckets
+that exist **solely** as nested subsections (no canonical section at all) — preserving the round-3
+nested-recovery behavior for genuinely subsection-only buckets.
+
+**Not touched:** the two line-287 threads ("Preserve live edits for mirrored rows" and its
+duplicate-ordering variant) remain OPEN — still the same mirror-wins-vs-live-leads merge-semantics
+decision parked on the owner. Round 4 does not touch that contract.
+
+Verification (round 4): reproduced the corruption on a scratch fixture (global-Planned row landed
+under the nested `### Action (Planned)` subsection) and confirmed the fix relocates it under
+`## Planned / Reserved`; regression fixtures — subsection-only bucket still recovers (fallback path),
+and unclassified-`###`-under-canonical-`## Planned` still lands under the canonical umbrella;
+real-board self-merge (`--live`/`--mirror` = `docs/EFFORT-LOG.md`) reports 268/268 items, 0 recovered,
+exit 0 (no drops, parser change safe on real data); `python3 -c "import ast; ast.parse(...)"` clean;
+`npx tsc --noEmit` clean, `npm test` 3395 passed (315 files), `npm run build` clean (Python-only change).

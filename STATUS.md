@@ -78,6 +78,20 @@ for mirrored rows" (round 2) and its duplicate-ordering variant "preserve duplic
 order-based pairing" are both the same shared-row conflict whose fix changes the mirror-wins-vs-
 live-leads contract already parked on the owner. Verify trio green (tsc clean, 3395 tests pass,
 build clean — Python-only change). Rollout note updated with round-3 detail.
+
+**Landing-round fix (round 4, PR #1354 review — codex-autofix):** one new codex-connector P2
+(`scripts/effort-log-union-merge.py:251`, "keep bucket insertion points on canonical sections"),
+fixed. A recovered global-Planned row was landing under an unrelated nested `### Action ... (Planned)`
+UI-backlog subsection instead of the canonical `## Planned / Reserved` section, because
+`bucket_insert_at[bucket]` was overwritten by every later same-bucket subsection (placement
+corruption — count invariant still passed). Fix: track a separate `canonical_bucket_insert_at`
+(updated only inside directly-classified level-`<=2` sections or level-2-inherited ones, via a
+parallel `heading_canonical_by_level` map); `recover_missing_items` prefers it and falls back to
+`bucket_insert_at` only for buckets that exist solely as nested subsections (round-3 behavior
+preserved). Reproduced + confirmed fix on scratch fixtures; real-board self-merge 268/268, 0
+recovered, exit 0. The two line-287 threads stay OPEN (same maintainer merge-semantics decision).
+Verify trio green (tsc clean, 3395 tests pass, build clean — Python-only change). Rollout note
+updated with round-4 detail.
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —

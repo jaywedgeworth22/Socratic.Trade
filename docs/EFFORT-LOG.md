@@ -1615,6 +1615,14 @@ As of 2026-07-08 (assignment-rule update).
   (same maintainer decision): "preserve live edits for mirrored rows" + its duplicate-ordering
   variant "preserve duplicate rows without order-based pairing" — both change the same shared-row
   mirror-wins-vs-live-leads contract. Verify trio green (3395 tests). Rollout note round-3 detail.
+  **Round-4 codex-autofix (PR #1354 review):** one new P2 (`:251` "keep bucket insertion points on
+  canonical sections") fixed — recovered global-Planned rows were landing under an unrelated nested
+  `### Action ... (Planned)` subsection because `bucket_insert_at` was overwritten by later
+  same-bucket subsections (placement corruption; count invariant still passed). Added a separate
+  `canonical_bucket_insert_at` (level-`<=2`-derived only, via a parallel `heading_canonical_by_level`
+  map); recovery prefers it, falls back to the nested point only for subsection-only buckets. Two
+  line-287 P2s still OPEN (same maintainer merge-semantics decision). Verify trio green (3395 tests).
+  Rollout note round-4 detail.
 
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
