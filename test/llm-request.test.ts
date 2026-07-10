@@ -9,7 +9,10 @@ import {
   normalizeReasoningEffortForModel,
   strategyLlmTimeoutMs,
   llmFetchCapturing,
+  ALL_LLM_REASONING_EFFORTS,
+  LLM_MODEL_ROTATION_SENTINEL,
   LLM_TIMEOUT_MS,
+  ROTATION_UI_REASONING_CAPABILITY,
   type LlmCallOutcome
 } from "../src/lib/llm-request";
 
@@ -86,6 +89,20 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "high")).toBe("high");
     expect(normalizeReasoningEffortForModel("mistral-medium-3-5", "xhigh")).toBe("high");
     expect(normalizeReasoningEffortForModel("mistral-small-2603", "high")).toBeUndefined();
+  });
+
+  it("the rotation sentinel never gains a REAL capability — server paths keep failing closed on it", () => {
+    // The synthetic rotation capability is UI-only (ROTATION_UI_REASONING_CAPABILITY below);
+    // reasoningCapabilityForModel — the function every wire-shaping path derives from — must keep
+    // returning undefined for the raw sentinel so a leaked "__rotate__" can never shape a request.
+    expect(reasoningCapabilityForModel(LLM_MODEL_ROTATION_SENTINEL)).toBeUndefined();
+    expect(normalizeReasoningEffortForModel(LLM_MODEL_ROTATION_SENTINEL, "high")).toBeUndefined();
+  });
+
+  it("exports the UI-only rotation capability with the full generic effort ladder", () => {
+    expect(ROTATION_UI_REASONING_CAPABILITY.provider).toBe("rotation");
+    expect(ROTATION_UI_REASONING_CAPABILITY.options.map((o) => o.value)).toEqual([...ALL_LLM_REASONING_EFFORTS]);
+    expect(ROTATION_UI_REASONING_CAPABILITY.settingLabel).toBe("Reasoning / Thinking Effort");
   });
 
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
@@ -224,6 +241,19 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect(anthropic.thinking).toEqual({ type: "adaptive" });
     expect(anthropic.output_config).toEqual({ effort: "max" });
     expect("temperature" in anthropic).toBe(false);
+  });
+
+  it("a raw rotation sentinel gets a plain temperature body — no reasoning keys, no headroom", () => {
+    const bounded = withLlmRequestBounds({ model: LLM_MODEL_ROTATION_SENTINEL }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: LLM_MODEL_ROTATION_SENTINEL,
+      reasoningEffort: "high"
+    });
+    expect("reasoning_effort" in bounded).toBe(false);
+    expect("thinking" in bounded).toBe(false);
+    expect("prompt_mode" in bounded).toBe(false);
+    expect(bounded.temperature).toBe(0);
+    expect(bounded.max_completion_tokens).toBe(1500);
   });
 
   it("reasoning models default to medium effort when unspecified", () => {

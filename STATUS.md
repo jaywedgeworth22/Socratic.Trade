@@ -8,6 +8,25 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Rotation-UX fixes (CLAUDE subagent, branch `claude/rotate-ux-fixes`, stacked on #1279)
+Owner reports fixed: (a) with a seat (or both) set to "Rotate all models", the Reasoning/Thinking
+Effort control vanished and the summary falsely claimed the selection "does not expose" a reasoning
+control — now the sentinel maps to a UI-only synthetic capability (`ROTATION_UI_REASONING_CAPABILITY`,
+full generic ladder) with honest copy that the chosen effort applies per served model, clamped per
+run to each model's supported range (call-time semantics untouched; the raw sentinel still fails
+closed everywhere server-side); (b) two rotate sentinels no longer trip the "SAME model critiquing
+its own proposals" independence warning — sentinel-aware positive copy instead. Also: the
+c2f0d754 high-tier-only-pair guard no longer hides the whole control (explicit "Per-model default
+(no high-tier escalation)" blank option + per-model "takes no reasoning parameters" note restores
+visibility and an explicit High opt-in without re-widening the evidence-backed Mistral capability
+map); AI review panel now discloses upfront that a blank strategist under all-rotate runs on local
+rules (no LLM); approval-card provenance/badges and `redTeamFailureModel` never leak the raw
+"__rotate__" sentinel. Page helpers extracted to `app/console/strategy/reasoning-control.ts`
+(unit-tested). Gate: tsc clean, lint 0 errors on touched files, full suite 311 files / 3262 tests.
+Committed locally (not pushed) per the pickup instructions. **Sequencing:** land after (or with)
+the parallel rotate-fix lane's `src/lib/model-rotation.ts` same-model-pairing skip — the new
+independence-hint copy states that behavior. Detail: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
+
 ## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
 Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call
 (benchmark 2026-07-08, 0/12) because the shaper claimed a family-wide reasoning capability.

@@ -234,10 +234,16 @@ export function ModelsCard() {
   );
   // Independence HINT (never a gate): same model — or same provider — for both teams is ALLOWED,
   // but a same-family reviewer shares the proposer's blind spots, so nudge without blocking.
+  // Two "__rotate__" sentinels are NOT "the same model": each run serves concrete round-robin
+  // picks, so the SAME-model warning must never fire for them (check rotation FIRST — the raw
+  // string compare would match the two identical sentinels).
   const providerOf = (m: string) => MODEL_GROUPS.find((g) => g.options.some((o) => o.value === m))?.provider;
+  const bothRotate = green === ROTATE_MODEL_ID && red === ROTATE_MODEL_ID;
   const independenceHint =
     green && red
-      ? green === red
+      ? bothRotate
+        ? "Strategist and Reviewer BOTH rotate through the curated model pool — not one model critiquing itself: each run serves concrete, audited round-robin picks, the runtime skips same-model pairings when both seats rotate, and per-model history accrues on both sides."
+        : green === red
         ? "Strategist and Reviewer are the SAME model — it will be critiquing its own proposals. Allowed, but a different model (ideally a different provider) gives a genuinely independent second opinion."
         : providerOf(green) && providerOf(green) === providerOf(red)
         ? "Strategist and Reviewer are different models from the SAME provider — partial independence. Allowed; a different provider avoids shared family blind spots."
