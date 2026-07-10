@@ -36,19 +36,65 @@ import { deriveExecutionState, fillSourceForExecutionMode } from "./execution-mo
 import { getSchedulerState } from "./scheduler";
 import { getCongressDataset, getInsiderDataset, getWebSourcesStatus, type CongressTrade } from "./web-sources";
 import { readCongressScoreVerdict } from "./congress-score-gate";
-import { fetchMacroData, determineMarketRegime } from "./macro";
+import { fetchMacroData, determineMarketRegime, type MacroData } from "./macro";
 import { deriveMacroMetrics } from "./macro-metrics";
 import { computeMarketInternals } from "./market-internals";
 import { getMarketSignals, type MarketSignals } from "./market-signals";
 import { fetchMassiveNews } from "./market-signals/massive";
 import { fetchMacroHistory } from "./macro-history";
 import type { PrefetchedFills } from "./performance";
-import type { BrokerageAccount, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
+import type { BrokerageAccount, BrokerQuote, ConnectedAccount, EquityOrder, EquityPosition, FillEvent, MarketQuote, MarketScan, NotificationEvent, NotificationEventType, Portfolio, TradeProposal, TradingPolicy } from "./types";
 import { isAdminEmail } from "./auth/admin";
 import { messageFromUnknownError, recordRecoverableIssue } from "./recoverable-issue";
 
 const PROPOSAL_PERFORMANCE_MIN_AGE_MS = 15 * 60_000;
 const RED_TEAM_EFFICACY_AUDIT_LIMIT = 500;
+
+// Same "no data" shape fetchMacroData's own internal failure path returns (BLANK_MACRO in
+// macro.ts, not exported) — used only as the deadline fallback below, since fetchMacroData already
+// never rejects on its own.
+const BLANK_MACRO_FALLBACK: MacroData = {
+  fedFundsRate: "",
+  dgs3moTreasury: "",
+  dgs2Treasury: "",
+  dgs10Treasury: "",
+  inflationExpectation10y: "",
+  cpiInflation: "",
+  corePCE: "",
+  realGDPGrowth: "",
+  unemploymentRate: "",
+  initialClaims: "",
+  m2MoneySupply: "",
+  m2GrowthYoY: "",
+  hyCreditSpread: "",
+  usdIndex: "",
+  wtiOil: "",
+  housingStarts: "",
+  consumerSentiment: "",
+  vix: "",
+  vix3m: "",
+  asOf: "unavailable",
+  fredSourced: false
+};
+
+/**
+ * Races an upstream promise against a deadline so a single hanging fetch (e.g. the undici
+ * IPv6-blackhole failure mode — see docs/rollouts/2026-07-06-api-health-timeouts.md) can never block
+ * the whole dashboard snapshot indefinitely. Does NOT abort the underlying promise — it keeps
+ * running in the background and its eventual resolution/rejection is simply ignored once the
+ * deadline has already produced a fallback. Existing `.catch(...)` fallbacks in this file still
+ * handle real rejections; this only guards against a promise that never settles at all.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number, fallback: () => T, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[dashboard] ${label} timed out after ${ms}ms — serving degraded snapshot section`);
+      resolve(fallback());
+    }, ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 export interface AccountReadiness {
   ok: boolean;
@@ -225,24 +271,34 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const gateway = activeAccount ? getBrokerGateway(policy, userId) : undefined;
   let accounts: BrokerageAccount[] = [];
   let brokerAccountReadError: string | undefined;
+  const handleAccountsReadFailure = (message: string) => {
+    brokerAccountReadError = message;
+    console.warn("Failed to fetch accounts:", message);
+    recordRecoverableIssue({
+      source: "broker",
+      operation: "dashboard.getAccounts",
+      severity: "error",
+      message,
+      fallback: "Using stored connected-account rows so configured accounts remain visible.",
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      broker: policy.activeBroker,
+      accountNumber: policy.accountNumber
+    });
+  };
   if (gateway) {
     try {
-      accounts = await gateway.getAccounts();
+      accounts = await withDeadline(
+        gateway.getAccounts(),
+        6000,
+        () => {
+          handleAccountsReadFailure("Timed out waiting for gateway.getAccounts after 6000ms.");
+          return [];
+        },
+        "gateway.getAccounts"
+      );
     } catch (error) {
-      const message = messageFromUnknownError(error);
-      brokerAccountReadError = message;
-      console.warn("Failed to fetch accounts:", message);
-      recordRecoverableIssue({
-        source: "broker",
-        operation: "dashboard.getAccounts",
-        severity: "error",
-        message,
-        fallback: "Using stored connected-account rows so configured accounts remain visible.",
-        userId,
-        connectedAccountId: policy.connectedAccountId,
-        broker: policy.activeBroker,
-        accountNumber: policy.accountNumber
-      });
+      handleAccountsReadFailure(messageFromUnknownError(error));
     }
   }
   // Resilience: a live getAccounts() that fails or returns empty (a transient broker/MCP enumeration
@@ -284,7 +340,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   }
   let robinhoodMcpHealth: RobinhoodMcpHealth | undefined;
   if ((activeAccount?.broker ?? policy.activeBroker) === "robinhood") {
-    robinhoodMcpHealth = await getRobinhoodMcpHealth(userId).catch((error): RobinhoodMcpHealth => ({
+    const robinhoodMcpHealthFallback = (error: unknown): RobinhoodMcpHealth => ({
       adapter: "mcp",
       ok: false,
       configured: false,
@@ -294,35 +350,51 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
       tools: [],
       checkedAt: new Date().toISOString(),
       error: messageFromUnknownError(error)
-    }));
+    });
+    robinhoodMcpHealth = await withDeadline(
+      getRobinhoodMcpHealth(userId).catch(robinhoodMcpHealthFallback),
+      4000,
+      () => robinhoodMcpHealthFallback(new Error("Timed out waiting for Robinhood MCP health check after 4000ms.")),
+      "getRobinhoodMcpHealth"
+    );
   }
   const accountNumber = policy.accountNumber ?? accounts.find((account) => account.agenticAllowed)?.accountNumber;
   let portfolio: Portfolio | undefined;
   let positions: EquityPosition[] = [];
   let orders: EquityOrder[] = [];
   let portfolioReadError: string | undefined;
+  const handlePortfolioReadFailure = (message: string) => {
+    portfolioReadError = message;
+    console.warn("Failed to fetch portfolio:", message);
+    recordRecoverableIssue({
+      source: "broker",
+      operation: "dashboard.getPortfolioBundle",
+      severity: "error",
+      message,
+      fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
+      userId,
+      connectedAccountId: policy.connectedAccountId,
+      broker: policy.activeBroker,
+      accountNumber
+    });
+  };
   if (accountNumber && gateway) {
     try {
-      [portfolio, positions, orders] = await Promise.all([
-        gateway.getPortfolio(accountNumber),
-        gateway.getEquityPositions(accountNumber),
-        gateway.getEquityOrders(accountNumber)
-      ]);
+      [portfolio, positions, orders] = await withDeadline<[Portfolio | undefined, EquityPosition[], EquityOrder[]]>(
+        Promise.all([
+          gateway.getPortfolio(accountNumber),
+          gateway.getEquityPositions(accountNumber),
+          gateway.getEquityOrders(accountNumber)
+        ]),
+        8000,
+        () => {
+          handlePortfolioReadFailure("Timed out waiting for portfolio, positions, and orders after 8000ms.");
+          return [undefined, [], []];
+        },
+        "portfolio/positions/orders"
+      );
     } catch (error) {
-      const message = messageFromUnknownError(error);
-      portfolioReadError = message;
-      console.warn("Failed to fetch portfolio:", message);
-      recordRecoverableIssue({
-        source: "broker",
-        operation: "dashboard.getPortfolioBundle",
-        severity: "error",
-        message,
-        fallback: "Dashboard snapshot continues without live portfolio, positions, and orders.",
-        userId,
-        connectedAccountId: policy.connectedAccountId,
-        broker: policy.activeBroker,
-        accountNumber
-      });
+      handlePortfolioReadFailure(messageFromUnknownError(error));
     }
   }
   const accountReadiness = accountReadinessForSnapshot({
@@ -351,7 +423,9 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   let currentPrices: Record<string, number> = {};
   if (accountNumber && gateway && portfolio) {
     const priceSymbols = Array.from(new Set(positions.map((p) => normalizeSymbol(p.symbol))));
-    const quotes = priceSymbols.length > 0 ? await gateway.getEquityQuotes(accountNumber, priceSymbols) : {};
+    const quotes: Record<string, BrokerQuote> = priceSymbols.length > 0
+      ? await withDeadline(gateway.getEquityQuotes(accountNumber, priceSymbols), 6000, () => ({}), "gateway.getEquityQuotes")
+      : {};
     currentPrices = Object.fromEntries(
       Object.values(quotes)
         .filter((quote) => typeof quote.price === "number" && quote.price > 0)
@@ -378,7 +452,12 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     // Same-source fills let the benchmark infer deposits/withdrawals (cash delta minus trade
     // cash) so the account return line is time-weighted instead of counting transfers as P&L.
     const benchmarkFills = scorecardSource === "live" ? liveFills : paperFills;
-    const benchmark = await computeSpyBenchmark(curve, userId, Date.now(), benchmarkFills).catch(() => null);
+    const benchmark = await withDeadline(
+      computeSpyBenchmark(curve, userId, Date.now(), benchmarkFills).catch(() => null),
+      4000,
+      () => null,
+      "computeSpyBenchmark"
+    );
     if (benchmark) performance.benchmark = benchmark;
   }
   const thesisScorecard = accountNumber ? getThesisScorecard(accountNumber, scorecardSource, currentPrices, userId, prefetchedFills) : [];
@@ -496,7 +575,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
 
   // Macro & market-regime board for the Macro tab (FRED macro + derived metrics + free
   // market-wide signals). Caches keep this cheap; failures degrade to defaults / omitted.
-  const macro = await fetchMacroData(userId);
+  const macro = await withDeadline(fetchMacroData(userId), 6000, () => BLANK_MACRO_FALLBACK, "fetchMacroData");
   // Only compute internals from a full scan. Some historical/trimmed audit shapes only
   // preserve symbol metadata, which is useful for UI labels but not valuation math.
   const scanForInternals = fullMarketScan(latestStrategyRun?.marketScan);
@@ -536,10 +615,20 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
   const macroBoard = {
     macro,
     derived: deriveMacroMetrics(macro, { marketEarningsYield }),
-    signals: await getMarketSignals(userId).catch((): MarketSignals => ({})),
+    signals: await withDeadline(
+      getMarketSignals(userId).catch((): MarketSignals => ({})),
+      4000,
+      (): MarketSignals => ({}),
+      "getMarketSignals"
+    ),
     regime: determineMarketRegime(macro),
-    history: await fetchMacroHistory(Date.now(), userId).catch(() => ({} as Record<string, number[]>)),
-    news: await fetchMassiveNews(8, userId).catch(() => [])
+    history: await withDeadline(
+      fetchMacroHistory(Date.now(), userId).catch(() => ({} as Record<string, number[]>)),
+      4000,
+      () => ({} as Record<string, number[]>),
+      "fetchMacroHistory"
+    ),
+    news: await withDeadline(fetchMassiveNews(8, userId).catch(() => []), 4000, () => [], "fetchMassiveNews")
   };
 
   const unifiedFeed = buildUnifiedFeed({

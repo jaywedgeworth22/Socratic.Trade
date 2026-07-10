@@ -60,6 +60,8 @@ export interface BenchmarkRoleSummary {
 export interface ClosedLotLike {
   /** Model that proposed the ENTRY (proposedByModel stamped on the opening proposal). */
   entryModel?: string;
+  /** Model that reviewed the ENTRY (reviewedByModel stamped on the opening proposal). */
+  reviewedByModel?: string;
   pnl: number;
   returnPct: number;
 }
@@ -200,15 +202,22 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
     benchmark.set(key(summary.model, summary.role), summary);
   }
 
-  // Realized performance per entry model — GREEN only by construction (entryModel is the
-  // Bull's proposedByModel stamped on the opening proposal).
-  const lotsByModel = new Map<string, ClosedLotLike[]>();
+  // Realized performance per entry model — GREEN (proposer) and RED (reviewer).
+  const proposerLotsByModel = new Map<string, ClosedLotLike[]>();
+  const reviewerLotsByModel = new Map<string, ClosedLotLike[]>();
   for (const lot of input.closedLots) {
-    if (!lot.entryModel) continue;
-    modelSet.add(lot.entryModel);
-    const bucket = lotsByModel.get(lot.entryModel);
-    if (bucket) bucket.push(lot);
-    else lotsByModel.set(lot.entryModel, [lot]);
+    if (lot.entryModel) {
+      modelSet.add(lot.entryModel);
+      const bucket = proposerLotsByModel.get(lot.entryModel);
+      if (bucket) bucket.push(lot);
+      else proposerLotsByModel.set(lot.entryModel, [lot]);
+    }
+    if (lot.reviewedByModel) {
+      modelSet.add(lot.reviewedByModel);
+      const bucket = reviewerLotsByModel.get(lot.reviewedByModel);
+      if (bucket) bucket.push(lot);
+      else reviewerLotsByModel.set(lot.reviewedByModel, [lot]);
+    }
   }
 
   // Reviewer (Red Team) veto value-add per model — RED role only by construction. The
@@ -233,10 +242,12 @@ export function aggregateModelStats(input: AggregateModelStatsInput): ModelRoleS
       const c = cost.get(key(model, role));
       const lat = latency.get(key(model, role)) ?? [];
       const bench = benchmark.get(key(model, role));
-      const lots = role === "green" ? (lotsByModel.get(model) ?? []) : [];
+      const lots = role === "green" 
+        ? (proposerLotsByModel.get(model) ?? []) 
+        : (reviewerLotsByModel.get(model) ?? []);
       const closedTrades = lots.length;
       let perf: ModelPerf | null = null;
-      if (role === "green" && closedTrades >= 1) {
+      if (closedTrades >= 1) {
         const wins = lots.filter((l) => l.returnPct > 0).length;
         perf = {
           closedTrades,
