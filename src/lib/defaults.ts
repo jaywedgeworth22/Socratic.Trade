@@ -56,6 +56,10 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // broadened to other indexes / the wider screener. Tunable in settings.
   universeFloor: { minPrice: 5, minMarketCapUsd: 100_000_000, minDollarVolume: 1_000_000 },
   strategyAuthority: "propose",
+  // Below-broker-minimum orders are BUMPED up to the floor (owner ruling 2026-07-09) — the bumped
+  // order re-runs the full policy gate at its bumped size, so caps still bind. "skip" restores the
+  // pre-ruling behavior (don't place guaranteed-reject orders).
+  brokerMinimumHandling: "bump",
   // Typed confirmation for high-impact live actions is ON by default; the owner can switch it off in
   // Settings → Advanced action confirmation (an adjustable preference, not a hard gate).
   requireTypedConfirmation: true,

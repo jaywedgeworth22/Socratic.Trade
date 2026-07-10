@@ -1246,6 +1246,13 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Broker-minimum bump-to-floor (MONET, branch `monet/broker-min-bump-to-floor`) — IN PROGRESS
+  2026-07-09, adversarial review running, landing.** Owner ruling on the #1169 question: BUMP
+  below-minimum orders up to the broker floor (default `brokerMinimumHandling:"bump"`, `"skip"` =
+  off-switch/pre-ruling behavior). Bump happens BEFORE evaluateTradeProposal so all caps bind at
+  the bumped size (fixes #1169's over-size risk); one re-review, fail-safe to block; sell bumps cap
+  at the whole position (exempt dust exit); audited as order_bumped_to_broker_minimum. #1169 closes
+  as superseded on merge. Rollout: `docs/rollouts/2026-07-09-broker-minimum-bump-to-floor.md`.
 - **Merge shepherd — auto-land completed background PRs (MONET, branch `monet/merge-shepherd`)
   — IN PROGRESS 2026-07-09, landing.** Root cause of "PRs go idle & forgotten": handoff protocol
   makes every PR edit EFFORT-LOG.md/STATUS.md -> each merge conflicts every other open PR; native

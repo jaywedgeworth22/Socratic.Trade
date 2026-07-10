@@ -864,6 +864,15 @@ export interface TradingPolicy {
   tuning?: TuningSettings;
   activeProfileId?: string;
   activeBroker?: "alpaca" | "alpaca-mcp" | "robinhood" | "test";
+  /**
+   * How an order below the active broker's minimum order size (e.g. Robinhood's $1 floor) is
+   * handled (owner ruling 2026-07-09; default "bump"):
+   *  - "bump": resize the order UP to the floor. The bumped order is re-reviewed and then runs the
+   *    FULL policy gate at its bumped size, so a bump can never over-size past the owner's caps.
+   *  - "skip": don't place the guaranteed-reject order; record + (cooldown-gated) alert. The
+   *    pre-2026-07-09 behavior, kept as the off-switch per the adjustable-guardrails template.
+   */
+  brokerMinimumHandling?: "bump" | "skip";
   // SHORT_SELLING: Feature gate for short/cover order sides.
   // When true, policy.ts will allow short/cover proposals through (with stricter
   // guardrails). When false or absent, short/cover proposals are unconditionally

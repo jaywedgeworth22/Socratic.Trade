@@ -19,6 +19,15 @@ rather than re-enabling npm-11 default behavior. Extracted from a larger uncommi
 the integration worktree; deliberately drops the co-mingled `@sentry/cloudflare` (Workers SDK — belongs
 in Congress.Trade, imported nowhere here) and a drifted lockfile regen. Verified `npm ci` clean +
 `better_sqlite3.node` builds. Rollout: `docs/rollouts/2026-07-08-npm-allowscripts-approval.md`.
+## 2026-07-09 — Broker-minimum bump-to-floor (MONET, `monet/broker-min-bump-to-floor`)
+Owner ruling ("bump up"): below-broker-minimum orders are resized UP to the floor instead of
+skipped. New `resolveBrokerMinimum` in broker-minimum-guard.ts; both strategy.ts pre-flight sites
+bump -> re-review once -> rebind, so the FULL policy gate evaluates the bumped size (caps still
+bind — the #1169 over-size risk is structurally impossible). Policy field `brokerMinimumHandling`
+(default "bump", "skip" = off-switch). Sell bumps cap at the whole position (exempt dust exit).
+Audited as `order_bumped_to_broker_minimum`. 4-lens adversarial review pre-land; #1169 closes as
+superseded on merge. UI toggle deferred (guardrails files claimed by stop-loss lanes).
+
 ## 2026-07-09 — Model Stats drawer widened on desktop (MONET, branch `monet/model-stats-drawer-wide`)
 Owner-directed console-UI fix. The Model Stats drawer (`app/console/components/model-stats-drawer.tsx`,
 opened from the Proposer/Reviewer pickers) renders a 4-column table (Model / Cost / Latency / Realized

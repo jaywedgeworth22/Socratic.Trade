@@ -78,7 +78,7 @@ import { fetchDailyOHLC } from "./history";
 import { expireStalePendingProposals, revalidatePendingProposals } from "./proposal-revalidation";
 import { getTaxSummary, getUserWashSaleLockProvenance } from "./tax";
 import { getBrokerGateway } from "./broker";
-import { describeBrokerMinimumOrderBlock, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
+import { describeBrokerMinimumOrderBlock, resolveBrokerMinimum, shouldAlertBrokerMinimumOrderBlock } from "./broker-minimum-guard";
 import { brokerHeldExitBlockReason, evaluateBrokerHeldExitAvailability } from "./broker-held-orders";
 import { notifyStaleLimitOrders } from "./stale-limit-orders";
 import { checkBudgetAndAlert, evaluateBudgetForRun, formatBudgetAdvisory, getBudgetStatusCached, notifyBudgetSkip, previewBudgetDecision, usageBudgetEnforceEnabled } from "./usage-budget";
@@ -1696,7 +1696,7 @@ export async function runStrategyOnce(
     };
 
     for (const proposal of proposals) {
-      const normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
+      let normalizedProposal = { ...proposal, symbol: normalizeSymbol(proposal.symbol) };
       const tradability = await gateway.getEquityTradability(policy.accountNumber, [normalizedProposal.symbol]);
       if (!tradability[normalizedProposal.symbol]?.tradable) {
         const decision = { approved: false, reasons: [tradability[normalizedProposal.symbol]?.reason ?? "Symbol is not tradable."] };
@@ -1716,19 +1716,60 @@ export async function runStrategyOnce(
         continue;
       }
 
-      const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
+      let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...normalizedProposal });
 
-      // Broker-minimum pre-flight guard: skip an order the broker has already told us (or that basic
-      // sizing math tells us) is a GUARANTEED reject for landing below its minimum dollar/fractional
-      // order size (e.g. Robinhood's $1 floor) — rather than placing it, getting rejected, and
-      // alerting on it every single run forever. The outward alert is cooldown-gated (this condition
-      // is NAV-bound and persistent, not transient) but the audit/proposal receipt is not, so the
-      // run history and Activity feed stay accurate every time.
+      // Broker-minimum pre-flight: an order below the broker's minimum dollar/fractional order size
+      // (e.g. Robinhood's $1 floor) is a GUARANTEED reject. Per brokerMinimumHandling (default
+      // "bump", owner ruling 2026-07-09) we resize it UP to the floor, re-review once, and let it
+      // run the FULL policy gate below at its bumped size — caps still bind, so a bump can never
+      // over-size past the owner's limits. "skip" (or an unbumpable order) takes the block path:
+      // record + cooldown-gated alert instead of placing a doomed order every run forever.
       // positionQuantity lets the guard exempt a whole-position dust exit (Robinhood allows
       // selling an entire fractional position even below its $1 minimum).
       const heldForMinimumGuard = workingPositions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(normalizedProposal.symbol));
-      const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity });
-      if (brokerMinimumBlockReason) {
+      let brokerMinimumResolution = resolveBrokerMinimum(
+        review,
+        policy.activeBroker,
+        { ...normalizedProposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+        policy.brokerMinimumHandling ?? "bump"
+      );
+      if (brokerMinimumResolution.action === "bump") {
+        const bumpedProposal = { ...normalizedProposal, quantity: undefined, dollarAmount: undefined, ...brokerMinimumResolution.patch };
+        const bumpedReview = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...bumpedProposal });
+        // Exactly one bump attempt — if the re-review STILL lands below minimum (price collapsed
+        // mid-run), fail safe to the block path rather than looping. Rebind to the bumped order
+        // first so the blocked record consistently shows the order we actually attempted.
+        const stillBlocked = describeBrokerMinimumOrderBlock(bumpedReview, policy.activeBroker, { ...bumpedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+        if (stillBlocked) {
+          normalizedProposal = bumpedProposal;
+          review = bumpedReview;
+          brokerMinimumResolution = { action: "block", reason: stillBlocked };
+        } else {
+          audit(
+            "order_bumped_to_broker_minimum",
+            {
+              runId,
+              symbol: normalizedProposal.symbol,
+              side: normalizedProposal.side,
+              originalQuantity: normalizedProposal.quantity,
+              originalDollarAmount: normalizedProposal.dollarAmount,
+              originalEstimatedNotional: review.estimatedNotional,
+              bumpedQuantity: bumpedProposal.quantity,
+              bumpedDollarAmount: bumpedProposal.dollarAmount,
+              bumpedEstimatedNotional: bumpedReview.estimatedNotional,
+              becomesFullExit: brokerMinimumResolution.becomesFullExit,
+              note: brokerMinimumResolution.note
+            },
+            userId,
+            connectedAccountId
+          );
+          normalizedProposal = bumpedProposal;
+          review = bumpedReview;
+          brokerMinimumResolution = { action: "proceed" };
+        }
+      }
+      if (brokerMinimumResolution.action === "block") {
+        const brokerMinimumBlockReason = brokerMinimumResolution.reason;
         const decision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
         const proposalId = crypto.randomUUID();
         insertProposal({ userId, executionMode, promptVersion: STRATEGY_PROMPT_VERSION, id: proposalId, runId, accountNumber: policy.accountNumber, proposal: normalizedProposal, decision, review, estimatedNotional: review.estimatedNotional, status: "blocked" });
@@ -3458,7 +3499,7 @@ export async function executeProposal(
     throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
   }
 
-  const proposal = row.proposal;
+  let proposal = row.proposal;
   assertLiveApprovalConfirmation({
     executionMode,
     confirmation: options.liveConfirmation,
@@ -3522,15 +3563,62 @@ export async function executeProposal(
       return { status: "blocked", reasons: [reason] };
     }
 
-    const review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
+    let review = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...proposal });
 
-    // Same broker-minimum pre-flight guard as the autonomous run loop: NAV/sizing can drift between
-    // proposal creation and a human clicking Approve, so re-check here too rather than let a
-    // known-doomed order reach the broker from this path.
+    // Same broker-minimum pre-flight as the autonomous run loop: NAV/sizing can drift between
+    // proposal creation and a human clicking Approve, so re-resolve here too. Default "bump"
+    // resizes up to the floor and re-reviews once; the bumped order then runs the full policy
+    // gate below at its bumped size (caps still bind). "skip"/unbumpable takes the block path.
     // Same whole-position dust-exit exemption as the autonomous loop (see the guard).
     const heldForMinimumGuard = positions.find((p) => normalizeSymbol(p.symbol) === normalizeSymbol(proposal.symbol));
-    const brokerMinimumBlockReason = describeBrokerMinimumOrderBlock(review, policy.activeBroker, { ...proposal, positionQuantity: heldForMinimumGuard?.quantity });
-    if (brokerMinimumBlockReason) {
+    // NOTE on typed live confirmations: the owner's confirmation (validated above) was minted
+    // against the PRE-bump estimated notional. A bump can raise the placed notional to the broker
+    // floor (+2% drift headroom, so ≤ ~$1.02 on Robinhood) — a bounded, owner-ruled default
+    // (brokerMinimumHandling "bump", 2026-07-09), so we deliberately do NOT force a re-confirmation
+    // ceremony for a sub-$1.02 delta; the order_bumped_to_broker_minimum audit records both sizes.
+    let brokerMinimumResolution = resolveBrokerMinimum(
+      review,
+      policy.activeBroker,
+      { ...proposal, positionQuantity: heldForMinimumGuard?.quantity, positionMarketValue: heldForMinimumGuard?.marketValue },
+      policy.brokerMinimumHandling ?? "bump"
+    );
+    if (brokerMinimumResolution.action === "bump") {
+      const bumpedProposal = { ...proposal, quantity: undefined, dollarAmount: undefined, ...brokerMinimumResolution.patch };
+      const bumpedReview = await gateway.reviewEquityOrder({ accountNumber: policy.accountNumber, ...bumpedProposal });
+      // Exactly one bump attempt — if still below minimum after re-review, fail safe to block.
+      // Rebind first so the blocked record consistently shows the order we actually attempted.
+      const stillBlocked = describeBrokerMinimumOrderBlock(bumpedReview, policy.activeBroker, { ...bumpedProposal, positionQuantity: heldForMinimumGuard?.quantity });
+      if (stillBlocked) {
+        proposal = bumpedProposal;
+        review = bumpedReview;
+        brokerMinimumResolution = { action: "block", reason: stillBlocked };
+      } else {
+        audit(
+          "order_bumped_to_broker_minimum",
+          {
+            proposalId,
+            symbol: proposal.symbol,
+            side: proposal.side,
+            originalQuantity: proposal.quantity,
+            originalDollarAmount: proposal.dollarAmount,
+            originalEstimatedNotional: review.estimatedNotional,
+            bumpedQuantity: bumpedProposal.quantity,
+            bumpedDollarAmount: bumpedProposal.dollarAmount,
+            bumpedEstimatedNotional: bumpedReview.estimatedNotional,
+            becomesFullExit: brokerMinimumResolution.becomesFullExit,
+            note: brokerMinimumResolution.note,
+            action: "approval"
+          },
+          userId,
+          policy.connectedAccountId
+        );
+        proposal = bumpedProposal;
+        review = bumpedReview;
+        brokerMinimumResolution = { action: "proceed" };
+      }
+    }
+    if (brokerMinimumResolution.action === "block") {
+      const brokerMinimumBlockReason = brokerMinimumResolution.reason;
       const blockedDecision: PolicyDecision = { approved: false, reasons: [brokerMinimumBlockReason] };
       updateProposalStatus(proposalId, "blocked", undefined, review, review.estimatedNotional, userId, undefined, undefined, blockedDecision);
       audit(
@@ -3768,7 +3856,9 @@ export async function executeProposal(
     // Atomic compare-and-swap BEFORE the broker call: only the caller that flips this proposal
     // proposed -> placing proceeds to placeEquityOrder, so concurrent approvals (double-click, two
     // tabs, from-draft) can't both place a real order (defense in depth with the run-lock above).
-    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode })) {
+    // `proposal` persists execution-time sizing (a broker-minimum bump rebinds it above) into the
+    // row before placement, so crash-recovery books any fill at the size actually sent.
+    if (!claimProposalForExecution(proposalId, "placing", userId, { review, estimatedNotional: review.estimatedNotional, refId, executionMode, proposal })) {
       const current = getProposal(proposalId, userId)?.status ?? "removed";
       return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
     }
