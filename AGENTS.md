@@ -344,6 +344,13 @@ canonical tags: `Socratic.Trade`, `Congress.Trade`, `API-Usage-Monitor`,
   not interchangeable — check `eps` to decide which one applies.
 - Tests use a temp SQLite file per run via `DATABASE_URL=file:<tmpdir>/...`
   (see `beforeAll` in test files) — don't point tests at the dev `data/app.db`.
+  Those DBs are auto-cleaned: `vitest.config.ts` points the test runtime's
+  TMPDIR/TMP/TEMP at one per-run `agentic-vitest-*` dir and `test/global-setup.ts`
+  removes it on teardown (plus sweeps `agentic-*` leftovers >6h old from the real
+  temp dir — crashed runs, pre-fix leaks). The suite used to leak every temp DB
+  forever (178k files / ~130GB on one machine). Keep new temp-file tests on the
+  `tmpdir()` / `process.env.TMPDIR` pattern so they stay inside the per-run dir;
+  never hardcode `/tmp`.
 
 ## Git author identity (GitHub email privacy)
 
