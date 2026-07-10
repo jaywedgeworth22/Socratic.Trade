@@ -240,11 +240,23 @@ const RATE_QUOTAS: Record<string, RateWindow[]> = {
 /** Env-overridable effective windows for a provider. `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`
  *  overrides (or adds) the corresponding window; a value <= 0 removes that window. Returns the merged
  *  window list, or `undefined` for an unlimited provider. */
+// Back-compat: providers whose per-minute knob had a different name before the unified quota. The
+// new PROVIDER_QUOTA_<NAME>_PER_MIN wins; the legacy name is honored only when the new one is unset,
+// so an operator who set the old var to match a paid/retuned plan doesn't silently fall back to the
+// built-in budget. (twelvedata's old limiter read TWELVEDATA_CREDITS_PER_MIN.)
+const LEGACY_PER_MIN_ENV: Record<string, string> = {
+  twelvedata: "TWELVEDATA_CREDITS_PER_MIN"
+};
+
 export function resolveProviderQuota(provider: string): RateWindow[] | undefined {
   const key = envKeyFor(provider);
   const base = RATE_QUOTAS[provider] ? RATE_QUOTAS[provider].map((w) => ({ ...w })) : [];
+  const legacyPerMinEnv = LEGACY_PER_MIN_ENV[provider];
+  const perMin =
+    finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ??
+    (legacyPerMinEnv ? finiteEnvNumber(legacyPerMinEnv) : undefined);
   const overrides: Array<[number, number]> = [
-    [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_MIN`) ?? NaN, MINUTE],
+    [perMin ?? NaN, MINUTE],
     [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_HOUR`) ?? NaN, HOUR],
     [finiteEnvNumber(`PROVIDER_QUOTA_${key}_PER_DAY`) ?? NaN, DAY]
   ];
@@ -295,6 +307,18 @@ export class RequestQuota {
     return allowed;
   }
 
+  /** Return up to `n` of the most-recent reservations on (provider, credKey) to the budget — for
+   *  requests that were admitted but never actually dispatched (partial whole-symbol remainder, a
+   *  circuit-breaker skip, etc.), so the local counter doesn't suppress later coverage. Best-effort:
+   *  clamps to what's recorded; a no-op for unlimited providers (nothing was recorded). */
+  refund(provider: string, credKey: string, n: number): void {
+    if (n <= 0) return;
+    const key = `${provider}|${credKey}`;
+    const ts = this.hits.get(key);
+    if (!ts || ts.length === 0) return;
+    ts.splice(Math.max(0, ts.length - n)); // drop the n newest (highest timestamps sit at the end)
+  }
+
   reset(provider?: string): void {
     if (!provider) { this.hits.clear(); return; }
     for (const k of [...this.hits.keys()]) if (k.startsWith(`${provider}|`)) this.hits.delete(k);
@@ -310,6 +334,12 @@ const defaultQuota = new RequestQuota();
  *  test/scan blow real free-tier caps. Full-chain tests use fresh per-test keys → isolated lanes. */
 export function admitProviderRequests(provider: string, credKey: string, wanted: number): number {
   return defaultQuota.admit(provider, credKey, wanted);
+}
+
+/** Return up to `n` admitted-but-undispatched requests on (provider, credKey) to the budget —
+ *  e.g. the partial remainder below one whole symbol, or calls a tripped circuit breaker skipped. */
+export function refundProviderRequests(provider: string, credKey: string, n: number): void {
+  defaultQuota.refund(provider, credKey, n);
 }
 
 /** Test-only: clear the default quota's window state. */

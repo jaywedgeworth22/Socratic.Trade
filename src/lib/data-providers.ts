@@ -29,7 +29,7 @@ import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
-import { withProviderLimit, admitProviderRequests, resetProviderQuotaState, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
+import { withProviderLimit, admitProviderRequests, refundProviderRequests, resetProviderQuotaState, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -3088,8 +3088,13 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const result: Record<string, SymbolEnrichment> = {};
     const misses: string[] = [];
 
+    // Namespace the cache by news-drop mode: a TIINGO_DROP_NEWS row has no headlines/sentiment, so it
+    // must NOT be served once the flag is turned back off (mirrors finnhub's "finnhub-norec" keying).
+    const dropNews = flagEnabled(process.env.TIINGO_DROP_NEWS);
+    const cacheKey = dropNews ? "tiingo-nonews" : "tiingo";
+
     for (const symbol of normalized) {
-      const cached = readEnrichmentCache("tiingo", symbol, this.userId, consented, now);
+      const cached = readEnrichmentCache(cacheKey, symbol, this.userId, consented, now);
       if (cached) result[symbol] = cached.data;
       else misses.push(symbol);
     }
@@ -3102,16 +3107,19 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     // right now; we query floor(that / perSymbol) best-first symbols and defer the rest best-effort.
     // Scan-size-agnostic + per-credential; never stalls. (Owner's Tiingo dashboard showed hourly at
     // -10/50 — an unpaced 30-symbol scan fires ~90 requests and 403s.)
-    const dropNews = flagEnabled(process.env.TIINGO_DROP_NEWS);
     const perSymbol = callsPerSymbol("tiingo", { dropExtra: dropNews });
     const credKey = apiKeyFingerprint(this.apiKey);
     const allowedRequests = admitProviderRequests("tiingo", credKey, misses.length * perSymbol);
     const symbolsAllowed = Math.floor(allowedRequests / perSymbol);
+    // admit() budgets in REQUESTS but we only dispatch whole symbols — hand back the partial remainder
+    // (e.g. 50/hour leaves 2 after 16×3) so those phantom reservations don't drain the daily window or
+    // block the last symbols of a later scan.
+    refundProviderRequests("tiingo", credKey, allowedRequests - symbolsAllowed * perSymbol);
     const toQuery = misses.slice(0, symbolsAllowed);
     for (const symbol of misses.slice(symbolsAllowed)) result[symbol] = {}; // deferred; not queried this run
     if (toQuery.length === 0) return result; // no hourly budget left — best-effort only
     const negativeCache = (symbol: string) => {
-      writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
+      writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
       result[symbol] = {};
     };
 
@@ -3186,14 +3194,22 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
             const hasTransientErr = madeCalls.some(
               (p) => p.status === "rejected" && isTransientError(p.reason)
             );
+            // The circuit breaker throws BEFORE any request is sent, so a breaker-skipped symbol never
+            // touched the upstream — refund its quota reservation and never negative-cache it.
+            const breakerSkipped = allRejected && madeCalls.some(
+              (p) => p.status === "rejected" && p.reason instanceof CircuitOpenError
+            );
 
             if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
-              writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, data, now + ttlMs());
+              writeEnrichmentCache(cacheKey, symbol, this.scope, this.userId, data, now + ttlMs());
               result[symbol] = data;
-            } else if (!hasTransientErr) {
-              negativeCache(symbol); // genuinely no data — rotate out; don't burn the hourly budget on it
+            } else if (!allRejected && !hasTransientErr) {
+              negativeCache(symbol); // provider RESPONDED with no usable data — rotate out; don't burn budget
             } else {
-              result[symbol] = data; // transient — leave uncached to retry next scan
+              // All sub-calls FAILED (transient 429/5xx, a 401/403 credential/plan error, or a breaker
+              // skip). Don't poison the cache — leave the symbol a miss to retry once the issue clears.
+              if (breakerSkipped) refundProviderRequests("tiingo", credKey, perSymbol);
+              result[symbol] = data;
             }
           } catch {
             result[symbol] = {};
@@ -3208,7 +3224,9 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId });
+      // retries: 0 — the quota reserves exactly one request per endpoint, so a built-in 429 retry
+      // would emit a second uncounted call and re-break the 50/hour cap this gate enforces.
+      const response = await fetchWithRetry(url, { cache: "no-store", signal: controller.signal, headers }, { service: this.name, keySource: this.keySource, userId: this.userId, retries: 0 });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -3295,7 +3313,9 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           try {
             // deferSuccessLog: true — Twelve Data embeds errors in HTTP 200 responses
             // (e.g. {"status":"error","message":"Invalid API key"}); log only after body validates.
-            return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true });
+            // retries: 0 — the quota reserved exactly one batch call; a 429 retry would spend a second,
+            // uncounted round of credits and re-break the per-minute budget this gate enforces.
+            return await fetchWithRetry(url, { cache: "no-store", signal: controller.signal }, { service: this.name, keySource: this.keySource, userId: this.userId, deferSuccessLog: true, retries: 0 });
           } finally {
             clearTimeout(timeout);
           }
@@ -3424,7 +3444,11 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         }
       } catch (err) {
-        if (isTransientError(err)) {
+        // A tripped circuit breaker throws before any request is sent, so the batch's admitted credits
+        // never reached Twelve Data — hand them back so the breaker cooldown doesn't also drain the
+        // local per-minute/day budget and keep the lane deferred after it half-opens.
+        if (err instanceof CircuitOpenError) refundProviderRequests(this.name, credKey, batch.length);
+        else if (isTransientError(err)) {
           console.warn("[data-providers] TwelveData transient error:", err instanceof Error ? err.message : err);
         }
         for (const symbol of batch) {

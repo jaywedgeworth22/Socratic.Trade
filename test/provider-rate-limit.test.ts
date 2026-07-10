@@ -448,6 +448,7 @@ const QUOTA_ENV_KEYS = [
   "PROVIDER_QUOTA_TIINGO_PER_HOUR",
   "PROVIDER_QUOTA_TESTPROV_PER_MIN",
   "PROVIDER_QUOTA_TESTPROV_PER_DAY",
+  "TWELVEDATA_CREDITS_PER_MIN",
 ];
 
 describe("resolveProviderQuota", () => {
@@ -493,6 +494,17 @@ describe("resolveProviderQuota", () => {
       { maxRequests: 3, windowMs: 60_000 },
       { maxRequests: 5, windowMs: 86_400_000 },
     ]);
+  });
+
+  it("honors the legacy TWELVEDATA_CREDITS_PER_MIN as a per-minute alias when the new name is unset", () => {
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "20";
+    expect(resolveProviderQuota("twelvedata")?.find((w) => w.windowMs === 60_000)?.maxRequests).toBe(20);
+  });
+
+  it("prefers the new PROVIDER_QUOTA_TWELVEDATA_PER_MIN over the legacy alias", () => {
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "12";
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "20";
+    expect(resolveProviderQuota("twelvedata")?.find((w) => w.windowMs === 60_000)?.maxRequests).toBe(12);
   });
 });
 
@@ -567,5 +579,32 @@ describe("RequestQuota (sliding-window, fake clock)", () => {
     quota.reset();
     expect(quota.admit("twelvedata", "k", 8)).toBe(8);
     expect(quota.admit("tiingo", "k", 50)).toBe(50);
+  });
+
+  it("refund() returns admitted-but-undispatched requests to the budget", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8); // spend the whole minute
+    expect(quota.admit("twelvedata", "k", 8)).toBe(0); // nothing left
+    quota.refund("twelvedata", "k", 3);                // hand back 3 (e.g. a breaker skip / partial remainder)
+    expect(quota.admit("twelvedata", "k", 8)).toBe(3); // exactly the 3 refunded are available again
+  });
+
+  it("refund() is clamped to what was recorded and is per-credential", () => {
+    const quota = new RequestQuota(new FakeClock());
+    quota.admit("twelvedata", "k", 5);
+    quota.refund("twelvedata", "k", 100); // over-refund can't exceed recorded hits
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8); // fully restored, not more
+    quota.admit("twelvedata", "k", 8);
+    quota.refund("twelvedata", "other", 4); // refunding an unknown credential is a no-op
+    expect(quota.admit("twelvedata", "k", 8)).toBe(0);
+  });
+
+  it("refund() is a no-op for unlimited providers and non-positive amounts", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(() => quota.refund("yahoo-finance", "k", 5)).not.toThrow();
+    quota.admit("twelvedata", "k", 8);
+    quota.refund("twelvedata", "k", 0);
+    quota.refund("twelvedata", "k", -3);
+    expect(quota.admit("twelvedata", "k", 8)).toBe(0); // unchanged
   });
 });

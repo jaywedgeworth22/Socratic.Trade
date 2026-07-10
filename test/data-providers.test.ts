@@ -566,6 +566,60 @@ describe("enrichment cache consent gate", () => {
     else process.env.TIINGO_DROP_NEWS = prevDrop;
   });
 
+  it("Tiingo does NOT negative-cache a symbol whose sub-calls ALL failed (403 cred/plan), so it re-queries", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let attempts = 0;
+    vi.stubGlobal("fetch", async () => { attempts++; return new Response("Forbidden", { status: 403 }); });
+
+    const key = `env-key-${randomUUID()}`;
+    const p1 = new TiingoEnrichmentProvider(key, "env");
+    const r1 = await p1.enrich(["AAA"]);
+    expect(r1.AAA).toEqual({});          // all sub-calls 403'd → best-effort empty
+    const attemptsAfterFirst = attempts;
+    expect(attemptsAfterFirst).toBeGreaterThan(0);
+
+    __resetTwelveDataWindowForTests(); // window elapses; the credential/plan issue is unrelated to the cache
+    const p2 = new TiingoEnrichmentProvider(key, "env");
+    await p2.enrich(["AAA"]);
+    // A negative cache would have suppressed AAA for the TTL; instead scan 2 re-queries it (attempts grew).
+    expect(attempts).toBeGreaterThan(attemptsAfterFirst);
+  });
+
+  it("Tiingo namespaces its cache by TIINGO_DROP_NEWS so toggling the flag doesn't serve a no-news row", async () => {
+    const { TiingoEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+    const prevDrop = process.env.TIINGO_DROP_NEWS;
+
+    let newsCalls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("/tiingo/news")) { newsCalls++; return new Response(JSON.stringify([{ title: "Big news for AAA" }])); }
+      if (u.match(/\/iex\//i)) return new Response(JSON.stringify([{ tngoLast: 100, prevClose: 99 }]));
+      return new Response(JSON.stringify({ name: "Alpha Co" })); // daily
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    // Scan 1 with news DROPPED → caches a row with no headlines under the "tiingo-nonews" namespace.
+    process.env.TIINGO_DROP_NEWS = "1";
+    const withoutNews = await new TiingoEnrichmentProvider(key, "env").enrich(["AAA"]);
+    expect(withoutNews.AAA?.headlines).toBeUndefined();
+    expect(newsCalls).toBe(0);
+
+    // Scan 2 with news ENABLED must NOT be served the cached no-news row — it re-queries and gets headlines.
+    __resetTwelveDataWindowForTests();
+    delete process.env.TIINGO_DROP_NEWS;
+    const withNews = await new TiingoEnrichmentProvider(key, "env").enrich(["AAA"]);
+    expect(newsCalls).toBe(1);                       // the news endpoint WAS hit (not a stale cache hit)
+    expect(withNews.AAA?.headlines).toEqual(["Big news for AAA"]);
+
+    if (prevDrop === undefined) delete process.env.TIINGO_DROP_NEWS;
+    else process.env.TIINGO_DROP_NEWS = prevDrop;
+  });
+
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
