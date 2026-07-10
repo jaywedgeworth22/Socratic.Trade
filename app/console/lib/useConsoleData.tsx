@@ -26,6 +26,19 @@ const EVENT_REFRESH_DEBOUNCE_MS = 200;
 // error card instead — it already auto-retries via the poll interval above.
 const FIRST_LOAD_WATCHDOG_MS = 15_000;
 const FIRST_LOAD_WATCHDOG_MESSAGE = "The dashboard is taking too long to respond. Retrying…";
+// Hard per-attempt ceiling, independent of anything the server does. fetchDashboard has no
+// built-in timeout, so a request that hangs at the network layer (an open connection that never
+// receives data — exactly the kernel TCP-memory-exhaustion failure mode that caused the prod
+// incident this file's coalescing logic exists to fix) would otherwise sit in `inFlight` forever:
+// every later SSE/poll/visibility trigger only sets `pendingBackgroundRefresh` and returns (by
+// design, to avoid resurrecting the old abort-storm), so nothing would ever start a fresh attempt.
+// This timer fires ONCE per attempt (not once per event), so it cannot reintroduce that storm — it
+// only kills an attempt that has been stuck well past what any real (even fully degraded) response
+// should take.
+const FETCH_DEADLINE_MS = 20_000;
+// Sentinel abort reason so a deadline-triggered abort can be told apart from an explicit refresh()
+// superseding this attempt (which aborts with no reason / the default AbortError).
+const DEADLINE_REASON = Symbol("dashboard-fetch-deadline");
 
 export type ConsoleStreamStatus = "unsupported" | "connecting" | "live" | "reconnecting";
 
@@ -74,58 +87,79 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   // (coalesced) fetch instead of a fresh abort-and-refetch per trigger — see backgroundRefresh below.
   const pendingBackgroundRefresh = useRef(false);
 
-  const runFetch = useCallback(async (controller: AbortController) => {
+  // Returns "deadline" when THIS attempt was killed by our own FETCH_DEADLINE_MS timer (distinct
+  // from "aborted", which means something else — an explicit refresh() — superseded it). Callers
+  // use that distinction to decide whether to retry immediately.
+  const runFetch = useCallback(async (controller: AbortController): Promise<"ok" | "deadline" | "aborted" | "error"> => {
+    const deadline = window.setTimeout(() => controller.abort(DEADLINE_REASON), FETCH_DEADLINE_MS);
     try {
       const data = await fetchDashboard<DashboardSnapshot>(controller.signal);
-      if (!mounted.current || controller.signal.aborted) return;
+      if (!mounted.current || controller.signal.aborted) return "aborted";
       setSnapshot(data);
       setFetchedAt(new Date());
       setError(null);
+      return "ok";
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      if (!mounted.current) return;
+      if (controller.signal.aborted) return controller.signal.reason === DEADLINE_REASON ? "deadline" : "aborted";
+      if (err instanceof DOMException && err.name === "AbortError") return "aborted";
+      if (!mounted.current) return "error";
       setError(err instanceof ConsoleApiError ? err.message : "Could not refresh data.");
+      return "error";
+    } finally {
+      window.clearTimeout(deadline);
     }
   }, []);
+
+  // Shared retry loop used by BOTH refresh() and backgroundRefresh() (the caller is responsible for
+  // aborting whatever was previously in flight, and for the "already in flight → just mark pending"
+  // short-circuit — see below). Each iteration runs one attempt with a fresh AbortController and
+  // then decides whether to run another:
+  //  - "deadline": THIS attempt hung past FETCH_DEADLINE_MS and was self-aborted — retry immediately
+  //    with a fresh connection. This fires once per attempt (never once per SSE event), so it cannot
+  //    resurrect the abort-storm that queueRefresh/pendingBackgroundRefresh exist to prevent.
+  //  - otherwise: retry only if a background trigger (SSE/poll/visibility) arrived and coalesced
+  //    while this attempt was running (pendingBackgroundRefresh) — this also means a trigger that
+  //    lands mid-refresh() is drained before refresh()'s own promise resolves, instead of waiting
+  //    for the next independent trigger.
+  const runLoop = useCallback(async () => {
+    for (;;) {
+      if (!mounted.current) return;
+      const controller = new AbortController();
+      inFlight.current = controller;
+      const result = await runFetch(controller);
+      if (inFlight.current !== controller) return; // superseded by a newer refresh()/backgroundRefresh()
+      inFlight.current = null;
+      if (result === "deadline") continue;
+      if (!pendingBackgroundRefresh.current) return;
+      pendingBackgroundRefresh.current = false;
+    }
+  }, [runFetch]);
 
   // Explicit foreground refresh: the initial load and every user action/mutation (approve/reject,
   // place/cancel an order, save a setting, etc. — everything callers pull `refresh` from
   // useConsoleData() for). The caller wants strictly fresh data right now, so this aborts and
-  // replaces whatever is in flight (background or foreground) and any coalesced background request
-  // that was waiting is moot once this fetch lands.
+  // replaces whatever is in flight (background or foreground).
   const refresh = useCallback(async () => {
     pendingBackgroundRefresh.current = false;
     inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
-    await runFetch(controller);
-    if (inFlight.current === controller) inFlight.current = null;
-  }, [runFetch]);
+    await runLoop();
+  }, [runLoop]);
 
   // Background refresh: SSE events, the poll interval, and tab-visibility resync. Must NEVER abort
   // an in-flight fetch — that abort-storm was the root cause of the console taking minutes to
   // first-paint: during an active scan, SSE market-data/run-complete events (and the poll interval)
   // fire every few seconds, so the slow initial fetch kept getting killed and restarted before it
   // could ever finish, until a quiet gap happened to appear. If a fetch is already in flight, just
-  // mark that a refresh was requested and let the in-flight one finish; once it settles (and only if
-  // this call still owns `inFlight` — an explicit refresh() may have superseded it), run exactly one
-  // more fetch when a background refresh is still pending, coalescing any number of triggers that
-  // arrived in the meantime into a single extra fetch.
+  // mark that a refresh was requested and let it finish (or hit its own deadline) — runLoop above
+  // drains that flag on its own once the in-flight attempt settles, coalescing any number of
+  // triggers that arrived in the meantime into a single extra fetch.
   const backgroundRefresh = useCallback(async () => {
     if (inFlight.current) {
       pendingBackgroundRefresh.current = true;
       return;
     }
-    for (;;) {
-      const controller = new AbortController();
-      inFlight.current = controller;
-      await runFetch(controller);
-      if (inFlight.current !== controller) return; // superseded by an explicit refresh()
-      inFlight.current = null;
-      if (!pendingBackgroundRefresh.current) return;
-      pendingBackgroundRefresh.current = false;
-    }
-  }, [runFetch]);
+    await runLoop();
+  }, [runLoop]);
 
   const queueRefresh = useCallback(() => {
     if (typeof window === "undefined") return;

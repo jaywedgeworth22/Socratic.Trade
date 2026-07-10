@@ -189,12 +189,26 @@ export async function completeMcpOAuthCallback(input: {
  * migrated into the `local` operator's stored token at boot (migrateLocalRobinhoodToken), so the
  * primary user resolves it like any other user and a non-`local` tenant can never reach it.
  */
+// Per-user in-flight refresh, so two concurrent callers of getMcpAccessToken for the SAME user
+// (e.g. the dashboard snapshot's broker chain and its now-parallel Robinhood MCP health check)
+// share one token exchange instead of each independently POSTing the same refresh_token. Some
+// OAuth servers rotate (single-use) refresh tokens, in which case the second concurrent exchange
+// would fail with invalid_grant even though the first succeeded — surfacing a false
+// reconnect/account-readiness error despite the account being fine.
+const inFlightRefreshes = new Map<string, Promise<string>>();
+
 export async function getMcpAccessToken(userId: string): Promise<string | undefined> {
   const tokens = getStoredMcpOAuthTokens(userId);
   if (!tokens) return undefined;
   if (!isExpiring(tokens)) return tokens.accessToken;
   if (!tokens.refreshToken) return tokens.accessToken;
-  return refreshMcpAccessToken(userId, tokens);
+  const pending = inFlightRefreshes.get(userId);
+  if (pending) return pending;
+  const promise = refreshMcpAccessToken(userId, tokens).finally(() => {
+    if (inFlightRefreshes.get(userId) === promise) inFlightRefreshes.delete(userId);
+  });
+  inFlightRefreshes.set(userId, promise);
+  return promise;
 }
 
 /**
