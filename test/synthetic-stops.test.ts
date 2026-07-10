@@ -27,8 +27,8 @@ vi.mock("../src/lib/vector-db", () => ({
 
 const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
-  quotes: {} as Record<string, { price?: number }>,
-  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string }>,
+  quotes: {} as Record<string, { price?: number; bid?: number; ask?: number }>,
+  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }>,
   cancelled: [] as string[],
   orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
   // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
@@ -60,7 +60,7 @@ vi.mock("../src/lib/broker", () => ({
     getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
       symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
     ),
-    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string }) => {
+    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }) => {
       broker.placed.push(order);
       if (broker.placeError) throw broker.placeError;
       return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
@@ -491,6 +491,58 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     row = listSyntheticStops("SYN-THROW", "local", "triggered")[0];
     expect(row.fireGeneration).toBe(1);
     expect(row.lastAttemptRefId).toBe(`${r0}-g1`);
+  });
+
+  // ── Extended-hours routing (allowExtendedHoursSyntheticStops) — PR #1228 review regressions ──
+
+  it("anchors the extended-hours SELL exit limit to the BID, not the ask-biased composite price", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      // bid 89.5 / ask 90: the composite price is the ASK (Alpaca sets price = ask ?? bid). A limit
+      // off the composite (89.87) would sit ABOVE the 89.5 bid — resting, not marketable.
+      broker.quotes = { AAPL: { price: 90, bid: 89.5, ask: 90 } };
+      connectTestAccount("SYN-EXTHOURS");
+      const policy = { ...policyFor("SYN-EXTHOURS"), allowExtendedHoursSyntheticStops: true };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({
+        side: "sell",
+        type: "limit",
+        marketHours: "extended_hours",
+        limitPrice: 89.36 // 89.5 * (1 - 0.0015) = 89.36575, bid-anchored, rounded OUTWARD (down) to stay marketable
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a FRACTIONAL extended-hours exit as a regular-hours market order (queues to the open instead of being hard-blocked)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      broker.positions = [{ symbol: "AAPL", quantity: 10.5, averageCost: 100, marketValue: 1050 }];
+      broker.quotes = { AAPL: { price: 90, bid: 89.5, ask: 90 } };
+      connectTestAccount("SYN-EXTFRAC");
+      const policy = { ...policyFor("SYN-EXTFRAC"), allowExtendedHoursSyntheticStops: true };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      // Before the quantity guard this became a fractional extended_hours limit, which policy
+      // hard-blocks ("Fractional or dollar-based orders must be regular-hours only.") — leaving the
+      // breached position with NO protective order at all for the rest of the extended session.
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({
+        side: "sell",
+        quantity: 10.5,
+        type: "market",
+        marketHours: "regular_hours"
+      });
+      expect(broker.placed[0].limitPrice).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("partial coverage: a 10-of-100-share resting trim leaves 90 shares protected — the stop fires for the UNCOVERED remainder", async () => {

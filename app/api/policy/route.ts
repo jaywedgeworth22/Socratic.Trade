@@ -121,7 +121,12 @@ export async function PUT(request: Request) {
     // unkeyed model is already safe at run time (proposeTrades throws / the Red review fails
     // closed); only a write that actually sets/changes that model must prove its provider is keyed.
     enforceKeyedGreenModelRule: policy.llmModel !== current.llmModel,
-    enforceKeyedRedModelRule: policy.redTeamLlmModel !== current.redTeamLlmModel
+    enforceKeyedRedModelRule: policy.redTeamLlmModel !== current.redTeamLlmModel,
+    // Same MERGED-policy scoping as the rules above: bound tuning.marketableLimitBufferBps only when
+    // THIS request actually sets/changes it — otherwise a stored out-of-range value would 400 EVERY
+    // unrelated save. A stale stored value is already safe at run time (validatedMarketableLimitBufferBps
+    // defaults/clamps it); only a write that changes the field must pass the bound.
+    enforceMarketableLimitBufferRule: policy.tuning?.marketableLimitBufferBps !== current.tuning?.marketableLimitBufferBps
   });
   if (validationError) return new NextResponse(validationError, { status: 400 });
   setPolicy(policy, userId);
@@ -135,6 +140,7 @@ async function validatePolicy(
     enforceInteractiveReasoningRule?: boolean;
     enforceKeyedGreenModelRule?: boolean;
     enforceKeyedRedModelRule?: boolean;
+    enforceMarketableLimitBufferRule?: boolean;
   } = {}
 ): Promise<string | undefined> {
   // Invalid legacy watchlist / ignore-list symbols are sanitized out in the PUT handler above, so stale
@@ -259,8 +265,14 @@ async function validatePolicy(
     // tuning.redTeamConvictionThreshold was removed 2026-07-07 (single-adversary consolidation O2:
     // the Red Team reviews EVERY risk-adding opening — no conviction gate). Stale values in stored
     // tuning JSON are ignored by the runtime; nothing to validate for it here.
-    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse } = policy.tuning;
+    const { shrinkPrior, minClosedLotsForWeightShift, sizingFloorPct, sizingCeilingPct, crisisMaxOpeningExposurePct, bearVetoFcfYieldFloorPct, bearVetoDebtToEquityCeiling, skipNegativeExpectancy, skipNegativeExpectancyEdgePct, gateOnRationaleCollapse, marketableLimitBufferBps } = policy.tuning;
     if (shrinkPrior !== undefined && (!Number.isFinite(shrinkPrior) || shrinkPrior < 0 || shrinkPrior > 100)) return "tuning.shrinkPrior must be between 0 and 100.";
+    // Zero/negative would INVERT the marketable exit/entry price (a SELL limit above the quote rests
+    // unfilled); >500 bps (5% through the quote) is a typo/units mistake. The exit path also clamps
+    // already-stored values (validatedMarketableLimitBufferBps); this keeps new saves honest at the
+    // source. Enforced only when the REQUEST sets/changes the field (see the PUT handler) so a stale
+    // stored value never blocks unrelated policy saves.
+    if ((options.enforceMarketableLimitBufferRule ?? true) && marketableLimitBufferBps !== undefined && (!Number.isFinite(marketableLimitBufferBps) || marketableLimitBufferBps <= 0 || marketableLimitBufferBps > 500)) return "tuning.marketableLimitBufferBps must be greater than 0 and at most 500 (bps).";
     if (minClosedLotsForWeightShift !== undefined && (!Number.isFinite(minClosedLotsForWeightShift) || minClosedLotsForWeightShift < 1 || minClosedLotsForWeightShift > 1000)) return "tuning.minClosedLotsForWeightShift must be between 1 and 1000.";
     if (sizingFloorPct !== undefined && (!Number.isFinite(sizingFloorPct) || sizingFloorPct < 0 || sizingFloorPct > 100)) return "tuning.sizingFloorPct must be between 0 and 100.";
     if (sizingCeilingPct !== undefined && (!Number.isFinite(sizingCeilingPct) || sizingCeilingPct < 1 || sizingCeilingPct > 100)) return "tuning.sizingCeilingPct must be between 1 and 100.";
