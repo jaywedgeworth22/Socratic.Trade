@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Anthropic spend-spike investigation + benchmark script cost visibility (CLAUDE, cloud lane, branch `claude/anthropic-spend-spike-e2di8j`)
+Owner reported Anthropic console spend jumped ~$35 -> ~$50 in 2 hours while `/admin/llm-usage`
+only reflected ~$35. Root cause (codebase-only investigation — no prod DB access this session):
+`scripts/benchmark-llm-models.ts` hits real provider APIs through the app's real credential path
+but is deliberately built with NO writes to the app DB, so its real Anthropic billing never lands
+in `llm_usage`. Fixed: the script now self-reports a total-spend rollup every run, and gained an
+opt-in `--record-usage` flag that logs real calls into the real `llm_usage` table under a pretend
+account (`user_id="benchmark:<user>"`) via a dedicated writable connection, never touching
+migrations or other tables. Owner's follow-up (opus-dominant/haiku-scattered/sonnet-absent call
+pattern) does NOT match a default full-catalog sweep — still open whether this specific spike was
+a scoped benchmark run or organic opus-configured production traffic; needs a real
+`/admin/llm-usage` pull to close out (no `OPS_DIAGNOSTIC_TOKEN` in this session).
+`scripts/eval/run-offline.ts` has the same ledger gap, left as a follow-up. Gate: tsc clean, lint 0
+errors, 3395/3395 tests; `npm run build` fails identically on unmodified `main` in this sandbox
+(pre-existing, confirmed via stash-and-rebuild). See
+`docs/rollouts/2026-07-10-anthropic-spend-spike-investigation.md`.
+
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
