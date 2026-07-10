@@ -51,6 +51,16 @@ above the still-visible tab bar (live-measured height, all destinations fit on i
 feedback); tab-bar badge clearance fixed. 55-findings backlog audited vs main post-MONET-sweeps:
 37 DONE / 2 PARTIAL / 7 OPEN (6 = owner TBDs, 1 deferred refactor). Detail:
 docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md
+## 2026-07-09 — MONET usage-cap pickup ROUND 2 closed out (CLAUDE, owner-directed)
+MONET's cap reset, it ran a second session (post-migration deploy, #1278–#1281, #1272 round-2),
+then re-capped; CLAUDE picked up again. All nine open PRs armed/merging: #1278 (7 threads +
+review-caught max-age-sweep blocker fixed), #1279/#1280/#1281 (threads fixed, armed; #1280
+oversized-exit bump now blocks), #1266/#1267/#1269 round-3 threads fixed (spoofable rerun
+marker, breaker-neutering health log, same-tick fire gate), #1272 un-dirtied, and MONET's aapl
+lane (owner-ruled no-cap enrichment + RAG warm-up receipts, supersedes #1272) landed as #1287
+(gate 3261/3261). Activity audit still not-started — MONET's on return. Round-2 addendum in
+`docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
+
 ## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
 flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228

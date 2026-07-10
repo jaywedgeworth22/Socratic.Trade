@@ -248,6 +248,18 @@ As of 2026-07-08 (assignment-rule update).
   commits — unclaimed again), PR #1083 (recommend close as duplicate of merged #1082 — owner
   call). NO deploys (honored the migration deploy-hold). Rollout:
   `docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
+  **ROUND 2 (same evening ~21:45 CDT — MONET re-capped after a productive resumed session; CLAUDE
+  picked up again, owner-directed):** MONET's 4 new PRs shepherded — #1279 mistral-capmap, #1280
+  bump-to-floor (oversized below-minimum exits now BLOCK instead of full-exit-bumping), #1281
+  unsaved-changes (all threads fixed/resolved, armed); #1278 learning-review — adopted MONET's
+  uncommitted trigger feature, fixed its 7 threads PLUS a review-caught REAL blocker (max-age
+  sweep unreachable for learned rows outside the 7-day window; empirically reproduced,
+  regression-tested), armed. Round-3 bot threads on #1266/#1267/#1269 fixed (incl. a spoofable
+  flake-rerun marker and an ok:true health log that neutered the new circuit breaker); #1272
+  un-dirtied. MONET's aapl lane (owner-ruled NO-CAP enrichment + RAG filings warm-up receipts;
+  supersedes #1272 content, ordering documented) committed + landed as PR #1287 (full gate
+  3261/3261). All 9 PRs armed, merging on CI. Activity audit REMAINS not-started (MONET's on
+  return). Round-2 addendum in the rollout note.
 - **Short stop-loss default (8%) + surface short settings in main Essentials (MONET, branch
   `monet/short-stop-default-and-surface`) — NOT YET MERGED: PR #1221 open, auto-merge armed
   2026-07-09 (code complete; this row stays out of the "merged to `main`" sense of Completed
