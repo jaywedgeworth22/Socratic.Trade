@@ -14,11 +14,11 @@ export const LLM_REQUIRED_CHAT_MESSAGE = "Connect an LLM provider in Settings to
 /**
  * Shown when a strategy session is attempted with either team model unchosen. NO MODEL DEFAULTS
  * (owner directive 2026-07-07): both the Green (strategist) and Red (reviewer) models must be
- * explicitly chosen in Settings — the strategy never invents one, so it fails closed with this
- * actionable message instead of sending an empty-model request.
+ * explicitly chosen on the Framework page — the strategy never invents one, so it fails closed
+ * with this actionable message instead of sending an empty-model request.
  */
 export const LLM_MODEL_REQUIRED_STRATEGY_MESSAGE =
-  "Choose both the Strategist (green team) and Reviewer (red team) models under Settings → LLM models to run a strategy session.";
+  "Choose both the Strategist (green team) and Reviewer (red team) models under Framework → Models to run a strategy session.";
 
 /**
  * Shown when the Strategist model is the rotation sentinel ("__rotate__") but no provider

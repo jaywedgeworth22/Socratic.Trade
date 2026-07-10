@@ -22,7 +22,7 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
-import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig } from "@/lib/llm-request";
+import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig, resolveReviewerReasoningEffort } from "@/lib/llm-request";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -119,7 +119,8 @@ export async function PUT(request: Request) {
   const reasoningConfigChanged =
     policy.llmModel !== current.llmModel ||
     policy.redTeamLlmModel !== current.redTeamLlmModel ||
-    policy.llmReasoningEffort !== current.llmReasoningEffort;
+    policy.llmReasoningEffort !== current.llmReasoningEffort ||
+    policy.redTeamReasoningEffort !== current.redTeamReasoningEffort;
   const validationError = await validatePolicy(policy, userId, {
     enforceInteractiveReasoningRule: reasoningConfigChanged,
     // Keyed-provider backstop gating mirrors the reasoning rule: validatePolicy runs against the
@@ -190,11 +191,22 @@ async function validatePolicy(
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
   }
-  if (
-    (options.enforceInteractiveReasoningRule ?? true) &&
-    (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
-      isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, policy.llmReasoningEffort))
-  ) return "gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+  if (policy.redTeamReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.redTeamReasoningEffort)) {
+    return "redTeamReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
+  // Per-team reasoning (2026-07-10): each team's (model, effort) combo is checked with ITS OWN
+  // effort — the proposer's legacy `llmReasoningEffort`, and the reviewer's `redTeamReasoningEffort`
+  // falling back to the proposer's until explicitly set (resolveReviewerReasoningEffort). A
+  // violating combo on EITHER team rejects, and the message names which team so the owner knows
+  // which control to change.
+  if (options.enforceInteractiveReasoningRule ?? true) {
+    if (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort)) {
+      return "Proposer (green team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+    }
+    if (isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, resolveReviewerReasoningEffort(policy))) {
+      return "Reviewer (red team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+    }
+  }
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";

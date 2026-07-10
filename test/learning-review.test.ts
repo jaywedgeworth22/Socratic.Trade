@@ -30,6 +30,7 @@ import {
   listLearnedContext,
   listLearnedContextForDecision,
   setPolicy,
+  setUserSetting,
   updateStrategyProfile,
   upsertConnectedAccount
 } from "../src/lib/db";
@@ -568,6 +569,62 @@ describe("user-level persistence (PR #1278 review fixes)", () => {
     expect(policy.learningReviewModel).toBe("gpt-5.5");
     // Idempotent: the seed persisted, later reads agree.
     expect(getPolicy(userId).learningReviewEnabled).toBe(true);
+  });
+
+  it("recovers an account-level enabled review even when user_settings holds a stale full-blob default (finding #3)", () => {
+    const userId = `lr-fullblob-${randomUUID().slice(0, 8)}`;
+    const acct = `acct-${randomUUID().slice(0, 8)}`;
+    seedAccount(userId, acct);
+    // Pre-cutover, the real ENABLED review lives account-scoped (#1116)…
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewMode: "annotate", learningReviewModel: "gpt-5.5" };
+    getDb()
+      .prepare(
+        `INSERT INTO account_strategy_state
+           (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'halted', NULL, ?)`
+      )
+      .run(userId, acct, JSON.stringify(accountPolicy), "legacy prompt", JSON.stringify(accountPolicy.scoringWeights), new Date().toISOString());
+    // …while user_settings.policy holds a FULL policy blob (e.g. from a pre-cutover profile
+    // activation) that stamped the DEFAULT learningReviewEnabled:false. The review keys are PRESENT
+    // but stale — the earlier "bail whenever any review key is present" left the review disabled.
+    // The seed must recognise the account-level keys as a full blob and still recover the account value.
+    setUserSetting(userId, "policy", { ...DEFAULT_POLICY, learningReviewEnabled: false });
+
+    const policy = getPolicy(userId);
+    expect(policy.learningReviewEnabled).toBe(true);
+    expect(policy.learningReviewMode).toBe("annotate");
+    expect(policy.learningReviewModel).toBe("gpt-5.5");
+    // One-time + idempotent: later reads agree (the seed persisted onto the same blob).
+    expect(getPolicy(userId).learningReviewEnabled).toBe(true);
+  });
+
+  it("does NOT clobber a deliberate user-level disable stored as a tiered write (finding #3 guard)", () => {
+    const userId = `lr-tiered-${randomUUID().slice(0, 8)}`;
+    const acct = `acct-${randomUUID().slice(0, 8)}`;
+    seedAccount(userId, acct);
+    // A stale account_strategy_state row still carries an ENABLED review…
+    const accountPolicy = { ...DEFAULT_POLICY, learningReviewEnabled: true, learningReviewModel: "gpt-5.5" };
+    getDb()
+      .prepare(
+        `INSERT INTO account_strategy_state
+           (user_id, connected_account_id, policy, prompt, scoring_weights, system_state, derived_from_profile_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'halted', NULL, ?)`
+      )
+      .run(userId, acct, JSON.stringify(accountPolicy), "prompt", JSON.stringify(accountPolicy.scoringWeights), new Date().toISOString());
+    // …but the user DELIBERATELY disabled it post-cutover — a TIERED write (only user-level keys).
+    // By VALUE this false is indistinguishable from a stale default, so the seed must refuse by
+    // STRUCTURE (tiered ⇒ authoritative). A naive "recover the account value whenever it reads false"
+    // would wrongly re-enable it and spend LLM budget the owner turned off.
+    setUserSetting(userId, "policy", {
+      learningReviewEnabled: false,
+      learningReviewMode: "decide",
+      learningReviewModel: "gpt-5.5",
+      notificationSettings: DEFAULT_POLICY.notificationSettings
+    });
+
+    expect(getPolicy(userId).learningReviewEnabled).toBe(false);
+    // …and it stays disabled on later reads (the one-time marker never re-fires the seed).
+    expect(getPolicy(userId).learningReviewEnabled).toBe(false);
   });
 });
 

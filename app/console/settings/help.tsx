@@ -97,7 +97,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "Green team (strategist)",
         aliases: "proposer bull llmModel",
         definition:
-          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Strategist' pick in LLM models."
+          "The LLM that writes trade proposals from the scan evidence and your written strategy instructions. Its model is the 'Proposer' pick under Framework → Models."
       },
       {
         term: "Red team (reviewer)",
@@ -181,7 +181,7 @@ const GLOSSARY: GlossaryGroup[] = [
         term: "THIS ACCOUNT vs ALL YOUR ACCOUNTS",
         aliases: "settings scope user-level account-level",
         definition:
-          "The two tags on this Settings page. THIS ACCOUNT settings follow the account (tax treatment, models, guardrails). ALL YOUR ACCOUNTS settings follow you (connections, API keys, notifications, scan shape) and overlay every account."
+          "The two storage scopes for configuration. THIS ACCOUNT settings follow the account and live where you configure the account itself — Framework (models, tax treatment, prompt, weights) and Mandates (guardrails). ALL YOUR ACCOUNTS settings follow you (connections, API keys, notifications, scan shape, learning review, typed confirmation) and overlay every account — everything on this Settings page is that kind."
       },
       {
         term: "Preset (profile)",
