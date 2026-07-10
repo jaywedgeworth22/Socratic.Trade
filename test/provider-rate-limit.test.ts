@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProviderRateLimiter,
+  RequestQuota,
   appendErrorCause,
   redactApiKeyParams,
   redactSecretValue,
   resolveProviderLimiterConfig,
+  resolveProviderQuota,
   scrubProviderErrorText,
   type ProviderLimiterClock,
 } from "../src/lib/provider-rate-limit";
@@ -437,5 +439,133 @@ describe("appendErrorCause", () => {
     expect(message.length).toBe("boom (cause: )".length + 20);
     expect(message).toContain("x".repeat(20));
     expect(message).not.toContain("x".repeat(21));
+  });
+});
+
+const QUOTA_ENV_KEYS = [
+  "PROVIDER_QUOTA_TWELVEDATA_PER_MIN",
+  "PROVIDER_QUOTA_TWELVEDATA_PER_DAY",
+  "PROVIDER_QUOTA_TIINGO_PER_HOUR",
+  "PROVIDER_QUOTA_TESTPROV_PER_MIN",
+  "PROVIDER_QUOTA_TESTPROV_PER_DAY",
+];
+
+describe("resolveProviderQuota", () => {
+  beforeEach(() => { for (const k of QUOTA_ENV_KEYS) delete process.env[k]; });
+  afterEach(() => { for (const k of QUOTA_ENV_KEYS) delete process.env[k]; });
+
+  it("returns the built-in twelvedata windows (8/min + 800/day)", () => {
+    const windows = resolveProviderQuota("twelvedata");
+    expect(windows).toEqual([
+      { maxRequests: 8, windowMs: 60_000 },
+      { maxRequests: 800, windowMs: 86_400_000 },
+    ]);
+  });
+
+  it("returns the built-in tiingo windows (50/hour + 1000/day)", () => {
+    expect(resolveProviderQuota("tiingo")).toEqual([
+      { maxRequests: 50, windowMs: 3_600_000 },
+      { maxRequests: 1000, windowMs: 86_400_000 },
+    ]);
+  });
+
+  it("is undefined for an unconfigured provider (unlimited)", () => {
+    expect(resolveProviderQuota("yahoo-finance")).toBeUndefined();
+  });
+
+  it("lets an env override REPLACE an existing window's cap", () => {
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "3";
+    const windows = resolveProviderQuota("twelvedata");
+    expect(windows?.find((w) => w.windowMs === 60_000)?.maxRequests).toBe(3);
+    expect(windows?.find((w) => w.windowMs === 86_400_000)?.maxRequests).toBe(800); // untouched
+  });
+
+  it("lets an env override REMOVE a window when set to <= 0", () => {
+    process.env.PROVIDER_QUOTA_TWELVEDATA_PER_MIN = "0";
+    const windows = resolveProviderQuota("twelvedata");
+    expect(windows).toEqual([{ maxRequests: 800, windowMs: 86_400_000 }]); // only the daily cap remains
+  });
+
+  it("lets an env override ADD windows to an otherwise-unlimited provider", () => {
+    process.env.PROVIDER_QUOTA_TESTPROV_PER_MIN = "3";
+    process.env.PROVIDER_QUOTA_TESTPROV_PER_DAY = "5";
+    expect(resolveProviderQuota("testprov")).toEqual([
+      { maxRequests: 3, windowMs: 60_000 },
+      { maxRequests: 5, windowMs: 86_400_000 },
+    ]);
+  });
+});
+
+describe("RequestQuota (sliding-window, fake clock)", () => {
+  beforeEach(() => { for (const k of QUOTA_ENV_KEYS) delete process.env[k]; });
+  afterEach(() => { for (const k of QUOTA_ENV_KEYS) delete process.env[k]; });
+
+  it("admits up to the tightest window and records the hits", () => {
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    // twelvedata: 8/min is tighter than 800/day.
+    expect(quota.admit("twelvedata", "k1", 20)).toBe(8);
+    expect(quota.admit("twelvedata", "k1", 20)).toBe(0); // budget spent in this minute
+  });
+
+  it("binds on the MINIMUM headroom across all windows, and each window depletes independently", async () => {
+    process.env.PROVIDER_QUOTA_TESTPROV_PER_MIN = "3";
+    process.env.PROVIDER_QUOTA_TESTPROV_PER_DAY = "5";
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+
+    expect(quota.admit("testprov", "k", 10)).toBe(3); // per-min binds (3 < 5)
+    await clock.advance(60_000);
+    // per-min window rolled over (fresh 3), but the day window has 3 recorded → 5-3 = 2 headroom.
+    expect(quota.admit("testprov", "k", 10)).toBe(2);
+    await clock.advance(60_000);
+    // day budget now fully spent (5), even though the minute has room.
+    expect(quota.admit("testprov", "k", 10)).toBe(0);
+  });
+
+  it("keeps a separate budget per credential", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("twelvedata", "keyA", 8)).toBe(8);
+    expect(quota.admit("twelvedata", "keyA", 8)).toBe(0);
+    expect(quota.admit("twelvedata", "keyB", 8)).toBe(8); // keyB untouched by keyA's spend
+  });
+
+  it("refills as older hits slide out of the window", async () => {
+    const clock = new FakeClock();
+    const quota = new RequestQuota(clock);
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8); // fill the minute at t=0
+    await clock.advance(59_000);
+    expect(quota.admit("twelvedata", "k", 8)).toBe(0); // still inside the 60s window → nothing
+    await clock.advance(2_000); // t=61_000: the t=0 hits are now > 60s old → they slide out
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8); // fully refilled
+  });
+
+  it("passes unlimited providers through unchanged", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("yahoo-finance", "k", 1000)).toBe(1000);
+  });
+
+  it("admits nothing for a non-positive request count", () => {
+    const quota = new RequestQuota(new FakeClock());
+    expect(quota.admit("twelvedata", "k", 0)).toBe(0);
+    expect(quota.admit("twelvedata", "k", -5)).toBe(0);
+  });
+
+  it("reset(provider) clears only that provider's lanes", () => {
+    const quota = new RequestQuota(new FakeClock());
+    quota.admit("twelvedata", "k", 8);
+    quota.admit("tiingo", "k", 50);
+    quota.reset("twelvedata");
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8); // twelvedata budget restored
+    expect(quota.admit("tiingo", "k", 50)).toBe(0);    // tiingo still spent
+  });
+
+  it("reset() with no argument clears every lane", () => {
+    const quota = new RequestQuota(new FakeClock());
+    quota.admit("twelvedata", "k", 8);
+    quota.admit("tiingo", "k", 50);
+    quota.reset();
+    expect(quota.admit("twelvedata", "k", 8)).toBe(8);
+    expect(quota.admit("tiingo", "k", 50)).toBe(50);
   });
 });

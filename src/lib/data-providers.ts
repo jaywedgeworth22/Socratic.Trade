@@ -29,7 +29,7 @@ import { getStreamedHeadlines } from "./streams/news-store";
 import { politeFetchText, runRateLimited, secUserAgent } from "./web-sources/http";
 import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
-import { withProviderLimit, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
+import { withProviderLimit, admitProviderRequests, resetProviderQuotaState, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
@@ -362,58 +362,42 @@ function maxSymbols(): number {
   return Number.POSITIVE_INFINITY;
 }
 
-// Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8
-// credits/minute. So the number of symbols we may put in one call (and the ceiling on how many we
-// enrich per scan) is exactly that per-minute credit budget. Env-tunable so a paid plan (which
-// lifts the per-minute credit ceiling) can raise it. Clamped to [1, 800] (800 = free daily cap, a
-// sane upper bound). Pair this with the twelvedata pacer interval in provider-rate-limit.ts so
-// concurrent-account scans can't stack past the per-minute budget.
-const DEFAULT_TWELVEDATA_CREDITS_PER_MIN = 8;
-function twelveDataCreditsPerMin(): number {
-  const value = Number(process.env.TWELVEDATA_CREDITS_PER_MIN ?? DEFAULT_TWELVEDATA_CREDITS_PER_MIN);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_CREDITS_PER_MIN;
-  return Math.min(Math.floor(value), 800);
-}
-
-// Budget window for Twelve Data: the credit budget is per-MINUTE, so allow at most one credit-budget
-// call per this window and SKIP (return best-effort immediately) any other scan that lands inside it,
-// rather than queueing it. Skipping — not queueing — is deliberate: enrichment providers run in
-// parallel in the cascade with no per-provider timeout, so a 60s queue wait would stall the 2nd–5th
-// account's whole scan at the top of the hour. A skipped scan just gets its Twelve Data fields from
-// the other providers / cache this run and picks up the credit next window.
-//
-// Keyed PER CREDENTIAL, not process-globally: a per-USER stored Twelve Data key has its OWN upstream
-// per-minute quota (resolveApiKeyWithSource gives user keys precedence), so one user's window must
-// not gate a different key's scan. The map key is a cheap non-crypto fingerprint of the API key
-// (never the raw key); the map is in-memory only and never serialized. The read+set is synchronous
-// (no await between), so concurrent same-tick scans on the SAME credential can't both pass; the
-// pacer's concurrency:1 covers the rarer cross-tick race.
-const twelveDataWindowStartByCred = new Map<string, number>();
-function twelveDataCredFingerprint(apiKey: string): string {
-  // djb2 — enough to distinguish credential lanes; not a secret store (in-memory Map key only).
+// djb2 fingerprint of an API key — enough to distinguish per-credential rate-budget lanes; NOT a
+// secret store (in-memory only, never logged or persisted). Used to key the shared request quota
+// (provider-rate-limit.ts) so a per-user stored key with its own upstream quota is never gated by
+// the operator key.
+function apiKeyFingerprint(apiKey: string): string {
   let h = 5381;
   for (let i = 0; i < apiKey.length; i++) h = ((h << 5) + h + apiKey.charCodeAt(i)) | 0;
   return String(h >>> 0);
 }
-const DEFAULT_TWELVEDATA_WINDOW_MS = 60_000;
-function twelveDataWindowMs(): number {
-  const value = Number(process.env.TWELVEDATA_WINDOW_MS ?? DEFAULT_TWELVEDATA_WINDOW_MS);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_WINDOW_MS;
+
+// Short negative-cache TTL for symbols a rate-limited provider returns no usable data for, so they
+// don't sit at the FRONT of `misses` forever starving lower-ranked symbols of a scarce free-tier
+// budget. Default 30 min: long enough to rotate a no-data symbol out for several scans, short enough
+// that a symbol which later gains coverage isn't suppressed for long.
+const DEFAULT_PROVIDER_NEGATIVE_TTL_MS = 30 * 60_000;
+function providerNegativeTtlMs(): number {
+  const value = Number(process.env.PROVIDER_NEGATIVE_TTL_MS ?? DEFAULT_PROVIDER_NEGATIVE_TTL_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_PROVIDER_NEGATIVE_TTL_MS;
   return value;
 }
-// Short negative-cache TTL for symbols Twelve Data returns no usable data for, so they don't sit at
-// the FRONT of `misses` forever (starving lower-ranked symbols of the scarce credit budget). Default
-// 30 min: long enough to rotate a no-data symbol out for several scans, short enough that a symbol
-// that later gains coverage isn't suppressed for long.
-const DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS = 30 * 60_000;
-function twelveDataNegativeTtlMs(): number {
-  const value = Number(process.env.TWELVEDATA_NEGATIVE_TTL_MS ?? DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS);
-  if (!Number.isFinite(value) || value <= 0) return DEFAULT_TWELVEDATA_NEGATIVE_TTL_MS;
-  return value;
+
+// How many outbound requests one enriched symbol costs a quota'd provider — passed to the request
+// quota (which budgets in REQUESTS, not symbols). Only providers in RATE_QUOTAS need this: tiingo
+// fires up to 3 sub-calls/symbol (iex, daily, [news]); twelvedata costs 1 credit/symbol. Non-quota'd
+// providers (finnhub, yahoo, alpha-vantage) are paced instead and never consult this.
+function callsPerSymbol(provider: string, opts?: { dropExtra?: boolean }): number {
+  switch (provider) {
+    case "tiingo": return opts?.dropExtra ? 2 : 3;  // iex, daily, [news]
+    default: return 1;                               // twelvedata (1 credit/symbol)
+  }
 }
-/** Test-only: reset the per-credential Twelve Data budget windows so cases don't leak state. */
+
+/** Test-only compatibility shim: the unified request quota replaced the old per-provider window
+ *  gates, so resetting "the Twelve Data window" now just clears the shared quota state. */
 export function __resetTwelveDataWindowForTests(): void {
-  twelveDataWindowStartByCred.clear();
+  resetProviderQuotaState();
 }
 
 // One retry on HTTP 429 (rate limit) with a short backoff before giving up.
@@ -2041,6 +2025,13 @@ export class FinnhubEnrichmentProvider implements MarketEnrichmentProvider {
     const toDate = new Date(now).toISOString().split("T")[0];
     const fromDate = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
+    // Finnhub (60/min free) is NOT quota-capped here: each symbol fires separate per-symbol calls, so the
+    // PACER (withProviderLimit minIntervalMs, provider-rate-limit.ts) spaces them under the per-minute cap
+    // while still covering EVERY symbol over time — scan-size-agnostic without dropping coverage. Only
+    // providers with a hard windowed cap you can't space around (twelvedata batch credits, tiingo 50/hour)
+    // go through admitProviderRequests(). See RATE_QUOTAS for the pacer-vs-quota rationale.
+    if (misses.length === 0) return result;
+
     for (let i = 0; i < misses.length; i += CONCURRENCY) {
       const chunk = misses.slice(i, i + CONCURRENCY);
       await Promise.all(
@@ -3104,18 +3095,38 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
     }
 
     const headers = { "Authorization": `Token ${this.apiKey}`, "Accept": "application/json" };
+    if (misses.length === 0) return result;
 
-    for (let i = 0; i < misses.length; i += CONCURRENCY) {
-      const chunk = misses.slice(i, i + CONCURRENCY);
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): tiingo = 50/hour + 1000/day, and each
+    // symbol costs `perSymbol` requests (iex + daily [+ news]). admit() returns how many REQUESTS fit
+    // right now; we query floor(that / perSymbol) best-first symbols and defer the rest best-effort.
+    // Scan-size-agnostic + per-credential; never stalls. (Owner's Tiingo dashboard showed hourly at
+    // -10/50 — an unpaced 30-symbol scan fires ~90 requests and 403s.)
+    const dropNews = flagEnabled(process.env.TIINGO_DROP_NEWS);
+    const perSymbol = callsPerSymbol("tiingo", { dropExtra: dropNews });
+    const credKey = apiKeyFingerprint(this.apiKey);
+    const allowedRequests = admitProviderRequests("tiingo", credKey, misses.length * perSymbol);
+    const symbolsAllowed = Math.floor(allowedRequests / perSymbol);
+    const toQuery = misses.slice(0, symbolsAllowed);
+    for (const symbol of misses.slice(symbolsAllowed)) result[symbol] = {}; // deferred; not queried this run
+    if (toQuery.length === 0) return result; // no hourly budget left — best-effort only
+    const negativeCache = (symbol: string) => {
+      writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
+      result[symbol] = {};
+    };
+
+    for (let i = 0; i < toQuery.length; i += CONCURRENCY) {
+      const chunk = toQuery.slice(i, i + CONCURRENCY);
       await Promise.all(
         chunk.map(async (symbol) => {
           try {
             const ticker = symbol.toLowerCase();
-            const [iexRaw, metaRaw, newsRaw] = await Promise.allSettled([
+            const tiingoCalls = [
               this.getJson(`https://api.tiingo.com/iex/${ticker}?token=${this.apiKey}`, headers),
-              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers),
-              this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers)
-            ]);
+              this.getJson(`https://api.tiingo.com/tiingo/daily/${ticker}?token=${this.apiKey}`, headers)
+            ];
+            if (!dropNews) tiingoCalls.push(this.getJson(`https://api.tiingo.com/tiingo/news?tickers=${ticker}&limit=5&token=${this.apiKey}`, headers));
+            const [iexRaw, metaRaw, newsRaw = { status: "rejected" as const, reason: new Error("news skipped") }] = await Promise.allSettled(tiingoCalls);
 
             let price: number | undefined;
             let bid: number | undefined;
@@ -3169,15 +3180,21 @@ export class TiingoEnrichmentProvider implements MarketEnrichmentProvider {
               ...(sentiment !== undefined && { sentiment })
             };
 
-            const allRejected = [iexRaw, metaRaw, newsRaw].every((p) => p.status === "rejected");
-            const hasTransientErr = [iexRaw, metaRaw, newsRaw].some(
+            // Only the calls we actually made count (news is a synthetic "rejected" when dropped).
+            const madeCalls = dropNews ? [iexRaw, metaRaw] : [iexRaw, metaRaw, newsRaw];
+            const allRejected = madeCalls.every((p) => p.status === "rejected");
+            const hasTransientErr = madeCalls.some(
               (p) => p.status === "rejected" && isTransientError(p.reason)
             );
 
             if (!allRejected && !hasTransientErr && Object.keys(data).length > 0) {
               writeEnrichmentCache("tiingo", symbol, this.scope, this.userId, data, now + ttlMs());
+              result[symbol] = data;
+            } else if (!hasTransientErr) {
+              negativeCache(symbol); // genuinely no data — rotate out; don't burn the hourly budget on it
+            } else {
+              result[symbol] = data; // transient — leave uncached to retry next scan
             }
-            result[symbol] = data;
           } catch {
             result[symbol] = {};
           }
@@ -3247,28 +3264,21 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
     // scans from stacking past the per-minute credit budget. Symbols beyond the budget are left
     // best-effort — the enrichment cascade fills them from other providers and the shared cache
     // covers repeats, so coverage accretes across the hourly scans instead of failing outright.
-    // One credit-budget call per rolling window PER CREDENTIAL (see twelveDataWindowStartByCred).
-    // If another scan already spent this credential's window budget, don't queue — return best-effort
-    // now so this account's scan isn't stalled waiting on a scarce free-tier provider the cascade
-    // covers otherwise.
-    const credKey = twelveDataCredFingerprint(this.apiKey);
-    const nowWin = Date.now();
-    if (nowWin - (twelveDataWindowStartByCred.get(credKey) ?? 0) < twelveDataWindowMs()) {
-      for (const symbol of misses) result[symbol] = {};
-      return result;
-    }
-    twelveDataWindowStartByCred.set(credKey, nowWin);
-
-    const creditsPerMin = twelveDataCreditsPerMin();
-    const toQuery = misses.slice(0, creditsPerMin);
+    // UNIFORM request quota (provider-rate-limit.ts RATE_QUOTAS): twelvedata = 8 credits/min + 800/day,
+    // 1 credit per symbol. admit() returns how many fit RIGHT NOW under both windows — scan-size-agnostic
+    // (works for any number of tickers) and per-credential — and the rest defer best-effort (the cascade
+    // + shared cache cover them; coverage accretes across scans). Never blocks/stalls the scan.
+    const credKey = apiKeyFingerprint(this.apiKey);
+    const symbolsAllowed = admitProviderRequests(this.name, credKey, misses.length);
+    const toQuery = misses.slice(0, symbolsAllowed);
     const skipped = misses.length - toQuery.length;
-    for (const symbol of misses.slice(creditsPerMin)) result[symbol] = {}; // best-effort; not queried this run
+    for (const symbol of misses.slice(symbolsAllowed)) result[symbol] = {}; // deferred; not queried this run
+    if (toQuery.length === 0) return result; // no budget left this window — best-effort only
     if (skipped > 0) {
       // Deliberately NOT a logApiHealth(ok:true) row: that would inflate the success ratio and keep
-      // the circuit breaker from ever seeing a genuinely dead Twelve Data lane (a >8-symbol scan
-      // whose real request below fails would otherwise still record a "success" here). This is a
-      // debug-only note; the actual call's real ok/fail is logged below.
-      console.debug(`[data-providers] TwelveData credit budget: queried ${toQuery.length}/${misses.length} symbols (${skipped} deferred this scan)`);
+      // the circuit breaker from ever seeing a genuinely dead Twelve Data lane. Debug-only; the real
+      // call's ok/fail is logged below.
+      console.debug(`[data-providers] TwelveData quota: queried ${toQuery.length}/${misses.length} symbols (${skipped} deferred this scan)`);
     }
     for (const batch of [toQuery]) {
       try {
@@ -3324,7 +3334,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
         // (they'd be deferred forever). A short TTL rotates it out for a few scans so others get a
         // turn; it's per-provider so other providers still enrich the symbol.
         const negativeCache = (symbol: string) => {
-          writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + twelveDataNegativeTtlMs());
+          writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + providerNegativeTtlMs());
           result[symbol] = {};
         };
         // Tracked across the batch so an ALL-transient batch (mis-sized credit budget, upstream
