@@ -10,6 +10,14 @@ steps materially change.
 
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
+The owner-directed 3-day activity-feed audit is complete: 36-agent workflow over the prod DB,
+every finding adversarially verified. Full ranked report: `docs/reviews/2026-07-09-activity-feed-audit.md`
+(3 quiet P1s — Roth proposer token-cap truncation, thesis-tag split-brain, cross-account reflection
+contamination — plus P2/P3 backlog; the historical feed storms were verified already-fixed).
+Bump-to-floor (owner ruling) merged as PR #1297 `4ef60cd3`, co-finished with the original bump lane
+after the #1280 collision resolved in #1297's favor. Fix backlog items are separate claims.
+
 ## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
 Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
 `app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
