@@ -943,12 +943,30 @@ As of 2026-07-08 (assignment-rule update).
   reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
   cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
   old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
+  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). **CLOSED OUT
+  same evening:** congress.trade IP Access Rule added (owner-authorized; SSE ok:true), first
+  8GB build proven (AG deployer seat, image a8b0185b healthy), docs PR #1247 merged. **DOMAIN
+  RENAME addendum (owner-directed, same evening): Coolify dashboard/API = host.jays.services
+  now; apex jays.services = Mac tunnel, wildcard *.jays.services DELETED; API token rotated —
+  fresh token via secret handoff needed; GitHub App webhook URL still apex (owner to update).**
+  Remaining: owner deletes the old Hetzner server after soak. (Historical remainder of this
+  row below —) OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
   old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
   PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
   (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
   session was permission-blocked from creating firewall rules on that zone); first
   announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
   migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
+- **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
+  branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
+  every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/
+  `llm-provider-test-*` names) into the shared tmp dir — 178k files/~130GB on the fleet Mac
+  before the 2026-07-09 manual cleanup; the disk janitor now reaps them there, but CI and
+  janitor-less machines still accumulate. Fix: vitest `globalSetup` + config-level
+  TMPDIR/TMP/TEMP override pointing the whole test runtime at one per-run
+  `agentic-vitest-*` dir under the real tmpdir, removed on teardown; setup also sweeps
+  stale `agentic-*` leftovers >6h old (janitor parity, parallel-run safe). Zero
+  test-file edits. PR via land.sh when gate green.
 - _Vitest temp-SQLite leak cleanup — duplicate interim row from the landing commit; superseded by
   the consolidated ✅ COMPLETED row above (PR #1268)._
 - **2-3 day activity audit: find unresolved issues (MONET, intro-anim session) — IN
@@ -976,6 +994,15 @@ As of 2026-07-08 (assignment-rule update).
   contract) remains open by design. Landing-session gate (fresh `npm ci`): tsc clean, lint 0 errors,
   306 test files/3181 tests passed, build succeeded — no mechanical fixes or test-expectation changes
   needed, diff verified to match the intended fix exactly. `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`.
+- **Autonomous-actions relative timestamps (MONET, intro-anim session, branch
+  `monet/autonomous-actions-timing-3676f7`) — IN PROGRESS 2026-07-09.** Owner: the Home
+  "Autonomous actions" rows should show relative timing top-right (15m ago / 1d ago) like
+  Journal entries. Reuses the `Ago` primitive (hover = exact time); `DecisionRowData.at`
+  wired from SocraticDecisionCase.createdAt / run createdAt / PendingProposal.createdAt.
+  Fileset: app/console/page.tsx only.
+- **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
+  `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
+  2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the
   _2026-07-09 (CLAUDE usage-cap pickup) CORRECTION + close-out: the "merged" claim above was
   premature — this work was PR #1229, still OPEN and blocked on 5 unresolved codex threads when
   the usage cap hit. All 5 were adversarially verified REAL and fixed in-PR (stale teardown-tick
@@ -1203,6 +1230,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
 
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 - **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — LANDED 2026-07-09 as PR #1272 (auto-merge armed, merging on CI; MONET-authored, committed + landed by CLAUDE under the owner-directed usage-cap pickup — full gate green twice, coexistence with #1222's TwelveData change verified).** Fix as designed: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
 
 
