@@ -302,14 +302,12 @@ Old box: all containers stopped `--restart=no` (rollback standby until owner del
 longer reaches Coolify; the `*.jays.services` wildcard A record was deleted. Every tool/script
 must call `https://host.jays.services/api/v1/...`. The stored Coolify API token also stopped
 authenticating at the same time (likely rotated in the UI) — agents need a fresh token via secret
-handoff; the GitHub App webhook URL (github.com side) still points at the apex and needs updating
-to `host.jays.services`. **Owner action still pending:** delete the old Hetzner server after
-soak. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
-**Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
-the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
-congress-stream SSE 403s — the one migration regression, root-caused); (2) first
-ANNOUNCE-THEN-DEPLOY release on the new box ships main HEAD (`6363e1e7`) — deliberately not
-triggered as part of the migration. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
+handoff (done 2026-07-10: token at `~/.secrets/global-api-keys`, verified). **CLOSED OUT
+2026-07-10:** owner fixed the GitHub App webhook URL and DELETED the old `91.98.44.8` server;
+temp migration_key and the old-IP congress.trade whitelist rule removed. No standby box — DB
+rollback path is the litestream R2 replica. Migration fully complete. (A stale duplicate
+"Owner actions pending" paragraph from a board-sync merge was removed here 2026-07-10 — both
+items were long resolved.) See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
 
 ## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
 Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature
