@@ -62,6 +62,7 @@ import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from 
 const LAST_RUN_KEY_PREFIX = "learning_review:lastRunDate";
 const LAST_FINGERPRINT_KEY_PREFIX = "learning_review:lastFingerprint";
 const LAST_REVIEWED_AT_KEY_PREFIX = "learning_review:lastReviewedAt";
+const LAST_CONFIG_KEY_PREFIX = "learning_review:lastConfig";
 
 const DEFAULT_MIN_NEW_LESSONS = 5;
 const DEFAULT_MAX_WAIT_DAYS = 7;
@@ -98,6 +99,20 @@ function lastFingerprintKey(userId: string): string {
 
 function lastReviewedAtKey(userId: string): string {
   return `${LAST_REVIEWED_AT_KEY_PREFIX}:${userId}`;
+}
+
+function lastConfigKey(userId: string): string {
+  return `${LAST_CONFIG_KEY_PREFIX}:${userId}`;
+}
+
+/** Cheap signature of the review CONFIG (mode + model). A change here must force a fresh review of
+ *  the EXISTING set even when no new lessons arrived: the fingerprint already encodes mode/model,
+ *  but the scheduler's trigger gate short-circuits before the fingerprint is ever built, so the
+ *  scheduler compares this signature directly (#1). Mirrors the runner's mode/model normalization
+ *  (annotate opt-out; a blank model is handled by the no-model skip, not substituted). */
+function reviewConfigSignature(policy: TradingPolicy): string {
+  const mode = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
+  return `${mode}|${policy.learningReviewModel?.trim() ?? ""}`;
 }
 
 /** ms of the last SUCCESSFUL review (0 if never). Used to count "new since last review". */
@@ -472,7 +487,10 @@ export function applyLearningReviewVerdicts(
         if (verdict.verdict === "keep") {
           const pending = pack.pendingById.get(verdict.id) ?? getPendingLearnedContext(verdict.id, userId);
           if (pending && pending.status === "pending") {
-            applyApprovedPending(pending);
+            // Stamp the promoted row at the review's marker time (nowIso == run-start now == the
+            // persisted lastReviewedAt) so the just-approved lesson is not re-counted as new the
+            // next day (#6). See applyApprovedPending's assertedAt note.
+            applyApprovedPending(pending, nowIso);
             action = setPendingLearnedContextStatus(verdict.id, userId, "approved") ? "approved" : null;
           }
         } else if (verdict.verdict === "reject" || verdict.verdict === "expire") {
@@ -573,6 +591,13 @@ export async function runDailyLearningReview(
     // would mark those rows reviewed without any review — so they re-trigger until any newer lesson
     // arrives and a successful review advances lastReviewedAt past them.
     advanceMarker();
+    // Acknowledge the current config (#1) so a config change that finds nothing to review (e.g. all
+    // candidate rows aged out of the pack window) doesn't re-fire this cheap pass every day.
+    try {
+      setInternalSetting(lastConfigKey(userId), reviewConfigSignature(policy));
+    } catch (error) {
+      console.error("[learning-review] failed to persist review config marker:", error);
+    }
     audit("learning_review_summary", { mode, model, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-items" }, userId);
     return { ok: true, skipped: true, reason: "no-items", mode, model, ...empty };
   }
@@ -684,13 +709,37 @@ export async function runDailyLearningReview(
     );
   }
 
-  // Decide (owner opt-in): apply verdicts via the existing mutation paths.
+  // Duplicate-verdict guard (#5): the model may emit MORE THAN ONE verdict for the same shown item
+  // (e.g. keep + reject for one pending row). Applying the raw array would run conflicting mutations
+  // — a risk-tier pending row would be promoted (applyApprovedPending inserts a live learned_context
+  // row) AND marked rejected, or promoted twice — and a plain Set would collapse the duplicates so
+  // the run still counts as "complete", caching a malformed response that is never retried. Fail-safe
+  // (retry rather than apply garbage): treat any item carrying duplicate verdicts as UNreviewed —
+  // never apply its verdicts and never count it as covered, so the run stays incomplete and the same
+  // item set is re-attempted on the next daily tick.
+  const verdictCounts = new Map<string, number>();
+  for (const r of result.reviews) {
+    const key = `${r.table}:${r.id}`;
+    verdictCounts.set(key, (verdictCounts.get(key) ?? 0) + 1);
+  }
+  const duplicatedKeys = new Set([...verdictCounts].filter(([, n]) => n > 1).map(([key]) => key));
+  const applicableReviews = duplicatedKeys.size
+    ? result.reviews.filter((r) => !duplicatedKeys.has(`${r.table}:${r.id}`))
+    : result.reviews;
+
+  // Decide (owner opt-in): apply verdicts via the existing mutation paths. Pass the run-start `now`
+  // as nowIso (#6) so promoted rows are stamped at == the persisted lastReviewedAt and not re-counted
+  // as new the next day.
   const { applied, failures } =
-    mode === "decide" ? applyLearningReviewVerdicts(userId, result.reviews, pack) : { applied: [] as AppliedVerdict[], failures: 0 };
+    mode === "decide"
+      ? applyLearningReviewVerdicts(userId, applicableReviews, pack, new Date(now).toISOString())
+      : { applied: [] as AppliedVerdict[], failures: 0 };
 
   // Coverage: parse success does not imply every shown item got a verdict (malformed entries are
-  // dropped; the model may omit items). Track it so an incomplete review is re-attempted.
-  const covered = new Set(result.reviews.map((r) => `${r.table}:${r.id}`));
+  // dropped; the model may omit items; items with duplicate verdicts are dropped above). An item
+  // counts as covered only when it received EXACTLY ONE verdict. Track it so an incomplete review
+  // is re-attempted.
+  const covered = new Set([...verdictCounts].filter(([, n]) => n === 1).map(([key]) => key));
   const complete = pack.items.every((it) => covered.has(`${it.table}:${it.id}`));
 
   const flagged = result.reviews.filter((r) => r.verdict !== "keep").length;
@@ -704,6 +753,7 @@ export async function runDailyLearningReview(
       flagged,
       applied: applied.length,
       coverageComplete: complete,
+      duplicateItems: duplicatedKeys.size,
       applyFailures: failures,
       summary: result.summary
     },
@@ -720,6 +770,7 @@ export async function runDailyLearningReview(
     try {
       setInternalSetting(lastFingerprintKey(userId), fingerprint);
       setInternalSetting(lastReviewedAtKey(userId), String(now));
+      setInternalSetting(lastConfigKey(userId), reviewConfigSignature(policy));
     } catch (error) {
       console.error("[learning-review] failed to persist review markers:", error);
     }
@@ -761,7 +812,15 @@ export async function runDailyLearningReviewIfDue(
     // Threshold OR max-age: don't spend a call until enough new lessons pile up, but never let
     // the oldest un-reviewed lesson linger past the max wait. Cheap — no LLM, no pack build.
     const trigger = evaluateLearningReviewTrigger(userId, now, policy);
-    if (!trigger.shouldRun) return null;
+    // Also re-review when the owner CHANGED the review config (annotate<->decide, or the reviewer
+    // model) since the last successful review (#1): the same set must be re-evaluated/applied under
+    // the new mode/model. The trigger only counts NEW lessons, and the fingerprint's mode/model
+    // awareness lives past this gate (inside runDailyLearningReview) and would never be reached, so
+    // an unchanged set would otherwise never re-run. priorConfig === undefined ⇒ a never-reviewed
+    // user, already governed by the trigger. Runs at most once (the run stores the new signature).
+    const priorConfig = getInternalSetting<string>(lastConfigKey(userId));
+    const configChanged = priorConfig !== undefined && priorConfig !== reviewConfigSignature(policy);
+    if (!trigger.shouldRun && !configChanged) return null;
     return await runDailyLearningReview(userId, { now, policyOverride: policy });
   } catch (error) {
     console.error("[learning-review] daily run error:", error);

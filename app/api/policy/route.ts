@@ -100,6 +100,14 @@ export async function PUT(request: Request) {
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
+  // EXCEPTION — learningReviewModel: a cleared model must be REJECTED, not stripped. validatePolicy
+  // rejects a blank STRING below, but a `null` would be deleted by stripNullsDeep before that check
+  // runs, and setPolicy would then merge DEFAULT_POLICY.learningReviewModel (claude-fable-5) back —
+  // the exact silent clear->default this route exists to prevent (owner: require a model be chosen;
+  // no hidden model default). Reject the null clear explicitly, mirroring the blank-string path.
+  if (body.learningReviewModel === null) {
+    return new NextResponse("learningReviewModel must be a non-empty model id.", { status: 400 });
+  }
   stripNullsDeep(policy as unknown as Record<string, unknown>);
   normalizeExclusivePolicyCaps(policy);
   // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually

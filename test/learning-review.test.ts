@@ -413,6 +413,69 @@ describe("skip unchanged sets", () => {
   });
 });
 
+// ── PR #1278 review-round hardening (#1 config re-run gate, #5 dup verdicts, #6 approval marker) ──
+
+describe("PR #1278 review-round hardening", () => {
+  it("scheduler re-runs on a review-config change even with no new lessons (#1)", async () => {
+    const userId = `lr-cfggate-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    seedLearnedRow(userId);
+    // Day 1: a successful annotate review stores lastReviewedAt + the config signature.
+    expect((await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() })).ok).toBe(true);
+
+    const nextDay = NOW + 86_400_000;
+    // Control: unchanged config, no new lessons -> the scheduler gate stays quiet (returns null).
+    expect(await runDailyLearningReviewIfDue(userId, nextDay)).toBeNull();
+
+    // Change the reviewer model (a config change) with NO new lessons: the gate must now OPEN and
+    // invoke the runner instead of short-circuiting — proving the same set is re-reviewed under the
+    // new config. A blank model makes the runner take the cheap 'no-model' skip (deterministic, no
+    // network), which is enough to prove the gate opened.
+    setPolicy({ ...getPolicy(userId), learningReviewModel: "" }, userId);
+    const rerun = await runDailyLearningReviewIfDue(userId, nextDay);
+    expect(rerun).not.toBeNull();
+    expect(rerun?.reason).toBe("no-model");
+  });
+
+  it("treats duplicate verdicts for one item as incomplete and never applies them (#5)", async () => {
+    const userId = `lr-dup-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    const pending = seedPendingRow(userId);
+    // The model emits TWO conflicting verdicts for the same pending id (keep + reject).
+    const llm = async (spec: { userContent: string }) => {
+      const item = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"] }> })
+        .reviewItems[0];
+      return verdictJson([
+        { id: item.id, table: item.table, verdict: "keep", confidence: 90, reasoning: "sound" },
+        { id: item.id, table: item.table, verdict: "reject", confidence: 80, reasoning: "corrupt" }
+      ]);
+    };
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm });
+    // Neither verdict is applied: the pending row is not promoted AND not rejected — it stays pending.
+    expect(getPendingLearnedContext(pending.id, userId)?.status).toBe("pending");
+    expect(day1.applied).toBe(0);
+    // The duplicated item counts as UNcovered, so the run is incomplete and re-attempted next day.
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm });
+    expect(day2.reason).not.toBe("unchanged");
+  });
+
+  it("does not re-review just-approved pending items the next day (#6)", async () => {
+    const userId = `lr-approve-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "decide");
+    // Enough pending items to meet the default threshold (5) so a naive re-count WOULD re-trigger.
+    Array.from({ length: 5 }, () => seedPendingRow(userId));
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm: keepAllLlm() });
+    expect(day1.ok).toBe(true);
+    expect(day1.applied).toBe(5);
+
+    // The promoted rows are stamped at the review marker (== lastReviewedAt), so the trigger sees
+    // NO new lessons the next day and the scheduler does not spend a call re-reviewing them.
+    const nextDay = NOW + 86_400_000;
+    expect(evaluateLearningReviewTrigger(userId, nextDay, getPolicy(userId)).reason).toBe("no-new-items");
+    expect(await runDailyLearningReviewIfDue(userId, nextDay)).toBeNull();
+  });
+});
+
 // ── User-level scoping: config overlays every account (the review runs once per user) ──
 
 describe("user-level scoping", () => {

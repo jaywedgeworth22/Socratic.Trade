@@ -182,3 +182,53 @@ no-hidden-model-default, decide-default, user-level scoping, per-call cost recor
 asks, NOT in #1278): the two trigger fields' Settings UI knobs, a "Global Settings" section rename,
 a per-call cost DISPLAY (usage page groups by model, not yet by context), and the open
 "more than one model reviews the lessons?" question.
+
+---
+
+## 2026-07-10 addendum 2 — Codex P2 review-round triage on #1278 (MONET, adversarially verified)
+
+**Context.** #1278's CI was green but the merge was held by the conversation-resolution gate: 6
+unresolved Codex-bot P2 threads on the learning-review path. Each was adversarially verified against
+the CURRENT code (post-8da047aa) by an independent agent, then cross-checked by hand.
+
+**Fixed (this PR):**
+- **#1 config-change re-run gate** (`learning-review.ts`): the scheduler's trigger gate short-circuited
+  before the mode/model-aware fingerprint was ever built, so flipping annotate↔decide or changing the
+  reviewer model with no new lessons silently never re-reviewed the existing set. Added a cheap config
+  signature (`learning_review:lastConfig` = `mode|model`), persisted on each successful review and on
+  the no-items skip; the scheduler now also re-runs when that signature changed. Self-healing (fires at
+  most once), honors "only run when there's something to review" (a config change IS the new thing).
+- **#4 reject null model clear** (`app/api/policy/route.ts`): a cleared model serializes to `null`, which
+  `stripNullsDeep` deleted BEFORE `validatePolicy`'s non-empty check ran, so `null` slipped past the
+  blank-string guard and `setPolicy` merged the claude-fable-5 default back — a hidden clear→default the
+  owner banned. Now rejected with an explicit 400 before stripping. (The verifying agent initially ruled
+  this "not-a-defect" on a misread of `defaults.ts`/the settings UI; hand-verification confirmed the
+  finding is real and owner-aligned.)
+- **#5 duplicate-verdict guard** (`learning-review.ts`): two verdicts for one shown id (e.g. keep+reject)
+  both applied (double-promote / promote+reject) while a Set collapsed them so the run cached as complete.
+  Items carrying duplicate verdicts are now excluded from apply AND from coverage, so the run stays
+  incomplete and retries. Behavior-identical on the normal (no-duplicate) path.
+- **#6 approval marker timestamp** (`learned-context/store.ts` + `learning-review.ts`): decide-mode
+  promotions were stamped with real application time (> the run-start `lastReviewedAt`), so the trigger
+  re-counted just-approved lessons as new the next day and spent a wasted review. `applyApprovedPending`
+  now takes a caller-supplied `assertedAt`; the review passes its run-start `now` so promoted rows sit at
+  == `lastReviewedAt` and are excluded by the trigger's strict `>`. Human approve route unchanged (keeps
+  real approval time — a human-approved lesson SHOULD trigger a future review).
+
+**Deferred (real but non-trivial; tracked as follow-ups, resolved with notes):**
+- **#2 unshown-item orphaning** (>80-item backlog): a complete review of the shown 80 advances
+  `lastReviewedAt` to `now`, marking the unshown remainder reviewed so they stop counting. Real, but a
+  safe fix must sweep oldest-first + add a `truncated` flag + advance the marker only for shown items,
+  without breaking the annotate-mode fingerprint gating 8da047aa just tuned. Follow-up PR.
+- **#3 legacy-seed default-blob edge** (`db-profiles.ts`): the seed bails when any learningReview* key is
+  present in `user_settings.policy`, so a pre-cutover full-blob with `enabled:false` can mask an
+  account-level enabled review. Fail-closed (reads OFF, one-click recoverable), sole-user blast radius; a
+  naive fix can't distinguish a stale default-false from a deliberate disable and could clobber intent.
+  Follow-up PR.
+
+**Tests added:** `test/learning-review.test.ts` — #1 scheduler re-run on config change, #5 duplicate
+verdicts incomplete+not-applied, #6 no re-review of just-approved items; `test/learning-review-policy-route.test.ts`
+— #4 null-model clear rejected.
+
+**Verification.** node@24. tsc clean; the 3 new learning-review tests + the #4 route test pass in
+isolation; full suite deferred to CI (local box thrashing at load ~185, multi-agent). Build: see commit.

@@ -44,6 +44,22 @@ describe("/api/policy — learningReviewModel blank handling", () => {
     expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("gpt-5.5");
   });
 
+  it("rejects a null model clear too, not just a blank string (#4)", async () => {
+    // Regression: a cleared optional field serializes to `null`, which stripNullsDeep deleted BEFORE
+    // validatePolicy's non-empty check ran — so a null slipped past the blank-string guard and
+    // setPolicy merged the claude-fable-5 default back (a hidden clear->default the owner banned).
+    const { PUT } = await import("../app/api/policy/route");
+    const { getPolicy } = await import("../src/lib/db");
+    const { DEFAULT_REQUEST_USER_ID } = await import("../src/lib/request-user");
+
+    expect((await PUT(putPolicy({ learningReviewModel: "gpt-5.5" }))).status).toBe(200);
+    const response = await PUT(putPolicy({ learningReviewModel: null }));
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("learningReviewModel must be a non-empty model id.");
+    // Not silently reverted to the default — the explicit selection stands.
+    expect(getPolicy(DEFAULT_REQUEST_USER_ID).learningReviewModel).toBe("gpt-5.5");
+  });
+
   it("still accepts a real model change", async () => {
     const { PUT } = await import("../app/api/policy/route");
     const response = await PUT(putPolicy({ learningReviewModel: "claude-opus-4-8" }));
