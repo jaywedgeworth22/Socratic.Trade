@@ -51,9 +51,16 @@ else none, no silent medium→high upgrade); `mistral-small-2603` rejects `promp
 outright, so it and every other Mistral id now send a plain chat body with no reasoning params.
 Rotation-pool re-add deliberately deferred to a keyed re-benchmark (neither model has ever
 completed a benchmarked call). Gate green: lint 0 errors / tsc clean / 310 files 3246 tests /
-build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`. Remaining queue: reviewedByModel
-stamp (after bump-to-floor lands — strategy.ts collision), strategy.ts split (needs freeze
-window).
+build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`.
+**Close-out 2026-07-10:** MERGED as PR #1279 (`d6b7dee3`, 05:41Z; fake-CONFLICTING wedge cleared
+with a fresh main-merge head) and DEPLOYED in the 06:20Z release (prod = `main@420c6747`).
+Handoff-queue state after verification: reviewedByModel stamp = ALREADY DONE (AG PR #1282
+`15c2560e` — verified against the queue item's intent; MONET claim withdrawn, board rows
+corrected); Mistral capmap = done (this PR); strategy.ts split = remains in the board's
+unassigned owner-decision bucket, start only after the open strategy.ts PRs (#1297, #1295)
+land and with an announced freeze window. Fleet env note: brew default node is now v26 —
+run `npm test`/`land.sh` in existing worktrees with `PATH=/opt/homebrew/opt/node@24/bin:$PATH`
+(`.nvmrc` pins 24; better-sqlite3 ABI mismatch otherwise).
 ## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
 Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
 policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled
