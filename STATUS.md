@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Console loading permafix: abort-storm coalescing + dashboard.ts parallelization (CLAUDE, branch `claude/loading-permafix`)
+Production console still took minutes to first-paint after PR #1293 (deadlines + watchdog) landed.
+Two compounding causes: (1) `useConsoleData.tsx`'s `refresh()` aborted the in-flight fetch on every
+SSE event and poll tick, so the slow initial fetch kept getting restarted during active scans; (2)
+`getDashboardSnapshot` ran its 9 `withDeadline`-wrapped upstream sections sequentially (~46s worst
+case). Fixed: background (SSE/interval/tab-visible) refreshes now coalesce instead of abort-and-
+restart (supersedes the still-open AG PR #1285 — commented there crediting the diagnosis); the
+broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequential) now runs via
+`Promise.all` against the independent group (Robinhood MCP health + macro/signals/history/news),
+cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
+log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
+files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+
 ## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
 Owner-directed recommendation rethink, implemented from a judged synthesis (3 judges converged
 on the same 4 chips). Display-only: GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =

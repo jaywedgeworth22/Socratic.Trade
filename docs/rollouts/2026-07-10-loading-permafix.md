@@ -1,0 +1,140 @@
+# 2026-07-10 — Console loading permafix (abort-storm coalescing + dashboard.ts parallelization)
+
+**Author:** CLAUDE (sonnet engineer agent) · **Branch:** `claude/loading-permafix`
+
+## Summary
+
+socratictrade.com's console still took minutes to first-paint even after PR #1293 (`withDeadline`
+wrappers + ipv4first + the 15s first-load watchdog) landed. Root cause was two compounding
+problems, neither of which #1293 or the still-open AG PR #1285 fully closed:
+
+1. **Abort storm** (`app/console/lib/useConsoleData.tsx`) — `refresh()` began with
+   `inFlight.current?.abort()`. During an active scan, SSE events (`market-data`, `run-complete`,
+   etc.) and the 15s poll interval both call `refresh()` every few seconds, so the slow initial
+   `GET /api/dashboard` fetch kept getting killed and restarted before it could ever finish — it
+   only completed once a quiet gap of several seconds happened to appear between triggers.
+2. **Sequential deadline stacking** (`src/lib/dashboard.ts`) — `getDashboardSnapshot` ran every
+   `withDeadline`-wrapped upstream section one after another: accounts (6s) -> Robinhood MCP
+   health (4s) -> portfolio/positions/orders (8s) -> quotes (6s) -> SPY benchmark (4s) -> macro
+   (6s) -> signals (4s) -> history (4s) -> news (4s) ~= 46s worst case. Individual timeouts
+   prevented any single call from hanging forever, but they still added instead of overlapping.
+
+## Why (root-cause story)
+
+PR #1293 added `withDeadline()` around every upstream call so a single hung request could no
+longer block the snapshot forever, plus a 15s watchdog so the console UI would fall back to its
+error card instead of an infinite logo. That fixed "hangs forever." It did not fix "takes way too
+long" — the deadline-guarded sections still ran back-to-back, and the abort storm meant even a
+moderately slow (not hung) request rarely got the chance to complete before being restarted.
+
+AG's PR #1285 (open, not yet merged) independently diagnosed the abort storm and added a
+`background?: boolean` option to `refresh()`: background (SSE/interval) refreshes **skip** if a
+fetch is already in flight, instead of aborting it. That is a real fix for the SSE/interval case,
+but it (a) doesn't coalesce — a skipped background refresh has no memory, so if nothing else
+happens to trigger another refresh soon after the in-flight one settles, the UI can go stale until
+the next poll tick — and (b) doesn't cover the tab-visibility refresh, which still aborts.
+
+## What changed
+
+### `app/console/lib/useConsoleData.tsx`
+Split `refresh` into two internal notions while keeping the public `ConsoleData.refresh` signature
+and behavior unchanged for every existing caller (`refresh: () => Promise<void>`, used by ~25 call
+sites across the console for user actions/mutations):
+- **`refresh()`** (exported, unchanged signature) — explicit foreground refresh for the initial
+  mount load and every user action/mutation (approve/reject, place/cancel an order, save a
+  setting, etc.). Aborts and replaces whatever is in flight, same as before.
+- **`backgroundRefresh()`** (new, internal) — used for the poll interval, the SSE-triggered
+  `queueRefresh`, and the tab-visibility handler. Never aborts an in-flight fetch. If one is
+  already running, it just marks `pendingBackgroundRefresh.current = true` and returns; when the
+  in-flight fetch settles, it runs exactly one more fetch if the flag is still set (coalescing any
+  number of triggers that arrived meanwhile into a single extra fetch), then stops. An explicit
+  `refresh()` call clears the pending flag and takes over `inFlight` — `backgroundRefresh` checks
+  it still owns `inFlight` before consuming the flag, so it doesn't fight a foreground refresh that
+  superseded it.
+
+This treats tab-visibility as a background trigger too (AG's PR only treated SSE + interval as
+background), since a user switching tabs back is not a mutation and can race with an in-flight
+fetch exactly like an SSE event can.
+
+**Supersedes the still-open AG PR #1285** — same root-cause diagnosis, credit to AG for finding
+it; this lands a more complete fix (coalescing + tab-visibility coverage) so #1285's `useConsoleData`
+diff is no longer needed. Commented on #1285 after landing to say so, with thanks.
+
+### `src/lib/dashboard.ts`
+`getDashboardSnapshot`'s upstream calls split into two groups run concurrently via one
+`Promise.all`, instead of nine sequential `await`s:
+
+- **Broker chain (kept sequential — genuine data dependency):** `gateway.getAccounts()` ->
+  compute `accountNumber` (`policy.accountNumber` falls back to a discovered live account from the
+  accounts call when unset) -> `Promise.all([getPortfolio, getEquityPositions, getEquityOrders])`
+  -> `gateway.getEquityQuotes(accountNumber, priceSymbols)` (needs the resolved `positions`) ->
+  the live current-price map. Wrapped in one async IIFE (`brokerChainPromise`) returning everything
+  downstream code needs (`accounts`, `liveAccounts`, `brokerAccountReadError`, `accountNumber`,
+  `portfolio`, `positions`, `orders`, `portfolioReadError`, `currentPrices`).
+- **Independent group (raced against the chain):** Robinhood MCP health (only depends on
+  `userId`/broker, not on the accounts/portfolio chain) and the entire macro board — `fetchMacroData`,
+  `getMarketSignals`, `fetchMacroHistory`, `fetchMassiveNews` — none of which read anything the
+  broker chain produces.
+- **SPY benchmark** stays sequential *after* the `Promise.all`, since it needs the performance
+  summary built from `currentPrices` (itself the last step of the broker chain) — its inputs don't
+  allow parallelizing it against the chain.
+
+Net effect: worst-case latency drops from the sum of all nine deadlines (~46s) to roughly the
+broker chain's own worst case (6+8+6=20s) plus the benchmark's 4s (~24s), since the chain is the
+long pole and everything else now overlaps it instead of stacking after it.
+
+Also added one summary log per request: `console.warn(`[dashboard] snapshot ${ms}ms (timed out:
+a,b)`)`, emitted only when the total exceeds 3000ms or any section timed out (tracked via a new
+optional `timedOutSections: string[]` sink threaded through every `withDeadline(...)` call). Normal
+fast requests stay silent; slow/degraded ones are now visible in Coolify logs without needing to
+grep for the nine individual per-section timeout warnings.
+
+Output shape and every existing fallback are unchanged — this is purely a scheduling change
+(what runs concurrently vs. sequentially), not a behavior change to any individual section.
+
+## Files
+- `app/console/lib/useConsoleData.tsx`
+- `src/lib/dashboard.ts`
+- `docs/EFFORT-LOG.md` / `/Users/jay/apps/TRADING-EFFORT-LOG.md` (new entry + corrected the stale
+  "PR pending" state on the already-merged #1293 entry + resolved the related TBD backlog line)
+- `STATUS.md`
+
+## Verification
+Run from a dedicated isolated worktree (see "Worktree note" below):
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — 0 errors (377 pre-existing grandfathered warnings, unrelated to this change).
+- `npm test` — 3374 tests passed, 315 files.
+- `npm run build` — clean.
+- Manual timing: `npm start` on a free local port with an empty dev DB (no connected broker
+  account, so no upstream broker calls fire) — two `curl -w %{time_total}` requests to
+  `/api/dashboard` measured ~874ms (cold) then ~6ms (warm). This is expected to be small in this
+  environment: with no connected account there are no slow upstreams to parallelize against, so
+  the dev-DB numbers don't demonstrate the fix — the structural change (verified via the dependency
+  analysis above + all tests passing) is what matters. No `[dashboard] snapshot` log line fired,
+  correctly, since neither threshold condition (>3000ms or a timeout) was met.
+
+## Worktree note (environment issue, not part of the fix)
+The assigned worktree (`/Users/jay/Code/Socratic.Trade/.claude/worktrees/vibrant-bouman-10388c`)
+turned out to be concurrently in use by a live, long-running Claude session on branch
+`claude/settings-global-only` (the tracked "Settings IA restructure" effort — see that entry in
+`docs/EFFORT-LOG.md`). While this task's edits sat uncommitted, that other session checked out its
+own branch in the same physical worktree, which would have mixed the two efforts' uncommitted
+changes into a single working tree. Recovered by: diffing out only the two files this task touched
+(confirmed their committed content was byte-identical on both branches, so the diff was
+uncontaminated), reverting them in the shared worktree to leave the other session's work exactly as
+it was, and finishing this task in a fresh, dedicated worktree
+(`git worktree add .../wt-loading-permafix claude/loading-permafix`) with its own `npm ci`. No
+files belonging to the other effort were read, moved, or modified beyond the unavoidable `git
+status`/`git diff` used to confirm the byte-identical baseline.
+
+## Follow-ups
+- After this PR merges, comment on AG's PR #1285 that it's superseded by this change (crediting
+  the diagnosis) and close it without merging.
+- The dev-DB timing measurement above doesn't exercise slow upstreams; the real validation is
+  production log volume of `[dashboard] snapshot` lines (and their duration) after deploy — watch
+  Coolify logs for a few days to confirm p95/worst-case actually dropped.
+- Worst case is still ~24s (dominated by the broker chain, which has a genuine 3-stage data
+  dependency: accounts -> portfolio bundle -> quotes). If that's still too slow in practice, the
+  next lever would be shrinking those three deadlines (6s/8s/6s) rather than further
+  parallelization, since the remaining chain can't be parallelized without changing what
+  `accountNumber`/`quotes` are allowed to depend on.

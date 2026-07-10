@@ -69,11 +69,12 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   const inFlight = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const queuedRefresh = useRef<number | null>(null);
+  // Set when a background trigger (SSE event, poll interval, tab becoming visible) arrives while a
+  // fetch is already in flight. Consumed once that fetch settles, to run exactly one more
+  // (coalesced) fetch instead of a fresh abort-and-refetch per trigger — see backgroundRefresh below.
+  const pendingBackgroundRefresh = useRef(false);
 
-  const refresh = useCallback(async () => {
-    inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
+  const runFetch = useCallback(async (controller: AbortController) => {
     try {
       const data = await fetchDashboard<DashboardSnapshot>(controller.signal);
       if (!mounted.current || controller.signal.aborted) return;
@@ -87,25 +88,64 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Explicit foreground refresh: the initial load and every user action/mutation (approve/reject,
+  // place/cancel an order, save a setting, etc. — everything callers pull `refresh` from
+  // useConsoleData() for). The caller wants strictly fresh data right now, so this aborts and
+  // replaces whatever is in flight (background or foreground) and any coalesced background request
+  // that was waiting is moot once this fetch lands.
+  const refresh = useCallback(async () => {
+    pendingBackgroundRefresh.current = false;
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+    await runFetch(controller);
+    if (inFlight.current === controller) inFlight.current = null;
+  }, [runFetch]);
+
+  // Background refresh: SSE events, the poll interval, and tab-visibility resync. Must NEVER abort
+  // an in-flight fetch — that abort-storm was the root cause of the console taking minutes to
+  // first-paint: during an active scan, SSE market-data/run-complete events (and the poll interval)
+  // fire every few seconds, so the slow initial fetch kept getting killed and restarted before it
+  // could ever finish, until a quiet gap happened to appear. If a fetch is already in flight, just
+  // mark that a refresh was requested and let the in-flight one finish; once it settles (and only if
+  // this call still owns `inFlight` — an explicit refresh() may have superseded it), run exactly one
+  // more fetch when a background refresh is still pending, coalescing any number of triggers that
+  // arrived in the meantime into a single extra fetch.
+  const backgroundRefresh = useCallback(async () => {
+    if (inFlight.current) {
+      pendingBackgroundRefresh.current = true;
+      return;
+    }
+    for (;;) {
+      const controller = new AbortController();
+      inFlight.current = controller;
+      await runFetch(controller);
+      if (inFlight.current !== controller) return; // superseded by an explicit refresh()
+      inFlight.current = null;
+      if (!pendingBackgroundRefresh.current) return;
+      pendingBackgroundRefresh.current = false;
+    }
+  }, [runFetch]);
+
   const queueRefresh = useCallback(() => {
     if (typeof window === "undefined") return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     if (queuedRefresh.current) window.clearTimeout(queuedRefresh.current);
     queuedRefresh.current = window.setTimeout(() => {
       queuedRefresh.current = null;
-      void refresh();
+      void backgroundRefresh();
     }, EVENT_REFRESH_DEBOUNCE_MS);
-  }, [refresh]);
+  }, [backgroundRefresh]);
 
   useEffect(() => {
     mounted.current = true;
     void refresh();
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void refresh();
+      void backgroundRefresh();
     }, POLL_MS);
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") void backgroundRefresh();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -115,7 +155,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       if (queuedRefresh.current) clearTimeout(queuedRefresh.current);
       inFlight.current?.abort();
     };
-  }, [refresh]);
+  }, [refresh, backgroundRefresh]);
 
   // First-load watchdog: self-contained, independent of refresh()/the effect above. While no
   // snapshot has arrived and no error has been reported yet, arm a timer; if it fires first, flip to
