@@ -1392,13 +1392,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Broker minimum BUMP-TO-FLOOR (MONET, intro-anim session, branch
-  `monet/broker-min-bump-3676f7`) — IN PROGRESS 2026-07-09, adversarial review running,
-  landing next.** Takes over the capped session's claim (its branch monet/broker-min-bump-to-floor
-  had zero commits). Owner ruling: sub-minimum orders bump TO the broker floor and place
-  (audited order_bumped_broker_minimum, re-reviewed, still policy-evaluated); skip stays as
-  brokerMinimumHandling="skip". Sells cap at full position; opening bumps decline when the
-  floor exceeds the effective per-order cap. New guardrails "Sub-minimum orders" select.
 - **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
   subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
   IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting
