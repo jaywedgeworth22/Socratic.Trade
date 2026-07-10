@@ -22,6 +22,7 @@ import {
   transitionProposalIfPending,
   upsertSocraticDecisionCase,
   createSocraticFrameworkProposal,
+  updatePendingProposalReprice,
   updateProposalStatus,
   updateFillEvent
 } from "./db";
@@ -71,6 +72,8 @@ import { resolveCongressGateMultiplier } from "./congress-score-gate";
 import type { ThesisStat, ThesisRegimeStat } from "./performance";
 import type { SituationCandidate } from "./experience-memory";
 import { allowedSymbolsForPolicy, applyOpeningOrderHeadroom, betaScaledStopPct, estimateNotional, evaluateTradeProposal, isIraTaxRegime } from "./policy";
+import { assessProtectiveExitRepriceDrift, extendedHoursExitBufferBps, marketableLimitExitPrice, repriceStoredProtectiveExit } from "./protective-exit-routing";
+import type { ProtectiveExitQuote } from "./protective-exit-routing";
 import { DEFAULT_TAX_SETTINGS } from "./defaults";
 import { atr, atrStopPct } from "./indicators";
 import { computePortfolioHeat, positionRiskUsd, realizedVolPct, volTargetScale, type PortfolioHeatResult } from "./vol-targeting";
@@ -121,7 +124,7 @@ import {
   type SocraticOverrideResolution
 } from "./socratic-runtime";
 import { indexSocraticDecisionMemory } from "./socratic-memory";
-import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
+import type { ApprovedEscalation, EquityOrder, EquityPosition, ExecutionMode, FillSource, MarketFactorBreakdown, MarketQuote, MarketQuoteSummary, MarketScan, OrderSide, PolicyDecision, Portfolio, RationaleDiversity, ReviewedOrder, ScoringWeights, SocraticDecisionCase, SocraticEvidenceItem, SocraticRagAttribution, TradingPolicy, TradeProposal } from "./types";
 import { computeRationaleDiversity } from "./rationale-diversity";
 import { isMarketOpen } from "./market-calendar";
 import { isTradingDay } from "./market-calendar";
@@ -722,7 +725,16 @@ export async function runStrategyOnce(
           })
       );
     }
-    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol);
+    // Extended-hours protective-exit routing is decided ONCE here (the run knows the wall-clock
+    // session); the pure generator just receives the buffer (undefined ⇒ default market/queue-to-open)
+    // plus real bid/ask anchors per symbol — a SELL limit must cross the BID (the composite scan price
+    // is ask-biased), a COVER the ASK. Synthesized spread sides never anchor (protectiveExitQuoteFromScan).
+    const exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {};
+    for (const [sym, q] of Object.entries(marketScan.quotesBySymbol)) {
+      const ref = protectiveExitQuoteFromScan(q);
+      if (ref && (ref.bid !== undefined || ref.ask !== undefined)) exitQuotesBySymbol[normalizeSymbol(sym)] = ref;
+    }
+    const proactiveProposals = generateProactiveRiskProposals(workingPositions, currentPrices, policy, betaBySymbol, atrStopPctBySymbol, extendedHoursExitBufferBps(policy), exitQuotesBySymbol);
     // Partial take-profit trims (laddered per band so they trim once per band, not every run). The band
     // is committed only when a trim actually FILLS (recordFillFromProposal), so a proposed/blocked/rejected
     // trim is re-offered next run; here we only read prior bands and prune fully-closed positions (hygiene).
@@ -3220,6 +3232,32 @@ export function applyDeterministicSizing(
     }
   }
 
+  // Broker-dollar-minimum floor: Robinhood (and potentially other brokers) reject
+  // dollar-based/fractional orders below a hard minimum notional (Robinhood: $1).
+  // Raise the sized notional to at least that floor when capacity allows, so
+  // proposals never reach the broker with notional values that are certain to be
+  // rejected. When capacity does NOT allow even the minimum, the order is too small
+  // to place — the policy review will block it on per-order-cap grounds.
+  const brokerMinDollar = brokerMinimumDollarNotional(policy);
+  let brokerMinNote = "";
+  // Guard on the PRE-rounding source intent, not the post-rounding `targetNotional`. A positive
+  // source size — the LLM-advised notional or the fallback size — that rounded DOWN below the floor
+  // (e.g. an advised $0.22, or any positive fallback under $1) otherwise collapses to $0 and skips
+  // this raise, reaching the broker as a guaranteed reject — the exact zero-notional path this floor
+  // exists to eliminate. Only raise when capacity can actually cover the minimum.
+  const rawSourceNotional = advisedNotional && advisedNotional > 0
+    ? advisedNotional
+    : Math.max(0, fallbackBase) * finalMultiplier;
+  if (
+    brokerMinDollar > 0 &&
+    targetNotional < brokerMinDollar &&
+    (targetNotional > 0 || rawSourceNotional > 0) &&
+    brokerMinDollar <= effectiveOpeningCap
+  ) {
+    brokerMinNote = `\n\n[Sizing] Raised ${formatWholeDollars(targetNotional)} to ${formatWholeDollars(brokerMinDollar)} to meet ${brokerLabel(policy)}'s minimum dollar-based order size.`;
+    targetNotional = brokerMinDollar;
+  }
+
   // Visibility: when the conviction cap actually BINDS (uncorroborated thesis whose raw AI
   // conviction exceeded the cap), surface that the size could not ride confidence alone. Suppressed
   // for unproven theses, which already report the exploratory-floor reason below.
@@ -3241,7 +3279,7 @@ export function applyDeterministicSizing(
     ...proposal,
     dollarAmount: targetNotional,
     quantity: undefined, // Override any LLM-guessed quantity to force notional routing
-    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + (unproven
+    rationale: proposal.rationale + advisedSizeNote + fallbackSizeNote + bracketMinNote + brokerMinNote + (unproven
       ? ` — EXPLORATORY floor: thesis has ${sampleTrades} closed lot${sampleTrades === 1 ? "" : "s"} (< ${minLotsForSizing}); held to minimum size until validated.`
       : ` from ${winRate}% win rate, ${avgReturn}% avg edge, and ${Math.round(conviction * 100)}% AI conviction.`) + capNote + advCapNote + volTargetNote + heatNote + kellyNote
   };
@@ -3266,6 +3304,21 @@ function bracketWholeShareMinimum(proposal: TradeProposal, policy: TradingPolicy
   return typeof referencePrice === "number" && Number.isFinite(referencePrice) && referencePrice > 0
     ? referencePrice
     : undefined;
+}
+
+/** Hard minimum dollar notional a broker requires for dollar-based/fractional orders.
+ *  Returns 0 when the broker has no known minimum (whole-share orders bypass this floor). */
+function brokerMinimumDollarNotional(policy: TradingPolicy): number {
+  // Robinhood rejects dollar-based orders below $1 ("must be at least $1").
+  if (policy.activeBroker === "robinhood") return 1;
+  return 0;
+}
+
+/** Human-readable broker name for sizing notes. */
+function brokerLabel(policy: TradingPolicy): string {
+  if (policy.activeBroker === "robinhood") return "Robinhood";
+  if (policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp") return "Alpaca";
+  return policy.activeBroker ?? "broker";
 }
 
 function estimateOpeningProposalNotional(proposal: TradeProposal, marketScan?: MarketScan): number | undefined {
@@ -3499,6 +3552,8 @@ export async function executeProposal(
     throw new Error("Proposal execution mode no longer matches the selected mode. Re-run the strategy before approving.");
   }
 
+  // `let`: an approval-held protective exit is repriced against the fresh approval-time quote
+  // below, and a below-broker-minimum order is rebound to its bumped sizing before placement.
   let proposal = row.proposal;
   assertLiveApprovalConfirmation({
     executionMode,
@@ -3545,6 +3600,71 @@ export async function executeProposal(
     const currentPrices = currentPricesFromScan(approvalScan);
     const account = { portfolio, positions };
     await notifyStaleLimitOrders({ userId, policy, orders });
+
+    // Approval-held protective exits: an extended-hours marketable-limit stored on the card was
+    // priced off the generation-time quote and goes stale while it waits for a human — a quote that
+    // moved through the stored limit would leave the once-marketable order resting unfilled where
+    // the queue-to-open market exit still gets out. Re-resolve the routing off the fresh quote and
+    // wall clock (degrading to market/regular_hours when the extended session no longer applies) and
+    // review/evaluate/place the repriced order. Everything else passes through untouched.
+    const storedProposal = proposal;
+    const approvalExitQuote = protectiveExitQuoteFromScan(
+      approvalScan.quotesBySymbol[proposal.symbol] ?? approvalScan.quotesBySymbol[normalizeSymbol(proposal.symbol)]
+    );
+    proposal = repriceStoredProtectiveExit(proposal, policy, approvalExitQuote);
+    if (proposal !== storedProposal) {
+      const confirmedNotional = row.estimatedNotional ?? row.review?.estimatedNotional;
+      const drift = assessProtectiveExitRepriceDrift(storedProposal, proposal, policy, approvalExitQuote, confirmedNotional);
+      // Fresh estimate for the persisted card; a degrade to market has no limit price to estimate
+      // from (estimateNotional returns 0), so keep the stored estimate rather than write a zero.
+      const repricedEstimate = estimateNotional(proposal);
+      const repricedNotional = Number.isFinite(repricedEstimate) && repricedEstimate > 0 ? repricedEstimate : undefined;
+      const repriceChange = {
+        proposalId,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        from: { type: storedProposal.type, limitPrice: storedProposal.limitPrice, marketHours: storedProposal.marketHours },
+        to: { type: proposal.type, limitPrice: proposal.limitPrice, marketHours: proposal.marketHours },
+        drift
+      };
+      // LIVE typed-confirmation invariant (repo precedent: autoRemediateStaleExitOrders defers
+      // live+typed-confirm remediation to the human rather than silently substituting): the phrase
+      // the user typed confirmed the STORED order, so a MATERIAL reprice — price or notional beyond
+      // the marketable-limit buffer tolerance — must go back to approval, not to the broker. The
+      // card stays pending with the repriced order persisted so the next Approve confirms the
+      // numbers that will actually be placed. Immaterial drift places normally below (also audited,
+      // via the drift payload on protective_exit_repriced).
+      const typedConfirmGatesLive = executionMode === "broker/live" && policy.requireTypedConfirmation !== false;
+      if (typedConfirmGatesLive && drift.material) {
+        const reason = `Protective exit repriced materially while awaiting approval (price drift ${
+          drift.priceDriftBps !== undefined ? Math.round(drift.priceDriftBps) : "unverifiable"
+        } bps vs ${drift.toleranceBps} bps tolerance) — a live typed confirmation covered the prior order, so approve the repriced order again.`;
+        const persisted = updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId);
+        audit("protective_exit_reprice_reapproval", { ...repriceChange, reason, persisted }, userId, policy.connectedAccountId);
+        if (!persisted) {
+          const current = getProposal(proposalId, userId)?.status ?? "removed";
+          return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+        }
+        await sendNotification(
+          {
+            type: "pending_approval",
+            title: `${proposal.symbol} protective exit repriced — approval needed again`,
+            payload: { proposalId, proposal, previous: storedProposal, drift, reason }
+          },
+          { policy, userId }
+        );
+        return { status: "proposed", reasons: [reason] };
+      }
+      // Persist the repriced order BEFORE claiming/placing so trade_proposals.proposal (Recent,
+      // Activity, getProposal) shows the order the broker actually received, never the stale
+      // generation-time price. CAS on status='proposed': if the card expired or was rejected while
+      // this approval was in flight, stop here like the other pending guards.
+      if (!updatePendingProposalReprice(proposalId, { proposal, estimatedNotional: repricedNotional }, userId)) {
+        const current = getProposal(proposalId, userId)?.status ?? "removed";
+        return { status: current, reasons: [`Proposal was ${current} before it could be executed.`] };
+      }
+      audit("protective_exit_repriced", repriceChange, userId, policy.connectedAccountId);
+    }
 
     const tradability = await gateway.getEquityTradability(policy.accountNumber, [proposal.symbol]);
     if (!tradability[proposal.symbol]?.tradable) {
@@ -4728,6 +4848,20 @@ function currentPricesFromScan(scan?: MarketScan): Record<string, number> {
   );
 }
 
+/**
+ * Real (non-synthetic, positive) bid/ask off a scan quote for anchoring a protective-exit
+ * marketable limit, with the composite price as the fallback anchor. A synthesized (price-derived)
+ * spread side never anchors — same guard the entry marketable-limit applies, judged per side.
+ */
+function protectiveExitQuoteFromScan(quote: MarketQuoteSummary | undefined): ProtectiveExitQuote | undefined {
+  if (!quote) return undefined;
+  return {
+    price: quote.price > 0 ? quote.price : undefined,
+    bid: !quote.syntheticBid && quote.bid && quote.bid > 0 ? quote.bid : undefined,
+    ask: !quote.syntheticAsk && quote.ask && quote.ask > 0 ? quote.ask : undefined
+  };
+}
+
 function uniqueSymbols(symbols: string[]): string[] {
   return Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
 }
@@ -5205,7 +5339,14 @@ export function generateProactiveRiskProposals(
   // Precomputed ATR-based stop DISTANCE (% of entry) per symbol — supplied by the caller (which has
   // bars) when policy.atrStops is on. Mirrors the betaBySymbol precompute pattern so this stays a pure
   // sync function. Empty/absent → fall back to the fixed/beta stop (a name is never left unprotected).
-  atrStopPctBySymbol: Record<string, number> = {}
+  atrStopPctBySymbol: Record<string, number> = {},
+  // Marketable-limit buffer (bps) for an extended-hours protective exit, or undefined for the default
+  // market/queue-to-open routing. Resolved by the async caller (it knows the session) so this stays
+  // pure; see extendedHoursExitBufferBps. When set, the stop exit becomes a limit tagged extended_hours.
+  extHoursBufferBps?: number,
+  // Real bid/ask anchors per symbol for the extended-hours marketable-limit (see the caller's
+  // protectiveExitQuoteFromScan filter). Missing entries fall back to currentPrice as the anchor.
+  exitQuotesBySymbol: Record<string, ProtectiveExitQuote> = {}
 ): TradeProposal[] {
   const proactiveProposals: TradeProposal[] = [];
   const stopLossPct = policy.riskRules.stopLossPct ?? 0;
@@ -5263,13 +5404,25 @@ export function generateProactiveRiskProposals(
     }
 
     if (reason) {
+      // Extended-hours routing (only when the caller resolved a live pre/post session with the toggle
+      // on): a marketable-limit anchored to the real bid (SELL) / ask (COVER) — currentPrice as the
+      // fallback anchor — that can actually fill after hours, else the default market order that
+      // queues to the regular open. A FRACTIONAL quantity never takes the limit path: fractional
+      // orders are regular-hours-only at the broker (a policy hard gate), so routing one to
+      // extended_hours would block the protective exit instead of queuing it.
+      const exitQuantity = Math.abs(pos.quantity);
+      const exitLimitPrice = extHoursBufferBps != null && Number.isInteger(exitQuantity)
+        ? marketableLimitExitPrice({ ...exitQuotesBySymbol[sym], price: currentPrice }, exitSide, extHoursBufferBps)
+        : undefined;
+      const useExtLimit = exitLimitPrice != null;
       proactiveProposals.push({
         symbol: normalizeSymbol(pos.symbol),
         side: exitSide,
-        type: "market",
-        quantity: Math.abs(pos.quantity),
+        type: useExtLimit ? "limit" : "market",
+        quantity: exitQuantity,
+        limitPrice: useExtLimit ? exitLimitPrice : undefined,
         timeInForce: "gfd",
-        marketHours: "regular_hours",
+        marketHours: useExtLimit ? "extended_hours" : "regular_hours",
         rationale: reason,
         tradeThesisTag: "Risk-Exit",
         entryMarketRegime: "Active Risk Check"

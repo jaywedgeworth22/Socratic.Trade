@@ -535,6 +535,27 @@
   }
 }
 
+/* Account scope dropdown rows (chrome.tsx ScopeSelector). The panel itself
+   reuses .con-menu-drop for the slide-down entrance; these are the row
+   hover/selected states. The loaded account row is aria-checked + disabled and
+   keeps a soft accent tint; switchable rows light up on hover/focus. */
+.con-scope-row {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.con-scope-row[aria-checked="true"] {
+  background: var(--con-accent-soft);
+}
+.con-scope-row:not([aria-checked="true"]):not([disabled]):hover,
+.con-scope-row:not([aria-checked="true"]):not([disabled]):focus-visible {
+  background: var(--con-surface-2);
+  border-color: var(--con-accent);
+}
+@media (pointer: coarse) {
+  .con-scope-row {
+    min-height: 44px;
+  }
+}
+
 /* ── Chips ── */
 .con-chip {
   display: inline-flex;
@@ -773,7 +794,10 @@
   font-size: 10px;
   font-weight: 600;
   color: var(--con-faint);
-  padding: 6px 0 4px;
+  /* Extra top padding vs. bottom gives the negative-positioned badge (see
+   * .con-badge below) clearance from the bar's top border so it doesn't read
+   * as clipped/cramped — a few px, not a bar-height change. */
+  padding: 9px 0 4px;
   flex: 1;
   position: relative;
 }
@@ -1225,6 +1249,11 @@
 }
 .con-cmdk-trigger kbd {
   font-family: var(--con-font-mono);
-  font-size: 10px;
+  font-size: 12px;
+  /* Owner ask: nudge the ⌘/K apart by ~half a space. Applied as letter-spacing
+     (trailing space trimmed with a negative margin-right so the badge padding
+     stays even). */
+  letter-spacing: 0.14em;
+  margin-right: -0.14em;
   color: var(--con-faint);
 }

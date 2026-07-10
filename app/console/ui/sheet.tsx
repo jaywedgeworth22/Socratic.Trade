@@ -63,6 +63,17 @@ export function Sheet({
   const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
 
+  // Keep the latest onClose without making it a dependency of the FOCUS effect below. Callers pass
+  // an inline arrow (e.g. `() => setOpen(false)`) that is a NEW reference on every render, so if the
+  // focus effect depended on onClose it would re-run on every parent re-render — including on each
+  // keystroke in a TypedConfirm field — and re-focus the first focusable element (the header X),
+  // yanking the caret out of the input. The focus effect now depends only on `open`; this tiny
+  // effect just keeps the ref current (writing the ref during render trips react-hooks lint).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const sheet = sheetRef.current;
@@ -79,7 +90,7 @@ export function Sheet({
 
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -101,12 +112,20 @@ export function Sheet({
       }
     };
 
+    let isFocusing = false;
     const onFocusIn = (e: FocusEvent) => {
+      if (isFocusing) return;
       const currentSheet = sheetRef.current;
-      if (!currentSheet) return;
+      if (!currentSheet || !currentSheet.isConnected) return;
       if (e.target instanceof Node && currentSheet.contains(e.target)) return;
-      const tabbables = getFocusableElements(currentSheet);
-      focusElement(tabbables[0] ?? currentSheet);
+      
+      isFocusing = true;
+      try {
+        const tabbables = getFocusableElements(currentSheet);
+        focusElement(tabbables[0] ?? currentSheet);
+      } finally {
+        isFocusing = false;
+      }
     };
 
     window.addEventListener("keydown", onKey);
@@ -118,7 +137,7 @@ export function Sheet({
       openerRef.current = null;
       if (opener && opener.isConnected) focusElement(opener);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

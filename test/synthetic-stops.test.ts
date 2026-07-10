@@ -10,6 +10,7 @@ import {
   listFillEvents,
   listSyntheticStops,
   revertSyntheticStopClaim,
+  upsertBrokerProtectiveStop,
   upsertConnectedAccount,
   upsertSyntheticStop
 } from "../src/lib/db";
@@ -26,8 +27,9 @@ vi.mock("../src/lib/vector-db", () => ({
 
 const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
-  quotes: {} as Record<string, { price?: number }>,
-  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string }>,
+  quotes: {} as Record<string, { price?: number; bid?: number; ask?: number }>,
+  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }>,
+  cancelled: [] as string[],
   orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
   // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
   // placed after hours); "filled" = synchronous fill (the Test broker's behavior).
@@ -58,10 +60,14 @@ vi.mock("../src/lib/broker", () => ({
     getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
       symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
     ),
-    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string }) => {
+    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }) => {
       broker.placed.push(order);
       if (broker.placeError) throw broker.placeError;
       return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
+    },
+    cancelEquityOrder: async (_accountNumber: string, orderId: string) => {
+      broker.cancelled.push(orderId);
+      return { orderId, refId: "x", state: "cancel_requested", raw: {} };
     }
   })
 }));
@@ -139,6 +145,7 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     broker.positions = [];
     broker.quotes = {};
     broker.placed = [];
+    broker.cancelled = [];
     broker.orders = [];
     broker.placeState = "accepted";
     broker.ordersError = null;
@@ -198,6 +205,24 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(broker.placed).toHaveLength(0);
   });
 
+  it.each(["queued", "confirmed", "unconfirmed"])(
+    "treats a RESTING Robinhood broker stop (state=%s) as protection → no duplicate synthetic exit",
+    async (rhState) => {
+      // Regression for the double-exit hazard: a Robinhood broker-held protective stop rests in
+      // queued/confirmed/unconfirmed (not Alpaca's new/accepted). Before the fix those states were
+      // unrecognized, so the monitor didn't see the broker stop, auto-registered a synthetic trailing
+      // stop, and could market-sell on top of the resting broker stop. It must now skip the symbol.
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      broker.quotes = { AAPL: { price: 90 } }; // would breach a 5% trail off extreme 100 IF registered
+      broker.orders = [{ id: "rh-stop-1", symbol: "AAPL", side: "sell", type: "stop_market", state: rhState }];
+      connectTestAccount(`SYN-RH-${rhState}`, "live");
+      const result = await runSyntheticStopMonitor("local", policyFor(`SYN-RH-${rhState}`), true);
+      // The resting RH broker stop owns the exit — no synthetic stop registered, nothing fired.
+      expect(result.exited).toBe(0);
+      expect(broker.placed).toHaveLength(0);
+    }
+  );
+
   it("still auto-registers when the only broker stop for the symbol is terminal (canceled)", async () => {
     broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
     broker.quotes = { AAPL: { price: 90 } };
@@ -208,6 +233,78 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     expect(result.exited).toBe(1);
     expect(broker.placed).toHaveLength(1);
     expect(broker.placed[0].side).toBe("sell");
+  });
+
+  it("a FULL-size live broker stop suppresses registration via quantity-aware coverage", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    // Explicit quantity == position: coverage (not any symbol-level shortcut) is what suppresses.
+    broker.orders = [{ id: "rh-full", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 10 }];
+    connectTestAccount("SYN-FULLSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-FULLSTOP"), true);
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    expect(listSyntheticStops("SYN-FULLSTOP", "local")).toHaveLength(0);
+  });
+
+  it("a PARTIAL-size live broker stop no longer suppresses protection for the uncovered shares", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 100, averageCost: 100, marketValue: 10000 }];
+    broker.quotes = { MU: { price: 90 } }; // breaches a 5% trail off extreme 100
+    // A live broker stop covering only 40 of the 100 shares (e.g. an owner-placed manual RH stop).
+    // The old symbol-level "has a live stop" guard was quantity-blind and suppressed registration
+    // entirely — 60 shares rode through a crash unprotected. Coverage must register the synthetic
+    // and fire it for exactly the uncovered remainder.
+    broker.orders = [{ id: "rh-part", symbol: "MU", side: "sell", type: "stop_market", state: "queued", quantity: 40 }];
+    connectTestAccount("SYN-PARTSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-PARTSTOP"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(60);
+  });
+
+  it("a live stop-BUY (entry/add-on) is NOT protection for a long — the synthetic registers and fires", async () => {
+    broker.positions = [{ symbol: "MU", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { MU: { price: 90 } };
+    // A stop-entry BUY above the market on a symbol we're long. The old symbol-level guard was
+    // side-blind — any live /stop/i order marked the symbol broker-protected. A buy can never exit
+    // a long, so it must not suppress the trailing stop.
+    broker.orders = [{ id: "buystop-1", symbol: "MU", side: "buy", type: "stop_market", state: "queued", quantity: 5 }];
+    connectTestAccount("SYN-BUYSTOP", "live");
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-BUYSTOP"), true);
+    expect(result.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0].side).toBe("sell");
+    expect(broker.placed[0].quantity).toBe(10);
+  });
+
+  it("disabled-teardown tick: the just-cancelled broker stop is pruned, so the synthetic registers the SAME tick", async () => {
+    broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    // The RH protective stop the feature placed while it was ON — the order list is fetched BEFORE
+    // reconcile runs, so this tick it still shows the stop as live even after the teardown cancels it.
+    broker.orders = [{ id: "prot-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "queued", quantity: 10 }];
+    upsertBrokerProtectiveStop({
+      id: "protstop-local-SYN-TEARDOWN-AAPL", userId: "local", accountNumber: "SYN-TEARDOWN",
+      symbol: "AAPL", brokerOrderId: "prot-1", quantity: 10, stopPrice: 92, status: "resting"
+    });
+    connectTestAccount("SYN-TEARDOWN", "live");
+    // policyFor leaves robinhoodBrokerStops at its default (off) → reconcile tears the stop down mid-tick.
+    const result = await runSyntheticStopMonitor("local", policyFor("SYN-TEARDOWN"), true);
+    expect(broker.cancelled).toEqual(["prot-1"]); // the teardown actually cancelled it
+    // The cancelled stop must NOT suppress auto-registration — the position would otherwise carry
+    // NEITHER protection until the next tick. The synthetic row exists (armed) this same tick.
+    expect(listSyntheticStops("SYN-TEARDOWN", "local")).toHaveLength(1);
+    // The FIRE path deliberately still honors the stale order for this one tick (a cancel the
+    // broker merely accepted can still fill) — no exit stacks on it.
+    expect(result.exited).toBe(0);
+    expect(broker.placed).toHaveLength(0);
+    // Next tick the broker's list no longer shows the cancelled stop: the armed synthetic takes over.
+    broker.orders = [];
+    const second = await runSyntheticStopMonitor("local", policyFor("SYN-TEARDOWN"), true);
+    expect(second.exited).toBe(1);
+    expect(broker.placed).toHaveLength(1);
+    expect(broker.placed[0]).toMatchObject({ side: "sell", quantity: 10 });
   });
 
   it("books a LIVE stop exit as pending_reconciliation (provisional at quote price, not a final fill)", async () => {
@@ -394,6 +491,58 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     row = listSyntheticStops("SYN-THROW", "local", "triggered")[0];
     expect(row.fireGeneration).toBe(1);
     expect(row.lastAttemptRefId).toBe(`${r0}-g1`);
+  });
+
+  // ── Extended-hours routing (allowExtendedHoursSyntheticStops) — PR #1228 review regressions ──
+
+  it("anchors the extended-hours SELL exit limit to the BID, not the ask-biased composite price", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      broker.positions = [{ symbol: "AAPL", quantity: 10, averageCost: 100, marketValue: 1000 }];
+      // bid 89.5 / ask 90: the composite price is the ASK (Alpaca sets price = ask ?? bid). A limit
+      // off the composite (89.87) would sit ABOVE the 89.5 bid — resting, not marketable.
+      broker.quotes = { AAPL: { price: 90, bid: 89.5, ask: 90 } };
+      connectTestAccount("SYN-EXTHOURS");
+      const policy = { ...policyFor("SYN-EXTHOURS"), allowExtendedHoursSyntheticStops: true };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({
+        side: "sell",
+        type: "limit",
+        marketHours: "extended_hours",
+        limitPrice: 89.36 // 89.5 * (1 - 0.0015) = 89.36575, bid-anchored, rounded OUTWARD (down) to stay marketable
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a FRACTIONAL extended-hours exit as a regular-hours market order (queues to the open instead of being hard-blocked)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:00:00Z")); // 08:00 ET = pre-market (EDT)
+    try {
+      broker.positions = [{ symbol: "AAPL", quantity: 10.5, averageCost: 100, marketValue: 1050 }];
+      broker.quotes = { AAPL: { price: 90, bid: 89.5, ask: 90 } };
+      connectTestAccount("SYN-EXTFRAC");
+      const policy = { ...policyFor("SYN-EXTFRAC"), allowExtendedHoursSyntheticStops: true };
+      const result = await runSyntheticStopMonitor("local", policy, true);
+      // Before the quantity guard this became a fractional extended_hours limit, which policy
+      // hard-blocks ("Fractional or dollar-based orders must be regular-hours only.") — leaving the
+      // breached position with NO protective order at all for the rest of the extended session.
+      expect(result.exited).toBe(1);
+      expect(broker.placed).toHaveLength(1);
+      expect(broker.placed[0]).toMatchObject({
+        side: "sell",
+        quantity: 10.5,
+        type: "market",
+        marketHours: "regular_hours"
+      });
+      expect(broker.placed[0].limitPrice).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("partial coverage: a 10-of-100-share resting trim leaves 90 shares protected — the stop fires for the UNCOVERED remainder", async () => {
