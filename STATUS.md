@@ -42,7 +42,14 @@ an honest short-position caveat added to the stop-flow diagram's broker-held nod
 check, and `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
 client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop (covering
 different shares) can no longer permanently block re-arming a partial remainder's own dead exit; plus
-a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint.
+a docs fix clarifying Alpaca REST (native trailing) vs Alpaca MCP (ratcheted) in the Guardrails hint;
+round 8: replaced round 7's `client_order_id`-only re-arm branch (fragile — the field is optional and
+a missing one would falsely read "dead") with `brokerHeldOrderIdBySymbol`, keyed off the account's own
+`broker_protective_stops` row instead of any broker-supplied id; also fixed an ordering bug found while
+verifying it (the re-arm pass runs BEFORE the tick's own reconcile call, so the map must be seeded from
+DB state at declaration, not only refreshed after reconcile), and a filled broker-held stop recognized
+during stale-row cleanup now books a `fill_events` row (`bookBrokerHeldStopFill`) before its row is
+deleted, instead of the exit silently vanishing from P&L/learning/activity.
 Next action: watch for
 further review rounds / merge; then live-verify the RH ratchet lane before flipping
 `robinhoodBrokerStops` on.

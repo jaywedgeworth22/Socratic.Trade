@@ -1539,8 +1539,8 @@ As of 2026-07-08 (assignment-rule update).
   plumbing" advanced group merged into ONE "Protective stops" card with a dynamic stop-flow
   diagram (ATR → beta → flat distance fallback, trailing overlay, broker-held → app-monitor
   enforcement). Rollout: `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`.
-  **PR #1331 open, 7 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
-  round 1-7" sections); round 5: OCO-pairing now requires a created-together time window (no
+  **PR #1331 open, 8 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
+  round 1-8" sections); round 5: OCO-pairing now requires a created-together time window (no
   longer conflates two independent equal-qty manual orders as one bracket), a stale `resting`
   broker-stop row is now checked against the tracked order's actual terminal state, an oversized
   existing stop is cancelled even when other-order coverage is unknown this tick, and a pure
@@ -1556,7 +1556,15 @@ As of 2026-07-08 (assignment-rule update).
   `confirmedPriorExitDead`'s re-arm confirmation now checks the SPECIFIC tracked order (by
   client_order_id) instead of a symbol-wide sweep, so an unrelated still-live broker stop
   (covering different shares) can no longer permanently block re-arming a partial remainder's
-  own dead exit; plus an Alpaca REST-vs-MCP trailing-copy docs fix. Gates green
+  own dead exit; plus an Alpaca REST-vs-MCP trailing-copy docs fix; round 8: round 7's
+  `client_order_id`-only re-arm branch was itself fragile (the field is optional — a still-live
+  order missing it would falsely read "dead"), replaced with `brokerHeldOrderIdBySymbol` keyed
+  off the account's own `broker_protective_stops` row instead of any broker-supplied id; fixed an
+  ordering bug found while verifying it (the re-arm pass runs BEFORE the tick's own reconcile
+  call, so the map needed seeding from DB state at declaration, not only refreshed after
+  reconcile); and a broker-held stop recognized as FILLED during stale-row cleanup now books a
+  `fill_events` row (`bookBrokerHeldStopFill`) before its row is deleted, instead of the exit
+  silently vanishing from P&L/learning/activity. Gates green
   (lint/tsc/3434 tests/build) in the isolated worktree.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352

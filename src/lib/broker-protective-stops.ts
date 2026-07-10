@@ -47,13 +47,15 @@
 import {
   audit,
   deleteBrokerProtectiveStop,
+  insertFillEvent,
   listBrokerProtectiveStops,
-  upsertBrokerProtectiveStop
+  upsertBrokerProtectiveStop,
+  type BrokerProtectiveStop
 } from "./db";
 import { isRejectedOrCanceledState, liveExitOrderCoverage } from "./broker-side";
 import { normalizeSymbol } from "./money";
 import { livePreflightBlocks } from "./preflight-live-guard";
-import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, TradingPolicy } from "./types";
+import type { BrokerGateway, EquityOrder, EquityPosition, ExecutionMode, FillSource, TradingPolicy } from "./types";
 
 /**
  * True when a broker order is done resting for reasons other than an app-issued cancel actually
@@ -180,6 +182,16 @@ export interface ReconcileResult {
    * list) instead of blindly skipping the fire path for the whole position.
    */
   partiallyPlacedStopQuantities: Record<string, number>;
+  /**
+   * Symbols whose broker-held protective stop row was recovered THIS call specifically because the
+   * tracked order was found already FILLED (not merely rejected/canceled/expired) — a fill that
+   * actually reduced the position. The caller's `positions` snapshot was captured BEFORE `orders`
+   * (synthetic-stops.ts fetches positions first), so it can still reflect the pre-fill quantity on
+   * THIS same call. The caller must treat these symbols the same as `placedStopSymbols` — skip BOTH
+   * synthetic registration and the fire path this tick — rather than auto-registering or firing a
+   * market exit against a stale, larger-than-actual position (Codex review, PR #1331).
+   */
+  filledRecoverySymbols: string[];
 }
 
 /**
@@ -242,9 +254,34 @@ export async function reconcileBrokerProtectiveStops(args: {
   extremePriceBySymbol?: Record<string, number>;
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [], ordersListed = true, extremePriceBySymbol = {} } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {} };
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [], partiallyPlacedStopQuantities: {}, filledRecoverySymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
+  const source: FillSource = executionMode === "broker/live" ? "live" : "paper";
+
+  // A broker-held protective stop's tracked order was found FILLED at the broker (native trail or
+  // ratcheted stop-market closing the position) before our own reconciliation ever saw it as a
+  // pending exit — book the fill now, from the row's own recorded terms, so realized P&L/learning/
+  // activity see this exit at all. Without this the row was simply deleted and the fill vanished
+  // (Codex review, PR #1331).
+  const bookBrokerHeldStopFill = (row: BrokerProtectiveStop, order: EquityOrder): void => {
+    const qty = order.filledQuantity ?? row.quantity;
+    const price = order.averagePrice ?? row.stopPrice;
+    insertFillEvent({
+      userId,
+      accountNumber,
+      source,
+      executionMode,
+      symbol: normalizeSymbol(row.symbol),
+      side: "sell",
+      quantity: qty,
+      price,
+      notional: qty * price,
+      status: "filled",
+      brokerOrderId: row.brokerOrderId,
+      raw: { brokerHeldProtectiveStop: true, kind: row.kind }
+    });
+  };
 
   // Symbols whose pending_cancel row section 1 just recovered THIS call specifically because the
   // order was found FILLED (not merely rejected/canceled/expired). A fill actually reduces the
@@ -395,7 +432,10 @@ export async function reconcileBrokerProtectiveStops(args: {
         if (found && isDoneRestingState(found.state)) {
           deleteBrokerProtectiveStop(row.id, userId);
           if (String(found.state ?? "").trim().toLowerCase() === "filled") {
-            filledRecoverySymbols.add(normalizeSymbol(row.symbol));
+            const s = normalizeSymbol(row.symbol);
+            filledRecoverySymbols.add(s);
+            out.filledRecoverySymbols.push(s);
+            bookBrokerHeldStopFill(row, found);
           }
           audit(
             "broker_protective_stop_cancel_recovered",
@@ -469,6 +509,8 @@ export async function reconcileBrokerProtectiveStops(args: {
         deleteBrokerProtectiveStop(existingStop.id, userId);
         if (String(trackedOrder.state ?? "").trim().toLowerCase() === "filled") {
           filledRecoverySymbols.add(sym);
+          out.filledRecoverySymbols.push(sym);
+          bookBrokerHeldStopFill(existingStop, trackedOrder);
         }
         audit(
           "broker_protective_stop_recovered",
