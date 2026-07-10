@@ -1547,6 +1547,33 @@ As of 2026-07-08 (assignment-rule update).
   repo's ruleset already requires 0 approving reviews (only `verify` gates a merge), so a rogue
   branch could already self-merge through the normal PR flow without this side-channel. See
   `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+- **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
+  (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
+  open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
+  follow-up from `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md` ("Follow-ups / still-open
+  blockers"): a `pending_cancel` row whose `gateway.cancelEquityOrder` retry kept throwing (e.g.
+  stale "not found" after an earlier cancel actually landed, or the stop simply filled) retried
+  forever and permanently blocked section-4 re-placement for that symbol (still protected by the
+  always-on synthetic fallback, but broker-held protection stayed off for the rest of the
+  session). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) now takes an
+  optional `orders?: EquityOrder[]` (the caller's freshly fetched `getEquityOrders()` list); on a
+  cancel failure it checks whether the row's `brokerOrderId` shows up there already done resting
+  (`isRejectedOrCanceledState` OR `filled`) and deletes the row if so; a rejected/canceled/expired
+  recovery re-places same-call (position never moved), a `filled` recovery defers re-placement to
+  the next call (see landing-round fix below — the position DID move, and the caller's `positions`
+  snapshot predates `orders`). Absent-from-list or still-live stays ambiguous and keeps retrying.
+  Wired `src/lib/synthetic-stops.ts` to pass its already-fetched `brokerOrders`. Also verified the
+  recon's companion issue (b), the `!exec.orderId` defensive branch, is ALREADY FIXED by PR
+  #1269's round-3 review (`isRejectedOrCanceledState` already precedes it) — no change needed
+  there. **Landing-round fix (PR #1352 review):** codex-connector flagged a real P1 — same-call
+  re-placement after a `filled` recovery could size a fresh stop off the caller's stale
+  pre-fill `positions` snapshot (fetched before `orders`), resting a sell stop for shares already
+  sold. Fixed with a `filledRecoverySymbols` set scoped to `filled`-specifically recoveries;
+  section 4 now skips those symbols for the current call only, resuming next call once a fresh
+  position read is in hand. +3 tests in `test/broker-protective-stops.test.ts` (recovers via a
+  terminal-state order-list match; recovers via `filled` — updated to assert same-call deferral
+  plus next-call resumption; stays conservative on absent/still-live). node@24: `land.sh` gate
+  green (tsc clean, 3386 tests, build clean).
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
   PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
