@@ -1386,8 +1386,8 @@ As of 2026-07-08 (assignment-rule update).
   `NODE_AUTH_TOKEN` unset and `GIT_SSH_COMMAND=/bin/false`), removed
   `scripts/npm-ci-with-shared-deps.sh` and its call sites in `ci.yml`/`deploy.yml`/`e2e.yml`/
   `codex-autofix.yml`/`sync-previews.yml`/`scripts/sync-preview-lanes.sh`/`scripts/cloud-setup.sh`.
-  Coordination note: PR #372 (`claude/ci-hybrid-runner-verify`) is open| **Antigravity** | Socratic Trade   | Infinite loading fix for SSE events aborting fetchDashboard (`agent/antigravity-infinite-loading-fix`) | Completed | Root cause found (frequent `market-data` SSE constantly aborting `fetchDashboard`); added `background` flag to `refresh` hook in `useConsoleData` to avoid aborting in-flight requests. Merged to main. |
-| **Codex**       | Socratic Trade   | Reviewer model efficacy Results wiring (`codex/reviewer-model-results-efficacy`) | Completed | Extends AG's `reviewedByModel` work: surfaces `redTeamEfficacy` snapshot + overrides, 20/50 sample gated scorecard in Results with honest `unattributed` fallback. Deployed in `krk1db6x`. | `ci.yml` — this branch merges `origin/main` before landing and keeps both changes if #372
+  Coordination note: PR #372 (`claude/ci-hybrid-runner-verify`) is open and also touches
+  `ci.yml` — this branch merges `origin/main` before landing and keeps both changes if #372
   lands first. Congress.Trade gets its own PR (separate repo, separate AGENTS.md rules).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
