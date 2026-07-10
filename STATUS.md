@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
+Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
+policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled
+runs worked; `runStrategyOnce` resolves rotation at run top) — the route now gates a rotating Green on
+`eligibleRotationPool(userId)` being non-empty, with a new actionable 412 message
+(`LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE`) when no key resolves for any catalog model; red sentinel
+never 412s (routes per-opening to human, like blank red). (2) `classifyRunFailure` (chrome.tsx) titled
+EVERY 412 "No LLM key is configured" — model-CHOICE messages now get "Choose your team models" →
+`/console/settings#models-green`; key messages keep the key title. (3) `advanceRotationPointers`
+same-model skip: dual rotation started both counters at 0 → proposer and reviewer served the SAME model
+all first cycle; red now skips one slot when its pick would equal green's (pool >= 2), wrap-advance
+intact. tsc clean; touched suites 26/26 (Node 24); committed locally, NOT pushed — review gates the
+landing (`land.sh` full gate then auto-merge). See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
+
 ## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
 Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
 is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
