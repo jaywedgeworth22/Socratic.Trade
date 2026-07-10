@@ -23,6 +23,7 @@
 // FAIL-SAFE: any LLM/transport/parse failure → audit + skip; nothing is ever mutated on failure.
 // The once-per-day marker still advances on failure so a broken provider can't be hammered all day.
 
+import { createHash } from "node:crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import {
@@ -57,6 +58,7 @@ import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from 
 // skips with reason "no-model".
 
 const LAST_RUN_KEY_PREFIX = "learning_review:lastRunDate";
+const LAST_FINGERPRINT_KEY_PREFIX = "learning_review:lastFingerprint";
 const LEARNED_WINDOW_DAYS = 7;
 const HISTORY_WINDOW_DAYS = 14;
 const MAX_REVIEW_ITEMS = 80;
@@ -82,6 +84,25 @@ export const LEARNING_REVIEW_FAILURE_AUDIT_KINDS = [
 
 function lastRunKey(userId: string): string {
   return `${LAST_RUN_KEY_PREFIX}:${userId}`;
+}
+
+function lastFingerprintKey(userId: string): string {
+  return `${LAST_FINGERPRINT_KEY_PREFIX}:${userId}`;
+}
+
+/** Stable fingerprint of what a review would actually examine, so an unchanged set never
+ *  spends an LLM call re-confirming verdicts we already have. Keyed on the review ITEMS
+ *  (id + content + confidence + assertedAt — so a new, changed, or re-asserted fact re-runs)
+ *  and the rollout-note set (a landed fix can flip a "still true?" verdict). DELIBERATELY
+ *  excludes the failure-event log: it's noisy (routine 429s/timeouts) and would force a
+ *  re-review most days, defeating the point — a genuinely corrupting failure surfaces as a
+ *  new fact/mutation, which is already in the items. */
+function reviewFingerprint(pack: LearningReviewContextPack): string {
+  const items = pack.items
+    .map((it) => `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.at}`)
+    .sort();
+  const notes = pack.systemHistory.rolloutNotes.map((n) => n.firstLine).sort();
+  return createHash("sha256").update(JSON.stringify({ items, notes })).digest("hex");
 }
 
 function utcDate(now: number): string {
@@ -477,6 +498,16 @@ export async function runDailyLearningReview(
     return { ok: true, skipped: true, reason: "no-items", mode, model, ...empty };
   }
 
+  // Don't waste a call re-reviewing an unchanged set: if the exact items + landed-fix history
+  // match the last SUCCESSFUL review, the LLM has nothing new to add. Advance the marker (we
+  // checked today) but make no call. `force` (admin/manual) always re-runs.
+  const fingerprint = reviewFingerprint(pack);
+  if (!options.force && getInternalSetting<string>(lastFingerprintKey(userId)) === fingerprint) {
+    advanceMarker();
+    audit("learning_review_summary", { mode, model, itemsReviewed: pack.items.length, verdicts: 0, applied: 0, reason: "unchanged" }, userId);
+    return { ok: true, skipped: true, reason: "unchanged", mode, model, ...empty };
+  }
+
   const userContent = JSON.stringify({
     asOfUtc: new Date(now).toISOString(),
     reviewItems: pack.items,
@@ -584,6 +615,14 @@ export async function runDailyLearningReview(
     userId
   );
   advanceMarker();
+  // Remember exactly what was reviewed so an identical set tomorrow skips without a call.
+  // Stored ONLY on success — a failed/parse-failed run leaves the prior fingerprint so the
+  // same items get another attempt on the next day rather than being skipped as "unchanged".
+  try {
+    setInternalSetting(lastFingerprintKey(userId), fingerprint);
+  } catch (error) {
+    console.error("[learning-review] failed to persist review fingerprint:", error);
+  }
 
   try {
     await sendNotification(

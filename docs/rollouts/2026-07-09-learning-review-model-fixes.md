@@ -26,7 +26,19 @@ answered by investigation:
    by default — nothing runs until enabled; when enabled, it applies verdicts by default.)
 3. **Renamed "Reviewer model" → "Learning-review model"** — the Red Team is now called
    "Reviewer", so the old label collided. Field label, hint, toast, and comments updated.
-4. **Made the settings user-level (was account-level) — a real coherence fix.**
+4. **Only run when there's something new to review (don't waste calls).** The review already
+   skipped the LLM call when there were zero items, but the learned-facts window is a rolling
+   7 days — so the same unchanged facts were re-sent to the model every day. Added a content
+   fingerprint (`reviewFingerprint`): the review now skips with reason `"unchanged"` (no LLM
+   call) when the item set (id + content + confidence + assertedAt) and the rollout-note set
+   match the last SUCCESSFUL review. It re-runs whenever a new/changed/re-asserted fact or a
+   new pending item appears, or a new deploy lands a fix that could flip a "still-true?" verdict.
+   The failure-event log is deliberately excluded from the fingerprint (routine 429s/timeouts
+   would otherwise force a re-review most days). The fingerprint is stored ONLY on success, so a
+   failed/parse-failed run is retried the next day rather than skipped. New setting key
+   `learning_review:lastFingerprint:<userId>`.
+
+5. **Made the settings user-level (was account-level) — a real coherence fix.**
    `runDailyLearningReviewIfDue(userId)` reads `getPolicy(userId)` (the ACTIVE account's policy)
    and runs **once per user per day** over user-level learned context, but the three
    `learningReview*` fields were stored per-account — so which account's setting controlled the

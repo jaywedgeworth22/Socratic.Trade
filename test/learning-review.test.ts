@@ -200,6 +200,57 @@ describe("defaults and model requirement", () => {
   });
 });
 
+// ── Skip re-review when nothing changed (no wasted LLM call) ────────────────────
+
+describe("skip unchanged sets", () => {
+  it("reviews once, then skips 'unchanged' the next day on an identical set, and re-runs when a new item appears", async () => {
+    const userId = `lr-unchanged-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    const row = seedLearnedRow(userId);
+    let calls = 0;
+    const llm = async () => {
+      calls += 1;
+      return verdictJson([{ id: row.id, table: "learned_context", verdict: "keep", confidence: 90, reasoning: "sound" }]);
+    };
+
+    // Day 1: real review — one LLM call, fingerprint stored.
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm });
+    expect(day1.ok).toBe(true);
+    expect(day1.skipped).toBeFalsy();
+    expect(calls).toBe(1);
+
+    // Day 2: identical item set — skip WITHOUT calling the LLM.
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm });
+    expect(day2.skipped).toBe(true);
+    expect(day2.reason).toBe("unchanged");
+    expect(calls).toBe(1);
+
+    // Day 3: a new learned fact appears — the set changed, so it runs again.
+    seedLearnedRow(userId);
+    const day3 = await runDailyLearningReview(userId, { now: NOW + 2 * 86_400_000, llm });
+    expect(day3.reason).not.toBe("unchanged");
+    expect(calls).toBe(2);
+  });
+
+  it("a failed review does NOT store the fingerprint, so the same set is retried the next day", async () => {
+    const userId = `lr-fail-retry-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    seedLearnedRow(userId);
+    let calls = 0;
+    const failing = async () => {
+      calls += 1;
+      throw new Error("provider down");
+    };
+    const day1 = await runDailyLearningReview(userId, { now: NOW, llm: failing });
+    expect(day1.ok).toBe(false);
+    expect(day1.reason).toBe("llm-failed");
+    // Next day, same set — must attempt again (not skipped as unchanged) since day 1 failed.
+    const day2 = await runDailyLearningReview(userId, { now: NOW + 86_400_000, llm: failing });
+    expect(day2.reason).toBe("llm-failed");
+    expect(calls).toBe(2);
+  });
+});
+
 // ── User-level scoping: config overlays every account (the review runs once per user) ──
 
 describe("user-level scoping", () => {
