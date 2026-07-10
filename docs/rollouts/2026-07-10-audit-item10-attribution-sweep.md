@@ -96,22 +96,50 @@ helpers. No gate, no order-placement path, no sizing math, no policy decision to
 
 ## Skipped sites (ambiguous or deliberately out of scope — not guessed)
 
-- `executeProposal`'s two `autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId)`
-  / `(..., userId)` calls were left exactly as-is. The run-loop callers already pass
-  `targetAccountId` (the run's account override) consistently, and the manual-approval
-  callsite (`executeProposal`, line ~3966) passes no id by design — its own code comment
-  says "the manual executeProposal path passes no id because it already operates on the
-  active account." Not a gap; changing it would be a behavior change outside this sweep's
-  mandate.
-- `src/lib/scheduler.ts:459` and `src/lib/fills.ts:21` — both call the now-4-arg-capable
-  `reconcilePendingFills` with only 3 args (unchanged; the new param is optional, so this
-  compiles and behaves identically to before). Both have `policy.connectedAccountId`
-  reachable and could be updated to pass it, but they live outside the declared
-  `strategy.ts` + `synthetic-stops.ts` scope for this session — left for a future pass rather
-  than silently expanding scope.
 - Historical NULL-attributed audit rows (the 216 `post_mortem_reflection`, 800
   `synthetic_stop_error`, etc. rows already in the DB) are untouched — per the report, no
   backfill; they age out of the feed's 3-day-ish default windows naturally.
+
+### Land-phase correction (2026-07-10, same branch)
+
+The three sites below were originally listed as deliberate out-of-scope skips (see git
+history of this file), but `chatgpt-codex-connector`'s PR review (P2) on PR #1341 flagged
+them as real gaps, and re-checking each confirmed the "left alone by design" reasoning didn't
+actually hold — the fix commit `116ee816` closed them:
+
+- **`src/lib/fills.ts:21`** (`onBrokerFill`) and **`src/lib/scheduler.ts:459`** (per-tick
+  reconcile) both call `reconcilePendingFills` with `policy` already in scope but weren't
+  passing `policy.connectedAccountId` — their `fill_reconciled` audit rows kept recording
+  `connected_account_id = NULL`. `fills.ts`'s `policy = getPolicy(userId)` is that user's
+  active-account policy; `scheduler.ts`'s `policy = getPolicy(userId, accountId)` is resolved
+  per-schedule-entry — in both cases `policy.connectedAccountId` is exactly the right account
+  to attribute to, not a guess. Fixed by passing it through.
+- **`executeProposal`'s blocked-decision path** (`autoRevertOnCapBreach(decision.reasons,
+  policy, userId)` at the former line ~3976) omitted the 4th arg. The original reasoning —
+  "the manual executeProposal path passes no id because it already operates on the active
+  account" — is true for `setPolicy`'s account-scoping (the code comment on
+  `autoRevertOnCapBreach` itself, `strategy.ts:3509`) but doesn't extend to the function's own
+  `policy_violation_cap_exceeded` audit() call, which kept recording NULL. Traced
+  `executeProposal`'s `policy = getPolicy(userId)` (no account override) through
+  `getPolicy`/`resolveAccount`: it always resolves to and stamps the ACTIVE account's id onto
+  `policy.connectedAccountId`, so passing `policy.connectedAccountId` here is byte-identical
+  to the implicit active-account resolution `setPolicy` already does when omitted — a no-op
+  for account-demotion scoping, but it fixes the audit attribution. Confirmed safe before
+  changing (not just applying the bot's suggested diff blind).
+
+Verification for this correction: `npx tsc --noEmit` clean; focused re-run of
+`test/risk-receipts.test.ts` (also fixed — see below), `test/broker-minimum-bump-execute.test.ts`,
+`test/reconciliation-risk.test.ts`, `test/usage-budget-strategy-integration.test.ts`,
+`test/synthetic-stops.test.ts` — all passing; full `land.sh` gate (tsc/test/build, 315 files /
+3377 tests) re-run green after.
+
+### Land-phase test fix
+
+`test/risk-receipts.test.ts`'s two `auditSpy` assertions (`correlation_receipt`,
+`stress_receipt`) still expected the pre-sweep 3-arg `audit()` call shape and failed under
+`land.sh`'s verify gate once this branch's real 4-arg calls ran. Updated both assertions to
+expect the 4th arg (`policy.connectedAccountId`, `undefined` in that test's fixture) —
+commit `2d8c1f78`.
 
 ## Follow-ups / risks
 
@@ -122,9 +150,9 @@ helpers. No gate, no order-placement path, no sizing math, no policy decision to
   calls (the extra is `broker_protective_stop_reconcile_error`, in the same function with
   `policy` already in scope) — fixed for consistency rather than left as a stray NULL.
   41 + 13 = 54, matching the task's own "~54 sites" figure.
-- `scheduler.ts`/`fills.ts` callers of `reconcilePendingFills` remain unattributed (see
-  Skipped sites) — cheap follow-up if the owner wants it, but out of this session's declared
-  scope.
-- Not deployed; this is a local commit on `claude/audit-item10-attribution`, not pushed. Land
-  phase (full `npx tsc --noEmit` / `npm test` / `npm run build` via `scripts/land.sh`) and the
-  PR are a separate, later step.
+- `scheduler.ts`/`fills.ts` callers of `reconcilePendingFills`, and `executeProposal`'s
+  blocked-decision `autoRevertOnCapBreach` call, were fixed during the Land phase (see
+  "Land-phase correction" above) — no longer open follow-ups.
+- Landed via PR #1341 (squash auto-merge). Full gate (`npx tsc --noEmit` / `npm test` /
+  `npm run build` via `scripts/land.sh`) re-run green multiple times across the land-phase
+  fixes described above.
