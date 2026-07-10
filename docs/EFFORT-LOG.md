@@ -1473,6 +1473,23 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
+  The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
+  capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
+  100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
+  EMPTY proposals; high-reasoning tier untested (script lacks an effort flag — follow-up).
+  Red verdicts both models correctly shaped + sharp; benchmark's 0% red schema-valid is a
+  validator artifact (green proposals-check applied to red — follow-up filed). Keys resolved
+  at runtime from Infisical prod (automation identity), never written to disk. Results:
+  `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Pool NOT changed — re-add
+  recommendation = owner call (`docs/rollouts/2026-07-10-mistral-rebench.md`).
+  _Probe addendum (owner question "why no proposals"): reasoning-off empty list = model
+  judgment (param-stripped probe identical). High-tier probes found + FIXED two more
+  shaper bugs (medium-3-5 rejects prompt_mode too — validation-order masked; reasoning
+  tier rejects greedy sampling → no temperature when thinking). With fixes it proposes
+  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout) — hold from
+  pool. Script gained `--effort <tier|omit>`._
 - **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
   branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
   advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
@@ -1605,31 +1622,21 @@ As of 2026-07-08 (assignment-rule update).
   (`8fd8b3ab`, Sheet focus-loop guard) — clean, complementary; both sides verified present. Gate
   green pre-land. Rollout: `docs/rollouts/2026-07-09-settings-ux-fixes.md`.
 - **Hetzner server migration: prod box 91.98.44.8 (4GB fsn1) -> 135.181.192.190 (8GB hel1)
-  (CLAUDE, worktree `.claude/worktrees/hetzner-server-migration-d59cd1`) — IN PROGRESS
-  2026-07-09 ~17:50 CDT.** Owner-directed in-conversation. Full Coolify-instance migration
-  (pg_dump coolify DB + /data/coolify incl. source/.env + ssh keys — preserves the GitHub App
-  source), rsync of the prod SQLite volume (restore-marker intact so no R2 re-restore /
-  single-litestream-writer preserved), redeploy socratic-trade-prod + github-runner service on
-  the new box, then flip the 6 Cloudflare A records (jays.services apex/*/prod +
-  socratictrade.com apex/*/admin) to the new IP. Old box kept STOPPED as rollback. #agent-sync
-  claim posted ~17:49 CDT with deploy-hold request; cutover after the in-flight c4d1bfa deploy
-  reached a terminal state + 10-min objection window. **INFRA DONE 2026-07-09 ~18:20 CDT** —
-  cutover verified (health 200, scheduler ticking, litestream caught up, runners re-registered,
-  old box fully stopped w/ --restart=no as rollback standby; that c4d1bfa deploy FAILED on the
-  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). **CLOSED OUT
-  same evening:** congress.trade IP Access Rule added (owner-authorized; SSE ok:true), first
-  8GB build proven (AG deployer seat, image a8b0185b healthy), docs PR #1247 merged. **DOMAIN
-  RENAME addendum (owner-directed, same evening): Coolify dashboard/API = host.jays.services
-  now; apex jays.services = Mac tunnel, wildcard *.jays.services DELETED; API token rotated —
-  fresh token via secret handoff needed; GitHub App webhook URL still apex (owner to update).**
-  Remaining: owner deletes the old Hetzner server after soak. (Historical remainder of this
-  row below —) OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
-  old box with nix-phase OOM, so prod cut over on the serving image 83e80953). Remaining: docs
-  PR merge; OWNER: congress.trade zone needs an IP Access Rule whitelisting 135.181.192.190
-  (old-IP Bot-Fight-Mode bypass rule found root-causing the congress-stream SSE 403s; this
-  session was permission-blocked from creating firewall rules on that zone); first
-  announce-then-deploy on the new box ships main HEAD 6363e1e7 (deliberately not part of the
-  migration). See docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
+  (CLAUDE) — COMPLETE + FULLY DECOMMISSIONED 2026-07-10.** [Row rewritten in place 2026-07-10:
+  prior text carried duplicated fragments from a board-sync merge plus superseded "Remaining"
+  items.] Owner-directed 2026-07-09. Full Coolify-instance migration (pg_dump + /data/coolify
+  + instance ssh keys — GitHub App source preserved), prod SQLite volume tar-copied (no R2
+  re-restore; single-scheduler/single-litestream-writer held throughout), built image
+  save/load'ed (~5 min cutover downtime), 6 CF A records flipped. Verified same evening:
+  health 200, scheduler ticking, litestream caught up, runners re-registered; congress.trade
+  IP Access Rule for the new IP added (owner-authorized); first 8GB cold build proven (AG
+  deploy). Same-evening owner DOMAIN RENAME: Coolify dashboard/API = host.jays.services (apex
+  jays.services = Mac tunnel; wildcard deleted); fresh API token handed off at
+  ~/.secrets/global-api-keys and verified. CLOSE-OUT 2026-07-10: owner fixed the GitHub App
+  webhook URL and DELETED the old 91.98.44.8 server; CLAUDE removed the temp migration_key
+  and the old-IP congress.trade whitelist rule. Rollback path is now the litestream R2
+  replica (no standby box). Docs PRs #1247 + #1284 merged. Rollout:
+  docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md.
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — IN PROGRESS 2026-07-09.** The suite leaks
   every temp DB it creates (`agentic-*.db/-wal/-shm` plus `chat-*`/`trading-test-*`/

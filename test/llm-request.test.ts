@@ -194,16 +194,20 @@ describe("llm-request — withLlmRequestBounds", () => {
     // hidden reasoning tokens against the same max_completion_tokens cap as the visible JSON.
     expect(xai.max_completion_tokens).toBe(1500 + 8000);
 
-    // mistral-medium-3-5 at an explicit high: reasoning_effort high + prompt_mode riding
-    // along (both passed provider validation in the 2026-07-08 benchmark; only the old
-    // "medium" effort value 400'd).
+    // mistral-medium-3-5 at an explicit high: reasoning_effort high and NOTHING else — the
+    // 2026-07-10 keyed probe proved it rejects prompt_mode:"reasoning" ("Reasoning prompt mode
+    // is not enabled for this model"; Mistral validates reasoning_effort before prompt_mode, so
+    // the 2026-07-08 effort-value 400 masked this).
     const mistralHigh = withLlmRequestBounds({ model: "mistral-medium-3-5" }, "chat-completions", {
       maxOutputTokens: 1500,
       model: "mistral-medium-3-5",
       reasoningEffort: "xhigh" // normalizes to "high" — the provider's only reasoning tier
     });
     expect(mistralHigh.reasoning_effort).toBe("high");
-    expect(mistralHigh.prompt_mode).toBe("reasoning");
+    expect("prompt_mode" in mistralHigh).toBe(false);
+    // Reasoning tier rejects greedy sampling (top_p-must-be-1 400) — no temperature, like the
+    // other providers' thinking modes.
+    expect("temperature" in mistralHigh).toBe(false);
     expect(mistralHigh.max_completion_tokens).toBe(1500 + 8000);
 
     // mistral-medium-3-5 at the default (medium => none): reasoning_effort "none" (a value the
