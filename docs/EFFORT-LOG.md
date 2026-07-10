@@ -1457,8 +1457,12 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
-  branch `claude/model-recs-rethink`) — LANDING 2026-07-09: PR opened via `land.sh`, auto-merge
-  armed.** Owner-directed, implemented from a judged synthesis (3 independent judges converged).
+  branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
+  advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
+  `app/ui/llm-model-catalog.ts`, and its `models.tsx` edits (PR #1333 label coloring) sit in a
+  disjoint region from this branch's `MODEL_GROUPS`/flags), gates green (tsc clean, focused
+  catalog/rotation/label tests 47/47), pushed, auto-merge re-armed.** Owner-directed, implemented
+  from a judged synthesis (3 independent judges converged).
   Display-only flag changes in both synced catalog copies (`app/ui/llm-model-catalog.ts` +
   `app/console/settings/models.tsx`): GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
   gemini-3.1-pro-preview (owner ruling restored) + claude-sonnet-5; removed deepseek-v4-pro Red

@@ -110,3 +110,30 @@ Not touched: `app/console/assistant/models.tsx` (live chat default, label not st
   comparative live history (proposedByModel/reviewedByModel + model_rotation_pick audits).
 - PR #1083 closed as superseded by this change (owner-directed): the gemini-3.1-pro-preview Red
   rec it carried is restored here as part of the full re-derivation.
+
+## Update 2026-07-10 — re-synced with `main` after PR #1295 went dirty
+
+`main` advanced 16 commits past this branch's merge-base while the PR sat waiting for review
+(broker-minimum bump, unified provider quota, learning-review fixes, filings warm-up ingestion,
+green/red label coloring in `models.tsx`, etc.), and GitHub flagged PR #1295 dirty. Merged
+`origin/main` into `claude/model-recs-rethink` (`git merge-tree` dry run first — zero conflicts;
+the real merge auto-resolved cleanly too).
+
+Conflict-boundary check: `main` did **not** touch `app/ui/llm-model-catalog.ts` at all since the
+merge-base, so the full rec-flag rewrite (and the conventions comment) landed untouched. `main`
+did touch `app/console/settings/models.tsx`, but in a disjoint region — PR #1333 (`claude/green-
+red-labels`) recolored the Proposer/Reviewer field labels and added the `bothRotate` sentinel
+hint further down the file; this branch's changes are confined to the `MODEL_GROUPS` array and
+its conventions comment near the top. No semantic collision: the label/rotation-hint work reads
+`recommendedGreen`/`recommendedRed` only indirectly (via the unrelated same-model/same-provider
+independence hint), so the merged file carries both sides' work as-is — verified by re-reading
+the merged file directly, not just trusting the absence of `<<<<<<<` markers.
+
+Verification after the merge: `PATH=/opt/homebrew/opt/node@24/bin:$PATH npx tsc --noEmit` clean;
+`better-sqlite3` needed `npm rebuild better-sqlite3` under Node 24 first (this worktree's
+`node_modules` had been built against the homebrew-default Node 26, NODE_MODULE_VERSION
+mismatch 147 vs 137); after the rebuild, `test/model-rotation.test.ts`,
+`test/console-red-team-labels.test.ts`, `test/model-stats.test.ts`,
+`test/account-scoped-models-migration.test.ts`, and `test/approvals-triage-model.test.ts` all
+pass (47/47). Pushed; PR #1295 mergeable again with auto-merge still armed for the required
+`verify` CI gate.
