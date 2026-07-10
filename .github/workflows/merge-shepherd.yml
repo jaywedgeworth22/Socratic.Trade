@@ -32,6 +32,13 @@ concurrency:
 jobs:
   shepherd:
     runs-on: ubuntu-latest
+    # A manual workflow_dispatch run against a non-main branch loads THAT branch's
+    # copy of this workflow file before any step runs -- so a branch could edit this
+    # file to add steps using SHEPHERD_TOKEN/GITHUB_TOKEN. Refuse to run the job at
+    # all unless the dispatch itself targeted main, before either token is exposed
+    # to any step. (The checkout pin below is a second, redundant safeguard: even a
+    # main-triggered run always executes main's copy of the script.)
+    if: github.ref == 'refs/heads/main'
     steps:
       # Pin to main regardless of which ref the dispatch was run against, so a
       # workflow_dispatch from a non-main branch can never run a branch-modified
