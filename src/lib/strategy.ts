@@ -1738,7 +1738,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         results.push({ proposal: normalizedProposal, status: "blocked", reasons: decision.reasons });
         continue;
       }
@@ -2007,7 +2007,7 @@ export async function runStrategyOnce(
           );
           // R1 §1.4.3 still applies: an autonomous run that TRIPPED a notional/order cap demotes
           // the account back to Ask-first even though the tripping proposal survives as a card.
-          autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+          autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
           results.push({ proposal: normalizedProposal, status: "proposed", reasons: decision.reasons });
           continue;
         }
@@ -2023,7 +2023,7 @@ export async function runStrategyOnce(
           },
           { policy, userId }
         );
-        autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId);
+        autoRevertOnCapBreach(decision.reasons, policy, userId, connectedAccountId);
         // Feed a policy-BLOCKED OPENING proposal into the counterfactual pipeline (same path as a user
         // rejection) so its post-block return matures into missed-opportunity analytics — closing the
         // gap for names the LLM proposed but the policy gate then blocked. Opening sides only (a blocked

@@ -133,6 +133,22 @@ Verification for this correction: `npx tsc --noEmit` clean; focused re-run of
 `test/synthetic-stops.test.ts` — all passing; full `land.sh` gate (tsc/test/build, 315 files /
 3377 tests) re-run green after.
 
+A **third** Codex re-review pass (after that push) found one more: `runStrategyOnce`'s three
+`autoRevertOnCapBreach(decision.reasons, policy, userId, targetAccountId)` calls (tradability/
+escalation/block paths, formerly lines 1741/2010/2026) pass the raw `targetAccountId` — which
+is `undefined` for the common case of a run targeting the active account with no explicit
+override (`options.connectedAccountId` unset) — instead of the function's own already-resolved
+`connectedAccountId` local const (`targetAccountId ?? getPolicy(userId).connectedAccountId`,
+line ~311) that every one of the OTHER 14 `audit()` sites in this same function already uses.
+Fixed by swapping `targetAccountId` → `connectedAccountId` at all three sites — matches the
+established in-function pattern exactly, and by the same resolution argument as above (when
+`targetAccountId` is undefined, `connectedAccountId` resolves to the active account, which is
+what `setPolicy`/`autoRevertOnCapBreach` would have targeted anyway) this is a no-op for the
+account-demotion write and only fixes the audit NULL. Verified: `npx tsc --noEmit` clean;
+138 tests across 9 focused files (including `strategy-hardening`, `strategy-bear-fail-closed`,
+`strategy-moneypath-drawdown-flip`, `strategy-rationale-collapse-gate`,
+`usage-budget-strategy-integration`) passing.
+
 ### Land-phase test fix
 
 `test/risk-receipts.test.ts`'s two `auditSpy` assertions (`correlation_receipt`,
