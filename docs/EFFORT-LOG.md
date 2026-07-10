@@ -1578,6 +1578,15 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Console approval card: de-duplicate the Red Team failure state (CLAUDE, branch
+  claude/adversary-review-duplication-026e6b) — IN PROGRESS 2026-07-10, gates green
+  (tsc/lint/3400 tests/build), landing via scripts/land.sh + auto-merge.** Owner-reported
+  (screenshot): a failed Red Team review rendered twice on the pending approval card
+  ("Devil's advocate (red team)" panel + a separate "Red Team review unavailable" callout,
+  same text). UI double-render, not two reviewers — the single-adversary consolidation (#1191)
+  is backend-correct. Fix: pure/total redTeamCardState() makes the three card sections mutually
+  exclusive by construction; regression test added. See
+  docs/rollouts/2026-07-10-adversary-review-duplication.md.
 - **Market-data provider pricing doc (CLAUDE, branch claude/provider-pricing-doc) —
   CORRECTED IN PLACE 2026-07-10: this row was stuck at "landing" after the PR actually
   merged. Status is COMPLETED as of commit c2150aae (PR #1368, "docs: canonical market-data
