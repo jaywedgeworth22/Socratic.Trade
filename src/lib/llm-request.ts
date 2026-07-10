@@ -2,7 +2,9 @@ import type { LlmReasoningEffort } from "./types";
 
 /** OpenAI and OpenAI-compatible (xAI/Gemini/Mistral/DeepSeek) HTTP shapes. */
 export type OpenAiTransport = "responses" | "chat-completions";
-export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek";
+/** "rotation" is a UI-ONLY pseudo-provider for the "__rotate__" seat sentinel (see
+ *  ROTATION_UI_REASONING_CAPABILITY) — no wire-shaping branch may ever match it. */
+export type LlmReasoningProvider = "openai" | "anthropic" | "xai" | "gemini" | "mistral" | "deepseek" | "rotation";
 
 export interface LlmReasoningOption {
   value: LlmReasoningEffort;
@@ -195,6 +197,29 @@ export function reasoningCapabilityForModel(model: string | undefined): LlmReaso
   }
   return undefined;
 }
+
+/**
+ * UI-ONLY synthetic reasoning capability for the "__rotate__" seat sentinel, so the settings UI can
+ * keep the effort control VISIBLE (and its stored value editable) when a seat rotates instead of
+ * hiding the control and falsely claiming "these models do not expose a reasoning control".
+ *
+ * Deliberately NOT returned by `reasoningCapabilityForModel`: every server call path derives its
+ * wire shape from that function (and from `normalizeReasoningEffortForModel`), and both must keep
+ * failing closed on a raw sentinel — the strategy run substitutes the concrete rotation pick before
+ * any request is shaped (src/lib/model-rotation.ts), and each served model then re-clamps the stored
+ * effort to its own supported range (`interactiveStrategyReasoningEffort`). Offering the full
+ * generic ladder here is honest precisely BECAUSE of that per-run clamp.
+ */
+export const ROTATION_UI_REASONING_CAPABILITY: LlmReasoningCapability = {
+  provider: "rotation",
+  label: "Rotating Models",
+  settingLabel: "Reasoning / Thinking Effort",
+  description:
+    "This seat rotates through the curated models each run. Your chosen effort applies to every served model, " +
+    "clamped per run to that model's supported range (DeepSeek and Mistral Medium treat anything below High as " +
+    "thinking off; models without a reasoning control ignore it).",
+  options: options(ALL_LLM_REASONING_EFFORTS)
+};
 
 export function normalizeReasoningEffortForOptions(
   optionsForModel: readonly Pick<LlmReasoningOption, "value">[],

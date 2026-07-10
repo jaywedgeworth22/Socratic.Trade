@@ -231,6 +231,28 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
+  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — ✅
+  COMPLETED 2026-07-10 via PR #1287; PR #1272 closed superseded.** Root cause of "AAPL
+  fundamentals all dashes": every enrichment provider sliced its symbol list to `maxSymbols()` =
+  30 while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL
+  held positions — the force-included extras past index 30 (systematically the owner's held
+  names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) got zero fields from every
+  provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for the
+  LLM/FCF-veto on exactly the owned positions. Final fix (owner ruling 2026-07-09, landed in
+  #1287 which merged this branch's content at 90c55579 and revised it): NO hard enrichment cap —
+  `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` (explicit, unclamped operator throttle);
+  enrichment order hoists ALL held names (incl. inside the ranked top-N) then event outliers;
+  tooltip honesty (`withProvenance`/`cellTitle` never stamp "Received <time>" on fields no
+  provider returned); regression tests for the 42-symbol prod shape, MARKET_SCAN_LIMIT,
+  unclamped override, and no-cap full-list coverage. ROUND 2 (MONET, 2026-07-10): the two
+  codex-connector findings that blocked #1272 (held-inside-top-N starvation; user-policy scan
+  shapes bypassing an env-derived budget) were fixed on the branch and are both structurally
+  addressed on main by #1287's ordering + no-cap; #1272 closed superseded 2026-07-10T05:30Z.
+  Deploy: rode the main@597b991c ANNOUNCE-THEN-DEPLOY (claimed 05:35Z; deployer owns
+  health-verify + the Deployed flip). Rollout:
+  `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
 - **MONET usage-cap pickup (CLAUDE, owner-directed, worktree
   `.claude/worktrees/monet-usage-cap-work-0038cf`) — ✅ COMPLETED 2026-07-09 evening.** MONET hit
   its usage cap ~17:05 CDT mid-merge-shepherding; the owner directed CLAUDE to pick up everything
@@ -442,24 +464,6 @@ As of 2026-07-08 (assignment-rule update).
 ---
 
 ## 🚧 In Progress
-
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never
-  enriched (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`) — IN
-  PROGRESS 2026-07-09; PR opened via land.sh, auto-merge armed (MONET's work, landed by CLAUDE
-  under the owner-directed usage-cap pickup: committed MONET's uncommitted fix, merged
-  `origin/main` incl. PR #1222's TwelveData negative-cache — different region, both kept — and
-  re-ran the full gate green).** Root cause of "AAPL fundamentals all dashes": every enrichment provider
-  slices its symbol list to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts)
-  while `scanMarket` enriches top-`candidateLimit` (30) ranked + up to 8 event outliers + ALL held
-  positions (src/lib/market.ts) — the force-included extras past index 30 (systematically the
-  owner's held names; verified in prod 2026-07-09T19:41Z, exactly 30/42 enriched) get zero fields
-  from every provider: blank Fundamentals drawer, neutral-50 factor defaults, no fundamentals for
-  the LLM/FCF-veto on exactly the owned positions. Fix: derive the per-provider budget from the
-  real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still
-  bounds cost; PR #1087 pacer handles the extra calls); order the `enrich()` symbol list held →
-  outliers → ranked so a budget shortfall starves the ranked tail, never holdings; tooltip honesty
-  (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
-  regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
 
 - **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
   `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
@@ -1395,6 +1399,25 @@ As of 2026-07-08 (assignment-rule update).
   (audited order_bumped_broker_minimum, re-reviewed, still policy-evaluated); skip stays as
   brokerMinimumHandling="skip". Sells cap at full position; opening bumps decline when the
   floor exceeds the effective per-order cap. New guardrails "Sub-minimum orders" select.
+- **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
+  subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
+  IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting
+  Rotate for both seats hid the Reasoning/Thinking Effort control and printed the false "these
+  models do not expose a reasoning control" line; (b) two rotate sentinels tripped the
+  "SAME model critiquing its own proposals" independence warning. Fix: UI-only synthetic
+  `ROTATION_UI_REASONING_CAPABILITY` (full generic ladder; `reasoningCapabilityForModel` still
+  returns undefined for the raw sentinel so server paths keep failing closed), page helpers
+  extracted to `app/console/strategy/reasoning-control.ts` (sentinel-aware + unit-tested),
+  honest rotation summary/hints, "Per-model default (no high-tier escalation)" blank option for
+  high-tier-only shared pairings (fixes the c2f0d754 disappear-on-default control without
+  re-widening the evidence-backed Mistral capability map), AI-review upfront local-rules
+  disclosure when both seats rotate, sentinel-aware independence hint, approval-card/red-team
+  sentinel leak fixes. Gate: tsc clean / lint 0-err on touched files / full suite 311 files
+  3262 tests green. Sequencing RESOLVED 2026-07-10: the rotate-fix lane's same-model-pairing
+  skip merged to `main` via #1294 and this branch merged `origin/main`; the independence-hint
+  copy is true of this tree (and was tightened to "whenever more than one model is eligible"
+  for the single-eligible-model degenerate pool). Waiting on base PR #1279 to merge, then
+  landing via `scripts/land.sh`. Rollout: `docs/rollouts/2026-07-10-rotation-ux-fixes.md`.
 - **Mistral capability-map fix (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-capmap-fix`) — IN PROGRESS 2026-07-09.** Handoff-queue item 2 (post-#1191
   unblocked queue). The old family-wide Mistral reasoning map 400'd every call (benchmark
@@ -1741,14 +1764,7 @@ As of 2026-07-08 (assignment-rule update).
 
 ## Planned / Reserved Before Implementation
 
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09.** Reservation/diagnosis row; the effort moved to 🚧 In Progress (same title, this file) when implementation began and is now in PR via land.sh, auto-merge armed — see that row for the full record. (Corrected in place per protocol, not deleted; annotation by CLAUDE while landing MONET's work under the owner-directed usage-cap pickup.)
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — IN PROGRESS 2026-07-09 (MONET, worktree `bold-lamport-20a8f9`, branch `monet/bold-lamport-20a8f9`).** Claimed 2026-07-09; fix in flight: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
-- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched — LANDED 2026-07-09 as PR #1272 (auto-merge armed, merging on CI; MONET-authored, committed + landed by CLAUDE under the owner-directed usage-cap pickup — full gate green twice, coexistence with #1222's TwelveData change verified).** Fix as designed: derive the per-provider enrichment budget from the real scan shape (candidateLimit + outlierReserve + held allowance, `MAX_SYMBOLS_CAP=50` still bounds cost) instead of the stale 30; reorder the `enrich()` symbol list so held names + event outliers precede the ranked top-N (first-wins slice can no longer starve them); tooltip honesty in `withProvenance`/`cellTitle` (no "Received <time>" stamp on fields no provider returned); regression test in test/data-providers.test.ts; PR via land.sh when the verify gate is green. Root cause of "AAPL fundamentals all dashes": every enrichment provider slices to `maxSymbols()` = 30 (`DEFAULT_MAX_SYMBOLS`, src/lib/data-providers.ts:271) while `scanMarket` enriches `topCandidates` = top-30 ranked + up to 8 event outliers + heldExtra holdings (src/lib/market.ts:294) — the extras past index 30 (systematically the OWNER'S HELD NAMES, e.g. AAPL/GOOG/V/KO, verified in prod run 2026-07-09T19:41Z: exactly 30/42 enriched) get zero fields from every provider, blanking the drilldown AND the LLM's fundamentals inputs/FCF-veto for held positions. Candidate fix: raise DEFAULT_MAX_SYMBOLS to cover candidateLimit+reserve+holdings (cap 50 exists) and/or enrich held names first; plus tooltip honesty (withProvenance stamps "Received <asOf>" on missing fields — app/console/ui/drilldown-data.ts:640).
-
-
-
-
-
+- **Enrichment starvation: force-included scan candidates (holdings + event outliers) never enriched (MONET, worktree `bold-lamport-20a8f9`) — MOVED 2026-07-09; ✅ COMPLETED 2026-07-10 via PR #1287 (#1272 closed superseded).** Reservation/diagnosis row; see the ✅ Completed row (same title) for the full record. _(Three merge-duplicated annotations of this row — MOVED / IN PROGRESS / LANDED-as-#1272 — were consolidated here 2026-07-10 by MONET; nothing substantive removed, they described the same effort at successive stages.)_
 - **AGENTS.md fleet-table completion: Cursor 4103 row + Monet 4104 confirmation + stray .codex/ (unassigned) — PLANNED 2026-07-05, awaiting seat responses.** _(2026-07-08: stripped FLEET tag — no agent is actively working on this.)_ Owner confirmed 2026-07-05: MONET preview = 4104, CURSOR = 4103. The Monet-port line (4103→4104) is committed on `agent/claude` (31d8da7, rides next land). Remaining, each owned by its seat (asked in #agent-sync CLAUDE sync-5): CURSOR documents its 4103 preview row (pm2 process name, hostname, worktree) in AGENTS.md + `scripts/setup-agent-previews.sh` or declares it ad-hoc-only; MONET confirms its lane/tooling expects 4104 (no pm2 `trading-monet` exists yet; nothing listens on 4103/4104); CODEX claims/relocates or approves deletion of untracked `.codex/{setup.sh,maintenance.sh}` left in `~/apps/trading-claude`.
 
 - **Pre-proposal broker health/availability gate (unassigned) — PLANNED 2026-07-08.** The proposal pipeline currently runs LLM generation before checking whether the broker can actually execute trades. `deriveExecutionState()` only checks "is an account connected?" — it doesn't check broker health, minimum notional, recent `order_placement_uncertain` rate, or account suspension. The scheduler calls `deriveExecutionState()` at line 396 and only throws for "no account," then proceeds to generate proposals for accounts that return errors at execution time. The fix: add a pre-proposal gate (before the LLM call) that checks broker connectivity, recent error rate, account status, and per-account minimum notional; skip proposal generation for unhealthy accounts. Touches `src/lib/execution-mode.ts` (extend `deriveExecutionState` with health signals), `src/lib/strategy.ts` (gate before LLM call at ~line 360), and `src/lib/scheduler.ts` (per-account skip logic at line 396). Related to the Robinhood `order_placement_uncertain` errors identified 2026-07-08 (Agentic AAPL near-zero notional rejects).
