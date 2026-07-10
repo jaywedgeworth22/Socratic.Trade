@@ -11,7 +11,7 @@ import benchmarkJson from "../../../../docs/benchmarks/2026-07-08-llm-model-benc
 export const dynamic = "force-dynamic";
 
 // Per-(model, role) cost / latency / realized-performance stats for the Proposer/Reviewer
-// model pickers (settings/models + strategy page drawers). Auth mirrors the sibling
+// model pickers (the Framework/strategy page drawers). Auth mirrors the sibling
 // /api/llm-usage route: identity comes only from the middleware-verified user.
 //
 // Live sources (this user's data only):

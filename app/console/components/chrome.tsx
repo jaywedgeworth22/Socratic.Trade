@@ -592,8 +592,8 @@ function classifyRunFailure(message: string, status?: number): RunBlock {
     return {
       title: "Choose your team models",
       detail: message,
-      fixHref: "/console/settings#models-green",
-      fixLabel: "Open Settings → LLM models"
+      fixHref: "/console/strategy#models",
+      fixLabel: "Open Framework → Models"
     };
   }
   if (status === 412 || m.includes("llm provider") || m.includes("llm key") || m.includes("provider key")) {

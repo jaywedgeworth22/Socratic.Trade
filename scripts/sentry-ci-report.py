@@ -115,7 +115,13 @@ def main() -> int:
     )
 
     # ── 1. Failure event ────────────────────────────────────────────────────
-    if conclusion == "failure":
+    # Only page Sentry for main + merge-queue failures. Feature-branch failures are already
+    # surfaced (and enforced) by the PR's required status checks; fingerprinting on branch
+    # minted one throwaway Sentry error-issue per agent branch (FLEET-INFRA-2N/-2H).
+    pageworthy_branch = branch == "main" or branch.startswith("gh-readonly-queue/")
+    if conclusion == "failure" and not pageworthy_branch:
+        print(f"skip: branch {branch} failure not paged to Sentry (PR checks cover it)")
+    elif conclusion == "failure":
         event_payload = {
             "event_id": uuid.uuid4().hex,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

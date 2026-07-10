@@ -50,7 +50,13 @@ const CLI = {
   out: argValue("--out"),
   timeoutMs: Number(argValue("--timeout-ms")) || undefined,
   user: argValue("--user") ?? "local",
-  dryRun: hasFlag("--dry-run")
+  dryRun: hasFlag("--dry-run"),
+  // --effort <none|minimal|low|medium|high|xhigh|max|omit>: request a specific reasoning effort
+  // instead of the app's default resolution. Still normalized per model by the app's own
+  // capability map (so an unsupported value can't produce a 400). "omit" is a DIAGNOSTIC mode:
+  // build the body normally, then strip the reasoning fields entirely — isolates whether an
+  // explicit `reasoning_effort:"none"`/thinking-off param (vs its absence) changes model behavior.
+  effort: argValue("--effort") as "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "omit" | undefined
 };
 if (!["green", "red", "both"].includes(CLI.role)) {
   console.error(`Invalid --role "${CLI.role}" (expected green|red|both)`);
@@ -553,7 +559,7 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
   // (set explicitly so the cross-family Bear default never redirects the target model).
   const policy = role === "green" ? { llmModel: model } : { llmModel: model, redTeamLlmModel: model };
   const endpoint = resolveLlmEndpoint(policy, CLI.user, "https://api.openai.com/v1/responses", role);
-  const softTimeoutMs = CLI.timeoutMs ?? strategyLlmTimeoutMs(endpoint.model, undefined);
+  const softTimeoutMs = CLI.timeoutMs ?? strategyLlmTimeoutMs(endpoint.model, CLI.effort === "omit" ? undefined : CLI.effort);
   const base = {
     model: endpoint.model,
     role,
@@ -572,7 +578,10 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
     return;
   }
 
-  const reasoningEffort = interactiveStrategyReasoningEffort(endpoint.model, undefined);
+  const reasoningEffort = interactiveStrategyReasoningEffort(
+    endpoint.model,
+    CLI.effort === "omit" ? undefined : CLI.effort
+  );
   const body = buildLlmRequestBody(
     { provider: endpoint.provider, transport: endpoint.transport },
     role === "green"
@@ -594,6 +603,13 @@ async function runOne(model: string, role: Role, round: number): Promise<void> {
           temperature: LLM_REQUEST_DEFAULTS.adversaryTemperature
         }
   );
+  if (CLI.effort === "omit") {
+    // Diagnostic: send the same body with NO reasoning/thinking steering at all.
+    delete (body as Record<string, unknown>).reasoning_effort;
+    delete (body as Record<string, unknown>).prompt_mode;
+    delete (body as Record<string, unknown>).thinking;
+    delete (body as Record<string, unknown>).reasoning;
+  }
   const requestJson = JSON.stringify(body);
   const requestBytes = Buffer.byteLength(requestJson);
 
