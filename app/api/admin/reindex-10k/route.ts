@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   if (denied) return denied;
 
   let symbols: string[] = [];
-  let limit = Number.POSITIVE_INFINITY;
+  let limit: number | undefined;
   try {
     const body = (await request.json()) as { symbols?: string[]; limit?: number };
     if (Array.isArray(body?.symbols)) symbols = body.symbols.filter((s) => typeof s === "string" && s.length > 0);
@@ -42,7 +42,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Provide { symbols: string[], limit?: number } in the request body." }, { status: 400 });
   }
 
-  const result = await refreshFilingBodies(symbols, Date.now(), limit);
+  // force: this is the operator explicitly asking for a backfill — it must not silently no-op
+  // behind the scheduler's ingest TTL stamp (it did until 2026-07-09, returning {attempted: 0}
+  // for up to a week after any scheduler attempt). An explicit `limit` also overrides the
+  // free-tier 1-filing cap; omitted, the tier default applies (paid 25 / free 1).
+  const result = await refreshFilingBodies(symbols, Date.now(), limit, { force: true });
   const stats = await getVectorStoreStats();
   return NextResponse.json({ ok: result.errors.length === 0, result, vectorStore: stats });
 }

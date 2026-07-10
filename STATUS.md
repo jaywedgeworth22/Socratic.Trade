@@ -8,6 +8,62 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Rotation ("__rotate__") now works for manual Run-once (CLAUDE, branch `claude/rotate-runonce-fix`)
+Owner-directed, three fixes in one commit: (1) the Run-once route precheck resolved the PERSISTED
+policy, where the `"__rotate__"` sentinel deliberately reads as unset → 412 every manual run (scheduled
+runs worked; `runStrategyOnce` resolves rotation at run top) — the route now gates a rotating Green on
+`eligibleRotationPool(userId)` being non-empty, with a new actionable 412 message
+(`LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE`) when no key resolves for any catalog model; red sentinel
+never 412s (routes per-opening to human, like blank red). (2) `classifyRunFailure` (chrome.tsx) titled
+EVERY 412 "No LLM key is configured" — model-CHOICE messages now get "Choose your team models" →
+`/console/settings#models-green`; key messages keep the key title. (3) `advanceRotationPointers`
+same-model skip: dual rotation started both counters at 0 → proposer and reviewer served the SAME model
+all first cycle; red now skips one slot when its pick would equal green's (pool >= 2), wrap-advance
+intact. tsc clean; touched suites 26/26 (Node 24); reviewed, landing via `land.sh` (full gate:
+lint/tsc/test/build) — PR opened, auto-merge armed. See `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
+## 2026-07-10 - Infinite-loading fix, CLAUDE layer (PR pending)
+socratictrade.com infinite logo: primary cause = SSE market-data abort-storm (AG PR #1285, land first);
+CLAUDE layer on `claude/console-load-hang` = deadlines on all 9 dashboard upstreams (degraded-not-hung,
+logged), ipv4first in instrumentation register(), 15s first-load watchdog (isolated from refresh()).
+Gate green: tsc, 3261/3261 tests, build, lint. Prod logs via Coolify API: app stdout silent (only
+litestream) - timeout warns now make hangs visible. Detail: docs/rollouts/2026-07-10-dashboard-deadlines-load-watchdog.md
+
+## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
+Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
+is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
+(1) **No hard enrichment cap** — `maxSymbols()` is now Infinity unless `FMP_MAX_SYMBOLS` is set
+(unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP=50` removed — an
+account with >50 positions must never see held names starved. Webull/Robinhood-options env
+overrides unclamped too (defaults unchanged). (2) **Filings receipts + ingestion**: the
+"Requested filings doc type never ingested" warning on every stock is now a neutral "Filings
+library still warming up" receipt with ingested counts; SEC ingestion is demand-first
+(watchlist + last-scan candidates incl. holdings before the alphabetical universe), paid-tier
+per-run default 25 (was 1), TTL env-tunable (`SEC_FILING_INGEST_TTL_HOURS`), and the admin
+backfill route now forces past the TTL stamp instead of silently no-oping. Prod env still
+needed to unlock paid pace: `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+See `docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` and the
+owner-ruling revision section in `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, usage-cap pickup round 2 of MONET's lane): committed MONET's
+uncommitted follow-on refinements (held-in-top-N enrichment priority, `ingestFiling`
+budget-skip un-record so budget-truncated filings retry instead of being marked ingested,
+forced admin backfills no longer push the scheduled-ingest TTL stamp), merged
+`origin/main` clean, full gate green, PR opened via `land.sh` with auto-merge armed.
+
+## 2026-07-09 — Enrichment starvation fix landed (MONET, branch `monet/bold-lamport-20a8f9`)
+Fixed the prod-verified starvation (30/42 candidates enriched, 2026-07-09T19:41Z run): the
+per-provider enrichment budget is now derived from the real scan shape (candidateLimit +
+outlierReserve + `HELD_SYMBOL_ALLOWANCE=12`, capped at 50) instead of a fixed 30, the
+`enrich()` symbol list is ordered held → event outliers → ranked top-N so a budget shortfall
+can never starve owned/force-included names, and `withProvenance`/`cellTitle` no longer stamp
+"Received <time>" on fields no provider returned. `FMP_MAX_SYMBOLS` stays the absolute
+operator override. See `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's uncommitted work):
+merged `origin/main` clean (incl. PR #1222 TwelveData negative-cache — different region,
+both kept), focused tests 132/132 then full gate green, PR opened via `land.sh` with
+auto-merge armed.
+## 2026-07-09 — Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`)
+Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
+
 ## 2026-07-08 - UI wave 4: scope dropdown + floating Tabs sheet (CLAUDE)
 Branch `claude/ui-polish-wave` (PR pending). ScopeSelector rebuilt Sheet->real anchored dropdown with
 'Configure accounts' item, wider desktop trigger, chevron aligned+rotating; mobile Tabs sheet now floats
@@ -15,6 +71,16 @@ above the still-visible tab bar (live-measured height, all destinations fit on i
 feedback); tab-bar badge clearance fixed. 55-findings backlog audited vs main post-MONET-sweeps:
 37 DONE / 2 PARTIAL / 7 OPEN (6 = owner TBDs, 1 deferred refactor). Detail:
 docs/rollouts/2026-07-08-ui-wave4-scope-dropdown-tabs-sheet.md
+## 2026-07-09 — MONET usage-cap pickup ROUND 2 closed out (CLAUDE, owner-directed)
+MONET's cap reset, it ran a second session (post-migration deploy, #1278–#1281, #1272 round-2),
+then re-capped; CLAUDE picked up again. All nine open PRs armed/merging: #1278 (7 threads +
+review-caught max-age-sweep blocker fixed), #1279/#1280/#1281 (threads fixed, armed; #1280
+oversized-exit bump now blocks), #1266/#1267/#1269 round-3 threads fixed (spoofable rerun
+marker, breaker-neutering health log, same-tick fire gate), #1272 un-dirtied, and MONET's aapl
+lane (owner-ruled no-cap enrichment + RAG warm-up receipts, supersedes #1272) landed as #1287
+(gate 3261/3261). Activity audit still not-started — MONET's on return. Round-2 addendum in
+`docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
+
 ## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
 flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
@@ -63,6 +129,17 @@ throughout); built image `docker save/load`ed so cutover downtime was ~5 min; si
 records flipped (`jays.services` apex/`*`/`prod`, `socratictrade.com` apex/`*`/`admin`). Verified:
 health 200/db ok/scheduler ticking, litestream caught up, runners re-registered, dashboard live.
 Old box: all containers stopped `--restart=no` (rollback standby until owner deletes it).
+**Same-evening resolutions:** the `congress.trade` IP Access Rule for the new IP was added
+(owner-authorized; congress-stream SSE `ok:true` again), and the first new-box deploy succeeded
+(AG deployer seat — first full cold nixpacks build on the 8 GB box proven).
+**Same-evening DOMAIN RENAME (owner-directed): the Coolify dashboard/API moved from the apex to
+`https://host.jays.services`** — the apex `jays.services` now CNAMEs to the Mac tunnel and no
+longer reaches Coolify; the `*.jays.services` wildcard A record was deleted. Every tool/script
+must call `https://host.jays.services/api/v1/...`. The stored Coolify API token also stopped
+authenticating at the same time (likely rotated in the UI) — agents need a fresh token via secret
+handoff; the GitHub App webhook URL (github.com side) still points at the apex and needs updating
+to `host.jays.services`. **Owner action still pending:** delete the old Hetzner server after
+soak. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
 **Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
 the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
 congress-stream SSE 403s — the one migration regression, root-caused); (2) first

@@ -174,16 +174,43 @@ describe("aggregateModelStats — performance gating", () => {
     expect(green.perf).toBeNull();
   });
 
-  it("never attributes closed-trade perf to the red role (Red attribution is per-run)", () => {
+  it("only attributes entry-model lots to the green role (proposer)", () => {
     const stats = aggregateModelStats({
       usageRows: [],
       latencyEvents: [],
       benchmarkSummaries: NO_BENCH,
       closedLots: lots("gpt-5.4-mini", 30, 30)
     });
+    const green = statFor(stats, "gpt-5.4-mini", "green");
+    expect(green.closedTrades).toBe(60);
+    expect(green.perf).not.toBeNull();
+
     const red = statFor(stats, "gpt-5.4-mini", "red");
     expect(red.closedTrades).toBe(0);
     expect(red.perf).toBeNull();
+  });
+
+  it("attributes reviewed-by-model lots to the red role (reviewer) when present", () => {
+    const stats = aggregateModelStats({
+      usageRows: [],
+      latencyEvents: [],
+      benchmarkSummaries: NO_BENCH,
+      closedLots: [
+        { reviewedByModel: "claude-sonnet-5", pnl: 100, returnPct: 4 },
+        { reviewedByModel: "claude-sonnet-5", pnl: -50, returnPct: -2 }
+      ]
+    });
+    const red = statFor(stats, "claude-sonnet-5", "red");
+    expect(red.closedTrades).toBe(2);
+    expect(red.perf).not.toBeNull();
+    expect(red.perf!.closedTrades).toBe(2);
+    expect(red.perf!.winRate).toBe(50);
+    expect(red.perf!.avgPnlPct).toBe(1);
+    expect(red.perf!.totalPnlUsd).toBe(50);
+
+    const green = statFor(stats, "claude-sonnet-5", "green");
+    expect(green.closedTrades).toBe(0);
+    expect(green.perf).toBeNull();
   });
 
   it("ignores lots without an entry model (pre-attribution history)", () => {

@@ -963,13 +963,20 @@ export async function runStrategyOnce(
           userId,
           connectedAccountId
         );
+        // Copy honesty (owner report 2026-07-09): the old title ("Requested filings doc type never
+        // ingested") read on every stock as "a document was looked for and not found" — a per-symbol
+        // lookup failure. The real state is a still-warming shared corpus: SEC ingestion is paced,
+        // so say that, with the actual count. Neutral tone: an advisory warm-up receipt on every
+        // decision card shouldn't wear the same orange as a real safety warning.
+        const ingestedFilingsTotal = Object.values(accessionCountsByDocType).reduce((sum, n) => sum + n, 0);
         promptSafetyEvidence.push({
           kind: "safety",
-          tone: "warning",
-          title: "Requested filings doc type never ingested",
+          tone: "neutral",
+          title: "Filings library still warming up",
           summary:
-            `${emptyDocTypes.length} requested doc type(s) produced no chunks this run: ` +
-            `${emptyDocTypes.join(", ")}. Advisory receipt only — nothing was altered or blocked.`,
+            `No ${emptyDocTypes.join(" or ")} filings are in the research library yet ` +
+            `(${ingestedFilingsTotal} filing${ingestedFilingsTotal === 1 ? "" : "s"} ingested so far — SEC ingestion is paced ` +
+            `and fills watchlist/held names first). This decision used the other evidence; nothing was altered or blocked.`,
           source: "prompt-safety",
           data: { emptyDocTypes, requestedDocTypes: requestedFilingsDocTypes }
         });
@@ -1357,6 +1364,9 @@ export async function runStrategyOnce(
           // Structured failure classification ("RED TEAM FAILED" flag) — absent when available.
           ...(redTeamResult.failureKind ? { failureKind: redTeamResult.failureKind } : {})
         };
+        if (redTeamResult.model) {
+          proposal.reviewedByModel = redTeamResult.model;
+        }
         if (redTeamResult.rejected) {
           console.log(`[Debate] Rejected ${proposal.symbol} ${proposal.side}: ${redTeamResult.reason}`);
           // Pre-veto override (Veto B): an available-and-rejecting Bear is ADVISORY when the agent

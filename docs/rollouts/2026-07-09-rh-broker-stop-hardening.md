@@ -130,6 +130,59 @@ test/broker-side.test.ts test/broker-held-orders.test.ts` (60 tests) plus the fo
 importing the touched modules (31 tests); `npx eslint` on touched files: 0 errors (2 pre-existing
 warnings). Full `npm test`/`npm run build` left to the `verify` CI gate on the PR.
 
+## Review-fix round 3 (2026-07-09, PR #1269 — placedStopSymbols/coverage machinery)
+
+Round-3 review on PR #1269 raised 4 threads on the just-placed-stop suppression machinery. Two were
+confirmed real and fixed in one commit; one is a deliberate design choice (kept, documented on the
+thread); one is a known accepted residual resolved with a tracked follow-up (below).
+
+1. **FIXED (P1) — active synthetic rows could fire over a same-tick broker-stop placement.** The
+   `justPlacedBrokerStopSymbols` gate only suppressed synthetic REGISTRATION. A row that was ALREADY
+   active (registered on a tick where section-4 placement threw, or armed before the flag was
+   enabled) fire-evaluated against the pre-reconcile order list — which can never contain the stop
+   reconcile just placed this tick — so a same-tick trail breach could market-sell shares the fresh
+   full-size stop already covered and then `cancelBrokerProtectiveStop` cancelled that stop after
+   booking the fill. The gate now also covers the fire loop (audited skip via
+   `synthetic_stop_skipped_resting_exit` before `claimSyntheticStop`); the just-placed stop is
+   always full position size, so the skip costs one tick of trail responsiveness with broker-held
+   protection resting. Comments on `ReconcileResult.placedStopSymbols` and the registration skip
+   updated to match (both previously said the fire path was deliberately ungated).
+2. **FIXED (P2) — synchronously rejected placements were recorded as live stops.** Section 4 of
+   `reconcileBrokerProtectiveStops` guarded only `!exec.orderId`, so a non-throwing broker response
+   with a terminal state (e.g. `rejected` + an order id) was stored as a `resting` row, counted in
+   `placed`, and advertised via `placedStopSymbols` — one tick of suppressed synthetic registration
+   with no protection resting, plus a zombie row blocking section-4 re-placement on every later tick
+   (section 3 sees no qty/price mismatch on a dead order). Now guarded with the same
+   `isRejectedOrCanceledState` check the synthetic exit path uses: audit + continue, no row, no
+   count, no symbol advertised; the next tick simply retries placement.
+3. **KEPT — `suspended` stays in `LIVE_ORDER_STATES`.** Deliberate: suspended is non-terminal, the
+   predicate also backs `confirmedPriorExitDead` (excluding it would advance the fire generation and
+   stack a second exit that can double-fill on reinstatement), and the set must stay a superset of
+   `ACTIVE_BROKER_ORDER_STATES` (drift-guard test) which has always counted suspended shares as
+   broker-held. Every suppressed fire is audited per tick.
+4. **ACCEPTED RESIDUAL + FOLLOW-UP — dead `pending_cancel` rows can block broker-stop re-placement
+   indefinitely.** If the broker order behind a `pending_cancel` row is already terminal but the
+   cancel retry keeps throwing (e.g. not-found after the cancel actually landed broker-side), the
+   row never clears and section 4 never re-places for that symbol. Bounded: a dead order contributes
+   no live coverage, so the always-on synthetic monitor registers the symbol on the next tick — the
+   position stays protected by the fallback layer. The blocking direction is deliberate (placing
+   over a possibly-live order would upsert a new `broker_order_id` over the UNIQUE row and orphan a
+   still-live full-size GTC stop untracked). **Tracked follow-up (not in this PR):** pass the
+   monitor's freshly fetched order list into `reconcileBrokerProtectiveStops` and delete a
+   `pending_cancel` row when its `brokerOrderId` appears in that list in a terminal state
+   (presence-with-terminal only — absence stays ambiguous and keeps the block), letting section 4
+   re-place on the following tick.
+
+Files (round 3): `src/lib/synthetic-stops.ts` (fire-path gate + comments),
+`src/lib/broker-protective-stops.ts` (rejected-state guard + `placedStopSymbols` doc),
+`test/synthetic-stops.test.ts` (active-row + same-tick placement + breaching quote regression),
+`test/broker-protective-stops.test.ts` (rejected placement: no row/no count/no advertise + retry
+recovery; `fakeGateway` gains `placeState`), this note.
+
+Verification (round 3): `npx tsc --noEmit` clean; `npx vitest run test/synthetic-stops.test.ts
+test/broker-protective-stops.test.ts test/broker-side.test.ts` green; `npx eslint` on touched files
+0 errors. Full suite rides the `verify` CI gate.
+
 ## Follow-ups / still-open blockers
 - **Blocker #1 (RH MCP stop-market/GTC contract unverified live) is NOT closed by this PR.** The
   remaining gate before `robinhoodBrokerStops` can default ON is a single live RH smoke test

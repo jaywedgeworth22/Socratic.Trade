@@ -423,6 +423,76 @@ describe("enrichment cache consent gate", () => {
     else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
+  it("TwelveData logs an ok:false health row when a batch is ALL embedded-transient errors (no usable data)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      // Every queried symbol comes back as an embedded transient error (429/5xx) inside HTTP 200 —
+      // e.g. a mis-sized credit budget or an upstream outage, not "no data for this symbol".
+      for (const s of syms) body[s] = { code: 429, status: "error", message: "out of API credits" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    const provider = new TwelveDataEnrichmentProvider(key, "env");
+    const beforeCount = getServiceHealthLog("twelvedata", 1000).length;
+    const res = await provider.enrich(["RATELIMITED1", "RATELIMITED2"]);
+    expect(res.RATELIMITED1).toEqual({});
+    expect(res.RATELIMITED2).toEqual({});
+
+    // The whole-request parse still succeeded (HTTP 200, valid JSON), but every symbol failed —
+    // this must surface as an ok:false health row so the circuit breaker can see the bad lane,
+    // not stay silently healthy while retrying it every window.
+    const rows = getServiceHealthLog("twelvedata", 10);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => r.ok === 0)).toBe(true);
+    const failure = rows.find((r) => r.ok === 0);
+    expect(failure?.error_text).toContain("transient");
+
+    // Exactly ONE health row for this call, and it's the failure — NOT an ok:true (outer HTTP/JSON
+    // success) paired with an ok:false (all-transient) for the same batch. getLaneHealth's circuit
+    // breaker trips only when the last 5 rows are ALL failures; pairing success+failure per batch
+    // would make repeated all-transient batches alternate forever and never trip it.
+    const afterCount = getServiceHealthLog("twelvedata", 1000).length;
+    expect(afterCount - beforeCount).toBe(1);
+    expect(rows[0].ok).toBe(0);
+  });
+
+  it("TwelveData stays ok:true on a PARTIAL batch (some symbols usable, some embedded-transient)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) {
+        body[s] = s === "RATELIMITED" ? { code: 429, status: "error", message: "out of API credits" } : { symbol: s, close: "10" };
+      }
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    const provider = new TwelveDataEnrichmentProvider(key, "env");
+    const res = await provider.enrich(["RATELIMITED", "GOOD"]);
+    expect(res.RATELIMITED).toEqual({});
+    expect(res.GOOD?.price).toBe(10);
+
+    // At least one symbol was usable, so the lane stays healthy — this call's own health row
+    // (the most recent one, since the log is ordered ts DESC) must be ok:true, not ok:false.
+    // (Older rows from earlier tests in this file may still be present in the shared log, so
+    // don't assert over the whole log — just the row this call just wrote.)
+    const rows = getServiceHealthLog("twelvedata", 10);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].ok).toBe(1);
+  });
+
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
@@ -1874,5 +1944,92 @@ describe("short-interest second source (Massive) — cross-check + disagreement 
     const provider = new MassiveEnrichmentProvider("massive-key", "env");
     const res = await provider.enrich(["NONE"]);
     expect(res.NONE).toEqual({});
+  });
+});
+
+describe("enrichment symbol budget covers the full scan candidate set (starvation regression)", () => {
+  // Prod 2026-07-09T19:41Z: scanMarket enriched top-30 ranked + 8 event outliers + 4 held
+  // names (42 symbols), but every provider sliced its list to a fixed 30 — the force-included
+  // extras (systematically the owner's HELD positions) got zero fields from every provider.
+  // The budget must cover candidateLimit + outlier reserve + a held-position allowance.
+  const ranked = Array.from({ length: 30 }, (_, i) => `RNK${i}`);
+  const outliers = Array.from({ length: 8 }, (_, i) => `EVT${i}`);
+  const held = ["AAPL", "GOOG", "V", "KO"];
+  // Held + outliers first, mirroring scanMarket's enrichment priority order.
+  const candidates = [...held, ...outliers, ...ranked];
+
+  beforeEach(async () => {
+    const { clearEnrichmentCache } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.FMP_MAX_SYMBOLS;
+    delete process.env.MARKET_SCAN_LIMIT;
+    delete process.env.MARKET_SCAN_EVENT_RESERVE;
+  });
+
+  function stubSymbolRecordingFetch(): Set<string> {
+    const fetched = new Set<string>();
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      const symbol = new URL(String(url)).searchParams.get("symbol");
+      if (symbol) fetched.add(symbol);
+      return new Response(JSON.stringify({}));
+    });
+    return fetched;
+  }
+
+  it("enriches every candidate: candidateLimit + outlier reserve + held extras (the 42-symbol prod shape)", async () => {
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    const result = await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+    expect(Object.keys(result).length).toBe(candidates.length);
+  });
+
+  it("still covers the force-included extras when MARKET_SCAN_LIMIT pins the scan size", async () => {
+    // MARKET_SCAN_LIMIT used to be consumed as the enrichment budget itself, re-creating
+    // the starvation for any operator with it set; it is the candidate limit, so the
+    // budget must sit ABOVE it (reserve + held allowance on top).
+    process.env.MARKET_SCAN_LIMIT = "30";
+    const { FinnhubEnrichmentProvider } = await import("../src/lib/data-providers");
+    const fetched = stubSymbolRecordingFetch();
+    const provider = new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env");
+    await provider.enrich(candidates);
+    for (const symbol of candidates) {
+      expect(fetched.has(symbol), `${symbol} was starved of enrichment`).toBe(true);
+    }
+  });
+
+  it("keeps FMP_MAX_SYMBOLS as an explicit operator throttle — unclamped, with NO default cap", async () => {
+    process.env.FMP_MAX_SYMBOLS = "10";
+    const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
+    let fetched = stubSymbolRecordingFetch();
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(candidates);
+    expect(fetched.size).toBe(10);
+
+    // The override is not silently clamped: an operator asking for 60 gets 60 (the old
+    // MAX_SYMBOLS_CAP=50 would have quietly cut this — owner ruling 2026-07-09: no hard cap).
+    process.env.FMP_MAX_SYMBOLS = "60";
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    const seventy = Array.from({ length: 70 }, (_, i) => `OVR${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(seventy);
+    expect(fetched.size).toBe(60);
+
+    // No env set: the full requested list is enriched, however large. An account with more
+    // than 50 positions must never see its held names starved by a provider-side ceiling.
+    delete process.env.FMP_MAX_SYMBOLS;
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    const bigBook = Array.from({ length: 120 }, (_, i) => `POS${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(bigBook);
+    expect(fetched.size).toBe(120);
   });
 });
