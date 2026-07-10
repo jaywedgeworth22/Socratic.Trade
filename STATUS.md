@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Learning-review legacy-seed default-blob edge fixed (MONET, branch `monet/learning-review-legacy-seed-99138a`, follow-up to #1278)
+Resolves PR #1278's deferred Codex P2 **finding #3**. `seedLegacyLearningReviewFields` (`src/lib/db-profiles.ts`)
+bailed whenever any `learningReview*` key was present in `user_settings.policy` — but a legacy FULL policy
+blob stamps the DEFAULT `learningReviewEnabled:false` there while the real enabled review lives account-scoped
+(#1116), so a pre-cutover enabled review silently read as disabled. Fix = two guards: (1) full-blob-vs-tiered
+disambiguation (a review key in a tiered `pickUserFields` write is authoritative; the same key in a full blob
+is a stale default → seed over it), and (2) a one-time `learning_review:legacySeedDone:<userId>` marker set
+unconditionally on first read, so the seed evaluates only pre-deploy state and can never later re-fire to
+clobber a deliberate disable (the fail-OPEN danger). +2 tests (full-blob recovered; tiered-disable NOT
+clobbered), pre-fix falsified. node@24: tsc clean, learning-review 32/32, policy-scope suites 53/53
+(pr7-merge-gate green), build clean, eslint 0-err. Built off #1278 tip 150257ae; #1278 squash-merged to
+`main` mid-work (`6f1aaf87`), so rebased onto `main` and delivered as **PR #1326** (full land.sh gate green).
+See `docs/rollouts/2026-07-09-learning-review-model-fixes.md` addendum 3. Only #1278 deferred item still
+open: #2 (unshown-item orphaning).
 ## 2026-07-10 — Mistral keyed re-benchmark (MONET, branch `monet/mistral-rebench-docs`, owner-directed)
 The re-benchmark deferred from #1279: **12/12 live calls succeeded, zero 400s** (was 0/12 pre-fix) —
 the capability-map fix is empirically proven against Mistral's API. `mistral-small-2603` green:

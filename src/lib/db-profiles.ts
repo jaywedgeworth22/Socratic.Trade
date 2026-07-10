@@ -3,7 +3,7 @@
 // and the re-exported getPolicy / setPolicy / getStrategyPrompt / setStrategyPrompt.
 import crypto from "crypto";
 import { getDb, audit } from "./db";
-import { getUserSetting, setUserSetting } from "./db-settings";
+import { getInternalSetting, getUserSetting, setInternalSetting, setUserSetting } from "./db-settings";
 import { getActiveConnectedAccount, getConnectedAccount, listConnectedAccounts } from "./db-api-keys";
 import { DEFAULT_POLICY, DEFAULT_SCORING_WEIGHTS, DEFAULT_STRATEGY_PROMPT } from "./defaults";
 import type {
@@ -44,6 +44,16 @@ const LEARNING_REVIEW_POLICY_FIELDS: Array<keyof TradingPolicy> = [
   "learningReviewMaxWaitDays"
 ];
 
+/**
+ * Global-settings key (per-user) marking that the one-time legacy learning-review seed has been
+ * evaluated for this user. Lives in the global `settings` store (getInternalSetting), mirroring
+ * the learning-review runner's own markers (`learning_review:lastRunDate:<userId>`, …); the
+ * userId suffix keeps it per-user. Once set, the seed never re-runs — see seedLegacyLearningReviewFields.
+ */
+function learningReviewLegacySeedKey(userId: string): string {
+  return `learning_review:legacySeedDone:${userId}`;
+}
+
 /** Extract only the user-level fields from a TradingPolicy. */
 function pickUserFields(policy: TradingPolicy): Partial<TradingPolicy> {
   const result: Partial<TradingPolicy> = {};
@@ -80,23 +90,55 @@ function stripUserFields(policy: Partial<TradingPolicy>): Partial<TradingPolicy>
 }
 
 /**
- * One-time lazy seed (#1278 follow-up): the learning-review config shipped account-scoped
- * (#1116) and is user-level now. Reads strip learningReview* from account rows and pre-#1278
- * tiered saves never wrote those keys to user_settings.policy, so a review enabled before this
- * deploy would silently read as disabled. When user_settings.policy carries NONE of the review
- * keys, copy them from the first account_strategy_state row that has any (active account first)
- * and persist them — the reverse-direction companion of migrateLegacyStrategyModelFieldsToAccounts.
- * Returns the seeded fields, or null when there was nothing to seed.
+ * One-time lazy seed (#1278 follow-up, deferred finding #3): the learning-review config shipped
+ * account-scoped (#1116) and is user-level now. Reads strip learningReview* from account rows and
+ * pre-#1278 tiered saves never wrote those keys to user_settings.policy, so a review enabled before
+ * this deploy would silently read as disabled. On the first read after the cutover we copy the
+ * account-level value up to user_settings.policy — the reverse-direction companion of
+ * migrateLegacyStrategyModelFieldsToAccounts. Returns the seeded fields, or null when there was
+ * nothing to seed.
+ *
+ * TWO guards, because the earlier "bail whenever any review key is already present" was wrong and a
+ * naive replacement is dangerous (finding #3):
+ *
+ *  1. Full-blob vs tiered disambiguation. `user_settings.policy` historically also held a FULL
+ *     policy blob (a profile activation via writePolicyBlobPreservingUserFields, a no-account
+ *     setPolicy, or a pre-tier DB) that stamps the DEFAULT learningReviewEnabled:false there while
+ *     the user's real ENABLED value lived account-scoped. So a review key being *present* does not
+ *     mean it is authoritative. A modern TIERED write (pickUserFields → setUserSetting) contains
+ *     ONLY user-level keys; a full blob also carries account-level keys. A review key in a tiered
+ *     blob is the user's real post-cutover value (leave it); the same key in a full blob is a stale
+ *     default (seed over it).
+ *  2. One-time marker (the load-bearing guard). Pre-cutover, learningReview* was never a user-level
+ *     field, so it could not reach a tiered blob — meaning on the FIRST read a present review key
+ *     can only be a stale full-blob default, never a deliberate choice. The marker pins the decision
+ *     to that pre-cutover state: after the user starts making post-cutover changes, a deliberate
+ *     tiered disable can be folded back into a full blob (the next profile activation runs
+ *     writePolicyBlobPreservingUserFields), making its false indistinguishable from a stale default
+ *     — but by then the marker is set (the first read necessarily precedes any deliberate change),
+ *     so the seed never re-fires and never clobbers that intent.
  */
 function seedLegacyLearningReviewFields(userId: string, stored: Partial<TradingPolicy>): Partial<TradingPolicy> | null {
-  if (LEARNING_REVIEW_POLICY_FIELDS.some((key) => key in stored)) return null;
-  const accounts = listConnectedAccounts(userId);
-  if (accounts.length === 0) return null;
+  if (getInternalSetting<boolean>(learningReviewLegacySeedKey(userId)) === true) return null;
+  const seeded = computeLegacyLearningReviewSeed(userId, stored);
+  // Set unconditionally, whether or not anything was seeded: the seed is a one-shot cutover
+  // migration that must evaluate only the pre-deploy DB state (guard #2 above).
+  setInternalSetting(learningReviewLegacySeedKey(userId), true);
+  return seeded;
+}
+
+function computeLegacyLearningReviewSeed(userId: string, stored: Partial<TradingPolicy>): Partial<TradingPolicy> | null {
+  // Guard #1: a review key sitting in a TIERED write (only user-level keys present) is the user's
+  // authoritative value — never overwrite it. A review key in a FULL blob (account-level keys also
+  // present) only stamped the default there; the real value still lives account-scoped, so seed.
+  const hasReviewKey = LEARNING_REVIEW_POLICY_FIELDS.some((key) => key in stored);
+  const isTieredWrite = Object.keys(stored).every((key) => USER_LEVEL_POLICY_FIELDS.has(key as keyof TradingPolicy));
+  if (hasReviewKey && isTieredWrite) return null;
   // Iterate accounts as listed — the legacy seed must NOT depend on the active-account (view)
   // pointer (PR #7 view/execution decouple guard, test/pr7-merge-gate.test.ts). Learning-review
   // config is user-level intent that happened to ship account-scoped (#1116), so any account
   // that carries it is an equally valid source; first-with-keys wins.
-  for (const account of accounts) {
+  for (const account of listConnectedAccounts(userId)) {
     const state = getAccountStrategyStateRow(userId, account.id);
     if (!state) continue;
     let accountPolicy: Partial<TradingPolicy>;
@@ -112,6 +154,8 @@ function seedLegacyLearningReviewFields(userId: string, stored: Partial<TradingP
       }
     }
     if (Object.keys(found).length > 0) {
+      // Persist onto the SAME stored object so a legacy full blob stays intact —
+      // readLegacyStrategyModelFields still reads llmModel/redTeamLlmModel/llmReasoningEffort from it.
       setUserSetting(userId, "policy", { ...stored, ...found });
       return found;
     }
