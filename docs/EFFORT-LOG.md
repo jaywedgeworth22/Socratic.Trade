@@ -1642,23 +1642,14 @@ As of 2026-07-08 (assignment-rule update).
   known open gaps remain in the daily learning-review job's coverage guarantees. See
   `docs/rollouts/2026-07-10-learning-review-backlog-drain.md` addendum.
 
-- **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET) — ✅
-  COMPLETED 2026-07-10: PR #1328 merged to `main` (`79b542e3`).** `buildLearningReviewContextPack`
-  sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review advanced `lastReviewedAt` to
-  run-start `now`, so a >80-item store's overflow stopped counting toward the trigger's newCount AND
-  max-age → never audited. Fix: sweep OLDEST un-reviewed first within the budget; add `truncated` +
-  `reviewedThroughMs` to the pack; advance the marker to `now` only when NOT truncated (else just
-  below the oldest DROPPED un-reviewed item), while still storing the fingerprint so annotate mode
-  doesn't re-run the LLM daily. +4 tests (pack-truncation flags; 200-item backlog drains across
-  exactly 3 daily runs in BOTH annotate+decide, every item shown, none silently reviewed). node@24:
-  tsc clean, full suite 3338/3338, learning-review 34/34, eslint 0-err, build clean. **Superseded by
-  the hardening row above** — an adversarial re-review the same day found this fix had 2 adjacent
-  gaps of its own; see that row. See `docs/rollouts/2026-07-10-learning-review-backlog-drain.md`.
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
   `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
   merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
   `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
-  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired). **SUPERSEDED same day by
+  the "Learning-review orphan hardening" row above** — an adversarial re-review found this fix had 2
+  adjacent orphaning gaps of its own, currently live in prod until the hardening PR lands+deploys; see
+  that row.**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
