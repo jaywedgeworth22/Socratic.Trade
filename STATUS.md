@@ -8,6 +8,20 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Learning-review legacy-seed default-blob edge fixed (MONET, branch `monet/learning-review-legacy-seed-99138a`, follow-up to #1278)
+Resolves PR #1278's deferred Codex P2 **finding #3**. `seedLegacyLearningReviewFields` (`src/lib/db-profiles.ts`)
+bailed whenever any `learningReview*` key was present in `user_settings.policy` — but a legacy FULL policy
+blob stamps the DEFAULT `learningReviewEnabled:false` there while the real enabled review lives account-scoped
+(#1116), so a pre-cutover enabled review silently read as disabled. Fix = two guards: (1) full-blob-vs-tiered
+disambiguation (a review key in a tiered `pickUserFields` write is authoritative; the same key in a full blob
+is a stale default → seed over it), and (2) a one-time `learning_review:legacySeedDone:<userId>` marker set
+unconditionally on first read, so the seed evaluates only pre-deploy state and can never later re-fire to
+clobber a deliberate disable (the fail-OPEN danger). +2 tests (full-blob recovered; tiered-disable NOT
+clobbered), pre-fix falsified. node@24: tsc clean, learning-review 32/32, policy-scope suites 53/53
+(pr7-merge-gate green), build clean, eslint 0-err. Built off #1278 tip 150257ae (code only exists there).
+See `docs/rollouts/2026-07-09-learning-review-model-fixes.md` addendum 3. Only deferred item still open: #2
+(unshown-item orphaning).
+
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
 ## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)

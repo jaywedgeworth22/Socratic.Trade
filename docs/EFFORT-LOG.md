@@ -485,6 +485,21 @@ As of 2026-07-08 (assignment-rule update).
 ## 🚧 In Progress
 
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
+- **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
+  `monet/learning-review-legacy-seed-99138a`, follow-up to PR #1278) — IN PROGRESS 2026-07-10; code
+  done + verified, PR opening as a follow-up to #1278.** `seedLegacyLearningReviewFields`
+  (`src/lib/db-profiles.ts`) bailed whenever any `learningReview*` key was present in
+  `user_settings.policy`; a legacy FULL blob stamps the DEFAULT `learningReviewEnabled:false` there
+  while the real enabled review lives account-scoped (#1116), so a pre-cutover enabled review silently
+  read as disabled. Fix = (1) full-blob-vs-tiered disambiguation (`isTieredWrite = every stored key is
+  user-level`) so a tiered `pickUserFields` write's review key is authoritative but a full blob's is a
+  stale default to seed over, and (2) a one-time `learning_review:legacySeedDone:<userId>` marker set
+  unconditionally on first read so the seed only ever evaluates pre-deploy state and can never re-fire to
+  clobber a later deliberate disable (the fail-OPEN danger the naive fix risked). +2 tests
+  (full-blob recovered; tiered-disable NOT clobbered), pre-fix falsified. node@24: tsc clean,
+  learning-review 32/32, policy-scope 53/53 (pr7-merge-gate green), build clean, eslint 0-err. Built off
+  #1278 tip 150257ae (target code only exists on the unmerged PR). #2 (unshown-item orphaning) remains the
+  only open #1278 deferred item. See docs/rollouts/2026-07-09-learning-review-model-fixes.md addendum 3.
 
 - **Filings ingest stop-early + budget 5000 (MONET, session `aapl-fundamentals-missing-e3ea01`) —
   IN PROGRESS 2026-07-10, owner-directed.** RAG_INGEST_MAX_TEXTS_PER_DAY 1000→5000 +
