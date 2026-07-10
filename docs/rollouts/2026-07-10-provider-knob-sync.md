@@ -130,7 +130,12 @@ write nothing.
 
 ## Contract assumptions to re-verify once the monitor-side PR merges
 
-The monitor's `GET /api/subscriptions` is being built in parallel. This code assumes:
+The monitor's `GET /api/subscriptions` is api-usage-monitor **PR #83** (up as of
+2026-07-10; GET shape reported to match this contract - bare array, `knobEnv` +
+`freeTierKnobEnv` per element, Bearer `USAGE_INGEST_TOKEN`). That repo is
+**merge-frozen on a pre-existing `migrate-safe.mjs` deploy blocker**, so this sync
+stays DRY-RUN until #83 is deployed and one live dry run confirms the real payload.
+This code assumes:
 
 1. **Response shape:** bare JSON array; each element has `provider{id,name,displayName}`,
    `name`, `status`, `knobEnv` (object of `ENV_NAME->string`, may be null),

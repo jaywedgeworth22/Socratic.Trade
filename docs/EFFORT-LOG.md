@@ -1564,7 +1564,10 @@ As of 2026-07-08 (assignment-rule update).
 
 ## In Progress
 - **[P2][Infra][S] Provider-knob sync: API-Usage-Monitor -> Infisical (CLAUDE (opus subagent),
-  branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR landing.** Mac-side script +
+  branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR #1370 OPEN (READY, gate green:
+  tsc clean / 3422 tests 316 files / build clean), awaiting owner review — NOT merged. Stays
+  DRY-RUN until api-usage-monitor PR #83 (contract-matching endpoint) deploys; that repo is
+  merge-frozen on a pre-existing migrate-safe.mjs blocker.** Mac-side script +
   launchd template that makes API-Usage-Monitor the source of truth for market-data subscription
   plans. `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe) GETs the monitor's token-authed
   `/api/subscriptions` (Bearer `USAGE_INGEST_TOKEN` from `~/.secrets/usage-monitor.env`), computes

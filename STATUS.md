@@ -20,9 +20,12 @@ a key allow-list (`PROVIDER_QUOTA_`/`PROVIDER_RATE_LIMIT_`/`MASSIVE_` prefixes +
 `FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`) and a safe value charset. Dry-run by default (prints
 diff, exit 0); `--apply` writes + posts one `#agent-sync` line per change. `com.jay.provider-knob-sync.plist`
 (30-min, `--apply`) is a template, **NOT installed**; install command in the rollout note. Monitor
-unreachable = exit 0, no spam. **Blocker/next:** the monitor-side `/api/subscriptions` PR is being built
-in parallel - contract assumptions listed in the rollout note must be re-verified against the real
-payload before enabling `--apply`. NOT run with `--apply` against prod; launchd job not installed. See
+unreachable = exit 0, no spam. **PR #1370 OPEN (READY), gate green (tsc clean / 3422 tests 316 files /
+build clean) - awaiting owner review. Blocker/next:** the monitor-side endpoint is api-usage-monitor
+PR #83 (GET shape matches this contract: bare array, knobEnv + freeTierKnobEnv, Bearer
+`USAGE_INGEST_TOKEN`), but that repo is merge-frozen on a pre-existing `migrate-safe.mjs` deploy
+blocker - the sync stays DRY-RUN until #83 deploys and one live dry run confirms the real payload.
+NOT run with `--apply` against prod; launchd job not installed. See
 `docs/rollouts/2026-07-10-provider-knob-sync.md`.
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
