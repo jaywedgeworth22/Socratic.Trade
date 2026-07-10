@@ -48,6 +48,11 @@ const FETCH_DEADLINE_MS = 35_000;
 // Sentinel abort reason so a deadline-triggered abort can be told apart from an explicit refresh()
 // superseding this attempt (which aborts with no reason / the default AbortError).
 const DEADLINE_REASON = Symbol("dashboard-fetch-deadline");
+// Shown while a deadline-aborted attempt is retrying. Setting `error` here is what makes the
+// freshness strip flip to "delayed" — without it, a request that keeps hanging past
+// FETCH_DEADLINE_MS would retry every ~35s forever with `error` still null, so the console would
+// keep labeling an old snapshot "fresh" even though no refresh has actually landed.
+const DEADLINE_ERROR_MESSAGE = "The dashboard is taking too long to respond. Retrying…";
 
 export type ConsoleStreamStatus = "unsupported" | "connecting" | "live" | "reconnecting";
 
@@ -109,7 +114,13 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       setError(null);
       return "ok";
     } catch (err) {
-      if (controller.signal.aborted) return controller.signal.reason === DEADLINE_REASON ? "deadline" : "aborted";
+      if (controller.signal.aborted) {
+        if (controller.signal.reason !== DEADLINE_REASON) return "aborted";
+        // Surface the hung attempt as a refresh error before runLoop retries, so the freshness UI
+        // stops calling a stale snapshot "fresh". A successful retry clears this via setError(null).
+        if (mounted.current) setError((prev) => prev ?? DEADLINE_ERROR_MESSAGE);
+        return "deadline";
+      }
       if (err instanceof DOMException && err.name === "AbortError") return "aborted";
       if (!mounted.current) return "error";
       setError(err instanceof ConsoleApiError ? err.message : "Could not refresh data.");

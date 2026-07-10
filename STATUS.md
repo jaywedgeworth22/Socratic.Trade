@@ -25,6 +25,12 @@ the server's ~24s worst-case self-bounded response (sequential broker chain 6+8+
 benchmark 4s). At 20s the client aborted a slow-but-working degraded fetch right as the server was
 about to respond and retried in a loop; 35s only kills a genuine network hang. See the Codex-autofix
 section in `docs/rollouts/2026-07-10-loading-permafix.md`. Gate re-run green.
+**Codex-autofix #2 (2026-07-10):** surface deadline retries as refresh failures. A deadline-aborted
+attempt (`FETCH_DEADLINE_MS`) used to `continue` the retry loop without ever setting `error`, so a
+request that kept hanging past 35s would retry forever with `error` still null — the freshness strip
+(`deriveFreshnessLabel`) then kept labeling an old snapshot "fresh". `runFetch` now sets a visible
+`error` (`DEADLINE_ERROR_MESSAGE`) on the deadline path before returning; a successful retry clears
+it via the existing `setError(null)`. Gate re-run green (tsc, 3396 tests / 315 files, build).
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —

@@ -157,3 +157,21 @@ clean, 3396 tests / 315 files, build clean.
   next lever would be shrinking those three deadlines (6s/8s/6s) rather than further
   parallelization, since the remaining chain can't be parallelized without changing what
   `accountNumber`/`quotes` are allowed to depend on.
+
+## Codex-autofix follow-up #2 (2026-07-10) — surface deadline retries as refresh failures
+
+Codex PR review (P2, `useConsoleData.tsx:141`) flagged that when an already-loaded `/api/dashboard`
+request hits `FETCH_DEADLINE_MS`, `runLoop` retried immediately (`if (result === "deadline") continue`)
+without ever setting `error`. Because the freshness UI (`deriveFreshnessLabel` in
+`app/console/components/chrome.tsx`) derives its "delayed" label purely from `error`'s truthiness, a
+request that keeps hanging past 35s would retry roughly every 35s forever with `error` still `null`,
+so the console kept labeling a stale snapshot "fresh" — stale trading data mislabeled as current.
+
+Fix: `runFetch` now sets a visible refresh error on the deadline path before returning `"deadline"`:
+`if (mounted.current) setError((prev) => prev ?? DEADLINE_ERROR_MESSAGE)`. The `prev ??` preserves an
+existing message (e.g. the first-load watchdog's), and a successful retry still clears the error via
+the existing `setError(null)` on the "ok" path, so the "delayed" indicator only shows while refreshes
+are actually failing. `error` never blanks the screen (the last good snapshot stays rendered), so this
+is UI-signal-only. Files: `app/console/lib/useConsoleData.tsx` (new `DEADLINE_ERROR_MESSAGE` constant
++ deadline branch in `runFetch`). No test references the deadline retry loop (React hook with timers);
+pure signal change. Gate re-run green: `tsc` clean, 3396 tests / 315 files, build clean.
