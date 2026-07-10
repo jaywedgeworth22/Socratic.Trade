@@ -141,7 +141,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   //    while this attempt was running (pendingBackgroundRefresh) — this also means a trigger that
   //    lands mid-refresh() is drained before refresh()'s own promise resolves, instead of waiting
   //    for the next independent trigger.
-  const runLoop = useCallback(async () => {
+  const runLoop = useCallback(async (foreground = false) => {
     for (;;) {
       if (!mounted.current) return;
       const controller = new AbortController();
@@ -149,7 +149,19 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       const result = await runFetch(controller);
       if (inFlight.current !== controller) return; // superseded by a newer refresh()/backgroundRefresh()
       inFlight.current = null;
-      if (result === "deadline") continue;
+      if (result === "deadline") {
+        // An AWAITED foreground refresh() must not stay pending across retries: several mutation
+        // flows `await refresh()` before clearing their busy state, and a persistently hung
+        // /api/dashboard would otherwise wedge those toasts/`finally` blocks forever. The deadline
+        // error is already surfaced by runFetch, so hand the immediate retry to a detached
+        // background loop and let this foreground promise resolve. (A background trigger arriving
+        // meanwhile still coalesces via pendingBackgroundRefresh — the detached loop drains it.)
+        if (foreground) {
+          void runLoop(false);
+          return;
+        }
+        continue;
+      }
       if (!pendingBackgroundRefresh.current) return;
       pendingBackgroundRefresh.current = false;
     }
@@ -162,7 +174,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     pendingBackgroundRefresh.current = false;
     inFlight.current?.abort();
-    await runLoop();
+    await runLoop(true);
   }, [runLoop]);
 
   // Background refresh: SSE events, the poll interval, and tab-visibility resync. Must NEVER abort

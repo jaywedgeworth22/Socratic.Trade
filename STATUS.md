@@ -31,6 +31,17 @@ request that kept hanging past 35s would retry forever with `error` still null �
 (`deriveFreshnessLabel`) then kept labeling an old snapshot "fresh". `runFetch` now sets a visible
 `error` (`DEADLINE_ERROR_MESSAGE`) on the deadline path before returning; a successful retry clears
 it via the existing `setError(null)`. Gate re-run green (tsc, 3396 tests / 315 files, build).
+**Codex-autofix #3 (2026-07-10):** two remaining P2 threads. (a) `useConsoleData.tsx`: an *awaited
+foreground* `refresh()` that hit `FETCH_DEADLINE_MS` used to `continue` the retry loop, holding that
+promise pending across retries — mutation flows that `await refresh()` before clearing their busy
+state could wedge forever if `/api/dashboard` kept hanging. `runLoop` now takes a `foreground` flag;
+on a foreground deadline it hands the retry to a detached background `runLoop(false)` and resolves,
+so the deadline error surfaces and the awaited promise settles while a background retry continues.
+(b) `mcp-oauth.ts`: the Robinhood refresh singleflight could be poisoned forever by a never-settling
+`exchangeToken` fetch (bare fetch, no abort). Added an `AbortSignal.timeout` bound to the exchange
+fetch (root fix) plus a `REFRESH_SINGLEFLIGHT_TTL_MS` backstop that evicts the shared pending promise
+even if some other await in `refreshMcpAccessToken` hangs, so the account self-heals once the network
+recovers. Gate re-run green (tsc, 3396 tests / 315 files, build).
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —

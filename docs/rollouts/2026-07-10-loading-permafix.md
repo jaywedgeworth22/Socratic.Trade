@@ -175,3 +175,47 @@ are actually failing. `error` never blanks the screen (the last good snapshot st
 is UI-signal-only. Files: `app/console/lib/useConsoleData.tsx` (new `DEADLINE_ERROR_MESSAGE` constant
 + deadline branch in `runFetch`). No test references the deadline retry loop (React hook with timers);
 pure signal change. Gate re-run green: `tsc` clean, 3396 tests / 315 files, build clean.
+
+## Codex-autofix follow-up #3 (2026-07-10) — foreground deadline resolution + Robinhood refresh singleflight expiry
+
+Two remaining non-outdated P2 Codex threads on this PR.
+
+### (a) Let foreground `refresh()` settle after a deadline (`useConsoleData.tsx`)
+
+**Why:** `runLoop` is shared by `refresh()` (awaited foreground) and `backgroundRefresh()`. On a
+`"deadline"` result it did `continue`, retrying in the same loop. For an *awaited foreground*
+`refresh()`, that meant the promise stayed pending across every retry. Several mutation flows do
+`await refresh()` before clearing their busy state / firing their success toast in a `finally`, so if
+`/api/dashboard` kept hanging (the exact incident this PR targets) those approvals/settings-saves
+could stay stuck in their busy state even after the mutation itself completed.
+
+**Fix:** `runLoop` now takes a `foreground = false` flag. On a foreground deadline it hands the
+immediate retry to a detached background `runLoop(false)` and returns, so the awaited foreground
+promise resolves (the deadline error is already surfaced by `runFetch` from follow-up #2). The
+detached loop sets `inFlight.current` synchronously before its first await, so a background trigger
+arriving meanwhile still coalesces via `pendingBackgroundRefresh` and a newer `refresh()` still
+supersedes it via the `inFlight.current !== controller` check. `refresh()` calls `runLoop(true)`;
+`backgroundRefresh()` keeps the default (`false`), so background retries loop in place exactly as
+before.
+
+### (b) Expire hung Robinhood refresh singleflights (`mcp-oauth.ts`)
+
+**Why:** `getMcpAccessToken` de-dupes concurrent token refreshes per user via `inFlightRefreshes`.
+`exchangeToken` used a bare `fetch` with no abort/timeout, so if the OAuth token endpoint never
+settled the pending promise would never resolve, its `.finally` cleanup would never run, and every
+later caller for that user (with the still-expired stored token) would await the same hung promise —
+the account could not self-heal after the network recovered without a reconnect/restart.
+
+**Fix:** two layers. (1) Root cause: the `exchangeToken` fetch now carries
+`AbortSignal.timeout(REFRESH_SINGLEFLIGHT_TTL_MS)` (20s; guarded for environments without
+`AbortSignal.timeout`) so a hung endpoint rejects, the promise settles, and the map entry is freed.
+(2) Backstop: `getMcpAccessToken` arms an unref'd `setTimeout(evict, REFRESH_SINGLEFLIGHT_TTL_MS)`
+that removes the shared pending promise even if some *other* await inside `refreshMcpAccessToken`
+(config discovery, client registration) is what hangs — so the next caller always starts a fresh
+refresh once the TTL elapses. Eviction is idempotent (checks `map.get(userId) === promise` before
+deleting) and the timer is cleared on normal settle.
+
+**Files:** `app/console/lib/useConsoleData.tsx`, `src/lib/mcp-oauth.ts`.
+**Verification:** `npx tsc --noEmit` clean; `npm run lint` 0 errors; `npm test` 3396 passing / 315
+files (incl. `test/mcp-oauth.test.ts` singleflight coverage); `npm run build` clean.
+**Follow-ups:** none — both threads resolved.

@@ -197,6 +197,14 @@ export async function completeMcpOAuthCallback(input: {
 // reconnect/account-readiness error despite the account being fine.
 const inFlightRefreshes = new Map<string, Promise<string>>();
 
+// Hard ceiling for a single token refresh (network round-trips: discovery + registration + the
+// token exchange POST). The exchange fetch below is bounded by AbortSignal.timeout, but this also
+// evicts the shared singleflight entry if ANY await in refreshMcpAccessToken hangs — otherwise a
+// never-settling refresh would pin the pending promise in the map forever, so every later caller
+// for the same user would await the same hung promise and the account could never self-heal once
+// the network recovered (short of a reconnect/restart).
+const REFRESH_SINGLEFLIGHT_TTL_MS = 20_000;
+
 export async function getMcpAccessToken(userId: string): Promise<string | undefined> {
   const tokens = getStoredMcpOAuthTokens(userId);
   if (!tokens) return undefined;
@@ -204,8 +212,17 @@ export async function getMcpAccessToken(userId: string): Promise<string | undefi
   if (!tokens.refreshToken) return tokens.accessToken;
   const pending = inFlightRefreshes.get(userId);
   if (pending) return pending;
-  const promise = refreshMcpAccessToken(userId, tokens).finally(() => {
+  const promise = refreshMcpAccessToken(userId, tokens);
+  const evict = () => {
     if (inFlightRefreshes.get(userId) === promise) inFlightRefreshes.delete(userId);
+  };
+  // Backstop eviction: even if `promise` never settles (a hung await upstream of the bounded
+  // exchange fetch), free the singleflight slot after the TTL so the next caller starts fresh.
+  const evictTimer = setTimeout(evict, REFRESH_SINGLEFLIGHT_TTL_MS);
+  if (typeof evictTimer.unref === "function") evictTimer.unref();
+  promise.finally(() => {
+    clearTimeout(evictTimer);
+    evict();
   });
   inFlightRefreshes.set(userId, promise);
   return promise;
@@ -367,7 +384,12 @@ async function exchangeToken(tokenUrl: string, body: URLSearchParams, existing?:
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body
+    body,
+    // Bound the token exchange so a hung OAuth endpoint rejects (freeing the refresh singleflight)
+    // instead of leaving a pending promise the whole account gets stuck behind.
+    signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(REFRESH_SINGLEFLIGHT_TTL_MS)
+      : undefined
   });
   if (!response.ok) throw new Error(`Robinhood MCP OAuth token exchange failed with HTTP ${response.status}.`);
   return tokenResponseToTokens((await response.json()) as Record<string, unknown>, existing);
