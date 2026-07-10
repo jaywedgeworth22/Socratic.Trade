@@ -25,6 +25,18 @@ ROUND 2 2026-07-10 (MONET): PR #1272 sat BLOCKED on two real codex-connector fin
 names *inside* the ranked top-N could still starve behind the extras, and user-policy scan
 shapes (settings UI, not env) bypassed the env-derived budget. Both fixed (see rollout
 addendum); threads resolved after the fix push — auto-merge was already armed.
+## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
+MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
+flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
+armed after round-2 fixes + conflict resolution; 38 codex-review findings across both rounds
+triaged with adversarial verification — every real one fixed with regression tests, money-path
+diffs independently reviewed pre-push; late fixes ride follow-ups #1265 merged, #1266/#1267/#1269
+armed). Un-landed lanes recovered: vitest tmpdir-leak #1268 MERGED, settings-UX #1270 MERGED,
+enrichment-starvation #1272 armed. Deferred: 2-3 day activity audit (needs prod DB, migration was
+in flight — MONET's to resume), broker-min bump-to-floor (unstarted), PR #1083 close (owner call —
+dup of merged #1082). No deploys (migration deploy-hold honored); next announce-then-deploy ships
+all of this plus activates the TwelveData fix + 6 AV keys. Full detail:
+`docs/rollouts/2026-07-09-monet-usage-cap-pickup.md`.
 
 ## 2026-07-09 — Settings-UX fixes landed (MONET-authored, CLAUDE usage-cap pickup; branch `monet/settings-ux-fixes`)
 Three-part settings-UX change MONET left uncommitted when its seat hit the usage cap, committed
