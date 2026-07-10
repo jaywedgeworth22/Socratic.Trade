@@ -7,15 +7,17 @@
  *  disarm anything (server-enforced). */
 
 import { useEffect, useMemo, useState } from "react";
-import { Lock, Unlock } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Lock, Unlock } from "lucide-react";
 import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
-import { reasoningCapabilityForModel } from "@/lib/llm-request";
+import { isDisallowedInteractiveStrategyReasoningConfig, reasoningCapabilityForModel } from "@/lib/llm-request";
+import { reasoningAdviceForModel } from "@/lib/model-reasoning-recommendations";
 import {
-  HIGH_TIER_REASONING_EFFORTS,
   normalizeReasoningValueForControl,
   reasoningControlForModels,
-  reasoningPatchFor,
-  reasoningSummary
+  reasoningSummary,
+  seatReasoningPatch,
+  type ReasoningControl
 } from "./reasoning-control";
 // Pure curated-model DATA (no legacy UI components) — the same catalog the rest
 // of the app offers, so the console review picker stays consistent with it.
@@ -199,6 +201,95 @@ function ModelSelect({
   );
 }
 
+/** One seat's own reasoning/thinking control (per-team split 2026-07-10): rendered under that
+ *  seat's model picker, only when THAT model exposes a reasoning knob. The reviewer additionally
+ *  gets an `inherit` blank option ("Same as proposer") representing the unset per-team field.
+ *  Disallowed interactive combos (gpt-5.5 + high) are disabled IN the select — the rule surfaces
+ *  before any save instead of as a post-save 400 toast — and curated per-model advice
+ *  (src/lib/model-reasoning-recommendations.ts) renders underneath. */
+function SeatEffortSelect({
+  id,
+  model,
+  control,
+  value,
+  disabled,
+  onPick,
+  inherit
+}: {
+  id: string;
+  /** The seat's concrete model (drives per-option disallow checks + advice). */
+  model: string;
+  control: ReasoningControl;
+  /** The resolved effort the select shows (same normalization the server applies at call time). */
+  value: LlmReasoningEffort | undefined;
+  disabled?: boolean;
+  onPick: (effort: LlmReasoningEffort) => void;
+  /** Reviewer-only: the "Same as proposer" unset state. `active` = no explicit per-team value is
+   *  stored; `resolvedLabel` names what currently inherits; `onClear` reverts to inheriting. */
+  inherit?: { active: boolean; resolvedLabel?: string; onClear: () => void };
+}) {
+  const advice = reasoningAdviceForModel(model);
+  const hasDisallowedOption = control.options.some((option) => isDisallowedInteractiveStrategyReasoningConfig(model, option.value));
+  return (
+    <div>
+      <Field label={control.label} hint={control.hint} htmlFor={id}>
+        <Select
+          id={id}
+          value={inherit?.active ? "" : (value ?? "")}
+          disabled={disabled}
+          onChange={(event) => {
+            const next = event.target.value;
+            if (!next) {
+              inherit?.onClear();
+              return;
+            }
+            onPick(next as LlmReasoningEffort);
+          }}
+        >
+          {inherit && (
+            <option
+              value=""
+              title="No reviewer-specific effort stored — the reviewer inherits the proposer's effort, re-clamped to this model's supported range at call time."
+            >
+              Same as proposer{inherit.resolvedLabel ? ` (${inherit.resolvedLabel})` : ""}
+            </option>
+          )}
+          {control.options.map((option) => {
+            const disallowed = isDisallowedInteractiveStrategyReasoningConfig(model, option.value);
+            return (
+              <option
+                key={option.value}
+                value={option.value}
+                disabled={disallowed}
+                title={disallowed ? "gpt-5.5 with high reasoning is disabled for interactive strategy runs." : option.hint}
+              >
+                {option.label}
+                {disallowed ? " — disabled for interactive runs" : ""}
+              </option>
+            );
+          })}
+        </Select>
+      </Field>
+      {advice && (
+        <p className={`mt-1.5 text-[length:var(--con-fs-xs)] ${hasDisallowedOption ? "text-[color:var(--con-warn)]" : "text-[color:var(--con-muted)]"}`}>
+          {advice}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Copy for a rotating seat, where the manual effort control is deliberately hidden. Matches the
+ *  server behavior in src/lib/model-rotation.ts (recommendedReasoningEffortForModel). */
+function RotationEffortNote() {
+  return (
+    <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+      Reasoning is auto-set per rotated model at its curated recommended level (models without a
+      curated recommendation run Medium).
+    </p>
+  );
+}
+
 export default function StrategyPage() {
   const { snapshot, refresh } = useConsoleData();
   const toast = useToast();
@@ -210,9 +301,12 @@ export default function StrategyPage() {
   // change; the custom-id text fields persist on blur. Reverted by useAutoSave's onError.
   const [localProposerModel, setLocalProposerModel] = useState<string | null>(null);
   const [localRedTeamModel, setLocalRedTeamModel] = useState<string | null>(null);
-  // "cleared" = an optimistic explicit-unset (the "Per-model default" option) awaiting the server
-  // round-trip; null = no local overlay (fall back to the saved policy value).
-  const [localReasoningEffort, setLocalReasoningEffort] = useState<LlmReasoningEffort | "cleared" | null>(null);
+  // Per-team reasoning overlays (per-team split 2026-07-10). Proposer: plain optimistic value —
+  // llmReasoningEffort always resolves (it has a "medium" default). Reviewer: "cleared" = an
+  // optimistic explicit-unset (the "Same as proposer" option) awaiting the server round-trip;
+  // null = no local overlay (fall back to the saved policy value).
+  const [localReasoningEffort, setLocalReasoningEffort] = useState<LlmReasoningEffort | null>(null);
+  const [localRedTeamReasoningEffort, setLocalRedTeamReasoningEffort] = useState<LlmReasoningEffort | "cleared" | null>(null);
   const autoSaveModels = useAutoSave();
   // Scoring weights: local text while typing each factor, persist on blur (per-field patch —
   // the server deep-merges scoringWeights, see commitWeight below).
@@ -250,28 +344,35 @@ export default function StrategyPage() {
     (proposerModel && !isCuratedModel(proposerModel) && !isRotate(proposerModel)) ||
     (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel) && !isRotate(effectiveRedTeamModel));
   const rotationSelected = isRotate(proposerModel) || isRotate(effectiveRedTeamModel);
-  // A rotating seat is NOT filtered out: it maps to the synthetic full-ladder rotation capability
-  // (see reasoning-control.ts), so the effort control stays visible/editable under rotation — the
-  // stored effort still applies per served model at call time, clamped per model.
-  const reasoningModels = [proposerModel, effectiveRedTeamModel];
-  const reasoningControl = reasoningControlForModels(reasoningModels);
-  const storedReasoningEffort = localReasoningEffort === "cleared" ? undefined : (localReasoningEffort ?? policy.llmReasoningEffort);
-  const reasoningValue = reasoningControl
-    ? normalizeReasoningValueForControl(reasoningModels, reasoningControl, storedReasoningEffort)
+  // Joint control used ONLY for the one-line provider/reasoning summary below. The actual effort
+  // selects are PER SEAT (per-team split 2026-07-10): each picker gets its own control, shown only
+  // when THAT seat's model exposes a reasoning knob; a rotating seat hides the manual control
+  // entirely (rotation auto-sets each served model's recommended effort server-side).
+  const reasoningControl = reasoningControlForModels([proposerModel, effectiveRedTeamModel]);
+  const storedProposerEffort = localReasoningEffort ?? policy.llmReasoningEffort;
+  // The reviewer's EXPLICIT per-team value only — undefined = inheriting the proposer's
+  // (mirrors resolveReviewerReasoningEffort server-side).
+  const storedReviewerEffort =
+    localRedTeamReasoningEffort === "cleared" ? undefined : (localRedTeamReasoningEffort ?? policy.redTeamReasoningEffort);
+  const proposerRotates = isRotate(proposerModel);
+  const reviewerRotates = isRotate(effectiveRedTeamModel);
+  const proposerReasoningControl = proposerRotates ? null : reasoningControlForModels([proposerModel]);
+  const reviewerReasoningControl = reviewerRotates ? null : reasoningControlForModels([effectiveRedTeamModel]);
+  const proposerReasoningValue = proposerReasoningControl
+    ? normalizeReasoningValueForControl([proposerModel], proposerReasoningControl, storedProposerEffort)
     : undefined;
-  // Mixed pairings whose SHARED option set is high-tier only (e.g. mistral-medium-3-5 + gpt-5.4:
-  // {high}) normalize every non-explicit stored effort to undefined (the no-silent-escalation
-  // guard in normalizeReasoningValueForControl). Instead of hiding the whole control — which left
-  // no way to even opt INTO the high tier — render it with an explicit "Per-model default" blank
-  // option. The blank option also stays available while the only shared values are high-tier, so
-  // choosing High is never a one-way door.
-  const reasoningHighTierOnly = reasoningControl ? reasoningControl.options.every((o) => HIGH_TIER_REASONING_EFFORTS.has(o.value)) : false;
-  const showPerModelDefaultOption = Boolean(reasoningControl) && (reasoningValue === undefined || reasoningHighTierOnly);
-  // Selected concrete models that take NO reasoning parameters at all (e.g. mistral-small-2603)
-  // while another selected seat still shows the control — disclose that the setting skips them.
-  const modelsIgnoringReasoning = reasoningControl
-    ? Array.from(new Set(reasoningModels.map((m) => m.trim()).filter(Boolean))).filter((m) => !isRotate(m) && !reasoningCapabilityForModel(m))
-    : [];
+  // What the reviewer would RUN at right now (explicit value, else the inherited proposer effort),
+  // re-normalized to the reviewer model's own supported range — shown inside the "Same as
+  // proposer" option label so inheritance is never a mystery value.
+  const reviewerReasoningValue = reviewerReasoningControl
+    ? normalizeReasoningValueForControl([effectiveRedTeamModel], reviewerReasoningControl, storedReviewerEffort ?? storedProposerEffort)
+    : undefined;
+  const reviewerInheriting = storedReviewerEffort === undefined;
+  const reviewerInheritedLabel = reviewerReasoningControl?.options.find((option) => option.value === reviewerReasoningValue)?.label;
+  // A concrete seat model that takes NO reasoning parameters at all (e.g. mistral-small-2603) —
+  // disclose per seat that reasoning settings don't apply to it.
+  const proposerNoKnob = Boolean(proposerModel) && !proposerRotates && !reasoningCapabilityForModel(proposerModel);
+  const reviewerNoKnob = Boolean(effectiveRedTeamModel) && !reviewerRotates && !reasoningCapabilityForModel(effectiveRedTeamModel);
 
   // Prompt: skip the write if blur leaves it unchanged from the saved copy.
   const commitPrompt = () => {
@@ -285,13 +386,15 @@ export default function StrategyPage() {
   };
 
   // Persist one team's model choice (from either the select or a blurred custom-id text field).
-  // Bundles a renormalized reasoning effort into the SAME write whenever the model set changes —
-  // see reasoningPatchFor — so a model-only save can never leave (model, effort) invalid.
+  // Bundles a renormalized effort FOR THAT SEAT into the SAME write whenever its model changes —
+  // see seatReasoningPatch — so a model-only save can never leave the seat's (model, effort)
+  // combo in an invalid state (including the disallowed interactive gpt-5.5+high combo, which is
+  // clamped to medium in the patch instead of bouncing off the server).
   const commitProposerModel = (model: string, prev: string) => {
     if (model === (policy.llmModel ?? "")) return; // unchanged from the saved value -> no write
     const patch = {
       llmModel: model,
-      ...reasoningPatchFor([model, redTeamModel || model], storedReasoningEffort)
+      ...seatReasoningPatch("llmReasoningEffort", model, storedProposerEffort)
     };
     setLocalProposerModel(model);
     autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
@@ -305,7 +408,9 @@ export default function StrategyPage() {
       // "" (blank = same as proposer) -> null: the policy route strips nulls back to absent,
       // which is how this optional field is actually cleared (an empty string is rejected).
       redTeamLlmModel: model || null,
-      ...reasoningPatchFor([proposerModel, model || proposerModel], storedReasoningEffort)
+      // Renormalize ONLY an explicit reviewer effort against the seat's new effective model — an
+      // inheriting (unset) reviewer stays unset (seatReasoningPatch no-ops on undefined effort).
+      ...seatReasoningPatch("redTeamReasoningEffort", model || proposerModel, storedReviewerEffort)
     };
     setLocalRedTeamModel(model);
     autoSaveModels.save(() => savePolicy(patch).then(() => refresh()), {
@@ -313,23 +418,31 @@ export default function StrategyPage() {
       errorTitle: "Reviewer not saved"
     });
   };
-  const commitReasoningEffort = (effort: LlmReasoningEffort) => {
+  const commitProposerReasoningEffort = (effort: LlmReasoningEffort) => {
     const prev = localReasoningEffort;
     setLocalReasoningEffort(effort);
     autoSaveModels.save(() => savePolicy({ llmReasoningEffort: effort }).then(() => refresh()), {
       onError: () => setLocalReasoningEffort(prev),
-      errorTitle: "Reasoning effort not saved"
+      errorTitle: "Proposer reasoning not saved"
     });
   };
-  // The "Per-model default" blank option: clear the stored effort entirely (the policy route strips
-  // the null back to absent), so at call time each model simply runs its own normalization of "no
-  // explicit effort" — never a silently-escalated shared high tier.
-  const clearReasoningEffort = () => {
-    const prev = localReasoningEffort;
-    setLocalReasoningEffort("cleared");
-    autoSaveModels.save(() => savePolicy({ llmReasoningEffort: null }).then(() => refresh()), {
-      onError: () => setLocalReasoningEffort(prev),
-      errorTitle: "Reasoning effort not saved"
+  const commitReviewerReasoningEffort = (effort: LlmReasoningEffort) => {
+    const prev = localRedTeamReasoningEffort;
+    setLocalRedTeamReasoningEffort(effort);
+    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: effort }).then(() => refresh()), {
+      onError: () => setLocalRedTeamReasoningEffort(prev),
+      errorTitle: "Reviewer reasoning not saved"
+    });
+  };
+  // The reviewer's "Same as proposer" blank option: clear the explicit per-team value entirely
+  // (the policy route strips the null back to absent), so the reviewer goes back to inheriting
+  // the proposer's effort via resolveReviewerReasoningEffort at call time.
+  const clearReviewerReasoningEffort = () => {
+    const prev = localRedTeamReasoningEffort;
+    setLocalRedTeamReasoningEffort("cleared");
+    autoSaveModels.save(() => savePolicy({ redTeamReasoningEffort: null }).then(() => refresh()), {
+      onError: () => setLocalRedTeamReasoningEffort(prev),
+      errorTitle: "Reviewer reasoning not saved"
     });
   };
 
@@ -372,66 +485,121 @@ export default function StrategyPage() {
       {/* Models — id anchor is a deep-link target (old Settings "#models" links
           retargeted here in the 2026-07-10 Settings IA restructure). */}
       <div id="models" className="scroll-mt-28">
-      <Card title="Models" action={<SaveStatus status={autoSaveModels.status} />}>
+      <Card
+        title="Models"
+        action={
+          <div className="flex items-center gap-3">
+            <Link
+              href="/console/usage"
+              className="flex items-center gap-1 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-accent)]"
+              title="What each model actually spends — per-provider and per-context LLM usage and cost."
+            >
+              LLM usage &amp; cost <ArrowRight size={12} />
+            </Link>
+            <SaveStatus status={autoSaveModels.status} />
+          </div>
+        }
+      >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label={
-              <>
-                <span className="text-[color:var(--con-pos)]">Proposer</span> Model
-              </>
-            }
-            hint="Green — writes the trade proposals each run."
-            htmlFor="llm-model"
-          >
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <ModelSelect
-                  id="llm-model"
-                  value={proposerModel}
-                  role="proposer"
-                  disabled={autoSaveModels.saving}
-                  onPick={(model) => commitProposerModel(model, proposerModel)}
-                  onCustomTextChange={(text) => setLocalProposerModel(text)}
-                  onCustomTextBlur={() => {
-                    const typed = (localProposerModel ?? "").trim();
-                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
-                    commitProposerModel(typed, policy.llmModel ?? "");
-                  }}
-                />
+          <div className="flex flex-col gap-3">
+            <Field
+              label={
+                <>
+                  <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+                </>
+              }
+              hint="Green — writes the trade proposals each run."
+              htmlFor="llm-model"
+            >
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <ModelSelect
+                    id="llm-model"
+                    value={proposerModel}
+                    role="proposer"
+                    disabled={autoSaveModels.saving}
+                    onPick={(model) => commitProposerModel(model, proposerModel)}
+                    onCustomTextChange={(text) => setLocalProposerModel(text)}
+                    onCustomTextBlur={() => {
+                      const typed = (localProposerModel ?? "").trim();
+                      if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                      commitProposerModel(typed, policy.llmModel ?? "");
+                    }}
+                  />
+                </div>
+                <ModelStatsButton role="proposer" />
               </div>
-              <ModelStatsButton role="proposer" />
-            </div>
-          </Field>
-          <Field
-            label={
-              <>
-                <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
-              </>
-            }
-            hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
-            htmlFor="rt-model"
-          >
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <ModelSelect
-                  id="rt-model"
-                  value={redTeamModel}
-                  allowBlank
-                  blankLabel="Same As Proposer"
-                  role="red-team"
-                  disabled={autoSaveModels.saving}
-                  onPick={(model) => commitRedTeamModel(model, redTeamModel)}
-                  onCustomTextChange={(text) => setLocalRedTeamModel(text)}
-                  onCustomTextBlur={() => {
-                    const typed = (localRedTeamModel ?? "").trim();
-                    if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
-                    commitRedTeamModel(typed, policy.redTeamLlmModel ?? "");
-                  }}
-                />
+            </Field>
+            {proposerRotates && <RotationEffortNote />}
+            {proposerReasoningControl && (
+              <SeatEffortSelect
+                id="proposer-effort"
+                model={proposerModel}
+                control={proposerReasoningControl}
+                value={proposerReasoningValue}
+                disabled={autoSaveModels.saving}
+                onPick={commitProposerReasoningEffort}
+              />
+            )}
+            {proposerNoKnob && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                {proposerModel} takes no reasoning parameters — reasoning settings don&apos;t apply to it.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-3">
+            <Field
+              label={
+                <>
+                  <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+                </>
+              }
+              hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
+              htmlFor="rt-model"
+            >
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <ModelSelect
+                    id="rt-model"
+                    value={redTeamModel}
+                    allowBlank
+                    blankLabel="Same As Proposer"
+                    role="red-team"
+                    disabled={autoSaveModels.saving}
+                    onPick={(model) => commitRedTeamModel(model, redTeamModel)}
+                    onCustomTextChange={(text) => setLocalRedTeamModel(text)}
+                    onCustomTextBlur={() => {
+                      const typed = (localRedTeamModel ?? "").trim();
+                      if (!typed || typed === CUSTOM_MODEL_OPTION) return; // nothing concrete typed
+                      commitRedTeamModel(typed, policy.redTeamLlmModel ?? "");
+                    }}
+                  />
+                </div>
+                <ModelStatsButton role="red-team" />
               </div>
-              <ModelStatsButton role="red-team" />
-            </div>
-          </Field>
+            </Field>
+            {reviewerRotates && <RotationEffortNote />}
+            {reviewerReasoningControl && (
+              <SeatEffortSelect
+                id="reviewer-effort"
+                model={effectiveRedTeamModel}
+                control={reviewerReasoningControl}
+                value={reviewerReasoningValue}
+                disabled={autoSaveModels.saving}
+                onPick={commitReviewerReasoningEffort}
+                inherit={{
+                  active: reviewerInheriting,
+                  resolvedLabel: reviewerInheritedLabel,
+                  onClear: clearReviewerReasoningEffort
+                }}
+              />
+            )}
+            {reviewerNoKnob && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
+                {effectiveRedTeamModel} takes no reasoning parameters — reasoning settings don&apos;t apply to it.
+              </p>
+            )}
+          </div>
         </div>
         {showCustomModelWarning && (
           <div className="mt-3 text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-md p-2.5 flex items-start gap-1.5">
@@ -455,53 +623,6 @@ export default function StrategyPage() {
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
-        {reasoningControl && (
-          <div className="mt-3 max-w-xs">
-            <Field
-              label={reasoningControl.label}
-              hint={
-                showPerModelDefaultOption
-                  ? `${reasoningControl.hint} “Per-model default” stores no shared effort — at call time each model clamps your account effort to its own supported range and never silently escalates to the slow/expensive high tier. Choosing High enables the high tier on every selected model that supports it.`
-                  : reasoningControl.hint
-              }
-              htmlFor="effort"
-            >
-              <Select
-                id="effort"
-                value={reasoningValue ?? ""}
-                disabled={autoSaveModels.saving}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (!next) {
-                    clearReasoningEffort();
-                    return;
-                  }
-                  commitReasoningEffort(next as LlmReasoningEffort);
-                }}
-              >
-                {showPerModelDefaultOption && (
-                  <option
-                    value=""
-                    title="No shared explicit effort — each selected model normalizes the account effort to its own supported range at call time (no silent high-tier escalation)."
-                  >
-                    Per-model default (no high-tier escalation)
-                  </option>
-                )}
-                {reasoningControl.options.map((option) => (
-                  <option key={option.value} value={option.value} title={option.hint}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {modelsIgnoringReasoning.length > 0 && (
-              <p className="mt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                {modelsIgnoringReasoning.join(" and ")} takes no reasoning parameters — this setting applies only to the
-                other selected model(s).
-              </p>
-            )}
-          </div>
-        )}
       </Card>
       </div>
 
@@ -756,8 +877,15 @@ function AiReviewPanel({
     !inheritedReviewerModel && [policy.redTeamLlmModel, policy.llmModel].some((m) => m === ROTATE_ALL_MODELS_ID);
   const reviewerModel = model || inheritedReviewerModel;
   const reviewerReasoningControl = reasoningControlForModels([reviewerModel]);
+  // Per-team reasoning (2026-07-10): when the seat being inherited is the Reviewer's, its default
+  // effort is the reviewer's own (redTeamReasoningEffort, falling back to the proposer's) —
+  // mirrors policyForTuningReviewer / resolveReviewerReasoningEffort server-side.
+  const inheritedEffort =
+    !model && inheritedReviewerLabel === "Reviewer"
+      ? (policy.redTeamReasoningEffort ?? policy.llmReasoningEffort)
+      : policy.llmReasoningEffort;
   const reviewerReasoningValue = reviewerReasoningControl
-    ? normalizeReasoningValueForControl([reviewerModel], reviewerReasoningControl, reviewReasoning ?? policy.llmReasoningEffort)
+    ? normalizeReasoningValueForControl([reviewerModel], reviewerReasoningControl, reviewReasoning ?? inheritedEffort)
     : undefined;
   const changes = useMemo(() => (review ? reviewChanges(review.proposedPatch, policy) : []), [review, policy]);
   const promptChanged = Boolean(review?.proposedPatch.prompt && review.proposedPatch.prompt !== strategyPrompt);

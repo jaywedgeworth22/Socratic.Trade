@@ -179,6 +179,10 @@ describe("resolveModelRotationForRun", () => {
       expect(out.llmModel).toBeTruthy();
       expect(out.llmModel).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
       expect(out.redTeamLlmModel).toBeUndefined(); // red seat not rotating
+      expect(out.redTeamReasoningEffort).toBeUndefined(); // ...so its effort is untouched too
+      // Per-team reasoning (2026-07-10): a rotating seat auto-sets the served model's curated
+      // recommended effort on the run-scoped override.
+      expect(out.llmReasoningEffort).toBeTruthy();
       served.push(out.llmModel!);
       out.commit(); // commit-late: the pointer only advances once the run serves the LLM
     }
@@ -204,15 +208,24 @@ describe("resolveModelRotationForRun", () => {
     // Same-model skip end-to-end: both pointers start at 0, but the run never serves the same
     // model to both seats (red consumes the adjacent slot).
     expect(out.redTeamLlmModel).not.toBe(out.llmModel);
+    // Per-team reasoning (2026-07-10): each rotated seat carries ITS served model's curated
+    // recommended effort (unknown -> medium) on the run-scoped override.
+    const { recommendedReasoningEffortForModel } = await import("../src/lib/model-reasoning-recommendations");
+    expect(out.llmReasoningEffort).toBe(recommendedReasoningEffortForModel(out.llmModel));
+    expect(out.redTeamReasoningEffort).toBe(recommendedReasoningEffortForModel(out.redTeamLlmModel));
     out.commit(); // pick audits + pointer advance are only written on commit (Finding 3: commit-late)
     const audits = getDb()
       .prepare("SELECT payload FROM audit_events WHERE kind = 'model_rotation_pick' AND user_id = ?")
       .all(userId) as Array<{ payload: string }>;
-    const parsed = audits.map((row) => JSON.parse(row.payload) as { runId: string; seat: string; model: string; pointer: number });
+    const parsed = audits.map(
+      (row) => JSON.parse(row.payload) as { runId: string; seat: string; model: string; pointer: number; reasoningEffort?: string }
+    );
     expect(parsed.filter((p) => p.runId === runId).map((p) => p.seat).sort()).toEqual(["green", "red"]);
     for (const pick of parsed) {
       expect(typeof pick.pointer).toBe("number");
       expect(pick.model).not.toBe(LLM_MODEL_ROTATION_SENTINEL);
+      // The served effort is part of the pick's audit trail.
+      expect(pick.reasoningEffort).toBe(recommendedReasoningEffortForModel(pick.model));
     }
     // A different account starts at its own pointer (slot 0), independent of acct-A's advance.
     const other = resolveModelRotationForRun({
@@ -286,6 +299,35 @@ describe("resolveModelRotationForRun", () => {
     second.commit();
     const third = resolveModelRotationForRun({ userId, accountId, runId: randomUUID(), policy: { llmModel: LLM_MODEL_ROTATION_SENTINEL } });
     expect(third.llmModel).not.toBe(first.llmModel);
+  });
+});
+
+describe("recommendedReasoningEffortForModel (curated rotation efforts)", () => {
+  it("serves DeepSeek at thinking-off, gpt-5.5 at medium, and unknown ids at the medium default", async () => {
+    const { recommendedReasoningEffortForModel, reasoningAdviceForModel } = await import("../src/lib/model-reasoning-recommendations");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-flash")).toBe("none");
+    expect(recommendedReasoningEffortForModel("deepseek-v4-pro")).toBe("none");
+    expect(recommendedReasoningEffortForModel("gpt-5.5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("claude-fable-5")).toBe("medium");
+    expect(recommendedReasoningEffortForModel("some-custom-model")).toBe("medium");
+    expect(recommendedReasoningEffortForModel(undefined)).toBe("medium");
+    // gpt-5.5's advice carries the interactive-high rule the UI surfaces BEFORE save.
+    expect(reasoningAdviceForModel("gpt-5.5")).toMatch(/disabled for interactive/i);
+    expect(reasoningAdviceForModel("gpt-5.4")).toBeUndefined();
+  });
+
+  it("every rotation-pool model's recommended effort survives the interactive clamp unchanged", async () => {
+    // Rotation must never auto-set an effort the interactive strategy path would then silently
+    // rewrite (e.g. recommending high for gpt-5.5, or medium for a DeepSeek that treats it as off).
+    const { MODEL_ROTATION_POOL } = await import("../src/lib/model-rotation");
+    const { recommendedReasoningEffortForModel } = await import("../src/lib/model-reasoning-recommendations");
+    const { interactiveStrategyReasoningEffort, reasoningCapabilityForModel } = await import("../src/lib/llm-request");
+    for (const model of MODEL_ROTATION_POOL) {
+      const recommended = recommendedReasoningEffortForModel(model);
+      const served = interactiveStrategyReasoningEffort(model, recommended);
+      if (reasoningCapabilityForModel(model)) expect(served, model).toBe(recommended);
+      else expect(served, model).toBeUndefined();
+    }
   });
 });
 

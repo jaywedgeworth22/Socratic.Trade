@@ -1,17 +1,18 @@
-/** The Strategy page's shared "Reasoning / Thinking Effort" control logic
+/** The Strategy page's "Reasoning / Thinking Effort" control logic
  *  (app/console/strategy/reasoning-control.ts) — extracted pure helpers, with the
- *  rotation-sentinel awareness added for the rotation-UX fixes (2026-07-09):
- *  a rotating seat must SHOW the control (synthetic full ladder + honest per-served-model
- *  copy) instead of disappearing with a false "do not expose a reasoning control" line. */
+ *  rotation-sentinel awareness added for the rotation-UX fixes (2026-07-09) and the
+ *  PER-SEAT patch helper from the per-team reasoning split (2026-07-10): each seat's
+ *  select renormalizes ONLY its own field, and the reviewer's unset/inheriting state
+ *  is never materialized by a model change. */
 
 import { describe, expect, it } from "vitest";
-import { ALL_LLM_REASONING_EFFORTS, LLM_MODEL_ROTATION_SENTINEL } from "../src/lib/llm-request";
+import { ALL_LLM_REASONING_EFFORTS, LLM_MODEL_ROTATION_SENTINEL, resolveReviewerReasoningEffort } from "../src/lib/llm-request";
 import {
   HIGH_TIER_REASONING_EFFORTS,
   normalizeReasoningValueForControl,
   reasoningControlForModels,
-  reasoningPatchFor,
-  reasoningSummary
+  reasoningSummary,
+  seatReasoningPatch
 } from "../app/console/strategy/reasoning-control";
 
 const ROTATE = LLM_MODEL_ROTATION_SENTINEL;
@@ -54,8 +55,10 @@ describe("reasoningSummary — honest copy under rotation", () => {
     const control = reasoningControlForModels([ROTATE, ROTATE]);
     const summary = reasoningSummary(control);
     expect(summary).not.toMatch(/do not expose/i);
+    // Per-team split (2026-07-10): rotation AUTO-SETS each served model's recommended effort —
+    // the summary states that instead of the old "your chosen effort applies, clamped" copy.
     expect(summary).toMatch(/served model/i);
-    expect(summary).toMatch(/clamped/i);
+    expect(summary).toMatch(/recommended/i);
   });
 
   it("keeps the plain copy for concrete models and the honest-absence line for none", () => {
@@ -90,15 +93,43 @@ describe("normalizeReasoningValueForControl — high-tier-only pairings (no sile
   });
 });
 
-describe("reasoningPatchFor — rotating seats never renormalize the stored effort", () => {
-  it("all-rotate yields an empty patch (stored effort is clamped per served model at call time)", () => {
-    expect(reasoningPatchFor([ROTATE, ROTATE], "medium")).toEqual({});
-    expect(reasoningPatchFor([ROTATE, ROTATE], "xhigh")).toEqual({});
+describe("seatReasoningPatch — per-seat renormalization bundled into model saves", () => {
+  it("clamps the seat's stored effort to the new model's own ladder", () => {
+    // gpt-5.4-mini's ladder is {low, medium, high}: "xhigh" clamps to "high" for the save.
+    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.4-mini", "xhigh")).toEqual({ llmReasoningEffort: "high" });
+    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.4-mini", "medium")).toEqual({ llmReasoningEffort: "medium" });
+    // Writes the reviewer's own per-team field when asked to.
+    expect(seatReasoningPatch("redTeamReasoningEffort", "claude-sonnet-5", "xhigh")).toEqual({ redTeamReasoningEffort: "xhigh" });
   });
 
-  it("rotate + concrete renormalizes against the concrete seat only", () => {
-    // gpt-5.4-mini's ladder is {low, medium, high}: "xhigh" clamps to "high" for the save.
-    expect(reasoningPatchFor([ROTATE, "gpt-5.4-mini"], "xhigh")).toEqual({ llmReasoningEffort: "high" });
-    expect(reasoningPatchFor([ROTATE, "gpt-5.4-mini"], "medium")).toEqual({ llmReasoningEffort: "medium" });
+  it("rotating/blank seats yield an empty patch (rotation auto-sets the served model's effort)", () => {
+    expect(seatReasoningPatch("llmReasoningEffort", ROTATE, "medium")).toEqual({});
+    expect(seatReasoningPatch("redTeamReasoningEffort", ROTATE, "xhigh")).toEqual({});
+    expect(seatReasoningPatch("llmReasoningEffort", "", "medium")).toEqual({});
+    expect(seatReasoningPatch("llmReasoningEffort", undefined, "medium")).toEqual({});
+  });
+
+  it("an UNSET effort never materializes into an explicit value on a model change", () => {
+    // The reviewer's inheriting state (redTeamReasoningEffort absent) must survive a model swap.
+    expect(seatReasoningPatch("redTeamReasoningEffort", "gpt-5.4-mini", undefined)).toEqual({});
+  });
+
+  it("a model with no reasoning capability yields no patch (effort is ignored at call time)", () => {
+    expect(seatReasoningPatch("llmReasoningEffort", "mistral-small-2603", "high")).toEqual({});
+  });
+
+  it("the disallowed interactive gpt-5.5+high combo saves the run-time-honest medium instead", () => {
+    expect(seatReasoningPatch("llmReasoningEffort", "gpt-5.5", "high")).toEqual({ llmReasoningEffort: "medium" });
+    expect(seatReasoningPatch("redTeamReasoningEffort", "gpt-5.5", "high")).toEqual({ redTeamReasoningEffort: "medium" });
+  });
+});
+
+describe("resolveReviewerReasoningEffort — the reviewer's fallback lives in one place", () => {
+  it("explicit reviewer effort wins; unset falls back to the proposer's; both-unset stays unset", () => {
+    expect(resolveReviewerReasoningEffort({ llmReasoningEffort: "medium", redTeamReasoningEffort: "high" })).toBe("high");
+    expect(resolveReviewerReasoningEffort({ llmReasoningEffort: "medium" })).toBe("medium");
+    expect(resolveReviewerReasoningEffort({})).toBeUndefined();
+    expect(resolveReviewerReasoningEffort(undefined)).toBeUndefined();
+    expect(resolveReviewerReasoningEffort(null)).toBeUndefined();
   });
 });

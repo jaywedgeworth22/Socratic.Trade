@@ -5,6 +5,12 @@
 // and test accounts. Proposals already persist `proposedByModel` (the CONCRETE serving model), so
 // attribution is automatic — rotation only has to vary which model serves each run.
 //
+// REASONING EFFORT (per-team split 2026-07-10): a rotating seat has NO manual effort control —
+// each rotated model is served at its curated recommended reasoning effort (unknown -> "medium";
+// src/lib/model-reasoning-recommendations.ts), carried on the same run-scoped override as the
+// model pick (green -> llmReasoningEffort, red -> redTeamReasoningEffort) and recorded on the
+// `model_rotation_pick` audit. The persisted per-team efforts are untouched.
+//
 // HOW IT RESOLVES: `runStrategyOnce` calls `resolveModelRotationForRun` at the TOP of every run,
 // BEFORE any budget preview or `resolveLlmEndpoint` call, and merges the result onto its
 // RUN-SCOPED policy clone (`runPolicy`) — the same pattern as the usage-budget downgrade. The
@@ -31,6 +37,8 @@
 import { audit, getInternalSetting, resolveLlmCredential, setInternalSetting } from "./db";
 import { llmModelFamily } from "./llm-provider";
 import { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL } from "./llm-request";
+import { recommendedReasoningEffortForModel } from "./model-reasoning-recommendations";
+import type { LlmReasoningEffort } from "./types";
 
 export { isModelRotationSentinel, LLM_MODEL_ROTATION_SENTINEL };
 
@@ -168,7 +176,17 @@ export function resolveModelRotationForRun(input: {
   accountId?: string;
   runId: string;
   policy: { llmModel?: string | null; redTeamLlmModel?: string | null };
-}): { llmModel?: string; redTeamLlmModel?: string; commit: () => void } {
+}): {
+  llmModel?: string;
+  redTeamLlmModel?: string;
+  /** A rotating GREEN seat also auto-sets the served model's curated recommended reasoning effort
+   *  (unknown model -> "medium"; src/lib/model-reasoning-recommendations.ts) onto the run-scoped
+   *  policy — there is no manual effort control under rotation. Clamped per model at call time. */
+  llmReasoningEffort?: LlmReasoningEffort;
+  /** Same auto-set for a rotating RED seat (the reviewer's own per-team effort field). */
+  redTeamReasoningEffort?: LlmReasoningEffort;
+  commit: () => void;
+} {
   const rotateGreen = isModelRotationSentinel(input.policy.llmModel);
   const rotateRed = isModelRotationSentinel(input.policy.redTeamLlmModel);
   if (!rotateGreen && !rotateRed) return { commit: () => {} };
@@ -202,7 +220,12 @@ export function resolveModelRotationForRun(input: {
       greenCounter: getInternalSetting<number>(greenKey) ?? 0,
       redCounter: getInternalSetting<number>(redKey) ?? 0
     });
-    const out: { llmModel?: string; redTeamLlmModel?: string } = {};
+    const out: {
+      llmModel?: string;
+      redTeamLlmModel?: string;
+      llmReasoningEffort?: LlmReasoningEffort;
+      redTeamReasoningEffort?: LlmReasoningEffort;
+    } = {};
     // Per-seat side effects (pointer advance + pick audit) are DEFERRED into `commit`: the models are
     // known now (so the budget preview can price them) but the pointer must only advance once the run
     // is committed to serving the LLM. If the caller returns/throws/skips before calling commit(), the
@@ -213,6 +236,11 @@ export function resolveModelRotationForRun(input: {
       ["red", advance.red, redKey]
     ] as const) {
       if (!pick) continue;
+      // Rotation owns the rotated seat's reasoning effort too: each served model runs at its
+      // curated recommended level (unknown -> "medium"), overriding the stored per-team effort on
+      // the RUN-SCOPED policy only. The persisted policy keeps the owner's stored effort for
+      // whenever rotation is switched off; call time still re-clamps per model.
+      const reasoningEffort = recommendedReasoningEffortForModel(pick.model);
       commits.push(() => {
         setInternalSetting(key, pick.nextPointer);
         audit(
@@ -221,6 +249,7 @@ export function resolveModelRotationForRun(input: {
             runId: input.runId,
             seat,
             model: pick.model,
+            reasoningEffort,
             pointer: pick.pointer,
             nextPointer: pick.nextPointer,
             wrapped: pick.wrapped,
@@ -231,8 +260,13 @@ export function resolveModelRotationForRun(input: {
           input.accountId
         );
       });
-      if (seat === "green") out.llmModel = pick.model;
-      else out.redTeamLlmModel = pick.model;
+      if (seat === "green") {
+        out.llmModel = pick.model;
+        out.llmReasoningEffort = reasoningEffort;
+      } else {
+        out.redTeamLlmModel = pick.model;
+        out.redTeamReasoningEffort = reasoningEffort;
+      }
     }
     return {
       ...out,
