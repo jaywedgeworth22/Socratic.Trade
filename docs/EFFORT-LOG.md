@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
   `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
   Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
@@ -1473,7 +1474,6 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
-- **Settings IA restructure - global-only Settings (CLAUDE, worktree vibrant-bouman-10388c, branch `claude/settings-global-only`) - IN PROGRESS 2026-07-10, owner-directed.** /console/settings becomes global-only: Models card DELETED (Framework /console/strategy is the single source of truth - it has the reasoning-effort controls Settings lacked); Tax treatment card MOVED to bottom of Framework (stays account-scoped, THIS ACCOUNT chip); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (db-profiles) so Advanced action confirmation is genuinely all-accounts; learning review already user-level (verified); THIS ACCOUNT section removed from Settings; deep-links retargeted.
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
   `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
   The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
