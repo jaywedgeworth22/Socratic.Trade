@@ -3307,7 +3307,6 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           logApiHealth({ service: this.name, ok: false, errorText: `TwelveData API error: ${msg}`, keySource: this.keySource, userId: this.userId });
           continue;
         }
-        logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         if (typeof rawObj.symbol === "string") {
           // Single-symbol response
           quoteMap[rawObj.symbol as string] = rawObj;
@@ -3328,6 +3327,11 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, {}, now + twelveDataNegativeTtlMs());
           result[symbol] = {};
         };
+        // Tracked across the batch so an ALL-transient batch (mis-sized credit budget, upstream
+        // outage) can be flagged below — the ok:true logged above only reflects the outer HTTP
+        // 200/JSON-parse success, not whether any embedded per-symbol data was actually usable.
+        let anyUsableSymbolData = false;
+        let anyEmbeddedTransientError = false;
         for (const symbol of batch) {
           const q = quoteMap[symbol];
           if (!q) {
@@ -3344,6 +3348,7 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
             const code = Number(q.code);
             if (code === 429 || code >= 500) {
               result[symbol] = {}; // transient — retry next scan, no cache write
+              anyEmbeddedTransientError = true;
             } else {
               negativeCache(symbol);
             }
@@ -3384,9 +3389,29 @@ export class TwelveDataEnrichmentProvider implements MarketEnrichmentProvider {
           if (Object.keys(data).length > 0) {
             writeEnrichmentCache("twelvedata", symbol, this.scope, this.userId, data, now + ttlMs());
             result[symbol] = data;
+            anyUsableSymbolData = true;
           } else {
             negativeCache(symbol); // returned a row but no usable fields — rotate it out briefly
           }
+        }
+
+        // Log exactly ONE health row for this batch, deferred until after per-symbol validation. If the
+        // whole batch surfaced embedded transient errors (429/5xx inside the HTTP 200 body) and produced
+        // NO usable symbol data, log only the failure — logging ok:true here (reflecting only the outer
+        // HTTP/JSON success) AND ok:false below for the same batch would pair them up, and getLaneHealth's
+        // circuit breaker trips only when the LAST 5 rows are all failures: alternating success/failure
+        // rows for repeated all-transient batches would never reach that state, defeating the point of
+        // this health signal. A partial batch (at least one usable symbol) still logs ok:true.
+        if (!anyUsableSymbolData && anyEmbeddedTransientError) {
+          logApiHealth({
+            service: this.name,
+            ok: false,
+            errorText: "TwelveData batch: no usable symbol data, embedded transient error(s) (429/5xx) in HTTP 200 body",
+            keySource: this.keySource,
+            userId: this.userId
+          });
+        } else {
+          logApiHealth({ service: this.name, ok: true, keySource: this.keySource, userId: this.userId });
         }
       } catch (err) {
         if (isTransientError(err)) {

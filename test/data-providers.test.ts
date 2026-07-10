@@ -423,6 +423,76 @@ describe("enrichment cache consent gate", () => {
     else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
+  it("TwelveData logs an ok:false health row when a batch is ALL embedded-transient errors (no usable data)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      // Every queried symbol comes back as an embedded transient error (429/5xx) inside HTTP 200 —
+      // e.g. a mis-sized credit budget or an upstream outage, not "no data for this symbol".
+      for (const s of syms) body[s] = { code: 429, status: "error", message: "out of API credits" };
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    const provider = new TwelveDataEnrichmentProvider(key, "env");
+    const beforeCount = getServiceHealthLog("twelvedata", 1000).length;
+    const res = await provider.enrich(["RATELIMITED1", "RATELIMITED2"]);
+    expect(res.RATELIMITED1).toEqual({});
+    expect(res.RATELIMITED2).toEqual({});
+
+    // The whole-request parse still succeeded (HTTP 200, valid JSON), but every symbol failed —
+    // this must surface as an ok:false health row so the circuit breaker can see the bad lane,
+    // not stay silently healthy while retrying it every window.
+    const rows = getServiceHealthLog("twelvedata", 10);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => r.ok === 0)).toBe(true);
+    const failure = rows.find((r) => r.ok === 0);
+    expect(failure?.error_text).toContain("transient");
+
+    // Exactly ONE health row for this call, and it's the failure — NOT an ok:true (outer HTTP/JSON
+    // success) paired with an ok:false (all-transient) for the same batch. getLaneHealth's circuit
+    // breaker trips only when the last 5 rows are ALL failures; pairing success+failure per batch
+    // would make repeated all-transient batches alternate forever and never trip it.
+    const afterCount = getServiceHealthLog("twelvedata", 1000).length;
+    expect(afterCount - beforeCount).toBe(1);
+    expect(rows[0].ok).toBe(0);
+  });
+
+  it("TwelveData stays ok:true on a PARTIAL batch (some symbols usable, some embedded-transient)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      const body: Record<string, unknown> = {};
+      for (const s of syms) {
+        body[s] = s === "RATELIMITED" ? { code: 429, status: "error", message: "out of API credits" } : { symbol: s, close: "10" };
+      }
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    const provider = new TwelveDataEnrichmentProvider(key, "env");
+    const res = await provider.enrich(["RATELIMITED", "GOOD"]);
+    expect(res.RATELIMITED).toEqual({});
+    expect(res.GOOD?.price).toBe(10);
+
+    // At least one symbol was usable, so the lane stays healthy — this call's own health row
+    // (the most recent one, since the log is ordered ts DESC) must be ok:true, not ok:false.
+    // (Older rows from earlier tests in this file may still be present in the shared log, so
+    // don't assert over the whole log — just the row this call just wrote.)
+    const rows = getServiceHealthLog("twelvedata", 10);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].ok).toBe(1);
+  });
+
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
