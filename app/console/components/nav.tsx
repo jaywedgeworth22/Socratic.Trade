@@ -169,13 +169,31 @@ export function DesktopRail({ pendingCount }: { pendingCount: number }) {
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** Sheet stops just above the fixed tab bar (rather than covering it) so the
+ * bar — and any pin toggle's live effect on it — stays visible the whole
+ * time the sheet is open. `barHeight` is the tab bar's real measured height
+ * (see `MobileTabBar`'s ResizeObserver), so this tracks safe-area insets and
+ * font-scaling exactly instead of guessing a fixed offset. `GAP` is the
+ * small breathing-room reveal between the sheet and the bar; `TOP_GAP` keeps
+ * the sheet off the very top of the viewport (status bar / notch). A floor
+ * is used until the first measurement lands (effectively instant — the bar
+ * is always mounted before a user can tap "Tabs" to open this). */
+const TABS_SHEET_GAP = 8;
+const TABS_SHEET_TOP_GAP = 16;
+const TABS_SHEET_BAR_FLOOR = 56;
+
 /** The bottom-sheet destination picker — replaces the old "More" list.
  *  Unlike the shared `Sheet` (a centered dialog on desktop, plain bottom
  *  sheet on mobile), this always slides up from the bottom with an explicit
  *  transform/opacity transition, because it only ever renders on mobile
  *  (`lg:hidden`) alongside the bottom tab bar. `prefers-reduced-motion`
  *  collapses the transition to 0ms rather than skipping it, so the sheet
- *  still ends up in the right place either way. */
+ *  still ends up in the right place either way.
+ *
+ *  It floats above the tab bar (not over it) and stretches to fill nearly
+ *  all remaining vertical space, so a typical phone shows every destination
+ *  without scrolling while the bar's pin state stays live underneath —
+ *  see `TABS_SHEET_GAP` etc. above for why. */
 function TabsSheet({
   open,
   onClose,
@@ -184,7 +202,8 @@ function TabsSheet({
   tabs,
   decisionCount,
   pendingCount,
-  learnedCount
+  learnedCount,
+  barHeight
 }: {
   open: boolean;
   onClose: () => void;
@@ -194,11 +213,13 @@ function TabsSheet({
   decisionCount: number;
   pendingCount: number;
   learnedCount: number;
+  barHeight: number;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const headingId = useId();
   const [entered, setEntered] = useState(false);
+  const barOffset = Math.max(barHeight, TABS_SHEET_BAR_FLOOR);
 
   useEffect(() => {
     if (!open) {
@@ -257,7 +278,9 @@ function TabsSheet({
 
   return (
     <>
-      <div className="con-scrim lg:hidden" onClick={onClose} aria-hidden />
+      {/* Scrim stops above the tab bar (not inset-0) so the bar reads as
+       * live/interactive, not dimmed, while the sheet is open. */}
+      <div className="con-scrim lg:hidden" style={{ bottom: barOffset }} onClick={onClose} aria-hidden />
       <div
         ref={sheetRef}
         role="dialog"
@@ -265,10 +288,13 @@ function TabsSheet({
         aria-labelledby={headingId}
         tabIndex={-1}
         className={cx(
-          "fixed inset-x-0 bottom-0 z-[101] flex max-h-[85dvh] flex-col overflow-hidden rounded-t-[var(--con-radius)] border border-b-0 border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
+          "fixed inset-x-0 z-[101] flex flex-col overflow-hidden rounded-[var(--con-radius)] border border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] shadow-[var(--con-shadow-lg)] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 lg:hidden",
           entered ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"
         )}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        style={{
+          bottom: barOffset + TABS_SHEET_GAP,
+          maxHeight: `calc(100dvh - ${barOffset + TABS_SHEET_GAP + TABS_SHEET_TOP_GAP}px)`
+        }}
       >
         <header className="flex items-center justify-between gap-4 border-b border-[color:var(--con-line)] px-5 py-3.5">
           <h2 id={headingId} className="text-[length:var(--con-fs-md)] font-semibold">
@@ -355,6 +381,25 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   const learnedCount = useLearnedPendingCount();
   const decisionCount = pendingCount + learnedCount;
   const tabsState = useMobileTabs(DESTINATIONS.map((d) => d.href));
+  const navRef = useRef<HTMLElement>(null);
+  const [barHeight, setBarHeight] = useState(0);
+
+  // Real measured height (incl. the bar's own safe-area padding) so the
+  // TabsSheet can stop exactly above it on any device/font-scale, rather
+  // than guessing a fixed px offset.
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const measure = () => setBarHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   // SSR-safe: before mount, tabHrefs is already DEFAULT_MOBILE_TAB_HREFS (the
   // hook's initial state), so this matches the server render exactly.
@@ -365,6 +410,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
   return (
     <>
       <nav
+        ref={navRef}
         className="fixed inset-x-0 bottom-0 z-50 border-t border-[color:var(--con-line-strong)] bg-[color:var(--con-surface)] lg:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="Console navigation"
@@ -390,7 +436,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
                 >
                   <Icon size={19} />
                   {d.href === "/console/approvals" && decisionCount > 0 && (
-                    <span className="con-badge absolute -right-2.5 -top-1.5" title={badgeTitle(pendingCount, learnedCount)}>
+                    <span className="con-badge absolute -right-2.5 -top-1" title={badgeTitle(pendingCount, learnedCount)}>
                       {decisionCount}
                     </span>
                   )}
@@ -427,6 +473,7 @@ export function MobileTabBar({ pendingCount }: { pendingCount: number }) {
         decisionCount={decisionCount}
         pendingCount={pendingCount}
         learnedCount={learnedCount}
+        barHeight={barHeight}
       />
     </>
   );
