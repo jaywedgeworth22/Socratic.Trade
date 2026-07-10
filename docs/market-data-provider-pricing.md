@@ -72,8 +72,14 @@ code defaults 2026-07-10; boot-time injection ⇒ changes apply on the next depl
 `TIINGO_DROP_NEWS`, `FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`,
 `MASSIVE_{HISTORY,SHORT_INTEREST}_ENABLED`, `MASSIVE_REST_MAX_CALLS_PER_MINUTE`.
 Resolution logic: `src/lib/provider-rate-limit.ts`. Subscription→knob automation
-(API-Usage-Monitor as source of truth) is designed and reserved on the boards —
-paused pending owner unblock as of 2026-07-10.
+(API-Usage-Monitor as source of truth): the **Mac-side sync shipped 2026-07-10** —
+`scripts/sync-provider-knobs.sh` + `scripts/com.jay.provider-knob-sync.plist` GET the
+monitor's `/api/subscriptions`, map each plan's status to knobs (active→`knobEnv`,
+canceled/paused→`freeTierKnobEnv`, considering→skip), and write only the diffs into
+Infisical prod via the proven universal-auth CLI path (allow-listed keys only). It is
+**gated on the monitor's `/api/subscriptions` endpoint** (parallel PR) and dry-runs by
+default; the launchd job is not installed yet. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
 
 ### Upgrade cheat-sheet
 

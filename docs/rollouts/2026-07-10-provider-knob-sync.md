@@ -153,7 +153,7 @@ The monitor's `GET /api/subscriptions` is being built in parallel. This code ass
 - Owner: install the launchd job when ready (command above), after a dry run.
 - Once the monitor PR merges, run one dry run end-to-end against the live endpoint to
   confirm the real payload matches the contract, then enable `--apply`.
-- `docs/market-data-provider-pricing.md` (currently on branch
-  `claude/provider-pricing-doc`) notes this automation as "designed and reserved -
-  paused pending owner unblock"; update that line to "shipped" when both this and the
-  monitor PR land.
+- `docs/market-data-provider-pricing.md` (now on `main`) has its "Where the dials
+  live" note updated by this PR: the Mac-side sync (this change) has shipped and is
+  gated on the monitor's `/api/subscriptions` endpoint. Flip it to fully "live" once
+  the monitor PR merges and a dry run confirms the real payload.
