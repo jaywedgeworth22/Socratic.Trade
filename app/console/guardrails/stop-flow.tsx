@@ -1,11 +1,14 @@
 "use client";
 
 /** Stop-flow diagram — the graphical "which stop applies when" map that sits above the Protective
- *  stops fields (owner ask, 2026-07-10). Three lanes, each read left → right along its fallback
+ *  stops fields (owner ask, 2026-07-10). Four lanes, each read left → right along its fallback
  *  arrows:
  *   1. DISTANCE — how far the stop sits from entry, per symbol: ATR → beta-scaled → flat base %.
  *   2. TRAILING — the overlay exit that follows the high-water mark (runs alongside lane 1).
  *   3. ENFORCEMENT — who actually fires it: broker-held (survives app downtime) → app monitor.
+ *   4. PER-POSITION OVERRIDE — the LLM's per-position stop PLAN (fixed/ATR/trailing/none), chosen
+ *      at buy time and persisted for the position's life, which pins lanes 1-2 for that ONE symbol
+ *      only (never a hidden re-prioritization — see position_stop_plans / StopPlanStyle).
  *  The model is a pure function of the policy so the on/off/fallback wiring is unit-testable
  *  (test/stop-flow-model.test.ts); the component is presentation only. */
 
@@ -147,7 +150,44 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
     note: "A position's shares can only back ONE resting sell at the broker — the app monitor layers the remaining rules on top."
   };
 
-  return [distance, trailing, enforcement];
+  const perPosition: StopFlowLane = {
+    key: "perPosition",
+    label: "Per-position override — the LLM can pin ONE position to a specific style at buy time (never hidden — shown on the proposal and in Positions)",
+    arrows: ["or ▸", "or ▸", "or ▸"],
+    nodes: [
+      {
+        key: "plan-fixed",
+        title: "Fixed",
+        value: "pins to a flat %",
+        active: true,
+        detail: `Pins this ONE position to the flat base % distance (skipping ATR/beta for it) — uses the account's own ${hasBase ? `${baseStop}%` : "8% fallback, since no account-wide stop-loss is configured"}.`
+      },
+      {
+        key: "plan-atr",
+        title: "ATR",
+        value: "pins to ATR distance",
+        active: true,
+        detail: "Pins this ONE position to its own ATR-based distance, even when the account doesn't have ATR stops on — falls back to the flat %/8% default if daily bars are unavailable for the symbol."
+      },
+      {
+        key: "plan-trailing",
+        title: "Trailing",
+        value: "pins to a trail",
+        active: true,
+        detail: `Pins this ONE position to a trailing stop only (skipping the fixed/ATR exit for it) — uses the account's own ${trailingOn ? `${trailPct}%` : "8% fallback, since no account-wide trailing % is configured"} trail, registered by the always-on synthetic monitor regardless of broker.`
+      },
+      {
+        key: "plan-none",
+        title: "None",
+        value: "no stop-loss",
+        active: true,
+        detail: "A genuine, owner-accepted no-stop choice for this ONE position — never silently applied. Requires a rationale, shown wherever this position's protection is displayed (Positions, Approvals) — never hard-blocked, but never hidden either."
+      }
+    ],
+    note: "Absent (the default) — this position follows the account's own precedence above, unchanged. Set only on an opening buy/short proposal; persisted for the position's life and cleared automatically when it closes."
+  };
+
+  return [distance, trailing, enforcement, perPosition];
 }
 
 function NodeBox({ node }: { node: StopFlowNode }) {

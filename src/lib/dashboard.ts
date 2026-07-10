@@ -18,6 +18,7 @@ import {
   listFillEvents,
   listConnectedAccounts,
   getActiveConnectedAccount,
+  getStopPlans,
   userHasAnyLlmCredential,
   listSocraticDecisionCases,
   listSocraticFrameworkProposals
@@ -566,6 +567,17 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     pendingProposals,
     latestStrategyRun
   });
+  // Per-position stop PLANS (LLM-chosen stop TYPE, persisted at fill time) — surfaced in the
+  // Positions table and the stop-flow diagram so a plan is never a hidden override. Best-effort:
+  // a lookup failure just means the UI falls back to the account's own precedence for every symbol.
+  const stopPlanBySymbol = (() => {
+    if (!policy.accountNumber) return {};
+    try {
+      return getStopPlans(policy.accountNumber, userId);
+    } catch {
+      return {};
+    }
+  })();
   const auditFeed = buildAuditFeed({
     audit,
     symbolMetaBySymbol,
@@ -670,6 +682,7 @@ export async function getDashboardSnapshot(userId: string = "local", currentUser
     portfolio: displayPortfolio,
     positions: displayPositions,
     symbolMetaBySymbol,
+    stopPlanBySymbol,
     orders,
     audit: clientAudit,
     auditFeed,

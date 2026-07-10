@@ -30,6 +30,7 @@ import { Sheet } from "../ui/sheet";
 import { SymbolButton } from "../ui/symbol-drilldown";
 
 const SIDE_LABEL: Record<string, string> = { buy: "BUY", sell: "SELL", short: "SHORT", cover: "COVER" };
+const STOP_PLAN_DISPLAY: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
 
 function isExit(side: string): boolean {
   return side === "sell" || side === "cover";
@@ -542,6 +543,15 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 Bracket protection: {typeof p.bracketStopLoss === "number" ? `stop ${fmtMoney(p.bracketStopLoss)}` : ""}
                 {typeof p.bracketStopLoss === "number" && typeof p.bracketTakeProfit === "number" ? " · " : ""}
                 {typeof p.bracketTakeProfit === "number" ? `take-profit ${fmtMoney(p.bracketTakeProfit)}` : ""}.
+              </>
+            ) : null}
+            {p.stopPlan && p.stopPlan.style !== "default" ? (
+              <>
+                {" "}
+                <strong>Stop plan ({STOP_PLAN_DISPLAY[p.stopPlan.style] ?? p.stopPlan.style}):</strong>{" "}
+                {p.stopPlan.style === "none"
+                  ? `the LLM chose to carry NO stop-loss on this position${p.stopPlan.rationale ? ` — "${p.stopPlan.rationale}"` : ""}.`
+                  : `this position's stop pins to the ${STOP_PLAN_DISPLAY[p.stopPlan.style] ?? p.stopPlan.style} distance, overriding the account's own default${p.stopPlan.rationale ? ` — "${p.stopPlan.rationale}"` : ""}.`}
               </>
             ) : null}
             {willPromptTyped ? " This uses the broker-account approval phrase before anything is placed." : ""}

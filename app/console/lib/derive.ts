@@ -4,6 +4,7 @@
  *  every helper returns null/undefined when the snapshot can't answer. */
 
 import type { DashboardSnapshot } from "../../dashboard-types";
+import type { PositionStopPlan } from "@/lib/db";
 import type {
   ConnectedAccount,
   EquityCurvePoint,
@@ -158,14 +159,45 @@ function hasWorkingClosingStop(orders: EquityOrder[], symbol: string, isShort: b
   });
 }
 
+const STOP_PLAN_LABEL: Record<string, string> = { fixed: "Fixed", atr: "ATR", trailing: "Trailing", none: "None" };
+
 /** Honest protection derivation from what the snapshot actually carries:
  *  a resting broker stop order that closes the position, else the app-managed
  *  stop rules (which pause while Stopped), else nothing. Shorts mirror the
  *  server's rules: the stop distance is riskRules.shortStopLossPct, falling
  *  back to stopLossPct (generateProactiveRiskProposals), and the app skips
  *  shorts entirely while shortSellingEnabled is off (synthetic-stops monitor
- *  and proactive exits both do). */
+ *  and proactive exits both do). An optional per-position stopPlan (the LLM's
+ *  own choice at buy time, from position_stop_plans) is layered on top —
+ *  NEVER a silent override: it always annotates the detail text, and a "none"
+ *  plan is called out prominently (never rendered as if nothing was ever
+ *  configured) rather than blending into the generic no-protection case. */
 export function deriveProtection(
+  position: EquityPosition,
+  orders: EquityOrder[],
+  policy: TradingPolicy,
+  stopPlan?: PositionStopPlan
+): ProtectionInfo {
+  const base = deriveBaseProtection(position, orders, policy);
+  if (!stopPlan || stopPlan.style === "default") return base;
+  const planLabel = STOP_PLAN_LABEL[stopPlan.style] ?? stopPlan.style;
+  if (stopPlan.style === "none") {
+    return {
+      label: base.label ?? "No stop (LLM choice)",
+      detail:
+        `Per-position plan: NO stop-loss — a deliberate LLM/owner choice for this position` +
+        (stopPlan.rationale ? ` ("${stopPlan.rationale}")` : "") +
+        `. ${base.detail}`,
+      tone: base.label ? base.tone : "warn"
+    };
+  }
+  return {
+    ...base,
+    detail: `Per-position plan: ${planLabel} (pins this position's stop, overriding the account's own default distance/trailing choice). ${base.detail}`
+  };
+}
+
+function deriveBaseProtection(
   position: EquityPosition,
   orders: EquityOrder[],
   policy: TradingPolicy
