@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Mistral benchmark data surfaced in the model-picker UI (MONET, branch `monet/mistral-benchmark-ui`)
+Owner-directed: users had no way to see the 2026-07-10 Mistral re-benchmark numbers when picking a
+model — they only lived in a docs note. Filled two ALREADY-BUILT UI surfaces instead of inventing a
+new one (the custom `ModelPicker` listbox is dead code, zero JSX usages — reviving it would have
+been a much larger rewrite than this data-wiring task warranted): (1) the Model Stats drawer's
+benchmark column, which previously showed a dash for all four Mistral rows (the 2026-07-08 sweep
+recorded 0 successes — the capability-map bug #1279 fixed) — now shows real cost/latency via a safe
+array-concat into the existing `normalizeBenchmarkSummaries` pipeline; (2) the Mistral Medium
+reasoning-effort advice text, extended with the concrete None (fast/cheap, proposes nothing) vs High
+(slow/costly, actually proposes) tradeoff the benchmark revealed. High-effort probe data deliberately
+NOT merged into the drawer (would collide with the default-effort row for the same model+role) —
+feeds the advice prose instead. Verified live end-to-end in-browser (own worktree dev server + a
+throwaway seeded API key, with a fixed `ENCRYPTION_KEY` shared between the seed script and the dev
+server so the app's own decrypt-and-validate save path passes — the default per-process random key
+otherwise makes cross-process seeding silently fail). Gate: lint 0 errors / tsc clean / 315 files
+3387 tests / build. See `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
 ## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
 Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
 every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's

@@ -7,6 +7,15 @@ import { resolveRequestUserId } from "@/lib/request-user";
 // Static benchmark reference (2026-07-08 model benchmark run): bundled at build time so the
 // endpoint has cost/latency numbers for every catalog model even with zero live traffic.
 import benchmarkJson from "../../../../docs/benchmarks/2026-07-08-llm-model-benchmark.json";
+// Supplemental keyed re-benchmark (2026-07-10): the 2026-07-08 sweep recorded 0 successes for
+// every Mistral row (a since-fixed capability-map bug, see docs/rollouts/2026-07-10-mistral-
+// rebench.md), so normalizeBenchmarkSummaries dropped them for lack of any numbers. This run's
+// summaries carry the real Mistral cost/latency at the pool's DEFAULT reasoning effort — the
+// high-reasoning-effort probe (docs/benchmarks/2026-07-10-mistral-rebench-high.json) is
+// deliberately NOT merged here to avoid a second, ambiguous row for the same (model, role); its
+// numbers instead inform the advice text under the Mistral reasoning-effort control
+// (src/lib/model-reasoning-recommendations.ts).
+import mistralRebenchJson from "../../../../docs/benchmarks/2026-07-10-mistral-rebench.json";
 
 export const dynamic = "force-dynamic";
 
@@ -24,8 +33,9 @@ export const dynamic = "force-dynamic";
 //     value-add (RED only): the counterfactual outcome of the proposals each reviewer
 //     vetoed. Red attribution is per-run, not per-closed-trade, so it feeds `reviewerPerf`
 //     rather than the closed-trade `perf` field — see model-stats.ts.
-// Benchmark source: docs/benchmarks/2026-07-08-llm-model-benchmark.json (cold p50 +
-// est. cost/call), clearly separated in the payload so the UI can label live vs benchmark.
+// Benchmark sources: docs/benchmarks/2026-07-08-llm-model-benchmark.json (full sweep, cold p50 +
+// est. cost/call) topped up by the 2026-07-10 Mistral re-benchmark (see the import comment above),
+// clearly separated in the payload so the UI can label live vs benchmark.
 export async function GET(request: Request) {
   const userId = resolveRequestUserId(request);
   const url = new URL(request.url);
@@ -51,14 +61,22 @@ export async function GET(request: Request) {
   const stats = aggregateModelStats({
     usageRows,
     latencyEvents,
-    benchmarkSummaries: normalizeBenchmarkSummaries(benchmarkJson.summaries),
+    // Concatenation is safe: normalizeBenchmarkSummaries drops the 2026-07-08 Mistral rows for
+    // lack of numbers (all-error), so the 2026-07-10 rows are the only ones that survive for
+    // those (model, role) pairs — no overwrite ambiguity.
+    benchmarkSummaries: normalizeBenchmarkSummaries([...benchmarkJson.summaries, ...mistralRebenchJson.summaries]),
     closedLots,
     reviewerPerfByModel
   });
 
+  // "Most recently updated" — the later of the two merged runs' timestamps, so the drawer's
+  // disclaimer date is honest even though it only ever shows one date for a two-source blend.
+  const mostRecentRunAt =
+    new Date(mistralRebenchJson.runAt).getTime() > new Date(benchmarkJson.runAt).getTime() ? mistralRebenchJson.runAt : benchmarkJson.runAt;
+
   return NextResponse.json({
     sinceDays,
-    benchmark: { runAt: benchmarkJson.runAt, source: "2026-07-08-llm-model-benchmark" },
+    benchmark: { runAt: mostRecentRunAt, source: "2026-07-08-llm-model-benchmark+2026-07-10-mistral-rebench" },
     stats
   });
 }
