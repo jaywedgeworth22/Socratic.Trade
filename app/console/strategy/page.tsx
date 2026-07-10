@@ -357,7 +357,15 @@ export default function StrategyPage() {
       {/* Models */}
       <Card title="Models" action={<SaveStatus status={autoSaveModels.status} />}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
+          <Field
+            label={
+              <>
+                <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+              </>
+            }
+            hint="Green — writes the trade proposals each run."
+            htmlFor="llm-model"
+          >
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <ModelSelect
@@ -378,8 +386,12 @@ export default function StrategyPage() {
             </div>
           </Field>
           <Field
-            label="Reviewer"
-            hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
+            label={
+              <>
+                <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+              </>
+            }
+            hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
             <div className="flex items-start gap-2">

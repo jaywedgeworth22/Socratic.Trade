@@ -708,3 +708,112 @@ describe("failure fail-safe", () => {
     expect((failed[0].payload as { reason: string }).reason).toBe("parse-failed");
   });
 });
+
+// ── Backlog drain when reviewable items exceed MAX_REVIEW_ITEMS (deferred PR #1278 finding #2) ──
+//
+// Regression for the >80-item orphaning bug: the pack sliced the newest MAX_REVIEW_ITEMS and a
+// "complete" review then advanced lastReviewedAt to run-start `now`, so items past the budget stopped
+// counting toward BOTH the trigger's newCount AND its max-age — they could never be audited. The fix
+// sweeps the OLDEST un-reviewed items first and advances the marker only through the newest shown
+// slice on a truncated run, so a large backlog drains across successive daily runs with nothing
+// silently marked reviewed.
+describe("backlog drain when reviewable items exceed MAX_REVIEW_ITEMS (deferred PR #1278 finding #2)", () => {
+  const MAX_REVIEW_ITEMS = 80; // mirrors the (unexported) constant in learning-review.ts
+
+  /** Seed `count` learned rows with strictly-distinct, recent assertedAt timestamps — all inside the
+   *  7-day pack window and staying inside it as `now` advances a few simulated days. Returns the ids. */
+  function seedManyLearnedRows(userId: string, count: number): Set<string> {
+    const ids = new Set<string>();
+    for (let i = 0; i < count; i++) {
+      const row = seedLearnedRow(userId, { assertedAt: new Date(NOW - (count - i) * 60_000).toISOString() });
+      ids.add(row.id);
+    }
+    return ids;
+  }
+
+  it("caps the pack at MAX_REVIEW_ITEMS, flags truncation, and reports a marker just below the oldest dropped item", async () => {
+    const userId = `lr-pack-trunc-${randomUUID().slice(0, 8)}`;
+    // 90 un-reviewed learned rows (fresh user: nothing reviewed yet) → 10 must be dropped.
+    const rows = Array.from({ length: MAX_REVIEW_ITEMS + 10 }, (_, i) =>
+      seedLearnedRow(userId, { assertedAt: new Date(NOW - (MAX_REVIEW_ITEMS + 10 - i) * 60_000).toISOString() })
+    );
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+
+    expect(pack.items).toHaveLength(MAX_REVIEW_ITEMS);
+    expect(pack.truncated).toBe(true);
+    // Oldest-first selection: the SHOWN items are strictly older than every DROPPED item.
+    const shownIds = new Set(pack.items.map((it) => it.id));
+    const shownMaxAt = Math.max(...pack.items.map((it) => Date.parse(it.at)));
+    const droppedMinAt = Math.min(
+      ...rows.filter((r) => !shownIds.has(r.id)).map((r) => Date.parse(r.assertedAt))
+    );
+    expect(shownMaxAt).toBeLessThan(droppedMinAt);
+    // The marker lands just below the oldest DROPPED item, so that item (and everything newer) keeps
+    // counting as un-reviewed and gets swept later — never orphaned.
+    const oldestFirst = [...rows].sort((a, b) => Date.parse(a.assertedAt) - Date.parse(b.assertedAt));
+    expect(pack.reviewedThroughMs).toBe(Date.parse(oldestFirst[MAX_REVIEW_ITEMS].assertedAt) - 1);
+    expect(pack.reviewedThroughMs).toBeLessThan(NOW);
+  });
+
+  it("a pack that fits the budget is not truncated and reports reviewedThroughMs === now", async () => {
+    const userId = `lr-pack-full-${randomUUID().slice(0, 8)}`;
+    Array.from({ length: MAX_REVIEW_ITEMS }, (_, i) =>
+      seedLearnedRow(userId, { assertedAt: new Date(NOW - (MAX_REVIEW_ITEMS - i) * 60_000).toISOString() })
+    );
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+    expect(pack.items).toHaveLength(MAX_REVIEW_ITEMS);
+    expect(pack.truncated).toBe(false);
+    expect(pack.reviewedThroughMs).toBe(NOW);
+  });
+
+  it.each(["annotate", "decide"] as const)(
+    "a >MAX_REVIEW_ITEMS backlog drains fully across successive daily runs in %s mode, with no item silently marked reviewed",
+    async (mode) => {
+      const userId = `lr-drain-${mode}-${randomUUID().slice(0, 8)}`;
+      enableReview(userId, mode);
+      const seeded = seedManyLearnedRows(userId, 200);
+
+      const shown = new Set<string>();
+      const collectKeepAll = async (spec: { userContent: string }) => {
+        const items = (JSON.parse(spec.userContent) as { reviewItems: Array<{ id: string; table: LearningReviewVerdict["table"] }> })
+          .reviewItems;
+        for (const it of items) shown.add(it.id);
+        return verdictJson(
+          items.map((it) => ({ id: it.id, table: it.table, verdict: "keep" as const, confidence: 90, reasoning: "sound" }))
+        );
+      };
+
+      // Drive the real scheduler gate: only run on a day the trigger says to (mirrors production, where
+      // runDailyLearningReviewIfDue guards runDailyLearningReview). Each iteration is a new UTC day so
+      // the once-per-day marker allows the run.
+      let runs = 0;
+      let now = NOW;
+      while (evaluateLearningReviewTrigger(userId, now, getPolicy(userId)).shouldRun) {
+        const res = await runDailyLearningReview(userId, { now, llm: collectKeepAll });
+        expect(res.ok).toBe(true);
+        expect(res.skipped).toBeFalsy(); // a fresh un-reviewed slice every day — never a no-op skip
+        runs += 1;
+        now += 86_400_000;
+        if (runs > 8) throw new Error("backlog failed to drain (possible re-show loop)");
+      }
+
+      // Every seeded item was shown to the LLM at least once — nothing was silently marked reviewed.
+      expect(shown.size).toBe(200);
+      for (const id of seeded) expect(shown.has(id)).toBe(true);
+      // Bounded work: ceil(200 / 80) === 3 LLM runs, then the trigger goes quiet.
+      expect(runs).toBe(3);
+      expect(evaluateLearningReviewTrigger(userId, now, getPolicy(userId)).reason).toBe("no-new-items");
+      // The store was never mutated away (keep is a no-op in both modes), so the drain came purely
+      // from the marker advancing — the exact path this fix corrects.
+      expect(listLearnedContext(userId)).toHaveLength(200);
+
+      // Observability: the over-budget slices were audited as truncated (first two runs), the final
+      // drain was not.
+      const truncatedFlags = listAuditByKind("learning_review_summary", 20, userId)
+        .map((a) => (a.payload as { truncated?: boolean }).truncated)
+        .filter((t) => t !== undefined);
+      expect(truncatedFlags.filter((t) => t === true)).toHaveLength(2);
+      expect(truncatedFlags.filter((t) => t === false)).toHaveLength(1);
+    }
+  );
+});

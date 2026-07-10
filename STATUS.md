@@ -28,6 +28,50 @@ calls now send reasoning_effort only, no temperature. With both fixes it DOES pr
 bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
 works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
 `--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
+Owner-directed pure display-copy change. Field labels for the two model pickers now read
+"Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
+`var(--con-pos)` / red `var(--con-neg)` via token-color spans, "Model" stays default,
+same weight) in `app/console/settings/models.tsx` and `app/console/strategy/page.tsx`.
+Helper copy simplified: "aka Green Team or Bull" → "Green", "aka Red Team or Bear" → "Red"
+throughout those two files, plus the drawer role label in
+`app/console/components/model-stats-drawer.tsx` ("Proposer (Green Team)" → "Proposer
+(Green)", same for Reviewer/Red). Other console pages (approval-card, results, decisions,
+red-team.ts lib) intentionally untouched — different UI areas, out of scope. Verified light
++ dark via live preview (computed colors match the tokens exactly). Gate green: tsc clean,
+3351 tests, build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
+
+## 2026-07-10 — Unified provider request quota (MONET, branch `monet/unified-provider-quota`)
+Owner directive: throttling must be "based on not knowing how many tickers will be in the scan so
+it is flexible and all other data provider settings also need to be that way." Built ONE
+`RequestQuota` primitive in `src/lib/provider-rate-limit.ts` — a provider declares real free-tier
+windows (per-min/hour/day) and `admitProviderRequests(provider, credKey, wanted)` returns how many
+of `wanted` outbound requests fit under ALL windows right now (per-credential, multi-window MIN,
+sliding, instantaneous/never-stalls); callers query the admitted best-first symbols and defer the
+rest best-effort. Scoped the QUOTA to providers with a hard windowed cap pacing can't solve —
+**twelvedata (8/min+800/day batch credits)** and **tiingo (50/hour+1000/day)** — fixing the tiingo
+403 (owner dashboard hourly −10/50: an unpaced 30-symbol scan fires ~90 req vs the 50/hr cap).
+finnhub/yahoo/alpha-vantage stay on the pre-existing PACER (per-symbol calls; spacing covers every
+symbol and is already scan-size-agnostic). Env-overridable
+`PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY` (≤0 removes a window). Tests: 40 in
+`provider-rate-limit.test.ts` (RequestQuota + resolveProviderQuota) + 2 new Tiingo + migrated
+Twelve Data. **Node trap:** this worktree's `better-sqlite3` had been rebuilt for node26 (homebrew's
+new default); rebuilt it for node@24 and run all gates under `/opt/homebrew/opt/node@24/bin`. Next:
+commit + `land.sh` under node@24; verify AV/TwelveData/Tiingo green on the next pre-market scan
+(~08:00Z). Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`.
+## 2026-07-10 — Learning-review >80-item backlog drain: PR #1278 deferred finding #2 (MONET)
+Fixed the daily learning-review silently marking a >`MAX_REVIEW_ITEMS` (80) backlog "reviewed" without
+auditing it. `buildLearningReviewContextPack` sliced the newest 80 and a complete review advanced
+`lastReviewedAt` to `now`, so overflow items stopped counting toward the trigger's newCount AND max-age.
+Fix (`src/lib/learning-review.ts`): sweep OLDEST un-reviewed first within the budget; add
+`truncated`/`reviewedThroughMs` to the pack; advance the marker to `now` only when NOT truncated (else just
+below the oldest dropped un-reviewed item), still storing the fingerprint so annotate mode doesn't re-run
+the LLM daily. Marker is only ever MORE conservative than the old `now` → no 8da047aa max-age regression.
++4 tests (200-item backlog drains across exactly 3 daily runs in both annotate+decide, none silently
+reviewed). node@24: tsc clean, full suite 3338/3338, lr 34/34, eslint 0-err, build clean. Built off merged
+`main` 6f1aaf87; branch `monet/learning-review-backlog-drain`, landing via land.sh. Closes the LAST open
+#1278 deferred item. See docs/rollouts/2026-07-10-learning-review-backlog-drain.md.
+
 ## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
 Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
 ## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
