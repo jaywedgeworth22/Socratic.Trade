@@ -123,6 +123,7 @@ function ModelSelect({
   disabled,
   allowBlank,
   blankLabel,
+  blankDisabled,
   role
 }: {
   id: string;
@@ -136,6 +137,12 @@ function ModelSelect({
   disabled?: boolean;
   allowBlank?: boolean;
   blankLabel?: string;
+  /** Render the blank option as an unselectable placeholder (native "choose one" pattern) — for a
+   *  seat where blank is NOT a valid choice to actively pick (the Proposer), only a display state
+   *  for "unconfigured." Without this, a `<select value="">` with no matching `<option value="">`
+   *  falls back to visually showing its FIRST rendered option ("Rotate all models (testing)"),
+   *  making an unconfigured seat look like rotation is on even though nothing was ever chosen. */
+  blankDisabled?: boolean;
   role: "proposer" | "red-team";
 }) {
   const selectValue = modelSelectValue(value);
@@ -158,7 +165,11 @@ function ModelSelect({
           onPick(next);
         }}
       >
-        {allowBlank && <option value="">{blankLabel ?? "Not Set"}</option>}
+        {allowBlank && (
+          <option value="" disabled={blankDisabled}>
+            {blankLabel ?? "Not Set"}
+          </option>
+        )}
         <option
           value={ROTATE_ALL_MODELS_ID}
           title="Round-robins every curated model with a resolvable key — a different model each run, so comparative history accrues across models. Intended for paper/test accounts."
@@ -336,43 +347,64 @@ export default function StrategyPage() {
   const prompt = promptDraft ?? snapshot.strategyPrompt;
   const proposerModel = localProposerModel ?? policy.llmModel ?? "";
   const redTeamModel = localRedTeamModel ?? policy.redTeamLlmModel ?? "";
-  const effectiveRedTeamModel = redTeamModel || proposerModel;
+  // NOTE (2026-07-10 fix): there used to be an `effectiveRedTeamModel = redTeamModel ||
+  // proposerModel` here that every display below read from. That was a false assumption — the
+  // server (`resolveRoleModel(policy, "red")` in src/lib/llm-provider.ts) does NOT fall back to
+  // the Proposer model when the Reviewer is blank; it returns "" and `debateProposal`
+  // (src/lib/red-team.ts) fails CLOSED to human review (`not_configured`). A blank Reviewer never
+  // runs the Proposer's model. Every display below now reads the Reviewer's own `redTeamModel`
+  // directly (blank stays blank) so the UI can't imply an inheritance that doesn't exist. This is
+  // display-only — no save/resolution behavior changed; see docs/rollouts/2026-07-10-per-team-reasoning.md.
+  //
+  // Reasoning EFFORT inheritance (storedReviewerEffort below) is a DIFFERENT, real mechanism —
+  // resolveReviewerReasoningEffort (src/lib/llm-request.ts) genuinely falls back to the Proposer's
+  // effort when redTeamReasoningEffort is unset, but only ever matters once a Reviewer model is
+  // actually configured (debateProposal returns before resolving effort when the model is blank).
   // The rotation sentinel is neither a custom id (it only ever serves curated models, so the
   // custom-cost-fallback warning doesn't apply) nor a model with its own reasoning capability.
   const isRotate = (m: string) => m === ROTATE_ALL_MODELS_ID;
   const showCustomModelWarning =
     (proposerModel && !isCuratedModel(proposerModel) && !isRotate(proposerModel)) ||
-    (effectiveRedTeamModel && !isCuratedModel(effectiveRedTeamModel) && !isRotate(effectiveRedTeamModel));
-  const rotationSelected = isRotate(proposerModel) || isRotate(effectiveRedTeamModel);
+    (redTeamModel && !isCuratedModel(redTeamModel) && !isRotate(redTeamModel));
+  const rotationSelected = isRotate(proposerModel) || isRotate(redTeamModel);
   // Joint control used ONLY for the one-line provider/reasoning summary below. The actual effort
   // selects are PER SEAT (per-team split 2026-07-10): each picker gets its own control, shown only
   // when THAT seat's model exposes a reasoning knob; a rotating seat hides the manual control
-  // entirely (rotation auto-sets each served model's recommended effort server-side).
-  const reasoningControl = reasoningControlForModels([proposerModel, effectiveRedTeamModel]);
+  // entirely (rotation auto-sets each served model's recommended effort server-side). A blank
+  // Reviewer model is filtered out here (not substituted with the Proposer's), so the summary
+  // reflects only models that actually resolve.
+  const reasoningControl = reasoningControlForModels([proposerModel, redTeamModel]);
   const storedProposerEffort = localReasoningEffort ?? policy.llmReasoningEffort;
   // The reviewer's EXPLICIT per-team value only — undefined = inheriting the proposer's
   // (mirrors resolveReviewerReasoningEffort server-side).
   const storedReviewerEffort =
     localRedTeamReasoningEffort === "cleared" ? undefined : (localRedTeamReasoningEffort ?? policy.redTeamReasoningEffort);
   const proposerRotates = isRotate(proposerModel);
-  const reviewerRotates = isRotate(effectiveRedTeamModel);
+  const reviewerRotates = isRotate(redTeamModel);
   const proposerReasoningControl = proposerRotates ? null : reasoningControlForModels([proposerModel]);
-  const reviewerReasoningControl = reviewerRotates ? null : reasoningControlForModels([effectiveRedTeamModel]);
+  // null (not just when rotating) whenever redTeamModel is blank — reasoningControlForModels
+  // filters out empty strings, so an unconfigured Reviewer correctly shows NO reasoning control
+  // at all rather than the Proposer's ladder under the Reviewer's heading.
+  const reviewerReasoningControl = reviewerRotates ? null : reasoningControlForModels([redTeamModel]);
   const proposerReasoningValue = proposerReasoningControl
     ? normalizeReasoningValueForControl([proposerModel], proposerReasoningControl, storedProposerEffort)
     : undefined;
   // What the reviewer would RUN at right now (explicit value, else the inherited proposer effort),
   // re-normalized to the reviewer model's own supported range — shown inside the "Same as
-  // proposer" option label so inheritance is never a mystery value.
+  // proposer" option label so inheritance is never a mystery value. Only computed when the
+  // Reviewer actually has a model (reviewerReasoningControl is null otherwise).
   const reviewerReasoningValue = reviewerReasoningControl
-    ? normalizeReasoningValueForControl([effectiveRedTeamModel], reviewerReasoningControl, storedReviewerEffort ?? storedProposerEffort)
+    ? normalizeReasoningValueForControl([redTeamModel], reviewerReasoningControl, storedReviewerEffort ?? storedProposerEffort)
     : undefined;
   const reviewerInheriting = storedReviewerEffort === undefined;
   const reviewerInheritedLabel = reviewerReasoningControl?.options.find((option) => option.value === reviewerReasoningValue)?.label;
   // A concrete seat model that takes NO reasoning parameters at all (e.g. mistral-small-2603) —
   // disclose per seat that reasoning settings don't apply to it.
   const proposerNoKnob = Boolean(proposerModel) && !proposerRotates && !reasoningCapabilityForModel(proposerModel);
-  const reviewerNoKnob = Boolean(effectiveRedTeamModel) && !reviewerRotates && !reasoningCapabilityForModel(effectiveRedTeamModel);
+  const reviewerNoKnob = Boolean(redTeamModel) && !reviewerRotates && !reasoningCapabilityForModel(redTeamModel);
+  // The Reviewer is unconfigured (blank, not rotating) — the real server-side consequence is that
+  // every risk-adding opening fails CLOSED to human review; it does NOT run the Proposer's model.
+  const reviewerNotConfigured = !redTeamModel;
 
   // Prompt: skip the write if blur leaves it unchanged from the saved copy.
   const commitPrompt = () => {
@@ -517,6 +549,9 @@ export default function StrategyPage() {
                     id="llm-model"
                     value={proposerModel}
                     role="proposer"
+                    allowBlank
+                    blankDisabled
+                    blankLabel="Not set — choose a model"
                     disabled={autoSaveModels.saving}
                     onPick={(model) => commitProposerModel(model, proposerModel)}
                     onCustomTextChange={(text) => setLocalProposerModel(text)}
@@ -554,7 +589,7 @@ export default function StrategyPage() {
                   <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
                 </>
               }
-              hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
+              hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = not configured: it does NOT inherit the Proposer model — every risk-adding opening routes to human review until a Reviewer model is set."
               htmlFor="rt-model"
             >
               <div className="flex items-start gap-2">
@@ -563,7 +598,7 @@ export default function StrategyPage() {
                     id="rt-model"
                     value={redTeamModel}
                     allowBlank
-                    blankLabel="Same As Proposer"
+                    blankLabel="Not set"
                     role="red-team"
                     disabled={autoSaveModels.saving}
                     onPick={(model) => commitRedTeamModel(model, redTeamModel)}
@@ -582,7 +617,7 @@ export default function StrategyPage() {
             {reviewerReasoningControl && (
               <SeatEffortSelect
                 id="reviewer-effort"
-                model={effectiveRedTeamModel}
+                model={redTeamModel}
                 control={reviewerReasoningControl}
                 value={reviewerReasoningValue}
                 disabled={autoSaveModels.saving}
@@ -596,7 +631,13 @@ export default function StrategyPage() {
             )}
             {reviewerNoKnob && (
               <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-                {effectiveRedTeamModel} takes no reasoning parameters — reasoning settings don&apos;t apply to it.
+                {redTeamModel} takes no reasoning parameters — reasoning settings don&apos;t apply to it.
+              </p>
+            )}
+            {reviewerNotConfigured && (
+              <p className="text-[length:var(--con-fs-xs)] text-[color:var(--con-warn)]">
+                No Reviewer model set — it does not inherit the Proposer. Every risk-adding opening
+                routes to human review until a Reviewer model is chosen.
               </p>
             )}
           </div>
@@ -619,7 +660,7 @@ export default function StrategyPage() {
           </div>
         )}
         <div className="mt-3 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-muted)]">
-          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(effectiveRedTeamModel)}.
+          Proposer: {modelProviderLabel(proposerModel)}. Reviewer: {modelProviderLabel(redTeamModel)}.
           {" "}
           {reasoningSummary(reasoningControl)}
         </div>
