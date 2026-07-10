@@ -1563,6 +1563,21 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **[P2][Infra][S] Provider-knob sync: API-Usage-Monitor -> Infisical (CLAUDE (opus subagent),
+  branch `claude/provider-knob-sync`) — IN PROGRESS 2026-07-10, PR landing.** Mac-side script +
+  launchd template that makes API-Usage-Monitor the source of truth for market-data subscription
+  plans. `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe) GETs the monitor's token-authed
+  `/api/subscriptions` (Bearer `USAGE_INGEST_TOKEN` from `~/.secrets/usage-monitor.env`), computes
+  each plan's desired knobs via `scripts/provider-knob-diff.mjs` (pure, unit-tested: active ->
+  `knobEnv`, canceled/paused -> `freeTierKnobEnv`, considering/null -> skip), reads current values
+  from Infisical prod over the proven SSH+universal-auth CLI path (box `135.181.192.190`), and
+  WRITES ONLY DIFFS. Hard allow-list guard (`^(PROVIDER_QUOTA_|PROVIDER_RATE_LIMIT_|MASSIVE_|`
+  `TIINGO_DROP_NEWS$|FINNHUB_DROP_RECOMMENDATION$|ALPACA_DATA_FEED$)`) + value-charset guard reject
+  anything else from the API. Dry-run by default (prints diff, exit 0); `--apply` writes + posts one
+  `#agent-sync` line per change. `com.jay.provider-knob-sync.plist` (30-min, `--apply`) NOT installed
+  by default; install command in the rollout note. Monitor-unreachable = exit 0, no spam. Contract
+  against the parallel monitor-side PR (subscription-knob linkage phase 1). Rollout:
+  `docs/rollouts/2026-07-10-provider-knob-sync.md`.
 - **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
   branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
   with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref

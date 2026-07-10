@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Provider-knob sync: API-Usage-Monitor -> Infisical prod (CLAUDE opus subagent, branch `claude/provider-knob-sync`)
+Mac-side script + launchd template making the API-Usage-Monitor the source of truth for market-data
+subscription plans: it syncs each plan's env-knob values into Infisical prod (where the trading app
+reads all provider quotas, seeded 2026-07-10). `scripts/sync-provider-knobs.sh` (ASCII, bash 3.2-safe)
+GETs the monitor's token-authed `/api/subscriptions`, computes desired knobs via the pure, unit-tested
+`scripts/provider-knob-diff.mjs` (active -> `knobEnv`; canceled/paused -> `freeTierKnobEnv`;
+considering/null -> skip), reads current values from Infisical over the proven SSH + universal-auth CLI
+path, and **writes only diffs**. Two guards reject anything else a buggy/compromised payload could send:
+a key allow-list (`PROVIDER_QUOTA_`/`PROVIDER_RATE_LIMIT_`/`MASSIVE_` prefixes + `TIINGO_DROP_NEWS`,
+`FINNHUB_DROP_RECOMMENDATION`, `ALPACA_DATA_FEED`) and a safe value charset. Dry-run by default (prints
+diff, exit 0); `--apply` writes + posts one `#agent-sync` line per change. `com.jay.provider-knob-sync.plist`
+(30-min, `--apply`) is a template, **NOT installed**; install command in the rollout note. Monitor
+unreachable = exit 0, no spam. **Blocker/next:** the monitor-side `/api/subscriptions` PR is being built
+in parallel - contract assumptions listed in the rollout note must be re-verified against the real
+payload before enabling `--apply`. NOT run with `--apply` against prod; launchd job not installed. See
+`docs/rollouts/2026-07-10-provider-knob-sync.md`.
 ## 2026-07-10 — Learning Review: explicit "defer" verdict for unsure items (CLAUDE, branch `claude/learning-review-defer`)
 Owner-directed. The daily Learning Review LLM (`src/lib/learning-review.ts`) can now emit a `"defer"`
 verdict (distinct from keep/reject/expire/needs_more_data) when it genuinely cannot decide an item —
