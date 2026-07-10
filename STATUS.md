@@ -8,6 +8,8 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
+Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
 ## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
 The owner-directed 3-day activity-feed audit is complete: 36-agent workflow over the prod DB,
 every finding adversarially verified. Full ranked report: `docs/reviews/2026-07-09-activity-feed-audit.md`

@@ -83,9 +83,6 @@ export default function SettingsPage() {
         {/* llmModel / redTeamLlmModel live on the account's policy — same
             save path (PUT /api/policy) as everything else account-scoped. */}
         <ModelsCard />
-        {/* learningReviewEnabled/Mode/Model are account-policy fields — same
-            PUT /api/policy save path; the review itself runs off the scheduler. */}
-        <LearningReviewCard />
         <AdvancedActionConfirmationCard />
       </section>
 
@@ -119,6 +116,11 @@ export default function SettingsPage() {
           <DataSharingCard />
         </div>
         <ScanShapeCard />
+        {/* learningReviewEnabled/Mode/Model are USER-level policy fields
+            (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
+            user per day over user-level learned context, so its config overlays
+            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
+        <LearningReviewCard />
         <BootBehaviorCard />
         <YouCard />
       </section>

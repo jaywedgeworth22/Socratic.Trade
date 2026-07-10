@@ -782,13 +782,24 @@ export interface TradingPolicy {
    */
   learningReviewEnabled?: boolean;
   /**
-   * "annotate" (default) = verdicts are recorded as audits + a notification only; nothing changes.
-   * "decide" (owner opt-in) = verdicts are additionally APPLIED via the existing learned-context
-   * mutation paths (delete/expire rows; approve/reject pending items) — every application audited.
+   * "decide" (default) = verdicts are APPLIED via the existing learned-context mutation paths
+   * (delete/expire rows; approve/reject pending items), every application audited. "annotate" =
+   * verdicts are recorded as audits + a notification only; nothing changes.
    */
   learningReviewMode?: "annotate" | "decide";
-  /** Model for the daily learning review. Unset = claude-fable-5 (one frontier call per day). */
+  /** Model for the learning review. Default claude-fable-5 (an explicit value, not a hidden
+   *  fallback — a blank model skips the review with reason "no-model"). */
   learningReviewModel?: string;
+  /**
+   * TRIGGER — the review fires when EITHER threshold is met (whichever comes first), capped at one
+   * run per UTC day. Both user-level; the review is user-scoped (one run per user per day).
+   */
+  /** Run once at least this many NEW reviewable lessons (learned facts + pending items) have
+   *  accumulated since the last review. Default 5. */
+  learningReviewMinNewLessons?: number;
+  /** …or run anyway once the oldest un-reviewed lesson has waited this many days, so nothing
+   *  corrupted lingers when new learning is slow. Default 7. */
+  learningReviewMaxWaitDays?: number;
   /**
    * Ordered cross-provider FAILOVER models for the Green Team (Bull) call. Default OFF (empty/unset).
    * When non-empty, a TRANSIENT primary failure (HTTP 429/5xx or timeout) transparently re-issues the
