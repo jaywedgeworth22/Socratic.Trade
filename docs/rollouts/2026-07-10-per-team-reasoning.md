@@ -130,7 +130,7 @@ though the policy is unset — display-only quirk of the native select; the summ
 ## Follow-ups
 
 - ~~The Reviewer picker's "Blank = same as proposer" hint (pre-existing copy) contradicts the
-  server's fail-closed behavior...~~ **DONE 2026-07-10, PR TBD, branch `claude/models-card-truth`**
+  server's fail-closed behavior...~~ **DONE 2026-07-10, PR #1349, branch `claude/models-card-truth`**
   (this PR — #1346 — had already squash-merged to `main` as `c7a2fa95` by the time this follow-up
   started, via the known auto-merge-race pattern, so the fix landed as a standalone PR rather than
   a push onto this branch). Two things fixed, copy/display only — no resolution behavior changed:
@@ -159,6 +159,6 @@ though the policy is unset — display-only quirk of the native select; the summ
   - **Owner decision surfaced, not resolved here:** should a blank Reviewer instead inherit the
     Proposer's model (matching what the old copy implied) rather than failing closed to human
     review? This PR only makes the UI tell the truth about current behavior; switching the actual
-    behavior is a separate, owner-directed change. See PR TBD's description.
+    behavior is a separate, owner-directed change. See PR #1349's description.
 - Curated recommended efforts are all "medium" except the opt-in-thinking providers ("none") —
   re-derive as rotation history accrues, same as the catalog's rec chips.
