@@ -24,6 +24,11 @@ permissions:
   pull-requests: write
   actions: write
   issues: write
+  # Referencing `environment: merge-shepherd` below makes GitHub create/update a
+  # deployment record for each run; grant deployments:write explicitly since this
+  # workflow already narrows GITHUB_TOKEN to an explicit allow-list (unlisted
+  # scopes default to none).
+  deployments: write
 
 concurrency:
   group: merge-shepherd
@@ -32,6 +37,16 @@ concurrency:
 jobs:
   shepherd:
     runs-on: ubuntu-latest
+    # Server-side branch gate: the `merge-shepherd` GitHub Environment has a
+    # deployment_branch_policy locked to `main` (custom_branch_policies=true,
+    # branch policy "main" only -- configured via the Environments API, not
+    # YAML). That policy is enforced by GitHub before the job is even
+    # dispatched and cannot be edited by a branch's copy of this file, unlike
+    # the `if:` guard below. Keep both: the `if:` guard is defense-in-depth
+    # for the (rare) case the environment policy is ever removed or
+    # misconfigured, and it's what actually skips the job cleanly rather than
+    # failing environment protection checks.
+    environment: merge-shepherd
     # A manual workflow_dispatch run against a non-main branch loads THAT branch's
     # copy of this workflow file before any step runs -- so a branch could edit this
     # file to add steps using SHEPHERD_TOKEN/GITHUB_TOKEN. Refuse to run the job at

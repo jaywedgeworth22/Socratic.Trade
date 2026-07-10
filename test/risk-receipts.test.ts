@@ -144,8 +144,8 @@ describe("applyRiskReceipts — riskReceipts ON", () => {
     expect(out[0].rationale).toContain("HELD");
     expect(out[0].rationale).toContain("[Risk] Stress");
     expect(out[0].rationale).toContain("% (mkt): book");
-    expect(auditSpy).toHaveBeenCalledWith("correlation_receipt", expect.objectContaining({ symbol: "AAA" }), "local");
-    expect(auditSpy).toHaveBeenCalledWith("stress_receipt", expect.objectContaining({ symbol: "AAA" }), "local");
+    expect(auditSpy).toHaveBeenCalledWith("correlation_receipt", expect.objectContaining({ symbol: "AAA" }), "local", policy.connectedAccountId);
+    expect(auditSpy).toHaveBeenCalledWith("stress_receipt", expect.objectContaining({ symbol: "AAA" }), "local", policy.connectedAccountId);
   });
 
   it("never appends a correlation note when there are no holdings or bar data is insufficient (never fabricates)", async () => {

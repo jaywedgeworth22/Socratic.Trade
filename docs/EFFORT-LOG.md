@@ -231,6 +231,7 @@ As of 2026-07-08 (assignment-rule update).
   `socratictrade.com`; production health 200 and live Roth IRA Settings page verified.
 
 ## Completed
+- **Settings IA restructure - global-only Settings (CLAUDE, branch `claude/settings-global-only`) - COMPLETED 2026-07-10 (PR #1340 merged to main, squash dc633a1d).** /console/settings is global-only: Settings Models card DELETED (Framework /console/strategy is the single source of truth, incl. reasoning-effort controls; Coach picker survives on the Coach page); Tax treatment card MOVED to bottom of Framework (account-scoped, THIS ACCOUNT chip, new module app/console/strategy/tax-settings.tsx); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (one switch spans all accounts; divergent per-account values superseded, no legacy seed - fails safe to required); learning review verified already user-level; deep-links retargeted (#models-green -> /console/strategy#models etc.); new regression test in per-account-policy-isolation. Rollout: docs/rollouts/2026-07-10-settings-global-only.md.
 - **Green/Red picker label coloring + Green Team/Red Team/Bull/Bear copy sweep (CLAUDE, branch
   `claude/green-red-labels`) — COMPLETED 2026-07-10.** Owner-directed pure display-copy change.
   Field labels for the two model pickers now read "Proposer Model" / "Reviewer Model" with only
@@ -500,6 +501,37 @@ As of 2026-07-08 (assignment-rule update).
 
 ## 🚧 In Progress
 
+- **AUTO-DEPLOY ON — merge-to-main auto-deploys prod (MONET, branch `monet/auto-deploy-on`) — DONE +
+  PROVEN 2026-07-10, PR pending via land.sh.** Owner-directed: production now auto-deploys on every push
+  to `main` (merge == live). Fixes: (1) Coolify native `is_auto_deploy_enabled=true` on
+  `socratic-trade-prod` (DB-only setting, done via box SSH — API is CF-blocked); (2) whitelisted
+  GitHub's stable **webhook** IP ranges (40 `/24` + IPv6) on the `jays.services` CF IP-allowlist that
+  was 403'ing them (bot protection stays on elsewhere). End-to-end proven: `e9e9138b` webhook deploy
+  (`is_webhook=t`) FINISHED; prod = `main` HEAD, healthy. **ANNOUNCE-THEN-DEPLOY RETIRED** — fleet must
+  stop manual deploy claims/triggers. Rollback: `is_auto_deploy_enabled=false`. Diagnosed + handed AG a
+  pre-existing deploy incident (transient git-clone window + zombie deploy holding the build queue; now
+  resolved). See `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md updated.
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (CLAUDE, branch `claude/audit-item10-attribution`) — IN PROGRESS 2026-07-10, built and locally committed, not yet pushed/landed.** Picked up the RESERVED row (split out of MONET's P1 batch per owner). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites that had it available but omitted it: 41 in `src/lib/strategy.ts` (`runStrategyOnce`'s local const; `policy.connectedAccountId` in every function that already takes a full `policy` param — `resolveScanScoringWeights`, `applyCorrelationClusterGate`, `applyEarningsBlackoutTag`, `applyRiskReceipts`, `applyDeterministicSizing`, `executeProposal`; `autoRevertOnCapBreach`'s own audit call now uses the param it already had; `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` gained an optional trailing `connectedAccountId` param, wired at their `runStrategyOnce` call sites) + all 13 `audit()` sites in `src/lib/synthetic-stops.ts` (one more than the report's "12" — `broker_protective_stop_reconcile_error` fixed too for consistency, same function scope). `strategy_bull_truncated` + post-mortem.ts/`setUserSetting` left untouched — already fixed by the P1 batch. Zero behavior changes to trading logic (4th-arg audit attribution + two new optional trailing params only). Verify: `npx tsc --noEmit` clean, eslint 0 errors (9 pre-existing grandfathered warnings), 46 focused test files / 523 tests green under node@24 (all `strategy-*`/`synthetic-stops`/sizing/gate/veto/wash-sale/reconciliation/scheduler suites touching these two files). Full gate (`npm test` full run + `npm run build`) deferred to the Land phase. Rollout: `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+
+- **Framework Models card truth fixes — Proposer blank-select display + Reviewer "inherits
+  proposer" false copy (CLAUDE, branch `claude/models-card-truth`) — IN PROGRESS 2026-07-10,
+  follow-up to the per-team-reasoning effort below.** Two pre-existing `app/console/strategy/page.tsx`
+  issues logged as follow-ups when PR #1346 landed: (1) the Proposer `ModelSelect` had no blank
+  option, so an unconfigured Proposer's native `<select>` visually fell back to showing "Rotate all
+  models (testing)" even though nothing was chosen — fixed with a new `blankDisabled` placeholder
+  option ("Not set — choose a model"). (2) The Reviewer hint/blank-label said "Blank = same as
+  proposer" / "Same As Proposer", but `resolveRoleModel(policy, "red")`
+  (`src/lib/llm-provider.ts`) never falls back to the Proposer model — a blank Reviewer fails CLOSED
+  to human review (`debateProposal`'s `not_configured`, `src/lib/red-team.ts`, owner directive
+  2026-07-07). Fixed the copy to state the real consequence and audited every display use of the
+  page's `effectiveRedTeamModel = redTeamModel || proposerModel` (killed that derivation; reasoning
+  control, summary line, and per-model advice now read the Reviewer's own `redTeamModel` directly).
+  Reasoning-EFFORT inheritance (a real, separate mechanism) is unchanged. Display/copy only — no
+  resolution behavior changed; owner question on whether blank SHOULD inherit is surfaced in the
+  PR description, not resolved here. Gate green (tsc clean / 3383 tests / build clean / lint 0-err).
+  Landed via `scripts/land.sh` as standalone PR #1349 off `origin/main`, auto-merge armed (PR #1346's branch was already
+  auto-merged and its remote branch auto-deleted by the time this started — known auto-merge-race
+  pattern). Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
 - **Activity-audit P1 batch: Roth proposer truncation + thesis-tag split-brain + reflection cross-account contamination (MONET, branch `monet/activity-audit-p1-batch`) — IN PROGRESS 2026-07-10, owner-assigned.** The 3 P1s from `docs/reviews/2026-07-09-activity-feed-audit.md` §1, via a cost-tiered agent team: (1) `LLM_OUTPUT_TOKEN_CAPS.strategyProposal` 1500→4000 (that cap only) + `strategy_bull_truncated` payload logs ACTUAL wire cap + finish_reason + connectedAccountId; (2) `insertProposal` defaults `trade_thesis_tag`/`entry_market_regime` from the proposal object + COALESCE reads in post-mortem/`getProposal`/`getProposalsByIds` + one-time backfill (recovers 543 rows); (3) reflection `reflection_signature`/`reflection_summary` keys scoped `:${userId}:${accountNumber}` w/ legacy-key read fallback (strategy.ts ~:4071), account passed into the audits, `setUserSetting` no-audit flag for the summary write. Item-10 post-mortem sub-part rides here; the strategy.ts/synthetic-stops attribution SWEEP is split to a second owner-directed session (see its RESERVED row). Full gate under node@24 + land.sh.
 - **Learning-review legacy-seed default-blob edge — #1278 deferred finding #3 (MONET, branch
   `monet/learning-review-legacy-seed-99138a`) — IN PROGRESS 2026-07-10; PR #1326 open, full land.sh gate
@@ -682,6 +714,26 @@ As of 2026-07-08 (assignment-rule update).
 
 ## ✅ Completed (merged to `main`, on beta/integration)
 
+- **Per-team reasoning levels + rotation auto-effort + usage/Learning-Review links (CLAUDE, branch
+  `claude/per-team-reasoning`) — ✅ COMPLETED 2026-07-10: PR #1346 merged to `main` (squash
+  `c7a2fa95`, verify green; land.sh gate tsc / lint 0-err / 3383 tests / build + live browser smoke
+  of all four items). Owner-directed; includes the 2026-07-10 scope add (usage link + Learning
+  Review "Model settings" links).** New account-scoped `TradingPolicy.redTeamReasoningEffort`
+  (mirrors `redTeamLlmModel` naming); legacy `llmReasoningEffort` = the PROPOSER's; reviewer falls
+  back until explicitly set via the single helper `resolveReviewerReasoningEffort`
+  (src/lib/llm-request.ts), wired at red-team.ts / strategy-tuning.ts / the AI-review panel.
+  `validatePolicy` rejects a gpt-5.5+high combo on EITHER team, naming the team. Framework UI:
+  per-seat reasoning selects (shown only when that model supports it), curated per-model advice from
+  NEW `src/lib/model-reasoning-recommendations.ts` (gpt-5.5 interactive-high rule surfaced BEFORE
+  save; High disabled in-select), reviewer "Same as proposer (…)" inherit option; rotating seats
+  hide the manual control — `resolveModelRotationForRun` auto-sets each rotated model's curated
+  recommended effort (unknown → medium) on the run-scoped override, audited on
+  `model_rotation_pick`. Plus "LLM usage & cost" link (Models card → /console/usage) and "Model
+  settings" links on both approvals Learning Review blocks → new Settings `#learning-review` anchor.
+  Follow-up chip spawned (pre-existing, NOT introduced): unset-proposer select visually shows
+  "Rotate all models"; reviewer "Blank = same as proposer" hint contradicts server fail-closed —
+  fixed 2026-07-10 via `claude/models-card-truth`, see the In Progress entry above.
+  Rollout: `docs/rollouts/2026-07-10-per-team-reasoning.md`.
 - **Plain-English Anthropic usage-limit error (CLAUDE, cloud lane, 2026-07-06).** Owner reported a
   screenshot where a Roth IRA thesis card's "⚠ RED TEAM FAILED (provider error)" note showed a raw
   Anthropic JSON error blob (`{"type":"error","error":{"type":"invalid_request_error","message":"You
@@ -1473,23 +1525,106 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
+  branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, gates green, PR #1353 open
+  with squash-auto-merge armed (round-3 pickup landing).** #1266 hardened the merge-shepherd job with an `if: github.ref
+  == 'refs/heads/main'` guard, but that guard is branch-editable — a `workflow_dispatch`
+  against a non-main branch loads THAT branch's copy of the YAML, so a branch could in theory
+  strip or invert the guard before it's evaluated. Honest fix is a GitHub **Environment** with
+  a `deployment_branch_policy` locked to `main`, enforced server-side by GitHub before the job
+  dispatches — not editable via any branch's workflow file. Created environment
+  `merge-shepherd` via the Environments API
+  (`deployment_branch_policy: {protected_branches:false, custom_branch_policies:true}` +
+  branch policy `main`, verified idempotent — repeat POSTs don't duplicate the policy) and
+  wired `environment: merge-shepherd` into the `shepherd` job in
+  `.github/workflows/merge-shepherd.yml`, keeping the existing `if:` guard as
+  defense-in-depth. Added `deployments: write` to the job's explicit permissions allow-list
+  (unlisted scopes default to `none`, and referencing an environment makes GitHub track a
+  deployment record per run). `SHEPHERD_TOKEN` does not currently exist as a repo secret (confirmed via
+  `gh secret list` — the workflow's `secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN` fallback
+  is presently just using `GITHUB_TOKEN`), so there is nothing to migrate; when/if the owner
+  adds it, it should go on as an **environment secret** scoped to `merge-shepherd` rather than
+  a repo secret (the API cannot read/copy secret values, only an interactive owner action can
+  set one). **Landing-round finding, NOT fixed here (PR #1353 review):** codex-connector
+  correctly points out the `environment:` reference is itself branch-editable — a branch can
+  delete that one line from its own workflow_dispatch copy just as easily as the `if:` guard,
+  and a job with no environment reference skips the deployment_branch_policy check entirely. A
+  genuine close needs the sensitive job moved into a reusable workflow pinned to `@main`
+  (`uses: ./.github/workflows/_merge-shepherd-impl.yml@main` — GitHub loads a pinned `uses:`
+  target from that ref regardless of the caller's ref), which is real CI architecture work
+  deserving its own session — filed as a follow-up rather than rushed here. Practical severity
+  today is bounded: no `SHEPHERD_TOKEN` secret exists yet to be environment-gated, and this
+  repo's ruleset already requires 0 approving reviews (only `verify` gates a merge), so a rogue
+  branch could already self-merge through the normal PR flow without this side-channel. See
+  `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+- **Mistral benchmark data in the model-picker UI (MONET, session worktree
+  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
+  2026-07-10, owner-directed, PR landing.** Research found the app already has two
+  purpose-built surfaces for exactly this data — filled both rather than inventing new UI
+  (the custom `ModelPicker` listbox that could show subtitles is dead code, zero JSX
+  usages; reviving it would have been a much larger out-of-scope rewrite). (1) Model Stats
+  drawer (`app/api/llm-usage/model-stats/route.ts` + `model-stats-drawer.tsx`): merges the
+  2026-07-10 default-effort re-benchmark into the existing benchmark pipeline —
+  concatenation is provably safe since `normalizeBenchmarkSummaries` already drops the
+  2026-07-08 all-error Mistral rows; all four Mistral rows now show real cost/latency
+  instead of a dash. (2) Reasoning-effort advice text
+  (`src/lib/model-reasoning-recommendations.ts`): `MISTRAL_MEDIUM_ADVICE` extended with the
+  concrete None (fast/cheap, proposes nothing) vs High (slow/costly, actually proposes)
+  tradeoff. High-effort probe data deliberately NOT merged into the drawer (would collide
+  with the default-effort row for the same model+role) — it feeds the advice prose instead.
+  Verified live in-browser end to end (seeded a throwaway dev API key + fixed
+  `ENCRYPTION_KEY` so the app's own save-time key validation passes): Model Stats drawer
+  shows real Mistral numbers, advice text renders exactly as authored under the Mistral
+  Medium reasoning control. Gate: lint 0 / tsc clean / 315 files 3387 tests / build.
+  Rollout: `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+- **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
+  (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
+  open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
+  follow-up from `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md` ("Follow-ups / still-open
+  blockers"): a `pending_cancel` row whose `gateway.cancelEquityOrder` retry kept throwing (e.g.
+  stale "not found" after an earlier cancel actually landed, or the stop simply filled) retried
+  forever and permanently blocked section-4 re-placement for that symbol (still protected by the
+  always-on synthetic fallback, but broker-held protection stayed off for the rest of the
+  session). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`) now takes an
+  optional `orders?: EquityOrder[]` (the caller's freshly fetched `getEquityOrders()` list); on a
+  cancel failure it checks whether the row's `brokerOrderId` shows up there already done resting
+  (`isRejectedOrCanceledState` OR `filled`) and deletes the row if so; a rejected/canceled/expired
+  recovery re-places same-call (position never moved), a `filled` recovery defers re-placement to
+  the next call (see landing-round fix below — the position DID move, and the caller's `positions`
+  snapshot predates `orders`). Absent-from-list or still-live stays ambiguous and keeps retrying.
+  Wired `src/lib/synthetic-stops.ts` to pass its already-fetched `brokerOrders`. Also verified the
+  recon's companion issue (b), the `!exec.orderId` defensive branch, is ALREADY FIXED by PR
+  #1269's round-3 review (`isRejectedOrCanceledState` already precedes it) — no change needed
+  there. **Landing-round fix (PR #1352 review):** codex-connector flagged a real P1 — same-call
+  re-placement after a `filled` recovery could size a fresh stop off the caller's stale
+  pre-fill `positions` snapshot (fetched before `orders`), resting a sell stop for shares already
+  sold. Fixed with a `filledRecoverySymbols` set scoped to `filled`-specifically recoveries;
+  section 4 now skips those symbols for the current call only, resuming next call once a fresh
+  position read is in hand. +3 tests in `test/broker-protective-stops.test.ts` (recovers via a
+  terminal-state order-list match; recovers via `filled` — updated to assert same-call deferral
+  plus next-call resumption; stays conservative on absent/still-live). node@24: `land.sh` gate
+  green (tsc clean, 3386 tests, build clean).
 - **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
-  `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
+  `monet/mistral-rebench-docs`) — ✅ COMPLETED 2026-07-10: base results merged to `main` via
+  PR #1329; a follow-up rotation-pool commit is riding the same branch, landing now.**
   The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
   capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
   100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
-  EMPTY proposals; high-reasoning tier untested (script lacks an effort flag — follow-up).
-  Red verdicts both models correctly shaped + sharp; benchmark's 0% red schema-valid is a
-  validator artifact (green proposals-check applied to red — follow-up filed). Keys resolved
-  at runtime from Infisical prod (automation identity), never written to disk. Results:
-  `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Pool NOT changed — re-add
-  recommendation = owner call (`docs/rollouts/2026-07-10-mistral-rebench.md`).
+  EMPTY proposals; Red verdicts both models correctly shaped + sharp; benchmark's 0% red
+  schema-valid is a validator artifact (green proposals-check applied to red — fixed).
+  Keys resolved at runtime from Infisical prod (automation identity), never written to disk.
+  Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
+  `docs/rollouts/2026-07-10-mistral-rebench.md`.
   _Probe addendum (owner question "why no proposals"): reasoning-off empty list = model
   judgment (param-stripped probe identical). High-tier probes found + FIXED two more
   shaper bugs (medium-3-5 rejects prompt_mode too — validation-order masked; reasoning
   tier rejects greedy sampling → no temperature when thinking). With fixes it proposes
-  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout) — hold from
-  pool. Script gained `--effort <tier|omit>`._
+  (2 valid + brackets, 50.1s, ~$0.074/call, 1/2 rounds hit the 150s timeout). Script
+  gained `--effort <tier|omit>`._
+  _Rotation-pool decision (owner, same session): keep BOTH mistral models in
+  `MODEL_ROTATION_POOL` for now, pull out later if warranted — overrides the earlier
+  hold-medium-3-5-out recommendation. Pool now excludes only `grok-build-0.1`. Tests +
+  comment updated in `src/lib/model-rotation.ts` / `test/model-rotation.test.ts`._
 - **Model recommendation rethink: per-team re-derivation of the Green/Red rec chips (CLAUDE,
   branch `claude/model-recs-rethink`) — LANDING 2026-07-10: PR #1295 went dirty as `main`
   advanced 16 commits; re-synced (`git merge origin/main`, zero conflicts — `main` never touched
@@ -1517,8 +1652,10 @@ As of 2026-07-08 (assignment-rule update).
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
 - **Learning-review >MAX_REVIEW_ITEMS backlog orphaning — #1278 deferred finding #2 (MONET, branch
-  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — IN PROGRESS 2026-07-10;
-  code+tests done + fully verified, PR opening via land.sh (built off merged `main` 6f1aaf87).**
+  `monet/learning-review-backlog-drain`, follow-up to merged PR #1278) — DEPLOYED TO PROD 2026-07-10;
+  merged to `main` as squash `79b542e3` (PR #1328, verify-green + auto-merge), then AUTO-DEPLOYED —
+  `79b542e3` is an ancestor of main HEAD `e9e9138b` (#1352), the healthy webhook build (~12:45Z) running
+  on prod (auto-deploy now live/owner-directed; announce-then-deploy retired).**
   `buildLearningReviewContextPack` sliced the newest 80 (`MAX_REVIEW_ITEMS`) and a "complete" review
   advanced `lastReviewedAt` to run-start `now`, so a >80-item store's overflow stopped counting toward
   the trigger's newCount AND max-age → never audited. Fix: sweep OLDEST un-reviewed first within the
@@ -1921,7 +2058,7 @@ As of 2026-07-08 (assignment-rule update).
 
 
 
-- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch).** Thread `connectedAccountId` into ~42 `audit()` sites in `src/lib/strategy.ts` (scope map in the report: `runStrategyOnce` local at :311, `executeProposal`/`proposeTrades` via `policy`, `autoRevertOnCapBreach` param at :3425; incl. `recordLlmOutcome` ctx + `reconcilePendingFills`/`flagStalePlacingIntents` signatures) and all 12 `synthetic-stops.ts` sites (`policy.connectedAccountId` is a parameter). NOTE: the `strategy_bull_truncated` emission site is EXCLUDED — handled in the P1 batch (`monet/activity-audit-p1-batch`); post-mortem.ts + `setUserSetting` no-audit flag also ride the P1 batch. Report §1.10: `docs/reviews/2026-07-09-activity-feed-audit.md`.
+- **Activity-audit item 10: account-attribution sweep in `strategy.ts` + `synthetic-stops.ts` (~54 audit sites) — RESERVED 2026-07-10 for a second owner-directed session (per owner, split out of MONET's P1 batch). MOVED 2026-07-10 to 🚧 In Progress (same title, this file) — see that row for the current record.** _(Corrected in place per protocol, not deleted; annotation by CLAUDE.)_
 - **Activity-audit P2.4: congress_share_daily retry storm (active, unbounded) — PLANNED 2026-07-10, unclaimed.** OPS half (do first): whitelist the new box 135.181.192.190 on the congress.trade CF zone (documented un-done follow-up, hetzner-migration rollout) — every POST is 403ing 32/32 and the marker never advances. CODE half: module-level in-flight promise + persisted last-attempt timestamp with 30-60 min failure backoff (`src/lib/congress-share.ts:588-800`, `scheduler.ts:313`). Report §1.4.
 - **Activity-audit P2.5: notification status recorder lies ("Not sent" on 1035/1035 while 378 delivered) — PLANNED 2026-07-10, unclaimed.** Return `NotifyChannelResult[]` from `sendDirectNotification`, derive sent/failed/skipped honestly, update reason mapping (`src/lib/notifications.ts:59-131`, `dashboard-ui.ts:335`); keep the operator-fallback email lane intact. Report §1.5.
 - **Activity-audit P2.6: `order_placement_uncertain` misclassifies definitive rejections (48/48 all-time) — PLANNED 2026-07-10, unclaimed.** Typed `OrderValidationError` for pre-flight throws → blocked/rejected; broker 4xx → `rejected_by_broker`; reserve "uncertain" for timeouts/5xx/undecodable. Consider Alpaca whole-share-bracket pre-flight sizing. NOTE: touches `strategy.ts` placement catch — coordinate with the item-10 sweep session. Report §1.6.

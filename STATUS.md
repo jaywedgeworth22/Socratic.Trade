@@ -20,6 +20,193 @@ broker chain (accounts -> portfolio/positions/orders -> quotes, genuinely sequen
 cutting worst case to roughly the chain alone (~24s). Added one `[dashboard] snapshot Xms` summary
 log (only when slow or a section timed out). Gate green: tsc clean, lint 0 errors, 3374 tests (315
 files), build clean. Rollout: docs/rollouts/2026-07-10-loading-permafix.md.
+## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
+#1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
+YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
+branch's copy of the file before evaluating the `if:`. Created a GitHub **Environment**
+named `merge-shepherd` via the Environments API with `deployment_branch_policy` locked to
+`main` (`custom_branch_policies: true`, branch policy `main` only) — this is enforced
+server-side by GitHub before the job dispatches, not something a branch's workflow file can
+override. Wired `environment: merge-shepherd` into `.github/workflows/merge-shepherd.yml`'s
+`shepherd` job (kept the existing `if:` guard as defense-in-depth, not a replacement), and
+added `deployments: write` to the job's permissions allow-list since referencing an
+environment makes GitHub track a deployment record per run and this workflow already scopes
+`GITHUB_TOKEN` down to an explicit list. `SHEPHERD_TOKEN` does not currently exist as a repo secret — nothing to migrate; if/when
+added it should be an **environment secret** on `merge-shepherd`, which needs an owner
+action (the API can create/gate the environment but cannot read or copy secret values). No
+app code touched — workflow + docs only. See
+`docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+
+**Landing-round finding, deliberately NOT fixed in this PR (PR #1353 review):** codex-connector
+correctly flagged that the `environment: merge-shepherd` reference is itself still part of the
+branch's own copy of the workflow YAML — a branch can delete that one line from its own copy just
+as easily as it could delete the `if:` guard, and GitHub only evaluates an environment's
+`deployment_branch_policy` for a job that actually references that environment; a job with no
+environment reference at all skips the check entirely. So this PR narrows the bypass (from "delete
+one `if:` line" to "delete one `environment:` line") without structurally closing it. A genuine
+close requires moving the sensitive job into a **reusable workflow pinned to `@main`**
+(`uses: ./.github/workflows/_merge-shepherd-impl.yml@main`): GitHub loads a `uses:`-referenced
+workflow from the pinned ref regardless of which ref dispatched the caller, so a branch cannot
+edit away the `environment:` declaration living inside the pinned file. That's a real CI
+architecture change (new file, `workflow_call` trigger wiring, verifying environment protection
+still applies inside a reusable workflow) that deserves its own dedicated, carefully-tested
+session rather than a rushed addition here — filed as a follow-up (see below).
+
+Practical severity today is bounded: `SHEPHERD_TOKEN` doesn't exist as a repo/environment secret,
+so there's no environment-gated secret currently exposed by this gap — the fallback
+`GITHUB_TOKEN` is already scoped to an explicit low(er)-privilege allow-list regardless of whether
+the environment check runs. Separately, this repo's branch-protection ruleset requires 0 approving
+reviews (only the `verify` CI check gates a merge), so a rogue/buggy agent branch could already
+self-merge through the normal PR flow without needing this side-channel at all — this workflow's
+gap is real but not the weakest link in the current threat model. Landed with the finding
+acknowledged and cross-referenced rather than silently resolved.
+## 2026-07-10 — Mistral benchmark data surfaced in the model-picker UI (MONET, branch `monet/mistral-benchmark-ui`)
+Owner-directed: users had no way to see the 2026-07-10 Mistral re-benchmark numbers when picking a
+model — they only lived in a docs note. Filled two ALREADY-BUILT UI surfaces instead of inventing a
+new one (the custom `ModelPicker` listbox is dead code, zero JSX usages — reviving it would have
+been a much larger rewrite than this data-wiring task warranted): (1) the Model Stats drawer's
+benchmark column, which previously showed a dash for all four Mistral rows (the 2026-07-08 sweep
+recorded 0 successes — the capability-map bug #1279 fixed) — now shows real cost/latency via a safe
+array-concat into the existing `normalizeBenchmarkSummaries` pipeline; (2) the Mistral Medium
+reasoning-effort advice text, extended with the concrete None (fast/cheap, proposes nothing) vs High
+(slow/costly, actually proposes) tradeoff the benchmark revealed. High-effort probe data deliberately
+NOT merged into the drawer (would collide with the default-effort row for the same model+role) —
+feeds the advice prose instead. Verified live end-to-end in-browser (own worktree dev server + a
+throwaway seeded API key, with a fixed `ENCRYPTION_KEY` shared between the seed script and the dev
+server so the app's own decrypt-and-validate save path passes — the default per-process random key
+otherwise makes cross-process seeding silently fail). Gate: lint 0 errors / tsc clean / 315 files
+3387 tests / build. See `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
+
+## 2026-07-10 — AUTO-DEPLOY ON: merge-to-main auto-deploys prod; announce-then-deploy RETIRED (MONET, branch `monet/auto-deploy-on`)
+Owner-directed: the merged-vs-deployed distinction was pure friction, so production now auto-deploys on
+every push to `main` (merge == live, no manual step). Two fixes made it work: (1) flipped Coolify's
+native `is_auto_deploy_enabled=true` on `socratic-trade-prod` (DB-only setting; API is CF-blocked, done
+via the box); (2) GitHub's push webhooks were being 403'd by the `jays.services` Cloudflare zone's
+IP-allowlist — whitelisted GitHub's documented **webhook** ranges (the stable 6, not the variable
+runner IPs; expanded to 40 `/24` + IPv6), bot protection stays on for everything else. **Proven
+end-to-end**: webhook-triggered deploy `e9e9138b` (`is_webhook=t`) reached `finished`; prod = `main`
+HEAD, healthy. **Fleet: announce-then-deploy is retired — do NOT post deploy claims or manually deploy.**
+Rollback: `is_auto_deploy_enabled=false`. Separately diagnosed + handed to AG a pre-existing deploy
+incident (transient github.com git-clone window + a zombie deploy holding the `concurrent_builds=1`
+queue; now resolved). Docs: `docs/rollouts/2026-07-10-auto-deploy-on.md`; AGENTS.md + AGENT-SYNC.md
+updated.
+## 2026-07-10 — PR #1229 residual (a): dead `pending_cancel` rows now self-heal (CLAUDE, branch `claude/broker-stop-residuals`)
+Closes the accepted-residual follow-up tracked in `docs/rollouts/2026-07-09-rh-broker-stop-hardening.md`
+("Follow-ups / still-open blockers"). `reconcileBrokerProtectiveStops` (`src/lib/broker-protective-stops.ts`)
+section 1 (pending_cancel retry) previously just logged and kept retrying forever when
+`gateway.cancelEquityOrder` kept throwing — even if the broker order was already done resting
+(e.g. a prior cancel actually landed and this was just a stale "not found", or the stop had
+simply filled). A permanently-stuck `pending_cancel` row silently blocks section 4 from ever
+re-placing a broker-held stop for that symbol (still protected by the always-on synthetic
+fallback, but broker-held protection is gone for the rest of the session). Fix: added an optional
+`orders?: EquityOrder[]` param — the caller's freshly fetched `gateway.getEquityOrders()` list —
+and on a cancel failure, section 1 now checks whether the row's `brokerOrderId` appears in that
+list already done resting (`isRejectedOrCanceledState` OR `filled`); if so, the row is deleted —
+for a rejected/canceled/expired recovery, section 4 re-places in the SAME call (the position never
+moved); for a `filled` recovery it does NOT re-place same-call (see landing-round review fix
+below). Absent-from-list or still-live stays ambiguous and keeps retrying — never assume terminal
+without positive evidence (mirrors the existing "never orphan a possibly-still-live stop" bias in
+this file). Wired the synthetic-stop monitor (`src/lib/synthetic-stops.ts`) to pass its
+already-fetched `brokerOrders` through. Issue (b) (`!exec.orderId` defensive branch, referenced by
+the same recon) was checked and found ALREADY FIXED by PR #1269's round-3 review —
+`isRejectedOrCanceledState(exec.state)` already precedes the `!exec.orderId` guard at section 4's
+placement call; no code change needed there, confirmed by reading PR #1269's resolved
+review-comment thread. +3 regression tests in `test/broker-protective-stops.test.ts` (recovers via
+a terminal-state order-list match; recovers via `filled`; stays conservative — never deletes on
+absent-from-list or still-live). node@24: `npx tsc --noEmit` clean, focused suite
+(broker-protective-stops + synthetic-stops + broker-side + broker-held-orders) 68/68 green, `npx
+eslint` on touched files 0 errors (2 pre-existing grandfathered warnings, unrelated). See
+`docs/rollouts/2026-07-10-broker-stop-residual-a-fix.md`.
+
+**Landing-round fix (same day, PR #1352 review):** the codex-connector bot flagged a real P1 race
+in the `filled` recovery path above — `positions` is fetched by the caller (synthetic-stops.ts)
+BEFORE `orders`, so on the tick a fill is first observed via `orders`, the `positions` array handed
+to `reconcileBrokerProtectiveStops` can still be the STALE pre-fill snapshot. Letting section 4
+re-place same-call (as originally landed) risked sizing a fresh sell stop off shares that were
+already sold by the fill. Fix: `reconcileBrokerProtectiveStops` now tracks
+`filledRecoverySymbols` — populated only by a `filled`-state section-1 recovery (rejected/
+canceled/expired recoveries are unaffected, since those never moved the position) — and section 4
+skips placement for those symbols this call, deferring to the next call's fresh position read (the
+always-on synthetic monitor still protects the position in the meantime). Updated the existing
+"also recovers when... FILLED" test to assert deferral (`recovered.placed === 0`, row gone) plus a
+follow-up call showing placement resumes normally once positions are fresh. Landed via
+`scripts/land.sh` — see verification section below for the full gate run.
+
+## 2026-07-10 — Activity-audit item 10: account-attribution sweep (CLAUDE, branch `claude/audit-item10-attribution`)
+Picked up the reserved item-10 row (split out of MONET's P1 batch per owner, unclaimed since
+2026-07-10). Threaded `connectedAccountId` into all 54 in-scope `audit()` sites across
+`src/lib/strategy.ts` (41) and `src/lib/synthetic-stops.ts` (13) that had the account
+available but omitted it — the "Account: unknown" feed symptom the audit report flagged.
+Pure attribution: 4th-arg audit calls plus two new optional trailing function parameters
+(`reconcilePendingFills`, `flagStalePlacingIntents`) and one ctx field
+(`recordLlmOutcome`) — zero behavior change to trading logic. `strategy_bull_truncated` and
+post-mortem.ts were left untouched (already fixed by PR #1314's P1 batch). Verify: tsc
+clean, eslint 0 errors, 46 focused test files / 523 tests green under node@24. Built in a
+fresh detached worktree off `origin/main`, committed locally, NOT pushed — full gate
+(`npm test` full run, `npm run build`) and PR/land are a later, separate step. See
+`docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
+## 2026-07-10 — Framework Models card truth fixes (CLAUDE, branch `claude/models-card-truth`, follow-up to #1346)
+Fixes the two Follow-ups logged when the per-team-reasoning PR (below) landed. (1) **Proposer
+`ModelSelect` had no blank option** — an unconfigured Proposer's native `<select value="">` (no
+matching `<option value="">`) visually fell back to its first rendered option, "Rotate all models
+(testing)", even though nothing was chosen. Fixed with a new `blankDisabled` prop on `ModelSelect`
+(`app/console/strategy/page.tsx`): the Proposer now shows an unselectable placeholder ("Not set —
+choose a model") when blank, matching the honest "Not Set" the summary line already showed.
+(2) **Reviewer hint/blank-label said "Blank = same as proposer" / "Same As Proposer" — the server
+does NOT inherit the Reviewer model.** `resolveRoleModel(policy, "red")` (`src/lib/llm-provider.ts`)
+returns `policy.redTeamLlmModel?.trim() || ""` with no fallback to `llmModel` (owner directive
+2026-07-07), and `debateProposal` (`src/lib/red-team.ts`) fails CLOSED to human review
+(`not_configured`) when blank. Fixed the copy, and killed the page's
+`effectiveRedTeamModel = redTeamModel || proposerModel` derivation — every display use (reasoning
+control, summary line, per-model advice, the "no reasoning knob" message) now reads the Reviewer's
+own `redTeamModel` directly; a blank Reviewer shows no reasoning control plus a new explicit
+"routes to human review" message. Reasoning-EFFORT inheritance (a real, separate mechanism via
+`resolveReviewerReasoningEffort`) is unaffected. Display/copy only — no resolution behavior
+changed; the owner question of whether blank SHOULD inherit the Proposer model is surfaced in the
+PR description, not resolved here. **Note:** PR #1346 (below) had already squash-merged to `main`
+as `c7a2fa95` and its branch's remote ref auto-deleted by the time this follow-up started (known
+auto-merge-race pattern), so this landed as a fresh standalone branch/PR off `origin/main` rather
+than a push onto `claude/per-team-reasoning`. Gate green: tsc clean, 3383 tests / 315 files, build
+clean, lint 0 errors. See `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
+
+## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
+**MERGED to `main` as PR #1346 (squash `c7a2fa95`, verify green).** Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
+`TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
+is now formally the PROPOSER's, and the reviewer resolves through the single fallback helper
+`resolveReviewerReasoningEffort` (src/lib/llm-request.ts) — wired at red-team.ts (debateProposal),
+strategy-tuning.ts (`policyForTuningReviewer` carries the reviewer effort when it inherits the Red
+model), and the AI-review panel default. `validatePolicy` now checks each team's (model, effort) combo
+with ITS OWN effort — a violating gpt-5.5+high on EITHER team rejects with a message naming the team.
+No default for the new field on purpose (absent = inherit proposer's). (2) **Framework UI:** each
+picker gets its OWN reasoning select (shown only when that model supports it), curated per-model
+advice underneath (new `src/lib/model-reasoning-recommendations.ts`; gpt-5.5's interactive-high rule
+surfaces BEFORE save and the High option is disabled in the select), reviewer select has a
+"Same as proposer (…)" inherit option; a rotating seat hides the manual control and shows the
+auto-set line — implemented server-side in `resolveModelRotationForRun` (each rotated seat carries
+its served model's curated recommended effort, unknown → medium, audited on `model_rotation_pick`).
+(3) "LLM usage & cost" link in the Models card header → /console/usage. (4) "Model settings" links on
+both Learning Review blocks (approvals learned-context) → new `#learning-review` anchor in Settings.
+Gate green: tsc clean, lint 0 errors, 3383 tests / 315 files, build clean; live browser smoke of all
+four items (per-seat saves, inherit-clear, rotation note, links, anchor) verified against the dev DB.
+See `docs/rollouts/2026-07-10-per-team-reasoning.md`.
+
+## 2026-07-10 — Settings IA restructure: global-only Settings (CLAUDE, branch `claude/settings-global-only`)
+Owner-directed. `/console/settings` is now GLOBAL-ONLY; account-scoped config lives on Framework
+(`/console/strategy`). Models card deleted from Settings entirely (`app/console/settings/models.tsx`
+removed — Framework's Proposer/Reviewer pickers with the working reasoning-effort controls are the
+single source of truth; the Coach picker survives on the Coach page via the same localStorage key).
+Tax treatment extracted to `app/console/strategy/tax-settings.tsx` and appended at the bottom of
+Framework, still account-scoped with a THIS ACCOUNT chip. `requireTypedConfirmation` PROMOTED to
+`USER_LEVEL_POLICY_FIELDS` (db-profiles) — one switch spans all accounts; divergent per-account
+values are superseded (no legacy seed, sole-user ruling; default fails safe to required). Learning
+review verified already user-level. THIS ACCOUNT section + scope-chip explainer removed from
+Settings; anchors preserved (#brokers/#api-keys/#sharing/#danger/#admin) + new #confirmation
+(Settings), #models/#tax (Framework, with the deferred hash-scroll fix). Run-block fix link
+`#models-green` → `/console/strategy#models`; "Settings → LLM models"/"Settings → Tax treatment"
+copy retargeted to Framework across chrome/llm-required/red-team/defaults/db/guardrails/help.
+New regression test in `test/per-account-policy-isolation.test.ts`. Gate green: tsc clean, lint 0
+errors, 3374 tests / 315 files, build clean; browser smoke of both pages clean.
+See `docs/rollouts/2026-07-10-settings-global-only.md`.
 
 ## 2026-07-10 — Learning-review legacy-seed default-blob edge fixed (MONET, branch `monet/learning-review-legacy-seed-99138a`, follow-up to #1278)
 Resolves PR #1278's deferred Codex P2 **finding #3**. `seedLegacyLearningReviewFields` (`src/lib/db-profiles.ts`)
@@ -43,6 +230,7 @@ gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the 
 but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
 verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
 schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`, detailed in
 Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
 (re-add small-2603; hold medium-3-5) is an owner call, detailed in
 `docs/rollouts/2026-07-10-mistral-rebench.md`.
@@ -53,6 +241,11 @@ medium-3-5 rejects `prompt_mode:"reasoning"` too (validation-order masked it on 
 reasoning tier rejects greedy sampling (`temperature:0` without `top_p:1`) → thinking-enabled Mistral
 calls now send reasoning_effort only, no temperature. With both fixes it DOES propose: 2 schema-valid
 bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
+works, but ~50x small-2603's cost. Benchmark script gained `--effort <tier|omit>`. High-tier
+results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+**Rotation-pool decision (owner, same session): keep BOTH models in `MODEL_ROTATION_POOL` for now,
+pull out later if warranted** — overrides the hold-medium-3-5-out recommendation above.
+`MODEL_ROTATION_POOL` now excludes only `grok-build-0.1`.
 works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
 `--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
 ## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
