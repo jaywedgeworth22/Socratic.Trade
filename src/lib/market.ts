@@ -297,7 +297,11 @@ export const nasdaqDelayedProvider: MarketDataProvider = {
     const provider = getEnrichmentProvider(options?.userId);
     if (topCandidates.length > 0) {
       try {
-        const enrichment = await provider.enrich(topCandidates.map((quote) => quote.symbol));
+        // Providers slice the symbol list to a per-provider budget (first-wins). Held
+        // positions and event outliers go FIRST so a budget shortfall starves the tail
+        // of the ranked top-N, never the names the agent owns or force-included.
+        const enrichmentOrder = [...heldExtra, ...eventExtra, ...ranked.slice(0, candidateLimit)];
+        const enrichment = await provider.enrich(enrichmentOrder.map((quote) => quote.symbol));
         topCandidates = topCandidates
           .map((quote) => {
             const extra = enrichment[quote.symbol];

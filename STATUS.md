@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Enrichment starvation fix landed (MONET, branch `monet/bold-lamport-20a8f9`)
+Fixed the prod-verified starvation (30/42 candidates enriched, 2026-07-09T19:41Z run): the
+per-provider enrichment budget is now derived from the real scan shape (candidateLimit +
+outlierReserve + `HELD_SYMBOL_ALLOWANCE=12`, capped at 50) instead of a fixed 30, the
+`enrich()` symbol list is ordered held → event outliers → ranked top-N so a budget shortfall
+can never starve owned/force-included names, and `withProvenance`/`cellTitle` no longer stamp
+"Received <time>" on fields no provider returned. `FMP_MAX_SYMBOLS` stays the absolute
+operator override. See `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+LANDING 2026-07-09 (CLAUDE, owner-directed usage-cap pickup of MONET's uncommitted work):
+merged `origin/main` clean (incl. PR #1222 TwelveData negative-cache — different region,
+both kept), focused tests 132/132 then full gate green, PR opened via `land.sh` with
+auto-merge armed.
+
 ## 2026-07-09 — Settings-UX fixes landed (MONET-authored, CLAUDE usage-cap pickup; branch `monet/settings-ux-fixes`)
 Three-part settings-UX change MONET left uncommitted when its seat hit the usage cap, committed
 as-is and landed by a CLAUDE pickup session: (1) real bug fix in `app/console/lib/policy-diff.ts
