@@ -32,8 +32,6 @@ auto-merge-race pattern), so this landed as a fresh standalone branch/PR off `or
 than a push onto `claude/per-team-reasoning`. Gate green: tsc clean, 3383 tests / 315 files, build
 clean, lint 0 errors. See `docs/rollouts/2026-07-10-per-team-reasoning.md` (Follow-ups section).
 
-## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`) — MERGED as PR #1346 (`c7a2fa95`)
-Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
 ## 2026-07-10 — Per-team reasoning levels + rotation auto-effort + usage/learning-review links (CLAUDE, branch `claude/per-team-reasoning`)
 **MERGED to `main` as PR #1346 (squash `c7a2fa95`, verify green).** Owner-directed Framework enhancement, four items. (1) **Per-team reasoning:** new account-scoped
 `TradingPolicy.redTeamReasoningEffort` (named to mirror `redTeamLlmModel`); legacy `llmReasoningEffort`
