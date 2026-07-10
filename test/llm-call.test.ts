@@ -170,12 +170,24 @@ describe("buildLlmRequestBody", () => {
     ) as Record<string, any>;
     expect(xai.reasoning_effort).toBe("high");
 
+    // Only mistral-medium-3-5 carries a Mistral reasoning capability (provider enforces
+    // reasoning_effort high|none); an explicit xhigh request normalizes to "high" and the
+    // reasoning prompt mode rides along on that tier.
     const mistral = buildLlmRequestBody(
       { provider: "mistral", transport: "chat-completions" },
-      { model: "mistral-large-2512", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+      { model: "mistral-medium-3-5", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
     ) as Record<string, any>;
-    expect(mistral.reasoning_effort).toBe("xhigh");
+    expect(mistral.reasoning_effort).toBe("high");
     expect(mistral.prompt_mode).toBe("reasoning");
+
+    // The rest of the Mistral family (small-2603 rejects the reasoning prompt mode outright;
+    // benchmark 2026-07-08) sends a plain body with no reasoning params at all.
+    const mistralPlain = buildLlmRequestBody(
+      { provider: "mistral", transport: "chat-completions" },
+      { model: "mistral-small-2603", systemPrompt: "sys", userContent: "{}", schema: SCHEMA, maxOutputTokens: 1500, reasoningEffort: "xhigh" }
+    ) as Record<string, any>;
+    expect(mistralPlain.reasoning_effort).toBeUndefined();
+    expect(mistralPlain.prompt_mode).toBeUndefined();
   });
 
   it("Anthropic auth headers include the prompt-caching beta; OpenAI-compatible unchanged (item 3)", () => {

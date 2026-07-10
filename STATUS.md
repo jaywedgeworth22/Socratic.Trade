@@ -8,6 +8,19 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Mistral capability-map fix (MONET, branch `monet/mistral-capmap-fix`)
+Handoff-queue item 2 (post-#1191 queue): both catalog Mistral models 400'd on every call
+(benchmark 2026-07-08, 0/12) because the shaper claimed a family-wide reasoning capability.
+Per Mistral's own 400s: `mistral-medium-3-5` accepts `reasoning_effort` high|none ONLY (now the
+sole Mistral capability entry, with DeepSeek-style opt-in normalization — high/xhigh/max → high,
+else none, no silent medium→high upgrade); `mistral-small-2603` rejects `prompt_mode:"reasoning"`
+outright, so it and every other Mistral id now send a plain chat body with no reasoning params.
+Rotation-pool re-add deliberately deferred to a keyed re-benchmark (neither model has ever
+completed a benchmarked call). Gate green: lint 0 errors / tsc clean / 310 files 3246 tests /
+build. See `docs/rollouts/2026-07-09-mistral-capmap-fix.md`. Remaining queue: reviewedByModel
+stamp (after bump-to-floor lands — strategy.ts collision), strategy.ts split (needs freeze
+window).
+
 ## 2026-07-09 — MONET usage-cap pickup CLOSED OUT (CLAUDE, owner-directed)
 MONET hit its usage cap ~17:05 CDT mid-merge-shepherding; a CLAUDE session picked up everything in
 flight. All six blocked MONET PRs are merged or armed (#1229/#1222/#1221/#1215/#1193 MERGED, #1228
