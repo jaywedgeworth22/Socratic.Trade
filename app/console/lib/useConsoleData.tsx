@@ -43,7 +43,7 @@ export interface ConsoleData {
   /** Health of the SSE stream used for push refreshes. */
   stream: ConsoleStreamHealth;
   /** Force a refetch now (used after every mutation). */
-  refresh: () => Promise<void>;
+  refresh: (options?: { background?: boolean }) => Promise<void>;
 }
 
 const ConsoleDataContext = createContext<ConsoleData | null>(null);
@@ -65,7 +65,8 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
   const mounted = useRef(true);
   const queuedRefresh = useRef<number | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { background?: boolean }) => {
+    if (options?.background && inFlight.current) return;
     inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
@@ -79,6 +80,10 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (!mounted.current) return;
       setError(err instanceof ConsoleApiError ? err.message : "Could not refresh data.");
+    } finally {
+      if (inFlight.current === controller) {
+        inFlight.current = null;
+      }
     }
   }, []);
 
@@ -88,7 +93,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
     if (queuedRefresh.current) window.clearTimeout(queuedRefresh.current);
     queuedRefresh.current = window.setTimeout(() => {
       queuedRefresh.current = null;
-      void refresh();
+      void refresh({ background: true });
     }, EVENT_REFRESH_DEBOUNCE_MS);
   }, [refresh]);
 
@@ -97,7 +102,7 @@ export function ConsoleDataProvider({ children }: { children: ReactNode }) {
     void refresh();
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void refresh();
+      void refresh({ background: true });
     }, POLL_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void refresh();
