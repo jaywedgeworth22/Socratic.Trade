@@ -1388,6 +1388,18 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Rotation "__rotate__" fix for manual Run-once + same-model pairing skip (CLAUDE, session
+  worktree `reverent-hodgkin-eedafa`, branch `claude/rotate-runonce-fix`) — IN PROGRESS
+  2026-07-09: PR opened, auto-merge armed.** Owner-directed,
+  three fixes: (1) `POST /api/strategy/run` precheck 412'd every manual run under rotation (the
+  persisted sentinel resolves as unset in `resolveOpenAiModel`; scheduled runs were fine) — now
+  gates a rotating Green on `eligibleRotationPool` non-empty, new actionable
+  `LLM_ROTATION_EMPTY_POOL_STRATEGY_MESSAGE` 412 when empty; red sentinel never 412s. (2)
+  `classifyRunFailure` titled every 412 "No LLM key is configured" — model-CHOICE 412s now titled
+  "Choose your team models" → `settings#models-green`. (3) `advanceRotationPointers` same-model
+  skip so dual rotation never serves the same model to both seats (both counters started at 0 =
+  self-debate all first cycle); wrap-advance intact. tsc clean, touched suites 26/26. Rollout:
+  `docs/rollouts/2026-07-09-rotate-runonce-fix.md`.
 - **Reviewed-by-model proposal stamp (AG, branch `agent/antigravity-reviewed-by-model`) — IN PROGRESS 2026-07-09.** Resumed and verified the `reviewedByModel` proposal stamp task. Stamped `reviewedByModel` on trade proposals during the Red Team review loop, persisted it in closed lots, propagated it to the model stats API, and aggregated realized performance symmetrically for the Reviewer role. Gate green: tsc clean, lint 0 errors, 727 tests passed, Next.js build clean. PR opened via `land.sh`. See [2026-07-09-reviewed-by-model-proposal-stamp.md](file:///Users/jay/Code/Socratic.Trade/docs/rollouts/2026-07-09-reviewed-by-model-proposal-stamp.md).
 - **Vitest temp-SQLite leak cleanup (MONET, session worktree `distracted-albattani-dfc422`,
   branch `monet/distracted-albattani-dfc422`) — ✅ COMPLETED 2026-07-09: merged to `main` as
