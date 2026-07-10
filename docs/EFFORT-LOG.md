@@ -1401,6 +1401,18 @@ As of 2026-07-08 (assignment-rule update).
   tiingo (50/hour+1000/day)**; finnhub/yahoo/alpha-vantage stay on the PACER. Fixes the tiingo 403
   (owner dashboard −10/50). Env-overridable `PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY`.
   Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`. Gate under node@24 + land.sh.
+- **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
+  PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
+  tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.
+  Rewrote `app/console/lib/useDirtyGuard.tsx` — an in-app `Sheet` prompt with **Discard changes**
+  (client-side `router.push`), **Keep editing** (stay), and **Review & save** (stay + open the
+  screen's review panel; shown only when the screen registers a review opener — Guardrails does,
+  Framework's inline review shows two). `nav.tsx` passes the `href` at all 3 guard sites (+ TabsSheet
+  prop-type); `policy-form.tsx` PolicySaveBar registers the review opener. Dirtiness still ref'd (no
+  shell re-render on keystroke). Gate green: tsc / lint 0-err / 3246 tests / build. Follow-up: cmdk
+  navigates without the guard (pre-existing gap). See
+  `docs/rollouts/2026-07-09-unsaved-changes-3option-prompt.md`. Rest of the owner's settings-UX batch
+  already landed (#1/#2/#4 via #1270; #5 via credential-naming).
 - **Rotation-UX fixes: effort control visible under "__rotate__" + sentinel-aware copy (CLAUDE
   subagent, branch `claude/rotate-ux-fixes` stacked on `monet/mistral-capmap-fix`/#1279) —
   IN PROGRESS 2026-07-10 (committed locally, not yet pushed).** Owner reports: (a) selecting

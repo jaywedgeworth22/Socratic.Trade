@@ -293,9 +293,10 @@ export function PolicySaveBar({
   const diff = useMemo(() => computeDiff(policy, draft.values, defs), [policy, draft, defs]);
   const extraEntries: ExtraDiffEntry[] = useMemo(() => classifyExtraPatch(policy, extraPatch), [policy, extraPatch]);
   const changeCount = diff.length + extraEntries.length;
-  // Register the uncommitted draft with the shell's unsaved-changes guard
-  // (beforeunload + nav interception). Must run before the early return.
-  useUnsavedChanges(changeCount > 0);
+  // Register the uncommitted draft with the shell's unsaved-changes guard (beforeunload + nav
+  // interception). The onReview opener powers the nav prompt's "Review & save" option. Must run
+  // before the early return.
+  useUnsavedChanges(changeCount > 0, () => setReviewOpen(true));
   if (changeCount === 0) return null;
 
   // extraPatch changes (universe, blocklist, order types, sell-to-fund-buy) can
