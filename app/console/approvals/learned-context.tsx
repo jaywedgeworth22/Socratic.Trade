@@ -15,7 +15,8 @@
  *  every card, non-blocking error notices, light/dark via --con-* tokens. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { Brain, ChevronDown, ChevronRight, RefreshCw, Settings } from "lucide-react";
 import {
   approvePendingLearnedContext,
   deleteLearnedContextItem,
@@ -33,6 +34,21 @@ import { Sheet } from "../ui/sheet";
 import { SymbolButton } from "../ui/symbol-drilldown";
 
 const POLL_MS = 60_000;
+
+/** Small header link from each Learning Review block to the Learning Review model-selection card
+ *  in Settings (its #learning-review anchor, ALL YOUR ACCOUNTS section). */
+function LearningReviewModelSettingsLink() {
+  return (
+    <Tooltip content="Configure the daily Learning Review — the model that audits these learned items — in Settings.">
+      <Link
+        href="/console/settings#learning-review"
+        className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+      >
+        <Settings size={12} aria-hidden /> Model settings
+      </Link>
+    </Tooltip>
+  );
+}
 
 const ORIGIN_LABEL: Record<PendingLearnedItem["origin"], string> = {
   autonomous: "autonomous run",
@@ -351,16 +367,19 @@ export function LearnedContextInbox() {
             )}
           </h2>
         </Tooltip>
-        <Tooltip
-          content="Re-check the server for pending learned context now (it also refreshes automatically).">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
-            onClick={() => void load()}
-            aria-label="Refresh learned-context queue">
-            <RefreshCw size={12} aria-hidden /> Refresh
-          </button>
-        </Tooltip>
+        <div className="flex items-center gap-3">
+          <LearningReviewModelSettingsLink />
+          <Tooltip
+            content="Re-check the server for pending learned context now (it also refreshes automatically).">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[length:var(--con-fs-xs)] font-semibold text-[color:var(--con-faint)] transition-colors hover:text-[color:var(--con-fg)]"
+              onClick={() => void load()}
+              aria-label="Refresh learned-context queue">
+              <RefreshCw size={12} aria-hidden /> Refresh
+            </button>
+          </Tooltip>
+        </div>
       </div>
       {error && (
         <Card>
@@ -638,7 +657,8 @@ export function LearnedFactsArchive() {
       </Tooltip>
       {open && (
         <>
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-3">
+            <LearningReviewModelSettingsLink />
             <Tooltip
               content="Re-check the server for recorded learned context now (it also refreshes automatically while open).">
               <button

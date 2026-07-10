@@ -11,6 +11,7 @@
 
 import type { LlmReasoningEffort } from "@/lib/types";
 import {
+  interactiveStrategyReasoningEffort,
   isModelRotationSentinel,
   normalizeReasoningEffortForModel,
   normalizeReasoningEffortForOptions,
@@ -70,26 +71,36 @@ export function reasoningSummary(control: ReasoningControl | null): string {
   if (!control) return "These selected models do not expose a provider-specific reasoning or thinking control here.";
   const labels = control.capabilities.map((capability) => capability.label).join(" + ");
   if (control.capabilities.some((capability) => capability.provider === "rotation")) {
-    return `${labels} active — the chosen effort applies to each run's served model, clamped to that model's supported range.`;
+    return `${labels} active — a rotating seat auto-sets each served model's curated recommended reasoning effort (unknown models run Medium).`;
   }
   return `${labels} active.`;
 }
 
-/** Whenever a model selection changes, the previously-saved reasoning effort may no longer be a
- *  valid/offered value for the new model pairing (e.g. a provider-specific "xhigh" that the newly
- *  chosen model doesn't expose). Recompute + include a renormalized value in the SAME save so a
- *  model-only write can never leave the stored (model, effort) combo in an invalid state — mirrors
- *  what the old single "Save models" button did by bundling the recomputed effort into one PUT.
- *  Rotating seats are excluded from the renormalization inputs: when a CONCRETE seat exists the
- *  effort renormalizes against it alone, and when ALL seats rotate the patch stays empty — the
- *  stored effort is never clamped against the synthetic full ladder (each served model clamps it
- *  at call time instead). */
-export function reasoningPatchFor(models: string[], effort: LlmReasoningEffort | undefined): { llmReasoningEffort?: LlmReasoningEffort } {
-  const candidates = models.filter((m) => m && !isModelRotationSentinel(m));
-  const control = reasoningControlForModels(candidates);
-  if (!control) return {};
-  const value = normalizeReasoningValueForControl(candidates, control, effort);
-  return value ? { llmReasoningEffort: value } : {};
+/** The per-team policy fields a seat's reasoning control writes (per-team split 2026-07-10). */
+export type SeatReasoningField = "llmReasoningEffort" | "redTeamReasoningEffort";
+
+/** Whenever a seat's MODEL changes, the previously-saved effort for that seat may no longer be a
+ *  valid/offered value for the new model (e.g. a provider-specific "xhigh" the new model doesn't
+ *  expose, or the disallowed interactive gpt-5.5+high combo). Recompute + include a renormalized
+ *  value in the SAME save so a model-only write can never leave the stored (model, effort) combo
+ *  in an invalid state. Three deliberate no-patch cases:
+ *   - rotating seat: rotation auto-sets each served model's recommended effort server-side
+ *     (src/lib/model-rotation.ts) — never clamp the stored effort against the synthetic ladder;
+ *   - `effort === undefined` (the reviewer's "inherit the proposer's" state): a model change must
+ *     never MATERIALIZE an explicit per-team value the owner didn't set;
+ *   - a model with no reasoning capability: the stored effort is simply ignored at call time.
+ *  Clamping goes through `interactiveStrategyReasoningEffort`, so picking gpt-5.5 while "high" is
+ *  stored saves the run-time-honest "medium" instead of a doomed 400. */
+export function seatReasoningPatch(
+  field: SeatReasoningField,
+  model: string | undefined,
+  effort: LlmReasoningEffort | undefined
+): Partial<Record<SeatReasoningField, LlmReasoningEffort>> {
+  const concrete = (model ?? "").trim();
+  if (!concrete || isModelRotationSentinel(concrete)) return {};
+  if (effort === undefined) return {};
+  const value = interactiveStrategyReasoningEffort(concrete, effort);
+  return value ? { [field]: value } : {};
 }
 
 /** high/xhigh/max are the EXPENSIVE, slow-latency reasoning tier every opt-in provider branch in

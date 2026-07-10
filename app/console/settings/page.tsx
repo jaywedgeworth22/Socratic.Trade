@@ -103,8 +103,12 @@ export default function SettingsPage() {
         {/* learningReviewEnabled/Mode/Model are USER-level policy fields
             (USER_LEVEL_POLICY_FIELDS in db-profiles): the review runs once per
             user per day over user-level learned context, so its config overlays
-            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT. */}
-        <LearningReviewCard />
+            every account — it belongs under ALL YOUR ACCOUNTS, not THIS ACCOUNT.
+            The anchor id is a deep-link target (the Learning Review blocks on
+            /console/approvals link here as "Model settings"). */}
+        <div id="learning-review" className="scroll-mt-28">
+          <LearningReviewCard />
+        </div>
         {/* requireTypedConfirmation is a USER-level policy field
             (USER_LEVEL_POLICY_FIELDS in db-profiles, promoted 2026-07-10): the
             phrase ceremony is an owner preference, not a per-account guardrail,

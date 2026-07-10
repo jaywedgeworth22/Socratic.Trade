@@ -70,6 +70,9 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
   // are REQUIRED explicit picks in Framework → Models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
+  // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
+  // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a
+  // value here would silently break that fallback for every policy.
   llmReasoningEffort: "medium",
   // Daily LLM learning review — default OFF (nothing runs until enabled). When enabled the
   // default mode is "decide" (apply verdicts — remove/expire facts, resolve pending items,
