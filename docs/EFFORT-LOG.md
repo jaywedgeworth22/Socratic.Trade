@@ -1525,6 +1525,26 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral benchmark data in the model-picker UI (MONET, session worktree
+  `distracted-albattani-dfc422`, branch `monet/mistral-benchmark-ui`) — IN PROGRESS
+  2026-07-10, owner-directed, PR landing.** Research found the app already has two
+  purpose-built surfaces for exactly this data — filled both rather than inventing new UI
+  (the custom `ModelPicker` listbox that could show subtitles is dead code, zero JSX
+  usages; reviving it would have been a much larger out-of-scope rewrite). (1) Model Stats
+  drawer (`app/api/llm-usage/model-stats/route.ts` + `model-stats-drawer.tsx`): merges the
+  2026-07-10 default-effort re-benchmark into the existing benchmark pipeline —
+  concatenation is provably safe since `normalizeBenchmarkSummaries` already drops the
+  2026-07-08 all-error Mistral rows; all four Mistral rows now show real cost/latency
+  instead of a dash. (2) Reasoning-effort advice text
+  (`src/lib/model-reasoning-recommendations.ts`): `MISTRAL_MEDIUM_ADVICE` extended with the
+  concrete None (fast/cheap, proposes nothing) vs High (slow/costly, actually proposes)
+  tradeoff. High-effort probe data deliberately NOT merged into the drawer (would collide
+  with the default-effort row for the same model+role) — it feeds the advice prose instead.
+  Verified live in-browser end to end (seeded a throwaway dev API key + fixed
+  `ENCRYPTION_KEY` so the app's own save-time key validation passes): Model Stats drawer
+  shows real Mistral numbers, advice text renders exactly as authored under the Mistral
+  Medium reasoning control. Gate: lint 0 / tsc clean / 315 files 3387 tests / build.
+  Rollout: `docs/rollouts/2026-07-10-mistral-benchmark-ui.md`.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
   open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual

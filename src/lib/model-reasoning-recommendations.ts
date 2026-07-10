@@ -41,9 +41,10 @@ const DEEPSEEK_OPT_IN_ADVICE =
   "run's soft timeout; choose them only if you accept the latency.";
 
 const MISTRAL_MEDIUM_ADVICE =
-  "Mistral Medium accepts only None or High reasoning (provider-enforced). High is the slow, " +
-  "expensive opt-in tier; None (recommended) is the fast tier this model has actually been " +
-  "benchmarked on.";
+  "Mistral Medium accepts only None or High reasoning (provider-enforced). In the 2026-07-10 " +
+  "benchmark, None (recommended) ran ~1.3s/~$0.012 per call but returned an EMPTY proposal list " +
+  "every round; High actually proposed (schema-valid, brackets included) but took ~50s/~$0.07 " +
+  "per call, and one of two benchmarked calls exceeded even the widened reasoning timeout.";
 
 export const MODEL_REASONING_RECOMMENDATIONS: Record<string, ModelReasoningRecommendation> = {
   // OpenAI — reasoning models take low/medium/high; medium is the balanced default everywhere.
