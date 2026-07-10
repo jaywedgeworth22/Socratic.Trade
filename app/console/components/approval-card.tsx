@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from "react";
 import { Database, Ruler, ShieldCheck, Swords, TrendingUp } from "lucide-react";
+import { isModelRotationSentinel } from "@/lib/llm-request";
 import type { PendingProposal, SocraticDecisionCase, SocraticRagAttribution, TradingPolicy, TradeProposal } from "@/lib/types";
 import type { DashboardSnapshot } from "../../dashboard-types";
 import {
@@ -85,8 +86,13 @@ function matchedDecision(snapshot: DashboardSnapshot | null, pending: PendingPro
 function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const configured = policy?.llmModel?.trim();
   const served = p.proposedByModel?.trim();
+  // A rotating policy EXPECTS a different served model each run — say so plainly instead of
+  // leaking the raw "__rotate__" sentinel and framing the rotation pick as an anomaly.
+  const rotating = isModelRotationSentinel(configured);
+  if (served && rotating) return `configured to rotate; served ${served} (this run's rotation pick)`;
   if (served && configured && served !== configured) return `served ${served}; configured primary was ${configured}`;
   if (served) return `served ${served}`;
+  if (rotating) return "policy rotates models each run; the concrete pick was not persisted on this legacy proposal";
   if (configured) return `configured primary ${configured}; served model not persisted on this legacy proposal`;
   return "served model not exposed on this proposal";
 }
@@ -94,6 +100,9 @@ function modelProvenance(p: TradeProposal, policy: TradingPolicy | undefined): s
 function fallbackProvenance(p: TradeProposal, policy: TradingPolicy | undefined): string {
   const fallbackModels = policy?.llmFallbackModels?.filter(Boolean) ?? [];
   if (p.proposedByModel && fallbackModels.includes(p.proposedByModel)) return `served by configured fallback ${p.proposedByModel}`;
+  if (p.proposedByModel && isModelRotationSentinel(policy?.llmModel)) {
+    return "policy rotates models — the served model is this run's rotation pick, not a failover";
+  }
   if (p.proposedByModel && policy?.llmModel && p.proposedByModel !== policy.llmModel) return "served model differs from configured primary";
   if (fallbackModels.length > 0) return `fallback chain configured (${fallbackModels.length}); no per-hop history on this card`;
   return "no fallback chain configured";
@@ -145,13 +154,17 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
   // to the snapshot policy's configured models only for legacy proposals that predate them
   // (the policy-derived value can be stale if the owner swapped models since proposing).
   const greenModelPersisted = p.proposedByModel?.trim() || null;
-  const greenModelConfigured = snapshot?.policy.llmModel?.trim() || null;
+  // The "__rotate__" sentinel is a rotation marker, never a servable model — a ModelBadge for the
+  // literal sentinel would be a lie (and providerForModel would even give it an OpenAI logo).
+  const greenPolicyRotates = isModelRotationSentinel(snapshot?.policy.llmModel);
+  const greenModelConfigured = greenPolicyRotates ? null : (snapshot?.policy.llmModel?.trim() || null);
   // No-defaults directive: never display a made-up default model as if it served this proposal.
   const greenModel = greenModelPersisted ?? greenModelConfigured ?? "unknown";
   // NO fallback to the green model here (no-defaults directive): Red never silently reuses Green,
   // so displaying Green would misattribute the critique. "unknown" only for legacy verdicts that
-  // predate per-proposal model stamping on a policy whose Red model was since cleared.
-  const redModel = p.redTeamVerdict?.model?.trim() || snapshot?.policy.redTeamLlmModel?.trim() || "unknown";
+  // predate per-proposal model stamping on a policy whose Red model was since cleared (or rotates).
+  const redConfigured = isModelRotationSentinel(snapshot?.policy.redTeamLlmModel) ? null : (snapshot?.policy.redTeamLlmModel?.trim() || null);
+  const redModel = p.redTeamVerdict?.model?.trim() || redConfigured || "unknown";
   // FAILED review: attribute honestly — never blame a fallback model that provably never ran.
   const redFailure = redTeamFailureMeta(p.redTeamVerdict?.failureKind);
   const redFailureModel =
@@ -243,9 +256,13 @@ export function ApprovalCard({ pending }: { pending: PendingProposal }) {
                 {!greenModelPersisted && !greenModelConfigured && (
                   <span
                     className="text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]"
-                    title="No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                    title={
+                      greenPolicyRotates
+                        ? "The policy rotates models each run; this legacy proposal predates per-proposal model stamping, so the concrete rotation pick was not recorded."
+                        : "No model is set on the policy; the server uses its default (which an OPENAI_MODEL env override could change)."
+                    }
                   >
-                    (policy default)
+                    ({greenPolicyRotates ? "policy rotates models" : "policy default"})
                   </span>
                 )}
               </div>
