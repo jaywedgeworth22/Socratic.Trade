@@ -29,7 +29,7 @@ vi.mock("../src/lib/vector-db", () => ({
 const broker = vi.hoisted(() => ({
   positions: [] as Array<{ symbol: string; quantity: number; averageCost: number; marketValue: number }>,
   quotes: {} as Record<string, { price?: number; bid?: number; ask?: number }>,
-  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }>,
+  placed: [] as Array<{ side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number; trailPercent?: number }>,
   cancelled: [] as string[],
   orders: [] as Array<{ id: string; symbol: string; side: string; type: string; state: string; quantity?: number; filledQuantity?: number; clientOrderId?: string }>,
   // Broker state returned by placeEquityOrder. "accepted" = the order RESTS (e.g. a market order
@@ -61,7 +61,7 @@ vi.mock("../src/lib/broker", () => ({
     getEquityTradability: async (_accountNumber: string, symbols: string[]) => Object.fromEntries(
       symbols.map((symbol) => [symbol, { tradable: true, fractional: true }])
     ),
-    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number }) => {
+    placeEquityOrder: async (order: { side: string; quantity: number; symbol: string; refId: string; type?: string; marketHours?: string; limitPrice?: number; trailPercent?: number }) => {
       broker.placed.push(order);
       if (broker.placeError) throw broker.placeError;
       return { orderId: `ord-${broker.placed.length}`, refId: order.refId, state: broker.placeState, raw: {} };
@@ -576,6 +576,50 @@ describe("runSyntheticStopMonitor (orchestration)", () => {
     const rowAfter = listSyntheticStops("SYN-REARM", "local", "triggered")[0];
     expect(rowAfter.fireGeneration).toBe(1);
     expect(rowAfter.lastAttemptRefId).toBe(broker.placed[1].refId);
+  });
+
+  it("re-arms the remainder's own dead exit even while an UNRELATED broker-held stop is still live for the same symbol (Codex review, PR #1331, round 7)", async () => {
+    // Alpaca native trailing floors to whole shares — 10.6 shares gets a 10-share resting native
+    // trail (placed by reconcile) PLUS the synthetic monitor firing its own market sell for the
+    // 0.6-share uncovered remainder (round 6's fix). If that remainder order later dies, re-arm
+    // must not be blocked just because the (unrelated, still perfectly valid) 10-share trail is
+    // still live — a quantity-blind "anything live for this symbol" check would wrongly conflate
+    // the two and leave the remainder permanently unprotected.
+    broker.positions = [{ symbol: "AAPL", quantity: 10.6, averageCost: 100, marketValue: 1060 }];
+    broker.quotes = { AAPL: { price: 90 } };
+    connectTestAccount("SYN-REARM-PARTIAL");
+    const alpacaPolicy = { ...policyFor("SYN-REARM-PARTIAL"), activeBroker: "alpaca" as const };
+    const first = await runSyntheticStopMonitor("local", alpacaPolicy, true);
+    expect(first.exited).toBe(1);
+    expect(broker.placed).toHaveLength(2); // [0] native trail (10 sh), [1] market sell (0.6 sh remainder)
+    const trailOrderId = "ord-1";
+    const remainderRefId = broker.placed[1].refId;
+
+    // The remainder's market sell later EXPIRES (never filled) — reconcile that to a terminal status.
+    const expiredGateway = {
+      getEquityOrders: async () => [
+        { id: trailOrderId, symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 10, createdAt: new Date().toISOString() },
+        { id: "ord-2", symbol: "AAPL", side: "sell", type: "market", state: "expired", clientOrderId: remainderRefId, createdAt: new Date().toISOString() }
+      ] as EquityOrder[]
+    } as unknown as BrokerGateway;
+    await reconcilePendingFills(expiredGateway, "SYN-REARM-PARTIAL", "local");
+
+    // Age the triggered row past the re-arm confirmation grace window.
+    getDb()
+      .prepare("UPDATE synthetic_trailing_stops SET updated_at = ? WHERE account_number = ? AND user_id = ?")
+      .run(new Date(Date.now() - 16 * 60_000).toISOString(), "SYN-REARM-PARTIAL", "local");
+
+    // Next tick: the native trail (10 sh) is STILL resting/live, but the remainder's own order is
+    // confirmed dead — re-arm must succeed despite the trail's continued presence.
+    broker.orders = [
+      { id: trailOrderId, symbol: "AAPL", side: "sell", type: "stop_market", state: "new", quantity: 10 },
+      { id: "ord-2", symbol: "AAPL", side: "sell", type: "market", state: "expired", clientOrderId: remainderRefId }
+    ];
+    const second = await runSyntheticStopMonitor("local", alpacaPolicy, true);
+    expect(second.exited).toBe(1); // re-armed AND re-fired for the still-uncovered 0.6-share remainder
+    const rowAfter = listSyntheticStops("SYN-REARM-PARTIAL", "local", "triggered")[0];
+    expect(rowAfter.fireGeneration).toBe(1);
+    expect(rowAfter.lastAttemptRefId).not.toBe(remainderRefId);
   });
 
   // ── Round 2 (adversarial review): per-row fire_generation / last_attempt_ref_id ─────

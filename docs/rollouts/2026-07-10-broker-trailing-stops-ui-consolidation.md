@@ -314,6 +314,43 @@ shares, and the 0.5-share remainder still fires this same tick instead of the wh
 skipped); `test/stop-flow-model.test.ts` (short-enabled long-only caveat present/absent). Full gate
 (lint/tsc/test/build) re-run green in the isolated worktree.
 
+## Review fixes round 7 (Codex on `c70c219`, three findings + one docs fix)
+
+1. **(docs) — the `brokerTrailingStops` field hint didn't distinguish Alpaca REST from Alpaca MCP:**
+   round 4 already routes `alpaca-mcp` through the ratcheted stop-market emulation (not a true
+   native `trailing_stop`), but the Guardrails hint text described "native trailing_stop orders on
+   Alpaca" without that caveat, understating the downtime-survival difference for MCP-endpoint
+   accounts. Fixed: the hint now explicitly separates "Alpaca REST → native" from "Alpaca MCP → same
+   app-ratcheted stop as Robinhood."
+2. **P2 — a broker-held stop that was ACTIVELY EXECUTING (`partially_filled`) could be cancelled by
+   the quantity-drift mismatch check:** section 3 only recognized a tracked order as terminal via
+   `isDoneRestingState` (filled/rejected/canceled/expired) — a `partially_filled` order is still
+   LIVE (per `broker-side.ts`'s `LIVE_ORDER_STATES`), so it fell through to the quantity-drift
+   comparison, which could see a mismatch (the position not yet reflecting the in-flight partial
+   fill) and cancel the order mid-execution — either the broker refuses the cancel outright, or it
+   succeeds and aborts the rest of an exit that was already correctly working. Fixed: a
+   `partially_filled` tracked order now skips drift detection entirely for that tick — the row is
+   left resting untouched; a later tick's `isDoneRestingState` recovery or a clean drift check
+   (once the fill settles) handles it from there.
+3. **P2 — the re-arm confirmation could be permanently blocked by an UNRELATED broker-held stop for
+   the same symbol:** `confirmedPriorExitDead`'s `hasAnyLiveExitOrder` symbol-wide sweep was
+   originally meant as a conservative fallback for rows with no recorded `lastAttemptRefId` — but it
+   ran UNCONDITIONALLY, even for rows that DO have one. After round 6's partial-native-trail fix (a
+   fractional long's floored native trail coexists with the synthetic monitor firing its own exit
+   for the uncovered remainder), that symbol-wide sweep would see the broker's own STILL-LIVE trail
+   (covering the OTHER shares) and refuse to re-arm the remainder's OWN dead exit attempt forever —
+   even though the specific order being checked (by `client_order_id`) was confirmed dead. Fixed:
+   when a row has a recorded `lastAttemptRefId`, `confirmedPriorExitDead` now checks ONLY that
+   specific order's liveness — never a symbol-wide sweep that can't distinguish "our own dead
+   order" from "an unrelated order covering different shares." The symbol-wide fallback now applies
+   only to the (essentially historical) case of a row with no recorded attempt id at all.
+
+New tests: `test/broker-protective-stops.test.ts` (a `partially_filled` tracked stop is left resting
+untouched despite a quantity recompute that would otherwise look like drift); `test/synthetic-stops.test.ts`
+(a fractional Alpaca long's uncovered remainder re-arms and re-fires after its own exit dies, despite
+the unrelated native trail for the other shares staying live throughout). Full gate
+(lint/tsc/test/build) re-run green in the isolated worktree.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing
