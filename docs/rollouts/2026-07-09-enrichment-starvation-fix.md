@@ -76,7 +76,10 @@ held + outliers first, which is the desired bias.
 - `test/dashboard-ui.test.ts` — `cellTitle` freshness-gating test.
 - `README.md`, `docs/settings-navigation-redesign/appendix-B-capability-inventory.md` —
   `FMP_MAX_SYMBOLS` docs updated to the new semantics.
-- `STATUS.md`, `docs/EFFORT-LOG.md` (+ live board `/Users/jay/apps/TRADING-EFFORT-LOG.md`) — protocol updates.
+- `STATUS.md`, `docs/EFFORT-LOG.md` — protocol updates (made in the landing commit by CLAUDE;
+  the MONET session left STATUS.md unedited — gap closed at landing). The live board
+  `/Users/jay/apps/TRADING-EFFORT-LOG.md` is owned by the usage-cap pickup session, not this
+  landing.
 
 `PLAN.md` and phase docs unchanged — bug fix, no scope/approach change.
 
@@ -108,3 +111,19 @@ installed clean (known recipe).
 - Peer PR #1222 (TwelveData window/negative-cache) may also touch
   `src/lib/data-providers.ts`; if it lands first, `land.sh` will require a manual
   review-merge — expected, not a conflict of intent.
+
+## Landing addendum (CLAUDE, 2026-07-09, owner-directed usage-cap pickup)
+
+MONET's session ended with this work uncommitted; CLAUDE committed and landed it verbatim
+(design unchanged). Landing steps and verification:
+
+- Committed MONET's tree as-is, then merged `origin/main` (16 commits behind, incl. the
+  Drizzle `db-settings` migration #1204 and PR #1222's TwelveData negative-cache — the
+  latter touches a different region of `src/lib/data-providers.ts`; git auto-merged
+  cleanly and BOTH changes are kept). `npm install` was required post-merge (new
+  `drizzle-orm` dependency).
+- Focused re-run post-merge: `npx vitest run test/data-providers.test.ts
+  test/console-drilldown.test.ts test/dashboard-ui.test.ts` — 132/132 passed.
+- Full gate re-run post-merge (`npm run lint`, `npx tsc --noEmit`, `npm test`,
+  `npm run build`) — results recorded in the landing PR; landed via `bash scripts/land.sh`
+  with `gh pr merge --squash --auto`.
