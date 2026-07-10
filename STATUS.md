@@ -22,6 +22,57 @@ fresh detached worktree off `origin/main`, committed locally, NOT pushed — ful
 (`npm test` full run, `npm run build`) and PR/land are a later, separate step. See
 `docs/rollouts/2026-07-10-audit-item10-attribution-sweep.md`.
 
+## 2026-07-10 — Learning-review legacy-seed default-blob edge fixed (MONET, branch `monet/learning-review-legacy-seed-99138a`, follow-up to #1278)
+Resolves PR #1278's deferred Codex P2 **finding #3**. `seedLegacyLearningReviewFields` (`src/lib/db-profiles.ts`)
+bailed whenever any `learningReview*` key was present in `user_settings.policy` — but a legacy FULL policy
+blob stamps the DEFAULT `learningReviewEnabled:false` there while the real enabled review lives account-scoped
+(#1116), so a pre-cutover enabled review silently read as disabled. Fix = two guards: (1) full-blob-vs-tiered
+disambiguation (a review key in a tiered `pickUserFields` write is authoritative; the same key in a full blob
+is a stale default → seed over it), and (2) a one-time `learning_review:legacySeedDone:<userId>` marker set
+unconditionally on first read, so the seed evaluates only pre-deploy state and can never later re-fire to
+clobber a deliberate disable (the fail-OPEN danger). +2 tests (full-blob recovered; tiered-disable NOT
+clobbered), pre-fix falsified. node@24: tsc clean, learning-review 32/32, policy-scope suites 53/53
+(pr7-merge-gate green), build clean, eslint 0-err. Built off #1278 tip 150257ae; #1278 squash-merged to
+`main` mid-work (`6f1aaf87`), so rebased onto `main` and delivered as **PR #1326** (full land.sh gate green).
+See `docs/rollouts/2026-07-09-learning-review-model-fixes.md` addendum 3. Only #1278 deferred item still
+open: #2 (unshown-item orphaning).
+## 2026-07-10 — Mistral keyed re-benchmark (MONET, branch `monet/mistral-rebench-docs`, owner-directed)
+The re-benchmark deferred from #1279: **12/12 live calls succeeded, zero 400s** (was 0/12 pre-fix) —
+the capability-map fix is empirically proven against Mistral's API. `mistral-small-2603` green:
+p50 3.6s, ~$0.0015/call, 100% schema-valid proposals with full bracket coverage (cheaper/faster than
+gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the new default): fast+valid
+but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
+verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
+schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
+(re-add small-2603; hold medium-3-5) is an owner call, detailed in
+`docs/rollouts/2026-07-10-mistral-rebench.md`.
+**Probe addendum (same night, owner question "why no proposals"):** reasoning-off medium-3-5
+deterministically answers `{"proposals":[]}` (param-stripped probe identical — model judgment, not
+request shape). High-tier probes surfaced + FIXED two more shaper bugs in `llm-request.ts`:
+medium-3-5 rejects `prompt_mode:"reasoning"` too (validation-order masked it on 2026-07-08), and its
+reasoning tier rejects greedy sampling (`temperature:0` without `top_p:1`) → thinking-enabled Mistral
+calls now send reasoning_effort only, no temperature. With both fixes it DOES propose: 2 schema-valid
+bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
+works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
+`--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+## 2026-07-09 — Model rec chips re-derived per team (CLAUDE, branch `claude/model-recs-rethink`)
+Owner-directed recommendation rethink, implemented from a judged synthesis (3 judges converged
+on the same 4 chips). Display-only: GREEN = claude-haiku-4-5 + gemini-3.5-flash; RED =
+gemini-3.1-pro-preview (owner ruling restored — the #1082/#1083 intent) + claude-sonnet-5.
+Removed: deepseek-v4-pro Red (benchmark-contradicted; its 17/3 bear record is silent-veto
+inflation via the `parsed.proposals ?? []` Bear parse), gpt-5.4-mini Green+Red (observed
+reasoning burnout / unverifiable all-veto; incumbent-circular records — stays in rotation, can
+earn flags back), gemini-3.5-flash Red (crowding; keeps Green, sanctioned interim Red fallback).
+Both synced catalog copies updated; conventions block rewritten with the new evidence policy +
+the two evidence traps; stale "balanced default" label fixed and the dead `DEFAULT_LLM_MODEL`
+export deleted (zero imports, verified). PR #1083 closed as superseded (owner-directed).
+Follow-up flagged: harden the Bear parse to treat unknown envelopes as parse failure. See
+`docs/rollouts/2026-07-09-model-recs-rethink.md`. **Update 2026-07-10:** PR #1295 went dirty as
+`main` advanced 16 commits; re-synced with a clean `git merge origin/main` (zero conflicts — main
+never touched `app/ui/llm-model-catalog.ts`; its `models.tsx` label-coloring edits sit in a
+disjoint region from this branch's flags/`MODEL_GROUPS`), gates green, pushed, auto-merge
+re-armed. See the rollout note's "Update 2026-07-10" section.
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green
@@ -299,14 +350,12 @@ Old box: all containers stopped `--restart=no` (rollback standby until owner del
 longer reaches Coolify; the `*.jays.services` wildcard A record was deleted. Every tool/script
 must call `https://host.jays.services/api/v1/...`. The stored Coolify API token also stopped
 authenticating at the same time (likely rotated in the UI) — agents need a fresh token via secret
-handoff; the GitHub App webhook URL (github.com side) still points at the apex and needs updating
-to `host.jays.services`. **Owner action still pending:** delete the old Hetzner server after
-soak. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
-**Owner actions pending:** (1) add a Cloudflare IP Access Rule whitelisting `135.181.192.190` on
-the `congress.trade` zone (Bot Fight Mode bypass — the old IP had one; without it the
-congress-stream SSE 403s — the one migration regression, root-caused); (2) first
-ANNOUNCE-THEN-DEPLOY release on the new box ships main HEAD (`6363e1e7`) — deliberately not
-triggered as part of the migration. See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
+handoff (done 2026-07-10: token at `~/.secrets/global-api-keys`, verified). **CLOSED OUT
+2026-07-10:** owner fixed the GitHub App webhook URL and DELETED the old `91.98.44.8` server;
+temp migration_key and the old-IP congress.trade whitelist rule removed. No standby box — DB
+rollback path is the litestream R2 replica. Migration fully complete. (A stale duplicate
+"Owner actions pending" paragraph from a board-sync merge was removed here 2026-07-10 — both
+items were long resolved.) See `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`.
 
 ## 2026-07-09 — Robinhood broker-held resting-stop hardening landed (MONET, worktree `trading-monet-rh-harden`, branch `monet/rh-broker-stop-hardening`)
 Landed an already-assembled money-path fix for the opt-in `policy.robinhoodBrokerStops` feature

@@ -133,8 +133,9 @@ by `scripts/land.sh`). The "Preview freshness policy" section below is historica
 
 Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
 dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
-2026-07-09 from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the
-owner deletes it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
+2026-07-09 from the 4 GB `91.98.44.8` box, which the owner DELETED 2026-07-10 — that IP
+is gone; DB rollback path is the litestream R2 replica — see
+`docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
 **The dashboard moved off the apex the same evening (owner-directed): `jays.services`
 (apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
 script calling `https://jays.services/api/v1/...` must use
