@@ -1392,6 +1392,17 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Mistral keyed re-benchmark (MONET, session worktree `distracted-albattani-dfc422`, branch
+  `monet/mistral-rebench-docs`) — IN PROGRESS 2026-07-10, owner-directed; docs PR landing.**
+  The re-benchmark deferred from #1279: 12/12 live calls ok, zero 400s (was 0/12 pre-fix) —
+  capability-map fix proven against Mistral's API. small-2603 green: p50 3.6s / ~$0.0015/call /
+  100% schema-valid + full bracket coverage. medium-3-5 green (reasoning off): fast+valid but
+  EMPTY proposals; high-reasoning tier untested (script lacks an effort flag — follow-up).
+  Red verdicts both models correctly shaped + sharp; benchmark's 0% red schema-valid is a
+  validator artifact (green proposals-check applied to red — follow-up filed). Keys resolved
+  at runtime from Infisical prod (automation identity), never written to disk. Results:
+  `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Pool NOT changed — re-add
+  recommendation = owner call (`docs/rollouts/2026-07-10-mistral-rebench.md`).
 - **Unsaved-changes nav prompt → 3 options (MONET, branch `monet/unsaved-changes-3opt`) — IN
   PROGRESS 2026-07-09, PR pending via land.sh.** Owner: the unsaved-changes warning on a nav
   tab/menu click should offer discard / go-back / review-save, not a 2-option `window.confirm`.

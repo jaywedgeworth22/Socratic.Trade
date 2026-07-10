@@ -8,6 +8,18 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Mistral keyed re-benchmark (MONET, branch `monet/mistral-rebench-docs`, owner-directed)
+The re-benchmark deferred from #1279: **12/12 live calls succeeded, zero 400s** (was 0/12 pre-fix) —
+the capability-map fix is empirically proven against Mistral's API. `mistral-small-2603` green:
+p50 3.6s, ~$0.0015/call, 100% schema-valid proposals with full bracket coverage (cheaper/faster than
+gpt-5.4-mini green by ~16x/~7x). `mistral-medium-3-5` green (reasoning off, the new default): fast+valid
+but EMPTY proposals every round; its high-reasoning tier untested (script lacks an effort flag). Red
+verdicts from BOTH models are correctly shaped + substantively sharp — the benchmark's 0% red
+schema-valid is a validator artifact (green proposals-check applied to red verdicts; follow-up filed).
+Results: `docs/benchmarks/2026-07-10-mistral-rebench.{json,md}`. Rotation pool NOT changed — recommendation
+(re-add small-2603; hold medium-3-5 pending a high-effort probe) is an owner call, detailed in
+`docs/rollouts/2026-07-10-mistral-rebench.md`.
+
 ## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
 Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
 `app/console/lib/useDirtyGuard.tsx` rewritten — the 2-option `window.confirm` becomes an in-app
