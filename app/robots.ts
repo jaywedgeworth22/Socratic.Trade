@@ -11,7 +11,7 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
-      allow: ["/welcome", "/how-it-works", "/design/socratic-trade"],
+      allow: ["/welcome", "/how-it-works", "/design/socratic-trade", "/privacy-policy", "/terms-and-conditions"],
       disallow: ["/", "/api/", "/access-denied"]
     },
     sitemap: `${base}/sitemap.xml`
