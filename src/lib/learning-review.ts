@@ -318,6 +318,17 @@ export interface LearningReviewItem {
 
 export interface LearningReviewContextPack {
   items: LearningReviewItem[];
+  /** True when at least one UN-REVIEWED item did not fit the MAX_REVIEW_ITEMS budget and was dropped
+   *  from `items`. When true the runner must NOT advance the review marker to `now` on completion —
+   *  that would silently mark the dropped (strictly-newer) un-reviewed items reviewed even though the
+   *  LLM never saw them. */
+  truncated: boolean;
+  /** ms the review marker (learning_review:lastReviewedAt) may safely advance to when the run is
+   *  fully successful: `now` when nothing un-reviewed was dropped, else just below the OLDEST DROPPED
+   *  un-reviewed item so those strictly-newer items keep counting toward the trigger and get swept on
+   *  a later run. Only meaningful for a fully-successful run (the runner stores it solely inside its
+   *  `complete && failures === 0` block). */
+  reviewedThroughMs: number;
   /** The underlying pending rows, keyed by id — needed to apply approvals in decide mode. */
   pendingById: Map<string, LearnedContextPendingRow>;
   recentLearningMutations: Array<{ subsystem: string; trigger?: string; createdAt: string; evidence?: unknown }>;
@@ -394,7 +405,41 @@ export async function buildLearningReviewContextPack(userId: string, now: number
   const learnedRows = listLearnedContext(userId).filter((row) => row.assertedAt >= learnedSince);
   const pendingRows = listPendingLearnedContext(userId, "pending");
   const pendingById = new Map(pendingRows.map((row) => [row.id, row]));
-  const items = [...pendingRows.map(pendingRowToItem), ...learnedRows.map(learnedRowToItem)].slice(0, MAX_REVIEW_ITEMS);
+
+  // Sweep the OLDEST UN-REVIEWED items first within the MAX_REVIEW_ITEMS budget. "Un-reviewed" =
+  // asserted/created after the last successful review — the same `> lastReviewedAt` test the trigger
+  // uses. This ordering matters when there are more reviewable items than the budget:
+  //   1. The oldest un-reviewed items are the ones closest to aging out UNAUDITED, so they must be
+  //      the ones we show — not an arbitrary pending-first slice that could strand them forever.
+  //   2. It lets a >MAX_REVIEW_ITEMS backlog actually DRAIN across successive daily runs: each run
+  //      shows the next-oldest budget-worth and advances the review marker past exactly those, so the
+  //      remainder is swept on later runs instead of being silently marked reviewed (the bug this
+  //      fixes: the old code sliced the newest 80 and then advanced the marker to `now`, orphaning
+  //      every item past 80).
+  // Already-reviewed items fill any leftover budget (a re-audit against fresh system-history),
+  // newest-first, and never count toward truncation.
+  const lastReviewedAt = getLastReviewedAt(userId);
+  const candidates = [...pendingRows.map(pendingRowToItem), ...learnedRows.map(learnedRowToItem)];
+  const atMs = (it: LearningReviewItem): number => Date.parse(it.at);
+  const byIdAsc = (a: LearningReviewItem, b: LearningReviewItem): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const isUnreviewed = (it: LearningReviewItem): boolean => {
+    const t = atMs(it);
+    return Number.isFinite(t) && t > lastReviewedAt;
+  };
+  const unreviewed = candidates.filter(isUnreviewed).sort((a, b) => atMs(a) - atMs(b) || byIdAsc(a, b));
+  const reviewed = candidates.filter((it) => !isUnreviewed(it)).sort((a, b) => atMs(b) - atMs(a) || byIdAsc(a, b));
+  const items = [...unreviewed, ...reviewed].slice(0, MAX_REVIEW_ITEMS);
+
+  // `truncated` == an un-reviewed item was dropped. When true, the marker may advance only to just
+  // BELOW the oldest dropped un-reviewed item, so every dropped item still counts toward the trigger
+  // and is swept later. Subtracting 1ms (vs. using the newest-SHOWN timestamp) keeps the boundary
+  // tie-safe: a shown item that shares the boundary millisecond with the first dropped item is simply
+  // re-shown next run (harmless) rather than a dropped tie-mate being orphaned. This value only ever
+  // moves the marker to <= `now`, never past an un-shown in-pack item — so it cannot regress the
+  // out-of-window max-age reachability the trigger relies on (that path keeps its `now`/no-advance
+  // semantics via the not-truncated branch and the empty-pack skip).
+  const truncated = unreviewed.length > MAX_REVIEW_ITEMS;
+  const reviewedThroughMs = truncated ? atMs(unreviewed[MAX_REVIEW_ITEMS]) - 1 : now;
 
   const recentLearningMutations = listLearningMutationsSince(userId, learnedSince, 50).map((m) => ({
     subsystem: m.subsystem,
@@ -417,6 +462,8 @@ export async function buildLearningReviewContextPack(userId: string, now: number
 
   return {
     items,
+    truncated,
+    reviewedThroughMs,
     pendingById,
     recentLearningMutations,
     systemHistory: { executionFailureEvents: failureEvents, rolloutNotes: await readRecentRolloutNotes() }
@@ -755,6 +802,7 @@ export async function runDailyLearningReview(
       coverageComplete: complete,
       duplicateItems: duplicatedKeys.size,
       applyFailures: failures,
+      truncated: pack.truncated,
       summary: result.summary
     },
     userId
@@ -766,10 +814,18 @@ export async function runDailyLearningReview(
   // since last review" count that gates the next run. A failed/parse-failed/partial run leaves
   // both untouched so the same lessons are re-attempted (the daily marker above still advances,
   // so this costs at most one extra LLM call per day) rather than skipped or counted as reviewed.
+  //
+  // lastReviewedAt advances to pack.reviewedThroughMs, NOT unconditionally to `now`: when the pack
+  // was TRUNCATED (>MAX_REVIEW_ITEMS un-reviewed items), `now` would silently mark the dropped items
+  // reviewed even though the LLM never saw them — the >80-item orphaning bug. reviewedThroughMs is
+  // `now` on a non-truncated run and just below the oldest dropped item on a truncated one, so the
+  // dropped items keep re-triggering until a later run sweeps them. The fingerprint is stored either
+  // way: gating it on !truncated would make annotate mode (which never mutates the backlog away)
+  // re-run the LLM on the same shown slice every day.
   if (complete && failures === 0) {
     try {
       setInternalSetting(lastFingerprintKey(userId), fingerprint);
-      setInternalSetting(lastReviewedAtKey(userId), String(now));
+      setInternalSetting(lastReviewedAtKey(userId), String(pack.reviewedThroughMs));
       setInternalSetting(lastConfigKey(userId), reviewConfigSignature(policy));
     } catch (error) {
       console.error("[learning-review] failed to persist review markers:", error);
