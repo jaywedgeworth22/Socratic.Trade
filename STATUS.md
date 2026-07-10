@@ -8,6 +8,24 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — Per-position stop PLANS (CLAUDE, branch `claude/per-position-stop-plans`, stacked on PR #1331)
+Owner-directed follow-up to the broker-trailing-stops session below. The LLM can now choose a
+per-position stop TYPE (fixed/ATR/trailing/none — distinct from the existing per-trade stop PRICE)
+at open time, persisted for the position's life (`position_stop_plans`, committed on fill like the
+take-profit band ratchet) and honored by all four stop-enforcement layers: `generateProactiveRiskProposals`/
+`enrichOpeningProposal` (per-symbol distance pin, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account
+has none configured), `runSyntheticStopMonitor` (self-loads plans; "trailing" registers even with
+`trailingStopPct`=0; "none" purges any existing registration, even one made before the plan was
+set), `reconcileBrokerProtectiveStops` (per-symbol `kindForSymbol` narrows the account's own enabled
+lane, never invents a new broker capability; "none" tears down any existing broker-held stop).
+ATR precompute extended to opening candidates (not just held positions) for universal availability.
+UI extends (not duplicates) the existing stop-flow diagram with a 4th "Per-position override" lane;
+Positions table and approval cards surface an active plan honestly (a "none" plan is never blended
+into the generic "nothing configured" case). `stopPlan: "none"` is deliberately NOT hard-blocked in
+policy.ts, per product philosophy. Gates green (lint/tsc/3475 tests/build). Rollout:
+`docs/rollouts/2026-07-10-per-position-stop-plans.md`. Next action: open the PR (stacked on #1331),
+arm auto-merge, watch for Codex review.
+
 ## 2026-07-10 — Broker-held trailing stops + Guardrails stop consolidation (CLAUDE, branch `claude/stop-loss-preset-options-f1jygn`)
 Owner-directed. Trailing stops become BROKER-HELD when `riskRules.trailingStopPct` > 0: native
 Alpaca `trailing_stop` orders (new `EquityOrderInput.trailPercent`; whole shares; no

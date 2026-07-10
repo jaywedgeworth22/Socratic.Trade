@@ -2031,8 +2031,39 @@ As of 2026-07-08 (assignment-rule update).
   KNOWN_GLOBAL footer set; evidence_age_anomaly dedup; policy_change attribution. All S,
   batchable. Spec: docs/reviews/2026-07-09-activity-feed-audit.md §1 P3.
 
+- **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (CLAUDE,
+  branch `claude/per-position-stop-plans`, stacked on PR #1331) — IN PROGRESS 2026-07-10, gates
+  green (lint/tsc/3475 tests/build); PR opening next.** MOVED from Planned (below) — same title,
+  see that entry for the full original design/requirements record.
+  **Implemented:** `TradeProposal.stopPlan` (`StopPlanStyle` = default/fixed/atr/trailing/none) in
+  the LLM structured-output schema + `sanitizeProposals` coercion; `position_stop_plans` table +
+  CRUD (`getStopPlans`/`recordStopPlan`/`clearStopPlans`, mirroring `take_profit_trims`), persisted
+  on fill (`recordFillFromProposal`), added to the account-deletion coverage list; wired into all
+  four stop-enforcement layers — `generateProactiveRiskProposals` + `enrichOpeningProposal`
+  (per-symbol distance override, `STOP_PLAN_FALLBACK_STOP_PCT`=8% when the account has no stop
+  configured at all — requirement B), `runSyntheticStopMonitor` (self-loads plans; "trailing"
+  registers even with `trailingStopPct`=0 via the fallback; "none" purges any existing
+  registration, including one made before the plan existed), `reconcileBrokerProtectiveStops`
+  (per-symbol `kindForSymbol` that only NARROWS the account's own enabled lane — never invents a
+  broker capability the account doesn't have; "none" tears down any existing broker-held stop for
+  that symbol). UI (requirement A): `stop-flow.tsx` gained a 4th "Per-position override" lane
+  (extends the existing diagram, doesn't add a disconnected element); `DashboardSnapshot` grew
+  `stopPlanBySymbol` (self-loaded, best-effort); `deriveProtection` annotates the Positions
+  protection column (a "none" plan is surfaced prominently, never blended into the generic
+  no-protection case); `approval-card.tsx` shows the LLM's chosen style + rationale on pending
+  proposals with a fresh (non-default) plan. Pre-trade validation stance for `stopPlan: "none"`:
+  deliberately NOT hard-blocked in `policy.ts` (per product philosophy — the schema already
+  encourages a rationale; enforcement is via honest UI surfacing, not a gate).
+  New tests: `test/strategy-hardening.test.ts` (generateProactiveRiskProposals + enrichOpeningProposal
+  per-plan cases), `test/synthetic-stops.test.ts` (trailing-with-fallback registration, none-purge
+  incl. after-the-fact), `test/broker-protective-stops.test.ts` (per-symbol kind narrowing, never
+  invents), `test/position-stop-plans-db.test.ts` (new — DB round-trip + fill-time persistence),
+  `test/console-live-data-derive.test.ts` (deriveProtection plan annotation), `test/stop-flow-model.test.ts`
+  (4th lane universal availability). Rollout: `docs/rollouts/2026-07-10-per-position-stop-plans.md`.
+
 - **Per-position stop PLANS — LLM chooses each position's stop type at proposal time (unassigned) —
   PLANNED 2026-07-10 (owner ask, stop-loss session; requirements sharpened by owner same day).**
+  _(Superseded by the IN PROGRESS entry above — kept for the original design record.)_
   Today the LLM already proposes a per-trade stop PRICE (`bracketStopLoss`, honored when valid);
   what it cannot choose is the stop TYPE (fixed / ATR / trailing / none) or have that choice
   survive for the position's lifetime — held positions are governed by the account-level policy
