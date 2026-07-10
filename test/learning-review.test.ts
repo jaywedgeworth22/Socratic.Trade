@@ -786,6 +786,53 @@ describe("defer verdict", () => {
     expect((applied[0].payload as { action: string; verdict: string }).verdict).toBe("defer");
   });
 
+  it("a later 'needs_more_data' verdict clears a stale defer note from an earlier review (codex #1351 P2)", async () => {
+    const userId = `lr-defer-stale-note-${randomUUID().slice(0, 8)}`;
+    const pending = seedPendingRow(userId);
+
+    // Day 1: deferred, note attached. Each day builds its own fresh context pack (as
+    // runDailyLearningReview does) — reused-pack.pendingById would otherwise still be the
+    // pre-defer snapshot, which is not what a real second run sees.
+    const day1Pack = await buildLearningReviewContextPack(userId, NOW);
+    applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "defer", confidence: 40, reasoning: "Ambiguous on day 1." }],
+      day1Pack
+    );
+    expect(getPendingLearnedContext(pending.id, userId)?.reviewNote).toContain("day 1");
+
+    // Day 2: fresh pack (reflects day 1's persisted note), rides along, but this time the
+    // reviewer lands on needs_more_data (not defer) — the stale "Left for you because..."
+    // explanation from day 1 must not linger.
+    const day2Pack = await buildLearningReviewContextPack(userId, NOW);
+    const { applied } = applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "needs_more_data", confidence: 55, reasoning: "Still under-sampled." }],
+      day2Pack
+    );
+
+    const row = getPendingLearnedContext(pending.id, userId);
+    expect(row?.status).toBe("pending"); // needs_more_data never mutates status
+    expect(row?.reviewNote ?? "").toBe("");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].action).toBe("cleared_stale_note");
+  });
+
+  it("'needs_more_data' with no prior note is a true no-op (no spurious write/audit)", async () => {
+    const userId = `lr-needs-more-data-noop-${randomUUID().slice(0, 8)}`;
+    const pending = seedPendingRow(userId);
+    const pack = await buildLearningReviewContextPack(userId, NOW);
+
+    const { applied } = applyLearningReviewVerdicts(
+      userId,
+      [{ id: pending.id, table: "learned_context_pending", verdict: "needs_more_data", confidence: 55, reasoning: "Under-sampled." }],
+      pack
+    );
+
+    expect(applied).toHaveLength(0);
+    expect(getPendingLearnedContext(pending.id, userId)?.reviewNote ?? null).toBeNull();
+  });
+
   it("decide mode: 'defer' on a durable learned_context row is a no-op (no queue exists to leave it in)", async () => {
     const userId = `lr-defer-durable-${randomUUID().slice(0, 8)}`;
     enableReview(userId, "decide");

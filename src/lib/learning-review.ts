@@ -583,6 +583,15 @@ export function applyLearningReviewVerdicts(
           // the reviewer's explanation so the human queue can surface it. reasoning is guaranteed
           // non-blank here (parseLearningReviewVerdicts drops blank-reasoning "defer" entries).
           action = setPendingLearnedContextReviewNote(verdict.id, userId, verdict.reasoning) ? "deferred" : null;
+        } else if (verdict.verdict === "needs_more_data") {
+          // A later review can ride along on a previously-deferred item and land on
+          // needs_more_data instead of defer. Clear any stale "Left for you because..." note so
+          // the queue UI never shows an explanation from an earlier day's verdict that no longer
+          // applies to the current review.
+          const pending = pack.pendingById.get(verdict.id) ?? getPendingLearnedContext(verdict.id, userId);
+          if (pending && pending.status === "pending" && pending.reviewNote) {
+            action = setPendingLearnedContextReviewNote(verdict.id, userId, "") ? "cleared_stale_note" : null;
+          }
         }
       }
     } catch (error) {
