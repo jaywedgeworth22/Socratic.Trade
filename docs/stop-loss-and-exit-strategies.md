@@ -117,11 +117,12 @@ When a trailing % is configured, the protective-stop reconciler
 (`broker-protective-stops.ts`) maintains a broker-held trailing stop per open
 long instead of the fixed broker stop (shares can only back ONE resting sell):
 
-- **Alpaca (paper + live):** a TRUE native `trailing_stop` order
+- **Alpaca REST (paper + live):** a TRUE native `trailing_stop` order
   (`EquityOrderInput.trailPercent` → `trail_percent`) — the broker trails the
   high-water mark itself, even while the app is down. Whole shares only
   (fractional remainders stay on the synthetic monitor); refuses
-  trailing+bracket combos.
+  trailing+bracket combos. `alpaca-mcp` accounts (possibly endpoint-only, no
+  REST keys) take the ratcheted lane below through their MCP transport instead.
 - **Robinhood (live, additionally gated on `robinhoodBrokerStops`):** the RH MCP
   has **no verified native trailing parameter**, so the reconciler places a
   resting GTC stop-market at the trail distance below the high-water mark and

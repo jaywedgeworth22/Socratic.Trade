@@ -925,8 +925,10 @@ export interface TradingPolicy {
    * trailing % is configured, the protective-stop reconciler maintains a broker-held trailing stop
    * for each open long instead of (not in addition to — shares can only back one resting sell) the
    * fixed broker stop:
-   *  - Alpaca (paper or live): a TRUE native `trailing_stop` order — the broker trails the
-   *    high-water mark itself, so the trail keeps moving even while this app is offline.
+   *  - Alpaca REST (paper or live): a TRUE native `trailing_stop` order — the broker trails the
+   *    high-water mark itself, so the trail keeps moving even while this app is offline. An
+   *    alpaca-mcp account takes the Robinhood-style ratcheted lane through its MCP transport
+   *    instead (an endpoint-only account has no REST keys for the native order type).
    *  - Robinhood (live only, and additionally gated on `robinhoodBrokerStops` — the existing
    *    "resting stops at Robinhood are live-verified" opt-in): the Robinhood MCP exposes no
    *    verified native trailing parameter, so the reconciler places a resting GTC stop-market at

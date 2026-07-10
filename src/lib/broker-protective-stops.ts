@@ -8,8 +8,11 @@
 //    stop can't sell shares we no longer hold).
 //
 //  - TRAILING (`brokerTrailingStops`, default on; inert until riskRules.trailingStopPct > 0):
-//     * Alpaca (paper or live): a TRUE native `trailing_stop` order (trail_percent) — the broker
-//       trails the high-water mark itself, so the trail keeps moving even while the app is down.
+//     * Alpaca REST (paper or live): a TRUE native `trailing_stop` order (trail_percent) — the
+//       broker trails the high-water mark itself, so the trail keeps moving even while the app is
+//       down.
+//     * Alpaca MCP: the ratcheted emulation below, through the account's own MCP transport — an
+//       MCP-endpoint-only account has no REST keys for the native lane.
 //     * Robinhood (live, additionally gated on `robinhoodBrokerStops` — the "resting stops at RH
 //       are live-verified" opt-in): the RH MCP exposes no verified native trailing parameter, so
 //       this lane places a resting GTC stop-market at trailingStopPct below the high-water mark and
@@ -129,9 +132,20 @@ export interface ReconcileResult {
    * the fresh full-size replacement. The caller must treat these symbols as broker-covered for
    * THIS tick — both synthetic REGISTRATION and the FIRE path of already-registered rows (a fire
    * would sell shares the just-placed full-size stop covers, then cancel that stop after booking
-   * the fill); the next tick's fresh order fetch sees the real resting order.
+   * the fill); the next tick's fresh order fetch sees the real resting order. ONLY full-position
+   * placements are listed here — a PARTIAL placement goes in `partiallyPlacedStopSymbols` instead,
+   * so suppressing registration can never leave the uncovered remainder stop-less for a tick.
    */
   placedStopSymbols: string[];
+  /**
+   * Symbols this reconcile placed a broker stop for covering only PART of the position (a
+   * fractional remainder the native trailing lane floored away, or shares partially covered by
+   * another live exit order). The caller must skip the synthetic FIRE path for these this tick
+   * (the fresh order isn't in its stale coverage list — firing would double-sell the covered
+   * shares) but must still REGISTER synthetic protection, so the uncovered remainder is never
+   * left without a stop if the app dies before the next tick.
+   */
+  partiallyPlacedStopSymbols: string[];
 }
 
 /**
@@ -158,7 +172,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   brokerOrders?: EquityOrder[];
 }): Promise<ReconcileResult> {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running, brokerOrders } = args;
-  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] };
+  const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [] };
 
   const kind = desiredBrokerStopKind(policy, executionMode);
 
@@ -190,15 +204,39 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   const stopPct = policy.riskRules?.stopLossPct ?? 0;
   const trailPct = policy.riskRules?.trailingStopPct ?? 0;
-  // Native trailing_stop orders exist only on Alpaca; every other broker in the trailing lane gets
-  // the ratcheted stop-market emulation.
-  const nativeTrailing = policy.activeBroker === "alpaca" || policy.activeBroker === "alpaca-mcp";
+  // Native trailing_stop orders exist only on the Alpaca REST lane. An `alpaca-mcp` account can be
+  // configured with ONLY an MCP endpoint (no REST keys), and the gateway's trailing branch goes
+  // REST-direct — so alpaca-mcp deliberately takes the ratcheted stop-market emulation through its
+  // own MCP transport instead of failing placement every tick (Codex review, PR #1331).
+  const nativeTrailing = policy.activeBroker === "alpaca";
 
-  // The share quantity a broker-held stop of this kind should cover. Alpaca rejects fractional
-  // trailing stops, so the native lane floors to whole shares — the synthetic monitor's
-  // quantity-aware coverage picks up the sub-share remainder (and whole sub-1-share positions).
-  const desiredStopQuantity = (pos: EquityPosition): number => {
-    const qty = Math.abs(pos.quantity);
+  // Coverage-aware target quantity for a symbol's broker stop: the shares NOT already covered by
+  // some OTHER live exit order (a bracket leg, a manual GTC sell, a resting take-profit trim).
+  // Placing a stop for already-covered shares stacks more exit quantity than the account holds —
+  // if both orders fill, the position is over-sold. Mirrors the synthetic fire path's
+  // uncovered-remainder rule. `excludeOrderId` drops our OWN resting stop (the order a mismatch
+  // replacement is about to cancel) from the count; orders this reconcile already cancelled are
+  // dropped too. An unknowable order quantity counts as full coverage (failing toward
+  // no-duplicate-sell). Without a caller-supplied order list, the full position quantity is used
+  // (pre-coverage behavior — protection over dedup).
+  const uncoveredQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number => {
+    const full = Math.abs(pos.quantity);
+    if (!brokerOrders) return full;
+    const cancelled = new Set(out.cancelledOrderIds);
+    const cov = liveExitOrderCoverage(
+      brokerOrders.filter((o) => !cancelled.has(o.id) && o.id !== excludeOrderId),
+      sym,
+      "long"
+    );
+    if (cov.unknownQty) return 0;
+    return Math.max(full - cov.coveredQty, 0);
+  };
+
+  // The share quantity a broker-held stop of this kind should cover: the uncovered remainder,
+  // floored to whole shares on the native trailing lane (Alpaca rejects fractional trailing
+  // stops) — the synthetic monitor's quantity-aware coverage picks up any remainder.
+  const desiredStopQuantity = (pos: EquityPosition, sym: string, excludeOrderId?: string): number => {
+    const qty = uncoveredQuantity(pos, sym, excludeOrderId);
     return kind === "trailing" && nativeTrailing ? Math.floor(qty) : qty;
   };
 
@@ -277,7 +315,7 @@ export async function reconcileBrokerProtectiveStops(args: {
   for (const [sym, pos] of liveLongs) {
     const existingStop = existingStops.find((r) => normalizeSymbol(r.symbol) === sym);
     if (existingStop && existingStop.status === "resting") {
-      const qty = desiredStopQuantity(pos);
+      const qty = desiredStopQuantity(pos, sym, existingStop.brokerOrderId);
       // Where section 4 would place this stop's trigger today (informational for native trailing —
       // the broker moves that trigger itself).
       const newStopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
@@ -329,41 +367,43 @@ export async function reconcileBrokerProtectiveStops(args: {
   const currentStops = listBrokerProtectiveStops(accountNumber, userId);
   const existing = new Set(currentStops.map((r) => normalizeSymbol(r.symbol)));
 
-  // Coverage source for placement: the caller's pre-reconcile order list, minus anything THIS
-  // reconcile just cancelled (a just-replaced stop still looks live in that stale list and would
-  // otherwise suppress its own replacement).
-  const cancelledThisTick = new Set(out.cancelledOrderIds);
-  const coverageOrders = brokerOrders?.filter((o) => !cancelledThisTick.has(o.id));
-
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;
     if (!(pos.averageCost > 0)) continue;
-    const qty = desiredStopQuantity(pos);
+    // The uncovered remainder (coverage-aware — never stack exit quantity on top of a live bracket
+    // leg / manual sell; the just-cancelled replacement's own order is pruned inside), floored to
+    // whole shares on the native trailing lane. Zero means either full coverage by other live exit
+    // orders or a sub-share remainder — either way the synthetic monitor keeps covering it.
+    const qty = desiredStopQuantity(pos, sym);
     if (!(qty > 0)) {
-      // A sub-1-share position in the native-trailing lane (Alpaca rejects fractional trailing
-      // stops) — the synthetic scheduler-tick monitor keeps covering it.
-      audit("broker_protective_stop_skipped", { symbol: sym, kind, note: "sub-share position — left to the synthetic monitor" }, userId);
+      audit("broker_protective_stop_skipped", {
+        symbol: sym,
+        kind,
+        note: "no uncovered whole shares — other live exit orders (or sub-share size) cover this position; the synthetic monitor covers any remainder"
+      }, userId);
       continue;
     }
-    // Shares already backed by another live exit-side order (an Alpaca OCO bracket stop leg, a
-    // manual GTC sell) can't back a second resting sell — skip instead of provoking a broker
-    // rejection every tick. Unknowable order quantities count as full coverage (failing toward
-    // no-duplicate-sell, mirroring the synthetic monitor's rule).
-    if (coverageOrders) {
-      const cov = liveExitOrderCoverage(coverageOrders, sym, "long");
-      if (cov.unknownQty || cov.coveredQty >= Math.abs(pos.quantity) - 0.000001) {
+    const stopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
+    if (!(stopPrice > 0)) continue;
+    // A trail that is ALREADY breached at placement time (mark at/below the entry-seeded trigger)
+    // must not be armed at the broker: a native trailing order would restart the trail from the
+    // CURRENT depressed market (deferring the exit by another full trail distance), and a ratcheted
+    // stop would rest with its trigger above the market. Skip — and deliberately do NOT advertise
+    // the symbol — so the synthetic monitor registers this tick and fires the app-defined exit
+    // immediately. (Codex review, PR #1331.)
+    if (kind === "trailing") {
+      const mark = pos.marketValue / pos.quantity;
+      if (stopPrice >= mark) {
         audit("broker_protective_stop_skipped", {
           symbol: sym,
           kind,
-          coveredQty: cov.coveredQty,
-          unknownOrderQuantity: cov.unknownQty,
-          note: "another live exit order already covers this position — not stacking a broker stop"
+          stopPrice,
+          mark,
+          note: "trail already breached at placement — leaving the exit to the synthetic monitor instead of arming a fresh, lower broker trail"
         }, userId);
         continue;
       }
     }
-    const stopPrice = kind === "fixed" ? round2(pos.averageCost * (1 - stopPct / 100)) : trailingTriggerPrice(pos);
-    if (!(stopPrice > 0)) continue;
     const refId = `protstop-${userId}-${accountNumber}-${sym}-${Date.now()}`;
     try {
       const exec = await gateway.placeEquityOrder({
@@ -411,8 +451,9 @@ export async function reconcileBrokerProtectiveStops(args: {
         trailPercent: kind === "trailing" ? trailPct : undefined
       });
       out.placed++;
-      out.placedStopSymbols.push(sym);
-      audit("broker_protective_stop_placed", { symbol: sym, kind, stopPrice, trailPercent: kind === "trailing" ? trailPct : undefined, quantity: qty, brokerOrderId: exec.orderId }, userId);
+      if (qty >= Math.abs(pos.quantity) - 0.000001) out.placedStopSymbols.push(sym);
+      else out.partiallyPlacedStopSymbols.push(sym);
+      audit("broker_protective_stop_placed", { symbol: sym, kind, stopPrice, trailPercent: kind === "trailing" ? trailPct : undefined, quantity: qty, positionQuantity: Math.abs(pos.quantity), brokerOrderId: exec.orderId }, userId);
     } catch (err) {
       audit("broker_protective_stop_error", { symbol: sym, stopPrice, error: errMsg(err) }, userId);
     }

@@ -78,7 +78,7 @@ export const ENTRY_QUALITY: FieldDef[] = [
  *  the FALLBACK distance. These now render together under the stop-flow diagram (stop-flow.tsx),
  *  ordered the way the flow reads: distance rules, then the trailing overlay, then who enforces. */
 export const PROTECTIVE_STOPS: FieldDef[] = [
-  { path: "riskRules.stopLossPct", label: "Stop-loss (base %)", kind: "pct", optional: true, looserWhen: "up", hint: "Base stop distance below entry — and the always-on FALLBACK when the per-symbol rules below can't price a name (no bars for ATR, no beta). Wider = looser protection. Clearing it disables ATR/beta stops too: they set the distance OF this stop." },
+  { path: "riskRules.stopLossPct", label: "Stop-loss (base %)", kind: "pct", optional: true, looserWhen: "up", hint: "Base stop distance below entry — and the always-on FALLBACK when the per-symbol rules below can't price a name (no bars for ATR, no beta). Wider = looser protection. ATR/beta set the distance OF this stop. Clearing the field resets it to the shipped 8% default — it does not turn stops off." },
   { path: "atrStops", label: "ATR-based stops", kind: "bool", looserWhen: "off", hint: "First choice for the stop distance: the name's own realized daily range (ATR multiple × ATR ÷ entry). Falls back to beta-scaled/fixed when bars are unavailable." },
   { path: "riskRules.atrStopPeriod", label: "ATR period", kind: "int", optional: true, hint: "Lookback (daily bars) for the ATR read. Default 14." },
   { path: "riskRules.atrStopMultiple", label: "ATR multiple", kind: "int", optional: true, hint: "Stop distance = this many ATRs below entry. Default 2." },

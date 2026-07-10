@@ -120,6 +120,25 @@ npm test
 npm run build
 ```
 
+## Review fixes (Codex, PR #1331 — all six findings valid, fixed in the follow-up commit)
+
+1. **Stop-loss hint honesty:** clearing the field reverts to the shipped 8% default (mergePolicy
+   refills it), it does NOT disable stops — hint rewritten.
+2. **Already-breached trails:** placement now skips (and does not advertise) a trailing stop whose
+   entry-seeded trigger is at/above the current mark — a native order would restart the trail from
+   the depressed market and defer the exit by a full trail distance; the synthetic monitor
+   registers and fires the app-defined exit instead.
+3. **Fractional remainders:** partial placements (floored native trailing, partially-covered
+   positions) are advertised via a new `partiallyPlacedStopSymbols` — the synthetic monitor defers
+   only the FIRE path for them and still REGISTERS, so the remainder is never stop-less for a tick.
+4. **alpaca-mcp transport:** native trailing is REST-only; `alpaca-mcp` accounts (possibly
+   endpoint-only) now take the ratcheted stop_market lane through their own MCP transport.
+5. **Partial coverage sizing:** broker stops are sized to the UNCOVERED remainder
+   (`uncoveredQuantity`, own-order excluded in mismatch checks) — never stacking more exit
+   quantity than the account holds.
+6. **Diagram cadence honesty:** the app-managed enforcement node now says fixed/ATR breaches exit
+   on each STRATEGY RUN while only the trailing monitor evaluates every scheduler tick.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing

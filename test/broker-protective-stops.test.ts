@@ -111,7 +111,7 @@ describe("reconcileBrokerProtectiveStops", () => {
 
   it("no-ops entirely when disabled (paper mode / flag off / wrong broker)", async () => {
     const r = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-5"), accountNumber: "PS-5", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true });
-    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] });
+    expect(r).toEqual({ placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [], partiallyPlacedStopSymbols: [] });
     expect(gw.placed).toHaveLength(0);
   });
 
@@ -302,7 +302,11 @@ describe("reconcileBrokerProtectiveStops — trailing lane", () => {
     });
     expect(r.placed).toBe(1);
     expect(gw.placed[0]).toMatchObject({ symbol: "MSFT", quantity: 10 }); // 10.6 → 10; the synthetic monitor covers the 0.6
-    expect(r.placedStopSymbols).toEqual(["MSFT"]); // NVDA (0.4 sh) is left entirely to the synthetic monitor
+    // A floored (partial) placement must NOT suppress synthetic REGISTRATION — the 0.6-share
+    // remainder still needs app-side protection this tick. It is advertised separately so the
+    // caller only defers the FIRE path. NVDA (0.4 sh) is left entirely to the synthetic monitor.
+    expect(r.placedStopSymbols).toEqual([]);
+    expect(r.partiallyPlacedStopSymbols).toEqual(["MSFT"]);
   });
 
   it("does NOT reprice a native Alpaca trailing stop as the mark moves (the broker trails it)", async () => {
@@ -370,13 +374,42 @@ describe("reconcileBrokerProtectiveStops — trailing lane", () => {
     });
     expect(r.placed).toBe(0);
     expect(gw.placed).toHaveLength(0);
-    // A PARTIAL cover does not suppress the broker stop (protection over dedup — broker may reject, synthetic still covers).
+    // A PARTIAL cover: the broker stop is sized to the UNCOVERED remainder only (never stacking
+    // more exit quantity than the account holds), and advertised as a partial placement.
     const partial = await reconcileBrokerProtectiveStops({
       userId: "local", policy: alpacaTrailPolicy("TR-7"), accountNumber: "TR-7", gateway: gw,
       positions: [longPos("AAPL", 10, 100)], executionMode: "broker/paper", running: true,
       brokerOrders: [liveSellOrder("AAPL", 3)]
     });
     expect(partial.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", quantity: 7 });
+    expect(partial.placedStopSymbols).toEqual([]);
+    expect(partial.partiallyPlacedStopSymbols).toEqual(["AAPL"]);
+  });
+
+  it("does NOT arm a broker trail that is already breached — the synthetic monitor owns the exit", async () => {
+    // avg 100, mark 90, trail 5% → entry-seeded trigger 95 is already breached. A native trailing
+    // order would restart the trail from 90 (deferring the exit by another 5%), and a ratcheted
+    // stop would rest with its trigger above the market — so placement is skipped and the symbol
+    // is NOT advertised, letting the synthetic monitor register and fire the app-defined exit.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-9"), accountNumber: "TR-9", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 90)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(0);
+    expect(gw.placed).toHaveLength(0);
+    expect(r.placedStopSymbols).toEqual([]);
+    expect(r.partiallyPlacedStopSymbols).toEqual([]);
+  });
+
+  it("alpaca-mcp accounts take the RATCHETED lane (stop_market via their MCP transport), not REST-native trailing", async () => {
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("TR-10", { activeBroker: "alpaca-mcp" }), accountNumber: "TR-10", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 120)], executionMode: "broker/paper", running: true
+    });
+    expect(r.placed).toBe(1);
+    expect(gw.placed[0]).toMatchObject({ symbol: "AAPL", type: "stop_market", quantity: 10, stopPrice: 114 });
+    expect(gw.placed[0].trailPercent).toBeUndefined(); // never sends the REST-only native param
   });
 
   it("tears trailing stops down when the owner opts out (brokerTrailingStops: false, no trailing %→fixed either)", async () => {

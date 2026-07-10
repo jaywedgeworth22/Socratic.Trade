@@ -213,7 +213,13 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   // broker merely accepted can still fill, and there a stale skip costs one tick while a wrong fire
   // costs a duplicate market sell.
   let registrationOrders = brokerOrders;
+  // Full-size placements suppress BOTH synthetic registration and fire this tick (the fresh order
+  // can't appear in the stale pre-reconcile list). Partial placements (a floored fractional
+  // remainder, or shares partially covered by another exit order) suppress ONLY the fire path:
+  // registration must proceed so the uncovered remainder isn't left stop-less if the app dies
+  // before the next tick's real quantity-aware coverage takes over.
   const justPlacedBrokerStopSymbols = new Set<string>();
+  const justPlacedPartialBrokerStopSymbols = new Set<string>();
   try {
     const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, brokerOrders });
     if (reconciled.cancelledOrderIds.length > 0) {
@@ -221,6 +227,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
     }
     for (const sym of reconciled.placedStopSymbols) justPlacedBrokerStopSymbols.add(normalizeSymbol(sym));
+    for (const sym of reconciled.partiallyPlacedStopSymbols) justPlacedPartialBrokerStopSymbols.add(normalizeSymbol(sym));
   } catch (err) {
     audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
   }
@@ -341,11 +348,11 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     // duplicate exit, then no protection. Skipping costs one tick of trail responsiveness with
     // full-size broker-held protection resting; the next tick's fresh order fetch restores real
     // quantity-aware coverage.
-    if (justPlacedBrokerStopSymbols.has(normalizeSymbol(stop.symbol))) {
+    if (justPlacedBrokerStopSymbols.has(normalizeSymbol(stop.symbol)) || justPlacedPartialBrokerStopSymbols.has(normalizeSymbol(stop.symbol))) {
       audit("synthetic_stop_skipped_resting_exit", {
         symbol: stop.symbol,
         positionQty,
-        note: "broker-held protective stop placed this tick — full-size protection resting; deferring fire to next tick's fresh coverage"
+        note: "broker-held protective stop placed this tick — resting protection the stale coverage list can't see; deferring fire to next tick's fresh coverage"
       }, userId);
       continue;
     }

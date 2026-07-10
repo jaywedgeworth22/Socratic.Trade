@@ -104,7 +104,9 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
 
   const enforcementParts: string[] = [];
   if (bracketsOn) enforcementParts.push("Alpaca bracket legs");
-  if (brokerTrailOn) enforcementParts.push(isAlpaca ? "native trailing stop" : "ratcheted trailing stop");
+  // Native trailing_stop orders are an Alpaca REST feature; alpaca-mcp and Robinhood get the
+  // app-ratcheted resting stop (see broker-protective-stops.ts).
+  if (brokerTrailOn) enforcementParts.push(broker === "alpaca" ? "native trailing stop" : "ratcheted trailing stop");
   if (rhStopsOn && !brokerTrailOn) enforcementParts.push("Robinhood resting stop");
 
   const enforcement: StopFlowLane = {
@@ -122,11 +124,15 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
       },
       {
         key: "app",
-        title: "App monitor",
-        value: "every scheduler tick",
+        title: "App-managed",
+        // Honest cadence: fixed/ATR/beta breaches exit via the deterministic risk check at the top
+        // of each STRATEGY RUN; only the trailing monitor evaluates on the ~1-minute scheduler
+        // tick (and only when a trailing % is set). Saying "every tick" for everything overstated
+        // protection for accounts whose broker can't hold the fixed stop.
+        value: trailingOn ? "trail: every tick · stops: each strategy run" : "stops: each strategy run",
         active: true,
         detail:
-          "The always-on fallback: each cycle it checks every position quantity-aware and fires a market exit on a breach — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting."
+          "The always-on, quantity-aware fallback. Fixed/ATR/beta breaches exit through the deterministic risk check at the start of each strategy run; the trailing monitor evaluates every scheduler tick (~1 min) when a trailing % is set — covering fractional shares, brokers without a needed order type, and anything a broker-held order doesn't. Pauses while the account is Stopped; broker-held orders keep resting."
       }
     ],
     note: "A position's shares can only back ONE resting sell at the broker — the app monitor layers the remaining rules on top."
