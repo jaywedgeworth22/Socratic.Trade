@@ -8,6 +8,23 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-10 — merge-shepherd server-side environment branch gate (CLAUDE subagent, branch `claude/shepherd-environment-gate`)
+#1266 follow-up: the merge-shepherd job's `if: github.ref == 'refs/heads/main'` guard is
+YAML — branch-editable, and a `workflow_dispatch` against a non-main branch loads that
+branch's copy of the file before evaluating the `if:`. Created a GitHub **Environment**
+named `merge-shepherd` via the Environments API with `deployment_branch_policy` locked to
+`main` (`custom_branch_policies: true`, branch policy `main` only) — this is enforced
+server-side by GitHub before the job dispatches, not something a branch's workflow file can
+override. Wired `environment: merge-shepherd` into `.github/workflows/merge-shepherd.yml`'s
+`shepherd` job (kept the existing `if:` guard as defense-in-depth, not a replacement), and
+added `deployments: write` to the job's permissions allow-list since referencing an
+environment makes GitHub track a deployment record per run and this workflow already scopes
+`GITHUB_TOKEN` down to an explicit list. `SHEPHERD_TOKEN` does not currently exist as a repo secret — nothing to migrate; if/when
+added it should be an **environment secret** on `merge-shepherd`, which needs an owner
+action (the API can create/gate the environment but cannot read or copy secret values). No
+app code touched — workflow + docs only. Ready for the serialized Land phase. See
+`docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
+
 ## 2026-07-10 — Green/Red picker label coloring + copy sweep (CLAUDE, branch `claude/green-red-labels`)
 Owner-directed pure display-copy change. Field labels for the two model pickers now read
 "Proposer Model" / "Reviewer Model" with only "Proposer"/"Reviewer" colored (green

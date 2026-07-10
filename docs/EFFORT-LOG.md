@@ -1456,6 +1456,27 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **merge-shepherd: server-side environment branch gate — #1266 follow-up (CLAUDE subagent,
+  branch `claude/shepherd-environment-gate`) — IN PROGRESS 2026-07-10, code done, ready for
+  the serialized Land phase.** #1266 hardened the merge-shepherd job with an `if: github.ref
+  == 'refs/heads/main'` guard, but that guard is branch-editable — a `workflow_dispatch`
+  against a non-main branch loads THAT branch's copy of the YAML, so a branch could in theory
+  strip or invert the guard before it's evaluated. Honest fix is a GitHub **Environment** with
+  a `deployment_branch_policy` locked to `main`, enforced server-side by GitHub before the job
+  dispatches — not editable via any branch's workflow file. Created environment
+  `merge-shepherd` via the Environments API
+  (`deployment_branch_policy: {protected_branches:false, custom_branch_policies:true}` +
+  branch policy `main`, verified idempotent — repeat POSTs don't duplicate the policy) and
+  wired `environment: merge-shepherd` into the `shepherd` job in
+  `.github/workflows/merge-shepherd.yml`, keeping the existing `if:` guard as
+  defense-in-depth. Added `deployments: write` to the job's explicit permissions allow-list
+  (unlisted scopes default to `none`, and referencing an environment makes GitHub track a
+  deployment record per run). `SHEPHERD_TOKEN` does not currently exist as a repo secret (confirmed via
+  `gh secret list` — the workflow's `secrets.SHEPHERD_TOKEN || secrets.GITHUB_TOKEN` fallback
+  is presently just using `GITHUB_TOKEN`), so there is nothing to migrate; when/if the owner
+  adds it, it should go on as an **environment secret** scoped to `merge-shepherd` rather than
+  a repo secret (the API cannot read/copy secret values, only an interactive owner action can
+  set one). See `docs/rollouts/2026-07-10-shepherd-environment-gate.md`.
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,
