@@ -10,7 +10,7 @@ import {
   desiredBrokerStopKind,
   reconcileBrokerProtectiveStops
 } from "../src/lib/broker-protective-stops";
-import { getDb, listBrokerProtectiveStops } from "../src/lib/db";
+import { getDb, listBrokerProtectiveStops, listFillEvents } from "../src/lib/db";
 import type { BrokerGateway, EquityOrder, EquityPosition, TradingPolicy } from "../src/lib/types";
 
 beforeAll(() => {
@@ -785,5 +785,103 @@ describe("reconcileBrokerProtectiveStops — round-7: never cancel an ACTIVELY E
     expect(r.cancelled).toBe(0);
     expect(gw.cancelled).toEqual([]);
     expect(listBrokerProtectiveStops("R7-1", "local")[0]).toMatchObject({ brokerOrderId: "ord-1", quantity: 10 });
+  });
+});
+
+describe("reconcileBrokerProtectiveStops — round-9 (Codex review, PR #1331)", () => {
+  let gw: ReturnType<typeof fakeGateway>;
+  beforeEach(() => { gw = fakeGateway(); });
+
+  it("recovers a FILLED broker-held stop during disabled teardown (kind === null) instead of retrying its cancel forever with the fill never booked", async () => {
+    // Place while the fixed lane is enabled...
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-TEARDOWN"), accountNumber: "R9-TEARDOWN", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-TEARDOWN", "local")).toHaveLength(1);
+
+    // ...then the feature is turned off (kind resolves to null) WHILE the stop already filled at the
+    // broker. The cancel attempt fails (a filled order can't be cancelled), and the caller's order
+    // list shows it as terminal-filled.
+    gw.failCancel = true;
+    const filledOrder: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled",
+      filledQuantity: 10, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-TEARDOWN", { robinhoodBrokerStops: false }), accountNumber: "R9-TEARDOWN", gateway: gw,
+      positions: [], executionMode: "broker/live", running: true, orders: [filledOrder]
+    });
+    expect(r.cancelled).toBe(0); // the cancel call itself still failed
+    expect(listBrokerProtectiveStops("R9-TEARDOWN", "local")).toHaveLength(0); // but recovered, not left pending_cancel
+    expect(listFillEvents("R9-TEARDOWN", "live")).toHaveLength(1); // the fill IS booked, not lost
+    expect(listFillEvents("R9-TEARDOWN", "live")[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 10, status: "filled" });
+  });
+
+  it("books a PARTIAL fill during stale-row cleanup even when the tracked order's overall terminal state is canceled/expired, not literally 'filled'", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-PARTIAL"), accountNumber: "R9-PARTIAL", gateway: gw,
+      positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-PARTIAL", "local")).toHaveLength(1);
+
+    // The resting stop partially executed (3 of 10 shares) before the remainder was canceled —
+    // overall state is "canceled", not "filled", but real shares DID trade.
+    const partiallyExecutedThenCanceled: EquityOrder = {
+      id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "canceled",
+      filledQuantity: 3, averagePrice: 92, createdAt: new Date().toISOString()
+    };
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local", policy: rhPolicy("R9-PARTIAL"), accountNumber: "R9-PARTIAL", gateway: gw,
+      positions: [longPos("AAPL", 7, 100)], executionMode: "broker/live", running: true,
+      orders: [partiallyExecutedThenCanceled]
+    });
+    expect(listBrokerProtectiveStops("R9-PARTIAL", "local")).toHaveLength(0);
+    expect(r.filledRecoverySymbols).toEqual(["AAPL"]); // deferred like a full fill — position moved
+    const fills = listFillEvents("R9-PARTIAL", "live");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ symbol: "AAPL", side: "sell", quantity: 3, price: 92, status: "filled" });
+  });
+
+  it("never reseeds a native trail's mismatch-driven REPLACEMENT looser than the broker's own (never independently registered) high-water mark", async () => {
+    // Entry 100, rally to 130 — the native trail seeds at 130 * 0.95 = 123.50. Full native coverage
+    // means the synthetic monitor never registers its own row for this symbol, so
+    // extremePriceBySymbol has no entry for it at all.
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R9-HWM"), accountNumber: "R9-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-HWM", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 });
+
+    // Price pulls back to 126 (still above entry, but below the true 130 peak) and the trail %
+    // changes 5% -> 6%, forcing a mismatch check. A naive trackedExtreme=0 would compute
+    // 126 * (1 - 0.06) = 118.44 and wrongly permit replacing the existing (tighter) 123.50 stop with
+    // this looser one — reducing real protection on a live position.
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R9-HWM", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R9-HWM", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 126)], executionMode: "broker/paper", running: true
+    });
+    expect(r.cancelled).toBe(0); // refused — the backfilled 130 peak means 126 is still a pullback
+    expect(gw.cancelled).toEqual([]);
+    expect(listBrokerProtectiveStops("R9-HWM", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 }); // unchanged
+  });
+
+  it("still allows the mismatch-driven replacement once the mark genuinely reaches/exceeds the backfilled peak", async () => {
+    await reconcileBrokerProtectiveStops({
+      userId: "local", policy: alpacaTrailPolicy("R9-HWM-2"), accountNumber: "R9-HWM-2", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 130)], executionMode: "broker/paper", running: true
+    });
+    expect(listBrokerProtectiveStops("R9-HWM-2", "local")[0]).toMatchObject({ stopPrice: 123.5, trailPercent: 5 });
+
+    const r = await reconcileBrokerProtectiveStops({
+      userId: "local",
+      policy: alpacaTrailPolicy("R9-HWM-2", { riskRules: { ...DEFAULT_POLICY.riskRules, trailingStopPct: 6 } }),
+      accountNumber: "R9-HWM-2", gateway: gw,
+      positions: [markedPos("AAPL", 10, 100, 135)], executionMode: "broker/paper", running: true // above the 130 peak
+    });
+    expect(r.cancelled).toBe(1);
+    expect(listBrokerProtectiveStops("R9-HWM-2", "local")[0]).toMatchObject({ trailPercent: 6, stopPrice: 126.9 }); // 135 * 0.94
   });
 });

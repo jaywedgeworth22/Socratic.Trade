@@ -1539,8 +1539,8 @@ As of 2026-07-08 (assignment-rule update).
   plumbing" advanced group merged into ONE "Protective stops" card with a dynamic stop-flow
   diagram (ATR → beta → flat distance fallback, trailing overlay, broker-held → app-monitor
   enforcement). Rollout: `docs/rollouts/2026-07-10-broker-trailing-stops-ui-consolidation.md`.
-  **PR #1331 open, 8 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
-  round 1-8" sections); round 5: OCO-pairing now requires a created-together time window (no
+  **PR #1331 open, 9 Codex review rounds fixed so far** (see the rollout doc's "Review fixes
+  round 1-9" sections); round 5: OCO-pairing now requires a created-together time window (no
   longer conflates two independent equal-qty manual orders as one bracket), a stale `resting`
   broker-stop row is now checked against the tracked order's actual terminal state, an oversized
   existing stop is cancelled even when other-order coverage is unknown this tick, and a pure
@@ -1564,8 +1564,15 @@ As of 2026-07-08 (assignment-rule update).
   call, so the map needed seeding from DB state at declaration, not only refreshed after
   reconcile); and a broker-held stop recognized as FILLED during stale-row cleanup now books a
   `fill_events` row (`bookBrokerHeldStopFill`) before its row is deleted, instead of the exit
-  silently vanishing from P&L/learning/activity. Gates green
-  (lint/tsc/3434 tests/build) in the isolated worktree.
+  silently vanishing from P&L/learning/activity; round 9: the DISABLED-teardown path
+  (`kind === null`) now recovers a FILLED stop the same way section 1 does (previously retried its
+  cancel forever with the fill never booked); a new `hadExecutedFill` predicate books a fill at all
+  three recovery sites on the literal "filled" state OR a positive `filledQuantity` regardless of
+  state, so a PARTIAL fill that terminates as canceled/expired is no longer lost; and a native
+  trail's mismatch-driven replacement now backfills a missing tracked high-water mark from the
+  existing stop's own recorded `stopPrice`/`trailPercent` (inverting the ratchet math) so it can
+  never reseed looser than the broker's own already-moved-up peak. Gates green
+  (lint/tsc/3438 tests/build) in the isolated worktree.
 - **PR #1229 residual (a): dead `pending_cancel` broker-protective-stop rows can now self-heal
   (CLAUDE, branch `claude/broker-stop-residuals`) — IN PROGRESS 2026-07-10, gates green, PR #1352
   open with squash-auto-merge armed (round-3 pickup landing).** Closes the accepted-residual
