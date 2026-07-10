@@ -432,6 +432,23 @@ As of 2026-07-08 (assignment-rule update).
   (`withProvenance`/`cellTitle` no longer stamp "Received <time>" on fields no provider returned);
   regression test for candidateLimit+extras full coverage. PR via land.sh when verify is green.
 
+- **Enrichment NO-CAP revision + filings warm-up receipts/ingestion (MONET, session
+  `aapl-fundamentals-missing-e3ea01`, branch `monet/aapl-fundamentals-missing-e3ea01`) — IN
+  PROGRESS 2026-07-09, owner-directed; supersedes PR #1272 (stuck on a phantom GitHub DIRTY
+  mergeable-state; `git merge-tree` clean; its content is merged into this branch).** Owner
+  rulings in-session: (1) NO hard enrichment-symbol cap — "no cap at all or multiple hundreds",
+  >50 positions is a supported future; `maxSymbols()` = Infinity unless `FMP_MAX_SYMBOLS` set
+  (unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP` removed; webull +
+  robinhood-options env overrides unclamped (defaults unchanged). (2) Fix the "document looked
+  for but not found" receipts: neutral "Filings library still warming up" copy with ingested
+  counts (was warning-orange "never ingested" on every stock); demand-first SEC ingestion
+  (watchlists + last-scan candidates incl. holdings before the alphabetical universe); paid-tier
+  per-run default 25 (was 1); `SEC_FILING_INGEST_TTL_HOURS` cadence knob; admin reindex route
+  forces past the TTL stamp (used to silently no-op). Rollouts:
+  `2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` + owner-ruling revision section in
+  `2026-07-09-enrichment-starvation-fix.md`. Prod env follow-up after deploy:
+  `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+
 - **Reviewer veto value-add in the Model Stats drawer (MONET, worktree
   `~/apps/trading-monet-reviewer-perf`, branch `monet/reviewer-veto-valueadd-stats`) — IN PROGRESS
   2026-07-09, owner-directed; PR opened via land.sh, auto-merge armed.** Plumbing-only: surfaces the

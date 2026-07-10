@@ -127,3 +127,32 @@ MONET's session ended with this work uncommitted; CLAUDE committed and landed it
 - Full gate re-run post-merge (`npm run lint`, `npx tsc --noEmit`, `npm test`,
   `npm run build`) — results recorded in the landing PR; landed via `bash scripts/land.sh`
   with `gh pr merge --squash --auto`.
+
+## Owner-ruling revision (MONET, 2026-07-09, session `aapl-fundamentals-missing-e3ea01`, supersedes the budget-derivation semantics above)
+
+After PR #1272 went up, the owner ruled in-session: **no hard enrichment-symbol cap** —
+"there doesn't need to be a hard cap at all, or if there is one it should be multiple
+hundreds"; more than 50 positions in one account is a supported future. The derivation
+above (`candidateLimit + reserve + HELD_SYMBOL_ALLOWANCE`, capped at 50) would silently
+re-create the starvation the day the account outgrows it, and a fixed 12-name held
+allowance is the same bug at a different number.
+
+Revised semantics (this branch, landed on top of the #1272 content):
+
+- `maxSymbols()` returns `Infinity` unless `FMP_MAX_SYMBOLS` is set — providers enrich
+  **every symbol they're asked for**; the scan's candidate list IS the budget.
+  `HELD_SYMBOL_ALLOWANCE`, `MAX_SYMBOLS_CAP`, and the scan-settings derivation are gone.
+- `FMP_MAX_SYMBOLS` stays as an EXPLICIT operator throttle, now **unclamped** (a
+  silently-clamped override is a cage, not a setting — guardrails philosophy).
+- `WEBULL_UNOFFICIAL_MAX_SYMBOLS` env override unclamped too (default 20 unchanged);
+  `ROBINHOOD_OPTIONS_MAX_SYMBOLS` added for the options tier's own first-N slice
+  (default 20 unchanged).
+- Quota realities stay where they belong: per-provider pacers (provider-rate-limit.ts),
+  TwelveData's credit window + negative cache (#1222), the Alpha Vantage daily key pool,
+  and the 6h fundamentals cache. Known trade-off: a cold scan over a large candidate
+  list takes longer (finnhub pacer ≈ 1.2s/call × 5 calls/symbol); the strategy path has
+  no timeout so it stalls rather than blanks, and the 6h cache makes only the first run
+  heavy. The kept enrichment-priority reordering (held + outliers first) also decides
+  who wins scarce TwelveData credits.
+- Regression tests updated: unclamped override (60 > old cap honored), no-env 120-symbol
+  list fully enriched, plus the two #1272 coverage tests unchanged.

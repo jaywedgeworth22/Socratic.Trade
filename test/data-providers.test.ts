@@ -1937,19 +1937,29 @@ describe("enrichment symbol budget covers the full scan candidate set (starvatio
     }
   });
 
-  it("keeps FMP_MAX_SYMBOLS as an absolute operator override and MAX_SYMBOLS_CAP as the cost bound", async () => {
+  it("keeps FMP_MAX_SYMBOLS as an explicit operator throttle — unclamped, with NO default cap", async () => {
     process.env.FMP_MAX_SYMBOLS = "10";
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     let fetched = stubSymbolRecordingFetch();
     await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(candidates);
     expect(fetched.size).toBe(10);
 
+    // The override is not silently clamped: an operator asking for 60 gets 60 (the old
+    // MAX_SYMBOLS_CAP=50 would have quietly cut this — owner ruling 2026-07-09: no hard cap).
+    process.env.FMP_MAX_SYMBOLS = "60";
+    clearEnrichmentCache();
+    fetched = stubSymbolRecordingFetch();
+    const seventy = Array.from({ length: 70 }, (_, i) => `OVR${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(seventy);
+    expect(fetched.size).toBe(60);
+
+    // No env set: the full requested list is enriched, however large. An account with more
+    // than 50 positions must never see its held names starved by a provider-side ceiling.
     delete process.env.FMP_MAX_SYMBOLS;
     clearEnrichmentCache();
     fetched = stubSymbolRecordingFetch();
-    // 60 distinct symbols — more than the 50-symbol cap: quota safety must still win.
-    const sixty = Array.from({ length: 60 }, (_, i) => `CAP${i}`);
-    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(sixty);
-    expect(fetched.size).toBe(50);
+    const bigBook = Array.from({ length: 120 }, (_, i) => `POS${i}`);
+    await new FinnhubEnrichmentProvider(`env-key-${randomUUID()}`, "env").enrich(bigBook);
+    expect(fetched.size).toBe(120);
   });
 });

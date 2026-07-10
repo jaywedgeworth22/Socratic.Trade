@@ -8,6 +8,22 @@ steps materially change.
 > (Planned / In Progress / Completed / Deployed-to-prod). Every agent keeps it
 > current per the `AGENTS.md` handoff protocol.
 
+## 2026-07-09 — Enrichment no-cap revision + filings warm-up receipts (MONET, branch `monet/aapl-fundamentals-missing-e3ea01`)
+Owner rulings from the AAPL-fundamentals session, landed on top of the #1272 content (that PR
+is superseded — GitHub stuck it on a phantom DIRTY mergeable-state; `git merge-tree` is clean):
+(1) **No hard enrichment cap** — `maxSymbols()` is now Infinity unless `FMP_MAX_SYMBOLS` is set
+(unclamped explicit throttle); `HELD_SYMBOL_ALLOWANCE`/`MAX_SYMBOLS_CAP=50` removed — an
+account with >50 positions must never see held names starved. Webull/Robinhood-options env
+overrides unclamped too (defaults unchanged). (2) **Filings receipts + ingestion**: the
+"Requested filings doc type never ingested" warning on every stock is now a neutral "Filings
+library still warming up" receipt with ingested counts; SEC ingestion is demand-first
+(watchlist + last-scan candidates incl. holdings before the alphabetical universe), paid-tier
+per-run default 25 (was 1), TTL env-tunable (`SEC_FILING_INGEST_TTL_HOURS`), and the admin
+backfill route now forces past the TTL stamp instead of silently no-oping. Prod env still
+needed to unlock paid pace: `VECTOR_EMBED_BATCH_DELAY_MS=0`, `SEC_FILING_INGEST_TTL_HOURS=24`.
+See `docs/rollouts/2026-07-09-filings-warmup-receipts-and-ingest-pacing.md` and the
+owner-ruling revision section in `docs/rollouts/2026-07-09-enrichment-starvation-fix.md`.
+
 ## 2026-07-09 — Enrichment starvation fix landed (MONET, branch `monet/bold-lamport-20a8f9`)
 Fixed the prod-verified starvation (30/42 candidates enriched, 2026-07-09T19:41Z run): the
 per-provider enrichment budget is now derived from the real scan shape (candidateLimit +

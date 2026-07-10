@@ -31,7 +31,6 @@ import { loadTickerCikMap } from "./web-sources/sec8k";
 import { padCik } from "./web-sources/sec-filings";
 import { withProviderLimit, scrubProviderErrorText, scrubProviderErrorTextForPool, appendErrorCause } from "./provider-rate-limit";
 import { AlphaVantageKeyPool, getPoolForKeys, isAlphaVantageDailyCapMessage } from "./alpha-vantage-key-pool";
-import { normalizeMarketScanCandidateLimit, normalizeMarketScanOutlierReserve } from "./scan-settings";
 
 // ── Enrichment cache scoping (mirrors src/lib/history.ts) ─────────────────────
 // Data fetched with a user's own stored key is scoped to that user (private) or
@@ -267,11 +266,6 @@ export function analystScoreFromMean(mean: number): number {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60_000; // fundamentals move slowly; cache 6h
-// The scan force-includes names past the ranked top-N: up to `outlierReserve` event
-// outliers plus every held position outside both sets. Holdings are dynamic, so this
-// is an allowance, not an exact count; MAX_SYMBOLS_CAP bounds the worst case.
-const HELD_SYMBOL_ALLOWANCE = 12;
-const MAX_SYMBOLS_CAP = 50;
 const CONCURRENCY = 5;
 const cache = new Map<string, { expiresAt: number; data: SymbolEnrichment }>();
 const originalSet = cache.set.bind(cache);
@@ -353,21 +347,19 @@ export function alpacaSnapshotTtlMs(): number {
   return Number.isFinite(value) && value >= 0 ? value : DEFAULT_ALPACA_SNAPSHOT_TTL_MS;
 }
 
-// Cover the REAL scan candidate set — top-`candidateLimit` ranked names PLUS the
-// force-included extras (event outliers + held positions) — so every row the dashboard
-// displays and every position the agent owns gets enriched. A fixed budget of 30 starved
-// the extras: the first-wins slice below dropped exactly the held names off the end of
-// every provider's list (all-dash Fundamentals for owned positions, prod 2026-07-09).
-// FMP_MAX_SYMBOLS remains an absolute operator override; otherwise the budget tracks the
-// same MARKET_SCAN_LIMIT / MARKET_SCAN_EVENT_RESERVE knobs the scan itself reads.
-// MAX_SYMBOLS_CAP bounds quota cost (Finnhub free tier is 60 calls/min; the shared pacer
-// in provider-rate-limit.ts spaces the extra calls).
+// Providers enrich EVERY symbol they're asked for — the scan's candidate list (top-N ranked
+// + event outliers + all held positions) IS the budget. A fixed provider-side cap starved
+// whatever the scan appended past it (all-dash Fundamentals for the owner's own positions,
+// prod 2026-07-09), and any hard ceiling recreates that bug the day the account outgrows it
+// (owner ruling 2026-07-09: no hard cap — >50 positions is a supported future).
+// FMP_MAX_SYMBOLS stays as an EXPLICIT operator throttle for quota thrift — unclamped,
+// because a silently-clamped override is a cage, not a setting. Quota realities live where
+// they belong: the per-provider pacers in provider-rate-limit.ts, TwelveData's credit
+// window, Alpha Vantage's daily key pool, and the 6h fundamentals cache above.
 function maxSymbols(): number {
   const explicit = Number(process.env.FMP_MAX_SYMBOLS);
-  if (Number.isFinite(explicit) && explicit > 0) return Math.min(explicit, MAX_SYMBOLS_CAP);
-  const candidateLimit = normalizeMarketScanCandidateLimit(process.env.MARKET_SCAN_LIMIT);
-  const outlierReserve = normalizeMarketScanOutlierReserve(process.env.MARKET_SCAN_EVENT_RESERVE, candidateLimit);
-  return Math.min(candidateLimit + outlierReserve + HELD_SYMBOL_ALLOWANCE, MAX_SYMBOLS_CAP);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  return Number.POSITIVE_INFINITY;
 }
 
 // Twelve Data's /quote endpoint costs ONE credit per symbol; the free Basic tier grants ~8
@@ -1240,10 +1232,12 @@ export function finnhubDropRecommendationEnabled(): boolean {
   return flagEnabled(process.env.FINNHUB_DROP_RECOMMENDATION);
 }
 
+// Default 20 is deliberate (unofficial scraping endpoint; burst-sensitive), but the env
+// override is unclamped — an operator raising it is making an explicit decision.
 function webullUnofficialMaxSymbols(): number {
   const value = Number(process.env.WEBULL_UNOFFICIAL_MAX_SYMBOLS ?? DEFAULT_WEBULL_UNOFFICIAL_MAX);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_WEBULL_UNOFFICIAL_MAX;
-  return Math.min(value, MAX_SYMBOLS_CAP);
+  return Math.floor(value);
 }
 
 function webullUnofficialTimeoutMs(): number {

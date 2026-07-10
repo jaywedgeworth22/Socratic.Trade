@@ -110,7 +110,7 @@ FINNHUB_API_KEY=...
 
 # Optional: Financial Modeling Prep (adds P/E + analyst consensus; Finnhub preferred).
 FMP_API_KEY=...
-FMP_MAX_SYMBOLS=15               # absolute enrichment-budget override (free-tier quota friendly); unset, the budget covers the scan's candidate limit + event outliers + held positions (max 50)
+FMP_MAX_SYMBOLS=15               # optional explicit enrichment throttle (free-tier quota thrift); unset, the FULL scan candidate list is enriched — no cap
 NEWS_CACHE_TTL_MS=21600000       # enrichment cache TTL (default 6h)
 
 # Optional: Alpha Vantage NEWS_SENTIMENT enrichment.

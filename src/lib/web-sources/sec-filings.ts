@@ -22,8 +22,14 @@ const SEC_BASE = "https://www.sec.gov";
 const EDGAR_DATA_BASE = "https://data.sec.gov";
 
 // The TTL for the per-symbol "last attempted filing ingest" stamp.
-// Weekly: 10-K/10-Q cadence is quarterly; no need to re-check before 7 days.
-const FILING_INGEST_TTL_MS = 7 * 24 * 60 * 60_000;
+// Weekly by default: 10-K/10-Q cadence is quarterly, so a free-tier corpus doesn't need
+// re-checking sooner. Operators draining the ingest backlog (paid Voyage key) lower it via
+// SEC_FILING_INGEST_TTL_HOURS (e.g. 24) so the capped per-run ingest runs daily instead.
+const DEFAULT_FILING_INGEST_TTL_HOURS = 7 * 24;
+function filingIngestTtlMs(): number {
+  const hours = Number(process.env.SEC_FILING_INGEST_TTL_HOURS ?? DEFAULT_FILING_INGEST_TTL_HOURS);
+  return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_FILING_INGEST_TTL_HOURS) * 60 * 60_000;
+}
 const ATTEMPT_KEY = "webSource:sec10k:lastAttempt";
 
 // Polite delay between per-CIK submissions-JSON fetches (300 ms per EDGAR fair-use guidance).
@@ -32,7 +38,12 @@ const CIK_POLITE_DELAY_MS = 300;
 // Threshold above which we treat VECTOR_EMBED_BATCH_DELAY_MS as free-tier (unpaid Voyage).
 // Default is 21_000 ms; operators with a paid key set this to 0 (or very low).
 const PAID_KEY_THRESHOLD_MS = 5_000;
+// Free tier: 1 filing/run — at 21s per 8-chunk embed batch a single 10-K takes minutes, so a
+// bigger cap would stall the scheduler tick for hours. Paid tier: a cap of 1 made the ~2,000
+// filing backlog take decades (prod 2026-07-09: two filings ever ingested); 25/run at the paid
+// embed pace is minutes of work, and RAG_INGEST_MAX_TEXTS_PER_DAY still bounds daily spend.
 const DEFAULT_MAX_FILINGS_PER_RUN = 1;
+const DEFAULT_PAID_MAX_FILINGS_PER_RUN = 25;
 
 export interface FilingRef {
   accession: string;   // dashed form: NNNNNNNNNN-YY-NNNNNN
@@ -290,44 +301,58 @@ function isFreeTier(): boolean {
 }
 
 function maxFilingsPerRunFromEnv(): number {
-  const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN ?? DEFAULT_MAX_FILINGS_PER_RUN);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_FILINGS_PER_RUN;
+  const parsed = Number(process.env.SEC_FILING_RAG_MAX_PER_RUN);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  return isFreeTier() ? DEFAULT_MAX_FILINGS_PER_RUN : DEFAULT_PAID_MAX_FILINGS_PER_RUN;
 }
 
-/** Whether we're due for a filing ingest check (weekly TTL). */
+/** Whether we're due for a filing ingest check (TTL per SEC_FILING_INGEST_TTL_HOURS, default weekly). */
 export function isFilingIngestDue(now: number = Date.now()): boolean {
   const last = getInternalSetting<string>(ATTEMPT_KEY);
   if (!last) return true;
-  return now - Date.parse(last) >= FILING_INGEST_TTL_MS;
+  return now - Date.parse(last) >= filingIngestTtlMs();
 }
 
 /**
- * Refresh 10-K/10-Q body ingestion for the given symbol list.
+ * Refresh 10-K/10-Q body ingestion for the given symbol list. Symbols are processed in the
+ * order given — callers put the highest-demand names (held positions, watchlists) FIRST so a
+ * capped run ingests the filings decisions actually retrieve against.
  *
  * Free-tier (VECTOR_EMBED_BATCH_DELAY_MS > 5000): processes at most 1 filing total per
  * invocation to avoid multi-hour scheduler stalls. The function is still called every tick but
- * the TTL gate (isFilingIngestDue) means it's a no-op until a week has passed.
+ * the TTL gate (isFilingIngestDue) means it's a no-op until the TTL has passed.
  *
- * Paid-tier (VECTOR_EMBED_BATCH_DELAY_MS <= 5000): processes up to `maxPerRun` filings per
- * invocation (default: SEC_FILING_RAG_MAX_PER_RUN, or 1).
+ * Paid-tier (VECTOR_EMBED_BATCH_DELAY_MS <= 5000): processes up to SEC_FILING_RAG_MAX_PER_RUN
+ * filings per invocation (default 25).
+ *
+ * An EXPLICIT `maxPerRun` (the admin backfill route's `limit`) is an operator decision and wins
+ * outright — including on free-tier env, where the caller is accepting the slow embed pacing.
+ * `opts.force` skips the TTL gate (again: the admin backfill route, which used to silently
+ * no-op for up to a week after any scheduler attempt).
  *
  * Never throws — all errors are captured in the returned result and the audit log.
  */
 export async function refreshFilingBodies(
   symbols: string[],
   now: number = Date.now(),
-  maxPerRun = maxFilingsPerRunFromEnv()
+  maxPerRun?: number,
+  opts?: { force?: boolean }
 ): Promise<RefreshFilingBodiesResult> {
   const result: RefreshFilingBodiesResult = { attempted: 0, ingested: 0, skipped: 0, errors: [] };
 
   if (symbols.length === 0) return result;
-  if (!isFilingIngestDue(now)) return result;
+  if (!opts?.force && !isFilingIngestDue(now)) return result;
 
   // Mark attempt so the next tick won't immediately retry
   setInternalSetting(ATTEMPT_KEY, new Date(now).toISOString());
 
   const freeTier = isFreeTier();
-  const cap = freeTier ? 1 : (Number.isFinite(maxPerRun) ? maxPerRun : Number.POSITIVE_INFINITY);
+  const cap =
+    typeof maxPerRun === "number" && Number.isFinite(maxPerRun) && maxPerRun > 0
+      ? Math.floor(maxPerRun)
+      : freeTier
+        ? DEFAULT_MAX_FILINGS_PER_RUN
+        : maxFilingsPerRunFromEnv();
 
   let cikMap: Record<string, string>;
   try {
@@ -386,6 +411,6 @@ export async function refreshFilingBodies(
     }
   }
 
-  audit("sec_filing_refresh", { symbols: symbols.length, ...result, freeTier });
+  audit("sec_filing_refresh", { symbols: symbols.length, ...result, freeTier, forced: Boolean(opts?.force) });
   return result;
 }
