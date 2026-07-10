@@ -374,6 +374,55 @@ describe("enrichment cache consent gate", () => {
     else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
   });
 
+  it("TwelveData does NOT negative-cache a transient per-symbol error (429), only a permanent one (404)", async () => {
+    const { TwelveDataEnrichmentProvider, clearEnrichmentCache, __resetTwelveDataWindowForTests } = await import("../src/lib/data-providers");
+    clearEnrichmentCache();
+    __resetTwelveDataWindowForTests();
+
+    let queried: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const m = String(url).match(/[?&]symbol=([^&]+)/);
+      const syms = m ? decodeURIComponent(m[1]).split(",") : [];
+      queried = syms;
+      const body: Record<string, unknown> = {};
+      for (const s of syms) {
+        if (s === "RATELIMITED") body[s] = { code: 429, status: "error", message: "out of API credits" };
+        else if (s === "NOTFOUND") body[s] = { code: 404, status: "error", message: "symbol not found" };
+        else body[s] = { symbol: s, close: "10" };
+      }
+      return new Response(JSON.stringify(body));
+    });
+
+    const key = `env-key-${randomUUID()}`;
+    // Budget of 1 symbol/call isolates each symbol's own scan so re-query behavior is unambiguous.
+    const prevBudget = process.env.TWELVEDATA_CREDITS_PER_MIN;
+    process.env.TWELVEDATA_CREDITS_PER_MIN = "1";
+
+    // RATELIMITED (transient 429): must NOT be negative-cached, so it's still a miss — and gets
+    // re-queried — on the very next scan once the credit window elapses.
+    const p1 = new TwelveDataEnrichmentProvider(key, "env");
+    const res1 = await p1.enrich(["RATELIMITED"]);
+    expect(res1.RATELIMITED).toEqual({});
+    __resetTwelveDataWindowForTests();
+    const p2 = new TwelveDataEnrichmentProvider(key, "env");
+    await p2.enrich(["RATELIMITED"]);
+    expect(queried).toEqual(["RATELIMITED"]); // scan 2 re-queried it, not suppressed by a negative cache
+
+    // NOTFOUND (permanent 404): IS negative-cached, so a later scan rotates past it to GOOD instead
+    // of re-querying the still-dead symbol.
+    __resetTwelveDataWindowForTests();
+    const p3 = new TwelveDataEnrichmentProvider(key, "env");
+    await p3.enrich(["NOTFOUND", "GOOD"]);
+    expect(queried).toEqual(["NOTFOUND"]); // scan 3 spent its 1-symbol budget on the front symbol
+    __resetTwelveDataWindowForTests();
+    const p4 = new TwelveDataEnrichmentProvider(key, "env");
+    await p4.enrich(["NOTFOUND", "GOOD"]);
+    expect(queried).toEqual(["GOOD"]); // scan 4 rotated past the negative-cached NOTFOUND to GOOD
+
+    if (prevBudget === undefined) delete process.env.TWELVEDATA_CREDITS_PER_MIN;
+    else process.env.TWELVEDATA_CREDITS_PER_MIN = prevBudget;
+  });
+
   it("FINNHUB_DROP_RECOMMENDATION drops the recommendation sub-call (5→4) without fabricating analyst data", async () => {
     const { FinnhubEnrichmentProvider, clearEnrichmentCache } = await import("../src/lib/data-providers");
     const originalFlag = process.env.FINNHUB_DROP_RECOMMENDATION;
