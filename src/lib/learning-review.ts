@@ -135,10 +135,15 @@ export function evaluateLearningReviewTrigger(userId: string, now: number, polic
   const maxWaitDays = positiveIntOr(policy.learningReviewMaxWaitDays, DEFAULT_MAX_WAIT_DAYS);
   const lastReviewedAt = getLastReviewedAt(userId);
 
-  const learnedSince = new Date(now - LEARNED_WINDOW_DAYS * 86_400_000).toISOString();
-  const learnedAts = listLearnedContext(userId)
-    .filter((row) => row.assertedAt >= learnedSince)
-    .map((row) => Date.parse(row.assertedAt));
+  // Deliberately NO LEARNED_WINDOW_DAYS cutoff here (unlike buildLearningReviewContextPack): the
+  // trigger must see EVERY un-reviewed lesson. A window filter made a learned row older than 7 days
+  // vanish from unreviewedAts entirely — it stopped counting toward the threshold AND "max-age"
+  // could never fire for it (at the defaults maxWaitDays == LEARNED_WINDOW_DAYS, a zero-width
+  // firing window; permanently unreachable for maxWaitDays > 7) — so a slow-trickle user's
+  // corrupted lessons aged out unreviewed, the exact gap this trigger exists to close.
+  // Self-healing: a successful review stores lastReviewedAt = now, after which any older row's
+  // assertedAt <= lastReviewedAt and it stops counting/re-triggering.
+  const learnedAts = listLearnedContext(userId).map((row) => Date.parse(row.assertedAt));
   const pendingAts = listPendingLearnedContext(userId, "pending").map((row) => Date.parse(row.createdAt));
   // "Un-reviewed" = appeared/changed after the last review.
   const unreviewedAts = [...learnedAts, ...pendingAts].filter((t) => Number.isFinite(t) && t > lastReviewedAt);
@@ -561,7 +566,12 @@ export async function runDailyLearningReview(
 
   const pack = await buildLearningReviewContextPack(userId, now);
   if (pack.items.length === 0) {
-    // Nothing to review today — terminal for the day.
+    // Nothing to review today — terminal for the day. Note: the trigger counts un-reviewed lessons
+    // WITHOUT the pack's LEARNED_WINDOW_DAYS cutoff, so it can fire "max-age" for a learned row too
+    // old for this pack; when such rows are the ONLY candidates, this skip is the accepted outcome
+    // (a cheap daily no-op, no LLM call). lastReviewedAt deliberately does NOT advance here — that
+    // would mark those rows reviewed without any review — so they re-trigger until any newer lesson
+    // arrives and a successful review advances lastReviewedAt past them.
     advanceMarker();
     audit("learning_review_summary", { mode, model, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-items" }, userId);
     return { ok: true, skipped: true, reason: "no-items", mode, model, ...empty };

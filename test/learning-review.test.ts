@@ -230,6 +230,34 @@ describe("review trigger (learningReviewMinNewLessons / learningReviewMaxWaitDay
     expect(trigger.oldestUnreviewedAgeDays).toBeGreaterThanOrEqual(8);
   });
 
+  it("max-age fires for a LEARNED row older than the 7-day pack window (regression: the window cutoff hid it)", async () => {
+    const userId = `lr-maxage-learned-${randomUUID().slice(0, 8)}`;
+    enableReview(userId, "annotate");
+    // A single LEARNED (not pending) lesson asserted 9 days ago — older than LEARNED_WINDOW_DAYS.
+    // The trigger used to filter learned rows to the last 7 days BEFORE the max-wait test, so this
+    // row dropped out of the un-reviewed count entirely: it stopped counting toward the threshold
+    // and "max-age" could never fire (zero-width window at the defaults maxWaitDays == 7).
+    seedLearnedRow(userId, { assertedAt: new Date(NOW - 9 * 86_400_000).toISOString() });
+    const trigger = evaluateLearningReviewTrigger(userId, NOW, getPolicy(userId));
+    expect(trigger).toMatchObject({ shouldRun: true, newCount: 1, reason: "max-age" });
+    expect(trigger.oldestUnreviewedAgeDays).toBeGreaterThanOrEqual(9);
+
+    // The row is outside the context-pack window, so the swept run terminally skips the day with
+    // "no-items" (accepted outcome) WITHOUT advancing lastReviewedAt — the row was never reviewed,
+    // so it keeps counting and re-triggers the next day rather than being silently marked reviewed.
+    const swept = await runDailyLearningReview(userId, { now: NOW, llm: async () => "should-not-be-called" });
+    expect(swept).toMatchObject({ skipped: true, reason: "no-items" });
+    const nextDay = NOW + 86_400_000;
+    expect(evaluateLearningReviewTrigger(userId, nextDay, getPolicy(userId)).reason).toBe("max-age");
+
+    // Self-healing: once a newer lesson arrives and a review SUCCEEDS, lastReviewedAt advances past
+    // the old row's assertedAt, so it stops counting/re-triggering.
+    seedLearnedRow(userId);
+    const run = await runDailyLearningReview(userId, { now: nextDay, llm: keepAllLlm() });
+    expect(run.ok).toBe(true);
+    expect(evaluateLearningReviewTrigger(userId, nextDay + 3_600_000, getPolicy(userId)).reason).toBe("no-new-items");
+  });
+
   it("falls back to the default thresholds when stored knob values are corrupt", () => {
     const userId = `lr-corrupt-${randomUUID().slice(0, 8)}`;
     seedLearnedRow(userId);
