@@ -9,14 +9,14 @@ export const CUSTOM_MODEL_ID_SEED = "custom-model-id";
  * paper/test accounts). Persisted as-is on policy.llmModel / policy.redTeamLlmModel; the strategy
  * run substitutes the concrete round-robin pick at run start (src/lib/model-rotation.ts — models
  * with no resolvable provider key are skipped). Keep the literal in sync with
- * LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts and the console-local copy in
- * app/console/settings/models.tsx.
+ * LLM_MODEL_ROTATION_SENTINEL in src/lib/llm-request.ts.
  */
 export const ROTATE_ALL_MODELS_ID = "__rotate__";
 export const ROTATE_ALL_MODELS_LABEL = "Rotate all models (testing)";
 
-// Label + recommendation conventions (owner rulings 2026-07-08; keep in sync with
-// app/console/settings/models.tsx): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
+// Label + recommendation conventions (owner rulings 2026-07-08; this is the ONLY catalog copy
+// since the Settings models card was retired 2026-07-10 — the Framework page and the Coach
+// picker both read it): descriptors are ROLE-NEUTRAL noun phrases (this catalog feeds
 // both the Green/proposer and Red/reviewer pickers — no "critique"/"review" in a label).
 // Recommendations are EMPIRICAL — derived from THIS ACCOUNT's call history (llm_step outcomes +
 // llm_usage), never from model naming/marketing or per-provider quotas. Snapshot 2026-07-08

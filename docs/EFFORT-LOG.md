@@ -1456,6 +1456,7 @@ As of 2026-07-08 (assignment-rule update).
   STATUS: gates green locally (lint 0 errors, tsc clean, 2449 tests, build ok); opening PR next.
 
 ## In Progress
+- **Settings IA restructure - global-only Settings (CLAUDE, worktree vibrant-bouman-10388c, branch `claude/settings-global-only`) - IN PROGRESS 2026-07-10, owner-directed.** /console/settings becomes global-only: Models card DELETED (Framework /console/strategy is the single source of truth - it has the reasoning-effort controls Settings lacked); Tax treatment card MOVED to bottom of Framework (stays account-scoped, THIS ACCOUNT chip); `requireTypedConfirmation` PROMOTED to USER_LEVEL_POLICY_FIELDS (db-profiles) so Advanced action confirmation is genuinely all-accounts; learning review already user-level (verified); THIS ACCOUNT section removed from Settings; deep-links retargeted.
 - **Unified scan-size-agnostic provider request quota (MONET, branch `monet/unified-provider-quota`)
   — IN PROGRESS 2026-07-10, owner-directed.** ONE `RequestQuota` primitive in `provider-rate-limit.ts`:
   a provider declares real free-tier windows (per-min/hour/day); `admitProviderRequests(provider,

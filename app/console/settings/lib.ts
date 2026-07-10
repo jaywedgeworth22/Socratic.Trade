@@ -146,14 +146,6 @@ export function deleteApiKey(service: string): Promise<{ success: boolean; delet
   });
 }
 
-// ── LLM provider availability ────────────────────────────────────────────────
-
-/** GET /api/chat/providers — per-provider "a key resolves for this user"
- *  booleans (never the keys). Same check the server makes before a real call. */
-export function fetchChatProviders(): Promise<{ providers: Record<string, boolean> }> {
-  return request<{ providers: Record<string, boolean> }>("/api/chat/providers");
-}
-
 // ── Delivery channels (out-of-app alert delivery) ────────────────────────────
 
 export interface DeliveryChannelDescriptor {
