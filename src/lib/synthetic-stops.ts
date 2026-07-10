@@ -8,6 +8,7 @@ import {
   getActiveConnectedAccount,
   getStopPlans,
   insertFillEvent,
+  listBrokerProtectiveStops,
   listPendingBrokerReconciliationFills,
   listSyntheticStops,
   recordSyntheticStopAttempt,
@@ -142,13 +143,33 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   } catch {
     // Can't list orders — fall back to registering synthetic stops (protection over dedup).
   }
+  // The account's OWN recognized broker-held protective stop for a symbol (broker_protective_stops,
+  // keyed by its actual brokerOrderId) — populated AFTER reconcileBrokerProtectiveStops runs below,
+  // so it reflects this tick's placements/cancellations. Excluded from the quantity-BLIND sweep just
+  // below: it is separately-tracked, independently-managed coverage (possibly for OTHER shares of
+  // the same symbol, e.g. a native trail covering the floored whole-share portion while the
+  // synthetic monitor covers a fractional remainder) — it must never be mistaken for "our own
+  // synthetic exit attempt might still be alive" (Codex review, PR #1331).
+  // Populated from the DB now (state left by the END of the PREVIOUS tick's reconcile) so the
+  // re-arm pass below — which runs BEFORE this tick's reconcile call — already excludes it;
+  // refreshed again after reconcile runs (below) to reflect any placement/cancellation THIS tick
+  // made, for the fire pass later in this same call.
+  let brokerHeldOrderIdBySymbol = new Map<string, string>(
+    listBrokerProtectiveStops(accountNumber, userId).map((r) => [normalizeSymbol(r.symbol), r.brokerOrderId])
+  );
   // Quantity-BLIND presence check — used only by the confirmed-terminal gate, where ANY live exit
-  // order (even a partial trim) must block a generation advance: while anything for the symbol is
-  // still working we cannot positively rule the prior attempt dead. Registration and firing use the
-  // quantity-AWARE liveExitOrderCoverage instead, so a 10-of-100-share trim can't leave the other
-  // 90 shares unprotected forever.
+  // order OTHER than the account's own recognized broker-held stop (excluded above) must block a
+  // generation advance: while anything unaccounted-for is still working for the symbol — including
+  // our own synthetic attempt, if its order lacks a matchable client_order_id — we cannot positively
+  // rule the prior attempt dead. Registration and firing use the quantity-AWARE liveExitOrderCoverage
+  // instead, so a 10-of-100-share trim can't leave the other 90 shares unprotected forever.
   const hasAnyLiveExitOrder = (symbol: string, positionSide: "long" | "short"): boolean =>
-    brokerOrders.some((o) => normalizeSymbol(o.symbol) === symbol && isLiveExitOrder(o, positionSide));
+    brokerOrders.some(
+      (o) =>
+        normalizeSymbol(o.symbol) === symbol &&
+        isLiveExitOrder(o, positionSide) &&
+        o.id !== brokerHeldOrderIdBySymbol.get(symbol)
+    );
   const isLiveState = (state: string): boolean => isLiveOrderState(state);
 
   // Synthetic protective exits whose outcome hasn't been reconciled yet (booked pending at
@@ -165,15 +186,18 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
    * which fire_generation may advance (rolling the client_order_id forward is safe exactly when the
    * old id's order can no longer execute). Layered, and ambiguity always fails to `false`:
    *  - the broker's order list was successfully fetched THIS tick (a failed fetch proves nothing);
-   *  - when the row HAS a recorded last_attempt_ref_id (every row that has ever fired does — it's
-   *    recorded before the broker call, unconditionally), check THAT SPECIFIC order by
-   *    client_order_id — never a symbol-wide "any live exit order" sweep. A coverage-aware PARTIAL
-   *    fire (the synthetic sells only the remainder a broker-held stop doesn't cover) can coexist
-   *    with that OTHER, unrelated, still-live broker order for the rest of the position — a
-   *    quantity-blind sweep would see that unrelated order and refuse to re-arm the remainder's own
-   *    protection forever, even after the remainder's own exit attempt is confirmed dead (Codex
-   *    review, PR #1331). Only a row with NO recorded attempt id (no specific order to check) falls
-   *    back to the conservative quantity-blind "nothing live for this symbol at all" sweep;
+   *  - it shows no live exit order for the symbol OTHER than the account's own recognized
+   *    broker-held stop (see `brokerHeldOrderIdBySymbol` above) — that ONE specific order is
+   *    excluded because it's separately-tracked, independently-managed coverage, so a
+   *    coverage-aware PARTIAL fire (the synthetic sells only the remainder a broker-held stop
+   *    doesn't cover) can coexist with it without blocking re-arm of the remainder's own dead
+   *    attempt forever. Anything else live — including our OWN synthetic exit order, if its
+   *    client_order_id happens not to be matchable below — still blocks (Codex review, PR #1331,
+   *    two rounds: neither a pure symbol-wide sweep nor a pure client_order_id match alone is
+   *    correct; excluding only the one order we can independently identify by broker-tracked id is);
+   *  - the recorded last_attempt_ref_id (if any) appears in no live-state order, matched by
+   *    client_order_id directly — belt-and-suspenders on top of the exclusion above, in case the
+   *    excluded broker-held row and our own last attempt were somehow the same order;
    *  - no synthetic-exit fill for the symbol is still pending reconciliation;
    *  - (re-arm pass only) the row is older than the 15-min grace, so a slow in-flight placement
    *    spanning ticks can't race a re-arm. The grace is keyed off updated_at, which for ACTIVE rows
@@ -183,11 +207,8 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const confirmedPriorExitDead = (stop: SyntheticTrailingStop, requireGrace: boolean): boolean => {
     if (!brokerOrdersListed) return false;
     const sym = normalizeSymbol(stop.symbol);
-    if (stop.lastAttemptRefId) {
-      if (brokerOrders.some((o) => o.clientOrderId === stop.lastAttemptRefId && isLiveState(o.state))) return false;
-    } else if (hasAnyLiveExitOrder(sym, stop.side)) {
-      return false;
-    }
+    if (hasAnyLiveExitOrder(sym, stop.side)) return false;
+    if (stop.lastAttemptRefId && brokerOrders.some((o) => o.clientOrderId === stop.lastAttemptRefId && isLiveState(o.state))) return false;
     if (pendingExitSymbols.has(sym)) return false;
     if (requireGrace && Date.now() - Date.parse(stop.updatedAt) < REARM_CONFIRM_GRACE_MS) return false;
     return true;
@@ -267,9 +288,22 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       const s = normalizeSymbol(sym);
       justPlacedPartialBrokerStopQty.set(s, reconciled.partiallyPlacedStopQuantities[sym] ?? reconciled.partiallyPlacedStopQuantities[s] ?? 0);
     }
+    // A broker-held stop that FILLED between this call's position fetch and reconcile's own order
+    // read reduced the position, but `positions` above was captured before `orders` — it may still
+    // show the stale pre-fill quantity THIS call. Treat these symbols exactly like a fresh full-size
+    // placement: skip both registration and fire this tick, deferring to the next call's fresh
+    // position read (Codex review, PR #1331) — otherwise the synthetic monitor could auto-register
+    // or fire a market exit against shares the broker stop already sold.
+    for (const sym of reconciled.filledRecoverySymbols) justPlacedBrokerStopSymbols.add(normalizeSymbol(sym));
   } catch (err) {
     audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
   }
+  // Refresh the account's own recognized broker-held stop per symbol AFTER reconcile ran, so
+  // `hasAnyLiveExitOrder`'s exclusion (see its doc comment) reflects any placement/cancellation
+  // reconcile just made this tick.
+  brokerHeldOrderIdBySymbol = new Map(
+    listBrokerProtectiveStops(accountNumber, userId).map((r) => [normalizeSymbol(r.symbol), r.brokerOrderId])
+  );
 
   // A "none" plan is a real, owner-accepted no-stop choice — purge any ACTIVE synthetic trailing
   // registration for that symbol regardless of the account-wide trailing config, so a plan set

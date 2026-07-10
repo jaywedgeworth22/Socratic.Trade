@@ -351,6 +351,48 @@ untouched despite a quantity recompute that would otherwise look like drift); `t
 the unrelated native trail for the other shares staying live throughout). Full gate
 (lint/tsc/test/build) re-run green in the isolated worktree.
 
+## Review fixes round 8 (Codex on `ad487ba`, two findings)
+
+1. **P1 — round 7's `client_order_id`-only re-arm branch was itself fragile when the id is
+   missing:** round 7 special-cased `confirmedPriorExitDead` to check only the row's own
+   `lastAttemptRefId` (via `client_order_id` match) when one was recorded, instead of a symbol-wide
+   sweep — but `client_order_id` is an OPTIONAL field on `EquityOrder`; if a broker's order mapper
+   doesn't populate it on a still-live order, the specific-match check would find nothing live under
+   that id and wrongly conclude "dead," advancing the generation and placing a duplicate exit
+   alongside an order that's still actually working. Fixed differently: replaced the
+   `client_order_id`-branching with `brokerHeldOrderIdBySymbol`, a map of the account's OWN
+   recognized `broker_protective_stops` row's `brokerOrderId` per symbol — built from
+   `listBrokerProtectiveStops`, independent of any broker-supplied `client_order_id`. The
+   quantity-blind `hasAnyLiveExitOrder` sweep now excludes only that one specifically-tracked order
+   (separately-managed, possibly-covering-other-shares coverage) and stays a full symbol-wide sweep
+   for everything else — including the row's own synthetic exit attempt if ITS id happens not to be
+   matchable, which still correctly blocks re-arm. `confirmedPriorExitDead` reverted to a single
+   combined check (no more `lastAttemptRefId`-present/absent branching) plus its own belt-and-suspenders
+   `client_order_id` check as an additional (not sole) safeguard.
+   - **Ordering bug found while verifying this fix:** the re-arm pass runs BEFORE this tick's
+     `reconcileBrokerProtectiveStops` call (which is what refreshes `brokerHeldOrderIdBySymbol` from
+     the DB), so populating the map only after reconcile left it empty for the re-arm pass every
+     tick — silently defeating the exclusion it was meant to provide. Fixed by ALSO seeding the map
+     at declaration, from the DB state left by the END of the previous tick's reconcile (before the
+     re-arm pass runs), then refreshing it again after this tick's reconcile for the later fire pass.
+     Caught by a debug trace on the exact round-7 regression test — `test/synthetic-stops.test.ts`'s
+     "re-arms the remainder's own dead exit even while an UNRELATED broker-held stop is still live"
+     failed (`second.exited` was `0` instead of `1`) until both halves of the fix landed.
+2. **P2 — a broker-held stop recognized as FILLED during stale-row cleanup was only deleted, never
+   booked as a fill:** both section 1's pending-cancel recovery and section 3's stale-resting-row
+   cleanup detect a tracked order in a terminal `filled` state and delete the DB row, but neither
+   ever recorded the actual exit — a native Alpaca trail or an RH ratcheted stop that closed a
+   position this way vanished from realized P&L, the learning loop, and the activity feed, with no
+   record it ever executed. Fixed: both sites now call a new `bookBrokerHeldStopFill` helper that
+   inserts a `fill_events` row (side `sell`, quantity/price from the tracked order's
+   `filledQuantity`/`averagePrice` falling back to the DB row's own recorded quantity/stop price,
+   `status: "filled"`, `raw: { brokerHeldProtectiveStop: true, kind }`) before the row disappears.
+
+New test coverage for round 8: the existing round-7 regression test in
+`test/synthetic-stops.test.ts` now exercises the corrected map-seeding order end-to-end (re-arm
+succeeds on tick 2 despite the unrelated native trail staying live). Full gate (lint/tsc/test/build)
+re-run green in the isolated worktree; 3434 tests / 316 files pass.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing
