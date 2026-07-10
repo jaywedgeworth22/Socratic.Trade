@@ -35,7 +35,7 @@ import { getMarketSignals } from "./market-signals";
 import { fetchMacroData, fetchMacroDataWithLiveVix, pruneMacro, determineMarketRegime, evaluateVolatilityBrake, type MacroData } from "./macro";
 import { buildCandidateEvidence } from "./evidence";
 import { deriveExecutionState, fillSourceForExecutionMode, llmExecutionMode, llmModeClarification, type ExecutionAccount } from "./execution-mode";
-import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
+import { interactiveStrategyReasoningEffort, isRetryableLlmError, isRetryableLlmStatus, LLM_OUTPUT_TOKEN_CAPS, LLM_REQUEST_DEFAULTS, LLM_TIMEOUT_MS, llmFetch, llmFetchCapturing, resolveLlmWireOutputCap, strategyLlmTimeoutMs, type LlmCallOutcome } from "./llm-request";
 import { buildBullSystem, STRATEGY_PROMPT_VERSION, THESIS_PLAYBOOK } from "./strategy-prompts";
 import { resolveLlmEndpoint } from "./llm-provider";
 import { resolveModelRotationForRun } from "./model-rotation";
@@ -92,9 +92,9 @@ import { checkLlmDailyBudget, checkMonthlyLlmSpendCeiling, releaseLlmReservation
 // (STRATEGY_PROMPT_VERSION comes with the prompt builders from ./strategy-prompts above —
 // ./strategy-prompt-version is a thin re-export kept for red-team.ts's cycle-free import.)
 import type { BrokerGateway } from "./types";
-import { generateReflectionSummary } from "./post-mortem";
+import { generateReflectionSummary, getReflectionSummary } from "./post-mortem";
 import { emitDashboardEvent } from "./events";
-import { getInternalSetting, getUserSetting, setInternalSetting } from "./db";
+import { getInternalSetting, setInternalSetting } from "./db";
 import { clearTakeProfitTrimBands, getTakeProfitTrimBands } from "./db";
 import type { TakeProfitTrimBand } from "./db";
 import { recordLlmUsage, extractLlmUsage } from "./llm-usage";
@@ -4239,7 +4239,9 @@ async function proposeTrades(input: {
       : undefined;
 
   const currentPrices = currentPricesFromScan(input.marketScan);
-  const reflection = getUserSetting(input.userId, "reflection_summary", "");
+  // Account-scoped (with legacy shared-row fallback): keyed by the same broker accountNumber
+  // the post-mortem writer uses, so a live account never reads a sibling account's reflection.
+  const reflection = getReflectionSummary(input.userId, input.policy.accountNumber);
   const executionState = deriveExecutionState(input.policy, input.activeAccount);
   const source = fillSourceForExecutionMode(executionState);
   const thesisScorecard = input.policy.accountNumber ? getThesisScorecard(input.policy.accountNumber, source, {}, input.userId, input.prefetched) : [];
@@ -4676,7 +4678,29 @@ async function proposeTrades(input: {
     keySource: llmKeySource
   };
   recordStep({ ...bullStepBase, status: "started" }, { includeInResult: false });
-  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean };
+  let bullResult: { text?: string; proposals: TradeProposal[]; truncated?: boolean; wireOutputCap?: number; finishReason?: string };
+  // Raw provider finish/stop-reason string for the strategy_bull_truncated audit below — same
+  // transports `detectLlmTruncation` (llm-call.ts) inspects, but that helper only returns a bool;
+  // this surfaces the actual reason value so the audit says WHY the model stopped, not just that it did.
+  const extractBullFinishReason = (payload: unknown): string | undefined => {
+    if (!payload || typeof payload !== "object") return undefined;
+    const p = payload as {
+      stop_reason?: unknown;
+      choices?: Array<{ finish_reason?: unknown }>;
+      incomplete_details?: { reason?: unknown } | null;
+      status?: unknown;
+      output?: Array<{ status?: unknown } | null>;
+    };
+    if (typeof p.stop_reason === "string") return p.stop_reason;
+    const chatReason = p.choices?.[0]?.finish_reason;
+    if (typeof chatReason === "string") return chatReason;
+    if (typeof p.incomplete_details?.reason === "string") return p.incomplete_details.reason;
+    if (typeof p.status === "string") return p.status;
+    // Responses-API shape with only per-item statuses (no top-level status/incomplete_details):
+    // detectLlmTruncation treats any output item with status "incomplete" as truncation.
+    if (Array.isArray(p.output) && p.output.some((o) => o?.status === "incomplete")) return "incomplete";
+    return undefined;
+  };
   try {
     bullResult = await withLlmGeneration(
       {
@@ -4744,6 +4768,14 @@ async function proposeTrades(input: {
             }
             const text = extractLlmText(payload);
             const truncated = detectLlmTruncation(payload);
+            // The wire cap actually sent for THIS attempt (base cap + provider reasoning headroom —
+            // e.g. Gemini/xAI/Mistral/DeepSeek add up to +16000), not the pre-headroom constant.
+            const wireOutputCap = resolveLlmWireOutputCap(attempt.transport, {
+              maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+              model: attempt.model,
+              reasoningEffort: interactiveStrategyReasoningEffort(attempt.model, input.policy.llmReasoningEffort)
+            });
+            const finishReason = extractBullFinishReason(payload);
 
             if (!text) {
               throw new Error("Empty response returned from LLM API.");
@@ -4753,13 +4785,13 @@ async function proposeTrades(input: {
               // R10 — fence/prose-tolerant extraction on the PRIMARY (Green/Bull) parse path too:
               // fenced JSON on the proposal step must not degrade to zero proposals.
               const parsed = JSON.parse(extractJsonPayload(text)) as { proposals?: TradeProposal[] };
-              return { text, proposals: parsed.proposals ?? [], truncated };
+              return { text, proposals: parsed.proposals ?? [], truncated, wireOutputCap, finishReason };
             } catch (parseError) {
               // A truncated/malformed model response must not crash the whole autonomous
               // run; degrade to zero proposals for this tick. The `truncated` flag lets the caller
               // record a DISTINCT truncation reason instead of a silent no-op (see below).
               console.warn("Bull Agent returned unparseable JSON; degrading to zero proposals this run", parseError);
-              return { text, proposals: [] as TradeProposal[], truncated };
+              return { text, proposals: [] as TradeProposal[], truncated, wireOutputCap, finishReason };
             }
           } catch (err) {
             // Transient transport error / timeout → fail over to the next model when one remains.
@@ -4792,16 +4824,27 @@ async function proposeTrades(input: {
   }));
   // TRUNCATION-AWARE: if the Bull answer hit the output-token cap, a zero/partial parse is NOT a
   // genuine "do nothing" — record a DISTINCT reason + audit so it's diagnosable and never a silent
-  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.)
+  // no-op. (See Chat A item 5; raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.) The
+  // reason string and audit payload report the ACTUAL wire cap (post reasoning-headroom), not the
+  // pre-headroom LLM_OUTPUT_TOKEN_CAPS constant, which can understate what was really sent.
   const bullTruncationReason = bullResult.truncated
-    ? `Green Team response hit the ${LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
+    ? `Green Team response hit the ${bullResult.wireOutputCap ?? LLM_OUTPUT_TOKEN_CAPS.strategyProposal}-token output cap (truncated${bullResult.finishReason ? `, finish_reason=${bullResult.finishReason}` : ""}); ${rawBullProposals.length} proposal(s) parsed. Raise LLM_OUTPUT_TOKEN_CAPS.strategyProposal if this recurs.`
     : undefined;
   if (bullTruncationReason) {
     console.warn(`[Bull] ${bullTruncationReason}`);
     audit(
       "strategy_bull_truncated",
-      { runId: input.runId, cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, parsedProposals: rawBullProposals.length, provider, model },
-      input.userId
+      {
+        runId: input.runId,
+        cap: LLM_OUTPUT_TOKEN_CAPS.strategyProposal,
+        wireOutputCap: bullResult.wireOutputCap,
+        finishReason: bullResult.finishReason,
+        parsedProposals: rawBullProposals.length,
+        provider,
+        model
+      },
+      input.userId,
+      input.policy.connectedAccountId
     );
   }
   // Record the served provider/model (may differ from the primary after failover) plus a clear reason

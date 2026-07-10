@@ -28,6 +28,15 @@ calls now send reasoning_effort only, no temperature. With both fixes it DOES pr
 bracket-covered proposals, 50.1s, ~$0.074/call, 1-of-2 rounds blew the 150s reasoning timeout —
 works, but ~50x small-2603's cost; recommended held out of the pool. Benchmark script gained
 `--effort <tier|omit>`. High-tier results: `docs/benchmarks/2026-07-10-mistral-rebench-high.{json,md}`.
+## 2026-07-09 — Daily learning-review fixes: no hidden model default, decide-default, user-level, renamed (MONET)
+Owner-directed: (1) removed the hidden blank=claude-fable-5 fallback — real explicit fable-5 default value, no blank option, server skips 'no-model' rather than substituting (app-wide: no other live hidden decision-model defaults); (2) Decide is now the default mode (feature still off by default); (3) renamed 'Reviewer model'->'Learning-review model' (Red Team is 'Reviewer' now); (4) made learningReview* USER-LEVEL (was account-level) — the job runs once per user/day so its config now overlays every account; card moved THIS ACCOUNT->ALL YOUR ACCOUNTS. Answered: review is ONE user-level call/day (not per-account); documented the full user-vs-account settings split. tsc/lint clean, learning-review 15/15 + policy-scope 23/23, driven live. See docs/rollouts/2026-07-09-learning-review-model-fixes.md.
+## 2026-07-10 — Activity-feed audit close-out + bump-to-floor merged (MONET, intro-anim session)
+The owner-directed 3-day activity-feed audit is complete: 36-agent workflow over the prod DB,
+every finding adversarially verified. Full ranked report: `docs/reviews/2026-07-09-activity-feed-audit.md`
+(3 quiet P1s — Roth proposer token-cap truncation, thesis-tag split-brain, cross-account reflection
+contamination — plus P2/P3 backlog; the historical feed storms were verified already-fixed).
+Bump-to-floor (owner ruling) merged as PR #1297 `4ef60cd3`, co-finished with the original bump lane
+after the #1280 collision resolved in #1297's favor. Fix backlog items are separate claims.
 
 ## 2026-07-09 — Unsaved-changes nav prompt: 3 options (MONET, branch `monet/unsaved-changes-3opt`)
 Owner: the unsaved-changes warning when clicking a nav tab/menu should offer three choices, not two.
@@ -55,6 +64,21 @@ proves (a) it fails without the fix and (b) passes with it. Gate green: tsc clea
 311 files / 3286 tests, build succeeds. Closes the task-chip suggestion spawned from the #1267
 lane (round-2 TwelveData health-row fix touched the same file/pattern). See
 `docs/rollouts/2026-07-10-db-health-tie-sweep.md`.
+## 2026-07-10 — Activity-audit P1 batch (MONET, branch `monet/activity-audit-p1-batch`, owner-assigned)
+The three P1s from the activity-feed audit, built by a cost-tiered agent team (2 Sonnet + 1 Fable
+implementers in isolated worktrees; adversarial verify with Fable on the money-path-subtle fix):
+(1) `strategyProposal` token cap 1500→4000 + honest `strategy_bull_truncated` audit (actual wire
+cap via new `resolveLlmWireOutputCap`, finish_reason, account attribution) — kills the Roth
+zero-proposal truncations; (2) thesis-tag split-brain — `insertProposal` defaults the columns from
+the proposal JSON, COALESCE read fallbacks, self-guarding 543-row backfill — ends the false
+"attribution is unusable" learning-loop directives; (3) reflection keys scoped per account with
+legacy-row retirement on first scoped write — the LIVE account no longer reads test/paper
+reflections, dedupe actually holds (~21 wasted LLM calls/day stop), hourly phantom `policy_change`
+cards stop; chat `get_reflection` follows the active account (verifier catch — would have gone
+silently null). The strategy.ts/synthetic-stops attribution sweep (item 10) is RESERVED for a
+second owner-directed session. Verify: lint 0 err / tsc clean / focused 113+35 / full gate via
+land.sh. Rollout: `docs/rollouts/2026-07-10-activity-audit-p1-batch.md`.
+
 ## 2026-07-10 — Enrichment starvation round-2 + disposition (MONET; PR #1272 closed superseded by #1287)
 PR #1272 (the starvation fix) sat BLOCKED on two real codex-connector findings: held names INSIDE
 the ranked top-N could still starve behind the force-included extras, and user-policy scan shapes

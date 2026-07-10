@@ -13,16 +13,19 @@
 // this lesson's evidence was generated?".
 //
 // MODES (policy.learningReviewMode):
-//   - "annotate" (default): write an audit per item ("learning_review_verdict") + a run summary
-//     audit ("learning_review_summary") + a notification. NOTHING is mutated.
-//   - "decide" (owner opt-in): additionally APPLY verdicts through the existing learned-context
-//     mutation paths — delete/expire learned_context rows; approve/reject pending items via the
-//     same applyApprovedPending/setPendingLearnedContextStatus the human approve route uses. Every
-//     application is audited ("learning_review_applied").
+//   - "decide" (default): write the audits below AND apply verdicts through the existing
+//     learned-context mutation paths — delete/expire learned_context rows; approve/reject pending
+//     items via the same applyApprovedPending/setPendingLearnedContextStatus the human approve
+//     route uses. Every application is audited ("learning_review_applied").
+//   - "annotate" (explicit opt-out): write an audit per item ("learning_review_verdict") + a run
+//     summary audit ("learning_review_summary") + a notification. NOTHING is mutated.
 //
 // FAIL-SAFE: any LLM/transport/parse failure → audit + skip; nothing is ever mutated on failure.
 // The once-per-day marker still advances on failure so a broken provider can't be hammered all day.
 
+// Bare "crypto" (not "node:crypto") — Next's webpack build errors on the node: scheme
+// prefix in this module's bundle context, same reason this file uses "fs"/"path" bare.
+import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import {
@@ -51,10 +54,18 @@ import { withLlmGeneration } from "./observability";
 import { summarizeOpenAiRequest, summarizeOpenAiResponseText } from "./telemetry-sanitize";
 import type { LearnedContextPendingRow, LearnedContextRow, TradingPolicy } from "./types";
 
-/** Default reviewer model: one frontier-class call per day on decisions that compound. */
-export const LEARNING_REVIEW_MODEL_DEFAULT = "claude-fable-5";
+// The reviewer model's default lives in DEFAULT_POLICY.learningReviewModel (a real,
+// explicit "claude-fable-5" value shown in the UI) — NOT a hidden fallback here. This
+// module never silently substitutes a model; if policy.learningReviewModel is blank it
+// skips with reason "no-model".
 
 const LAST_RUN_KEY_PREFIX = "learning_review:lastRunDate";
+const LAST_FINGERPRINT_KEY_PREFIX = "learning_review:lastFingerprint";
+const LAST_REVIEWED_AT_KEY_PREFIX = "learning_review:lastReviewedAt";
+const LAST_CONFIG_KEY_PREFIX = "learning_review:lastConfig";
+
+const DEFAULT_MIN_NEW_LESSONS = 5;
+const DEFAULT_MAX_WAIT_DAYS = 7;
 const LEARNED_WINDOW_DAYS = 7;
 const HISTORY_WINDOW_DAYS = 14;
 const MAX_REVIEW_ITEMS = 80;
@@ -80,6 +91,103 @@ export const LEARNING_REVIEW_FAILURE_AUDIT_KINDS = [
 
 function lastRunKey(userId: string): string {
   return `${LAST_RUN_KEY_PREFIX}:${userId}`;
+}
+
+function lastFingerprintKey(userId: string): string {
+  return `${LAST_FINGERPRINT_KEY_PREFIX}:${userId}`;
+}
+
+function lastReviewedAtKey(userId: string): string {
+  return `${LAST_REVIEWED_AT_KEY_PREFIX}:${userId}`;
+}
+
+function lastConfigKey(userId: string): string {
+  return `${LAST_CONFIG_KEY_PREFIX}:${userId}`;
+}
+
+/** Cheap signature of the review CONFIG (mode + model). A change here must force a fresh review of
+ *  the EXISTING set even when no new lessons arrived: the fingerprint already encodes mode/model,
+ *  but the scheduler's trigger gate short-circuits before the fingerprint is ever built, so the
+ *  scheduler compares this signature directly (#1). Mirrors the runner's mode/model normalization
+ *  (annotate opt-out; a blank model is handled by the no-model skip, not substituted). */
+function reviewConfigSignature(policy: TradingPolicy): string {
+  const mode = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
+  return `${mode}|${policy.learningReviewModel?.trim() ?? ""}`;
+}
+
+/** ms of the last SUCCESSFUL review (0 if never). Used to count "new since last review". */
+function getLastReviewedAt(userId: string): number {
+  const raw = getInternalSetting<string>(lastReviewedAtKey(userId));
+  const n = raw ? Number(raw) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+export interface LearningReviewTrigger {
+  shouldRun: boolean;
+  /** How many reviewable lessons are new since the last review. */
+  newCount: number;
+  /** Age in days of the oldest un-reviewed lesson (0 when none). */
+  oldestUnreviewedAgeDays: number;
+  reason: "threshold" | "max-age" | "below-threshold" | "no-new-items";
+}
+
+/** Positive-integer policy knob with a fallback — a corrupt stored value (NaN/string/zero)
+ *  falls back to the default instead of silently disabling the trigger via NaN comparisons. */
+function positiveIntOr(value: unknown, fallback: number): number {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+/**
+ * Should the review fire now? Cheap (two DB reads, no LLM, no rollout-note disk read). Runs when
+ * EITHER at least `learningReviewMinNewLessons` NEW reviewable lessons (learned facts + pending)
+ * have appeared since the last successful review, OR the oldest un-reviewed lesson has waited
+ * `learningReviewMaxWaitDays` — so a slow trickle still gets swept eventually and nothing corrupted
+ * lingers. Only lessons ASSERTED/CREATED after the last review count as "new/un-reviewed".
+ */
+export function evaluateLearningReviewTrigger(userId: string, now: number, policy: TradingPolicy): LearningReviewTrigger {
+  const threshold = positiveIntOr(policy.learningReviewMinNewLessons, DEFAULT_MIN_NEW_LESSONS);
+  const maxWaitDays = positiveIntOr(policy.learningReviewMaxWaitDays, DEFAULT_MAX_WAIT_DAYS);
+  const lastReviewedAt = getLastReviewedAt(userId);
+
+  // Deliberately NO LEARNED_WINDOW_DAYS cutoff here (unlike buildLearningReviewContextPack): the
+  // trigger must see EVERY un-reviewed lesson. A window filter made a learned row older than 7 days
+  // vanish from unreviewedAts entirely — it stopped counting toward the threshold AND "max-age"
+  // could never fire for it (at the defaults maxWaitDays == LEARNED_WINDOW_DAYS, a zero-width
+  // firing window; permanently unreachable for maxWaitDays > 7) — so a slow-trickle user's
+  // corrupted lessons aged out unreviewed, the exact gap this trigger exists to close.
+  // Self-healing: a successful review stores lastReviewedAt = now, after which any older row's
+  // assertedAt <= lastReviewedAt and it stops counting/re-triggering.
+  const learnedAts = listLearnedContext(userId).map((row) => Date.parse(row.assertedAt));
+  const pendingAts = listPendingLearnedContext(userId, "pending").map((row) => Date.parse(row.createdAt));
+  // "Un-reviewed" = appeared/changed after the last review.
+  const unreviewedAts = [...learnedAts, ...pendingAts].filter((t) => Number.isFinite(t) && t > lastReviewedAt);
+
+  const newCount = unreviewedAts.length;
+  if (newCount === 0) {
+    return { shouldRun: false, newCount: 0, oldestUnreviewedAgeDays: 0, reason: "no-new-items" };
+  }
+  const oldestAgeDays = (now - Math.min(...unreviewedAts)) / 86_400_000;
+  if (newCount >= threshold) return { shouldRun: true, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "threshold" };
+  if (oldestAgeDays >= maxWaitDays) return { shouldRun: true, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "max-age" };
+  return { shouldRun: false, newCount, oldestUnreviewedAgeDays: oldestAgeDays, reason: "below-threshold" };
+}
+
+/** Stable fingerprint of what a review would actually examine, so an unchanged set never
+ *  spends an LLM call re-confirming verdicts we already have. Keyed on the review ITEMS
+ *  (id + content + confidence + assertedAt — so a new, changed, or re-asserted fact re-runs),
+ *  the rollout-note set (a landed fix can flip a "still true?" verdict), AND the review
+ *  CONFIG (mode + model) — flipping annotate→decide or choosing a different reviewer must
+ *  force a fresh review of the existing set, not hit the "unchanged" skip. DELIBERATELY
+ *  excludes the failure-event log: it's noisy (routine 429s/timeouts) and would force a
+ *  re-review most days, defeating the point — a genuinely corrupting failure surfaces as a
+ *  new fact/mutation, which is already in the items. */
+function reviewFingerprint(pack: LearningReviewContextPack, mode: "annotate" | "decide", model: string): string {
+  const items = pack.items
+    .map((it) => `${it.table}|${it.id}|${it.subject}|${it.value}|${it.riskTier}|${it.confidence ?? ""}|${it.at}`)
+    .sort();
+  const notes = pack.systemHistory.rolloutNotes.map((n) => n.firstLine).sort();
+  return createHash("sha256").update(JSON.stringify({ items, notes, mode, model })).digest("hex");
 }
 
 function utcDate(now: number): string {
@@ -350,16 +458,19 @@ export interface AppliedVerdict {
  *   learned_context_pending:  keep → approve (applyApprovedPending + status 'approved', mirroring the
  *                             human approve route); reject/expire → status 'rejected';
  *                             needs_more_data → left pending.
- * Every application is audited ("learning_review_applied"). Returns what was actually applied.
+ * Every application is audited ("learning_review_applied"). Returns what was actually applied plus
+ * how many per-item applications THREW (audited as "learning_review_apply_error" and swallowed here) —
+ * callers use the failure count to avoid caching the run as complete when a mutation must be retried.
  */
 export function applyLearningReviewVerdicts(
   userId: string,
   verdicts: LearningReviewVerdict[],
   pack: Pick<LearningReviewContextPack, "items" | "pendingById">,
   nowIso: string = new Date().toISOString()
-): AppliedVerdict[] {
+): { applied: AppliedVerdict[]; failures: number } {
   const reviewedIds = new Set(pack.items.map((item) => `${item.table}:${item.id}`));
   const applied: AppliedVerdict[] = [];
+  let failures = 0;
 
   for (const verdict of verdicts) {
     if (!reviewedIds.has(`${verdict.table}:${verdict.id}`)) continue; // never touch unshown rows
@@ -376,7 +487,10 @@ export function applyLearningReviewVerdicts(
         if (verdict.verdict === "keep") {
           const pending = pack.pendingById.get(verdict.id) ?? getPendingLearnedContext(verdict.id, userId);
           if (pending && pending.status === "pending") {
-            applyApprovedPending(pending);
+            // Stamp the promoted row at the review's marker time (nowIso == run-start now == the
+            // persisted lastReviewedAt) so the just-approved lesson is not re-counted as new the
+            // next day (#6). See applyApprovedPending's assertedAt note.
+            applyApprovedPending(pending, nowIso);
             action = setPendingLearnedContextStatus(verdict.id, userId, "approved") ? "approved" : null;
           }
         } else if (verdict.verdict === "reject" || verdict.verdict === "expire") {
@@ -384,6 +498,7 @@ export function applyLearningReviewVerdicts(
         }
       }
     } catch (error) {
+      failures += 1;
       audit(
         "learning_review_apply_error",
         { id: verdict.id, table: verdict.table, verdict: verdict.verdict, error: error instanceof Error ? error.message : String(error) },
@@ -400,7 +515,7 @@ export function applyLearningReviewVerdicts(
       );
     }
   }
-  return applied;
+  return { applied, failures };
 }
 
 // ── Runner ──────────────────────────────────────────────────────────────────────
@@ -438,7 +553,8 @@ export async function runDailyLearningReview(
   const now = options.now ?? Date.now();
   const empty = { itemsReviewed: 0, verdicts: 0, applied: 0 };
   const policy = options.policyOverride ?? getPolicy(userId);
-  const mode: "annotate" | "decide" = policy.learningReviewMode === "decide" ? "decide" : "annotate";
+  // "decide" is the default (apply verdicts); only an explicit "annotate" opts out.
+  const mode: "annotate" | "decide" = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
 
   if (!options.force && !isLearningReviewDue(userId, now)) {
     return { ok: false, skipped: true, reason: "not-due", mode, ...empty };
@@ -450,7 +566,14 @@ export async function runDailyLearningReview(
     return { ok: false, skipped: true, reason: "over-budget", mode, ...empty };
   }
 
-  const model = policy.learningReviewModel?.trim() || LEARNING_REVIEW_MODEL_DEFAULT;
+  // No hidden model fallback (owner: the app never silently substitutes a model). The policy
+  // default is a real "claude-fable-5" value, so this is normally always set; if it's somehow
+  // blank, skip with a clear reason rather than quietly picking a model the user didn't choose.
+  const model = policy.learningReviewModel?.trim();
+  if (!model) {
+    audit("learning_review_summary", { mode, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-model" }, userId);
+    return { ok: false, skipped: true, reason: "no-model", mode, ...empty };
+  }
   const advanceMarker = () => {
     try {
       setInternalSetting(lastRunKey(userId), utcDate(now));
@@ -461,10 +584,32 @@ export async function runDailyLearningReview(
 
   const pack = await buildLearningReviewContextPack(userId, now);
   if (pack.items.length === 0) {
-    // Nothing to review today — terminal for the day.
+    // Nothing to review today — terminal for the day. Note: the trigger counts un-reviewed lessons
+    // WITHOUT the pack's LEARNED_WINDOW_DAYS cutoff, so it can fire "max-age" for a learned row too
+    // old for this pack; when such rows are the ONLY candidates, this skip is the accepted outcome
+    // (a cheap daily no-op, no LLM call). lastReviewedAt deliberately does NOT advance here — that
+    // would mark those rows reviewed without any review — so they re-trigger until any newer lesson
+    // arrives and a successful review advances lastReviewedAt past them.
     advanceMarker();
+    // Acknowledge the current config (#1) so a config change that finds nothing to review (e.g. all
+    // candidate rows aged out of the pack window) doesn't re-fire this cheap pass every day.
+    try {
+      setInternalSetting(lastConfigKey(userId), reviewConfigSignature(policy));
+    } catch (error) {
+      console.error("[learning-review] failed to persist review config marker:", error);
+    }
     audit("learning_review_summary", { mode, model, itemsReviewed: 0, verdicts: 0, applied: 0, reason: "no-items" }, userId);
     return { ok: true, skipped: true, reason: "no-items", mode, model, ...empty };
+  }
+
+  // Don't waste a call re-reviewing an unchanged set: if the exact items + landed-fix history
+  // + review config (mode/model) match the last SUCCESSFUL review, the LLM has nothing new to
+  // add. Advance the marker (we checked today) but make no call. `force` always re-runs.
+  const fingerprint = reviewFingerprint(pack, mode, model);
+  if (!options.force && getInternalSetting<string>(lastFingerprintKey(userId)) === fingerprint) {
+    advanceMarker();
+    audit("learning_review_summary", { mode, model, itemsReviewed: pack.items.length, verdicts: 0, applied: 0, reason: "unchanged" }, userId);
+    return { ok: true, skipped: true, reason: "unchanged", mode, model, ...empty };
   }
 
   const userContent = JSON.stringify({
@@ -564,16 +709,72 @@ export async function runDailyLearningReview(
     );
   }
 
-  // Decide (owner opt-in): apply verdicts via the existing mutation paths.
-  const applied = mode === "decide" ? applyLearningReviewVerdicts(userId, result.reviews, pack) : [];
+  // Duplicate-verdict guard (#5): the model may emit MORE THAN ONE verdict for the same shown item
+  // (e.g. keep + reject for one pending row). Applying the raw array would run conflicting mutations
+  // — a risk-tier pending row would be promoted (applyApprovedPending inserts a live learned_context
+  // row) AND marked rejected, or promoted twice — and a plain Set would collapse the duplicates so
+  // the run still counts as "complete", caching a malformed response that is never retried. Fail-safe
+  // (retry rather than apply garbage): treat any item carrying duplicate verdicts as UNreviewed —
+  // never apply its verdicts and never count it as covered, so the run stays incomplete and the same
+  // item set is re-attempted on the next daily tick.
+  const verdictCounts = new Map<string, number>();
+  for (const r of result.reviews) {
+    const key = `${r.table}:${r.id}`;
+    verdictCounts.set(key, (verdictCounts.get(key) ?? 0) + 1);
+  }
+  const duplicatedKeys = new Set([...verdictCounts].filter(([, n]) => n > 1).map(([key]) => key));
+  const applicableReviews = duplicatedKeys.size
+    ? result.reviews.filter((r) => !duplicatedKeys.has(`${r.table}:${r.id}`))
+    : result.reviews;
+
+  // Decide (owner opt-in): apply verdicts via the existing mutation paths. Pass the run-start `now`
+  // as nowIso (#6) so promoted rows are stamped at == the persisted lastReviewedAt and not re-counted
+  // as new the next day.
+  const { applied, failures } =
+    mode === "decide"
+      ? applyLearningReviewVerdicts(userId, applicableReviews, pack, new Date(now).toISOString())
+      : { applied: [] as AppliedVerdict[], failures: 0 };
+
+  // Coverage: parse success does not imply every shown item got a verdict (malformed entries are
+  // dropped; the model may omit items; items with duplicate verdicts are dropped above). An item
+  // counts as covered only when it received EXACTLY ONE verdict. Track it so an incomplete review
+  // is re-attempted.
+  const covered = new Set([...verdictCounts].filter(([, n]) => n === 1).map(([key]) => key));
+  const complete = pack.items.every((it) => covered.has(`${it.table}:${it.id}`));
 
   const flagged = result.reviews.filter((r) => r.verdict !== "keep").length;
   audit(
     "learning_review_summary",
-    { mode, model, itemsReviewed: pack.items.length, verdicts: result.reviews.length, flagged, applied: applied.length, summary: result.summary },
+    {
+      mode,
+      model,
+      itemsReviewed: pack.items.length,
+      verdicts: result.reviews.length,
+      flagged,
+      applied: applied.length,
+      coverageComplete: complete,
+      duplicateItems: duplicatedKeys.size,
+      applyFailures: failures,
+      summary: result.summary
+    },
     userId
   );
   advanceMarker();
+  // Remember exactly what was reviewed (fingerprint) and WHEN (lastReviewedAt) — both ONLY when
+  // the run was fully successful: every shown item received a verdict AND no decide-mode
+  // application threw. The fingerprint skips an identical set; lastReviewedAt resets the "new
+  // since last review" count that gates the next run. A failed/parse-failed/partial run leaves
+  // both untouched so the same lessons are re-attempted (the daily marker above still advances,
+  // so this costs at most one extra LLM call per day) rather than skipped or counted as reviewed.
+  if (complete && failures === 0) {
+    try {
+      setInternalSetting(lastFingerprintKey(userId), fingerprint);
+      setInternalSetting(lastReviewedAtKey(userId), String(now));
+      setInternalSetting(lastConfigKey(userId), reviewConfigSignature(policy));
+    } catch (error) {
+      console.error("[learning-review] failed to persist review markers:", error);
+    }
+  }
 
   try {
     await sendNotification(
@@ -605,7 +806,21 @@ export async function runDailyLearningReviewIfDue(
   try {
     const policy = getPolicy(userId);
     if (policy.learningReviewEnabled !== true) return null;
+    // At most one attempt per UTC day (this also backs off a failed provider — a failed run
+    // advances the day marker so it isn't retried on every tick).
     if (!isLearningReviewDue(userId, now)) return null;
+    // Threshold OR max-age: don't spend a call until enough new lessons pile up, but never let
+    // the oldest un-reviewed lesson linger past the max wait. Cheap — no LLM, no pack build.
+    const trigger = evaluateLearningReviewTrigger(userId, now, policy);
+    // Also re-review when the owner CHANGED the review config (annotate<->decide, or the reviewer
+    // model) since the last successful review (#1): the same set must be re-evaluated/applied under
+    // the new mode/model. The trigger only counts NEW lessons, and the fingerprint's mode/model
+    // awareness lives past this gate (inside runDailyLearningReview) and would never be reached, so
+    // an unchanged set would otherwise never re-run. priorConfig === undefined ⇒ a never-reviewed
+    // user, already governed by the trigger. Runs at most once (the run stores the new signature).
+    const priorConfig = getInternalSetting<string>(lastConfigKey(userId));
+    const configChanged = priorConfig !== undefined && priorConfig !== reviewConfigSignature(policy);
+    if (!trigger.shouldRun && !configChanged) return null;
     return await runDailyLearningReview(userId, { now, policyOverride: policy });
   } catch (error) {
     console.error("[learning-review] daily run error:", error);
