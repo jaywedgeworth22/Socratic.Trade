@@ -39,8 +39,8 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
  * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
  * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
  * no imports beyond types) so both the rotation module and `resolveOpenAiModel`'s safety net below
- * can share it without an import cycle. Keep the literal in sync with the UI copies in
- * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID) and app/console/settings/models.tsx.
+ * can share it without an import cycle. Keep the literal in sync with the UI copy in
+ * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID).
  */
 export const LLM_MODEL_ROTATION_SENTINEL = "__rotate__";
 

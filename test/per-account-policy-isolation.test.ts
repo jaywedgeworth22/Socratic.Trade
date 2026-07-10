@@ -111,6 +111,40 @@ describe("per-account policy isolation (PR 1)", () => {
     expect(db.getPolicy(u, other).systemState).toBe("halted");
   });
 
+  it("requireTypedConfirmation is user-level — one switch spans every account", async () => {
+    // Promoted to USER_LEVEL_POLICY_FIELDS in the 2026-07-10 Settings IA restructure: the
+    // typed-phrase ceremony is an owner preference, not a per-account guardrail.
+    const db = await import("../src/lib/db");
+    const u = `typeduser-${randomUUID()}`;
+    const p = `tacct-p-${randomUUID()}`;
+    const q = `tacct-q-${randomUUID()}`;
+
+    db.upsertConnectedAccount({ id: p, userId: u, broker: "alpaca", environment: "paper", accountNumber: "TP1", label: "P", isActive: true });
+    db.upsertConnectedAccount({ id: q, userId: u, broker: "alpaca", environment: "live", accountNumber: "TQ1", label: "Q", isActive: false });
+
+    // Default: required (true) on every account.
+    expect(db.getPolicy(u, p).requireTypedConfirmation).toBe(true);
+    expect(db.getPolicy(u, q).requireTypedConfirmation).toBe(true);
+
+    // Turning it off through ONE account applies to the whole login…
+    db.setPolicy({ ...db.getPolicy(u, p), requireTypedConfirmation: false }, u, p);
+    expect(db.getPolicy(u, p).requireTypedConfirmation).toBe(false);
+    expect(db.getPolicy(u, q).requireTypedConfirmation).toBe(false);
+
+    // …and a stale divergent per-account value (pre-promotion legacy row) is
+    // superseded by the user-level overlay on read, never resurrected.
+    const raw = db
+      .getDb()
+      .prepare("SELECT policy FROM account_strategy_state WHERE user_id = ? AND connected_account_id = ?")
+      .get(u, q) as { policy: string };
+    const legacy = JSON.parse(raw.policy) as Record<string, unknown>;
+    legacy.requireTypedConfirmation = true; // divergent account-scoped leftover
+    db.getDb()
+      .prepare("UPDATE account_strategy_state SET policy = ? WHERE user_id = ? AND connected_account_id = ?")
+      .run(JSON.stringify(legacy), u, q);
+    expect(db.getPolicy(u, q).requireTypedConfirmation).toBe(false);
+  });
+
   it("deleting a connected account purges its per-account isolated state", async () => {
     const db = await import("../src/lib/db");
     const u = `deluser-${randomUUID()}`;

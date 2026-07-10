@@ -1,7 +1,7 @@
 "use client";
 
 /** Model stats drawer — the info affordance next to the Proposer/Reviewer model
- *  pickers (settings/models + strategy page). One small button per select opens
+ *  pickers on the Framework (strategy) page. One small button per select opens
  *  a sheet listing every catalog model with cost per call and latency (live
  *  figures when this user has enough real traffic, otherwise the 2026-07-08
  *  benchmark, always labeled which is which) plus a performance column whose
@@ -218,7 +218,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
 
   const statsRole = role === "proposer" ? "green" : "red";
   const byModel = new Map((data?.stats ?? []).filter((s) => s.role === statsRole).map((s) => [s.model, s]));
-  const roleLabel = role === "proposer" ? "Proposer (Green Team)" : "Reviewer (Red Team)";
+  const roleLabel = role === "proposer" ? "Proposer (Green)" : "Reviewer (Red)";
 
   return (
     <>
