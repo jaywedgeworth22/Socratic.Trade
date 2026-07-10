@@ -224,7 +224,7 @@ describe("reconcileBrokerProtectiveStops", () => {
     expect(rows[0]).toMatchObject({ brokerOrderId: "ord-2", status: "resting", quantity: 12 });
   });
 
-  it("also recovers when the caller's order list shows the stop already FILLED (cancel-of-a-fill always fails)", async () => {
+  it("also recovers when the caller's order list shows the stop already FILLED (cancel-of-a-fill always fails), but DEFERS re-placement to the next call — a fill actually moves the position, and `positions` was fetched by the caller before `orders`, so this call's `positions` may still be the stale pre-fill snapshot", async () => {
     await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 10, 100)], executionMode: "broker/live", running: true });
     expect(gw.placed).toHaveLength(1);
     gw.failCancel = true;
@@ -238,14 +238,23 @@ describe("reconcileBrokerProtectiveStops", () => {
     const blocked = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 5, 110)], executionMode: "broker/live", running: true });
     expect(blocked.placed).toBe(0);
     // The caller's order list shows ord-1 already FILLED (a filled order can never be cancelled —
-    // it's just as terminal as a rejection for this purpose).
+    // it's just as terminal as a rejection for this purpose). Section 1 clears the row THIS call,
+    // but section 4 must NOT re-place in the same call: the `positions` array this call was handed
+    // (still [longPos("AAPL", 5, 110)], simulating the caller's pre-orders-fetch snapshot) cannot be
+    // trusted to already reflect a fill that section 1 only just learned about from `orders`.
     gw.nextOrderId = "ord-3";
     const orders: EquityOrder[] = [{ id: "ord-1", symbol: "AAPL", side: "sell", type: "stop_market", state: "filled", createdAt: new Date().toISOString() }];
     const recovered = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 5, 110)], executionMode: "broker/live", running: true, orders });
-    expect(recovered.placed).toBe(1);
+    expect(recovered.placed).toBe(0); // deferred — no same-call replacement off a possibly-stale snapshot
+    expect(listBrokerProtectiveStops("PS-FILLED", "local")).toHaveLength(0); // row gone, nothing resting yet
+    expect(gw.placed).toHaveLength(1); // still just the original placement — no premature second one
+    // The NEXT call brings a fresh position read (no filled-order evidence needed this time — the
+    // row is already gone): placement resumes normally, sized off the current quantity.
+    const resumed = await reconcileBrokerProtectiveStops({ userId: "local", policy: rhPolicy("PS-FILLED"), accountNumber: "PS-FILLED", gateway: gw, positions: [longPos("AAPL", 5, 110)], executionMode: "broker/live", running: true });
+    expect(resumed.placed).toBe(1);
     const rows = listBrokerProtectiveStops("PS-FILLED", "local");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-3", status: "resting" });
+    expect(rows[0]).toMatchObject({ brokerOrderId: "ord-3", status: "resting", quantity: 5 });
   });
 
   it("stays conservative — never deletes a pending_cancel row when the order is ABSENT from the caller's list or still LIVE", async () => {

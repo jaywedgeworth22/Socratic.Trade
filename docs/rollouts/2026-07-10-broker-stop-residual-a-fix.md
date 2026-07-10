@@ -90,3 +90,39 @@ Node 24 (`PATH=/opt/homebrew/opt/node@24/bin:$PATH`; homebrew's default `node` i
   Worth a look if a future recon flags them, but out of scope here.
 - `robinhoodBrokerStops` stays default OFF; this is hardening only, not enablement. The
   still-open live-RH-smoke-test blocker from the 2026-07-09 note is unaffected by this change.
+
+## Landing-round review fix (same day, PR #1352)
+`required_conversation_resolution` on `main`'s branch protection blocked the merge on an
+unresolved codex-connector P1 comment, found valid on inspection:
+
+> When the recovered broker order is `filled`, this deletes the local row and lets section 4
+> place a fresh stop in the same pass using the `positions` snapshot that `runSyntheticStopMonitor`
+> captured before fetching `orders`. If the stop fills between those two broker reads... this path
+> can create a new GTC sell stop for shares that were just sold/reduced.
+
+Traced the call chain: `runSyntheticStopMonitor` (`src/lib/synthetic-stops.ts`) calls
+`gateway.getEquityPositions()` first, then `gateway.getEquityOrders()`, then passes BOTH into a
+single `reconcileBrokerProtectiveStops` call. A rejected/canceled/expired recovery is safe to
+re-place in that same call — the position never changed size. A `filled` recovery is different: the
+position DID shrink, but the `positions` array already in hand for this call could be the read from
+*before* the fill happened, if the fill landed broker-side in the narrow window between the two
+`gateway.get*` calls. Section 4 would then size a replacement stop off the stale (pre-fill)
+quantity — worst case, a resting sell stop for shares no longer held.
+
+Fix (`src/lib/broker-protective-stops.ts`): `reconcileBrokerProtectiveStops` now builds a
+`filledRecoverySymbols` set during section 1, populated only when the recovery evidence was
+specifically `filled` (not rejected/canceled/expired). Section 4's placement loop skips any symbol
+in that set for the current call, deferring re-placement to the next `reconcileBrokerProtectiveStops`
+call — by then the caller has taken a fresh `getEquityPositions()` read that reflects the fill. The
+always-on synthetic monitor protects the position for that one extra tick in between (same fallback
+this file relies on throughout).
+
+Updated the existing "also recovers when... FILLED" test in `test/broker-protective-stops.test.ts`
+to assert the new deferral (`recovered.placed === 0`, row deleted, no premature second placement)
+plus a follow-up call showing placement resumes normally once positions are fresh. The
+`canceled`-state recovery test (section 1 recovering via a non-filled terminal state, same-call
+re-placement) is unchanged and still passes — that path was never the race.
+
+Verification (node@24, full gate this time): `npx tsc --noEmit` clean; `npm test` — 315 files,
+3386 tests, all pass; `npm run build` clean. Landed via `bash scripts/land.sh`, PR #1352,
+squash-auto-merge armed.

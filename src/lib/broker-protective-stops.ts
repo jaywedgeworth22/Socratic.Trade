@@ -20,7 +20,10 @@
 // re-placement for that symbol. The caller's freshly fetched order list (`orders`, optional) lets
 // section 1 recover: if the order shows up there already done resting (filled/rejected/canceled/
 // expired), the row is deleted instead of retried again. Absent-from-list or still-live stays
-// ambiguous and keeps retrying — never assume terminal without positive evidence.
+// ambiguous and keeps retrying — never assume terminal without positive evidence. A rejected/
+// canceled/expired recovery never moved the position, so section 4 may re-place in the SAME call;
+// a FILLED recovery did move it, and the caller fetches `positions` before `orders`, so that one
+// case defers re-placement to the next call rather than risk sizing off a stale pre-fill quantity.
 
 import {
   audit,
@@ -141,6 +144,17 @@ export async function reconcileBrokerProtectiveStops(args: {
   const { userId, policy, accountNumber, gateway, positions, executionMode, running, orders = [] } = args;
   const out: ReconcileResult = { placed: 0, cancelled: 0, cancelledOrderIds: [], placedStopSymbols: [] };
 
+  // Symbols whose pending_cancel row section 1 just recovered THIS call specifically because the
+  // order was found FILLED (not merely rejected/canceled/expired). A fill actually reduces the
+  // position, but `positions` was captured by the caller (synthetic-stops.ts fetches it BEFORE
+  // `orders`) — so if the fill lands broker-side in the gap between those two reads, `positions`
+  // can still show the pre-fill quantity on THIS same call. Letting section 4 re-place immediately
+  // would then use that stale quantity, resting a fresh sell stop sized for shares that are already
+  // gone. Rejected/canceled/expired recoveries don't have this problem (the position never moved),
+  // so only "filled" recoveries defer — placement resumes next call once a fresh position read is
+  // in hand (the synthetic monitor still protects the position in the meantime).
+  const filledRecoverySymbols = new Set<string>();
+
   // The flag gates only PLACEMENT of new stops — never CANCELLATION. When the feature is disabled
   // (flag off) or no longer applicable (not live Robinhood, no stop-loss %), any stop it previously
   // placed is still resting live at the broker. Turning the feature off must TEAR THOSE DOWN, not
@@ -196,13 +210,19 @@ export async function reconcileBrokerProtectiveStops(args: {
         // "order not found", or the stop simply filled before the cancel reached the broker).
         // Check the caller's freshly fetched order list: if the order shows up there in a state
         // that's done resting (filled/rejected/canceled/expired), the row is stale bookkeeping —
-        // delete it so section 4 can re-place for the symbol on a later tick. If the order is
-        // ABSENT from the list or still live, stay conservative and keep retrying next tick
+        // delete it so section 4 can re-place for the symbol. A rejected/canceled/expired order
+        // never moved the position, so that re-place resumes in THIS SAME call; a filled order DID
+        // move the position, so filledRecoverySymbols below makes section 4 defer that one case to
+        // the next call instead (see its comment). If the order is ABSENT from the list or still
+        // live, stay conservative and keep retrying next tick
         // (an absent order is ambiguous, not confirmed dead — see broker-protective-stops.ts's
         // module doc and the section-4 "never orphan a possibly-still-live stop" guard).
         const found = orders.find((o) => o.id === row.brokerOrderId);
         if (found && isDoneRestingState(found.state)) {
           deleteBrokerProtectiveStop(row.id, userId);
+          if (String(found.state ?? "").trim().toLowerCase() === "filled") {
+            filledRecoverySymbols.add(normalizeSymbol(row.symbol));
+          }
           audit(
             "broker_protective_stop_cancel_recovered",
             { symbol: row.symbol, brokerOrderId: row.brokerOrderId, brokerState: found.state, error: errMsg(err) },
@@ -283,6 +303,10 @@ export async function reconcileBrokerProtectiveStops(args: {
 
   for (const [sym, pos] of liveLongs) {
     if (existing.has(sym)) continue;
+    // Section 1 just recovered this symbol's row THIS call via a FILLED order — `positions` may not
+    // yet reflect that fill (see the filledRecoverySymbols comment above). Defer to the next call's
+    // fresh position read rather than risk sizing a replacement off a stale (pre-fill) quantity.
+    if (filledRecoverySymbols.has(sym)) continue;
     if (!(pos.averageCost > 0)) continue;
     const qty = Math.abs(pos.quantity);
     const stopPrice = round2(pos.averageCost * (1 - stopPct / 100));
