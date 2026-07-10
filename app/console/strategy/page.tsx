@@ -1,11 +1,12 @@
 "use client";
 
 /** Strategy — how this account trades: the strategist's written instructions
- *  (prompt), the models, the eight scoring-factor weights, and the preset
- *  library. Always account-scoped; the header repeats the scope. Presets are
- *  copy-not-link and can never arm or disarm anything (server-enforced). */
+ *  (prompt), the models, the eight scoring-factor weights, the preset
+ *  library, and the account's tax treatment. Always account-scoped; the
+ *  header repeats the scope. Presets are copy-not-link and can never arm or
+ *  disarm anything (server-enforced). */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Lock, Unlock } from "lucide-react";
 import type { LlmReasoningEffort, ScoringWeights, StrategyTuningPatch, TradingPolicy } from "@/lib/types";
 import { reasoningCapabilityForModel } from "@/lib/llm-request";
@@ -37,6 +38,7 @@ import { useUnsavedChanges } from "../lib/useDirtyGuard";
 import { ALL_DEFS } from "../guardrails/field-defs";
 import { TypedConfirm } from "../components/chrome";
 import { ModelStatsButton } from "../components/model-stats-drawer";
+import { TaxSettingsCard } from "./tax-settings";
 import { useToast } from "../ui/toast";
 import { Ago, Btn, Card, Chip, Empty, Field, LiveTag, RawNumInput, Select, TextArea, TextInput, Tooltip } from "../ui/primitives";
 import { SaveStatus } from "../ui/save-status";
@@ -220,6 +222,19 @@ export default function StrategyPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const reality = useMemo(() => (snapshot ? deriveReality(snapshot) : null), [snapshot]);
+  const ready = snapshot !== null;
+
+  // Deep links (e.g. Settings' old #models links now route to /console/strategy#models):
+  // the page renders only after the snapshot arrives, so the native anchor jump
+  // misses — scroll once the target section actually exists.
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    const timer = setTimeout(() => document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    return () => clearTimeout(timer);
+  }, [ready]);
+
   if (!snapshot || !reality) return null;
 
   const policy = snapshot.policy;
@@ -354,10 +369,20 @@ export default function StrategyPage() {
         />
       </Card>
 
-      {/* Models */}
+      {/* Models — id anchor is a deep-link target (old Settings "#models" links
+          retargeted here in the 2026-07-10 Settings IA restructure). */}
+      <div id="models" className="scroll-mt-28">
       <Card title="Models" action={<SaveStatus status={autoSaveModels.status} />}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Proposer" hint="aka Green Team or Bull — writes the trade proposals each run." htmlFor="llm-model">
+          <Field
+            label={
+              <>
+                <span className="text-[color:var(--con-pos)]">Proposer</span> Model
+              </>
+            }
+            hint="Green — writes the trade proposals each run."
+            htmlFor="llm-model"
+          >
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <ModelSelect
@@ -378,8 +403,12 @@ export default function StrategyPage() {
             </div>
           </Field>
           <Field
-            label="Reviewer"
-            hint="aka Red Team or Bear — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
+            label={
+              <>
+                <span className="text-[color:var(--con-neg)]">Reviewer</span> Model
+              </>
+            }
+            hint="Red — reviews every proposal each run, and runs a deeper adversarial debate on high-conviction or dissent-flagged ideas. Blank = same as proposer."
             htmlFor="rt-model"
           >
             <div className="flex items-start gap-2">
@@ -474,6 +503,7 @@ export default function StrategyPage() {
           </div>
         )}
       </Card>
+      </div>
 
       {/* Scoring weights */}
       <Card title="Scoring-factor weights" action={<SaveStatus status={autoSaveWeights.status} />}>
@@ -585,6 +615,13 @@ export default function StrategyPage() {
           </div>
         )}
       </Card>
+
+      {/* Tax treatment — account-scoped like the rest of this page; moved here
+          from Settings in the 2026-07-10 IA restructure (Settings is global-only).
+          The id anchor is a deep-link target. */}
+      <div id="tax" className="scroll-mt-28">
+        <TaxSettingsCard />
+      </div>
     </div>
   );
 }

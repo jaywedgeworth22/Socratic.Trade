@@ -4,11 +4,13 @@
  *  system's learning decisions (recent learned facts + the pending approval
  *  queue) against a system-history digest, catching lessons whose evidence was
  *  corrupted by an execution defect (e.g. losses from a stuck exit blamed on
- *  the thesis). Three account-policy fields, saved through the same
+ *  the thesis). Three USER-LEVEL fields (one config for your whole login — the
+ *  review runs once per user per day, not per account), saved through the same
  *  PUT /api/policy path as every other settings card:
  *    learningReviewEnabled — the on/off switch (default off);
- *    learningReviewMode    — annotate (audit + notify only) vs decide (apply);
- *    learningReviewModel   — reviewer model (blank = claude-fable-5). */
+ *    learningReviewMode    — decide (apply verdicts, default) vs annotate (notify only);
+ *    learningReviewModel   — the model that runs the review (default claude-fable-5,
+ *                            an explicit value — never a blank that secretly means Fable). */
 
 import { useState } from "react";
 import { savePolicy, ConsoleApiError } from "../lib/api";
@@ -29,10 +31,11 @@ const MODE_OPTIONS = [
   }
 ] as const;
 
-// Reviewer-model shortlist: this is a once-a-day audit of decisions that compound, so the
-// curated options are frontier-tier; any model id also works via the account's Models card.
+// Model shortlist: this is a once-a-day audit of decisions that compound, so the curated
+// options are frontier-tier; the review model is its own user-level pick (unrelated to the
+// per-account team models on Framework → Models). No blank/"default" pseudo-option — the
+// field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
-  { value: "", label: "default (claude-fable-5)" },
   { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
   { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
   { value: "gpt-5.5", label: "gpt-5.5 — deepest OpenAI reasoning · $$$" },
@@ -49,8 +52,10 @@ export function LearningReviewCard() {
   if (!snapshot || !policy) return null;
 
   const enabled = policy.learningReviewEnabled === true;
-  const mode = policy.learningReviewMode === "decide" ? "decide" : "annotate";
-  const model = policy.learningReviewModel ?? "";
+  // "decide" is the default; only an explicit "annotate" opts out.
+  const mode = policy.learningReviewMode === "annotate" ? "annotate" : "decide";
+  // Real default value (never blank-means-Fable).
+  const model = policy.learningReviewModel?.trim() || "claude-fable-5";
   const customModel = model && !REVIEW_MODEL_OPTIONS.some((o) => o.value === model) ? model : null;
 
   const save = async (patch: Record<string, unknown>, saved: string) => {
@@ -120,16 +125,16 @@ export function LearningReviewCard() {
             </Select>
           </Field>
           <Field
-            label="Reviewer model"
-            hint="One call per day, so a frontier model is the point. Blank = claude-fable-5."
+            label="Learning-review model"
+            hint="One call per day, so a frontier model is the point. Defaults to claude-fable-5."
             htmlFor="learning-review-model"
           >
             <Select
               id="learning-review-model"
               value={model}
               disabled={busy}
-              title="The model that reviews the learning decisions. Needs a resolvable key for its provider (Settings → API keys)."
-              onChange={(e) => void save({ learningReviewModel: e.target.value || null }, "Reviewer model saved")}
+              title="The model that runs the daily learning review. Needs a resolvable key for its provider (Settings → API keys)."
+              onChange={(e) => void save({ learningReviewModel: e.target.value }, "Learning-review model saved")}
             >
               {customModel && (
                 <option value={customModel} title="A model id outside the curated list, kept exactly as stored.">

@@ -39,8 +39,8 @@ export type LlmTransport = OpenAiTransport | "anthropic-messages";
  * `runStrategyOnce` substitutes the concrete pick onto its run-scoped policy clone at the top of
  * every run (src/lib/model-rotation.ts) before any endpoint resolution. Defined here (leaf module,
  * no imports beyond types) so both the rotation module and `resolveOpenAiModel`'s safety net below
- * can share it without an import cycle. Keep the literal in sync with the UI copies in
- * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID) and app/console/settings/models.tsx.
+ * can share it without an import cycle. Keep the literal in sync with the UI copy in
+ * app/ui/llm-model-catalog.ts (ROTATE_ALL_MODELS_ID).
  */
 export const LLM_MODEL_ROTATION_SENTINEL = "__rotate__";
 
@@ -484,7 +484,9 @@ export async function fetchLlmWithRetry(
 }
 
 export const LLM_OUTPUT_TOKEN_CAPS = {
-  strategyProposal: LLM_REQUEST_DEFAULTS.maxOutputTokens,
+  // Literal, NOT tied to LLM_REQUEST_DEFAULTS.maxOutputTokens: proposal JSON for multiple proposals
+  // doesn't fit in the shared 1500-token default — prod Roth truncated to zero proposals 2026-07-09.
+  strategyProposal: 4000,
   strategyTuning: LLM_REQUEST_DEFAULTS.maxOutputTokens,
   /**
    * The single Red Team reviewer (docs/single-adversary-consolidation.md §7). Replaces the former
@@ -520,6 +522,26 @@ type RequestBounds = {
  */
 const ANTHROPIC_MIN_MAX_TOKENS = 4096;
 
+/**
+ * The actual numeric output-token cap that ends up on the wire — `bounds.maxOutputTokens` widened
+ * by provider-specific reasoning headroom, exactly as `withLlmRequestBounds` computes it below.
+ * Exposed so callers that log/audit a truncated response (e.g. strategy.ts's Bull-truncation audit)
+ * can report what was ACTUALLY sent instead of the pre-headroom `LLM_OUTPUT_TOKEN_CAPS` constant —
+ * a Gemini/xAI/Mistral/DeepSeek reasoning call gets up to +16000 tokens of headroom the constant
+ * alone doesn't reflect.
+ */
+export function resolveLlmWireOutputCap(transport: LlmTransport, bounds: RequestBounds): number {
+  if (transport === "anthropic-messages") return Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS);
+  const capability = reasoningCapabilityForModel(bounds.model);
+  const normalizedEffort = normalizeReasoningEffortForModel(bounds.model, bounds.reasoningEffort);
+  if (capability?.provider === "openai" && normalizedEffort) {
+    return bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort as "low" | "medium" | "high");
+  }
+  if (transport === "responses") return bounds.maxOutputTokens;
+  if (capability && normalizedEffort) return bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort);
+  return bounds.maxOutputTokens;
+}
+
 export function withLlmRequestBounds<T extends Record<string, unknown>>(
   body: T,
   transport: LlmTransport,
@@ -531,7 +553,7 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     // Anthropic's Messages API takes a REQUIRED top-level `max_tokens` (not max_output_tokens /
     // max_completion_tokens). Newer Claude adaptive-thinking models reject non-default sampling knobs,
     // so omit temperature when adaptive thinking is active.
-    const base = { ...body, max_tokens: Math.max(bounds.maxOutputTokens, ANTHROPIC_MIN_MAX_TOKENS) };
+    const base = { ...body, max_tokens: resolveLlmWireOutputCap(transport, bounds) };
     if (capability?.provider === "anthropic" && normalizedEffort) {
       return { ...base, thinking: { type: "adaptive" }, output_config: { effort: normalizedEffort } };
     }
@@ -543,7 +565,7 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     // Reasoning models reject `temperature`; steer with `reasoning_effort` and give the output cap
     // extra headroom so hidden reasoning tokens don't starve the visible JSON answer.
     const effort = normalizedEffort as "low" | "medium" | "high";
-    const maxOutputTokens = bounds.maxOutputTokens + reasoningTokenHeadroom(effort);
+    const maxOutputTokens = resolveLlmWireOutputCap(transport, bounds);
     if (transport === "responses") {
       return { ...body, max_output_tokens: maxOutputTokens, reasoning: { effort } };
     }
@@ -552,7 +574,7 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
 
   const temperature = bounds.temperature ?? LLM_REQUEST_DEFAULTS.deterministicTemperature;
   if (transport === "responses") {
-    return { ...body, max_output_tokens: bounds.maxOutputTokens, temperature };
+    return { ...body, max_output_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
   }
   if (capability && normalizedEffort) {
     // Same headroom rationale as the OpenAI branch above, extended to every other
@@ -560,7 +582,7 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
     // hidden "thinking"/reasoning tokens against the SAME `max_completion_tokens` cap as the visible
     // JSON answer, so a bare 1500-token cap at medium/high effort starves the visible output before
     // it can even start (composite review B/high/S — this was previously OpenAI-only).
-    const maxCompletionTokens = bounds.maxOutputTokens + reasoningTokenHeadroom(normalizedEffort);
+    const maxCompletionTokens = resolveLlmWireOutputCap(transport, bounds);
     if (capability.provider === "deepseek") {
       const deepSeekThinking =
         normalizedEffort === "none"
@@ -569,14 +591,20 @@ export function withLlmRequestBounds<T extends Record<string, unknown>>(
       return { ...body, max_completion_tokens: maxCompletionTokens, ...deepSeekThinking };
     }
     // Mistral only reaches here as mistral-medium-3-5 with effort "none" | "high" (the only
-    // Mistral id with a reasoning capability). prompt_mode:"reasoning" rides along only on the
-    // reasoning tier — medium-3-5 accepted it in the 2026-07-08 benchmark validation, while
-    // small-2603 400s on it (which is exactly why small has no capability entry).
-    const providerReasoning =
-      capability.provider === "mistral" && normalizedEffort !== "none"
-        ? { reasoning_effort: normalizedEffort, prompt_mode: "reasoning" }
-        : { reasoning_effort: normalizedEffort };
-    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, ...providerReasoning };
+    // Mistral id with a reasoning capability), and it gets reasoning_effort ONLY — never
+    // prompt_mode. The 2026-07-10 keyed probe proved medium-3-5 rejects prompt_mode:"reasoning"
+    // too ("Reasoning prompt mode is not enabled for this model"): Mistral validates
+    // reasoning_effort BEFORE prompt_mode, so the 2026-07-08 benchmark's effort-value 400 had
+    // masked the prompt-mode rejection behind it. Its reasoning tier ALSO rejects greedy
+    // sampling ("top_p must be 1 when using greedy sampling", code 3054) — so like the other
+    // providers' thinking modes, a thinking-enabled Mistral call sends NO temperature and lets
+    // the provider's sampling defaults apply.
+    if (capability.provider === "mistral" && normalizedEffort !== "none") {
+      return { ...body, max_completion_tokens: maxCompletionTokens, reasoning_effort: normalizedEffort };
+    }
+    return { ...body, max_completion_tokens: maxCompletionTokens, temperature, reasoning_effort: normalizedEffort };
   }
-  return { ...body, max_completion_tokens: bounds.maxOutputTokens, temperature };
+  // resolveLlmWireOutputCap (== bounds.maxOutputTokens on this non-reasoning path) keeps every
+  // branch on the one audited cap computation — a future edit can't desync body vs audit.
+  return { ...body, max_completion_tokens: resolveLlmWireOutputCap(transport, bounds), temperature };
 }
