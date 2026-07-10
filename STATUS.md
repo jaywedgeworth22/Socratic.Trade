@@ -22,6 +22,18 @@ construction. The "sole adversary" line was folded into the panel's failure bran
 now a legacy-only fallback (no structured verdict + legacy `adversaryUnavailable` flag). Added 5
 regression assertions. Gates green (tsc/lint/3400 tests/build) under node26 — see the rollout note's
 Node ABI caveat. See `docs/rollouts/2026-07-10-adversary-review-duplication.md`.
+## 2026-07-10 — Privacy Policy + Terms and Conditions pages for Twilio verification (MONET, branch `monet/privacy-terms-pages`)
+Owner needs live URLs for Twilio's toll-free/A2P SMS verification. Added `/privacy-policy` +
+`/terms-and-conditions` (boilerplate, matching the existing `/how-it-works`/`/welcome` page
+pattern), describing the app's real opt-in Twilio SMS notification channel with the specific
+language Twilio's compliance review looks for (opt-in consent, message frequency varies, rates may
+apply, STOP/HELP, no sale of phone numbers). Registered in `sitemap.ts`/`robots.ts`. Caught the
+actual thing that would have broken verification: `middleware.ts` redirects every unauthenticated
+path to `/login` by default — added both new paths to `PUBLIC_PREFIXES` so they're reachable
+without signing in. Verified live via `next dev` (Browser preview): both pages render full content
+unauthenticated. node@24: tsc clean, eslint 0-err, full suite 315/3395, build clean (both pages
+static). See `docs/rollouts/2026-07-10-privacy-terms-pages.md`. Follow-up: owner should have
+counsel review if the product scales past sole-operator use.
 
 ## 2026-07-10 — Pricing doc: cover ALL external data sources, not just the core seven (CLAUDE subagent, branch `claude/pricing-doc-all-sources`)
 Owner: "consider all the other data sources we have too, not just those few — marketstack, and
