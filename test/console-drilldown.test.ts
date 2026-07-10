@@ -313,6 +313,21 @@ describe("console drilldown: provenance + misc formatting", () => {
     expect(withProvenance("Volume.", view, "volume")).not.toContain("Source:");
   });
 
+  it("only stamps 'Received' freshness on fields a provider actually supplied", () => {
+    const view: QuoteView = {
+      symbol: "X",
+      full: false,
+      asOf: new Date().toISOString(),
+      peRatio: 12,
+      sources: { peRatio: "yahoo-finance" }
+    };
+    // Sourced field → provenance + freshness.
+    expect(withProvenance("P/E.", view, "peRatio")).toContain("Received");
+    // Unsourced field (no provider returned it this scan) → no fabricated freshness:
+    // "Received 2:00 PM" on a blank cell claimed we got data we never did.
+    expect(withProvenance("FCF yield.", view, "fcfYield")).toBe("FCF yield.");
+  });
+
   it("normalizes debt/equity like the legacy scan table (percent vs ratio, sec-xbrl exempt)", () => {
     expect(normalizedDebtToEquity({ symbol: "X", full: false, debtToEquity: 150 })).toBe(1.5);
     expect(normalizedDebtToEquity({ symbol: "X", full: false, debtToEquity: 1.5 })).toBe(1.5);

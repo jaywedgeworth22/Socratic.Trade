@@ -238,11 +238,14 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     const cases = listSocraticDecisionCases("local", { runId: result.runId });
     expect(cases.length).toBeGreaterThanOrEqual(1);
     const coverageItems = cases[0]!.evidence.filter(
-      (item) => item.kind === "safety" && item.title === "Requested filings doc type never ingested"
+      (item) => item.kind === "safety" && item.title === "Filings library still warming up"
     );
     expect(coverageItems.length).toBe(1);
     expect(coverageItems[0]!.summary).toContain("10-k");
-    expect(coverageItems[0]!.tone).toBe("warning");
+    // Warm-up receipt is advisory context, not a safety alarm — neutral tone by design
+    // (owner report 2026-07-09: the warning-orange "never ingested" card on every stock
+    // read as a per-symbol lookup failure).
+    expect(coverageItems[0]!.tone).toBe("neutral");
   }, 30_000);
 
   it("(b) THE KEY LOW-NOISE CASE: 10-k requested, NOT retrieved this run, but HAS >=1 ingested_accessions '10-K' row -> receipt does NOT fire", async () => {
@@ -396,7 +399,7 @@ describe("corpus-coverage receipt — strategy.ts integration (advisory only)", 
     // producer and didn't retrieve) so this doubles as a same-run advisory-invariant check.
     const ragField = String(bullUser.retrievedFinancialContext ?? "");
     expect(ragField).toContain("Risk factors for AAPL.");
-    expect(ragField).not.toContain("never ingested");
+    expect(ragField).not.toContain("warming up");
     expect(ragField).not.toContain("earnings-transcript");
   }, 30_000);
 });
