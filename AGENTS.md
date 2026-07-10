@@ -39,12 +39,13 @@ Before every commit/push to the GitHub repo, you MUST update the following:
    Completed (merged to `main`) → Deployed to production** as its state changes, and add new
    efforts as they are conceived. This is the owner's at-a-glance board; treat it as append-mostly
    and never delete another agent's row — correct it in place and note the correction. "Completed"
-   means merged to `main` (which auto-deploys NOWHERE — auto-deploy is OFF and previews are retired);
-   "Deployed to production" is a separate **ANNOUNCE-THEN-DEPLOY** release (owner ruling 2026-07-09):
-   one deployer posts a #agent-sync claim (app + exact commit + contents + "deploying in N min unless
-   objection"), honors a ~10-min objection window, avoids market hours unless it's a fix, then triggers
-   the Coolify deploy and owns health-verify + boards — canonical protocol detail in
-   `/Users/jay/apps/AGENT-SYNC.md`. Do not mark it deployed unless that release actually happened.
+   means merged to `main`. **As of 2026-07-10, merging to `main` AUTO-DEPLOYS to production**
+   (owner-directed): Coolify auto-deploys `socratic-trade-prod` on every push to `main`, so
+   "Completed (merged)" and "Deployed to production" now collapse — there is no separate manual deploy
+   step. The old **ANNOUNCE-THEN-DEPLOY** protocol is **RETIRED**: do NOT post deploy claims or manually
+   trigger Coolify deploys. Mechanism, verification, and rollback:
+   `docs/rollouts/2026-07-10-auto-deploy-on.md`; canonical protocol detail in
+   `/Users/jay/apps/AGENT-SYNC.md`.
 3. **`docs/rollouts/YYYY-MM-DD-short-slug.md`** — create or update a chronological rollout note detailing what was done, decisions made, what's next, exact touched files, and verification commands run. Do NOT use a single `HANDOFF.md` file, use the rollouts directory.
 4. **`PLAN.md`** — reflect any scope, timeline, or approach changes.
 5. **Phase docs (`docs/*.md`)** — update the relevant phase doc to match actual implementation state.
@@ -133,8 +134,9 @@ by `scripts/land.sh`). The "Preview freshness policy" section below is historica
 
 Hosting is now Coolify on the Hetzner box (`135.181.192.190`, 8 GB `ubuntu-8gb-hel1-2`,
 dashboard + API `https://host.jays.services` — direct DNS, no Mac dependency; migrated
-2026-07-09 from the 4 GB `91.98.44.8` box, which is kept stopped as rollback until the
-owner deletes it — see `docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
+2026-07-09 from the 4 GB `91.98.44.8` box, which the owner DELETED 2026-07-10 — that IP
+is gone; DB rollback path is the litestream R2 replica — see
+`docs/rollouts/2026-07-09-hetzner-8gb-server-migration.md`).
 **The dashboard moved off the apex the same evening (owner-directed): `jays.services`
 (apex) now CNAMEs to the Mac Cloudflare tunnel and does NOT reach Coolify — any tool or
 script calling `https://jays.services/api/v1/...` must use
@@ -150,11 +152,14 @@ rollout note).
 
 **PRODUCTION IS ON COOLIFY (cut over 2026-07-07, owner-directed, MONET; verified).**
 `socratictrade.com` = Coolify app `socratic-trade-prod` (uuid `m1os7ijf31bg3fanil152e4b`,
-branch `main`, nixpacks, auto-deploy OFF). **A production release follows ANNOUNCE-THEN-DEPLOY
-(owner ruling 2026-07-09):** one deployer posts a #agent-sync claim (app + exact commit + contents +
-"deploying in N min unless objection"), honors a ~10-min objection window, avoids market hours unless
-it's a fix, then triggers a Coolify deploy of `socratic-trade-prod` and owns health-verify + board
-updates. `~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
+branch `main`, nixpacks). **AUTO-DEPLOY IS ON (owner-directed 2026-07-10): every push to `main`
+auto-deploys `socratic-trade-prod`** via Coolify's GitHub-App webhook — `is_auto_deploy_enabled=true`
+plus GitHub's webhook IP ranges whitelisted on the `jays.services` Cloudflare zone (they were 403'd by
+the zone's IP-allowlist, which is why webhooks never fired before; bot protection stays on for all
+other traffic). Merge == live; the **ANNOUNCE-THEN-DEPLOY protocol is RETIRED** — do NOT post deploy
+claims or manually trigger deploys. Rollback to manual: set `is_auto_deploy_enabled=false` on the app.
+Details/verification: `docs/rollouts/2026-07-10-auto-deploy-on.md`.
+`~/apps/trading-publish.sh` is DEPRECATED (it targets the stopped Mac pm2 lane); canonical
 protocol detail lives in `/Users/jay/apps/AGENT-SYNC.md`. Boot path:
 `scripts/coolify-prod-start.sh` under `DB_BOOTSTRAP=live` — Infisical secrets via pinned
 in-container CLI, one-time litestream 0.5.14 restore from the R2 replica

@@ -139,6 +139,23 @@ npm run build
 6. **Diagram cadence honesty:** the app-managed enforcement node now says fixed/ATR breaches exit
    on each STRATEGY RUN while only the trailing monitor evaluates every scheduler tick.
 
+## Review fixes round 2 + main merge (Codex on `fc72001`; merged `origin/main` incl. PR #1352/#1341)
+
+- **Native trails below entry:** a native Alpaca trail placed while mark < entry seeds from the
+  depressed market (avg 100 / mark 96 / 5%: trigger ~91.2 vs the app's entry-seeded 95) — the
+  native lane now places only when mark ≥ entry; below it the synthetic monitor keeps the
+  entry-seeded trail (the ratcheted lane is unaffected — its explicit trigger IS entry-seeded).
+- **Trailing copy honesty:** shares committed to resting broker exits (Alpaca bracket legs) can't
+  also back a trail — hint + diagram now say bracketed positions keep their bracket exits.
+- **Live-placement preflight:** sections 3–4 now return early when `livePreflightBlocks` is true
+  (ALLOW_LIVE_TRADING=false escape hatch) — the default-on trailing lane can no longer place a
+  real broker order past an explicit live-trading opt-out; risk-reducing cancels still run.
+- **Merge with main:** PR #1352's pending_cancel self-heal (`isDoneRestingState`, filled-recovery
+  defer) landed on main touching the same reconciler — its `orders` param and this PR's
+  `brokerOrders` were the same caller list, so they are UNIFIED as `orders` (recovery + coverage
+  documented together); PR #1341's connectedAccountId audit threading kept on the merged sites.
+  NOTE: main also flipped **auto-deploy ON** (b4c4f4b) — merging this PR auto-deploys production.
+
 ## Follow-ups / risks
 
 - **Live-verify the RH ratchet lane before enabling `robinhoodBrokerStops`** — same standing

@@ -33,8 +33,13 @@ export interface StoreContextsResult {
   indexed: number;
   /** Set when the embed/upsert flow threw (e.g. Voyage 429) — the failure is no longer silent. */
   error?: string;
-  /** True when Pinecone/Voyage keys were missing, so nothing could be stored. */
+  /** True when nothing was stored for a non-error reason — see unconfigured/dedupComplete for which. */
   skipped?: boolean;
+  /** Set with skipped: Pinecone/Voyage keys missing — nothing can embed until configured. */
+  unconfigured?: boolean;
+  /** Set with skipped: every chunk was already in the index (content-hash dedup) — the content
+   *  is fully stored; the caller may safely treat the document as ingested. */
+  dedupComplete?: boolean;
   /**
    * Count of embeddings dropped by the integrity guard (R2: wrong dimension or non-finite values,
    * e.g. a Voyage model/config drift) instead of being upserted as a degenerate vector. 0 in the
@@ -200,6 +205,16 @@ function remainingIngestTexts(userId: string, requested: number): { allowed: num
     // Tests mock db.ts without the usage table; fail open there instead of breaking vector mocks.
     return { allowed: requested, used: 0, limit };
   }
+}
+
+/** Whether the rolling-24h ingest text budget (RAG_INGEST_MAX_TEXTS_PER_DAY) has any headroom
+ *  left for this user scope. Cheap pre-flight for bulk ingest loops (SEC filings): checking
+ *  BEFORE fetching/chunking a document avoids downloading multi-MB filing bodies that
+ *  storeDocument would only budget-skip — and avoids emitting one budget warning per doomed
+ *  document. Fails open (true) when the budget is disabled or unreadable, mirroring
+ *  remainingIngestTexts. */
+export function hasIngestTextBudget(userId: string = "local"): boolean {
+  return remainingIngestTexts(userId, 1).allowed > 0;
 }
 
 function pineconeWriteBudgetEnabled(): boolean {
@@ -1114,7 +1129,7 @@ export async function storeContexts(
     }));
   }
   if (documentsToStore.length === 0) {
-    return { attempted: validDocuments.length, indexed: 0, skipped: true };
+    return { attempted: validDocuments.length, indexed: 0, skipped: true, dedupComplete: true };
   }
 
   let budgetSkipped = 0;
@@ -1231,7 +1246,7 @@ export async function storeContexts(
       attempted: validDocuments.length
     });
     audit("vector_store", { ok: false, attempted: validDocuments.length, indexed: 0, skipped: true, reason: "missing Pinecone/Voyage keys" }, userId);
-    return { attempted: validDocuments.length, indexed: 0, skipped: true };
+    return { attempted: validDocuments.length, indexed: 0, skipped: true, unconfigured: true };
   }
 
   let indexed = 0;
@@ -1384,7 +1399,7 @@ export async function storeDocument(
     );
   }
   if (freshChunks.length === 0) {
-    return { attempted: chunked.length, indexed: 0, skipped: true };
+    return { attempted: chunked.length, indexed: 0, skipped: true, dedupComplete: true };
   }
 
   const documents: ContextDocument[] = freshChunks.map((c) => ({

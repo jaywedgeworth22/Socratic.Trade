@@ -22,7 +22,7 @@ import {
   normalizeMarketScanCandidateLimit,
   normalizeMarketScanOutlierReserve
 } from "@/lib/scan-settings";
-import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig } from "@/lib/llm-request";
+import { ALL_LLM_REASONING_EFFORTS, isDisallowedInteractiveStrategyReasoningConfig, resolveReviewerReasoningEffort } from "@/lib/llm-request";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/types";
 import type { IndexUniverse, NotificationEventType, TradingPolicy } from "@/lib/types";
 import { NextResponse } from "next/server";
@@ -90,17 +90,24 @@ export async function PUT(request: Request) {
       ...(typeof body.tuning === "object" && body.tuning ? body.tuning : {})
     }
   };
-  // Owner directive 2026-07-07: an empty/cleared Red model is NOT silently deleted (that used to mean
-  // "fall back to the Green model" — a fallback that no longer exists). A blank model is rejected by
-  // validatePolicy so the user must pick one; there is no default for anything.
-  // The learning review model, by contrast, is an OPTIONAL advisory feature: blanking it clears the
-  // selection (→ undefined, feature no-ops) rather than being a rejected mandatory pick.
-  if (typeof body.learningReviewModel === "string" && body.learningReviewModel.trim().length === 0) {
-    delete policy.learningReviewModel;
-  }
+  // Owner directive 2026-07-07: an empty/cleared model is NOT silently deleted or substituted — a
+  // blank model id is rejected by validatePolicy so the user must pick one explicitly. This covers
+  // the learning-review model too (#1278): a blank used to be quietly deleted here ("cleared →
+  // feature no-ops"), but mergePolicy now refills the explicit claude-fable-5 default, which would
+  // turn a clear into a silent revert-to-default. Rejecting mirrors the Green/Red model rules; the
+  // runner's "no-model" skip remains only as a backstop for corrupt stored data that bypassed this
+  // route.
   // The client serializes a CLEARED optional field as `null` (JSON.stringify drops `undefined`, which the
   // `...current` merge above would otherwise silently restore). Strip those nulls back to absent so blanking
   // a field actually turns the guard off / reverts it to its default.
+  // EXCEPTION — learningReviewModel: a cleared model must be REJECTED, not stripped. validatePolicy
+  // rejects a blank STRING below, but a `null` would be deleted by stripNullsDeep before that check
+  // runs, and setPolicy would then merge DEFAULT_POLICY.learningReviewModel (claude-fable-5) back —
+  // the exact silent clear->default this route exists to prevent (owner: require a model be chosen;
+  // no hidden model default). Reject the null clear explicitly, mirroring the blank-string path.
+  if (body.learningReviewModel === null) {
+    return new NextResponse("learningReviewModel must be a non-empty model id.", { status: 400 });
+  }
   stripNullsDeep(policy as unknown as Record<string, unknown>);
   normalizeExclusivePolicyCaps(policy);
   // Only enforce the interactive gpt-5.5/high-reasoning rejection when THIS request actually
@@ -112,7 +119,8 @@ export async function PUT(request: Request) {
   const reasoningConfigChanged =
     policy.llmModel !== current.llmModel ||
     policy.redTeamLlmModel !== current.redTeamLlmModel ||
-    policy.llmReasoningEffort !== current.llmReasoningEffort;
+    policy.llmReasoningEffort !== current.llmReasoningEffort ||
+    policy.redTeamReasoningEffort !== current.redTeamReasoningEffort;
   const validationError = await validatePolicy(policy, userId, {
     enforceInteractiveReasoningRule: reasoningConfigChanged,
     // Keyed-provider backstop gating mirrors the reasoning rule: validatePolicy runs against the
@@ -159,7 +167,10 @@ async function validatePolicy(
   if (policy.redTeamLlmModel !== undefined && (typeof policy.redTeamLlmModel !== "string" || policy.redTeamLlmModel.trim().length === 0 || policy.redTeamLlmModel.length > 64)) return "redTeamLlmModel must be a non-empty model id.";
   if (policy.learningReviewEnabled !== undefined && typeof policy.learningReviewEnabled !== "boolean") return "learningReviewEnabled must be a boolean.";
   if (policy.learningReviewMode !== undefined && !["annotate", "decide"].includes(policy.learningReviewMode)) return "learningReviewMode must be annotate or decide.";
+  if (policy.brokerMinimumHandling !== undefined && !["bump", "skip"].includes(policy.brokerMinimumHandling)) return "brokerMinimumHandling must be bump or skip.";
   if (policy.learningReviewModel !== undefined && (typeof policy.learningReviewModel !== "string" || policy.learningReviewModel.trim().length === 0 || policy.learningReviewModel.length > 64)) return "learningReviewModel must be a non-empty model id.";
+  if (policy.learningReviewMinNewLessons !== undefined && (!Number.isInteger(policy.learningReviewMinNewLessons) || policy.learningReviewMinNewLessons < 1 || policy.learningReviewMinNewLessons > 1000)) return "learningReviewMinNewLessons must be an integer between 1 and 1000.";
+  if (policy.learningReviewMaxWaitDays !== undefined && (!Number.isInteger(policy.learningReviewMaxWaitDays) || policy.learningReviewMaxWaitDays < 1 || policy.learningReviewMaxWaitDays > 365)) return "learningReviewMaxWaitDays must be an integer between 1 and 365.";
   // Owner directive 2026-07-07: a chosen model must belong to a provider the user holds a key for
   // (no defaults; only keyed providers are usable). Same-model-for-both is allowed — independence is
   // the user's choice, not enforced. The Settings UI disables non-keyed options; this is the
@@ -180,11 +191,22 @@ async function validatePolicy(
   if (policy.llmReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.llmReasoningEffort)) {
     return "llmReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
   }
-  if (
-    (options.enforceInteractiveReasoningRule ?? true) &&
-    (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort) ||
-      isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, policy.llmReasoningEffort))
-  ) return "gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+  if (policy.redTeamReasoningEffort !== undefined && !ALL_LLM_REASONING_EFFORTS.includes(policy.redTeamReasoningEffort)) {
+    return "redTeamReasoningEffort must be none, minimal, low, medium, high, xhigh, or max.";
+  }
+  // Per-team reasoning (2026-07-10): each team's (model, effort) combo is checked with ITS OWN
+  // effort — the proposer's legacy `llmReasoningEffort`, and the reviewer's `redTeamReasoningEffort`
+  // falling back to the proposer's until explicitly set (resolveReviewerReasoningEffort). A
+  // violating combo on EITHER team rejects, and the message names which team so the owner knows
+  // which control to change.
+  if (options.enforceInteractiveReasoningRule ?? true) {
+    if (isDisallowedInteractiveStrategyReasoningConfig(policy.llmModel, policy.llmReasoningEffort)) {
+      return "Proposer (green team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+    }
+    if (isDisallowedInteractiveStrategyReasoningConfig(policy.redTeamLlmModel, resolveReviewerReasoningEffort(policy))) {
+      return "Reviewer (red team): gpt-5.5 with high reasoning is disabled for interactive strategy runs. Use medium/low reasoning or choose a faster model.";
+    }
+  }
   if (policy.holdingHorizon && !["intraday", "swing", "position", "longterm"].includes(policy.holdingHorizon)) return "holdingHorizon must be intraday, swing, position, or longterm.";
   if (policy.maxOrderNotional !== undefined && policy.maxOrderNotional <= 0) return "maxOrderNotional must be positive.";
   if (policy.maxOrderPctOfNav !== undefined && (policy.maxOrderPctOfNav <= 0 || policy.maxOrderPctOfNav > 100)) return "maxOrderPctOfNav must be between 0 and 100.";

@@ -68,13 +68,24 @@ export const DEFAULT_POLICY: TradingPolicy = {
   // NO llmModel / redTeamLlmModel here (owner directive 2026-07-07: no model default for anything,
   // ever). A seeded default here would resurrect the exact silent-default the model layer removed —
   // every new policy would "choose" gpt-5.4-mini without the user ever picking it. Both team models
-  // are REQUIRED explicit picks in Settings → LLM models; unset fails closed with an actionable
+  // are REQUIRED explicit picks in Framework → Models; unset fails closed with an actionable
   // message (LLM_MODEL_REQUIRED_STRATEGY_MESSAGE / the Red reviewer's not_configured routing).
+  // The PROPOSER's reasoning effort (per-team split 2026-07-10). NO redTeamReasoningEffort default
+  // on purpose: absent means "inherit the proposer's" (resolveReviewerReasoningEffort) — seeding a
+  // value here would silently break that fallback for every policy.
   llmReasoningEffort: "medium",
-  // Daily LLM learning review — default OFF; "annotate" never mutates anything (audits + a
-  // notification only). "decide" (apply verdicts) is a separate owner opt-in in Settings.
+  // Daily LLM learning review — default OFF (nothing runs until enabled). When enabled the
+  // default mode is "decide" (apply verdicts — remove/expire facts, resolve pending items,
+  // each audited; owner-chosen 2026-07-09); "annotate" (audit + notify only, no mutation) is
+  // the opt-out. The reviewer model defaults to a real, explicit "claude-fable-5" value —
+  // never a blank that silently means Fable (owner: no hidden model defaults; require a chosen
+  // model). User-level (see USER_LEVEL_POLICY_FIELDS): one config for the whole login.
   learningReviewEnabled: false,
-  learningReviewMode: "annotate",
+  learningReviewMode: "decide",
+  learningReviewModel: "claude-fable-5",
+  // Trigger: run when >= 5 new lessons pile up, OR the oldest un-reviewed one is >= 7 days old.
+  learningReviewMinNewLessons: 5,
+  learningReviewMaxWaitDays: 7,
   holdingHorizon: "swing",
   maxOrderPctOfNav: 5,
   maxDailyNotional: 500,
@@ -109,6 +120,7 @@ export const DEFAULT_POLICY: TradingPolicy = {
   proposalRevalidateCadenceHours: 0,
   staleLimitOrderMinutes: 15,
   autoRemediateStaleExits: true, // cancel-replace a stale EXIT limit with a market order so a stop can't strand the position (MU deadlock); owner-tunable, defers to human typed-confirm on live
+  brokerMinimumHandling: "bump", // sub-minimum orders are raised TO the broker floor and placed (owner ruling 2026-07-09: bump, not skip); "skip" restores pre-flight blocking
   permittedOrderTypes: ["market", "limit"],
   permitExtendedHours: false,
   runCadenceMinutes: 60,

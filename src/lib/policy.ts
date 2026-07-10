@@ -58,8 +58,8 @@ export interface PolicyContext {
    */
   approvedEscalations?: ApprovedEscalation[];
   /**
-   * The BUYING ConnectedAccount's taxationType (db row, as configured in Settings → Tax
-   * treatment). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
+   * The BUYING ConnectedAccount's taxationType (db row, set on the account itself in Settings →
+   * Broker accounts). This is the SOURCE OF TRUTH for the account's tax regime — it wins over
    * policy.taxSettings.taxationType (see dashboard.ts's tax-summary overlay) and must be
    * threaded here because legacy/manually-configured IRA accounts may have capabilities absent
    * (or reporting "brokerage") AND a policy taxSettings without taxationType; without this the

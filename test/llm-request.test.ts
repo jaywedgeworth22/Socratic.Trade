@@ -3,13 +3,19 @@ import {
   isReasoningModel,
   resolveOpenAiModel,
   withLlmRequestBounds,
+  resolveLlmWireOutputCap,
   interactiveStrategyReasoningEffort,
   isDisallowedInteractiveStrategyReasoningConfig,
   reasoningCapabilityForModel,
   normalizeReasoningEffortForModel,
   strategyLlmTimeoutMs,
   llmFetchCapturing,
+  ALL_LLM_REASONING_EFFORTS,
+  LLM_MODEL_ROTATION_SENTINEL,
+  LLM_OUTPUT_TOKEN_CAPS,
+  LLM_REQUEST_DEFAULTS,
   LLM_TIMEOUT_MS,
+  ROTATION_UI_REASONING_CAPABILITY,
   type LlmCallOutcome
 } from "../src/lib/llm-request";
 
@@ -88,6 +94,31 @@ describe("llm-request — model resolution", () => {
     expect(normalizeReasoningEffortForModel("mistral-small-2603", "high")).toBeUndefined();
   });
 
+  it("the rotation sentinel never gains a REAL capability — server paths keep failing closed on it", () => {
+    // The synthetic rotation capability is UI-only (ROTATION_UI_REASONING_CAPABILITY below);
+    // reasoningCapabilityForModel — the function every wire-shaping path derives from — must keep
+    // returning undefined for the raw sentinel so a leaked "__rotate__" can never shape a request.
+    expect(reasoningCapabilityForModel(LLM_MODEL_ROTATION_SENTINEL)).toBeUndefined();
+    expect(normalizeReasoningEffortForModel(LLM_MODEL_ROTATION_SENTINEL, "high")).toBeUndefined();
+  });
+
+  it("exports the UI-only rotation capability with the full generic effort ladder", () => {
+    expect(ROTATION_UI_REASONING_CAPABILITY.provider).toBe("rotation");
+    expect(ROTATION_UI_REASONING_CAPABILITY.options.map((o) => o.value)).toEqual([...ALL_LLM_REASONING_EFFORTS]);
+    expect(ROTATION_UI_REASONING_CAPABILITY.settingLabel).toBe("Reasoning / Thinking Effort");
+  });
+
+  it("strategyProposal is a literal 4000, independent of the shared 1500 default (P1 fix: prod Roth truncated to zero proposals 2026-07-09)", () => {
+    expect(LLM_REQUEST_DEFAULTS.maxOutputTokens).toBe(1500);
+    expect(LLM_OUTPUT_TOKEN_CAPS.strategyProposal).toBe(4000);
+    // Every OTHER cap is untouched — still tied to the shared default.
+    expect(LLM_OUTPUT_TOKEN_CAPS.strategyTuning).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.adversaryReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.postMortemReflection).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.proposalRevalidation).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+    expect(LLM_OUTPUT_TOKEN_CAPS.learningReview).toBe(LLM_REQUEST_DEFAULTS.maxOutputTokens);
+  });
+
   it("widens the strategy LLM timeout only for thinking-enabled reasoning models", () => {
     // Non-reasoning model: base bound regardless of the requested effort.
     expect(strategyLlmTimeoutMs("gpt-4.1-mini", "high")).toBe(LLM_TIMEOUT_MS);
@@ -163,16 +194,20 @@ describe("llm-request — withLlmRequestBounds", () => {
     // hidden reasoning tokens against the same max_completion_tokens cap as the visible JSON.
     expect(xai.max_completion_tokens).toBe(1500 + 8000);
 
-    // mistral-medium-3-5 at an explicit high: reasoning_effort high + prompt_mode riding
-    // along (both passed provider validation in the 2026-07-08 benchmark; only the old
-    // "medium" effort value 400'd).
+    // mistral-medium-3-5 at an explicit high: reasoning_effort high and NOTHING else — the
+    // 2026-07-10 keyed probe proved it rejects prompt_mode:"reasoning" ("Reasoning prompt mode
+    // is not enabled for this model"; Mistral validates reasoning_effort before prompt_mode, so
+    // the 2026-07-08 effort-value 400 masked this).
     const mistralHigh = withLlmRequestBounds({ model: "mistral-medium-3-5" }, "chat-completions", {
       maxOutputTokens: 1500,
       model: "mistral-medium-3-5",
       reasoningEffort: "xhigh" // normalizes to "high" — the provider's only reasoning tier
     });
     expect(mistralHigh.reasoning_effort).toBe("high");
-    expect(mistralHigh.prompt_mode).toBe("reasoning");
+    expect("prompt_mode" in mistralHigh).toBe(false);
+    // Reasoning tier rejects greedy sampling (top_p-must-be-1 400) — no temperature, like the
+    // other providers' thinking modes.
+    expect("temperature" in mistralHigh).toBe(false);
     expect(mistralHigh.max_completion_tokens).toBe(1500 + 8000);
 
     // mistral-medium-3-5 at the default (medium => none): reasoning_effort "none" (a value the
@@ -226,6 +261,19 @@ describe("llm-request — withLlmRequestBounds", () => {
     expect("temperature" in anthropic).toBe(false);
   });
 
+  it("a raw rotation sentinel gets a plain temperature body — no reasoning keys, no headroom", () => {
+    const bounded = withLlmRequestBounds({ model: LLM_MODEL_ROTATION_SENTINEL }, "chat-completions", {
+      maxOutputTokens: 1500,
+      model: LLM_MODEL_ROTATION_SENTINEL,
+      reasoningEffort: "high"
+    });
+    expect("reasoning_effort" in bounded).toBe(false);
+    expect("thinking" in bounded).toBe(false);
+    expect("prompt_mode" in bounded).toBe(false);
+    expect(bounded.temperature).toBe(0);
+    expect(bounded.max_completion_tokens).toBe(1500);
+  });
+
   it("reasoning models default to medium effort when unspecified", () => {
     const chat = withLlmRequestBounds({ model: "gpt-5.4-nano" }, "chat-completions", {
       maxOutputTokens: 1000,
@@ -233,6 +281,25 @@ describe("llm-request — withLlmRequestBounds", () => {
     });
     expect(chat.reasoning_effort).toBe("medium");
     expect(chat.max_completion_tokens).toBe(1000 + 4000);
+  });
+
+  it("resolveLlmWireOutputCap exposes the ACTUAL wire cap for LLM_OUTPUT_TOKEN_CAPS.strategyProposal, matching what withLlmRequestBounds embeds in the body", () => {
+    // Non-reasoning: no headroom, wire cap == the raw strategyProposal cap.
+    expect(resolveLlmWireOutputCap("chat-completions", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "gpt-4.1-mini" }))
+      .toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal);
+
+    // Gemini at medium reasoning effort: +4000 headroom on top of the 4000 base cap — the exact
+    // shape that starved prod Roth proposals on 2026-07-09 (this is the audit's headline example).
+    const geminiBounds = { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "gemini-3.1-pro-preview", reasoningEffort: "medium" as const };
+    const geminiWireCap = resolveLlmWireOutputCap("chat-completions", geminiBounds);
+    expect(geminiWireCap).toBe(LLM_OUTPUT_TOKEN_CAPS.strategyProposal + 4000);
+    // The exported resolver must match exactly what withLlmRequestBounds actually puts on the wire.
+    const geminiBody = withLlmRequestBounds({ model: geminiBounds.model }, "chat-completions", geminiBounds);
+    expect(geminiBody.max_completion_tokens).toBe(geminiWireCap);
+
+    // Anthropic messages: floored at ANTHROPIC_MIN_MAX_TOKENS (4096), not raw headroom math.
+    expect(resolveLlmWireOutputCap("anthropic-messages", { maxOutputTokens: LLM_OUTPUT_TOKEN_CAPS.strategyProposal, model: "claude-opus-4-8" }))
+      .toBe(4096);
   });
 
   // Composite review B/high/S: "Reasoning-token headroom exists only for OpenAI — other providers'

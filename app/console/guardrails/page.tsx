@@ -317,7 +317,7 @@ export default function GuardrailsPage() {
           </AdvancedGroup>
           <AdvancedGroup title="Tax rules">
             <p className="pt-2 text-[length:var(--con-fs-xs)] text-[color:var(--con-faint)]">
-              The wash-sale guard itself (on/off, account type, rates) lives in Settings → Tax treatment. These rules
+              The wash-sale guard itself (on/off, account type, rates) lives in Framework → Tax treatment. These rules
               tune what a rebuy lockout means for this account and how strict it is.
             </p>
             <div className="mt-2 rounded-md border border-[color:var(--con-line)] bg-[color:var(--con-surface-2)] px-3 py-2 text-[length:var(--con-fs-xs)] leading-relaxed text-[color:var(--con-muted)]">

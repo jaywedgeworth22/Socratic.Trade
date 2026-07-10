@@ -194,7 +194,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         side: stop.side,
         fireGeneration: stop.fireGeneration + 1,
         note: "protective exit order confirmed terminal with the position still open — trailing protection restored"
-      }, userId);
+      }, userId, policy.connectedAccountId);
     }
   }
 
@@ -221,7 +221,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
   const justPlacedBrokerStopSymbols = new Set<string>();
   const justPlacedPartialBrokerStopSymbols = new Set<string>();
   try {
-    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, brokerOrders });
+    const reconciled = await reconcileBrokerProtectiveStops({ userId, policy, accountNumber, gateway, positions, executionMode, running, orders: brokerOrders });
     if (reconciled.cancelledOrderIds.length > 0) {
       const cancelledIds = new Set(reconciled.cancelledOrderIds);
       registrationOrders = brokerOrders.filter((o) => !cancelledIds.has(o.id));
@@ -229,7 +229,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     for (const sym of reconciled.placedStopSymbols) justPlacedBrokerStopSymbols.add(normalizeSymbol(sym));
     for (const sym of reconciled.partiallyPlacedStopSymbols) justPlacedPartialBrokerStopSymbols.add(normalizeSymbol(sym));
   } catch (err) {
-    audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId);
+    audit("broker_protective_stop_reconcile_error", { error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
   }
 
   // Auto-register a trailing stop for each open position when a trail % is configured.
@@ -328,7 +328,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     result.triggered++;
 
     if (!running) {
-      audit("synthetic_stop_would_trigger", { symbol: stop.symbol, side: stop.side, price, triggerPrice: evaln.triggerPrice, note: "system not running — exit suppressed" }, userId);
+      audit("synthetic_stop_would_trigger", { symbol: stop.symbol, side: stop.side, price, triggerPrice: evaln.triggerPrice, note: "system not running — exit suppressed" }, userId, policy.connectedAccountId);
       continue;
     }
 
@@ -353,7 +353,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         symbol: stop.symbol,
         positionQty,
         note: "broker-held protective stop placed this tick — resting protection the stale coverage list can't see; deferring fire to next tick's fresh coverage"
-      }, userId);
+      }, userId, policy.connectedAccountId);
       continue;
     }
     // Quantity-aware double-exit guard: shares already covered by live exit orders are broker-held —
@@ -372,7 +372,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
         note: coverage.unknownQty
           ? "a live exit order with unknowable quantity rests for this symbol — treated as fully covering, not stacking another protective exit"
           : "live exit orders already cover the full position — not stacking another protective exit"
-      }, userId);
+      }, userId, policy.connectedAccountId);
       continue;
     }
     const qty = Math.min(positionQty, Math.max(positionQty - coverage.coveredQty, 0));
@@ -397,18 +397,18 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       entryMarketRegime: "Risk Exit"
     };
     const tradability = await gateway.getEquityTradability(accountNumber, [exitProposal.symbol]).catch((err) => {
-      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "tradability_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "tradability_check_failed", error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
       return undefined;
     });
     if (!tradability?.[exitProposal.symbol]?.tradable) {
       audit("synthetic_stop_blocked", {
         symbol: stop.symbol,
         reason: tradability?.[exitProposal.symbol]?.reason ?? "Symbol is not tradable for the protective exit."
-      }, userId);
+      }, userId, policy.connectedAccountId);
       continue;
     }
     const portfolio = await gateway.getPortfolio(accountNumber).catch((err) => {
-      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "portfolio_check_failed", error: err instanceof Error ? err.message : String(err) }, userId);
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reason: "portfolio_check_failed", error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
       return undefined;
     });
     if (!portfolio) continue;
@@ -423,7 +423,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       isLiveExecution: executionMode === "broker/live"
     });
     if (!policyDecision.approved) {
-      audit("synthetic_stop_blocked", { symbol: stop.symbol, reasons: policyDecision.reasons }, userId);
+      audit("synthetic_stop_blocked", { symbol: stop.symbol, reasons: policyDecision.reasons }, userId, policy.connectedAccountId);
       continue;
     }
     // Atomically claim this stop (active -> triggered) BEFORE placing. If a previous tick's
@@ -431,7 +431,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
     // claimed the stop and this run skips it — so the same protective exit can't fire twice. The
     // claim also serializes the generation/refId bookkeeping below against concurrent monitor runs.
     if (!claimSyntheticStop(stop.id, userId)) {
-      audit("synthetic_stop_skipped_inflight", { symbol: stop.symbol, note: "already claimed/triggered by a concurrent monitor run" }, userId);
+      audit("synthetic_stop_skipped_inflight", { symbol: stop.symbol, note: "already claimed/triggered by a concurrent monitor run" }, userId, policy.connectedAccountId);
       continue;
     }
     // Deterministic ref id (stop id + trigger price + fire generation) so the broker's own
@@ -479,7 +479,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // and re-arm the stop so the position isn't left unprotected behind a stuck 'triggered' row.
       if (isRejectedOrCanceledState(exec.state)) {
         revertSyntheticStopClaim(stop.id, userId);
-        audit("synthetic_stop_error", { symbol: stop.symbol, error: `Broker declined the protective exit (state: ${exec.state}).`, orderId: exec.orderId }, userId);
+        audit("synthetic_stop_error", { symbol: stop.symbol, error: `Broker declined the protective exit (state: ${exec.state}).`, orderId: exec.orderId }, userId, policy.connectedAccountId);
         continue;
       }
       // The fill is FINAL only when the broker confirms it filled synchronously (same rule as the
@@ -517,7 +517,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // Already 'triggered' via the claim; this just records the final lastPrice.
       upsertSyntheticStop({ ...stop, status: "triggered", lastPrice: price });
       result.exited++;
-      audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId);
+      audit("synthetic_stop_triggered", { symbol: stop.symbol, side: stop.side, exitSide, price, triggerPrice: evaln.triggerPrice, quantity: qty, orderId: exec.orderId }, userId, policy.connectedAccountId);
     } catch (err) {
       // Placement failed/uncertain — re-arm the stop so a later tick can retry rather than
       // leaving the position unprotected behind a stuck 'triggered' row. The revert deliberately
@@ -525,7 +525,7 @@ export async function runSyntheticStopMonitor(userId: string, policy: TradingPol
       // this order before the call threw, and remembering its client_order_id is what lets the
       // retry reuse the same id (422-safe) until that order is positively confirmed dead.
       revertSyntheticStopClaim(stop.id, userId);
-      audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId);
+      audit("synthetic_stop_error", { symbol: stop.symbol, error: err instanceof Error ? err.message : String(err) }, userId, policy.connectedAccountId);
     }
   }
 

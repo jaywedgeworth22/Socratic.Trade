@@ -96,10 +96,13 @@ export function stopFlowModel(policy: TradingPolicy): StopFlowLane[] {
         value: trailingOn ? `−${trailPct}% from peak` : "off",
         active: trailingOn,
         detail: trailingOn
-          ? "Exits when price falls this far from its best level since entry. Both this and the distance stop can fire — whichever triggers first."
+          ? "Exits when price falls this far from its best level since entry. Both this and the distance stop can fire — whichever triggers first. Shares already committed to a resting broker exit (e.g. Alpaca bracket legs) keep those instead — a trail can't claim shares an existing broker order holds."
           : "Off. Set a trailing % to add a high-water-mark exit on top of the fixed/ATR stop."
       }
-    ]
+    ],
+    note: trailingOn && bracketsOn
+      ? "Broker-held brackets are also on: bracketed positions keep their bracket stop/take legs (shares can back only one resting exit) — the trail covers unbracketed positions."
+      : undefined
   };
 
   const enforcementParts: string[] = [];
