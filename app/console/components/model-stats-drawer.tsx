@@ -218,7 +218,7 @@ export function ModelStatsButton({ role }: { role: PickerRole }) {
 
   const statsRole = role === "proposer" ? "green" : "red";
   const byModel = new Map((data?.stats ?? []).filter((s) => s.role === statsRole).map((s) => [s.model, s]));
-  const roleLabel = role === "proposer" ? "Proposer (Green Team)" : "Reviewer (Red Team)";
+  const roleLabel = role === "proposer" ? "Proposer (Green)" : "Reviewer (Red)";
 
   return (
     <>
