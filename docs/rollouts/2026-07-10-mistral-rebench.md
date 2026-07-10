@@ -111,6 +111,7 @@ proposer (empty list); with reasoning on it works but at ~50x small-2603's cost 
 
 - Red-role validator fix in `scripts/benchmark-llm-models.ts` (artifact above).
 - ~~Optional `--effort` flag~~ DONE this PR; high-effort probe DONE (findings above).
-- Owner decision on re-adding `mistral-small-2603` to `MODEL_ROTATION_POOL`
-  (recommended); medium-3-5 recommended held out (reasoning-off proposes nothing,
-  reasoning-on is slow/expensive with timeout risk).
+- ~~Owner decision on re-adding to `MODEL_ROTATION_POOL`~~ DECIDED 2026-07-10: owner
+  wants BOTH models in the pool for now, to pull out later as warranted — done in
+  `src/lib/model-rotation.ts` (this overrides the hold-medium-3-5-out recommendation
+  above). `MODEL_ROTATION_POOL` now excludes only `grok-build-0.1`.
