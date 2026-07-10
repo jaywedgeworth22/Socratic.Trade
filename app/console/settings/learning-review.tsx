@@ -32,8 +32,9 @@ const MODE_OPTIONS = [
 ] as const;
 
 // Model shortlist: this is a once-a-day audit of decisions that compound, so the curated
-// options are frontier-tier; any model id also works via the account's Models card. No
-// blank/"default" pseudo-option — the field always holds a real, chosen model.
+// options are frontier-tier; the review model is its own user-level pick (unrelated to the
+// per-account team models on Framework → Models). No blank/"default" pseudo-option — the
+// field always holds a real, chosen model.
 const REVIEW_MODEL_OPTIONS = [
   { value: "claude-fable-5", label: "claude-fable-5 — most capable Claude · $$$" },
   { value: "claude-opus-4-8", label: "claude-opus-4-8 — premium Claude reasoning · $$$" },
