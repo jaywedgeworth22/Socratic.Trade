@@ -21,6 +21,24 @@ red-team.ts lib) intentionally untouched — different UI areas, out of scope. V
 + dark via live preview (computed colors match the tokens exactly). Gate green: tsc clean,
 3351 tests, build clean. See `docs/rollouts/2026-07-10-green-red-labels.md`.
 
+## 2026-07-10 — Unified provider request quota (MONET, branch `monet/unified-provider-quota`)
+Owner directive: throttling must be "based on not knowing how many tickers will be in the scan so
+it is flexible and all other data provider settings also need to be that way." Built ONE
+`RequestQuota` primitive in `src/lib/provider-rate-limit.ts` — a provider declares real free-tier
+windows (per-min/hour/day) and `admitProviderRequests(provider, credKey, wanted)` returns how many
+of `wanted` outbound requests fit under ALL windows right now (per-credential, multi-window MIN,
+sliding, instantaneous/never-stalls); callers query the admitted best-first symbols and defer the
+rest best-effort. Scoped the QUOTA to providers with a hard windowed cap pacing can't solve —
+**twelvedata (8/min+800/day batch credits)** and **tiingo (50/hour+1000/day)** — fixing the tiingo
+403 (owner dashboard hourly −10/50: an unpaced 30-symbol scan fires ~90 req vs the 50/hr cap).
+finnhub/yahoo/alpha-vantage stay on the pre-existing PACER (per-symbol calls; spacing covers every
+symbol and is already scan-size-agnostic). Env-overridable
+`PROVIDER_QUOTA_<NAME>_PER_MIN|_PER_HOUR|_PER_DAY` (≤0 removes a window). Tests: 40 in
+`provider-rate-limit.test.ts` (RequestQuota + resolveProviderQuota) + 2 new Tiingo + migrated
+Twelve Data. **Node trap:** this worktree's `better-sqlite3` had been rebuilt for node26 (homebrew's
+new default); rebuilt it for node@24 and run all gates under `/opt/homebrew/opt/node@24/bin`. Next:
+commit + `land.sh` under node@24; verify AV/TwelveData/Tiingo green on the next pre-market scan
+(~08:00Z). Rollout: `docs/rollouts/2026-07-10-unified-provider-quota.md`.
 ## 2026-07-10 — Learning-review >80-item backlog drain: PR #1278 deferred finding #2 (MONET)
 Fixed the daily learning-review silently marking a >`MAX_REVIEW_ITEMS` (80) backlog "reviewed" without
 auditing it. `buildLearningReviewContextPack` sliced the newest 80 and a complete review advanced
